@@ -1,0 +1,570 @@
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// Agent control protocol, contract version 0.1.0.
+//
+// The controller compiles a test configuration into one Plan per agent and
+// drives each agent through AgentService. The agent serves AgentService over
+// gRPC with mutual TLS, and the controller is its only client. The canonical
+// JSON form of a Plan is the proto3 JSON mapping of the Plan message, which
+// the standalone agent mode reads from a file. See contracts/README.md for
+// the state machine, the error codes, and the digest rules.
+
+syntax = "proto3";
+
+package fps.agent.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// AgentService is the control surface of one agent. The agent serves it, and
+// the controller that registered the agent is its only client.
+service AgentService {
+  // Register binds the agent to a controller and returns its capabilities.
+  // A repeated call from the bound controller is idempotent. A call from a
+  // different controller fails with FAILED_PRECONDITION until the current
+  // binding expires.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Heartbeat renews the binding and reports the agent state. The agent
+  // aborts any run and drops the binding when no heartbeat arrives within the
+  // heartbeat timeout that Register set.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Prepare verifies module digests, loads scenarios, binds ports, and
+  // configures host pools and workers. It returns once the agent is in state
+  // AGENT_STATE_PREPARED.
+  rpc Prepare(PrepareRequest) returns (PrepareResponse);
+
+  // Start begins the load phases of a prepared plan, optionally at a given
+  // time so that several agents start together.
+  rpc Start(StartRequest) returns (StartResponse);
+
+  // Stop ends a run with a ramp down or aborts it. Stop on a prepared plan
+  // that never started releases its resources.
+  rpc Stop(StopRequest) returns (StopResponse);
+
+  // StreamCounters sends one counter snapshot per interval until the run
+  // reaches AGENT_STATE_STOPPED, and then sends a final snapshot and ends.
+  rpc StreamCounters(StreamCountersRequest) returns (stream StreamCountersResponse);
+}
+
+// AgentState is the position of the agent in its state machine.
+enum AgentState {
+  // AGENT_STATE_UNSPECIFIED is never sent.
+  AGENT_STATE_UNSPECIFIED = 0;
+  // AGENT_STATE_IDLE means that the agent holds no plan.
+  AGENT_STATE_IDLE = 1;
+  // AGENT_STATE_PREPARING means that a Prepare call is in progress.
+  AGENT_STATE_PREPARING = 2;
+  // AGENT_STATE_PREPARED means that a plan is loaded and waits for Start.
+  AGENT_STATE_PREPARED = 3;
+  // AGENT_STATE_RUNNING means that the load phases are in progress.
+  AGENT_STATE_RUNNING = 4;
+  // AGENT_STATE_STOPPING means that a ramp down is in progress.
+  AGENT_STATE_STOPPING = 5;
+  // AGENT_STATE_STOPPED means that the run ended and final counters are available.
+  AGENT_STATE_STOPPED = 6;
+  // AGENT_STATE_FAILED means that the run ended because of an agent error.
+  AGENT_STATE_FAILED = 7;
+}
+
+// Backend names a transport backend.
+enum Backend {
+  // BACKEND_UNSPECIFIED is never sent.
+  BACKEND_UNSPECIFIED = 0;
+  // BACKEND_KERNEL uses kernel sockets.
+  BACKEND_KERNEL = 1;
+  // BACKEND_AF_XDP uses AF_XDP sockets.
+  BACKEND_AF_XDP = 2;
+  // BACKEND_DPDK uses DPDK poll mode drivers.
+  BACKEND_DPDK = 3;
+}
+
+// Topology matches the topology field of the test configuration.
+enum Topology {
+  // TOPOLOGY_UNSPECIFIED is invalid in a plan.
+  TOPOLOGY_UNSPECIFIED = 0;
+  // TOPOLOGY_APP_SIM emulates clients and servers.
+  TOPOLOGY_APP_SIM = 1;
+  // TOPOLOGY_CLIENT_SIM emulates clients against real servers.
+  TOPOLOGY_CLIENT_SIM = 2;
+  // TOPOLOGY_SERVER_SIM emulates servers for real clients.
+  TOPOLOGY_SERVER_SIM = 3;
+}
+
+// HostRole matches the role field of a host pool.
+enum HostRole {
+  // HOST_ROLE_UNSPECIFIED is invalid in a plan.
+  HOST_ROLE_UNSPECIFIED = 0;
+  // HOST_ROLE_CLIENT hosts open sessions.
+  HOST_ROLE_CLIENT = 1;
+  // HOST_ROLE_SERVER hosts accept sessions.
+  HOST_ROLE_SERVER = 2;
+}
+
+// PhaseShape matches the shape field of a load phase.
+enum PhaseShape {
+  // PHASE_SHAPE_UNSPECIFIED is invalid in a plan.
+  PHASE_SHAPE_UNSPECIFIED = 0;
+  // PHASE_SHAPE_HOLD keeps start_fraction for the whole phase.
+  PHASE_SHAPE_HOLD = 1;
+  // PHASE_SHAPE_LINEAR moves from start_fraction to end_fraction linearly.
+  PHASE_SHAPE_LINEAR = 2;
+  // PHASE_SHAPE_STEP moves from start_fraction to end_fraction in equal steps.
+  PHASE_SHAPE_STEP = 3;
+}
+
+// StopMode selects how Stop ends a run.
+enum StopMode {
+  // STOP_MODE_UNSPECIFIED is treated as STOP_MODE_RAMP_DOWN.
+  STOP_MODE_UNSPECIFIED = 0;
+  // STOP_MODE_RAMP_DOWN stops new sessions and lets open sessions finish
+  // within the drain timeout.
+  STOP_MODE_RAMP_DOWN = 1;
+  // STOP_MODE_ABORT resets every open session at once.
+  STOP_MODE_ABORT = 2;
+}
+
+// CriterionOp matches the op field of a criterion.
+enum CriterionOp {
+  // CRITERION_OP_UNSPECIFIED is invalid in a plan.
+  CRITERION_OP_UNSPECIFIED = 0;
+  // CRITERION_OP_LT is the < operator.
+  CRITERION_OP_LT = 1;
+  // CRITERION_OP_LE is the <= operator.
+  CRITERION_OP_LE = 2;
+  // CRITERION_OP_GT is the > operator.
+  CRITERION_OP_GT = 3;
+  // CRITERION_OP_GE is the >= operator.
+  CRITERION_OP_GE = 4;
+  // CRITERION_OP_EQ is the == operator.
+  CRITERION_OP_EQ = 5;
+  // CRITERION_OP_NE is the != operator.
+  CRITERION_OP_NE = 6;
+}
+
+// RegisterRequest binds the agent to a controller.
+message RegisterRequest {
+  // controller_id names the controller instance.
+  string controller_id = 1;
+  // agent_id is the identifier that the controller assigns to this agent.
+  string agent_id = 2;
+  // heartbeat_interval is the period at which the controller sends Heartbeat.
+  google.protobuf.Duration heartbeat_interval = 3;
+  // heartbeat_timeout is the silence after which the agent aborts any run
+  // and drops the binding. It must exceed heartbeat_interval.
+  google.protobuf.Duration heartbeat_timeout = 4;
+}
+
+// RegisterResponse confirms the binding.
+message RegisterResponse {
+  // agent_id echoes the assigned identifier.
+  string agent_id = 1;
+  // capabilities describes what the agent can run.
+  Capabilities capabilities = 2;
+  // state is the agent state after the call.
+  AgentState state = 3;
+}
+
+// Capabilities describes one agent. Field names follow the Agent and
+// Capabilities schemas of the controller OpenAPI document.
+message Capabilities {
+  // agent_version is the agent build version.
+  string agent_version = 1;
+  // engine_api is the contract version that the agent implements, such as 0.1.0.
+  string engine_api = 2;
+  // backends lists the transport backends that the agent supports.
+  repeated Backend backends = 3;
+  // cores is the number of workers that the agent can run.
+  uint32 cores = 4;
+  // memory_bytes is the memory available for sessions.
+  uint64 memory_bytes = 5;
+  // ports lists the traffic interfaces.
+  repeated PortInfo ports = 6;
+  // modules lists the installed modules with their digests.
+  repeated ModuleRef modules = 7;
+  // labels are operator assigned key and value pairs.
+  map<string, string> labels = 8;
+}
+
+// PortInfo describes one traffic interface of the agent.
+message PortInfo {
+  // name is the interface name, such as eth1.
+  string name = 1;
+  // driver is the kernel or poll mode driver name.
+  string driver = 2;
+  // speed_mbps is the link speed.
+  uint32 speed_mbps = 3;
+  // mac is the hardware address in lowercase colon notation.
+  string mac = 4;
+  // mtu is the configured MTU.
+  uint32 mtu = 5;
+}
+
+// HeartbeatRequest renews the binding.
+message HeartbeatRequest {
+  // controller_id names the bound controller.
+  string controller_id = 1;
+}
+
+// HeartbeatResponse reports the agent state.
+message HeartbeatResponse {
+  // state is the current agent state.
+  AgentState state = 1;
+  // plan_id names the loaded plan, or is empty in AGENT_STATE_IDLE.
+  string plan_id = 2;
+  // phase is the name of the current load phase while running.
+  string phase = 3;
+  // agent_time is the agent clock, which lets the controller estimate skew
+  // before it sets StartRequest.start_at.
+  google.protobuf.Timestamp agent_time = 4;
+  // message explains AGENT_STATE_FAILED in one sentence.
+  string message = 5;
+}
+
+// PrepareRequest carries the plan for this agent.
+message PrepareRequest {
+  // plan is the compiled plan.
+  Plan plan = 1;
+}
+
+// PrepareResponse confirms that the plan is loaded.
+message PrepareResponse {
+  // plan_id echoes the plan identifier.
+  string plan_id = 1;
+  // state is AGENT_STATE_PREPARED on success.
+  AgentState state = 2;
+}
+
+// StartRequest starts a prepared plan.
+message StartRequest {
+  // plan_id names the prepared plan.
+  string plan_id = 1;
+  // start_at is the agent clock time at which the first phase begins. When
+  // absent, the run starts at once.
+  google.protobuf.Timestamp start_at = 2;
+}
+
+// StartResponse confirms the start.
+message StartResponse {
+  // started_at is the agent clock time at which the first phase began or
+  // will begin.
+  google.protobuf.Timestamp started_at = 1;
+}
+
+// StopRequest stops a run.
+message StopRequest {
+  // plan_id names the plan to stop.
+  string plan_id = 1;
+  // mode selects a ramp down or an abort.
+  StopMode mode = 2;
+  // drain_timeout bounds a ramp down. Sessions still open afterwards are
+  // reset. When absent, the agent uses ten seconds.
+  google.protobuf.Duration drain_timeout = 3;
+}
+
+// StopResponse reports the end of the run.
+message StopResponse {
+  // state is the agent state after the call, normally AGENT_STATE_STOPPED or
+  // AGENT_STATE_IDLE for a plan that never started.
+  AgentState state = 1;
+  // final_snapshot is the last counter snapshot of the run, when the run started.
+  CounterSnapshot final_snapshot = 2;
+}
+
+// StreamCountersRequest subscribes to counter snapshots.
+message StreamCountersRequest {
+  // plan_id names the plan.
+  string plan_id = 1;
+  // interval is the snapshot period. When absent, the agent uses one second.
+  google.protobuf.Duration interval = 2;
+  // per_worker requests one snapshot per worker in place of one aggregate
+  // snapshot per interval.
+  bool per_worker = 3;
+}
+
+// StreamCountersResponse carries one snapshot.
+message StreamCountersResponse {
+  // snapshot is the counter snapshot.
+  CounterSnapshot snapshot = 1;
+}
+
+// CounterSnapshot holds the counters of one agent, or of one worker when the
+// stream was opened with per_worker. Counters and histograms are cumulative
+// from the start of the run, so a lost snapshot loses no data.
+message CounterSnapshot {
+  // plan_id names the plan.
+  string plan_id = 1;
+  // sequence increases by one for every snapshot of the stream, starting at 1.
+  uint64 sequence = 2;
+  // time is the agent clock time of the snapshot.
+  google.protobuf.Timestamp time = 3;
+  // phase is the name of the load phase at the time of the snapshot.
+  string phase = 4;
+  // worker_id names the worker for a per worker snapshot.
+  uint32 worker_id = 5;
+  // aggregate is true when the snapshot sums all workers.
+  bool aggregate = 6;
+  // is_final is true for the last snapshot of the run.
+  bool is_final = 7;
+  // counters holds counter and gauge values.
+  repeated CounterValue counters = 8;
+  // histograms holds latency and size distributions.
+  repeated HistogramValue histograms = 9;
+}
+
+// CounterValue is one counter or gauge.
+message CounterValue {
+  // metric is a metric name from contracts/metrics/catalog.yaml, such as
+  // sessions.attempted. The catalog defines the unit, the level, the kind,
+  // and the allowed labels.
+  string metric = 1;
+  // labels qualify the value, such as scenario or port, as the catalog allows.
+  map<string, string> labels = 2;
+  // value holds a counter or a gauge, as the catalog kind requires.
+  oneof value {
+    // count is a monotonic counter value.
+    uint64 count = 3;
+    // gauge is an instantaneous value.
+    double gauge = 4;
+  }
+}
+
+// HistogramValue is one cumulative distribution.
+message HistogramValue {
+  // metric is a histogram name from contracts/metrics/catalog.yaml.
+  string metric = 1;
+  // labels qualify the value, as the catalog allows.
+  map<string, string> labels = 2;
+  // count is the number of recorded values.
+  uint64 count = 3;
+  // hdr_v2 is the histogram in the compressed HdrHistogram V2 encoding, in
+  // the unit that the catalog names.
+  bytes hdr_v2 = 4;
+}
+
+// Plan is the compiled share of one test for one agent. The controller
+// produces it, and the standalone agent mode reads it from a JSON file in the
+// proto3 JSON mapping.
+message Plan {
+  // plan_id is unique per run and agent, by convention <run_id>/<agent_id>.
+  string plan_id = 1;
+  // run_id names the run.
+  string run_id = 2;
+  // agent_id names the agent that executes the plan.
+  string agent_id = 3;
+  // test_name copies metadata.name of the test configuration.
+  string test_name = 4;
+  // engine_api is the contract version that the plan targets, such as 0.1.0.
+  string engine_api = 5;
+  // seed is the run seed. Each worker derives its generators from the seed,
+  // the worker id, and the session id, so a replay reproduces every session.
+  uint64 seed = 6;
+  // topology copies the topology of the test configuration.
+  Topology topology = 7;
+  // backend selects the transport backend for every port.
+  Backend backend = 8;
+  // modules lists every module that the plan needs, with its digest.
+  repeated ModuleRef modules = 9;
+  // scenarios carries the source of every scenario that the mix uses.
+  repeated ScenarioSource scenarios = 10;
+  // mix lists the resolved mix entries with their effective parameters.
+  repeated MixEntry mix = 11;
+  // ports lists the traffic ports of this agent.
+  repeated PortBinding ports = 12;
+  // host_pools lists the slice of each host pool that this agent emulates.
+  repeated HostPoolSlice host_pools = 13;
+  // external_servers lists real servers for TOPOLOGY_CLIENT_SIM.
+  repeated ExternalServer external_servers = 14;
+  // workers lists one entry per worker, each pinned to one core.
+  repeated WorkerPlan workers = 15;
+  // load holds the objective and the load phases.
+  LoadPlan load = 16;
+  // warmup is the time from the start that statistics exclude.
+  google.protobuf.Duration warmup = 17;
+  // criteria are pass and fail rules. Only the standalone agent mode
+  // evaluates them. The controller evaluates criteria over all agents.
+  repeated Criterion criteria = 18;
+}
+
+// ModuleRef pins one module by name, version, and digest.
+message ModuleRef {
+  // name is the module name from its manifest.
+  string name = 1;
+  // version is the module version from its manifest.
+  string version = 2;
+  // digest is sha256:<64 lowercase hex> over the module tree as
+  // contracts/README.md defines it. The agent refuses a module whose digest
+  // differs.
+  string digest = 3;
+}
+
+// ScenarioSource carries one scenario file.
+message ScenarioSource {
+  // ref is <module>/<scenario>, as in the profile mix of the test configuration.
+  string ref = 1;
+  // module is the module that exports the scenario.
+  string module = 2;
+  // source is the scenario file in YAML, conforming to
+  // contracts/schemas/scenario.schema.json.
+  string source = 3;
+  // digest is sha256:<64 lowercase hex> over the UTF-8 bytes of source.
+  string digest = 4;
+}
+
+// MixEntry is one resolved entry of the profile mix.
+message MixEntry {
+  // id names the entry within the plan. Worker rates refer to it.
+  string id = 1;
+  // scenario is the ref of a ScenarioSource in the same plan.
+  string scenario = 2;
+  // weight is the normalized weight within the basis, between 0 and 1.
+  double weight = 3;
+  // params holds the effective scenario variables after test overrides.
+  google.protobuf.Struct params = 4;
+  // client_pool names the client host pool, or is empty for the default.
+  string client_pool = 5;
+  // server_pool names the server host pool, or is empty for the default.
+  string server_pool = 6;
+}
+
+// PortBinding maps a test port to a local interface.
+message PortBinding {
+  // name is the port name from the test configuration.
+  string name = 1;
+  // interface_name is the local interface, the part of the location after the slash.
+  string interface_name = 2;
+  // mtu is the MTU to configure, or zero to keep the current value.
+  uint32 mtu = 3;
+}
+
+// HostPoolSlice is the part of one host pool that this agent emulates. Host
+// index i of a pool maps to the i-th address of its prefix, counting from the
+// first address after the network address and skipping the gateway, and for
+// IPv4 also skipping the broadcast address.
+message HostPoolSlice {
+  // name is the host pool name from the test configuration.
+  string name = 1;
+  // port is the port name that the pool sits on.
+  string port = 2;
+  // role is the role of the pool.
+  HostRole role = 3;
+  // ipv4_prefix is the IPv4 prefix of the whole pool, such as 10.10.0.0/16.
+  string ipv4_prefix = 4;
+  // ipv6_prefix is the IPv6 prefix of the whole pool.
+  string ipv6_prefix = 5;
+  // pool_count is the number of hosts in the whole pool across all agents.
+  uint32 pool_count = 6;
+  // offset is the pool index of the first host of this slice.
+  uint32 offset = 7;
+  // count is the number of hosts in this slice.
+  uint32 count = 8;
+  // gateway is the gateway address, or is empty.
+  string gateway = 9;
+  // vlan is the VLAN id, or zero for untagged.
+  uint32 vlan = 10;
+  // mac_base is the MAC address of pool index 0. Host index i uses
+  // mac_base plus i, so addresses stay unique across agents.
+  string mac_base = 11;
+  // os_profile names the host OS profile.
+  string os_profile = 12;
+}
+
+// ExternalServer is a real server for TOPOLOGY_CLIENT_SIM.
+message ExternalServer {
+  // name is the server name from the test configuration.
+  string name = 1;
+  // address is a host name or an IP address.
+  string address = 2;
+  // port is the server port, or zero for the scenario default.
+  uint32 port = 3;
+}
+
+// WorkerPlan is the share of one worker. A worker owns its hosts and
+// sessions, and every session stays on its worker.
+message WorkerPlan {
+  // worker_id is unique within the plan and counts from 0.
+  uint32 worker_id = 1;
+  // core is the CPU that the worker pins to.
+  uint32 core = 2;
+  // hosts lists the host ranges that the worker owns.
+  repeated HostRange hosts = 3;
+  // rates lists the steady state target of each mix entry on this worker.
+  repeated WorkerRate rates = 4;
+}
+
+// HostRange is a contiguous range of hosts of one pool.
+message HostRange {
+  // pool names a HostPoolSlice of the plan.
+  string pool = 1;
+  // offset is the pool index of the first host. The range must lie within
+  // the slice of this agent.
+  uint32 offset = 2;
+  // count is the number of hosts.
+  uint32 count = 3;
+}
+
+// WorkerRate is the steady state target of one mix entry on one worker. The
+// load phases scale it over time.
+message WorkerRate {
+  // mix_entry names a MixEntry of the plan.
+  string mix_entry = 1;
+  // target is the rate or the concurrency, as the load objective requires.
+  oneof target {
+    // sessions_per_second is the session open rate.
+    double sessions_per_second = 2;
+    // concurrent_sessions is the number of sessions kept open.
+    uint32 concurrent_sessions = 3;
+  }
+}
+
+// LoadPlan holds the objective and the phases.
+message LoadPlan {
+  // objective copies the objective type of the test configuration.
+  LoadObjective objective = 1;
+  // objective_value is the share of the objective value for this agent.
+  double objective_value = 2;
+  // phases run in order.
+  repeated LoadPhase phases = 3;
+}
+
+// LoadObjective matches the objective type of the test configuration.
+enum LoadObjective {
+  // LOAD_OBJECTIVE_UNSPECIFIED is invalid in a plan.
+  LOAD_OBJECTIVE_UNSPECIFIED = 0;
+  // LOAD_OBJECTIVE_CONCURRENT_SESSIONS targets open sessions.
+  LOAD_OBJECTIVE_CONCURRENT_SESSIONS = 1;
+  // LOAD_OBJECTIVE_SESSIONS_PER_SECOND targets the session open rate.
+  LOAD_OBJECTIVE_SESSIONS_PER_SECOND = 2;
+  // LOAD_OBJECTIVE_THROUGHPUT_BPS targets bits per second.
+  LOAD_OBJECTIVE_THROUGHPUT_BPS = 3;
+  // LOAD_OBJECTIVE_SIMULATED_USERS targets active simulated users.
+  LOAD_OBJECTIVE_SIMULATED_USERS = 4;
+}
+
+// LoadPhase scales every worker rate over one time span.
+message LoadPhase {
+  // name is the phase name from the test configuration.
+  string name = 1;
+  // duration is the length of the phase.
+  google.protobuf.Duration duration = 2;
+  // shape selects how the fraction moves within the phase.
+  PhaseShape shape = 3;
+  // start_fraction is the fraction of the steady target at the phase start.
+  double start_fraction = 4;
+  // end_fraction is the fraction of the steady target at the phase end.
+  double end_fraction = 5;
+  // steps is the number of equal steps for PHASE_SHAPE_STEP.
+  uint32 steps = 6;
+}
+
+// Criterion is one pass and fail rule.
+message Criterion {
+  // metric is a metric name from contracts/metrics/catalog.yaml.
+  string metric = 1;
+  // op is the comparison.
+  CriterionOp op = 2;
+  // value is the threshold.
+  double value = 3;
+}

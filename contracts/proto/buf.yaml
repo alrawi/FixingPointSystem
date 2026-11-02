@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# buf configuration for the agent control protocol, contract version 0.1.0.
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+    - COMMENTS
+breaking:
+  use:
+    - FILE
