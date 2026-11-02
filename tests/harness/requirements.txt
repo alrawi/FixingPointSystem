@@ -1,0 +1,4 @@
+# Python tools that lint and test the namespace harness helpers.
+pytest>=8.0
+ruff==0.16.9
+mypy==2.3.1

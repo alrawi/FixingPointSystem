@@ -63,12 +63,15 @@ The targets that exist today are listed below.
 | `test-ctl` | `go test -race ./...` over the controller |
 | `test-ops` | the plan tool tests, the Cargo workspace probe, and a parse of `go.work` |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
+| `lint-qa` | shellcheck on the harness scripts, and ruff and mypy on its Python helper when they are installed |
+| `test-qa` | the unit tests of the harness pcapng helper |
+| `e2e-qa` | the namespace harness self test, which needs root |
 | `test-agt` | `cargo test -p fps-agent`, the capability detection tests against fake system roots and the `agent.proto` mirror test |
 | `test-eng` | every crate under `engine/`, see [Engine](Engine.md) |
 | `lint-rlm` | `ruff format --check`, `ruff check`, and `mypy --strict` over `realism/` |
 | `test-rlm` | the realism runner tests, including the ndpiReader test when nDPI is installed |
 
-A workstream adds its targets in a block of its own above the aggregate targets at the bottom of the `Makefile`. The block appends to `LINT_TARGETS` and `TEST_TARGETS` on separate lines and delegates to the workstream's own commands, so parallel packages never edit the same line. The `make e2e` target arrives with the namespace harness of QA-01 and needs root.
+A workstream adds its targets in a block of its own above the aggregate targets at the bottom of the `Makefile`. The block appends to `LINT_TARGETS` and `TEST_TARGETS` on separate lines and delegates to the workstream's own commands, so parallel packages never edit the same line. End to end targets append to `E2E_TARGETS` in the same way, and `make e2e` runs them. These targets need root, so `make test` leaves them out and an agent runs `sudo make e2e`.
 
 ```make
 # CTL controller
@@ -209,6 +212,20 @@ A workstream workflow follows six rules.
 6. **Keep slow levels apart.** End to end, realism, and performance jobs live in their own workflow files with the triggers that the levels table names, so the fast workflow stays within five minutes.
 
 A path filtered workflow does not run on pull requests that miss its paths, and GitHub then reports a required check as pending. The owner therefore marks only `ci.yml` jobs as required checks, or marks a workstream job as required only after removing its path filter.
+
+## Namespace harness
+
+End to end tests run on the two arm namespace harness in [`tests/harness/`](https://github.com/alrawi/FixingPointSystem/tree/main/tests/harness), which QA-01 built. The harness connects a client namespace and a server namespace through a routing namespace that stands in for the device under test, so real sockets cross a forwarding hop on any Linux runner without virtual machines. The routing namespace can apply an MTU, an 802.1Q tag on each arm, and NAT, and it records pcapng captures on either arm.
+
+```bash
+sudo tests/harness/netns.sh up                       # FPS_MTU, FPS_NAT, FPS_CLIENT_VLAN, and more configure it
+sudo tests/harness/netns.sh capture start out.pcapng client
+sudo tests/harness/netns.sh exec client curl "http://$(tests/harness/netns.sh info | sed -n 's/^SERVER_ADDR=//p'):8080/"
+sudo tests/harness/netns.sh capture stop
+sudo tests/harness/netns.sh down                     # removes every namespace, link, and route
+```
+
+A test reads addresses from `netns.sh info` and sets `FPS_NETNS` to a name of its own, so several harnesses run side by side. The harness turns off IPv6 and the veth segmentation offloads by default, so captures hold only test traffic in frames no larger than the MTU. The [harness README](https://github.com/alrawi/FixingPointSystem/blob/main/tests/harness/README.md) lists every command and setting. The `harness` job of `.github/workflows/qa.yml` runs the self test as root on `ubuntu-24.04`, including the VLAN case that needs the `8021q` kernel module.
 
 ## Gate suites
 

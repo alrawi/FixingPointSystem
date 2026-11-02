@@ -36,7 +36,7 @@ A new agent reads four pages in order before claiming work.
 | Page | Summary |
 |---|---|
 | [Coding Standards](Coding-Standards.md) | Rules and examples for Rust, Go, Python, TypeScript, shell, contracts, commits, and documentation |
-| [Testing](Testing.md) | Test levels, modular tests, module tests, regression tests, and gate suites |
+| [Testing](Testing.md) | Test levels, modular tests, module tests, regression tests, the namespace harness, and gate suites |
 | [Controller](Controller.md) | The controller module, its flags, configuration file, logging, health endpoint, and checks |
 | [Engine](Engine.md) | Engine crates, the `SessionIo` seam, and the scenario and template compiler |
 
@@ -50,6 +50,7 @@ A new agent reads four pages in order before claiming work.
 | [Decision records](https://github.com/alrawi/FixingPointSystem/tree/main/docs/decisions) | Decisions D1 to D9 and later proposals |
 | [Contracts](https://github.com/alrawi/FixingPointSystem/tree/main/contracts) | OpenAPI document, schemas, agent control protocol, and examples |
 | [Gate 0 report](https://github.com/alrawi/FixingPointSystem/blob/main/docs/phase0/gate0-report.md) | Spike results and items carried into Phase 1 |
+| [Namespace harness](https://github.com/alrawi/FixingPointSystem/blob/main/tests/harness/README.md) | Two arm network namespace harness for end to end tests and captures |
 | [Handoff template](https://github.com/alrawi/FixingPointSystem/blob/main/docs/handoff/TEMPLATE.md) | The progress document that every package keeps |
 | [AGENTS.md](https://github.com/alrawi/FixingPointSystem/blob/main/AGENTS.md) | Schema and standing instructions for agents |
 
