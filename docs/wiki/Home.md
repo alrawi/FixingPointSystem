@@ -51,4 +51,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phase 0 is complete except for spike S3, which waits for a KVM host. Phase 1 starts when the owner seeds its issues.
+Phase 0 is complete except for spike S3 (#7), which waits for a KVM host. Phase 1 is seeded as issues #10 to #57, and eight packages are ready to claim.

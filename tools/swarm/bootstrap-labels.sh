@@ -24,6 +24,7 @@ labels=(
   "wip|ededed|Pull request is not ready to merge"
   "flaky|ffffff|Quarantined flaky test"
   "e2e|c2e0c6|Run end to end suites on this pull request"
+  "phase:0|f1e05a|Phase 0 spikes and contracts"
   "phase:1|f1e05a|Phase 1 core alpha"
   "phase:2|f1e05a|Phase 2 library"
   "phase:3|f1e05a|Phase 3 scale"
@@ -31,7 +32,7 @@ labels=(
   "size:M|d4d4d4|Up to five hours"
   "size:L|bdbdbd|Epic"
 )
-for ws in con ops qa eng trn hst agt ctl cli mod rlm cap img ui; do
+for ws in spk con ops qa eng trn hst agt ctl cli mod rlm cap img ui; do
   labels+=("ws:${ws}|006b75|Workstream ${ws^^}")
 done
 
