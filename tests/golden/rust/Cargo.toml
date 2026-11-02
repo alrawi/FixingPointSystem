@@ -1,0 +1,11 @@
+[package]
+name = "fps-golden"
+description = "Golden file comparison for tests, rewritten only when UPDATE_GOLDEN=1"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"

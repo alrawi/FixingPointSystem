@@ -81,6 +81,7 @@ test-ops-workspace:
 	trap 'rm -rf "$$tmp"' EXIT; \
 	cp Cargo.toml Cargo.lock "$$tmp/"; \
 	cp -R spikes "$$tmp/spikes"; \
+	mkdir -p "$$tmp/tests/golden" && cp -R tests/golden/rust "$$tmp/tests/golden/rust"; \
 	mkdir -p "$$tmp/engine/fps-probe/src"; \
 	printf '[package]\nname = "fps-probe"\nversion = "0.0.1"\nedition = "2021"\n' \
 	  > "$$tmp/engine/fps-probe/Cargo.toml"; \

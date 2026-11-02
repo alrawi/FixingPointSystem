@@ -14,7 +14,7 @@ resolver = "2"
 #
 # Every directory that a glob matches must hold a Cargo.toml, so the spikes without
 # Rust code are excluded by name.
-members = ["[es][np][gi][ik][ne][es]/*"]
+members = ["[es][np][gi][ik][ne][es]/*", "tests/golden/rust"]
 exclude = ["spikes/s3-afxdp", "spikes/s4-trex-astf"]
 
 [workspace.package]
