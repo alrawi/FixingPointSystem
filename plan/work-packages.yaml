@@ -1,0 +1,1847 @@
+# FixingPointSystem work package catalog.
+#
+# This file is the single source of truth for the implementation plan. The
+# wiki pages Work-Packages-Phase-N.md are generated from it with
+#   python3 tools/plan/plan.py render
+# and CI fails when the generated pages are out of date.
+#
+# Rules (enforced by tools/plan/plan.py check):
+# - id matches the workstream prefix and is unique.
+# - depends_on names existing ids, in the same or an earlier phase, without cycles.
+# - size is S, M, or L. An L package is an epic and must be split before work starts.
+# - every path sits under a path that the workstream owns, or in shared_paths for OPS.
+
+version: 1
+
+phases:
+  - number: 1
+    name: Core alpha
+    gate: >-
+      Gate 1. A two arm run of the HTTP/1.1 and DNS mix through the controller and one
+      kernel backend agent reaches 99% nDPI classification as the intended application,
+      and the REST API skeleton passes its contract tests.
+  - number: 2
+    name: Library
+    gate: >-
+      Gate 2. All 15 application modules of decision D7 pass the eight realism checks in
+      module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2
+      image boots and runs a test unattended.
+  - number: 3
+    name: Scale
+    gate: >-
+      Gate 3 (v1 release). One 16 vCPU agent meets the tier T1 targets on KVM, multi agent
+      runs aggregate correctly, every image format boots, and the web UI passes its end to
+      end suite.
+
+workstreams:
+  - id: CON
+    name: Contracts
+    paths: [contracts/, docs/decisions/, tools/contracts/]
+    languages: [YAML, JSON Schema, Protocol Buffers, WIT]
+    owner_gated: true
+  - id: OPS
+    name: Repository and swarm tooling
+    paths: [tools/swarm/, tools/plan/, .github/]
+    shared_paths: [Cargo.toml, Makefile, go.work, CODEOWNERS]
+    languages: [Python, Shell, YAML]
+  - id: QA
+    name: Test infrastructure and gate suites
+    paths: [tests/, bench/]
+    languages: [Shell, Python, Rust]
+  - id: ENG
+    name: Agent engine
+    paths: [engine/fps-io/, engine/fps-flow/, engine/fps-interp/, engine/fps-sched/, engine/fps-stats/, engine/fps-runtime/, engine/fps-wasm/, engine/fps-capture/]
+    languages: [Rust]
+  - id: TRN
+    name: Transport backends
+    paths: [engine/fps-backend-kernel/, engine/fps-backend-afxdp/, engine/fps-backend-dpdk/, engine/fps-tcp/, modules/tls/]
+    languages: [Rust]
+  - id: HST
+    name: Host emulation
+    paths: [engine/fps-hosts/]
+    languages: [Rust]
+  - id: AGT
+    name: Agent service
+    paths: [engine/fps-agent/]
+    languages: [Rust]
+  - id: CTL
+    name: Controller
+    paths: [controller/]
+    languages: [Go]
+  - id: CLI
+    name: Python SDK and command line client
+    paths: [sdk/python/, cli/]
+    languages: [Python, Go]
+  - id: MOD
+    name: Application and content modules
+    paths: [modules/]
+    languages: [YAML, Rust]
+  - id: RLM
+    name: Realism validation
+    paths: [realism/]
+    languages: [Python]
+  - id: CAP
+    name: Capture compiler and profile extractor
+    paths: [capture/]
+    languages: [Python]
+  - id: IMG
+    name: Appliance image
+    paths: [image/]
+    languages: [HCL, Shell, YAML]
+  - id: UI
+    name: Web UI
+    paths: [ui/]
+    languages: [TypeScript]
+
+work_packages:
+
+  # ------------------------------------------------------------------ Phase 1
+
+  - id: OPS-01
+    title: Repository scaffolding for Phase 1
+    phase: 1
+    workstream: OPS
+    size: S
+    critical: true
+    depends_on: []
+    paths: [Cargo.toml, Makefile, go.work, CODEOWNERS, .github/workflows/]
+    summary: >-
+      Prepare the shared files so that later packages add crates, Go modules, and CI jobs
+      without editing the same lines.
+    deliverables:
+      - Root Cargo.toml lists members by glob (spikes/*, engine/*, modules/*/native).
+      - A root Makefile with the targets lint, test, and test-<workstream> that delegate to per workstream scripts.
+      - A go.work file that includes controller/ and cli/ once they exist.
+      - CODEOWNERS that requires owner review for contracts/ and docs/decisions/.
+      - A documented pattern of one CI workflow file per workstream.
+    acceptance:
+      - "`make lint test` runs the existing contract, Rust, and shell checks and passes."
+      - A new empty crate under engine/ builds without any edit to the root Cargo.toml.
+
+  - id: OPS-02
+    title: Swarm helper command
+    phase: 1
+    workstream: OPS
+    size: M
+    depends_on: []
+    paths: [tools/swarm/]
+    summary: >-
+      Implement the claim, heartbeat, release, takeover, and stale commands of the Swarm
+      Protocol over the GitHub REST API so that agents stop typing raw API calls.
+    deliverables:
+      - tools/swarm/fps_swarm.py with the subcommands list, claim, heartbeat, release, takeover, block, and review.
+      - A status card renderer and parser that round trips the format in the Swarm Protocol.
+      - Unit tests that replay recorded API responses and never call the network.
+    acceptance:
+      - "`python3 -m pytest tools/swarm` passes offline."
+      - Two simulated agents that claim the same issue concurrently resolve to exactly one holder.
+
+  - id: OPS-03
+    title: Stale lease scanner and dependency promoter
+    phase: 1
+    workstream: OPS
+    size: S
+    depends_on: [OPS-02]
+    paths: [.github/workflows/swarm-scan.yml, tools/swarm/]
+    summary: >-
+      Run a scheduled workflow that marks expired leases stale and promotes backlog
+      packages whose dependencies have closed.
+    deliverables:
+      - A workflow on a 30 minute schedule that uses only the repository token.
+      - The scanner relabels expired in progress issues as status:stale and comments with the expiry time.
+      - The scanner moves status:backlog issues to status:ready when every dependency issue is closed.
+    acceptance:
+      - Unit tests cover expiry, a renewed lease, a blocked issue, and dependency promotion.
+      - A manual workflow dispatch with dry_run set prints the planned changes and changes nothing.
+
+  - id: OPS-04
+    title: Project board status sync
+    phase: 1
+    workstream: OPS
+    size: S
+    owner_action: The owner creates a token with project access and stores it as the FPS_PROJECT_TOKEN secret.
+    depends_on: []
+    paths: [.github/workflows/project-sync.yml]
+    summary: >-
+      Mirror the status label of each work package issue into the Status field of the
+      GitHub Project, because sandboxed agents cannot reach the Projects API.
+    deliverables:
+      - A workflow triggered by issue label events that sets the Project Status option matching the status label.
+      - The workflow exits successfully and does nothing when the secret is absent.
+    acceptance:
+      - Relabeling a test issue moves its card to the matching column within one minute.
+
+  - id: QA-01
+    title: Two arm network namespace harness
+    phase: 1
+    workstream: QA
+    size: M
+    critical: true
+    depends_on: [OPS-01]
+    paths: [tests/harness/]
+    summary: >-
+      Build a harness that connects a client namespace and a server namespace through a
+      routing namespace that stands in for the device under test, so that end to end tests
+      run on any Linux CI runner without virtual machines.
+    deliverables:
+      - tests/harness/netns.sh with the commands up, down, exec, and capture.
+      - Configurable client and server prefixes, MTU, optional VLAN, and optional NAT in the routing namespace.
+      - A capture command that writes pcapng from the routing namespace.
+    acceptance:
+      - "`sudo tests/harness/netns.sh up` followed by a curl from the client namespace to a server namespace listener succeeds."
+      - "`down` removes every namespace, link, and route that `up` created."
+      - shellcheck passes.
+
+  - id: QA-02
+    title: Golden file helpers
+    phase: 1
+    workstream: QA
+    size: S
+    depends_on: [OPS-01]
+    paths: [tests/golden/]
+    summary: >-
+      Provide one golden file convention for Rust, Go, and Python tests, with an explicit
+      update switch.
+    deliverables:
+      - A small Rust crate, a Go package, and a pytest fixture that compare output with testdata files.
+      - Each helper rewrites the golden file only when UPDATE_GOLDEN=1 is set.
+      - A diff that names the golden file on mismatch.
+    acceptance:
+      - Each helper has tests for match, mismatch, and update.
+
+  - id: QA-03
+    title: Benchmark baseline comparison
+    phase: 1
+    workstream: QA
+    size: M
+    depends_on: [OPS-01]
+    paths: [bench/]
+    summary: >-
+      Record benchmark baselines as JSON and fail a run that regresses beyond a stated
+      tolerance.
+    deliverables:
+      - bench/compare.py that reads a result file and a baseline file and applies per metric tolerances.
+      - The S1 engine benchmark recorded as the first baseline with host details.
+      - Instructions to refresh a baseline in a reviewed pull request.
+    acceptance:
+      - A synthetic 15% regression fails against a 10% tolerance, and a 5% regression passes.
+
+  - id: CON-01
+    title: Agent control protocol v0.1
+    phase: 1
+    workstream: CON
+    size: M
+    critical: true
+    depends_on: []
+    paths: [contracts/proto/]
+    summary: >-
+      Define the gRPC service between controller and agents and the compiled plan messages
+      that the controller sends.
+    deliverables:
+      - contracts/proto/fps/agent/v1/agent.proto with Register, Heartbeat, Prepare, Start, Stop, and StreamCounters.
+      - Plan messages for scenario sources, module digests, host pool slices, per worker rates, load phases, and the seed.
+      - A canonical JSON mapping of the plan for the standalone agent mode.
+      - buf lint and buf breaking checks in CI.
+    acceptance:
+      - "`buf lint` passes, and an example plan in contracts/examples/plans/ validates against the JSON mapping."
+      - The owner approves the pull request.
+
+  - id: CON-02
+    title: Counter catalog v0.1
+    phase: 1
+    workstream: CON
+    size: S
+    critical: true
+    depends_on: []
+    paths: [contracts/metrics/, tools/contracts/]
+    summary: >-
+      Name every counter and histogram once, with unit, level, and labels, so that the
+      agent, the controller, the API, and the UI agree on metric names.
+    deliverables:
+      - contracts/metrics/catalog.yaml covering the four counter levels of the specification.
+      - A validator rule that metric names in the OpenAPI document and in criteria examples exist in the catalog.
+    acceptance:
+      - "`python3 tools/contracts/validate.py` passes with the new rule, and a test shows that an unknown metric fails."
+
+  - id: CON-03
+    title: Extension interface v0.1
+    phase: 1
+    workstream: CON
+    size: M
+    critical: true
+    depends_on: []
+    paths: [contracts/extension/, docs/decisions/]
+    summary: >-
+      Define the extension world with the five hooks of the specification and the template
+      functions that modules export, and propose how first party modules ship native code
+      behind the same interface.
+    deliverables:
+      - contracts/extension/fps-extension.wit with on_open, on_data, on_timer, on_close, render, and exported template functions.
+      - Decision record 0010 (proposed) for native first party extensions that implement the same interface as a Rust trait.
+      - A mapping table from WIT types to the Rust trait.
+    acceptance:
+      - wasm-tools validates the WIT file.
+      - The owner accepts or rejects decision record 0010.
+
+  - id: CON-04
+    title: Scenario contract v0.2
+    phase: 1
+    workstream: CON
+    size: M
+    critical: true
+    depends_on: [CON-03]
+    paths: [contracts/schemas/, contracts/examples/, contracts/README.md, contracts/CHANGELOG.md, tools/contracts/]
+    summary: >-
+      Extend the template grammar with module function calls and the last received buffer,
+      and state datagram semantics for expect on UDP flows.
+    deliverables:
+      - Grammar for module calls such as dns.query(name=vars.host, qtype='A') with keyword arguments.
+      - The reference `last` for the bytes that the previous expect consumed.
+      - Datagram rules for expect on UDP, one datagram per read with a size limit.
+      - Updated examples and validator tests.
+    acceptance:
+      - "`python3 tools/contracts/validate.py` and `python3 -m pytest tools/contracts` pass."
+      - contracts/CHANGELOG.md records v0.2, and the owner approves.
+
+  - id: ENG-01
+    title: Engine crate skeleton
+    phase: 1
+    workstream: ENG
+    size: S
+    critical: true
+    depends_on: [OPS-01]
+    paths: [engine/fps-io/, engine/fps-flow/, engine/fps-interp/, engine/fps-stats/]
+    summary: >-
+      Create the engine crates and move the reusable parts of the S1 spike into them with
+      their tests.
+    deliverables:
+      - fps-io with the SessionIo trait and an in memory duplex implementation for tests.
+      - fps-flow with the program model and template parser from spikes/s1-engine.
+      - fps-interp and fps-stats as empty crates with lint settings and forbid(unsafe_code).
+    acceptance:
+      - "`cargo test -p fps-io -p fps-flow` passes, including the ported S1 tests."
+      - "`cargo clippy --workspace --all-targets -- -D warnings` passes."
+
+  - id: ENG-02
+    title: Scenario loader and semantic checks
+    phase: 1
+    workstream: ENG
+    size: M
+    depends_on: [ENG-01]
+    paths: [engine/fps-flow/]
+    summary: >-
+      Load scenario YAML into the program model and apply the same semantic rules as the
+      Python validator.
+    deliverables:
+      - A loader that returns typed errors with the file, flow, and action index.
+      - The semantic rules of tools/contracts/validate.py for flows, after, spawn, branch, and templates.
+      - A shared fixture directory that both validators read.
+    acceptance:
+      - Every fixture produces the same accept or reject verdict in Rust and in Python.
+
+  - id: ENG-03
+    title: Template compiler with module functions
+    phase: 1
+    workstream: ENG
+    size: M
+    critical: true
+    depends_on: [ENG-01, CON-04]
+    paths: [engine/fps-flow/]
+    summary: >-
+      Compile templates into byte segments and call slots, and dispatch module function calls
+      through the TemplateFn trait.
+    deliverables:
+      - Segment compilation for literals, vars, session fields, fill, hex, rand_int, and module calls.
+      - Constant folding for templates without session dependent parts.
+      - A human readable dump of compiled programs for golden tests.
+    acceptance:
+      - Golden tests cover every grammar rule of contract v0.2.
+      - A property test shows that rendering is deterministic for a fixed seed and session id.
+
+  - id: ENG-04
+    title: Flow program interpreter
+    phase: 1
+    workstream: ENG
+    size: M
+    critical: true
+    depends_on: [ENG-03]
+    paths: [engine/fps-interp/]
+    summary: >-
+      Execute compiled flow programs over any SessionIo for TCP sessions, with timeouts,
+      the three expect modes, and seeded delay distributions.
+    deliverables:
+      - All v0.1 actions except spawn and UDP specific behavior.
+      - Per session random number generators derived from the run seed and session id.
+      - Fixed, uniform, exponential, lognormal, and Pareto delays.
+      - Failure reasons that map to the counter catalog.
+    acceptance:
+      - Interpreter tests run client and server programs against each other over the in memory duplex.
+      - Each failure reason has a test that triggers it.
+
+  - id: ENG-05
+    title: Vectored writes for fill bodies
+    phase: 1
+    workstream: ENG
+    size: S
+    depends_on: [ENG-04, QA-03]
+    paths: [engine/fps-interp/]
+    summary: >-
+      Write fill() bodies as vectored writes from a shared filler buffer, which is Gate 0
+      carry over item 1.
+    deliverables:
+      - Vectored write support in the interpreter send path.
+      - A bulk benchmark baseline in bench/baselines/.
+    acceptance:
+      - The 1 MiB body workload stays within 25% of the hand written baseline on the same host.
+
+  - id: ENG-06
+    title: UDP datagram sessions
+    phase: 1
+    workstream: ENG
+    size: M
+    critical: true
+    depends_on: [ENG-04, CON-04]
+    paths: [engine/fps-io/, engine/fps-interp/]
+    summary: >-
+      Add a datagram variant of SessionIo and the UDP semantics of contract v0.2 to the
+      interpreter.
+    deliverables:
+      - A DatagramIo trait with an in memory implementation for tests.
+      - connect, accept, send, expect, and close for UDP flows.
+    acceptance:
+      - A DNS shaped request and response program passes over the in memory implementation.
+      - Datagram size limits and timeouts have tests.
+
+  - id: ENG-07
+    title: Multi flow scenario instances
+    phase: 1
+    workstream: ENG
+    size: M
+    depends_on: [ENG-04]
+    paths: [engine/fps-interp/]
+    summary: >-
+      Run all flows of one scenario instance with after ordering, spawn, and shared
+      scenario variables.
+    deliverables:
+      - A scenario instance object that owns shared variables and flow states.
+      - after ordering and spawn with the failure propagation rules of the contract.
+    acceptance:
+      - The web_browse example runs its lookup flow before its page flow in a test.
+      - A spawned flow failure fails its parent scenario instance.
+
+  - id: ENG-08
+    title: Session scheduler
+    phase: 1
+    workstream: ENG
+    size: M
+    critical: true
+    depends_on: [ENG-01]
+    paths: [engine/fps-sched/]
+    summary: >-
+      Produce session start times from the load objective, phases, and arrival process,
+      deterministically from the seed.
+    deliverables:
+      - Constant and Poisson arrivals, a concurrency cap, and linear and step phases.
+      - A schedule iterator that a worker drains with an injected clock.
+    acceptance:
+      - Two schedules with the same seed are identical, and a KS test accepts the Poisson inter arrival times.
+      - Phase boundary tests cover ramp up, steady, and ramp down.
+
+  - id: ENG-09
+    title: Statistics collection
+    phase: 1
+    workstream: ENG
+    size: M
+    critical: true
+    depends_on: [ENG-01, CON-02]
+    paths: [engine/fps-stats/]
+    summary: >-
+      Collect the catalog counters and HDR latency histograms per worker without locks and
+      publish one snapshot per second.
+    deliverables:
+      - Per worker counter shards and histograms keyed by catalog names.
+      - A snapshot type that merges shards and serializes to the plan JSON mapping.
+    acceptance:
+      - A concurrency test with eight workers loses no increments.
+      - Snapshot names match contracts/metrics/catalog.yaml.
+
+  - id: ENG-10
+    title: Worker runtime
+    phase: 1
+    workstream: ENG
+    size: M
+    critical: true
+    depends_on: [ENG-04, ENG-08, ENG-09]
+    paths: [engine/fps-runtime/]
+    summary: >-
+      Run one single threaded async runtime per pinned core, each owning its sessions,
+      timers, and statistics shard.
+    deliverables:
+      - Worker threads with optional core pinning and a shared nothing session model.
+      - Graceful stop with ramp down and immediate abort.
+    acceptance:
+      - A loopback test drives the http1 web_get example at a fixed rate and reports matching counters.
+      - Stop completes within the configured ramp down time plus one second.
+
+  - id: TRN-01
+    title: Kernel TCP backend
+    phase: 1
+    workstream: TRN
+    size: M
+    critical: true
+    depends_on: [ENG-01]
+    paths: [engine/fps-backend-kernel/]
+    summary: >-
+      Implement SessionIo over kernel TCP sockets with source addresses from the host pool.
+    deliverables:
+      - connect with IP_BIND_ADDRESS_NO_PORT and a configured local port range.
+      - accept on pool addresses with a configurable backlog.
+      - Socket options for buffer sizes, Nagle, and linger.
+    acceptance:
+      - A loopback test opens 10,000 sessions from 100 source addresses without address errors.
+
+  - id: TRN-02
+    title: Kernel UDP backend
+    phase: 1
+    workstream: TRN
+    size: S
+    critical: true
+    depends_on: [TRN-01, ENG-06]
+    paths: [engine/fps-backend-kernel/]
+    summary: >-
+      Implement DatagramIo over kernel UDP sockets bound to pool addresses.
+    deliverables:
+      - Connected UDP sockets for clients and bound sockets for servers.
+    acceptance:
+      - A loopback test exchanges 10,000 request and response pairs from 100 source addresses.
+
+  - id: TRN-03
+    title: Operating system profiles for the kernel backend
+    phase: 1
+    workstream: TRN
+    size: S
+    depends_on: [TRN-01]
+    paths: [engine/fps-backend-kernel/]
+    summary: >-
+      Apply the TTL, MSS, window, SACK, and timestamp settings of each OS profile where the
+      kernel exposes them, and document what the kernel controls.
+    deliverables:
+      - Profiles windows11, linux6, and macos14 as data files.
+      - A limits table that names each option the kernel backend cannot set per socket.
+    acceptance:
+      - A capture from the QA-01 harness shows the configured TTL and MSS for each profile.
+
+  - id: HST-01
+    title: Host pool allocator
+    phase: 1
+    workstream: HST
+    size: S
+    depends_on: [ENG-01]
+    paths: [engine/fps-hosts/]
+    summary: >-
+      Map sessions to source hosts deterministically and split pools across agents and
+      workers.
+    deliverables:
+      - Round robin, uniform, and Zipf host selection from the seed.
+      - Slicing of a pool by agent and worker without overlap.
+    acceptance:
+      - Property tests show that slices are disjoint and cover the pool.
+
+  - id: HST-02
+    title: Kernel port setup
+    phase: 1
+    workstream: HST
+    size: M
+    critical: true
+    depends_on: [HST-01, QA-01]
+    paths: [engine/fps-hosts/]
+    summary: >-
+      Configure a test port for the kernel backend with a network namespace, a local route
+      for the pool prefix, the gateway, an optional VLAN, and the sysctl profile.
+    deliverables:
+      - Netlink based setup and teardown that never touches the management interface.
+      - A sysctl profile for local port range, TIME_WAIT reuse, and socket buffers.
+    acceptance:
+      - An integration test in the QA-01 harness binds and connects from 20,000 pool addresses.
+      - Teardown leaves no namespace, route, or link behind.
+
+  - id: AGT-01
+    title: Standalone agent mode
+    phase: 1
+    workstream: AGT
+    size: M
+    critical: true
+    depends_on: [ENG-10, TRN-02, HST-02, CON-01]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Run a plan file without a controller and print one counter snapshot per second as
+      JSON lines.
+    deliverables:
+      - "`fps-agent run --plan plan.json --modules DIR` with exit codes for pass, fail, and error."
+      - Module loading from a directory with digest checks.
+    acceptance:
+      - The http1 and DNS example plan runs in the QA-01 harness and reports successful sessions on both arms.
+
+  - id: AGT-02
+    title: Agent gRPC service
+    phase: 1
+    workstream: AGT
+    size: M
+    critical: true
+    depends_on: [AGT-01, CON-01]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Implement the agent side of the control protocol with registration, heartbeat,
+      prepare, start, stop, and the counter stream.
+    deliverables:
+      - A tonic server and a client loop that registers with a configured controller.
+      - State handling that rejects out of order calls with gRPC status codes.
+    acceptance:
+      - A test with a fake controller drives prepare, start, and stop and receives counter snapshots.
+
+  - id: AGT-03
+    title: Capability detection
+    phase: 1
+    workstream: AGT
+    size: S
+    depends_on: [CON-01]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Report cores, NUMA nodes, memory, NIC drivers, kernel version, and XDP support in the
+      capabilities message.
+    deliverables:
+      - Detection code with a fake system root for tests.
+    acceptance:
+      - Tests cover a virtio-net guest, a host without XDP, and a host with two NUMA nodes.
+
+  - id: CTL-01
+    title: Controller skeleton
+    phase: 1
+    workstream: CTL
+    size: S
+    critical: true
+    depends_on: [OPS-01]
+    paths: [controller/]
+    summary: >-
+      Create the Go module with the controller binary, configuration loading, structured
+      logging, and lint settings.
+    deliverables:
+      - controller/cmd/fps-controller with flags and a configuration file.
+      - log/slog JSON logging, a health endpoint, and graceful shutdown.
+      - golangci-lint configuration and a CI workflow.
+    acceptance:
+      - "`go test -race ./...` and `golangci-lint run` pass in controller/."
+
+  - id: CTL-02
+    title: REST layer from the OpenAPI contract
+    phase: 1
+    workstream: CTL
+    size: M
+    critical: true
+    depends_on: [CTL-01]
+    paths: [controller/]
+    summary: >-
+      Generate the server interface from contracts/openapi/fps-api-v1.yaml and add problem
+      details, scoped tokens, and stubs.
+    deliverables:
+      - Generated types and server interface with a check that the generated code is current.
+      - RFC 9457 problem responses and read, run, and admin token scopes.
+      - Stubs that return 501 problems for operations that later packages implement.
+    acceptance:
+      - A contract test calls every operation and validates each response against the OpenAPI document.
+
+  - id: CTL-03
+    title: Configuration store and validation
+    phase: 1
+    workstream: CTL
+    size: M
+    depends_on: [CTL-02]
+    paths: [controller/]
+    summary: >-
+      Store test configurations and validate them against the schema, module references,
+      and agent capacity.
+    deliverables:
+      - SQLite storage behind a repository interface.
+      - POST and GET /v1/configs and POST /v1/configs/{id}:validate.
+    acceptance:
+      - Every example under contracts/examples/tests/ stores and validates, and each invalid fixture returns a problem that names the field.
+
+  - id: CTL-04
+    title: Module registry
+    phase: 1
+    workstream: CTL
+    size: M
+    depends_on: [CTL-02]
+    paths: [controller/]
+    summary: >-
+      List, install, inspect, and delete module packages with manifest validation and
+      content digests.
+    deliverables:
+      - A local registry directory with an index file.
+      - The /v1/modules operations.
+    acceptance:
+      - Installing the example http1 and dns modules succeeds, and a manifest with an unknown license fails.
+
+  - id: CTL-05
+    title: Test compiler
+    phase: 1
+    workstream: CTL
+    size: M
+    critical: true
+    depends_on: [CTL-01, CON-01]
+    paths: [controller/]
+    summary: >-
+      Compile a test configuration into per agent plans by normalizing the mix and splitting
+      rates and host pools by core count.
+    deliverables:
+      - A pure function from configuration and agent inventory to plans.
+      - Session based mix normalization. Byte based correction arrives in CTL-12.
+    acceptance:
+      - Golden tests cover one agent, two agents with unequal cores, and a pool that does not divide evenly.
+      - Compiling twice with the same seed yields identical plans.
+
+  - id: CTL-06
+    title: Agent manager
+    phase: 1
+    workstream: CTL
+    size: M
+    critical: true
+    depends_on: [CTL-01, CON-01]
+    paths: [controller/]
+    summary: >-
+      Track agent registration, inventory, reservation, and heartbeat timeouts.
+    deliverables:
+      - The controller side of Register and Heartbeat and the /v1/agents operations.
+      - A fake agent package for tests in other controller packages.
+    acceptance:
+      - A test with three fake agents covers reservation, release, and a missed heartbeat.
+
+  - id: CTL-07
+    title: Run orchestrator
+    phase: 1
+    workstream: CTL
+    size: M
+    critical: true
+    depends_on: [CTL-03, CTL-05, CTL-06]
+    paths: [controller/]
+    summary: >-
+      Drive the run state machine from pending to a final state and contain agent faults.
+    deliverables:
+      - POST /v1/runs, GET /v1/runs/{id}, and POST /v1/runs/{id}:stop.
+      - Degraded marking when an agent fails during a run.
+    acceptance:
+      - Table driven tests cover every allowed state transition and reject every other transition.
+      - A test with a failing fake agent ends the run according to its criteria.
+
+  - id: CTL-08
+    title: Metrics aggregation and streaming
+    phase: 1
+    workstream: CTL
+    size: M
+    critical: true
+    depends_on: [CTL-07, CON-02]
+    paths: [controller/]
+    summary: >-
+      Merge agent snapshots into run metrics, serve the metrics views, stream them over
+      Server Sent Events, and expose Prometheus metrics.
+    deliverables:
+      - GET /v1/runs/{id}/metrics with views and windows, the SSE stream, and /metrics.
+    acceptance:
+      - Aggregated counters equal the sum of fake agent snapshots, and histogram merges match a reference merge.
+
+  - id: CTL-09
+    title: Criteria evaluation and reports
+    phase: 1
+    workstream: CTL
+    size: S
+    depends_on: [CTL-08]
+    paths: [controller/]
+    summary: >-
+      Evaluate pass and fail criteria and produce JSON and CSV reports.
+    deliverables:
+      - GET /v1/runs/{id}/report for JSON and CSV.
+    acceptance:
+      - Golden reports cover a passing run, a failing criterion, and a degraded run.
+
+  - id: CTL-10
+    title: Capabilities endpoint
+    phase: 1
+    workstream: CTL
+    size: S
+    depends_on: [CTL-04, CTL-06]
+    paths: [controller/]
+    summary: >-
+      Serve GET /v1/capabilities from the registry and agent inventory.
+    deliverables:
+      - The capabilities operation with engine API version, backends, agents, and modules.
+    acceptance:
+      - The contract test for /v1/capabilities passes with two fake agents.
+
+  - id: MOD-01
+    title: HTTP/1.1 module
+    phase: 1
+    workstream: MOD
+    size: M
+    critical: true
+    depends_on: [ENG-04, CON-04]
+    paths: [modules/http1/]
+    summary: >-
+      Ship the http1 module with request and response functions and scenarios for a single
+      fetch, keepalive browsing, and uploads.
+    deliverables:
+      - Manifest, scenarios, native functions http1.request and http1.response, and parameter schema.
+      - HTTP/1.0 and HTTP/1.1 variants with chunked and length delimited bodies.
+      - A synthetic fixture capture generated in the QA-01 harness.
+    acceptance:
+      - The module passes contract validation and its interpreter tests.
+      - nDPI classifies at least 99% of fixture sessions as HTTP.
+
+  - id: MOD-02
+    title: DNS module
+    phase: 1
+    workstream: MOD
+    size: M
+    critical: true
+    depends_on: [ENG-06, CON-04]
+    paths: [modules/dns/]
+    summary: >-
+      Ship the dns module with query encoding, answer parsing, and lookup scenarios over UDP
+      with TCP fallback.
+    deliverables:
+      - Native functions dns.query and dns.answer_ip and a server that answers from a zone file.
+      - Record types A, AAAA, CNAME, MX, and TXT.
+    acceptance:
+      - tshark parses every fixture message without errors, and nDPI classifies at least 99% of sessions as DNS.
+
+  - id: RLM-01
+    title: Realism runner and nDPI conformance
+    phase: 1
+    workstream: RLM
+    size: M
+    critical: true
+    depends_on: []
+    paths: [realism/]
+    summary: >-
+      Score a capture against expected application labels with nDPI run out of process and
+      write a realism report.
+    deliverables:
+      - "`python3 -m realism score --pcap FILE --labels FILE` writing a JSON report."
+      - A report schema in realism/schema/ that later checks extend.
+    acceptance:
+      - Tests use small synthetic captures and a stub classifier, and one optional test runs the real ndpiReader when it is installed.
+
+  - id: RLM-02
+    title: Parser error checks with Zeek and tshark
+    phase: 1
+    workstream: RLM
+    size: S
+    depends_on: [RLM-01]
+    paths: [realism/]
+    summary: >-
+      Count parser errors and malformed packets per application with tshark and Zeek.
+    deliverables:
+      - A conformance check that adds parser error counts to the realism report.
+    acceptance:
+      - A capture with one malformed DNS message reports exactly one parser error.
+
+  - id: RLM-03
+    title: Module realism CI job
+    phase: 1
+    workstream: RLM
+    size: M
+    depends_on: [RLM-01, QA-01, AGT-01]
+    paths: [realism/, .github/workflows/realism.yml]
+    summary: >-
+      Run every changed module in the harness, capture its traffic, and fail the pull request
+      when a realism check fails.
+    deliverables:
+      - A workflow that detects changed module directories and runs their fixtures.
+      - The realism report uploaded as a workflow artifact.
+    acceptance:
+      - A pull request that breaks the http1 request line fails the job.
+
+  - id: QA-04
+    title: Gate 1 acceptance suite
+    phase: 1
+    workstream: QA
+    size: M
+    critical: true
+    depends_on: [QA-01, AGT-02, CTL-09, MOD-01, MOD-02, RLM-02]
+    paths: [tests/gates/gate1/]
+    summary: >-
+      Automate the Gate 1 criterion end to end with the controller, one agent, the harness,
+      and the realism runner.
+    deliverables:
+      - tests/gates/gate1/run.sh that starts the controller and agent, submits the mix through the API, captures, and scores.
+      - A gate report in Markdown with the measured values.
+    acceptance:
+      - The suite passes on a clean CI runner and fails when the classification threshold is raised above the measured value.
+
+  - id: UI-00
+    title: Web UI stack decision
+    phase: 1
+    workstream: UI
+    size: S
+    owner_action: The owner accepts or rejects decision record 0011.
+    depends_on: []
+    paths: [ui/docs/]
+    summary: >-
+      Propose the UI language, framework, build tool, and test tools as decision record
+      0011 for owner approval.
+    deliverables:
+      - A comparison of at most three stacks against license, bundle size, accessibility, and generated client support.
+    acceptance:
+      - The owner records a decision.
+
+  - id: UI-01
+    title: Web UI skeleton
+    phase: 1
+    workstream: UI
+    size: M
+    depends_on: [UI-00]
+    paths: [ui/]
+    summary: >-
+      Create the UI project with the generated API client, token sign in, layout, and a mock
+      API server for tests.
+    deliverables:
+      - A generated client from contracts/openapi/fps-api-v1.yaml with a currency check.
+      - Lint, format, unit test, and build scripts wired to CI.
+    acceptance:
+      - The UI builds, its unit tests pass, and it renders the capabilities of the mock server.
+
+  - id: UI-02
+    title: Module library view
+    phase: 1
+    workstream: UI
+    size: S
+    depends_on: [UI-01]
+    paths: [ui/]
+    summary: >-
+      List installed modules with their manifests, scenarios, and parameters.
+    deliverables:
+      - A list view and a detail view for modules.
+    acceptance:
+      - Component tests cover an empty registry, two modules, and an API error.
+
+  # ------------------------------------------------------------------ Phase 2
+
+  - id: CON-05
+    title: Agent control protocol v0.2
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [CON-01]
+    paths: [contracts/proto/]
+    summary: >-
+      Add run time rate updates, capture requests, and module signatures to the control
+      protocol.
+    deliverables:
+      - UpdateRates, StartCapture, and StopCapture messages and signature fields in module references.
+    acceptance:
+      - buf breaking reports no breaking change against v0.1, and the owner approves.
+
+  - id: OPS-05
+    title: Release workflow
+    phase: 2
+    workstream: OPS
+    size: M
+    depends_on: [OPS-01]
+    paths: [.github/workflows/release.yml]
+    summary: >-
+      Build versioned agent, controller, module, and image artifacts from a tag with
+      checksums and a changelog.
+    deliverables:
+      - A tag triggered workflow that uploads artifacts and SHA256 sums to a GitHub release.
+    acceptance:
+      - A release candidate tag produces every artifact in a dry run.
+
+  - id: ENG-11
+    title: WebAssembly extension host
+    phase: 2
+    workstream: ENG
+    size: M
+    depends_on: [CON-03, ENG-04]
+    paths: [engine/fps-wasm/]
+    summary: >-
+      Host module extensions that implement the extension world, with fuel and memory limits.
+    deliverables:
+      - An adapter that exposes WASM template functions and hooks through the same Rust trait as native extensions.
+      - Per call fuel limits and per instance memory limits.
+    acceptance:
+      - A test extension that loops forever is stopped by its fuel limit and fails only its own session.
+
+  - id: ENG-12
+    title: Session sampling and capture
+    phase: 2
+    workstream: ENG
+    size: M
+    depends_on: [ENG-10]
+    paths: [engine/fps-capture/]
+    summary: >-
+      Mirror a configurable sample of sessions into a pcapng ring with TLS key logs.
+    deliverables:
+      - A packet socket ring filtered to the sampled sessions and a pcapng writer.
+      - Key log export in NSS key log format next to each capture.
+    acceptance:
+      - A 1% sample of 10,000 sessions yields between 70 and 130 captured sessions.
+
+  - id: ENG-13
+    title: Run time rate adjustment
+    phase: 2
+    workstream: ENG
+    size: S
+    depends_on: [ENG-08]
+    paths: [engine/fps-sched/]
+    summary: >-
+      Let the scheduler change per scenario rates during a run without restarting workers.
+    deliverables:
+      - A rate update method that takes effect on the next scheduling tick.
+    acceptance:
+      - A test changes the rate twice and measures the new rates within 5%.
+
+  - id: TRN-04
+    title: TLS transport module
+    phase: 2
+    workstream: TRN
+    size: M
+    critical: true
+    depends_on: [ENG-04, TRN-01]
+    paths: [modules/tls/]
+    summary: >-
+      Wrap sessions in TLS 1.2 and 1.3 with rustls, with client profiles, a per run
+      certificate authority, resumption, and key logs.
+    deliverables:
+      - Client profiles for SNI, ALPN, versions, groups, and cipher order.
+      - Server certificates issued per run by a generated authority.
+      - Session resumption and NSS key log export.
+    acceptance:
+      - Handshake rates on one core stay within 10% of the S2 spike results.
+      - tshark decrypts a sample capture with the exported keys.
+
+  - id: TRN-05
+    title: TLS client fingerprint profiles
+    phase: 2
+    workstream: TRN
+    size: M
+    depends_on: [TRN-04, RLM-04]
+    paths: [modules/tls/]
+    summary: >-
+      Define client profiles whose JA4 fingerprints match common browsers and verify them in
+      CI.
+    deliverables:
+      - At least four browser profiles with documented sources for each field order.
+    acceptance:
+      - RLM-04 reports the expected JA4 value for every profile.
+
+  - id: AGT-04
+    title: Signed module verification
+    phase: 2
+    workstream: AGT
+    size: S
+    depends_on: [AGT-02, CTL-11, CON-05]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Refuse unsigned or altered modules outside developer mode.
+    deliverables:
+      - Signature verification against the registry key and a developer mode flag.
+    acceptance:
+      - Tests cover a valid signature, a tampered archive, and developer mode.
+
+  - id: AGT-05
+    title: Capture and rate update handlers
+    phase: 2
+    workstream: AGT
+    size: S
+    depends_on: [AGT-02, CON-05, ENG-12, ENG-13]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Implement the v0.2 protocol calls for rate updates and captures in the agent.
+    deliverables:
+      - Handlers for UpdateRates, StartCapture, and StopCapture.
+    acceptance:
+      - A fake controller test changes rates and downloads a capture.
+
+  - id: CTL-11
+    title: Module signing and signed index
+    phase: 2
+    workstream: CTL
+    size: M
+    depends_on: [CTL-04]
+    paths: [controller/]
+    summary: >-
+      Sign module archives and publish a signed registry index.
+    deliverables:
+      - Ed25519 signing for archives and the index, and key rotation notes.
+    acceptance:
+      - Verification fails for a modified archive and a modified index.
+
+  - id: CTL-12
+    title: Byte weighted mix control
+    phase: 2
+    workstream: CTL
+    size: M
+    depends_on: [CTL-08, CON-05, AGT-05]
+    paths: [controller/]
+    summary: >-
+      Correct per scenario rates every second until the byte share of each scenario is
+      within 2 points of its weight.
+    deliverables:
+      - A controller loop that estimates bytes per session and sends UpdateRates.
+    acceptance:
+      - A simulation with fake agents converges within 30 seconds and stays within 2 points.
+
+  - id: CTL-13
+    title: HTML report
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CTL-09]
+    paths: [controller/]
+    summary: >-
+      Render the run report as a self contained HTML page.
+    deliverables:
+      - An HTML template with summary, criteria, realism results, and charts.
+    acceptance:
+      - A golden HTML test passes, and the page has no external requests.
+
+  - id: CTL-14
+    title: Captures API
+    phase: 2
+    workstream: CTL
+    size: M
+    depends_on: [CTL-07, AGT-05]
+    paths: [controller/]
+    summary: >-
+      Start filtered captures through agents and serve the pcapng files.
+    deliverables:
+      - POST and GET /v1/runs/{id}/captures and the capture download.
+    acceptance:
+      - The contract tests for capture operations pass with a fake agent.
+
+  - id: CTL-15
+    title: Mutual TLS between controller and agents
+    phase: 2
+    workstream: CTL
+    size: M
+    depends_on: [CTL-06, AGT-02]
+    paths: [controller/]
+    summary: >-
+      Issue agent certificates at enrollment and require mutual TLS on the control channel.
+    deliverables:
+      - An enrollment token flow and certificate rotation.
+    acceptance:
+      - An agent without a valid certificate cannot register.
+
+  - id: CLI-01
+    title: Python SDK
+    phase: 2
+    workstream: CLI
+    size: M
+    depends_on: [CTL-02]
+    paths: [sdk/python/]
+    summary: >-
+      Generate a Python client from the OpenAPI contract and add a thin wrapper for runs and
+      metrics.
+    deliverables:
+      - A generated client with a currency check and helpers for start, wait, and report.
+    acceptance:
+      - Tests pass against a stub server built from the OpenAPI examples.
+
+  - id: CLI-02
+    title: fps command line client
+    phase: 2
+    workstream: CLI
+    size: M
+    depends_on: [CTL-07]
+    paths: [cli/]
+    summary: >-
+      Provide a Go command line client for configurations, runs, live metrics, and reports.
+    deliverables:
+      - "`fps config`, `fps run`, `fps watch`, and `fps report` commands."
+    acceptance:
+      - End to end tests run against the controller with fake agents.
+
+  - id: MOD-03
+    title: Content generators
+    phase: 2
+    workstream: MOD
+    size: M
+    critical: true
+    depends_on: [CON-03, ENG-03]
+    paths: [modules/content/]
+    summary: >-
+      Ship synthetic content generators for HTML, JSON APIs, multilingual text, email bodies,
+      and binary file types.
+    deliverables:
+      - Native content functions with size parameters and seeded variety.
+      - A provenance note that states every generator is synthetic.
+    acceptance:
+      - The duplicate payload ratio across 10,000 generated bodies is at most 1%.
+
+  - id: MOD-04
+    title: HTTPS scenarios
+    phase: 2
+    workstream: MOD
+    size: S
+    depends_on: [MOD-01, TRN-04]
+    paths: [modules/http1/]
+    summary: >-
+      Add http1 scenarios over TLS 1.2 and 1.3.
+    deliverables:
+      - Scenarios that bind the tls transport with browser profiles.
+    acceptance:
+      - nDPI classifies at least 99% of decrypted fixture sessions as HTTP over TLS.
+
+  - id: MOD-05
+    title: HTTP/2 framing and HPACK functions
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [CON-04]
+    paths: [modules/http2/native/]
+    summary: >-
+      Implement the HTTP/2 frame and HPACK functions that the http2 scenarios call.
+    deliverables:
+      - Functions for the connection preface, SETTINGS, HEADERS, DATA, WINDOW_UPDATE, PING, and GOAWAY.
+    acceptance:
+      - Encoded frames decode correctly with the h2 test vectors, and fuzz tests run for 60 seconds without a panic.
+
+  - id: MOD-06
+    title: HTTP/2 module
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [MOD-05, TRN-04]
+    paths: [modules/http2/]
+    summary: >-
+      Ship http2 scenarios for prior knowledge cleartext and for TLS with ALPN.
+    deliverables:
+      - Scenarios with concurrent streams and server push disabled by default.
+    acceptance:
+      - tshark parses every frame without errors, and nDPI classifies at least 99% of sessions as HTTP/2.
+
+  - id: MOD-07
+    title: SMTP module
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [MOD-03, TRN-04]
+    paths: [modules/smtp/]
+    summary: >-
+      Ship smtp scenarios for message submission with STARTTLS and attachments.
+    deliverables:
+      - Client and server scenarios with EHLO, AUTH, MAIL, RCPT, DATA, and QUIT.
+    acceptance:
+      - Zeek logs every fixture message without parser errors.
+
+  - id: MOD-08
+    title: IMAP module
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [MOD-03]
+    paths: [modules/imap/]
+    summary: >-
+      Ship imap scenarios for login, mailbox selection, fetch, and logout.
+    deliverables:
+      - Tagged command handling with literals in fetched messages.
+    acceptance:
+      - nDPI classifies at least 99% of fixture sessions as IMAP.
+
+  - id: MOD-09
+    title: POP3 module
+    phase: 2
+    workstream: MOD
+    size: S
+    depends_on: [MOD-03]
+    paths: [modules/pop3/]
+    summary: >-
+      Ship pop3 scenarios for login, listing, retrieval, and deletion.
+    deliverables:
+      - Scenarios for USER and PASS login and APOP.
+    acceptance:
+      - nDPI classifies at least 99% of fixture sessions as POP3.
+
+  - id: MOD-10
+    title: FTP module
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [ENG-07, MOD-03]
+    paths: [modules/ftp/]
+    summary: >-
+      Ship ftp scenarios with passive mode data channels started through spawn.
+    deliverables:
+      - Control channel scenarios and spawned data flows for RETR, STOR, and LIST.
+    acceptance:
+      - The session structure check reproduces one control and one data connection per transfer.
+
+  - id: MOD-11
+    title: SSH module
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [CON-03, ENG-11]
+    paths: [modules/ssh/]
+    summary: >-
+      Ship ssh scenarios with real key exchange through a native extension backed by a
+      GPL-3.0 compatible SSH library.
+    deliverables:
+      - Interactive shell and file copy shaped scenarios with configurable session length.
+    acceptance:
+      - The server and client complete key exchange in every fixture session, and nDPI classifies them as SSH.
+
+  - id: MOD-12
+    title: SMB2 encoding functions
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [CON-04]
+    paths: [modules/smb2/native/]
+    summary: >-
+      Implement SMB2 message encoding and parsing for negotiate, session setup, tree connect,
+      create, read, write, and close.
+    deliverables:
+      - Native functions with synthetic NTLM exchanges.
+    acceptance:
+      - tshark parses every encoded message without errors.
+
+  - id: MOD-13
+    title: SMB2 module
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [MOD-12, MOD-03]
+    paths: [modules/smb2/]
+    summary: >-
+      Ship smb2 scenarios for file browsing, download, and upload.
+    deliverables:
+      - Client and server scenarios with configurable file sizes.
+    acceptance:
+      - nDPI classifies at least 99% of fixture sessions as SMB.
+
+  - id: MOD-14
+    title: SIP with RTP module
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [ENG-06, ENG-07]
+    paths: [modules/sip_rtp/]
+    summary: >-
+      Ship sip_rtp scenarios with an INVITE dialog, SDP negotiation, and paced RTP streams in
+      both directions.
+    deliverables:
+      - SIP over UDP, spawned RTP flows at codec packet intervals, and BYE teardown.
+    acceptance:
+      - The temporal check accepts RTP inter arrival times at the configured interval, and Zeek logs every call.
+
+  - id: MOD-15
+    title: HLS video module
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [MOD-01, MOD-03]
+    paths: [modules/hls/]
+    summary: >-
+      Ship hls scenarios that fetch a playlist and then segments at the segment cadence over
+      a bitrate ladder.
+    deliverables:
+      - Master and media playlists and synthetic segment bodies of the configured size.
+    acceptance:
+      - The temporal check accepts the segment fetch cadence, and byte share matches the configured bitrate within 5%.
+
+  - id: MOD-16
+    title: NTP module
+    phase: 2
+    workstream: MOD
+    size: S
+    depends_on: [ENG-06]
+    paths: [modules/ntp/]
+    summary: >-
+      Ship ntp client and server scenarios in client and server modes.
+    deliverables:
+      - NTPv4 packet encoding with realistic poll intervals.
+    acceptance:
+      - tshark parses every fixture packet without errors.
+
+  - id: MOD-17
+    title: LDAP module
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [CON-04]
+    paths: [modules/ldap/]
+    summary: >-
+      Ship ldap scenarios for bind, search, and unbind with BER encoding functions.
+    deliverables:
+      - Native BER functions and a server that answers from a fixture directory.
+    acceptance:
+      - nDPI classifies at least 99% of fixture sessions as LDAP.
+
+  - id: MOD-18
+    title: MQTT module
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [CON-04]
+    paths: [modules/mqtt/]
+    summary: >-
+      Ship mqtt scenarios for connect, subscribe, publish at QoS 0 and 1, and keepalive.
+    deliverables:
+      - MQTT 3.1.1 and 5.0 encoding functions and a broker scenario.
+    acceptance:
+      - nDPI classifies at least 99% of fixture sessions as MQTT.
+
+  - id: RLM-04
+    title: TLS decryption and JA4 checks
+    phase: 2
+    workstream: RLM
+    size: M
+    depends_on: [RLM-01]
+    paths: [realism/]
+    summary: >-
+      Decrypt sampled TLS sessions with exported keys and compare JA4 fingerprints with the
+      configured client profile.
+    deliverables:
+      - The encryption check in the realism report.
+    acceptance:
+      - A fixture with a mismatched profile fails, and a matching fixture passes.
+
+  - id: RLM-05
+    title: Content variety check
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [RLM-01]
+    paths: [realism/]
+    summary: >-
+      Measure the duplicate payload ratio and payload size distribution.
+    deliverables:
+      - The content variety check in the realism report.
+    acceptance:
+      - A capture with repeated bodies fails at the 1% threshold.
+
+  - id: RLM-06
+    title: Temporal distribution check
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [RLM-01]
+    paths: [realism/]
+    summary: >-
+      Compare inter arrival times and object sizes with target distributions through the KS
+      test.
+    deliverables:
+      - The temporal check with α as a parameter.
+    acceptance:
+      - Synthetic samples from the target pass, and samples from a shifted distribution fail.
+
+  - id: RLM-07
+    title: Mix accuracy check
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [RLM-01, CTL-09]
+    paths: [realism/]
+    summary: >-
+      Compute the achieved mix from run metrics and nDPI output and compare it with the
+      configured weights.
+    deliverables:
+      - The mix accuracy check for session and byte bases.
+    acceptance:
+      - A report that is off by 3 points for one application fails.
+
+  - id: RLM-08
+    title: Session structure check
+    phase: 2
+    workstream: RLM
+    size: M
+    depends_on: [RLM-01]
+    paths: [realism/]
+    summary: >-
+      Reconstruct connection count and ordering per scenario instance and compare them with
+      the scenario graph.
+    deliverables:
+      - The session structure check with scenario graphs read from module scenarios.
+    acceptance:
+      - The web_browse fixture passes, and a fixture with the page fetch before the lookup fails.
+
+  - id: RLM-09
+    title: Transport behavior check
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [RLM-01, TRN-03]
+    paths: [realism/]
+    summary: >-
+      Compare TCP handshake options with the selected OS profile.
+    deliverables:
+      - The transport behavior check.
+    acceptance:
+      - Each OS profile fixture passes, and a fixture with a wrong TTL fails.
+
+  - id: RLM-10
+    title: Host identity check
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [RLM-01]
+    paths: [realism/]
+    summary: >-
+      Count distinct hosts and detect address conflicts in a capture.
+    deliverables:
+      - The host identity check.
+    acceptance:
+      - A capture with two MAC addresses for one IP address reports a conflict.
+
+  - id: CAP-01
+    title: Capture session extraction
+    phase: 2
+    workstream: CAP
+    size: M
+    depends_on: []
+    paths: [capture/]
+    summary: >-
+      Reassemble TCP streams and group UDP flows from a capture into sessions with timing.
+    deliverables:
+      - "`python3 -m capture sessions --pcap FILE` writing session JSON."
+    acceptance:
+      - Tests with synthetic captures cover retransmission, out of order segments, and missing handshakes.
+
+  - id: CAP-02
+    title: Scenario generation from sessions
+    phase: 2
+    workstream: CAP
+    size: M
+    depends_on: [CAP-01, CON-04]
+    paths: [capture/]
+    summary: >-
+      Generate a flow program from extracted sessions and replace dynamic fields with
+      template expressions.
+    deliverables:
+      - Field detection for lengths, identifiers, timestamps, and cookies.
+    acceptance:
+      - A generated scenario validates and replays in the harness with the same byte counts within 1%.
+
+  - id: CAP-03
+    title: Scrubbing and provenance
+    phase: 2
+    workstream: CAP
+    size: M
+    depends_on: [CAP-01]
+    paths: [capture/]
+    summary: >-
+      Remove personal data and credentials from extracted sessions and write the provenance
+      record that module manifests require.
+    deliverables:
+      - Scrub rules for addresses, user names, passwords, tokens, and email addresses.
+    acceptance:
+      - A seeded capture with known secrets yields output that contains none of them.
+
+  - id: CAP-04
+    title: Profile extractor
+    phase: 2
+    workstream: CAP
+    size: M
+    depends_on: [CAP-01]
+    paths: [capture/]
+    summary: >-
+      Derive an application mix and temporal models from a capture and write a test profile.
+    deliverables:
+      - Mix shares, session arrival models, and object size models fitted per application.
+    acceptance:
+      - A profile extracted from a generated run reproduces its configured mix within 2 points.
+
+  - id: IMG-01
+    title: qcow2 base image
+    phase: 2
+    workstream: IMG
+    size: M
+    critical: true
+    depends_on: [AGT-02, CTL-07]
+    paths: [image/]
+    summary: >-
+      Build an Ubuntu LTS qcow2 image with Packer that contains the controller, the agent,
+      cloud-init, and an isolated management interface.
+    deliverables:
+      - A Packer template, systemd units, and cloud-init NoCloud defaults.
+      - Firewall rules that block routing between management and test interfaces.
+    acceptance:
+      - The image boots under QEMU and serves /v1/capabilities on the management interface.
+
+  - id: IMG-02
+    title: First boot roles and tuning
+    phase: 2
+    workstream: IMG
+    size: M
+    depends_on: [IMG-01]
+    paths: [image/]
+    summary: >-
+      Select the controller, agent, or all in one role at first boot and apply the matching
+      hugepage and CPU isolation profile.
+    deliverables:
+      - A role selector driven by cloud-init data and tuning profiles per role.
+    acceptance:
+      - Boot tests confirm each role starts only its services.
+
+  - id: IMG-03
+    title: Image format conversion
+    phase: 2
+    workstream: IMG
+    size: S
+    depends_on: [IMG-01]
+    paths: [image/]
+    summary: >-
+      Convert the qcow2 master to VMDK inside OVA, VHDX, fixed VHD aligned to 1 MB, and raw.
+    deliverables:
+      - A conversion script with checksums for each format.
+    acceptance:
+      - qemu-img check passes for every output, and the VHD size is a multiple of 1 MB.
+
+  - id: IMG-04
+    title: Image boot test in CI
+    phase: 2
+    workstream: IMG
+    size: M
+    depends_on: [IMG-02]
+    paths: [image/, .github/workflows/image.yml]
+    summary: >-
+      Boot the image in CI, run the Gate 1 suite inside it, and publish the result.
+    deliverables:
+      - A workflow that uses KVM when the runner offers it and software emulation otherwise.
+    acceptance:
+      - The workflow boots the all in one role and passes a short HTTP and DNS run.
+
+  - id: IMG-05
+    title: Container images
+    phase: 2
+    workstream: IMG
+    size: S
+    depends_on: [AGT-02, CTL-07]
+    paths: [image/containers/]
+    summary: >-
+      Build controller and agent container images for Docker and Kubernetes labs.
+    deliverables:
+      - Dockerfiles with non root users and a compose file for an all in one lab.
+    acceptance:
+      - The compose lab runs a short test between two agent containers.
+
+  - id: UI-03
+    title: Test configuration editor
+    phase: 2
+    workstream: UI
+    size: M
+    depends_on: [UI-01]
+    paths: [ui/]
+    summary: >-
+      Edit test configurations through forms and a YAML view with schema validation.
+    deliverables:
+      - Editors for network, profile, load, timeline, and criteria with inline errors.
+    acceptance:
+      - Every example test round trips through the editor without changes.
+
+  - id: UI-04
+    title: Run launch and live metrics
+    phase: 2
+    workstream: UI
+    size: M
+    depends_on: [UI-01]
+    paths: [ui/]
+    summary: >-
+      Start and stop runs and chart live metrics from the SSE stream.
+    deliverables:
+      - A run view with state, counters, and latency charts that update every second.
+    acceptance:
+      - Component tests replay a recorded SSE stream and render the expected values.
+
+  - id: UI-05
+    title: Reports and run comparison
+    phase: 2
+    workstream: UI
+    size: M
+    depends_on: [UI-04]
+    paths: [ui/]
+    summary: >-
+      Show run reports and compare two runs side by side.
+    deliverables:
+      - A report view with criteria, realism results, and a comparison table.
+    acceptance:
+      - Component tests cover a passing run, a failing run, and a comparison.
+
+  - id: UI-06
+    title: Agents and ports view
+    phase: 2
+    workstream: UI
+    size: S
+    depends_on: [UI-01]
+    paths: [ui/]
+    summary: >-
+      Show agents, their capabilities, reservations, and port assignments.
+    deliverables:
+      - An agents list with reserve and release actions.
+    acceptance:
+      - Component tests cover reservation conflicts reported by the API.
+
+  - id: QA-05
+    title: Gate 2 acceptance suite
+    phase: 2
+    workstream: QA
+    size: M
+    critical: true
+    depends_on: [MOD-04, MOD-06, MOD-07, MOD-08, MOD-09, MOD-10, MOD-11, MOD-13, MOD-14, MOD-15, MOD-16, MOD-17, MOD-18, RLM-03, RLM-04, RLM-05, RLM-06, RLM-07, RLM-08, RLM-09, RLM-10, CTL-12, IMG-04]
+    paths: [tests/gates/gate2/]
+    summary: >-
+      Automate the Gate 2 criteria across all 15 modules, byte weighted mixes, and the image.
+    deliverables:
+      - A gate script and report that run every module through realism CI and a byte weighted enterprise mix.
+    acceptance:
+      - The suite passes on a clean runner and records every measured value in the gate report.
+
+  # ------------------------------------------------------------------ Phase 3
+
+  - id: TRN-10
+    title: User space TCP stack decision
+    phase: 3
+    workstream: TRN
+    size: M
+    owner_action: The owner accepts or rejects decision record 0012.
+    depends_on: [TRN-01]
+    paths: [docs/decisions/, engine/fps-tcp/]
+    summary: >-
+      Compare smoltcp, an own TCP stack, and F-Stack for the AF_XDP and DPDK backends and
+      propose decision record 0012 with measurements.
+    deliverables:
+      - A prototype benchmark for each candidate behind SessionIo and a license review.
+    acceptance:
+      - The decision record reports sessions per second and throughput for each candidate on the same host.
+
+  - id: TRN-11
+    title: AF_XDP packet input and output
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-10]
+    paths: [engine/fps-backend-afxdp/]
+    summary: >-
+      Implement UMEM, fill, completion, receive, and transmit rings with batching per queue,
+      using the S3 results to choose defaults.
+    deliverables:
+      - Zero copy mode with fallback to copy mode, and per queue workers.
+    acceptance:
+      - A two VM test on KVM reaches the packet rate that S3 measured within 10%.
+
+  - id: TRN-12
+    title: User space TCP over AF_XDP
+    phase: 3
+    workstream: TRN
+    size: L
+    depends_on: [TRN-10, TRN-11]
+    paths: [engine/fps-tcp/, engine/fps-backend-afxdp/]
+    summary: >-
+      Run the chosen TCP stack over AF_XDP and expose SessionIo. Split this epic after
+      decision record 0012 is accepted.
+    deliverables:
+      - Child packages for connection setup, data transfer, timers and retransmission, and OS profile options.
+    acceptance:
+      - The http1 module passes realism CI on the AF_XDP backend.
+
+  - id: HST-03
+    title: ARP, ND, and DHCP for user space backends
+    phase: 3
+    workstream: HST
+    size: M
+    depends_on: [TRN-11]
+    paths: [engine/fps-hosts/]
+    summary: >-
+      Answer ARP and neighbor discovery for host pools, obtain addresses through DHCP when
+      configured, and assign MAC addresses per host.
+    deliverables:
+      - Responders and a MAC allocator that avoids conflicts.
+    acceptance:
+      - The host identity check passes for 20,000 hosts on one port.
+
+  - id: TRN-13
+    title: DPDK backend spike with F-Stack
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-10]
+    paths: [engine/fps-backend-dpdk/]
+    summary: >-
+      Measure F-Stack behind SessionIo on SR-IOV or bare metal, as the Gate 0 update of
+      decision D1 requires.
+    deliverables:
+      - A spike report with session rate, throughput, and integration cost.
+    acceptance:
+      - The owner records whether tier T2 proceeds with F-Stack.
+
+  - id: TRN-14
+    title: Backend selection at boot
+    phase: 3
+    workstream: TRN
+    size: S
+    depends_on: [TRN-11, AGT-03]
+    paths: [engine/fps-backend-kernel/, engine/fps-backend-afxdp/]
+    summary: >-
+      Select the fastest working backend from detected capabilities and report the choice.
+    deliverables:
+      - A selection function with a forced override.
+    acceptance:
+      - Tests cover a virtio-net guest with and without zero copy support.
+
+  - id: CTL-16
+    title: Multi agent runs
+    phase: 3
+    workstream: CTL
+    size: M
+    depends_on: [CTL-07, CTL-08, CTL-12]
+    paths: [controller/]
+    summary: >-
+      Split plans across several agents, check clock synchronization, and aggregate results.
+    deliverables:
+      - Plan splitting across agents and a clock offset check before start.
+    acceptance:
+      - A run with three fake agents aggregates counters exactly and refuses to start with an offset above 10 ms.
+
+  - id: UI-07
+    title: Web UI end to end suite
+    phase: 3
+    workstream: UI
+    size: M
+    depends_on: [UI-03, UI-04, UI-05, UI-06, CTL-08]
+    paths: [ui/]
+    summary: >-
+      Exercise the UI against a real controller with fake agents in a browser.
+    deliverables:
+      - Browser tests for configuration, run, and report flows.
+    acceptance:
+      - The suite passes in CI on Chromium.
+
+  - id: QA-06
+    title: Benchmark suite per hypervisor
+    phase: 3
+    workstream: QA
+    size: M
+    depends_on: [TRN-14, QA-03]
+    paths: [bench/]
+    summary: >-
+      Run the standard benchmark set on each supported hypervisor and publish the results.
+    deliverables:
+      - Benchmark definitions for throughput, session rate, concurrency, and TLS.
+    acceptance:
+      - Results for KVM are published with host details and compared with tier T1 targets.
+
+  - id: QA-07
+    title: Gate 3 acceptance suite
+    phase: 3
+    workstream: QA
+    size: M
+    critical: true
+    depends_on: [QA-06, CTL-16, UI-07, IMG-03, TRN-12, HST-03]
+    paths: [tests/gates/gate3/]
+    summary: >-
+      Automate the v1 release criteria.
+    deliverables:
+      - A gate script and report for tier T1, multi agent runs, image formats, and the UI suite.
+    acceptance:
+      - The suite passes on the reference KVM host and records every measured value.

@@ -1,0 +1,166 @@
+# Testing
+
+Every work package proves its behavior with tests that run without the packages around it. This page defines the test levels, where each level lives, how to write a modular test for a new component, and how regression tests protect fixed defects.
+
+## Test levels
+
+We use eight levels. Each package ships the levels that its workstream requires in the matrix below.
+
+| Level | Purpose | Location | Runs in |
+|---|---|---|---|
+| Unit | One function or type, no I/O | Next to the code (`#[cfg(test)]`, `_test.go`, `test_*.py`) | Every pull request |
+| Property | Invariants over generated inputs | Next to the code, with `proptest` or `hypothesis` | Every pull request |
+| Contract | Code agrees with a contract file | `tests/` of the consuming package | Every pull request |
+| Component | One package through its public interface with fakes for neighbors | `tests/` of the package | Every pull request |
+| Integration | Several real packages in one process or host | `tests/integration/` | Every pull request when the runner allows it |
+| End to end | Controller, agent, and harness over real sockets | `tests/e2e/` and `tests/gates/` | Pull requests labeled `e2e`, nightly, and gates |
+| Realism | Generated traffic passes the eight realism checks | Module `fixtures/` and `realism/` | Module pull requests and nightly |
+| Performance | Throughput, rate, and latency against baselines | `bench/` | Nightly on a fixed host and on request |
+
+## Required levels by workstream
+
+| Workstream | Unit | Property | Contract | Component | Integration | End to end | Realism | Performance |
+|---|---|---|---|---|---|---|---|---|
+| CON | | | yes | | | | | |
+| OPS, QA | yes | | | yes | | | | |
+| ENG | yes | yes | yes | yes | | | | yes |
+| TRN, HST | yes | | | yes | yes | | | yes |
+| AGT | yes | | yes | yes | yes | | | |
+| CTL | yes | | yes | yes | yes | | | |
+| CLI | yes | | yes | yes | | | | |
+| MOD | yes | | yes | yes | | | yes | |
+| RLM, CAP | yes | yes | | yes | | | | |
+| IMG | | | | yes | | yes | | |
+| UI | yes | | yes | yes | | yes | | |
+
+## Commands
+
+OPS-01 adds a root `Makefile` that runs each workstream's tests with one command. Until OPS-01 merges, run the underlying commands directly.
+
+```bash
+make test                 # every fast level of every workstream
+make test-eng             # one workstream
+make lint                 # every formatter and linter
+make e2e                  # end to end suites; needs root for the namespace harness
+
+# Equivalent commands per language
+cargo test -p fps-interp
+(cd controller && go test -race ./...)
+python3 -m pytest realism
+```
+
+Fast levels finish within five minutes on a CI runner. A test that needs longer moves to the end to end or performance level.
+
+## Writing a modular test
+
+A modular test checks one package through its public interface and replaces every neighbor with a fake that the neighbor's own package publishes. We follow five steps.
+
+1. **Name the seam.** Find the trait, interface, or contract file that sits between the package and its neighbor in the seam table of the [Implementation Plan](Implementation-Plan.md).
+2. **Use the published fake.** Each seam owner ships a fake next to the interface, for example the in memory duplex in `engine/fps-io` and the fake agent in `controller/internal/fakeagent`. Do not write a private fake when a published one exists.
+3. **Fix the inputs.** Use a fixed seed, an injected clock, and fixture files under `testdata/`.
+4. **Assert observable behavior.** Check outputs, counters, bytes on the wire, and error variants. Do not assert private fields.
+5. **Name the test after the behavior.** For example, `expect_pattern_consumes_through_first_match`.
+
+The Rust example tests the interpreter against a scripted server over the in memory duplex.
+
+```rust
+#[tokio::test]
+async fn expect_pattern_consumes_through_first_match() {
+    let (client_io, mut server_io) = fps_io::memory::duplex(64 * 1024);
+    let program = compile_client(r#"
+        - send: "GET / HTTP/1.1\r\n\r\n"
+        - expect: { pattern: "\r\n\r\n", timeout_ms: 1000 }
+    "#);
+    let server = tokio::spawn(async move {
+        read_until(&mut server_io, b"\r\n\r\n").await;
+        server_io.write_all(b"HTTP/1.1 200 OK\r\n\r\nextra").await.unwrap();
+    });
+    let outcome = run_session(&program, client_io, test_context(42)).await;
+    assert_eq!(outcome.result, Ok(()));
+    assert_eq!(outcome.consumed, 19); // through the first "\r\n\r\n", not "extra"
+    server.await.unwrap();
+}
+```
+
+The Go example tests the orchestrator against fake agents with a table of state transitions.
+
+```go
+func TestRunStateTransitions(t *testing.T) {
+	tests := []struct {
+		name   string
+		agents []fakeagent.Behavior
+		want   run.State
+	}{
+		{"all agents finish", []fakeagent.Behavior{fakeagent.Finish, fakeagent.Finish}, run.Completed},
+		{"one agent crashes", []fakeagent.Behavior{fakeagent.Finish, fakeagent.CrashAfter(2)}, run.Failed},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o := newTestOrchestrator(t, tc.agents...)
+			id := o.Start(context.Background(), testConfig(t))
+			if got := o.Wait(id); got != tc.want {
+				t.Fatalf("state = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+```
+
+## Testing a new module
+
+A module package proves four things with tests inside its own directory.
+
+1. **The module validates.** `python3 tools/contracts/validate.py --modules modules/<name>` passes.
+2. **Client and server agree.** An interpreter test runs every scenario with both sides over the in memory duplex and checks success counters.
+3. **Bytes stay stable.** A transcript test renders each scenario with seed 42 and compares the bytes in both directions with golden files in `tests/testdata/`.
+4. **Traffic looks real.** The fixture capture from a harness run passes every realism check that applies to the module, and `fixtures/expected.yaml` records the expected labels.
+
+```text
+modules/dns/tests/
+  scenarios.rs                   client and server over the in memory duplex
+  transcript.rs                  golden byte transcripts
+  testdata/lookup.seed42.c2s.bin
+  testdata/lookup.seed42.s2c.bin
+modules/dns/fixtures/
+  lookup.pcapng                  produced by tests/harness, synthetic only
+  expected.yaml                  application label and realism thresholds
+```
+
+## Regression tests
+
+A regression test pins a defect that once escaped. We apply five rules.
+
+1. **Test first.** The fix pull request adds a test that fails on the old code. The pull request description shows the failing output.
+2. **Name the issue.** The test name or a comment cites the issue number, as in `regression_142_chunked_last_byte`.
+3. **Keep it at the lowest level.** A defect found in an end to end run gets a unit or component test that reproduces it, when such a test can reproduce it.
+4. **Never delete without a reason.** Removing a regression test requires a sentence in the pull request that explains why the behavior no longer applies.
+5. **Guard performance too.** A fixed performance defect adds or tightens a baseline under `bench/baselines/`.
+
+Golden files form the second regression layer. Compiler output, plan output, report output, and module transcripts are compared with files under `testdata/`. A change to a golden file must be intended.
+
+```bash
+UPDATE_GOLDEN=1 cargo test -p fps-flow   # rewrite golden files
+git diff --stat -- '*testdata*'          # review every changed file
+```
+
+A pull request that changes golden files explains each change in its description, and the reviewer checks the diff.
+
+Benchmark baselines form the third layer. `bench/compare.py` fails a run that regresses beyond the tolerance of each metric, which is 10% by default. Baselines change only in a pull request that names the host and explains the change.
+
+## Determinism and flaky tests
+
+Tests use fixed seeds, injected clocks, and loopback or namespace networks. A test that depends on real time uses generous limits and asserts ranges.
+
+A flaky test is a defect. The agent that observes it opens a `type:bug` issue with the label `flaky`, marks the test as ignored with a reference to the issue, and continues. The quarantine lasts at most one week before the test is fixed or removed with the owner's approval.
+
+## Coverage
+
+We measure line coverage on changed packages with `cargo llvm-cov`, `go test -cover`, and `pytest --cov`. New library code should reach 80% line coverage. Coverage is a review signal, and a reviewer may accept less when the uncovered code is error handling that tests cannot reach without fault injection.
+
+## Test data rules
+
+Test data is synthetic, small, and licensed with the repository. Captures that contain personal data, credentials, or third party content never enter the repository. Fixture captures under `modules/*/fixtures/` stay below 1 MB each.
+
+## Gate suites
+
+Each gate suite lives under `tests/gates/gate<N>/` and has one entry point, `run.sh`, which writes `report.md` with measured values and a pass or fail verdict per criterion. A gate suite uses only public interfaces, which are the REST API, the agent binary, the harness, and the realism runner. The owner signs off a gate after reading its report.
