@@ -9,7 +9,7 @@ Scenario contract v0.2 (CON-04).
 - Datagram rules for `expect` on UDP. One `expect` reads exactly one datagram, the stop rule checks that datagram, and the new field `max_datagram` (1 to 65,507 bytes, default 65,507) bounds its size. A longer datagram fails the session.
 - The module manifest adds `functions`, the template function catalog with typed parameters and defaults. It must equal the catalog that the extension returns, and the validator checks every module call against it without running extension code.
 - Template values and parameters carry the types of the extension `value-type` enum, and the validator checks argument types.
-- The example modules declare `engine_api: ">=0.2, <0.3"` and their function catalogs. `dns` adds the scenario `resolve`, which uses `dns.query`, `dns.answer_ip(last)`, and `dns.response(last, ...)`, and `http1/web_browse` builds its messages with `http1.request` and `http1.response`. The example plan uses engine API 0.2.0 and the new module digests.
+- The example modules declare `engine_api: ">=0.2, <0.3"` and their function catalogs. `dns` adds the scenario `resolve`, which uses `dns.query`, `dns.answer_ip(last)`, and `dns.response(last, ...)`, and `http1` adds the scenario `web_page`, which builds its messages with `http1.request` and `http1.response`. The v0.1 examples stay unchanged, because spikes S1 and S4 and the example plan read them. The example plan uses engine API 0.2.0 and the new module digests.
 - The reserved action `raw` is unchanged.
 
 ## Extension interface 0.1.0 (2026-11-02)

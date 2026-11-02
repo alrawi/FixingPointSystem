@@ -35,6 +35,7 @@ functions:
 scenarios:
   - scenarios/web_get.yaml
   - scenarios/web_browse.yaml
+  - scenarios/web_page.yaml
 assets:
   - { name: html_body, generator: content.html }
 provenance:

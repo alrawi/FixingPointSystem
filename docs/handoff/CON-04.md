@@ -57,18 +57,21 @@ Wait for the owner to review PR #67 and answer the open questions.
 - `last` uses a definite precedence rule per side. A loop counts only with a positive integer literal count, and a branch only when every arm contains an expect.
 - On UDP one expect consumes one whole datagram, and the stop rule becomes a check on it. `max_datagram` defaults to 65,507, the IPv4 UDP payload limit, and the engine reads into a per worker scratch buffer, so the default costs no memory per session.
 - Calls nest at most 8 levels. Module names `vars`, `session`, `last`, `true`, and `false` are reserved.
-- The example `lookup` and `web_get` scenarios stay unchanged because the example plan embeds their sources. The new `dns/resolve` scenario and the rewritten `http1/web_browse` scenario show the v0.2 features.
+- The v0.1 example scenarios `lookup`, `web_get`, and `web_browse` stay unchanged. The example plan embeds the first two, and spikes S1 (`program::tests::example_scenarios_compile`) and S4 (`test_enterprise_mix_reports_losses`) parse `web_browse` with the v0.1 grammar. The new scenarios `dns/resolve` and `http1/web_page` show the v0.2 features.
 
 ## Pitfalls
 
 - Any change under `contracts/examples/modules/` changes the module tree digests in `contracts/examples/plans/http_dns_smoke.json`. Run `python3 tools/contracts/check_plans.py --print-digests` and copy the new digests, since the plan must stay in canonical form.
 - `check_plans.py` calls `check_scenario` without a manifest, so module calls in plan sources stay unchecked.
+- The first CI run failed in the `rust` and `contracts` jobs because spikes S1 and S4 read `http1/web_browse.yaml`, which we had rewritten with module calls. We restored that file and moved the example into `http1/web_page.yaml`. Run `cargo test -p fps-spike-engine` and `python3 -m pytest spikes/s4-trex-astf` after changing any example scenario.
 
 ## Verify the current state
 
 ```bash
 python3 tools/contracts/validate.py               # contracts: 0 error(s), 0 warning(s)
 python3 -m pytest -q tools/contracts               # 147 passed
+cargo test -q --lib --manifest-path spikes/s1-engine/Cargo.toml   # 15 passed
+python3 -m pytest -q spikes/s4-trex-astf          # passes
 python3 tools/contracts/check_plans.py             # plans: 0 error(s)
 ```
 
@@ -81,3 +84,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | 2026-11-02T20:05:07Z | claude-con04-d3df | claim | none | Fresh branch from main, card 6587192454 |
 | 2026-11-02T20:13:44Z | claude-con04-d3df | checkpoint | see git log | Schemas, validator, examples, and tests done; README and CHANGELOG next |
 | 2026-11-02T20:15:56Z | claude-con04-d3df | finish | see git log | README, CHANGELOG, and wiki done; all checks pass |
+| 2026-11-02T20:18:36Z | claude-con04-d3df | checkpoint | see git log | CI failed in rust and contracts because spikes read web_browse; restored it and moved the example to web_page |

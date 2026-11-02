@@ -56,8 +56,8 @@ def resolve() -> dict:
 
 
 @pytest.fixture()
-def web_browse() -> dict:
-    return v.load_yaml(EXAMPLES / "modules/http1/scenarios/web_browse.yaml")
+def web_page() -> dict:
+    return v.load_yaml(EXAMPLES / "modules/http1/scenarios/web_page.yaml")
 
 
 def check_scenario(doc: dict, manifest: dict) -> v.Report:
@@ -216,16 +216,16 @@ def test_required_module_calls_are_checked(web_get, http_manifest, dns_manifest)
     assert [f.path for f in report.errors] == ["/flows/0/client/2/send", "/flows/0/client/2/send"]
 
 
-def test_examples_use_module_calls(web_browse, resolve):
-    for doc in (web_browse, resolve):
+def test_examples_use_module_calls(web_page, resolve):
+    for doc in (web_page, resolve):
         sends = [b for _, k, b in v._walk_actions(doc["flows"][0]["client"], []) if k == "send"]
         assert any("." in v.parse_expression(m.group(1)).qualified for s in sends
                    for m in v.PLACEHOLDER.finditer(s))
 
 
-def test_example_module_call_errors_fail_the_validator(web_browse, http_manifest):
-    web_browse["flows"][0]["server"][2]["send"] = "{{ http1.response('200') }}"
-    assert any("takes int, got text" in m for m in messages(check_scenario(web_browse, http_manifest)))
+def test_example_module_call_errors_fail_the_validator(web_page, http_manifest):
+    web_page["flows"][0]["server"][2]["send"] = "{{ http1.response('200') }}"
+    assert any("takes int, got text" in m for m in messages(check_scenario(web_page, http_manifest)))
 
 
 # --- manifest function catalog ----------------------------------------------
