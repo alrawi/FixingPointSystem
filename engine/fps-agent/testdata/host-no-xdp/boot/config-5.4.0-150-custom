@@ -1,0 +1,3 @@
+# Synthetic excerpt of a custom kernel config.
+CONFIG_BPF_SYSCALL=y
+# CONFIG_XDP_SOCKETS is not set

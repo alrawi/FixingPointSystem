@@ -1,0 +1,10 @@
+[package]
+name = "fps-stats"
+description = "Counters and histograms of the FixingPointSystem engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
