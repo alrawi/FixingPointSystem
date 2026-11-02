@@ -1,0 +1,17 @@
+[package]
+name = "fps-spike-tls"
+description = "Phase 0 spike S2: TLS handshake cost per core with rustls and the ring provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+# The ring provider keeps every linked crate compatible with GPL-3.0 (decision D4).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
