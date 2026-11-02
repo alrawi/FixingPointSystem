@@ -114,6 +114,51 @@ test-spk:
 TEST_TARGETS += test-agt
 test-agt:
 	$(CARGO) test -p fps-agent
+# CTL controller
+
+GO ?= go
+GOLANGCI_LINT ?= golangci-lint
+
+# gofmt, go vet, and golangci-lint over the controller module. CI runs
+# golangci-lint through its pinned action, so a machine without the binary skips
+# it with a notice.
+LINT_TARGETS += lint-ctl
+lint-ctl:
+	@out="$$(cd controller && gofmt -l .)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+	cd controller && $(GO) vet ./...
+	@if command -v $(GOLANGCI_LINT) >/dev/null 2>&1; then \
+	  echo "cd controller && $(GOLANGCI_LINT) run"; \
+	  cd controller && $(GOLANGCI_LINT) run; \
+	else \
+	  echo "golangci-lint skipped because it is not installed"; \
+	fi
+
+TEST_TARGETS += test-ctl
+test-ctl:
+	cd controller && $(GO) test -race ./...
+# ENG agent engine
+
+# Every crate under engine/ is tested by package name, which equals its
+# directory name, so a new engine crate joins this target without an edit here.
+# lint-rust already covers the engine crates.
+ENG_CRATES := $(notdir $(patsubst %/,%,$(dir $(wildcard engine/*/Cargo.toml))))
+
+TEST_TARGETS += test-eng
+test-eng:
+	$(CARGO) test $(addprefix -p ,$(ENG_CRATES))
+# RLM realism validation. realism/requirements-dev.txt lists the tools, and the
+# optional ndpiReader test skips when nDPI is not installed.
+
+LINT_TARGETS += lint-rlm
+lint-rlm:
+	$(PYTHON) -m ruff format --check realism
+	$(PYTHON) -m ruff check realism
+	$(PYTHON) -m mypy --config-file realism/pyproject.toml realism
+
+TEST_TARGETS += test-rlm
+test-rlm:
+	$(PYTHON) -m pytest -q realism
 
 # ---------------------------------------------------------------------------
 # Aggregate targets. New workstream blocks go above this line, because make

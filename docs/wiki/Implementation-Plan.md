@@ -78,6 +78,7 @@ Each seam has one owner and one definition. A package that needs a seam to chang
 | Byte stream and datagram I/O | `SessionIo`, `DatagramIo` in `engine/fps-io` | TRN | ENG |
 | Host capabilities | `HostCapabilities` and `SystemRoot` in `engine/fps-agent` (AGT-03) | AGT | TRN backend selection, CTL through `Capabilities` |
 | Realism report | `realism/schema/` (RLM-01) | RLM | CTL, QA |
+| Realism report | [`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) (RLM-01) | RLM | CTL, QA |
 
 ### Counter catalog
 
@@ -99,6 +100,14 @@ AGT-03 detects host capabilities in [`engine/fps-agent`](https://github.com/alra
 5. NUMA nodes, the kernel release, and the port hints have no field in contract version 0.1.0, so they stay on `HostCapabilities` until follow up #74 adds them.
 
 The fake system roots in `engine/fps-agent/testdata/` cover a virtio-net guest, a host without XDP, and a host with two NUMA nodes. Later agent packages add fixtures there instead of writing new fakes.
+### Realism report
+
+The realism runner from RLM-01 writes one JSON report per capture with `python3 -m realism score --pcap FILE --labels FILE`, and the [realism README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md) describes the command, the labels file, and the report. Packages that add checks or read reports follow four rules.
+
+1. A check adds one entry to `checks` with the common fields `check`, `passed`, and `metrics`. Its schema adds a definition under `$defs` and one `if` and `then` entry in `$defs.check.allOf`.
+2. Metric names and labels in a report come from the metric catalog, for example `realism.conformance_ratio` with the labels `application` and `classifier`.
+3. Classifiers run out of process. The nDPI classifier calls `ndpiReader -d`, so port based guesses never count toward conformance.
+4. The report passes when it has at least one check and every check passes. The conformance check passes when every labelled application reaches the threshold, which is 0.99 unless the labels file or the command sets another.
 
 ## Phases and gates
 

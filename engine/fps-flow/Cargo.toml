@@ -1,0 +1,18 @@
+[package]
+name = "fps-flow"
+description = "Scenario model, loader, and template compiler of the FixingPointSystem engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+rand = { version = "0.8", default-features = false }
+rand_pcg = "0.3"
+# serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
+serde_yaml = { package = "serde_norway", version = "0.9" }
+thiserror = "2"
+
+[dev-dependencies]
+proptest = "1"
