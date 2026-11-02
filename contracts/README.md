@@ -79,6 +79,10 @@ literal    := integer | 'single quoted string'
 | `hex(s)` | Bytes decoded from the hexadecimal string s |
 | `rand_int(a, b)` | Uniform integer in [a, b] from the seeded generator |
 
+## Engine API version
+
+The owner decided on 2026-11-02 that `engine_api` names one shared engine contract version. That version covers the scenario format, the template grammar, and the extension interface together. A change to any of them bumps the engine API version, and a module's `engine_api` range states which engine versions can load it. The extension package keeps its own WIT package version, and each engine API version lists the extension package version it ships.
+
 ## Validation
 
 ```bash

@@ -1,6 +1,6 @@
 # D10. Native first party extensions
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-11-02)
 - Date: 2026-11-02
 - Deciders: repository owner
 

@@ -33,3 +33,7 @@ We added `tools/swarm/fps_swarm.py`, which runs every step of the [Swarm Protoco
 ## [2026-11-02] decision | Agents register with the controller
 
 The owner decided that agents dial the controller and register themselves, which reverses the direction in the CON-01 draft. We added CON-06 to the catalog to change the agent control protocol, and AGT-02 and CTL-06 now depend on it.
+
+## [2026-11-02] decision | D10 accepted and one engine API version
+
+The owner accepted D10, so first party modules may ship native Rust extensions behind the same traits as WebAssembly extensions. The owner also decided that `engine_api` names one shared engine contract version covering scenarios, templates, and the extension interface. The contracts README records the rule.

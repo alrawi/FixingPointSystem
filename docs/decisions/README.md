@@ -11,4 +11,4 @@ Each file records one decision from the specification's decision table, with the
 - [D7. v1 application list](0007-v1-applications.md)
 - [D8. User interface in v1](0008-user-interface.md)
 - [D9. Team model](0009-team-model.md)
-- [D10. Native first party extensions](0010-native-extensions.md) (Proposed)
+- [D10. Native first party extensions](0010-native-extensions.md) (Accepted)
