@@ -33,3 +33,6 @@ We added `tools/swarm/fps_swarm.py`, which runs every step of the [Swarm Protoco
 ## [2026-11-02] ingest | OPS-03 Stale lease scanner and dependency promoter
 
 We added the workflow `.github/workflows/swarm-scan.yml`, which runs `fps_swarm.py sweep` every 30 minutes with only the repository token, and a manual dispatch with a `dry_run` input that defaults to true. The stale sweep now posts one comment with the `fps:stale` marker and the expiry time when it marks an item stale. We added the section The scanner to [Swarm Protocol](Swarm-Protocol.md) and a note to [Project Board Setup](Project-Board-Setup.md) that relabels made with the repository token start no OPS-04 workflow. The evidence is `docs/handoff/OPS-03.md` and the `test_scan_*` tests in `tools/swarm/test_fps_swarm.py`.
+## [2026-11-02] decision | Agents register with the controller
+
+The owner decided that agents dial the controller and register themselves, which reverses the direction in the CON-01 draft. We added CON-06 to the catalog to change the agent control protocol, and AGT-02 and CTL-06 now depend on it.
