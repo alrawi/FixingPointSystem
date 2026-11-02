@@ -61,6 +61,8 @@ The targets that exist today are listed below.
 | `test-con` | the contract validator and its tests |
 | `test-ops` | the plan tool tests, the Cargo workspace probe, and a parse of `go.work` |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
+| `lint-qa` | gofmt, go vet, and golangci-lint on the Go golden file helper, and ruff and `mypy --strict` on the Python one, each skipped with a notice when its tool is missing |
+| `test-qa` | the match, mismatch, and update tests of the three [golden file helpers](#golden-files) |
 
 A workstream adds its targets in a block of its own above the aggregate targets at the bottom of the `Makefile`. The block appends to `LINT_TARGETS` and `TEST_TARGETS` on separate lines and delegates to the workstream's own commands, so parallel packages never edit the same line. The `make e2e` target arrives with the namespace harness of QA-01 and needs root.
 
@@ -75,7 +77,7 @@ test-ctl:
 	cd controller && go test -race ./...
 ```
 
-The Rust workspace in the root `Cargo.toml` takes its members from a glob, so a new crate under `spikes/` or `engine/` builds without an edit there. The `test-ops-workspace` target proves this on every run by building an empty probe crate under `engine/` in a temporary copy of the workspace root. The Go workspace in `go.work` lists no modules yet, and the package that creates `controller/` or `cli/` adds one `use` line for it. The handoff file of [OPS-01](https://github.com/alrawi/FixingPointSystem/blob/main/docs/handoff/OPS-01.md) explains both choices.
+The Rust workspace in the root `Cargo.toml` takes its members from a glob, so a new crate under `spikes/` or `engine/` builds without an edit there. The crate `fps-golden` lives outside both roots and is listed by its path `tests/golden/rust`. The `test-ops-workspace` target proves the glob on every run by building an empty probe crate under `engine/` in a temporary copy of the workspace root, which also holds every member listed by path. The Go workspace in `go.work` lists the module `tests/golden/go`, and the package that creates `controller/` or `cli/` adds one `use` line for it. The handoff file of [OPS-01](https://github.com/alrawi/FixingPointSystem/blob/main/docs/handoff/OPS-01.md) explains both choices.
 
 Fast levels finish within five minutes on a CI runner. A test that needs longer moves to the end to end or performance level.
 
@@ -171,9 +173,74 @@ UPDATE_GOLDEN=1 cargo test -p fps-flow   # rewrite golden files
 git diff --stat -- '*testdata*'          # review every changed file
 ```
 
-A pull request that changes golden files explains each change in its description, and the reviewer checks the diff.
+A pull request that changes golden files explains each change in its description, and the reviewer checks the diff. The [golden file helpers](#golden-files) give every language the same switch and the same failure message.
 
 Benchmark baselines form the third layer. `bench/compare.py` fails a run that regresses beyond the tolerance of each metric, which is 10% by default. Baselines change only in a pull request that names the host and explains the change.
+
+## Golden files
+
+We compare rendered output with golden files through one helper per language under `tests/golden/`. The three helpers follow four rules.
+
+1. **One switch.** A helper rewrites a golden file only when `UPDATE_GOLDEN` equals `1`. Any other value, including an empty one, compares and never writes.
+2. **Write only on change.** In update mode a helper writes a file only when its content differs, and it creates missing directories. An unchanged file keeps its modification time, so `git status` shows only real changes.
+3. **Fail with a readable diff.** A mismatch fails the test with the path of the golden file, the hint to rerun with `UPDATE_GOLDEN=1`, and a unified diff from the golden file to the output. Content that is not UTF-8 gets the byte lengths, the first differing offset, and 16 bytes of hex from each side.
+4. **A missing file fails.** Compare mode reports a missing golden file as a failure, so a test cannot pass before someone records its output.
+
+The Rust crate `fps-golden` is a workspace member. A crate adds it as a development dependency and calls the macro, which resolves the name under the crate's `tests/testdata/`.
+
+```toml
+[dev-dependencies]
+fps-golden = { path = "../../tests/golden/rust" }
+```
+
+```rust
+#[test]
+fn plan_renders_stable_json() {
+    let json = render_plan(&test_plan(42));
+    fps_golden::assert_golden!("plan.seed42.json", json);
+}
+```
+
+The function `fps_golden::assert_golden(path, output)` takes any path, and `fps_golden::check(path, output, mode)` returns a `Result` for tests that inspect the failure.
+
+The Go module `github.com/alrawi/FixingPointSystem/tests/golden/go` is listed in `go.work`, so modules in the workspace import it without a `replace` line. `golden.Assert` resolves the name under the package's `testdata/`, which is the working directory of `go test`.
+
+```go
+import golden "github.com/alrawi/FixingPointSystem/tests/golden/go"
+
+func TestPlanRendersStableJSON(t *testing.T) {
+	golden.Assert(t, "plan.seed42.json", renderPlan(testPlan(42)))
+}
+```
+
+`golden.AssertString` takes a string, `golden.AssertFile` takes any path, and `golden.Check` returns errors that match `golden.ErrMismatch` and `golden.ErrMissing` with `errors.Is`.
+
+The Python helper is the `golden` fixture in `tests/golden/python/fps_golden.py`. A test directory imports the fixture in its `conftest.py`, because pytest rejects `pytest_plugins` in a conftest below the rootdir. The fixture resolves the name under `testdata/` next to the test file and accepts `str` or `bytes`.
+
+```python
+# realism/conftest.py, one level below the repository root
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests" / "golden" / "python"))
+from fps_golden import golden
+
+__all__ = ["golden"]
+```
+
+```python
+def test_plan_renders_stable_json(golden):
+    golden.check("plan.seed42.json", render_plan(test_plan(42)))
+```
+
+We record or refresh golden files with the switch and then review every changed file before we commit.
+
+```bash
+UPDATE_GOLDEN=1 cargo test -p fps-flow
+UPDATE_GOLDEN=1 go test ./...
+UPDATE_GOLDEN=1 python3 -m pytest realism
+git diff --stat -- '*testdata*'
+```
 
 ## Determinism and flaky tests
 

@@ -129,7 +129,9 @@ class Golden:
         try:
             return check(self.path(name), actual, self.update)
         except GoldenError as e:
-            pytest.fail(str(e), pytrace=False)
+            message = str(e)
+        # Fail outside the except block, so the report shows only the message.
+        pytest.fail(message, pytrace=False)
 
 
 @pytest.fixture

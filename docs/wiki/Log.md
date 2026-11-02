@@ -29,3 +29,7 @@ We drafted the agent control protocol in `contracts/proto/fps/agent/v1/agent.pro
 ## [2026-11-02] ingest | OPS-02 Swarm helper command
 
 We added `tools/swarm/fps_swarm.py`, which runs every step of the [Swarm Protocol](Swarm-Protocol.md) over the REST API, and updated that page to show each helper command next to its raw calls. The page now also defines the `fps:block` marker that the promotion sweep reads. The evidence is `docs/handoff/OPS-02.md` and the offline tests in `tools/swarm/test_fps_swarm.py`, which include two agents that claim one issue at the same time and resolve to one holder.
+
+## [2026-11-02] ingest | QA-02 Golden file helpers
+
+We added one golden file helper per language under `tests/golden/`, which are the Rust crate `fps-golden`, a Go module, and a pytest fixture. Each helper rewrites a golden file only when `UPDATE_GOLDEN=1` is set and fails with a unified diff that names the file. We added the `lint-qa` and `test-qa` targets, the workflow `.github/workflows/qa.yml`, and a Golden files section in [Testing](Testing.md). The root `Cargo.toml` lists `tests/golden/rust` as a member, because the member glob covers only `spikes/` and `engine/`, and the `test-ops-workspace` probe copies that crate. The evidence is `make test-qa` and the handoff file `docs/handoff/QA-02.md`.

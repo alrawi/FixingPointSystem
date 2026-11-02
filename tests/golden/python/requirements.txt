@@ -1,0 +1,4 @@
+# Tools that lint-qa and test-qa use for the Python golden file helper.
+pytest>=8.0
+ruff==0.16.9
+mypy==2.3.1
