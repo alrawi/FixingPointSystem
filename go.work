@@ -6,3 +6,5 @@
 // a line of its own. Raise the go line when a module requires a newer Go.
 
 go 1.24
+
+use ./controller

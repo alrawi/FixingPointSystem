@@ -413,6 +413,26 @@ work_packages:
       - "`python3 tools/contracts/validate.py` and `python3 -m pytest tools/contracts` pass."
       - contracts/CHANGELOG.md records v0.2, and the owner approves.
 
+  - id: CON-06
+    title: Agent initiated control connection
+    phase: 1
+    workstream: CON
+    size: M
+    critical: true
+    depends_on: [CON-01]
+    paths: [contracts/proto/, contracts/openapi/, contracts/examples/plans/, contracts/README.md, contracts/CHANGELOG.md, tools/contracts/]
+    summary: >-
+      Apply the owner decision of 2026-11-02 that agents register with the controller. The
+      agent dials the controller, so agents behind NAT or in clouds need no inbound port.
+    deliverables:
+      - A ControllerService that the controller serves, with Register and a bidirectional Session stream that carries heartbeats, Prepare, Start, Stop, and counter snapshots.
+      - Removal of AgentService, or a documented reason to keep any part of it.
+      - Updated state machine, error codes, and example plan in contracts/README.md.
+      - A note in the OpenAPI registerAgent description that agents register themselves.
+    acceptance:
+      - "`buf lint` and `python3 tools/contracts/check_plans.py` pass."
+      - The owner approves the pull request.
+
   - id: ENG-01
     title: Engine crate skeleton
     phase: 1
@@ -699,7 +719,7 @@ work_packages:
     workstream: AGT
     size: M
     critical: true
-    depends_on: [AGT-01, CON-01]
+    depends_on: [AGT-01, CON-06]
     paths: [engine/fps-agent/]
     summary: >-
       Implement the agent side of the control protocol with registration, heartbeat,
@@ -818,7 +838,7 @@ work_packages:
     workstream: CTL
     size: M
     critical: true
-    depends_on: [CTL-01, CON-01]
+    depends_on: [CTL-01, CON-06]
     paths: [controller/internal/agents/, controller/internal/fakeagent/]
     summary: >-
       Track agent registration, inventory, reservation, and heartbeat timeouts.

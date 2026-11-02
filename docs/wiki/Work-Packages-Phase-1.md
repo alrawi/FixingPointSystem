@@ -4,7 +4,7 @@
 
 Gate 1. A two arm run of the HTTP/1.1 and DNS mix through the controller and one kernel backend agent reaches 99% nDPI classification as the intended application, and the REST API skeleton passes its contract tests.
 
-This page lists 48 work packages. Packages marked critical path gate the phase.
+This page lists 49 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -22,6 +22,7 @@ flowchart LR
   CON_02["CON-02<br/>Counter catalog v0.1"]
   CON_03["CON-03<br/>Extension interface v0.1"]
   CON_04["CON-04<br/>Scenario contract v0.2"]
+  CON_06["CON-06<br/>Agent initiated control connection"]
   ENG_01["ENG-01<br/>Engine crate skeleton"]
   ENG_02["ENG-02<br/>Scenario loader and semantic checks"]
   ENG_03["ENG-03<br/>Template compiler with module functions"]
@@ -64,6 +65,7 @@ flowchart LR
   OPS_01 --> QA_02
   OPS_01 --> QA_03
   CON_03 --> CON_04
+  CON_01 --> CON_06
   OPS_01 --> ENG_01
   ENG_01 --> ENG_02
   ENG_01 --> ENG_03
@@ -92,7 +94,7 @@ flowchart LR
   HST_02 --> AGT_01
   CON_01 --> AGT_01
   AGT_01 --> AGT_02
-  CON_01 --> AGT_02
+  CON_06 --> AGT_02
   CON_01 --> AGT_03
   OPS_01 --> CTL_01
   CTL_01 --> CTL_02
@@ -101,7 +103,7 @@ flowchart LR
   CTL_01 --> CTL_05
   CON_01 --> CTL_05
   CTL_01 --> CTL_06
-  CON_01 --> CTL_06
+  CON_06 --> CTL_06
   CTL_03 --> CTL_07
   CTL_05 --> CTL_07
   CTL_06 --> CTL_07
@@ -127,7 +129,7 @@ flowchart LR
   UI_00 --> UI_01
   UI_01 --> UI_02
   classDef critical stroke-width:3px
-  class OPS_01,QA_01,CON_01,CON_02,CON_03,CON_04,ENG_01,ENG_03,ENG_04,ENG_06,ENG_08,ENG_09,ENG_10,TRN_01,TRN_02,HST_01,HST_02,AGT_01,AGT_02,CTL_01,CTL_02,CTL_03,CTL_05,CTL_06,CTL_07,CTL_08,CTL_09,MOD_01,MOD_02,RLM_01,RLM_02,QA_04 critical
+  class OPS_01,QA_01,CON_01,CON_02,CON_03,CON_04,CON_06,ENG_01,ENG_03,ENG_04,ENG_06,ENG_08,ENG_09,ENG_10,TRN_01,TRN_02,HST_01,HST_02,AGT_01,AGT_02,CTL_01,CTL_02,CTL_03,CTL_05,CTL_06,CTL_07,CTL_08,CTL_09,MOD_01,MOD_02,RLM_01,RLM_02,QA_04 critical
 ```
 
 ## Summary
@@ -145,6 +147,7 @@ flowchart LR
 | [CON-02](#con-02-counter-catalog-v01) | Counter catalog v0.1 | S | none | yes |
 | [CON-03](#con-03-extension-interface-v01) | Extension interface v0.1 | M | none | yes |
 | [CON-04](#con-04-scenario-contract-v02) | Scenario contract v0.2 | M | CON-03 | yes |
+| [CON-06](#con-06-agent-initiated-control-connection) | Agent initiated control connection | M | CON-01 | yes |
 | [ENG-01](#eng-01-engine-crate-skeleton) | Engine crate skeleton | S | OPS-01 | yes |
 | [ENG-02](#eng-02-scenario-loader-and-semantic-checks) | Scenario loader and semantic checks | M | ENG-01 |  |
 | [ENG-03](#eng-03-template-compiler-with-module-functions) | Template compiler with module functions | M | ENG-01, CON-04 | yes |
@@ -161,14 +164,14 @@ flowchart LR
 | [HST-01](#hst-01-host-pool-allocator) | Host pool allocator | S | ENG-01 | yes |
 | [HST-02](#hst-02-kernel-port-setup) | Kernel port setup | M | HST-01, QA-01 | yes |
 | [AGT-01](#agt-01-standalone-agent-mode) | Standalone agent mode | M | ENG-10, TRN-02, HST-02, CON-01 | yes |
-| [AGT-02](#agt-02-agent-grpc-service) | Agent gRPC service | M | AGT-01, CON-01 | yes |
+| [AGT-02](#agt-02-agent-grpc-service) | Agent gRPC service | M | AGT-01, CON-06 | yes |
 | [AGT-03](#agt-03-capability-detection) | Capability detection | S | CON-01 |  |
 | [CTL-01](#ctl-01-controller-skeleton) | Controller skeleton | S | OPS-01 | yes |
 | [CTL-02](#ctl-02-rest-layer-from-the-openapi-contract) | REST layer from the OpenAPI contract | M | CTL-01 | yes |
 | [CTL-03](#ctl-03-configuration-store-and-validation) | Configuration store and validation | M | CTL-02 | yes |
 | [CTL-04](#ctl-04-module-registry) | Module registry | M | CTL-02 |  |
 | [CTL-05](#ctl-05-test-compiler) | Test compiler | M | CTL-01, CON-01 | yes |
-| [CTL-06](#ctl-06-agent-manager) | Agent manager | M | CTL-01, CON-01 | yes |
+| [CTL-06](#ctl-06-agent-manager) | Agent manager | M | CTL-01, CON-06 | yes |
 | [CTL-07](#ctl-07-run-orchestrator) | Run orchestrator | M | CTL-03, CTL-05, CTL-06 | yes |
 | [CTL-08](#ctl-08-metrics-aggregation-and-streaming) | Metrics aggregation and streaming | M | CTL-07, CON-02 | yes |
 | [CTL-09](#ctl-09-criteria-evaluation-and-reports) | Criteria evaluation and reports | S | CTL-08 | yes |
@@ -264,6 +267,27 @@ Acceptance.
 
 - [ ] `python3 tools/contracts/validate.py` and `python3 -m pytest tools/contracts` pass.
 - [ ] contracts/CHANGELOG.md records v0.2, and the owner approves.
+
+### CON-06 Agent initiated control connection
+
+Phase 1 · size M · workstream CON · critical path
+
+- **Depends on.** CON-01
+- **Paths.** `contracts/proto/`, `contracts/openapi/`, `contracts/examples/plans/`, `contracts/README.md`, `contracts/CHANGELOG.md`, `tools/contracts/`
+
+Apply the owner decision of 2026-11-02 that agents register with the controller. The agent dials the controller, so agents behind NAT or in clouds need no inbound port.
+
+Deliverables.
+
+- A ControllerService that the controller serves, with Register and a bidirectional Session stream that carries heartbeats, Prepare, Start, Stop, and counter snapshots.
+- Removal of AgentService, or a documented reason to keep any part of it.
+- Updated state machine, error codes, and example plan in contracts/README.md.
+- A note in the OpenAPI registerAgent description that agents register themselves.
+
+Acceptance.
+
+- [ ] `buf lint` and `python3 tools/contracts/check_plans.py` pass.
+- [ ] The owner approves the pull request.
 
 ## OPS Repository and swarm tooling
 
@@ -741,7 +765,7 @@ Acceptance.
 
 Phase 1 · size M · workstream AGT · critical path
 
-- **Depends on.** AGT-01, CON-01
+- **Depends on.** AGT-01, CON-06
 - **Paths.** `engine/fps-agent/`
 
 Implement the agent side of the control protocol with registration, heartbeat, prepare, start, stop, and the counter stream.
@@ -871,7 +895,7 @@ Acceptance.
 
 Phase 1 · size M · workstream CTL · critical path
 
-- **Depends on.** CTL-01, CON-01
+- **Depends on.** CTL-01, CON-06
 - **Paths.** `controller/internal/agents/`, `controller/internal/fakeagent/`
 
 Track agent registration, inventory, reservation, and heartbeat timeouts.
