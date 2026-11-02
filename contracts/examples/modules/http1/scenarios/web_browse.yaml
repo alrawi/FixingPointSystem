@@ -1,0 +1,27 @@
+scenario: web_browse
+description: A page view followed by think time and either a second page or an image fetch, on one keepalive connection.
+vars:
+  host: www.example.test
+  server_port: 8080
+  page_size: 18000
+  image_size: 52000
+flows:
+  - id: browse
+    module: http1
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "GET / HTTP/1.1\r\nHost: {{ vars.host }}\r\nAccept: text/html\r\n\r\n"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - expect: { bytes: "{{ vars.page_size }}", timeout_ms: 5000 }
+      - delay: { dist: lognormal, mu: 3.0, sigma: 0.8, unit: ms }
+      - send: "GET /logo.png HTTP/1.1\r\nHost: {{ vars.host }}\r\nAccept: image/png\r\n\r\n"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - expect: { bytes: "{{ vars.image_size }}", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {{ vars.page_size }}\r\n\r\n{{ fill(vars.page_size) }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 30000 }
+      - send: "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {{ vars.image_size }}\r\n\r\n{{ fill(vars.image_size) }}"
+      - close: fin

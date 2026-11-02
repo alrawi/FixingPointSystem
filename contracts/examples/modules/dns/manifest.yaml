@@ -1,0 +1,19 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: dns
+version: 0.1.0
+type: app
+summary: DNS A record lookups over UDP.
+engine_api: ">=0.1, <0.2"
+license: GPL-3.0-only
+provides:
+  - { protocol: dns, transport: udp, port: 53 }
+parameters:
+  type: object
+  properties:
+    server_port: { type: integer, default: 53 }
+scenarios:
+  - scenarios/lookup.yaml
+provenance:
+  source: specification
+  notes: Messages follow RFC 1035. The scenario sends one fixed query for www.example.test.

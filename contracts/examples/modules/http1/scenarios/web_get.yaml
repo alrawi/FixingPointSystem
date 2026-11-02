@@ -1,0 +1,29 @@
+scenario: web_get
+description: One TCP connection that issues keepalive GET requests for objects of a fixed size.
+vars:
+  host: www.example.test
+  path: /index.html
+  server_port: 8080
+  requests: 4
+  body_size: 4096
+  user_agent: "Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1"
+flows:
+  - id: page
+    module: http1
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - loop:
+          count: "{{ vars.requests }}"
+          do:
+            - send: "GET {{ vars.path }} HTTP/1.1\r\nHost: {{ vars.host }}\r\nUser-Agent: {{ vars.user_agent }}\r\nAccept: */*\r\n\r\n"
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+            - expect: { bytes: "{{ vars.body_size }}", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - loop:
+          count: "{{ vars.requests }}"
+          do:
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+            - send: "HTTP/1.1 200 OK\r\nServer: fps/0.1\r\nContent-Type: text/html\r\nContent-Length: {{ vars.body_size }}\r\n\r\n{{ fill(vars.body_size) }}"
+      - close: fin

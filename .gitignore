@@ -1,0 +1,11 @@
+/target/
+**/target/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.pcap
+*.pcapng
+!contracts/examples/**/fixtures/*.pcapng
+spikes/*/results/raw/
+.DS_Store

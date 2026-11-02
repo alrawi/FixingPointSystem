@@ -1,0 +1,28 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: http1
+version: 0.1.0
+type: app
+summary: HTTP/1.1 client and server scenarios with keepalive and configurable object sizes.
+engine_api: ">=0.1, <0.2"
+license: GPL-3.0-only
+provides:
+  - { protocol: http, transport: tcp, port: 80 }
+  - { protocol: http, transport: tcp, port: 8080 }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    host: { type: string, default: www.example.test }
+    path: { type: string, default: /index.html }
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 8080 }
+    requests: { type: integer, minimum: 1, default: 4 }
+    body_size: { type: integer, minimum: 0, default: 4096 }
+scenarios:
+  - scenarios/web_get.yaml
+  - scenarios/web_browse.yaml
+assets:
+  - { name: html_body, generator: content.html }
+provenance:
+  source: specification
+  notes: Messages follow RFC 9112. All content is generated.

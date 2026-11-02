@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alrawi/FixingPointSystem/contracts/schemas/test-config.schema.json",
+  "title": "FixingPointSystem test configuration",
+  "description": "Contract v0.1. Composes network, profile, load, timeline, and criteria. Names for ports and devices follow Open Traffic Generator vocabulary.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "topology", "network", "profile", "load"],
+  "properties": {
+    "apiVersion": { "const": "fixingpoint.dev/v1alpha1" },
+    "kind": { "const": "Test" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "description": { "type": "string" },
+        "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "topology": {
+      "description": "app_sim emulates clients and servers; client_sim emulates clients against real servers; server_sim emulates servers for real clients.",
+      "enum": ["app_sim", "client_sim", "server_sim"]
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ports", "host_pools"],
+      "properties": {
+        "ports": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "location"],
+            "properties": {
+              "name": { "$ref": "#/$defs/name" },
+              "location": {
+                "description": "Agent and interface, as <agent>/<interface>.",
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.:-]+$"
+              },
+              "mtu": { "type": "integer", "minimum": 576, "maximum": 9216 }
+            }
+          }
+        },
+        "host_pools": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/host_pool" }
+        },
+        "external_servers": {
+          "description": "Real servers for client_sim topology.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "address"],
+            "properties": {
+              "name": { "$ref": "#/$defs/name" },
+              "address": { "type": "string" },
+              "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            }
+          }
+        }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basis", "mix"],
+      "properties": {
+        "basis": { "enum": ["sessions", "bytes"] },
+        "mix": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["scenario", "weight"],
+            "properties": {
+              "scenario": {
+                "description": "Scenario reference as <module>/<scenario> or a bare scenario name that is unique among installed modules.",
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*(/[a-z][a-z0-9_]*)?$"
+              },
+              "weight": { "type": "number", "exclusiveMinimum": 0 },
+              "client_pool": { "$ref": "#/$defs/name" },
+              "server_pool": { "$ref": "#/$defs/name" },
+              "params": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    "load": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective", "phases"],
+      "properties": {
+        "objective": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "enum": ["concurrent_sessions", "sessions_per_second", "throughput_bps", "simulated_users"] },
+            "value": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "phases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "duration_s"],
+            "properties": {
+              "name": { "$ref": "#/$defs/name" },
+              "duration_s": { "type": "number", "exclusiveMinimum": 0 },
+              "shape": { "enum": ["linear", "step", "hold"], "default": "hold" }
+            }
+          }
+        }
+      }
+    },
+    "timeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seed": { "type": "integer", "minimum": 0 },
+        "warmup_s": { "type": "number", "minimum": 0 }
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["metric", "op", "value"],
+        "properties": {
+          "metric": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" },
+          "op": { "enum": ["<", "<=", ">", ">=", "==", "!="] },
+          "value": { "type": "number" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,62}$" },
+    "host_pool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "port", "role", "count"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "port": { "$ref": "#/$defs/name" },
+        "role": { "enum": ["client", "server"] },
+        "ipv4": {
+          "type": "string",
+          "pattern": "^(25[0-5]|2[0-4]\\d|1?\\d?\\d)(\\.(25[0-5]|2[0-4]\\d|1?\\d?\\d)){3}/(3[0-2]|[12]?\\d)$"
+        },
+        "ipv6": { "type": "string", "pattern": "^[0-9A-Fa-f:]+/(12[0-8]|1[01]\\d|[1-9]?\\d)$" },
+        "count": { "type": "integer", "minimum": 1 },
+        "gateway": { "type": "string" },
+        "vlan": { "type": "integer", "minimum": 1, "maximum": 4094 },
+        "mac_base": { "type": "string", "pattern": "^([0-9a-f]{2}:){5}[0-9a-f]{2}$" },
+        "os_profile": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+      },
+      "anyOf": [ { "required": ["ipv4"] }, { "required": ["ipv6"] } ]
+    }
+  }
+}
