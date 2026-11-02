@@ -1,0 +1,18 @@
+scenario: lookup
+description: One A record query and response over UDP. The payloads encode www.example.test in RFC 1035 wire format.
+vars:
+  server_port: 53
+flows:
+  - id: query
+    module: dns
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ hex('12340100000100000000000003777777076578616d706c6504746573740000010001') }}"
+      - expect: { min_bytes: 12, timeout_ms: 2000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { min_bytes: 12, timeout_ms: 2000 }
+      - send: "{{ hex('12348180000100010000000003777777076578616d706c6504746573740000010001c00c000100010000012c0004c0000201') }}"
+      - close: fin

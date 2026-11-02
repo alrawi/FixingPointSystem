@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alrawi/FixingPointSystem/contracts/schemas/module-manifest.schema.json",
+  "title": "FixingPointSystem module manifest",
+  "description": "Contract v0.1. Declares a module's identity, capabilities, parameters, scenarios, and provenance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "name", "version", "type", "engine_api", "license", "provenance"],
+  "properties": {
+    "apiVersion": { "const": "fixingpoint.dev/v1alpha1" },
+    "kind": { "const": "Module" },
+    "name": { "$ref": "#/$defs/identifier" },
+    "version": { "$ref": "#/$defs/semver" },
+    "type": {
+      "description": "Module type. Types marked reserved are accepted by the schema but rejected by v1 agents.",
+      "enum": ["app", "transport", "host", "content", "tunnel", "strike", "evasion", "fuzzer"]
+    },
+    "summary": { "type": "string", "maxLength": 200 },
+    "engine_api": {
+      "description": "Engine contract versions the module supports, as a semver range such as '>=0.1, <0.2'.",
+      "type": "string",
+      "pattern": "^\\s*(?:[<>]=?|=|\\^|~)?\\s*\\d+\\.\\d+(?:\\.\\d+)?(?:\\s*,\\s*(?:[<>]=?|=|\\^|~)?\\s*\\d+\\.\\d+(?:\\.\\d+)?)*\\s*$"
+    },
+    "license": {
+      "description": "SPDX license expression for module code and content. It must be compatible with GPL-3.0.",
+      "type": "string",
+      "minLength": 2
+    },
+    "provides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocol", "transport"],
+        "properties": {
+          "protocol": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$" },
+          "transport": { "enum": ["tcp", "udp", "sctp"] },
+          "port": { "$ref": "#/$defs/port" }
+        }
+      }
+    },
+    "requires": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["module", "version"],
+        "properties": {
+          "module": { "$ref": "#/$defs/identifier" },
+          "version": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "parameters": {
+      "description": "JSON Schema (draft 2020-12) for user configurable parameters. The root must be an object schema.",
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "object" } }
+    },
+    "scenarios": {
+      "description": "Scenario files relative to the manifest.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/relpath" },
+      "uniqueItems": true
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "$ref": "#/$defs/identifier" },
+          "path": { "$ref": "#/$defs/relpath" },
+          "generator": { "type": "string", "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$" }
+        },
+        "oneOf": [ { "required": ["path"] }, { "required": ["generator"] } ]
+      }
+    },
+    "extension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wasm", "hooks"],
+      "properties": {
+        "wasm": { "$ref": "#/$defs/relpath" },
+        "hooks": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["on_open", "on_data", "on_timer", "on_close", "render"] }
+        }
+      }
+    },
+    "fixtures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capture", "expect"],
+        "properties": {
+          "capture": { "$ref": "#/$defs/relpath" },
+          "expect": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ndpi": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+              "zeek": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+            },
+            "minProperties": 1
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "properties": {
+        "source": { "enum": ["synthetic", "capture", "specification"] },
+        "consent": { "type": "string" },
+        "scrubbed": { "type": "boolean" },
+        "notes": { "type": "string" }
+      },
+      "if": { "properties": { "source": { "const": "capture" } } },
+      "then": { "required": ["consent", "scrubbed"], "properties": { "scrubbed": { "const": true } } }
+    }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$" },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+    "relpath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9_./-]+$"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: enterprise_mix_10g
+  description: Byte weighted enterprise mix through a firewall at 10 Gbps.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: agent-a/eth1 }
+    - { name: server0, location: agent-a/eth2 }
+  host_pools:
+    - { name: users, port: client0, role: client, ipv4: 10.10.0.0/16, count: 20000, gateway: 10.10.0.1, os_profile: windows11 }
+    - { name: servers, port: server0, role: server, ipv4: 172.16.0.0/24, count: 200, gateway: 172.16.0.1, os_profile: linux6 }
+profile:
+  basis: bytes
+  mix:
+    - { scenario: http1/web_browse, weight: 60 }
+    - { scenario: http1/web_get, weight: 39.9, params: { body_size: 65536, requests: 8 } }
+    - { scenario: dns/lookup, weight: 0.1 }
+load:
+  objective: { type: throughput_bps, value: 10000000000 }
+  phases:
+    - { name: ramp_up, duration_s: 60, shape: linear }
+    - { name: steady, duration_s: 600, shape: hold }
+    - { name: ramp_down, duration_s: 30, shape: linear }
+timeline: { seed: 42, warmup_s: 30 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "<", value: 0.001 }
+  - { metric: mix.max_abs_error_pp, op: "<=", value: 2 }

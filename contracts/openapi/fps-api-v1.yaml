@@ -1,0 +1,590 @@
+openapi: 3.1.0
+info:
+  title: FixingPointSystem Controller API
+  version: 0.1.0
+  summary: Contract v0.1 for the controller REST API.
+  description: >
+    The controller stores test configurations, installs modules, starts runs on
+    agents, and serves metrics and reports. Long operations return HTTP 202 with
+    a run identifier. Errors use RFC 9457 problem details. Names for ports,
+    devices, flows, and metrics follow Open Traffic Generator vocabulary
+    (decision D5).
+  license:
+    name: GPL-3.0-only
+    identifier: GPL-3.0-only
+servers:
+  - url: https://{controller}/v1
+    variables:
+      controller:
+        default: localhost:8443
+security:
+  - bearerToken: []
+tags:
+  - name: system
+  - name: modules
+  - name: configs
+  - name: runs
+  - name: agents
+paths:
+  /capabilities:
+    get:
+      tags: [system]
+      operationId: getCapabilities
+      summary: Engine API version, backends, agent inventory, and installed modules.
+      x-required-scope: read
+      responses:
+        "200":
+          description: Capabilities.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Capabilities" }
+        default: { $ref: "#/components/responses/Problem" }
+  /modules:
+    get:
+      tags: [modules]
+      operationId: listModules
+      x-required-scope: read
+      parameters:
+        - { name: type, in: query, schema: { $ref: "#/components/schemas/ModuleType" } }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/PageToken" }
+      responses:
+        "200":
+          description: Installed modules.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ModuleSummary" } }
+                  next_page_token: { type: string }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [modules]
+      operationId: installModule
+      summary: Install a signed module archive.
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, contentMediaType: application/octet-stream }
+      responses:
+        "201":
+          description: Installed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModuleSummary" }
+        default: { $ref: "#/components/responses/Problem" }
+  /modules/{name}/{version}:
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string, pattern: "^[a-z][a-z0-9_]{0,62}$" } }
+      - { name: version, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [modules]
+      operationId: getModule
+      x-required-scope: read
+      responses:
+        "200":
+          description: Module manifest.
+          content:
+            application/json:
+              schema: { $ref: "../schemas/module-manifest.schema.json" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [modules]
+      operationId: deleteModule
+      x-required-scope: admin
+      responses:
+        "204": { description: Removed. }
+        default: { $ref: "#/components/responses/Problem" }
+  /configs:
+    post:
+      tags: [configs]
+      operationId: createConfig
+      x-required-scope: run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../schemas/test-config.schema.json" }
+          application/yaml:
+            schema: { $ref: "../schemas/test-config.schema.json" }
+      responses:
+        "201":
+          description: Stored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigRef" }
+        default: { $ref: "#/components/responses/Problem" }
+  /configs/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      tags: [configs]
+      operationId: getConfig
+      x-required-scope: read
+      responses:
+        "200":
+          description: Stored configuration.
+          content:
+            application/json:
+              schema: { $ref: "../schemas/test-config.schema.json" }
+        default: { $ref: "#/components/responses/Problem" }
+  /configs/{id}:validate:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    post:
+      tags: [configs]
+      operationId: validateConfig
+      summary: Check schema, module references, and agent capacity.
+      x-required-scope: run
+      responses:
+        "200":
+          description: Validation report. `valid` is false when any finding has severity error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationReport" }
+        default: { $ref: "#/components/responses/Problem" }
+  /runs:
+    get:
+      tags: [runs]
+      operationId: listRuns
+      x-required-scope: read
+      parameters:
+        - { name: state, in: query, schema: { $ref: "#/components/schemas/RunState" } }
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/PageToken" }
+      responses:
+        "200":
+          description: Runs, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Run" } }
+                  next_page_token: { type: string }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [runs]
+      operationId: startRun
+      x-required-scope: run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [config_id]
+              properties:
+                config_id: { type: string }
+                agents: { type: array, items: { type: string }, description: Agent ids to use. The controller picks reserved agents when absent. }
+                labels: { type: object, additionalProperties: { type: string } }
+      responses:
+        "202":
+          description: Accepted. Poll the run or subscribe to its metrics stream.
+          headers:
+            Location: { schema: { type: string }, description: URL of the run. }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        default: { $ref: "#/components/responses/Problem" }
+  /runs/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      tags: [runs]
+      operationId: getRun
+      x-required-scope: read
+      responses:
+        "200":
+          description: Run state and summary counters.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        default: { $ref: "#/components/responses/Problem" }
+  /runs/{id}:stop:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    post:
+      tags: [runs]
+      operationId: stopRun
+      x-required-scope: run
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force: { type: boolean, default: false, description: Abort immediately and skip ramp down. }
+      responses:
+        "202":
+          description: Stopping.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        default: { $ref: "#/components/responses/Problem" }
+  /runs/{id}/metrics:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      tags: [runs]
+      operationId: getRunMetrics
+      x-required-scope: read
+      parameters:
+        - { name: view, in: query, required: true, schema: { $ref: "#/components/schemas/MetricView" } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: step_s, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        "200":
+          description: Metric series for the view and window.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MetricSeriesSet" }
+        default: { $ref: "#/components/responses/Problem" }
+  /runs/{id}/metrics:stream:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      tags: [runs]
+      operationId: streamRunMetrics
+      summary: Live metrics as Server Sent Events, one event per second per view.
+      x-required-scope: read
+      parameters:
+        - { name: view, in: query, schema: { type: array, items: { $ref: "#/components/schemas/MetricView" } }, style: form, explode: true }
+      responses:
+        "200":
+          description: Event stream. Each event's data field is a MetricSample encoded as JSON.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        default: { $ref: "#/components/responses/Problem" }
+  /runs/{id}/report:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      tags: [runs]
+      operationId: getRunReport
+      x-required-scope: read
+      parameters:
+        - { name: format, in: query, schema: { enum: [json, csv, html], default: json } }
+      responses:
+        "200":
+          description: Report.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunReport" }
+            text/csv:
+              schema: { type: string }
+            text/html:
+              schema: { type: string }
+        default: { $ref: "#/components/responses/Problem" }
+  /runs/{id}/captures:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      tags: [runs]
+      operationId: listCaptures
+      x-required-scope: read
+      responses:
+        "200":
+          description: Captures of the run.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Capture" } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [runs]
+      operationId: startCapture
+      x-required-scope: run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [port]
+              properties:
+                port: { type: string }
+                bpf: { type: string, description: Berkeley Packet Filter expression. }
+                max_bytes: { type: integer, minimum: 1, default: 104857600 }
+                export_tls_keys: { type: boolean, default: false }
+      responses:
+        "202":
+          description: Capture started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Capture" }
+        default: { $ref: "#/components/responses/Problem" }
+  /runs/{id}/captures/{capture_id}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { name: capture_id, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [runs]
+      operationId: downloadCapture
+      x-required-scope: read
+      responses:
+        "200":
+          description: Capture file.
+          content:
+            application/vnd.tcpdump.pcap:
+              schema: { type: string, contentMediaType: application/vnd.tcpdump.pcap }
+        default: { $ref: "#/components/responses/Problem" }
+  /agents:
+    get:
+      tags: [agents]
+      operationId: listAgents
+      x-required-scope: read
+      responses:
+        "200":
+          description: Registered agents.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Agent" } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [agents]
+      operationId: registerAgent
+      x-required-scope: admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [address]
+              properties:
+                address: { type: string, description: gRPC endpoint of the agent. }
+                labels: { type: object, additionalProperties: { type: string } }
+      responses:
+        "201":
+          description: Registered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        default: { $ref: "#/components/responses/Problem" }
+  /agents/{id}:reserve:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    post:
+      tags: [agents]
+      operationId: reserveAgent
+      x-required-scope: run
+      responses:
+        "200":
+          description: Reserved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        default: { $ref: "#/components/responses/Problem" }
+  /agents/{id}:release:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    post:
+      tags: [agents]
+      operationId: releaseAgent
+      x-required-scope: run
+      responses:
+        "200":
+          description: Released.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        default: { $ref: "#/components/responses/Problem" }
+components:
+  securitySchemes:
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: Scoped API token. Each operation names its required scope in x-required-scope (read, run, or admin).
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" }
+    PageSize:
+      name: page_size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+    PageToken:
+      name: page_token
+      in: query
+      schema: { type: string }
+  responses:
+    Problem:
+      description: Error as RFC 9457 problem details.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  schemas:
+    Problem:
+      type: object
+      properties:
+        type: { type: string, format: uri-reference, default: about:blank }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string }
+        instance: { type: string, format: uri-reference }
+        errors:
+          type: array
+          items: { $ref: "#/components/schemas/Finding" }
+    Finding:
+      type: object
+      required: [severity, path, message]
+      properties:
+        severity: { enum: [error, warning, info] }
+        path: { type: string, description: JSON Pointer into the submitted document. }
+        message: { type: string }
+    ValidationReport:
+      type: object
+      required: [valid, findings]
+      properties:
+        valid: { type: boolean }
+        findings: { type: array, items: { $ref: "#/components/schemas/Finding" } }
+        capacity:
+          type: object
+          properties:
+            agents_required: { type: integer }
+            agents_available: { type: integer }
+    ModuleType:
+      enum: [app, transport, host, content, tunnel, strike, evasion, fuzzer]
+    ModuleSummary:
+      type: object
+      required: [name, version, type, license]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        type: { $ref: "#/components/schemas/ModuleType" }
+        license: { type: string }
+        summary: { type: string }
+        scenarios: { type: array, items: { type: string } }
+        signed_by: { type: string }
+    ConfigRef:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        created_at: { type: string, format: date-time }
+    Capabilities:
+      type: object
+      required: [engine_api, backends, agents, modules]
+      properties:
+        engine_api: { type: string, examples: ["0.1.0"] }
+        api_version: { type: string, examples: ["0.1.0"] }
+        backends:
+          type: array
+          items: { enum: [kernel, af_xdp, dpdk] }
+        agents: { type: array, items: { $ref: "#/components/schemas/Agent" } }
+        modules: { type: array, items: { $ref: "#/components/schemas/ModuleSummary" } }
+    Agent:
+      type: object
+      required: [id, address, state]
+      properties:
+        id: { type: string }
+        address: { type: string }
+        state: { enum: [online, offline, reserved, busy] }
+        version: { type: string }
+        cores: { type: integer, minimum: 1 }
+        backend: { enum: [kernel, af_xdp, dpdk] }
+        ports:
+          type: array
+          items:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string }
+              driver: { type: string }
+              speed_mbps: { type: integer }
+        labels: { type: object, additionalProperties: { type: string } }
+    RunState:
+      enum: [pending, preparing, running, stopping, completed, failed, aborted]
+    Run:
+      type: object
+      required: [id, config_id, state]
+      properties:
+        id: { type: string }
+        config_id: { type: string }
+        state: { $ref: "#/components/schemas/RunState" }
+        degraded: { type: boolean, description: True when an agent failed during the run. }
+        phase: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time }
+        seed: { type: integer }
+        engine_version: { type: string }
+        module_versions: { type: object, additionalProperties: { type: string } }
+        summary: { $ref: "#/components/schemas/RunSummary" }
+        verdict:
+          type: object
+          properties:
+            passed: { type: boolean }
+            criteria:
+              type: array
+              items:
+                type: object
+                properties:
+                  metric: { type: string }
+                  op: { type: string }
+                  value: { type: number }
+                  observed: { type: number }
+                  passed: { type: boolean }
+    RunSummary:
+      type: object
+      properties:
+        sessions_attempted: { type: integer }
+        sessions_succeeded: { type: integer }
+        sessions_failed: { type: integer }
+        bytes_tx: { type: integer }
+        bytes_rx: { type: integer }
+        throughput_bps: { type: number }
+        sessions_per_second: { type: number }
+        concurrent_sessions: { type: integer }
+    MetricView:
+      enum: [application, scenario, port, tcp, tls, realism]
+    MetricSample:
+      type: object
+      required: [ts, view, key, values]
+      properties:
+        ts: { type: string, format: date-time }
+        view: { $ref: "#/components/schemas/MetricView" }
+        key: { type: string, description: "Application, scenario, or port name that the sample describes." }
+        values: { type: object, additionalProperties: { type: number } }
+    MetricSeriesSet:
+      type: object
+      required: [view, samples]
+      properties:
+        view: { $ref: "#/components/schemas/MetricView" }
+        samples: { type: array, items: { $ref: "#/components/schemas/MetricSample" } }
+    RunReport:
+      type: object
+      required: [run, realism]
+      properties:
+        run: { $ref: "#/components/schemas/Run" }
+        realism:
+          type: array
+          items:
+            type: object
+            required: [property, observed, target, passed]
+            properties:
+              property: { type: string }
+              observed: { type: number }
+              target: { type: string }
+              passed: { type: boolean }
+    Capture:
+      type: object
+      required: [id, port, state]
+      properties:
+        id: { type: string }
+        port: { type: string }
+        state: { enum: [running, completed, failed] }
+        bytes: { type: integer }
