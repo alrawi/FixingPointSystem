@@ -33,3 +33,6 @@ We added `tools/swarm/fps_swarm.py`, which runs every step of the [Swarm Protoco
 ## [2026-11-02] ingest | RLM-01 Realism runner and nDPI conformance
 
 We added the realism runner in `realism/`, which scores a pcap or pcapng capture against a labels file and writes a JSON report that follows `realism/schema/realism-report.schema.json`. The conformance check runs `ndpiReader -d` out of process and compares the share of sessions classified as the intended application with the 99% threshold. We added a Realism report section and a schema link to the seam table of [Implementation Plan](Implementation-Plan.md), and the `lint-rlm` and `test-rlm` rows to [Testing](Testing.md). The evidence is `docs/handoff/RLM-01.md` and the tests in `realism/tests/`, which include a run of the real ndpiReader 4.2.0 on synthetic HTTP and DNS captures.
+## [2026-11-02] decision | Agents register with the controller
+
+The owner decided that agents dial the controller and register themselves, which reverses the direction in the CON-01 draft. We added CON-06 to the catalog to change the agent control protocol, and AGT-02 and CTL-06 now depend on it.
