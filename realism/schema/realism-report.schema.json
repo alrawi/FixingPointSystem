@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alrawi/FixingPointSystem/realism/schema/realism-report.schema.json",
+  "title": "FixingPointSystem realism report",
+  "description": "Report of the realism runner for one capture. Every check adds one entry to checks. A new check kind adds a definition under $defs and one if/then entry to $defs.check.allOf, and keeps the common check fields.",
+  "type": "object",
+  "required": ["report", "version", "generator", "passed", "capture", "labels", "checks"],
+  "additionalProperties": false,
+  "properties": {
+    "report": {"const": "fps-realism-report"},
+    "version": {
+      "description": "Report format version. Additive changes raise the minor version.",
+      "type": "string",
+      "pattern": "^0\\.[0-9]+\\.[0-9]+$"
+    },
+    "generator": {"type": "string", "minLength": 1},
+    "passed": {
+      "description": "True when checks is not empty and every check passed.",
+      "type": "boolean"
+    },
+    "capture": {
+      "type": "object",
+      "required": ["file", "sha256", "format", "link_types", "frames", "skipped_frames", "sessions"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {"type": "string", "description": "Base name of the capture file."},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "format": {"enum": ["pcap", "pcapng"]},
+        "link_types": {
+          "description": "Link types of the capture, numbered as in the tcpdump link type registry.",
+          "type": "array",
+          "items": {"type": "integer", "minimum": 0}
+        },
+        "frames": {"type": "integer", "minimum": 0},
+        "skipped_frames": {
+          "description": "Frames that carry no IPv4 or IPv6 TCP or UDP packet the runner decodes.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "sessions": {"type": "integer", "minimum": 0}
+      }
+    },
+    "labels": {
+      "type": "object",
+      "required": ["file", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {"type": "string"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/check"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "endpoint": {
+      "type": "object",
+      "required": ["ip", "port"],
+      "additionalProperties": false,
+      "properties": {
+        "ip": {"type": "string"},
+        "port": {"type": "integer", "minimum": 0, "maximum": 65535}
+      }
+    },
+    "metric": {
+      "description": "One metric value. The name is a metric of contracts/metrics/catalog.yaml, and labels are labels that the catalog declares for it.",
+      "type": "object",
+      "required": ["name", "labels", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$"},
+        "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+        "value": {"type": "number"}
+      }
+    },
+    "check": {
+      "description": "Fields that every check carries. The allOf entries add the fields of each known check kind.",
+      "type": "object",
+      "required": ["check", "passed", "metrics"],
+      "properties": {
+        "check": {"$ref": "#/$defs/name"},
+        "passed": {"type": "boolean"},
+        "metrics": {"type": "array", "items": {"$ref": "#/$defs/metric"}}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"check": {"const": "conformance"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/conformance"}
+        }
+      ]
+    },
+    "conformance": {
+      "description": "Share of labelled sessions that one classifier names as the intended application.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "classifier", "classifier_version", "threshold",
+        "applications", "unlabelled_sessions", "mismatches", "mismatches_total"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "conformance"},
+        "passed": {
+          "description": "True when at least one application was scored and every application passed.",
+          "type": "boolean"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/metric"},
+              {
+                "properties": {
+                  "name": {"const": "realism.conformance_ratio"},
+                  "labels": {
+                    "required": ["application", "classifier"],
+                    "additionalProperties": false
+                  },
+                  "value": {"minimum": 0, "maximum": 1}
+                }
+              }
+            ]
+          }
+        },
+        "classifier": {"enum": ["ndpi", "zeek", "stub"]},
+        "classifier_version": {"type": "string"},
+        "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "applications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["application", "accepted", "sessions", "conforming", "ratio", "passed", "observed"],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "accepted": {
+                "description": "Classifier protocol names that count as the application. An empty list fails the application.",
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "sessions": {"type": "integer", "minimum": 1},
+              "conforming": {"type": "integer", "minimum": 0},
+              "ratio": {"type": "number", "minimum": 0, "maximum": 1},
+              "passed": {"type": "boolean"},
+              "observed": {
+                "description": "Session count per classifier protocol name.",
+                "type": "object",
+                "additionalProperties": {"type": "integer", "minimum": 1}
+              }
+            }
+          }
+        },
+        "unlabelled_sessions": {"type": "integer", "minimum": 0},
+        "mismatches": {
+          "description": "The first 100 labelled sessions that the classifier did not name as the intended application.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": ["session", "transport", "client", "server", "application", "observed"],
+            "additionalProperties": false,
+            "properties": {
+              "session": {"type": "integer", "minimum": 1},
+              "transport": {"enum": ["tcp", "udp"]},
+              "client": {"$ref": "#/$defs/endpoint"},
+              "server": {"$ref": "#/$defs/endpoint"},
+              "application": {"type": "string"},
+              "observed": {"type": "string"}
+            }
+          }
+        },
+        "mismatches_total": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}
