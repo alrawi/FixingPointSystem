@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["spikes/s1-engine", "spikes/s2-tls"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/alrawi/FixingPointSystem"
+publish = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = 1
