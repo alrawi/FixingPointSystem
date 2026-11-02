@@ -108,6 +108,12 @@ test-spk:
 	$(PYTHON) -m pytest -q spikes/s4-trex-astf
 
 # ---------------------------------------------------------------------------
+# AGT agent
+
+# Capability detection against fake system roots and the agent.proto mirror test.
+TEST_TARGETS += test-agt
+test-agt:
+	$(CARGO) test -p fps-agent
 # CTL controller
 
 GO ?= go

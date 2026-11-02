@@ -76,6 +76,8 @@ Each seam has one owner and one definition. A package that needs a seam to chang
 | Counter catalog | `contracts/metrics/catalog.yaml` (CON-02) | ENG | CTL, UI, RLM |
 | Extension interface | `contracts/extension/fps-extension.wit` and the Rust traits in `contracts/extension/README.md` (CON-03) | ENG | MOD |
 | Byte stream and datagram I/O | `SessionIo`, `DatagramIo` in `engine/fps-io` | TRN | ENG |
+| Host capabilities | `HostCapabilities` and `SystemRoot` in `engine/fps-agent` (AGT-03) | AGT | TRN backend selection, CTL through `Capabilities` |
+| Realism report | `realism/schema/` (RLM-01) | RLM | CTL, QA |
 | Realism report | [`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) (RLM-01) | RLM | CTL, QA |
 
 ### Counter catalog
@@ -87,6 +89,17 @@ The [metric catalog](https://github.com/alrawi/FixingPointSystem/blob/main/contr
 3. An OpenAPI field that carries a metric names it with `x-fps-metric`, and the validator rejects names that the catalog lacks.
 4. A new metric is a contract change, so it needs a CON package and owner approval.
 
+### Capability detection
+
+AGT-03 detects host capabilities in [`engine/fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent). The function `detect` reads `/proc` and `/sys` under an injectable `SystemRoot` and returns `HostCapabilities`, which `to_capabilities` maps into a hand written mirror of the proto `Capabilities` message. A contract test reads `agent.proto` and fails when the mirror drifts. Consumers rely on five facts.
+
+1. `cores` counts online CPUs, and `memory_bytes` is `MemAvailable`.
+2. `ports` lists every interface except loopback. The driver comes from the device `uevent`, so a virtual interface such as a bridge reports an empty driver, and a link without a speed reports 0.
+3. `backends` lists `BACKEND_AF_XDP` only when the kernel is 4.18 or newer and its config or `/proc/kallsyms` proves AF_XDP sockets. Unknown support leaves the backend out.
+4. Each detected port carries a native XDP and a zero copy hint from a table of drivers and kernel versions. Only an AF_XDP bind with `XDP_ZEROCOPY` proves zero copy, so backend selection treats the hint as a starting point.
+5. NUMA nodes, the kernel release, and the port hints have no field in contract version 0.1.0, so they stay on `HostCapabilities` until follow up #74 adds them.
+
+The fake system roots in `engine/fps-agent/testdata/` cover a virtio-net guest, a host without XDP, and a host with two NUMA nodes. Later agent packages add fixtures there instead of writing new fakes.
 ### Realism report
 
 The realism runner from RLM-01 writes one JSON report per capture with `python3 -m realism score --pcap FILE --labels FILE`, and the [realism README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md) describes the command, the labels file, and the report. Packages that add checks or read reports follow four rules.

@@ -63,6 +63,7 @@ The targets that exist today are listed below.
 | `test-ctl` | `go test -race ./...` over the controller |
 | `test-ops` | the plan tool tests, the Cargo workspace probe, and a parse of `go.work` |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
+| `test-agt` | `cargo test -p fps-agent`, the capability detection tests against fake system roots and the `agent.proto` mirror test |
 | `test-eng` | every crate under `engine/`, see [Engine](Engine.md) |
 | `lint-rlm` | `ruff format --check`, `ruff check`, and `mypy --strict` over `realism/` |
 | `test-rlm` | the realism runner tests, including the ndpiReader test when nDPI is installed |
