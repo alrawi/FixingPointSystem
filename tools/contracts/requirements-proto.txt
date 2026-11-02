@@ -1,0 +1,5 @@
+# Packages for tools/contracts/check_plans.py and its tests.
+# protobuf is BSD-3-Clause and grpcio-tools is Apache-2.0, both compatible with GPL-3.0.
+-r requirements.txt
+protobuf>=5.28
+grpcio-tools>=1.66
