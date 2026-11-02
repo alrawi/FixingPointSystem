@@ -29,6 +29,10 @@ write_files:
             set-name: test0
             addresses: [ "@ADDR@/24" ]
             mtu: 1500
+  # Persist hugepages so DPDK still starts after the HWE kernel reboot.
+  - path: /etc/sysctl.d/60-hugepages.conf
+    content: |
+      vm.nr_hugepages=1024
 runcmd:
   - netplan apply
   - sysctl -w vm.nr_hugepages=1024
