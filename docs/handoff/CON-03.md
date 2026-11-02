@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #19 |
 | Branch | `wp/CON-03` |
-| Pull request | #0 |
+| Pull request | #61 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 40% (2 of 5 plan steps) |
 | Current holder | claude-con03-67e1, lease until 2026-11-02T18:57:18Z |
 | Last verified commit | none |
 
@@ -21,22 +21,24 @@ Define the extension world `fps:extension@0.1.0` with the five hooks of the spec
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
 - [ ] 1. Write `contracts/extension/fps-extension.wit` and validate it with `wasm-tools component wit`
-- [ ] 2. Write `contracts/extension/README.md` with the hook semantics and the WIT to Rust mapping table
-- [ ] 3. Write decision record `docs/decisions/0010-native-extensions.md` (Proposed) and list it in the index
+- [x] 2. Write `contracts/extension/README.md` with the hook semantics and the WIT to Rust mapping table
+- [x] 3. Write decision record `docs/decisions/0010-native-extensions.md` (Proposed) and list it in the index
 - [ ] 4. Add a pinned wasm-tools CI step, and update `contracts/README.md` and `contracts/CHANGELOG.md`
 - [ ] 5. Ingest into the wiki, append the Log entry, and run the local checks
 
 ## Done and verified
 
-None yet.
+- Step 2. `contracts/extension/README.md` written. Voice checked by a local scan for em dashes, colons, and contractions outside code and tables.
+- Step 3. `docs/decisions/0010-native-extensions.md` written with status Proposed and listed in `docs/decisions/README.md`.
+- The WIT file is written but not yet validated, so step 1 stays open.
 
 ## Remaining
 
-All plan steps.
+Validate the WIT (step 1), the CI decision and the contract index and changelog (step 4, drafted), and the final checks (step 5, wiki edits drafted).
 
 ## Next action
 
-Write the WIT file.
+Run `wasm-tools component wit contracts/extension/fps-extension.wit` and fix any parse error.
 
 ## Blockers and open questions
 
@@ -64,3 +66,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-02T17:27:18Z | claude-con03-67e1 | claim | none | Fresh branch from main, card 6583722346 |
+| 2026-11-02T17:50:00Z | claude-con03-67e1 | checkpoint | see git log | WIT, README, D10, changelog, and wiki drafted; WIT validation pending on wasm-tools install |

@@ -8,6 +8,7 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 | `schemas/module-manifest.schema.json` | Module manifest |
 | `schemas/scenario.schema.json` | Scenarios and flow program actions |
 | `schemas/test-config.schema.json` | Test configuration |
+| `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
 | `examples/` | Example modules and tests that every validator run checks |
 
 ## Flow program semantics
@@ -32,7 +33,7 @@ For UDP flows, `connect` binds the peer address, `accept` binds the port and wai
 
 ## Template grammar
 
-A template is a string with zero or more `{{ expression }}` placeholders. Contract v0.1 defines the core grammar below. Module helper functions such as `http1.request(...)` arrive with WebAssembly extensions in a later contract version.
+A template is a string with zero or more `{{ expression }}` placeholders. Contract v0.1 defines the core grammar below. Module helper functions such as `http1.request(...)` are template functions that a module extension exports through `extension/fps-extension.wit`. The template syntax for calling them, including keyword arguments, arrives in contract v0.2 (CON-04).
 
 ```
 expression := reference | call | literal
@@ -56,6 +57,11 @@ literal    := integer | 'single quoted string'
 ```bash
 python3 -m pip install -r tools/contracts/requirements.txt
 python3 tools/contracts/validate.py
+```
+
+```bash
+cargo install wasm-tools --locked
+wasm-tools component wit contracts/extension/fps-extension.wit
 ```
 
 The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax, scenario references in mixes, host pool sizes, and port references.

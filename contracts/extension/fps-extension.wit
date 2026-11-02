@@ -1,0 +1,229 @@
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// FixingPointSystem extension interface, contract version 0.1.0.
+//
+// A module that needs computation which flow programs cannot express ships a
+// component that targets the `extension` world below. The engine instantiates
+// the component once per worker and opens one `session` resource per session
+// of every flow that names the module. The same interface is the Rust trait
+// that native first party extensions implement (decision record 0010). The
+// mapping between the two lives in contracts/extension/README.md.
+package fps:extension@0.1.0;
+
+/// Types shared by the hooks, the template catalog, and the engine calls.
+interface types {
+    /// Side of the flow program that runs the session.
+    enum side {
+        client,
+        server,
+    }
+
+    /// Transport of the session.
+    enum transport {
+        tcp,
+        udp,
+    }
+
+    /// A template value. The first four cases match scenario variables in
+    /// contract v0.1. The `bytes` case carries binary data such as the buffer
+    /// that the previous `expect` consumed.
+    variant value {
+        int(s64),
+        float(f64),
+        boolean(bool),
+        text(string),
+        bytes(list<u8>),
+    }
+
+    /// The declared type of a template function parameter.
+    enum value-type {
+        int,
+        float,
+        boolean,
+        text,
+        bytes,
+        /// Any of the five value cases. The function checks the case itself.
+        any,
+    }
+
+    /// A value bound to a name, used for variables and keyword arguments.
+    record named-value {
+        name: string,
+        value: value,
+    }
+
+    /// Identity and configuration of one session.
+    record session-info {
+        /// Session sequence number within the run, the same as `session.id`.
+        id: u64,
+        /// Flow id, the same as `session.flow`.
+        flow: string,
+        side: side,
+        transport: transport,
+        /// Scenario variables after test parameter overrides, including the
+        /// module parameters that the manifest declares.
+        vars: list<named-value>,
+    }
+
+    /// Arguments of one template function call. Positional arguments come
+    /// first in call order. Keyword arguments keep their call order.
+    record call-args {
+        positional: list<value>,
+        named: list<named-value>,
+    }
+
+    /// A timer handle that `engine.set-timer` returns and `on-timer` receives.
+    type timer-id = u32;
+
+    /// Why a session ends.
+    enum close-reason {
+        /// The flow program finished and closed with `fin` or `half`.
+        finished,
+        /// The flow program or the extension aborted with `rst`.
+        reset,
+        /// The peer closed or reset the session first.
+        peer-closed,
+        /// An `expect` or the session deadline timed out.
+        timeout,
+        /// A hook or an action failed.
+        failed,
+    }
+
+    /// What the engine does with bytes that `on-data` saw.
+    variant data-outcome {
+        /// Deliver the received bytes unchanged to the flow program.
+        pass,
+        /// The extension consumed the bytes. The flow program sees nothing.
+        consume,
+        /// Deliver these bytes to the flow program instead of the received ones.
+        replace(list<u8>),
+    }
+
+    /// Classes of hook failure. The engine counts them as failure labels.
+    enum hook-error-kind {
+        /// A template function received arguments that its catalog entry rejects.
+        invalid-argument,
+        /// The peer sent bytes that violate the protocol.
+        protocol,
+        /// The extension does not implement the requested function or feature.
+        unsupported,
+        /// Any other failure inside the extension.
+        internal,
+    }
+
+    /// A hook failure. It fails only the session that called the hook.
+    record hook-error {
+        kind: hook-error-kind,
+        /// Lowercase sentence without trailing punctuation.
+        message: string,
+    }
+
+    /// Why the engine refused an engine call.
+    enum engine-error {
+        /// The session no longer accepts writes.
+        closed,
+        /// The call would exceed a limit, such as the timer count.
+        limit,
+        /// The call is not valid in the current hook, such as send during render.
+        not-allowed,
+    }
+
+    /// Log levels for `engine.log`.
+    enum log-level {
+        trace,
+        debug,
+        info,
+        warn,
+        error,
+    }
+}
+
+/// Engine calls, the only way an extension reaches the network, time, or
+/// randomness. The engine attributes every call to the session whose hook is
+/// running, so an extension cannot act on another session.
+interface engine {
+    use types.{engine-error, log-level, timer-id};
+
+    /// Write bytes to the session transport after any bytes already queued.
+    send: func(data: list<u8>) -> result<_, engine-error>;
+
+    /// Start a one shot timer that fires `on-timer` after `delay-ms` of
+    /// session time. The engine clock is injected, so replays fire timers at
+    /// the same points.
+    set-timer: func(delay-ms: u32) -> result<timer-id, engine-error>;
+
+    /// Cancel a timer. Cancelling a fired or unknown timer does nothing.
+    cancel-timer: func(timer: timer-id);
+
+    /// Emit a structured log record. The engine adds the session and flow ids.
+    log: func(level: log-level, message: string, fields: list<tuple<string, string>>);
+
+    /// Next 64 bit value from the session generator, which derives from the
+    /// run seed and the session id.
+    random-u64: func() -> u64;
+
+    /// `len` bytes from the session generator.
+    random-bytes: func(len: u32) -> list<u8>;
+}
+
+/// The catalog of template functions that the module exports.
+interface template {
+    use types.{value, value-type};
+
+    /// One parameter of a template function.
+    record param-desc {
+        name: string,
+        %type: value-type,
+        /// Value used when the call omits the argument. A parameter without a
+        /// default is required.
+        default: option<value>,
+    }
+
+    /// One template function, called in templates as `<module>.<name>(...)`.
+    record function-desc {
+        name: string,
+        params: list<param-desc>,
+        /// One line description for documentation and validator messages.
+        summary: string,
+    }
+
+    /// Return the full catalog. The engine calls it once per load and checks
+    /// every call in a scenario against it before the run starts.
+    functions: func() -> list<function-desc>;
+}
+
+/// The five hooks of the specification.
+interface hooks {
+    use types.{session-info, call-args, timer-id, close-reason, data-outcome, hook-error};
+
+    /// Per session state of the extension. The engine drops the resource
+    /// after `on-close` returns.
+    resource session {
+        /// The engine received bytes on the session, before `expect` sees them.
+        on-data: func(data: list<u8>) -> result<data-outcome, hook-error>;
+
+        /// A timer that this session set has fired.
+        on-timer: func(timer: timer-id) -> result<_, hook-error>;
+
+        /// The session ends. Engine calls other than `log` return
+        /// `not-allowed` during this hook.
+        on-close: func(reason: close-reason);
+
+        /// Render the template function `function` with `args`. The engine
+        /// has checked the arguments against the catalog. The result replaces
+        /// the placeholder in the template. Calls to `send` and `set-timer`
+        /// return `not-allowed` during this hook.
+        render: func(function: string, args: call-args) -> result<list<u8>, hook-error>;
+    }
+
+    /// The session opened, after `connect` or `accept` succeeded and before
+    /// the first action of the flow program runs.
+    on-open: func(info: session-info) -> result<session, hook-error>;
+}
+
+/// The world that every extension component targets.
+world extension {
+    import engine;
+    export template;
+    export hooks;
+}
