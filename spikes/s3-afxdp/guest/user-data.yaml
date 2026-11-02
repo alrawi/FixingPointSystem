@@ -1,0 +1,31 @@
+#cloud-config
+# Spike S3 guest. The launch script substitutes @SSH_KEY@, @ROLE@, @ADDR@, and @MAC@.
+hostname: "fps-@ROLE@"
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - "@SSH_KEY@"
+package_update: true
+packages:
+  - dpdk
+  - xdp-tools
+  - ethtool
+  - linux-tools-generic
+  - jq
+write_files:
+  - path: /etc/netplan/60-test.yaml
+    permissions: "0600"
+    content: |
+      network:
+        version: 2
+        ethernets:
+          test0:
+            match: { macaddress: "@MAC@" }
+            set-name: test0
+            addresses: [ "@ADDR@/24" ]
+            mtu: 1500
+runcmd:
+  - netplan apply
+  - sysctl -w vm.nr_hugepages=1024
