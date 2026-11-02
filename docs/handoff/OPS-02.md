@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #11 |
 | Branch | `wp/OPS-02` |
-| Pull request | pending |
+| Pull request | #62 |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 83% (5 of 6 plan steps) |
 | Current holder | claude-ops02-db00, lease until 2026-11-02T18:57:00Z |
 | Last verified commit | none |
 
@@ -20,24 +20,24 @@ We implement the claim, heartbeat, release, takeover, block, review, and sweep o
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Status card model with render, parse, and the holder rule, plus unit tests
-- [ ] 2. API seam (one injectable `gh api` runner), server time from the Date header, and a recorded fake API for tests
-- [ ] 3. Subcommands list, claim, and takeover, with the concurrent claim test
-- [ ] 4. Subcommands heartbeat, release, block, and review
-- [ ] 5. Promotion sweep and stale sweep subcommands with tests
+- [x] 1. Status card model with render, parse, and the holder rule, plus unit tests
+- [x] 2. API seam (one injectable `gh api` runner), server time from the Date header, and a recorded fake API for tests
+- [x] 3. Subcommands list, claim, and takeover, with the concurrent claim test
+- [x] 4. Subcommands heartbeat, release, block, and review
+- [x] 5. Promotion sweep and stale sweep subcommands with tests
 - [ ] 6. CI wiring, wiki update (Swarm Protocol and Log), and finish
 
 ## Done and verified
 
-None yet.
+Steps 1 to 5 are done. `python3 -m pytest -q tools/swarm` reports 42 passed offline, and `mypy --strict tools/swarm/fps_swarm.py` reports no issues.
 
 ## Remaining
 
-Every plan step.
+Step 6, which covers the CI pytest path, the Swarm Protocol page, the Log entry, and the finish.
 
 ## Next action
 
-Write `tools/swarm/fps_swarm.py` with the card dataclass, render, parse, and holder rule.
+Add `tools/swarm` to the pytest step in `.github/workflows/ci.yml`.
 
 ## Blockers and open questions
 
@@ -64,3 +64,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-02T17:27:20Z | claude-ops02-db00 | claim | none | Card 6583717345 holds the lease after the settle wait |
+| 2026-11-02T17:40:00Z | claude-ops02-db00 | checkpoint | pending | Steps 1 to 5 done, 42 tests pass |
