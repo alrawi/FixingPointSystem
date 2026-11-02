@@ -72,7 +72,7 @@ Each seam has one owner and one definition. A package that needs a seam to chang
 |---|---|---|---|
 | REST API | `contracts/openapi/fps-api-v1.yaml` | CTL | CLI, UI, QA |
 | Module manifest and scenarios | `contracts/schemas/` | CON | MOD, ENG, CTL, CAP |
-| Agent control protocol and plans | `contracts/proto/` (CON-01) | CTL | AGT |
+| Agent control protocol and plans | `contracts/proto/` and `contracts/examples/plans/` (CON-01) | CTL | AGT |
 | Counter catalog | `contracts/metrics/catalog.yaml` (CON-02) | ENG | CTL, UI, RLM |
 | Extension interface | `contracts/extension/fps-extension.wit` (CON-03) | ENG | MOD |
 | Byte stream and datagram I/O | `SessionIo`, `DatagramIo` in `engine/fps-io` | TRN | ENG |
