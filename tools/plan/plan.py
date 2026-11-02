@@ -181,6 +181,8 @@ def _anchor(wp: dict) -> str:
 def render(plan: dict, check_only: bool) -> int:
     stale = []
     for p in plan["phases"]:
+        if p["number"] == 0:
+            continue
         path = WIKI / f"Work-Packages-Phase-{p['number']}.md"
         text = render_phase(plan, p["number"])
         if check_only:
@@ -275,12 +277,19 @@ def seed(plan: dict, phase: int, apply: bool) -> int:
                               for d in wp["depends_on"])
         title = f"[{wp['id']}] {wp['title']}"
         labels = issue_labels(wp, ready)
+        if wp.get("status") == "done":
+            labels = [l for l in labels if not l.startswith("status:")] + ["status:done"]
         if not apply:
             print(f"would create: {title}  labels={','.join(labels)}")
             continue
-        gh(f"repos/{REPO}/issues", "--method", "POST", "--input", "-",
-           payload={"title": title, "body": issue_body(wp), "labels": labels})
-        print(f"created: {title}")
+        issue = gh(f"repos/{REPO}/issues", "--method", "POST", "--input", "-",
+                   payload={"title": title, "body": issue_body(wp), "labels": labels})
+        if wp.get("status") == "done":
+            gh(f"repos/{REPO}/issues/{issue['number']}", "--method", "PATCH", "--input", "-",
+               payload={"state": "closed", "state_reason": "completed"})
+            closed.add(wp["id"])
+            existing[wp["id"]] = {"state": "closed", "state_reason": "completed"}
+        print(f"created: #{issue['number']} {title}")
     return 0
 
 
