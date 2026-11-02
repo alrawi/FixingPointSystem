@@ -21,7 +21,10 @@ Pick the size from the results.
 |---|---|
 | 40 or more threads, 32 GB or more RAM, 40 GB or more free disk | Full: `VCPUS=16 MEM_MB=8192 QUEUES=8 QUEUE_SET="1 2 4 8"` |
 | 16 or more threads, 16 GB or more RAM, 20 GB or more free disk | Minimum: `VCPUS=4 MEM_MB=4096 QUEUES=2 QUEUE_SET="1 2"` |
+| 8 or more threads, 12 GB or more RAM, 20 GB or more free disk | Small: `VCPUS=3 MEM_MB=3072 QUEUES=2 QUEUE_SET="1 2"` |
 | Anything smaller | Stop and report the host details |
+
+The small size gives each VM one main core and two forwarding cores, which leaves two host threads for QEMU and the vhost workers. It measures the packet rate per queue, which is the number that sets the AF_XDP defaults. It cannot show scaling beyond two queues, so label every result from a small host as "small host" and treat the 10 Gbps verdict as indicative.
 
 ## 2. Prepare
 
@@ -48,7 +51,7 @@ The first boot takes several minutes while cloud-init installs packages. If ever
 
 1. `sudo chown -R "$USER" spikes/s3-afxdp/results`
 2. Replace the table in `spikes/s3-afxdp/RESULTS.md` with one row per receiver (`"role":"rx"`) line in `results/s3.jsonl`. Use the guest kernel string from the JSON.
-3. Under the table, state whether any 1,500 byte receiver row reaches 813,000 packets per second (10 Gbps), and for which kernel, mode, and queue count. Add the host CPU, host kernel, and QEMU version from `results/host.txt`.
+3. Under the table, state the size you used. State whether any 1,500 byte receiver row reaches 813,000 packets per second (10 Gbps), and for which kernel, mode, and queue count. Add the host CPU, host kernel, and QEMU version from `results/host.txt`.
 4. Commit `spikes/s3-afxdp/RESULTS.md` and `spikes/s3-afxdp/results/`, then push the `s3-results` branch. If the push fails, report the path of the results directory.
 
 ## 5. Report
