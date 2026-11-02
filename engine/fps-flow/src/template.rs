@@ -480,7 +480,8 @@ pub fn decode_hex(s: &str) -> Result<Vec<u8>, TemplateError> {
     if !digits.len().is_multiple_of(2) {
         return Err(TemplateError::Hex("odd number of digits".into()));
     }
-    Ok(digits.chunks_exact(2).map(|p| (p[0] << 4) | p[1]).collect())
+    let (pairs, _) = digits.as_chunks::<2>();
+    Ok(pairs.iter().map(|[hi, lo]| (hi << 4) | lo).collect())
 }
 
 #[cfg(test)]

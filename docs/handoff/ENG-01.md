@@ -72,6 +72,7 @@ None.
 ## Pitfalls
 
 - Building a `Filler` costs one random draw per byte of its 1 MiB buffer. A property test that builds one per case ran for 40 seconds, so the tests share one filler through `OnceLock`.
+- CI installs the newest stable toolchain, whose clippy may carry lints that a local toolchain lacks. The first CI run failed on `clippy::chunks_exact_to_as_chunks`, and `decode_hex` now uses `as_chunks`.
 - `cargo fmt --all` formats the spike crates too. They were already formatted, so it changed nothing there.
 
 ## Verify the current state
@@ -92,3 +93,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | 2026-11-02T20:04:31Z | claude-eng01-1906 | claim | | Card 6587196943 |
 | 2026-11-02T20:16:57Z | claude-eng01-1906 | checkpoint | b734346 | Engine crates and Makefile target |
 | 2026-11-02T20:19:00Z | claude-eng01-1906 | finish | | Wiki ingest, ready for review |
+| 2026-11-02T20:24:00Z | claude-eng01-1906 | checkpoint | | Fix the CI clippy lint chunks_exact_to_as_chunks |
