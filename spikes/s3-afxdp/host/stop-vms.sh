@@ -9,3 +9,4 @@ for role in tx rx; do
   fi
   ip link del "fps-$role" 2>/dev/null || true
 done
+ip link del "${BRIDGE:-fpsbr0}" 2>/dev/null || true

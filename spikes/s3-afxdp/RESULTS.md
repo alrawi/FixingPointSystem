@@ -1,10 +1,8 @@
 # Spike S3 results
 
-Status: **blocked, needs a KVM host.** The Phase 0 build container exposes no `/dev/kvm`. The harness in this directory is complete and passes `shellcheck`.
+Status: **not run yet.** The harness is ready for a bare metal Linux host with KVM (see the host requirements in `README.md`). `host/run-all.sh` writes `results/s3.jsonl`, `results/host.txt`, and guest logs; copy the receiver rows into the table below.
 
-Fill one row per JSON line that `guest/run-afxdp.sh` writes on the receiver.
-
-| Kernel | Mode | Frame bytes | Queues | vCPU | Median Rx pps | Line Gbps | Zero copy observed |
+| Guest kernel | Mode | Frame bytes | Queues | vCPU | Median Rx pps | Line Gbps | Zero copy log lines |
 |---|---|---|---|---|---|---|---|
 | 6.8 (GA) | default | 64 | 1 | 16 | | | |
 | 6.8 (GA) | copy | 64 | 1 | 16 | | | |
