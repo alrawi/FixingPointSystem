@@ -3,7 +3,7 @@
   "runId": "run-0001",
   "agentId": "agent-a",
   "testName": "http_dns_smoke",
-  "engineApi": "0.1.0",
+  "engineApi": "0.2.0",
   "seed": "7",
   "topology": "TOPOLOGY_APP_SIM",
   "backend": "BACKEND_KERNEL",
@@ -11,12 +11,12 @@
     {
       "name": "dns",
       "version": "0.1.0",
-      "digest": "sha256:140227bdf31ccfaf72818c2cf4902887986cf249643107287bc0c20d2e933f0c"
+      "digest": "sha256:30d8ff09716eeb9acd5beafc3bd9792e3b8adcf35a435b29df2962c8e259db62"
     },
     {
       "name": "http1",
       "version": "0.1.0",
-      "digest": "sha256:5991a234b984d4c66a42bad8443238a616c3efce25dfcf560ebf32b04a3d88d8"
+      "digest": "sha256:8e60b20ffeae39f80f7785aa8f129d657bff9c660dd78c9979401718e8fd3ff1"
     }
   ],
   "scenarios": [

@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #20 |
 | Branch | `wp/CON-04` |
-| Pull request | none yet |
+| Pull request | #67 |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 67% (4 of 6 plan steps) |
 | Current holder | claude-con04-d3df, lease until 2026-11-02T21:34:19Z |
 | Last verified commit | none |
 
@@ -20,24 +20,24 @@ Extend the scenario contract to v0.2. The template grammar gains module function
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Design the v0.2 grammar, `last`, and the UDP datagram rules, and bump the scenario schema
-- [ ] 2. Add the template function list to the module manifest schema and the example manifests
-- [ ] 3. Implement the template parser and module call checks in `tools/contracts/validate.py`
-- [ ] 4. Add validator tests for the grammar, `last`, module calls, and UDP expect
+- [x] 1. Design the v0.2 grammar, `last`, and the UDP datagram rules, and bump the scenario schema
+- [x] 2. Add the template function list to the module manifest schema and the example manifests
+- [x] 3. Implement the template parser and module call checks in `tools/contracts/validate.py`
+- [x] 4. Add validator tests for the grammar, `last`, module calls, and UDP expect
 - [ ] 5. Update the examples, `contracts/README.md`, and `contracts/CHANGELOG.md`
 - [ ] 6. Ingest into the wiki, append the Log entry, run the checks, and finish
 
 ## Done and verified
 
-None yet.
+- Steps 1 to 4. The scenario schema carries `max_datagram` on expect, the manifest schema carries `functions`, and `validate.py` parses the v0.2 grammar, checks module calls against manifest catalogs, checks `last` by a definite precedence walk per side, and applies the UDP datagram rules. `python3 tools/contracts/validate.py` reports 0 errors and 0 warnings, `python3 -m pytest -q tools/contracts` passes 147 tests, and `python3 tools/contracts/check_plans.py` reports 0 errors.
 
 ## Remaining
 
-All plan steps.
+Steps 5 and 6. The README grammar and semantics sections and the CHANGELOG entry are not written yet.
 
 ## Next action
 
-Read the CON-03 template function catalog and write the v0.2 grammar into `contracts/README.md`.
+Write the v0.2 template grammar, `last`, and UDP datagram sections into `contracts/README.md`.
 
 ## Blockers and open questions
 
@@ -65,3 +65,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-02T20:05:07Z | claude-con04-d3df | claim | none | Fresh branch from main, card 6587192454 |
+| 2026-11-02T20:13:44Z | claude-con04-d3df | checkpoint | see git log | Schemas, validator, examples, and tests done; README and CHANGELOG next |

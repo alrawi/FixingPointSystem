@@ -1,0 +1,21 @@
+scenario: resolve
+description: One A record query built by the module, with the answer address bound for later flows. The server answers from the query that it received.
+vars:
+  host: www.example.test
+  answer: 192.0.2.1
+  server_port: 53
+flows:
+  - id: query
+    module: dns
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ dns.query(name=vars.host, qtype='A') }}"
+      - expect: { min_bytes: 12, max_datagram: 512, timeout_ms: 2000 }
+      - set: { server_ip: "{{ dns.answer_ip(last) }}" }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { min_bytes: 12, max_datagram: 512, timeout_ms: 2000 }
+      - send: "{{ dns.response(last, address=vars.answer) }}"
+      - close: fin
