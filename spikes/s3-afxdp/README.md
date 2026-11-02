@@ -2,31 +2,41 @@
 
 S3 measures the AF_XDP packet rate inside KVM guests with virtio-net and vhost-net. The result decides whether tier T1 (10 Gbps per agent on 16 vCPU) is reachable with AF_XDP on KVM, and which Ubuntu LTS kernel the appliance needs (decision D6).
 
+## Host requirements
+
+The test runs two Linux guests on one host and sends traffic between them over a private bridge. It needs no physical test NIC.
+
+| | Minimum | Full T1 test |
+|---|---|---|
+| CPU | x86_64, 8 cores / 16 threads | 32 cores / 64 threads |
+| RAM | 16 GB | 32 GB |
+| Free disk | 20 GB | 40 GB |
+| Guest size | `VCPUS=4 MEM_MB=4096` | `VCPUS=16 MEM_MB=8192` |
+| Queue counts | `QUEUE_SET="1 2"` | `QUEUE_SET="1 2 4 8"` |
+
+The host must run Linux on bare metal with virtualization enabled in the firmware, so that `/dev/kvm` exists. It needs root access, internet access for the Ubuntu cloud image (about 600 MB) and guest packages, and the packages `qemu-system-x86 qemu-utils cloud-image-utils curl`.
+
 ## Method
 
-1. `host/launch-vms.sh` boots two Ubuntu 24.04 guests from the official cloud image. A private bridge joins their multiqueue virtio-net test interfaces, and a second user mode NIC carries management traffic.
-2. In each guest, `guest/run-afxdp.sh` runs DPDK `testpmd` with the AF_XDP poll mode driver. The receiver runs `rxonly` and the sender runs `txonly`, for 64 and 1,500 byte frames. Each size runs twice, once with the driver default (zero copy when the kernel driver supports it) and once with `force_copy=1`.
-3. The script records the median of the per second packet rates after a five second warm up, the line rate in Gbps, the kernel, the driver, and the queue count, in one JSON line per test.
-4. Repeat steps 2 and 3 with the GA kernel and with the hardware enablement kernel (`sudo apt install linux-generic-hwe-24.04`, then reboot).
+1. `host/launch-vms.sh` boots two Ubuntu 24.04 guests from the official cloud image. A private bridge joins their multiqueue virtio-net test interfaces, and a user mode NIC carries management traffic.
+2. `host/run-all.sh` waits for both guests, then runs every combination of frame size (64 and 1,500 bytes), mode (driver default and forced copy), and queue count. For each combination it starts the receiver, waits 3 seconds, and runs the sender for 30 seconds.
+3. In each guest, `guest/run-afxdp.sh` runs DPDK `testpmd` with the AF_XDP poll mode driver (`rxonly` or `txonly`). It reports the median of the non zero per second packet rates, the line rate in Gbps, the kernel, the driver, and the queue count as one JSON line.
+4. `KERNEL=hwe host/run-all.sh` installs the Ubuntu hardware enablement kernel in both guests, reboots them, and repeats the measurements.
 
 ## Running
 
+An agent such as Claude Code can run the whole spike from `RUNBOOK.md`.
+
 ```bash
-# On a KVM host, as root
-SSH_KEY=~/.ssh/id_ed25519.pub VCPUS=16 QUEUES=8 ./host/launch-vms.sh
-scp -P 2222 guest/run-afxdp.sh ubuntu@127.0.0.1:   # receiver
-scp -P 2221 guest/run-afxdp.sh ubuntu@127.0.0.1:   # sender
-ssh -p 2222 ubuntu@127.0.0.1 sudo ./run-afxdp.sh rx &
-ssh -p 2221 ubuntu@127.0.0.1 sudo ./run-afxdp.sh tx
-./host/stop-vms.sh
+sudo apt install -y qemu-system-x86 qemu-utils cloud-image-utils curl
+sudo VCPUS=16 MEM_MB=8192 QUEUES=8 spikes/s3-afxdp/host/launch-vms.sh
+sudo QUEUE_SET="1 2 4 8" spikes/s3-afxdp/host/run-all.sh
+sudo KERNEL=hwe QUEUE_SET="1 2 4 8" spikes/s3-afxdp/host/run-all.sh
+sudo spikes/s3-afxdp/host/stop-vms.sh
 ```
 
-Start the receiver first. Both sides walk the same size and mode sequence with the same per test duration, so they stay aligned. Set `QUEUES=8` in the guests to measure multiqueue scaling.
+Results land in `spikes/s3-afxdp/results/s3.jsonl`, with guest logs in `logs-*.tgz` and host details in `host.txt`. A queue count must stay below the guest's vCPU count, because `testpmd` uses one core per queue plus a main core.
 
 ## Pass criterion
 
 AF_XDP reaches 10 Gbps of 1,500 byte frames (about 813,000 frames per second) on 16 vCPU. If it does not, we plan a DPDK virtio PMD path for tier T1.
-
-## Status
-
-Not run yet. The Phase 0 build environment has no `/dev/kvm`, so this spike needs one of the owner's KVM hosts. See `RESULTS.md`.

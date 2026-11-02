@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spike S3 host side: boot two Ubuntu LTS guests joined by a private bridge.
 # Guest "tx" generates packets with AF_XDP and guest "rx" receives them.
-# Requires root, KVM, qemu-system-x86_64, qemu-img, cloud-image-utils.
+# Requires root, KVM, qemu-system-x86_64, qemu-utils, cloud-image-utils, curl.
 set -euo pipefail
 
 WORK=${WORK:-/var/tmp/fps-s3}
@@ -10,18 +10,28 @@ VCPUS=${VCPUS:-16}
 MEM_MB=${MEM_MB:-8192}
 QUEUES=${QUEUES:-8}
 BRIDGE=${BRIDGE:-fpsbr0}
-SSH_KEY=${SSH_KEY:-$HOME/.ssh/id_ed25519.pub}
 HERE=$(cd "$(dirname "$0")" && pwd)
 
-for cmd in qemu-system-x86_64 qemu-img cloud-localds ip curl; do
+for cmd in qemu-system-x86_64 qemu-img cloud-localds ip curl ssh-keygen; do
   command -v "$cmd" >/dev/null || { echo "missing $cmd" >&2; exit 1; }
 done
 [[ -c /dev/kvm ]] || { echo "KVM is not available on this host" >&2; exit 1; }
-[[ -r $SSH_KEY ]] || { echo "set SSH_KEY to a readable public key" >&2; exit 1; }
 
 mkdir -p "$WORK"
+# A dedicated key lets host/run-all.sh reach the guests without touching ~/.ssh.
+SSH_KEY=${SSH_KEY:-$WORK/id_ed25519.pub}
+if [[ ! -r $SSH_KEY ]]; then
+  ssh-keygen -q -t ed25519 -N "" -f "${SSH_KEY%.pub}"
+fi
 base="$WORK/base.img"
 [[ -f $base ]] || curl -fL -o "$base" "$IMAGE_URL"
+
+# Hosts that run Docker often send bridged frames through iptables, whose
+# FORWARD policy may drop the test traffic. Warn; do not change host settings.
+nf=/proc/sys/net/bridge/bridge-nf-call-iptables
+if [[ -r $nf && $(cat "$nf") == 1 ]]; then
+  echo "warning: $nf is 1; if the receiver sees no packets, run: sysctl -w net.bridge.bridge-nf-call-iptables=0" >&2
+fi
 
 if ! ip link show "$BRIDGE" >/dev/null 2>&1; then
   ip link add "$BRIDGE" type bridge
@@ -51,4 +61,4 @@ for role in tx rx; do
     -display none -daemonize -pidfile "$WORK/$role.pid"
   echo "started $role: ssh -p 222$i ubuntu@127.0.0.1"
 done
-echo "When cloud-init finishes, run guest/run-afxdp.sh in both guests (rx first)."
+echo "Next: sudo $HERE/run-all.sh"
