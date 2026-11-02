@@ -32,6 +32,30 @@ export FPS_REPO=alrawi/FixingPointSystem
 
 An agent that resumes its own work after a restart creates a new identifier and follows the takeover procedure. This rule keeps the record simple.
 
+## The helper command
+
+We wrap every step of this protocol in one command, [`tools/swarm/fps_swarm.py`](https://github.com/alrawi/FixingPointSystem/blob/main/tools/swarm/fps_swarm.py). It needs Python 3.10 or newer and the `gh` command line client, and it calls only the repository scoped REST API through `gh api`. Each section below shows the helper command first and the raw calls after it. The raw calls stay authoritative, so an agent without Python can still follow the protocol.
+
+| Command | Protocol step |
+|---|---|
+| `fps_swarm.py now` | Print GitHub server time |
+| `fps_swarm.py list` | List claimable items in selection order |
+| `fps_swarm.py claim N --steps S` | Claim steps 1 to 5, including the settle wait |
+| `fps_swarm.py takeover N --steps S` | Claim an item whose newest card expired, was released, or was blocked |
+| `fps_swarm.py heartbeat N --check` | Confirm that our card holds the lease with 10 minutes left |
+| `fps_swarm.py heartbeat N --progress P --commit C --pr R --next X` | Checkpoint step 5, which renews the lease and edits the card |
+| `fps_swarm.py release N --next X` | Release steps 3 and 4 |
+| `fps_swarm.py block N --reason X --blocked-by M` | Block steps 2 and 3 |
+| `fps_swarm.py review N --pr R` | Finish steps 4 and 5 |
+| `fps_swarm.py promote`, `stale`, or `sweep` | The promotion sweep, the stale sweep, or both, each with `--dry-run` |
+
+The command reads the agent identifier from `FPS_AGENT_ID` and the repository from `FPS_REPO`, and the flags `--agent` and `--repo` override them. It exits with 0 on success, with 1 when the protocol refuses the step, for example because another card holds the lease, and with 2 on a usage or API error. Git work stays with the agent, so `claim` prints the card id, key, branch, and handoff path that the next steps need. The tests in `tools/swarm/` replay recorded API responses and never reach the network.
+
+```bash
+export FPS_AGENT_ID="claude-$(openssl rand -hex 3)" FPS_REPO=alrawi/FixingPointSystem
+swarm() { python3 tools/swarm/fps_swarm.py "$@"; }   # a function also works in scripts
+```
+
 ## Labels
 
 Every work package issue carries exactly one status label. The `tools/swarm/bootstrap-labels.sh` script creates the label set.
@@ -118,6 +142,13 @@ Each session starts with the same sequence of steps.
 3. Run the stale sweep. For every `status:in-progress` issue whose holder card has expired, replace the label with `status:stale`.
 4. Pick an item with the selection rule below.
 
+The helper runs both sweeps and lists claimable items in two commands.
+
+```bash
+swarm sweep            # promotion sweep, then stale sweep; add --dry-run to only print changes
+swarm list             # claimable items in selection order, tab separated
+```
+
 The promotion sweep applies three rules. A label change that returns 404 means that another agent already made it, and the sweep ignores that error.
 
 1. A `status:backlog` work package becomes `status:ready` when every dependency id in its body maps to an issue that closed with `state_reason` equal to `completed`. The sweep skips issues labeled `needs:split` or `type:followup`.
@@ -159,6 +190,14 @@ The agent claims an item in seven steps. The same steps resume an item that has 
 5. Replace the status label with `status:in-progress`. Add the GitHub login of the agent as an assignee for visibility; the card remains the authority, because agents may share one login.
 6. Prepare the branch. When `origin/wp/<ID>` exists, check it out, read the handoff file, run its verification commands, and reuse the open pull request. Otherwise create the branch from `origin/main` and copy the handoff template to `docs/handoff/<ID>.md`.
 7. Append a session log row to the handoff file, commit, and push immediately. This first push marks the branch as taken, so an earlier holder that still believes it holds the lease meets a rejected push. Open the pull request when none exists, with the `wip` label and the text `Closes #<issue>`.
+
+The helper performs steps 1 to 5 in one command. It exits with 1 and marks its own card `superseded` when another card wins the settle race. It skips the assignee when `gh api user` fails or when `--no-assign` is given.
+
+```bash
+swarm claim 23 --steps 5     # prints card=<id> key=ENG-04 branch=wp/ENG-04 handoff=docs/handoff/ENG-04.md lease=<time>
+```
+
+The raw calls for every step follow.
 
 ```bash
 N=23; ID=ENG-04; BR="wp/$ID"
@@ -204,9 +243,14 @@ A checkpoint makes the current state recoverable. The agent performs five steps.
 ```bash
 git add -A && git commit -m "Checkpoint $ID: expect modes and timeouts" \
   -m "Work-Package: $ID" -m "Agent: $FPS_AGENT_ID"
-git push
+swarm heartbeat "$N" --check && git push
+swarm heartbeat "$N" --progress "40% (2 of 5 plan steps)" --commit "$(git rev-parse --short HEAD)" \
+  --pr 57 --next "Implement expect min_bytes and its timeout test"
+# Raw equivalent of the last command
 gh api -X PATCH "repos/$FPS_REPO/issues/comments/$CARD" -F body=@card.md
 ```
+
+The helper finds the card by the agent identifier, so the agent does not need to remember the comment id. Fields that the command does not name keep their values.
 
 An agent never force pushes and never rebases a published branch. A rejected push means that another agent advanced the branch, and the agent must stop, read the cards, and push to a salvage branch. Conflicts in `docs/wiki/Log.md` resolve by keeping both entries in date order.
 
@@ -223,6 +267,12 @@ An agent that must stop on purpose releases the lease. Typical reasons are a low
 3. Edit the card to state `released`.
 4. Replace `status:in-progress` with `status:ready` and add `has-handoff`. Remove the assignee.
 
+The helper performs steps 3 and 4 after the agent checkpoints and updates the handoff file.
+
+```bash
+swarm release "$N" --next "Write the timeout test for expect min_bytes"
+```
+
 ## Oversized packages
 
 An agent that finds a package too large for one session does not grow its scope. It finishes the current plan step, checkpoints, and blocks the package with the labels `status:blocked`, `needs:split`, and `needs:owner`. The blocking comment proposes child packages with titles, paths, and dependencies. A planner agent or the owner then allocates new ids in the same workstream, adds the children to the catalog in a plan pull request, and runs the seeder after it merges. Each child depends on the epic's dependencies, and every dependent of the epic depends on all children. The epic becomes a tracking issue that closes when its children close.
@@ -235,11 +285,21 @@ An agent that cannot continue because of a missing decision, a contract gap, or 
 2. Post a comment that names the blocker, links the blocking issue or opens one, and states what would unblock the work.
 3. Edit the card to state `blocked` and replace the status label with `status:blocked`. Add `needs:owner` when only the owner can resolve the blocker.
 
+The helper performs steps 2 and 3. Its blocking comment starts with a marker that names the blocking issues, and the promotion sweep reads the newest such marker. A marker without issues means that only the owner can unblock the item, so the sweep leaves it alone.
+
+```bash
+swarm block "$N" --reason "Needs the counter catalog from CON-02" --blocked-by 18 --needs-owner
+# The comment it posts starts with this line
+<!-- fps:block agent=claude-7f3a2c issues=18 -->
+```
+
 Whoever resolves the blocker relabels the issue `status:ready`. The next agent resumes from the handoff file.
 
 ## Takeover
 
 A takeover is a claim of an item whose newest card is expired, released, or blocked. [Claim or resume](#claim-or-resume) covers it, because step 3 names the previous holder and step 6 resumes the branch. The new holder never waits for permission, since the previous agent may have crashed. When the branch fails its verification commands, the new holder fixes it forward from the last commit that the handoff marks as verified and records the failure in the session log.
+
+The helper command `swarm takeover N` follows the claim steps and also accepts an item that still carries `status:in-progress` when its holder card has expired. It refuses an item without an earlier card, because that is a plain claim.
 
 An agent that returns after its lease expired treats its own item like anybody else's. It reads the cards, and when another card holds the lease it edits its old card to `superseded`, pushes its local commits to a salvage branch, and stops.
 
@@ -252,6 +312,12 @@ An agent finishes an item when the [Definition of Done](Implementation-Plan.md#d
 3. Set the handoff status to `ready for review` and progress to 100%, then push.
 4. Remove the `wip` label from the pull request.
 5. Replace `status:in-progress` with `status:review` and edit the card to state `done`.
+
+The helper performs steps 4 and 5 and takes the pull request number from the card when `--pr` is absent.
+
+```bash
+swarm review "$N" --pr 57
+```
 
 A reviewer agent then reviews the pull request. The owner merges it, and the `Closes #<issue>` text closes the issue. The promotion sweep then replaces the status label with `status:done`.
 
