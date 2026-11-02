@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #39 |
 | Branch | `wp/CTL-01` |
-| Pull request | pending |
+| Pull request | #70 |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 83% (5 of 6 plan steps) |
 | Current holder | claude-ctl01-a67c, lease until 2026-11-02T21:34:21Z |
 | Last verified commit | none |
 
@@ -24,11 +24,11 @@ We create the Go module `github.com/alrawi/FixingPointSystem/controller` with th
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Claim the package, create the branch and this handoff file, and open the pull request
-- [ ] 2. Create the module, the configuration loader in `internal/app`, and its unit tests
-- [ ] 3. Add the HTTP server with `/healthz`, the run loop with graceful shutdown, and component tests
-- [ ] 4. Add `cmd/fps-controller` with flags, signal handling, and its tests
-- [ ] 5. Add `.golangci.yml`, the `go.work` line, the make targets, and `.github/workflows/controller.yml`
+- [x] 1. Claim the package, create the branch and this handoff file, and open the pull request
+- [x] 2. Create the module, the configuration loader in `internal/app`, and its unit tests
+- [x] 3. Add the HTTP server with `/healthz`, the run loop with graceful shutdown, and component tests
+- [x] 4. Add `cmd/fps-controller` with flags, signal handling, and its tests
+- [x] 5. Add `.golangci.yml`, the `go.work` line, the make targets, and `.github/workflows/controller.yml`
 - [ ] 6. Ingest the result into the wiki, pass the tests and CI, and finish
 
 ## Done and verified
@@ -41,7 +41,7 @@ Every plan step.
 
 ## Next action
 
-Create `controller/go.mod` and the configuration loader in `controller/internal/app/config.go`.
+Ingest the result into the wiki, push, and wait for the `ctl` workflow on #70.
 
 ## Blockers and open questions
 

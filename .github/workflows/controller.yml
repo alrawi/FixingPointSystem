@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Workstream workflow for CTL. It follows the one workflow per workstream pattern
+# that docs/wiki/Testing.md describes and runs the same checks as make lint-ctl
+# test-ctl. golangci-lint runs through its action, pinned by commit, so the job
+# installs no binary by hand.
+name: ctl
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/**
+      - controller/**
+      - Cargo.toml
+      - Cargo.lock
+      - Makefile
+      - go.work
+  pull_request:
+    paths:
+      - .github/**
+      - controller/**
+      - Cargo.toml
+      - Cargo.lock
+      - Makefile
+      - go.work
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: controller
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: controller/go.mod
+          cache-dependency-path: controller/go.sum
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "gofmt needed on:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          version: v2.12.2
+          working-directory: controller
+      - name: go test -race
+        run: make -C .. test-ctl
