@@ -33,3 +33,6 @@ We added `tools/swarm/fps_swarm.py`, which runs every step of the [Swarm Protoco
 ## [2026-11-02] ingest | AGT-03 Capability detection
 
 We created the crate `engine/fps-agent` with capability detection. It reads cores, NUMA nodes, memory, port drivers, the kernel version, and AF_XDP support from `/proc` and `/sys` under an injectable system root and fills a Rust mirror of the proto `Capabilities` message, which a contract test compares with `agent.proto`. We added the Capability detection section and a seam row to [Implementation Plan](Implementation-Plan.md) and the `test-agt` target to [Testing](Testing.md). NUMA nodes, the kernel release, and per port XDP hints have no field in contract version 0.1.0, and follow up #74 proposes them. The evidence is `docs/handoff/AGT-03.md` and `engine/fps-agent/tests/detect.rs`.
+## [2026-11-02] decision | Agents register with the controller
+
+The owner decided that agents dial the controller and register themselves, which reverses the direction in the CON-01 draft. We added CON-06 to the catalog to change the agent control protocol, and AGT-02 and CTL-06 now depend on it.
