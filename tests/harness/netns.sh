@@ -358,7 +358,9 @@ capture_start() {
   [[ ! -f "${CAPTURE_PID}" ]] || die "a capture is running, run netns.sh capture stop first"
   mkdir -p "$(dirname "${file}")"
   file="$(cd "$(dirname "${file}")" && pwd)/$(basename "${file}")"
-  local raw="${file}.pcap.part"
+  # The AppArmor profile of tcpdump on Ubuntu permits writes only to files
+  # with a capture extension, so the temporary file ends in .pcap.
+  local raw="${file}.part.pcap"
   : >"${CAPTURE_LOG}"
   setsid ip netns exec "${NS_ROUTER}" \
     tcpdump -n -s 0 -U --immediate-mode -i "${dev}" -w "${raw}" \

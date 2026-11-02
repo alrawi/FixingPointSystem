@@ -6,6 +6,7 @@
 #   make test          the fast test levels of every workstream
 #   make test-<ws>     the fast tests of one workstream, for example make test-con
 #   make lint-<ws>     the linters of one workstream, when it has its own
+#   make e2e           the end to end levels, which need root
 #
 # Each workstream owns one block below and registers its targets by appending to
 # LINT_TARGETS and TEST_TARGETS on lines of its own. A package that adds a
@@ -22,6 +23,7 @@ CARGO ?= cargo
 
 LINT_TARGETS :=
 TEST_TARGETS :=
+E2E_TARGETS :=
 
 # ---------------------------------------------------------------------------
 # Repository wide linters
@@ -108,17 +110,46 @@ test-spk:
 	$(PYTHON) -m pytest -q spikes/s4-trex-astf
 
 # ---------------------------------------------------------------------------
+# QA test harness
+
+# shellcheck runs on the harness scripts, and ruff and mypy on its Python helper
+# when they are installed. CI installs them from tests/harness/requirements.txt.
+LINT_TARGETS += lint-qa
+lint-qa:
+	shellcheck tests/harness/*.sh
+	@if command -v ruff >/dev/null 2>&1 && command -v mypy >/dev/null 2>&1; then \
+	  echo "ruff format --check tests/harness && ruff check tests/harness && mypy --strict tests/harness/pcapng.py"; \
+	  ruff format --check tests/harness && ruff check tests/harness && mypy --strict tests/harness/pcapng.py; \
+	else \
+	  echo "lint-qa skipped ruff and mypy because they are not installed"; \
+	fi
+
+# The unit tests of the pcapng helper, which need no root.
+TEST_TARGETS += test-qa
+test-qa:
+	$(PYTHON) -m pytest -q tests/harness
+
+# The namespace harness self test needs root, so make test leaves it out.
+E2E_TARGETS += e2e-qa
+e2e-qa:
+	tests/harness/selftest.sh
+
+# ---------------------------------------------------------------------------
 # Aggregate targets. New workstream blocks go above this line, because make
 # expands the prerequisite lists below when it reads them.
 
 .PHONY: help lint test $(LINT_TARGETS) $(TEST_TARGETS) \
 	test-ops-plan test-ops-workspace test-ops-gowork
+.PHONY: e2e $(E2E_TARGETS)
 
 help:
 	@echo "make lint                  run every linter: $(LINT_TARGETS)"
 	@echo "make test                  run every fast test: $(TEST_TARGETS)"
 	@echo "make test-<workstream>     run the fast tests of one workstream"
+	@echo "make e2e                   run every end to end level as root: $(E2E_TARGETS)"
 
 lint: $(LINT_TARGETS)
 
 test: $(TEST_TARGETS)
+
+e2e: $(E2E_TARGETS)
