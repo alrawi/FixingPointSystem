@@ -1,0 +1,19 @@
+[package]
+name = "fps-agent"
+description = "FixingPointSystem agent: host capability detection and, later, the AgentService server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "fps-agent"
+path = "src/main.rs"
+
+[dependencies]
+# Error enums for library code, as docs/wiki/Coding-Standards.md requires.
+thiserror = "2"

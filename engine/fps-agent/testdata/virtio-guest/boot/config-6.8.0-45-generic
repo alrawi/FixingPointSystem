@@ -1,0 +1,4 @@
+# Synthetic excerpt of a distribution kernel config.
+CONFIG_BPF_SYSCALL=y
+CONFIG_XDP_SOCKETS=y
+CONFIG_XDP_SOCKETS_DIAG=m
