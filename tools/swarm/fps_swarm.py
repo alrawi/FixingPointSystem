@@ -241,6 +241,62 @@ def own_card(cards: Sequence[CardComment], agent: str) -> CardComment | None:
     return mine[-1] if mine else None
 
 
+def last_lease(cards: Sequence[CardComment]) -> CardComment | None:
+    """Return the active card with the latest lease, which is when an item went stale.
+
+    Return None when no card is active, for example when every card was released.
+    """
+    active = [cc for cc in cards if cc.card.state == "active"]
+    return (
+        max(active, key=lambda cc: (cc.card.lease, cc.comment_id)) if active else None
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stale comment
+# ---------------------------------------------------------------------------
+
+STALE_MARKER_RE = re.compile(r"^<!-- fps:stale lease=(?P<lease>\S+) -->")
+
+
+def stale_comment(number: int, last: CardComment | None) -> str:
+    """Render the comment that the stale sweep posts when it marks an item stale.
+
+    The marker line names the expired lease, so a second sweep can tell that the
+    comment for this expiry already exists.
+    """
+    if last is None:
+        lease = "none"
+        text = (
+            "No active status card holds a lease on this item, so the stale sweep"
+            " replaced `status:in-progress` with `status:stale`."
+        )
+    else:
+        lease = format_time(last.card.lease)
+        text = (
+            f"The lease of `{last.card.agent}` on {last.card.key or f'#{number}'}"
+            f" expired at {lease} (UTC), so the stale sweep replaced"
+            " `status:in-progress` with `status:stale`."
+        )
+    lines = [
+        f"<!-- fps:stale lease={lease} -->",
+        "**Stale lease**",
+        "",
+        text,
+        f"Any agent may now resume the item with `fps_swarm.py takeover {number}`.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def has_stale_comment(comments: Iterable[dict[str, Any]], lease: str) -> bool:
+    """Return whether a stale comment for this expired lease already exists."""
+    for c in comments:
+        match = STALE_MARKER_RE.match(c.get("body") or "")
+        if match and match["lease"] == lease:
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # API seam
 # ---------------------------------------------------------------------------
@@ -779,7 +835,11 @@ class Swarm:
     # Sweeps --------------------------------------------------------------
 
     def stale_sweep(self, dry_run: bool = False) -> list[int]:
-        """Relabel in progress items whose holder card expired as status:stale."""
+        """Relabel in progress items whose holder card expired as status:stale.
+
+        Each relabel comes with one comment that names the expiry time. A rerun
+        does not repeat the comment for the same expired lease.
+        """
         changed = []
         now = self.api.now()
         for issue in self.api.get_all(
@@ -788,13 +848,23 @@ class Swarm:
             if "pull_request" in issue:
                 continue
             number = int(issue["number"])
-            cards = self.api.cards(number)
+            comments = self.api.comments(number)
+            cards = cards_from_comments(comments)
             if holder(cards, now) is not None:
                 continue
             changed.append(number)
-            self.log(f"stale: #{number} has no unexpired active card")
-            if not dry_run:
-                self._relabel(number, "status:stale", labels_of(issue))
+            last = last_lease(cards)
+            lease = format_time(last.card.lease) if last else "none"
+            expiry = f"lease expired at {lease}" if last else "no active card"
+            self.log(
+                f"stale: #{number} has {expiry}, relabel and comment"
+                f"{' (dry run)' if dry_run else ''}"
+            )
+            if dry_run:
+                continue
+            self._relabel(number, "status:stale", labels_of(issue))
+            if not has_stale_comment(comments, lease):
+                self.api.post_comment(number, stale_comment(number, last))
         return changed
 
     def promotion_sweep(self, dry_run: bool = False) -> list[tuple[int, str]]:

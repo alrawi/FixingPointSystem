@@ -625,3 +625,138 @@ def test_sweep_command_dry_run_prints_and_changes_nothing(
 def test_now_command_prints_server_time(capsys: pytest.CaptureFixture[str]) -> None:
     assert fs.main(["now"], runner=FakeGitHub(now=T0)) == 0
     assert capsys.readouterr().out.strip() == "2026-11-02T09:00:00Z"
+
+
+# Scanner (OPS-03) ----------------------------------------------------------
+
+WORKFLOW = ROOT / ".github" / "workflows" / "swarm-scan.yml"
+
+
+def stale_comments(gh: FakeGitHub, number: int) -> list[str]:
+    return [
+        c["body"] for c in gh.comments[number] if c["body"].startswith("<!-- fps:stale")
+    ]
+
+
+def scan(gh: FakeGitHub, capsys: pytest.CaptureFixture[str], *flags: str) -> list[str]:
+    """Run the sweep command as the workflow does and return its stdout rows."""
+    capsys.readouterr()
+    assert fs.main(["sweep", *flags], runner=gh) == fs.EXIT_OK
+    return capsys.readouterr().out.splitlines()
+
+
+def test_scan_marks_an_expired_lease_stale_with_one_expiry_comment(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    gh, _, _ = claimed()
+    gh.advance(90)
+    assert scan(gh, capsys) == ["11\tstatus:stale"]
+    assert "status:stale" in gh.labels(11) and "status:in-progress" not in gh.labels(11)
+    [comment] = stale_comments(gh, 11)
+    expiry = "2026-11-02T10:30:00Z"
+    assert comment.splitlines()[0] == f"<!-- fps:stale lease={expiry} -->"
+    assert f"`claude-a` on OPS-02 expired at {expiry} (UTC)" in comment
+    assert "fps_swarm.py takeover 11" in comment
+    assert not fs.is_card(comment)
+    # A second scan finds nothing, and a scan that races a relabel back to
+    # in progress does not repeat the comment for the same expired lease.
+    assert scan(gh, capsys) == []
+    gh.issues[11]["labels"] = [{"name": "type:wp"}, {"name": "status:in-progress"}]
+    assert scan(gh, capsys) == ["11\tstatus:stale"]
+    assert len(stale_comments(gh, 11)) == 1
+
+
+def test_scan_leaves_a_renewed_lease_alone_until_the_renewal_expires(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    gh, s, _ = claimed()
+    gh.advance(60)
+    s.heartbeat(11, progress="17% (1 of 6 plan steps)")
+    gh.advance(60)  # past the first lease, inside the renewed one
+    assert scan(gh, capsys) == []
+    assert "status:in-progress" in gh.labels(11)
+    assert stale_comments(gh, 11) == []
+    gh.advance(30)  # the renewed lease ran out at T0 + 150 minutes
+    assert scan(gh, capsys) == ["11\tstatus:stale"]
+    [comment] = stale_comments(gh, 11)
+    assert "expired at 2026-11-02T11:30:00Z" in comment
+
+
+def test_scan_never_marks_a_blocked_issue_stale(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    gh, s, _ = claimed()
+    s.block(11, "Needs the labels from OPS-04", blocked_by=[13])
+    gh.advance(240)  # far past the lease of the blocked card
+    assert scan(gh, capsys) == []
+    assert "status:blocked" in gh.labels(11) and "status:stale" not in gh.labels(11)
+    assert stale_comments(gh, 11) == []
+    gh.close(13)
+    assert sorted(scan(gh, capsys)) == ["11\tstatus:ready", "13\tstatus:done"]
+    assert {"status:ready", "has-handoff"} <= set(gh.labels(11))
+    assert stale_comments(gh, 11) == []
+
+
+def test_scan_promotes_a_backlog_package_once_every_dependency_closed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    gh = ready_repo()
+    gh.add_issue(
+        95,
+        "[ENG-95] Needs OPS-02 and OPS-03",
+        ["type:wp", "status:backlog"],
+        body="- **Depends on.** OPS-02, OPS-03\n",
+    )
+    gh.issues[11]["labels"] = [{"name": "type:wp"}, {"name": "status:review"}]
+    assert scan(gh, capsys) == []
+    gh.close(11)
+    assert sorted(scan(gh, capsys)) == ["11\tstatus:done", "12\tstatus:ready"]
+    assert "status:backlog" in gh.labels(95)
+    gh.close(12, reason="not_planned")
+    scan(gh, capsys)
+    assert "status:backlog" in gh.labels(95)
+    gh.issues[12]["state_reason"] = "completed"
+    assert "95\tstatus:ready" in scan(gh, capsys)
+    assert "status:ready" in gh.labels(95) and "status:backlog" not in gh.labels(95)
+
+
+def test_scan_without_an_active_card_comments_without_a_lease(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    gh = ready_repo()
+    gh.add_issue(82, "[ENG-82] Released", ["type:wp", "status:in-progress"])
+    post(gh, 82, make_card(key="ENG-82", state="released"))
+    assert scan(gh, capsys) == ["82\tstatus:stale"]
+    [comment] = stale_comments(gh, 82)
+    assert comment.splitlines()[0] == "<!-- fps:stale lease=none -->"
+    assert "No active status card" in comment
+
+
+def test_scan_dry_run_prints_every_planned_change_and_changes_nothing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    gh = ready_repo()
+    gh.close(11)
+    gh.add_issue(80, "[ENG-80] Expired", ["type:wp", "status:in-progress"])
+    post(gh, 80, make_card(key="ENG-80", lease=T0 - dt.timedelta(minutes=1)))
+    rows = scan(gh, capsys, "--dry-run")
+    assert sorted(rows) == ["11\tstatus:done", "12\tstatus:ready", "80\tstatus:stale"]
+    assert gh.mutations() == []
+
+
+def test_scan_workflow_runs_the_sweep_on_schedule_with_the_repository_token() -> None:
+    yaml = pytest.importorskip("yaml")
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert text.startswith("# SPDX-License-Identifier: GPL-3.0-only")
+    flow = yaml.safe_load(text)
+    on = flow[True]  # YAML 1.1 reads the bare key `on` as true
+    assert on["schedule"] == [{"cron": "*/30 * * * *"}]
+    dry = on["workflow_dispatch"]["inputs"]["dry_run"]
+    assert dry["type"] == "boolean"
+    assert flow["permissions"] == {"issues": "write", "contents": "read"}
+    assert "secrets." not in text
+    [job] = flow["jobs"].values()
+    [step] = [st for st in job["steps"] if "run" in st]
+    assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
+    assert "python3 tools/swarm/fps_swarm.py sweep --dry-run" in step["run"]
+    assert "github.event_name == 'workflow_dispatch'" in step["env"]["DRY_RUN"]
