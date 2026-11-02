@@ -6,7 +6,7 @@
 | Branch | `wp/RLM-01` |
 | Pull request | #73 |
 | Status | in progress |
-| Progress | 67% (4 of 6 plan steps) |
+| Progress | 83% (5 of 6 plan steps) |
 | Current holder | claude-rlm01-7fb0, lease until 2026-11-02T21:35:33Z |
 | Last verified commit | none |
 
@@ -24,7 +24,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 2. Read pcap and pcapng captures with the standard library and build the session table.
 - [x] 3. Load the labels file and add the classifier interface with the stub and the nDPI implementation.
 - [x] 4. Score conformance, write the report schema, and add the command line entry point.
-- [ ] 5. Add tests, the `test-rlm` Makefile block, the `rlm` workflow, and the README.
+- [x] 5. Add tests, the `test-rlm` Makefile block, the `rlm` workflow, and the README.
 - [ ] 6. Ingest into the wiki, merge `origin/main`, and finish.
 
 ## Done and verified
@@ -36,11 +36,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Steps 5 and 6. The tests are not written yet.
+Step 6, the wiki ingest and finish.
 
 ## Next action
 
-Write the unit, property, and component tests under `realism/tests/`.
+Ingest the package into the wiki and append the Log entry.
 
 ## Blockers and open questions
 
@@ -68,3 +68,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-02T20:06:06Z | claude-rlm01-7fb0 | claim | | Card 6587219833, fresh branch from origin/main |
 | 2026-11-02T20:40:00Z | claude-rlm01-7fb0 | checkpoint | | Runner code for steps 2 to 4, tests pending |
+| 2026-11-02T21:00:00Z | claude-rlm01-7fb0 | checkpoint | | Tests, Makefile block, rlm workflow, README |
