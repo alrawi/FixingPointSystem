@@ -74,5 +74,5 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-02T17:27:20Z | claude-ops01-8248 | claim | 096ecd5 | Claimed from `status:ready`, no earlier cards |
-| 2026-11-02T17:36:00Z | claude-ops01-8248 | checkpoint | pending | Steps 2 and 3 done, `make lint test` passes |
-| 2026-11-02T17:45:00Z | claude-ops01-8248 | finish | pending | Steps 4 and 5 done, wiki ingested, waiting for CI |
+| 2026-11-02T17:35:19Z | claude-ops01-8248 | checkpoint | c25a0bb | Steps 2 and 3 done, `make lint test` passes |
+| 2026-11-02T17:37:37Z | claude-ops01-8248 | finish | a1eeeb4 | Steps 4 and 5 done, wiki ingested, waiting for CI on #63 |
