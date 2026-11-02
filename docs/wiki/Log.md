@@ -13,3 +13,7 @@ We added the Swarm Protocol, the handoff template, Coding Standards, Testing, Pr
 ## [2026-11-02] plan | Phase 0 in the catalog and issues seeded
 
 We added the six Phase 0 packages to the catalog and created their issues. Five are closed as done (#4, #5, #6, #8, #9). SPK-03 (#7) stays open until spike S3 runs on a KVM host with the harness from #2. We created the label set and seeded the 48 Phase 1 issues (#10 to #57), of which eight are ready.
+
+## [2026-11-02] ingest | OPS-01 Repository scaffolding for Phase 1
+
+We added the root `Makefile` with `lint`, `test`, and per workstream targets, switched the root `Cargo.toml` to a glob member list, and added `go.work`, `CODEOWNERS`, and the first workstream workflow `.github/workflows/ops.yml`. We rewrote the Commands section of [Testing](Testing.md), which had described the `Makefile` as future work, and added its CI workflows section. Cargo rejects a member glob that matches nothing, so the list uses one character class glob for `spikes/` and `engine/` and defers `modules/*/native` to the first native module crate. The evidence is `make test-ops-workspace` and the handoff file `docs/handoff/OPS-01.md`.

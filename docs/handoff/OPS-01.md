@@ -5,10 +5,10 @@
 | Issue | #10 |
 | Branch | `wp/OPS-01` |
 | Pull request | #63 |
-| Status | in progress |
-| Progress | 60% (3 of 5 plan steps) |
-| Current holder | claude-ops01-8248, lease until 2026-11-02T18:57:20Z |
-| Last verified commit | none |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
+| Current holder | claude-ops01-8248, lease until 2026-11-02T19:05:59Z |
+| Last verified commit | c25a0bb |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -23,22 +23,24 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Claim the package, create the branch and this handoff file, and open the pull request
 - [x] 2. Switch the root `Cargo.toml` to glob members and prove that a new empty crate under `engine/` builds
 - [x] 3. Add the root `Makefile` with `lint`, `test`, and `test-<workstream>` targets that delegate to the existing commands
-- [ ] 4. Add `go.work`, `CODEOWNERS`, and the documented CI workflow pattern
-- [ ] 5. Ingest the result into the wiki, pass `make lint test` and CI, and finish
+- [x] 4. Add `go.work`, `CODEOWNERS`, and the documented CI workflow pattern
+- [x] 5. Ingest the result into the wiki, pass `make lint test` and CI, and finish
 
 ## Done and verified
 
 1. Claim, branch, handoff file, and pull request #63 with the `wip` label.
 2. The root `Cargo.toml` uses a glob member. `make test-ops-workspace` builds a new empty crate `engine/fps-probe` in a temporary copy of the workspace root and passes. With the old explicit member list the same target fails with `package ID specification fps-probe did not match any packages`.
 3. The root `Makefile` provides `lint`, `test`, `lint-rust`, `lint-shell`, `lint-deny`, `lint-ops`, `test-con`, `test-ops`, and `test-spk`. `make lint test` passes locally in about 40 seconds.
+4. `go.work` holds only a `go 1.24` line, and `go work edit -json` parses it. `CODEOWNERS` assigns `/contracts/`, `/docs/decisions/`, and `/CODEOWNERS` to `@alrawi`. `.github/workflows/ops.yml` runs `make lint-ops test-ops`, and the CI workflows section of `docs/wiki/Testing.md` documents the pattern.
+5. The Commands and CI workflows sections of `docs/wiki/Testing.md` and an ingest entry in `docs/wiki/Log.md` record the result. `python3 tools/plan/plan.py lint` and `make lint test` pass.
 
 ## Remaining
 
-Step 4 is written but not yet committed with its documentation. Step 5 is open.
+The deliverable `modules/*/native` is not in the member list, as the decisions below explain. GitHub enforces `CODEOWNERS` only after the owner enables "Require review from Code Owners" in the branch protection of `main`.
 
 ## Next action
 
-Document the one workflow per workstream pattern in `docs/wiki/Testing.md` and add `.github/workflows/ops.yml` as its first instance.
+A reviewer agent reviews pull request #63 against the Definition of Done.
 
 ## Blockers and open questions
 
@@ -61,7 +63,8 @@ None.
 ## Verify the current state
 
 ```bash
-make lint test   # after step 3; expected to pass
+make lint test            # expected to pass
+make test-ops-workspace   # expected to print that engine/fps-probe built
 ```
 
 ## Session log
@@ -72,3 +75,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-02T17:27:20Z | claude-ops01-8248 | claim | 096ecd5 | Claimed from `status:ready`, no earlier cards |
 | 2026-11-02T17:36:00Z | claude-ops01-8248 | checkpoint | pending | Steps 2 and 3 done, `make lint test` passes |
+| 2026-11-02T17:45:00Z | claude-ops01-8248 | finish | pending | Steps 4 and 5 done, wiki ingested, waiting for CI |
