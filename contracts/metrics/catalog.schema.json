@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alrawi/FixingPointSystem/contracts/metrics/catalog.schema.json",
+  "title": "FixingPointSystem metric catalog",
+  "description": "Contract v0.1. Names every counter, gauge, and histogram once, with its type, unit, level, and labels.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["catalog", "version", "labels", "metrics"],
+  "properties": {
+    "catalog": { "const": "fps-metrics" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "labels": {
+      "description": "Every label that a metric may carry. A metric may only use labels declared here.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/label_name" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description"],
+        "properties": {
+          "description": { "type": "string", "minLength": 1 },
+          "values": {
+            "description": "Closed set of values. Absent means the value set is open, for example an application name.",
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/metric" }
+    }
+  },
+  "$defs": {
+    "label_name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "metric_name": {
+      "description": "Dotted lower case name, the same pattern that test criteria accept.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "unit", "level", "labels", "description"],
+      "properties": {
+        "name": { "$ref": "#/$defs/metric_name" },
+        "type": {
+          "description": "counter only increases during a run; gauge is a value at one instant; histogram is an HDR latency or size distribution.",
+          "enum": ["counter", "gauge", "histogram"]
+        },
+        "unit": {
+          "enum": [
+            "sessions", "transactions", "bytes", "packets", "events", "hosts",
+            "us", "ratio", "percent", "percentage_points", "bits_per_second", "sessions_per_second"
+          ]
+        },
+        "level": {
+          "description": "Counter level of the specification. The application and scenario row of the specification splits into two levels.",
+          "enum": ["application", "scenario", "flow_action", "transport", "port_host"]
+        },
+        "labels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/label_name" }
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "formula": {
+          "description": "For derived gauges, the catalog metrics the controller computes the value from, as an arithmetic expression over metric names.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "histogram" } } },
+          "then": { "properties": { "unit": { "enum": ["us", "bytes"] } } }
+        },
+        {
+          "if": { "required": ["formula"] },
+          "then": { "properties": { "type": { "const": "gauge" } } }
+        }
+      ]
+    }
+  }
+}
