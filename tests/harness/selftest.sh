@@ -196,8 +196,10 @@ case_refusals() {
   "${NETNS}" down
   pass "a second up is refused and down is idempotent"
   if command -v setpriv >/dev/null 2>&1; then
+    # The unprivileged user may lack access to the checkout, so it runs a copy.
+    install -m 0755 "${NETNS}" "${WORK}/netns.sh"
     status=0
-    setpriv --reuid=65534 --regid=65534 --clear-groups "${NETNS}" up 2>/dev/null || status=$?
+    setpriv --reuid=65534 --regid=65534 --clear-groups "${WORK}/netns.sh" up 2>/dev/null || status=$?
     ((status == 1)) || fail "up without root exited with ${status}, want 1"
     pass "up without root is refused"
   fi

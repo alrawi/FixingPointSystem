@@ -12,7 +12,8 @@
 #   netns.sh capture stop
 #   netns.sh info                    print the configuration as KEY=VALUE lines
 #
-# The environment configures up. Later commands read the state that up stored.
+# The environment configures up. Later commands need only FPS_NETNS and
+# FPS_STATE_DIR, and info prints the configuration that up stored.
 #   FPS_NETNS        name prefix of the namespaces, [a-z0-9]{1,12}, default fps
 #   FPS_CLIENT_NET   client arm prefix, default 10.201.0.0/24
 #   FPS_SERVER_NET   server arm prefix, default 10.202.0.0/24
@@ -74,11 +75,15 @@ load_config() {
   NS_SERVER="${PREFIX}-server"
 }
 
-# load_state replaces the environment configuration with the one up stored.
+# load_state confirms that up ran. Every name that later commands need derives
+# from the prefix, so they never source the state file.
 load_state() {
   [[ -f "${STATE_FILE}" ]] || die "harness ${PREFIX} is not up, run netns.sh up first"
-  # shellcheck source=/dev/null
-  source "${STATE_FILE}"
+}
+
+# meta_value FILE KEY prints one value of a KEY=VALUE file.
+meta_value() {
+  sed -n "s/^$2=//p" "$1"
 }
 
 ip_to_int() {
@@ -389,12 +394,13 @@ capture_stop() {
   require_root
   load_state
   [[ -f "${CAPTURE_PID}" ]] || die "no capture is running"
-  # shellcheck source=/dev/null
-  source "${CAPTURE_META}"
+  local raw file
+  raw="$(meta_value "${CAPTURE_META}" CAPTURE_RAW)"
+  file="$(meta_value "${CAPTURE_META}" CAPTURE_FILE)"
   stop_capture
-  python3 -I "${HARNESS_DIR}/pcapng.py" convert "${CAPTURE_RAW}" "${CAPTURE_FILE}"
-  rm -f "${CAPTURE_RAW}" "${CAPTURE_META}"
-  log "capture written to ${CAPTURE_FILE}"
+  python3 -I "${HARNESS_DIR}/pcapng.py" convert "${raw}" "${file}"
+  rm -f "${raw}" "${CAPTURE_META}"
+  log "capture written to ${file}"
 }
 
 cmd_capture() {
