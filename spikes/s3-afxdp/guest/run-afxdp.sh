@@ -18,7 +18,7 @@ PEER_MAC=${PEER_MAC:-52:54:00:77:00:02}
 OUT=${OUT:-results}
 TESTPMD=$(command -v dpdk-testpmd || true)
 
-[[ -n $TESTPMD ]] || { echo "dpdk-testpmd not found (apt install dpdk)" >&2; exit 1; }
+[[ -n $TESTPMD ]] || { echo "dpdk-testpmd not found (apt install dpdk-dev librte-net-af-xdp24)" >&2; exit 1; }
 [[ $ROLE == tx || $ROLE == rx ]] || { echo "role must be tx or rx" >&2; exit 1; }
 [[ $MODE == default || $MODE == copy ]] || { echo "mode must be default or copy" >&2; exit 1; }
 mkdir -p "$OUT"
