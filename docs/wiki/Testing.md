@@ -63,6 +63,9 @@ The targets that exist today are listed below.
 | `test-ctl` | `go test -race ./...` over the controller |
 | `test-ops` | the plan tool tests, the Cargo workspace probe, and a parse of `go.work` |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
+| `test-eng` | every crate under `engine/`, see [Engine](Engine.md) |
+| `lint-rlm` | `ruff format --check`, `ruff check`, and `mypy --strict` over `realism/` |
+| `test-rlm` | the realism runner tests, including the ndpiReader test when nDPI is installed |
 
 A workstream adds its targets in a block of its own above the aggregate targets at the bottom of the `Makefile`. The block appends to `LINT_TARGETS` and `TEST_TARGETS` on separate lines and delegates to the workstream's own commands, so parallel packages never edit the same line. The `make e2e` target arrives with the namespace harness of QA-01 and needs root.
 

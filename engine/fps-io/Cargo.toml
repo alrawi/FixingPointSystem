@@ -1,0 +1,15 @@
+[package]
+name = "fps-io"
+description = "Session byte stream I/O seam of the FixingPointSystem engine, with an in memory duplex for tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+tokio = { version = "1", features = ["io-util"] }
+
+[dev-dependencies]
+proptest = "1"
+tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }
