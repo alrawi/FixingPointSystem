@@ -1,0 +1,105 @@
+{
+  "meta": {
+    "objective": "sessions_per_second",
+    "basis": "sessions",
+    "total_cps": 1000.0,
+    "mean_payload_bytes_per_session": 17244.0
+  },
+  "summary": {
+    "exact": 8,
+    "approximate": 3,
+    "unsupported": 0,
+    "total": 11,
+    "exact_share": 0.7272727272727273
+  },
+  "entries": [
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "connect",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "send",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "expect",
+      "verdict": "approximate",
+      "note": "pattern becomes a fixed byte watermark learned by simulation"
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "expect",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "loop",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "close",
+      "verdict": "exact",
+      "note": "ASTF closes with FIN when the program ends"
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "server",
+      "action": "accept",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "server",
+      "action": "expect",
+      "verdict": "approximate",
+      "note": "pattern becomes a fixed byte watermark learned by simulation"
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "server",
+      "action": "send",
+      "verdict": "approximate",
+      "note": "fill() content becomes one repeated byte in ASTF"
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "server",
+      "action": "loop",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "server",
+      "action": "close",
+      "verdict": "exact",
+      "note": "ASTF closes with FIN when the program ends"
+    }
+  ]
+}

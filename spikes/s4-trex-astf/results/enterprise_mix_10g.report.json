@@ -1,0 +1,305 @@
+{
+  "meta": {
+    "objective": "throughput_bps",
+    "basis": "bytes",
+    "total_cps": 26500.868618999884,
+    "mean_payload_bytes_per_session": 47168.26523579715
+  },
+  "summary": {
+    "exact": 22,
+    "approximate": 13,
+    "unsupported": 1,
+    "total": 36,
+    "exact_share": 0.6111111111111112
+  },
+  "entries": [
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "client",
+      "action": "connect",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "client",
+      "action": "send",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "client",
+      "action": "expect",
+      "verdict": "approximate",
+      "note": "pattern becomes a fixed byte watermark learned by simulation"
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "client",
+      "action": "expect",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "client",
+      "action": "delay",
+      "verdict": "unsupported",
+      "note": "ASTF has fixed and uniform delays only, not lognormal"
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "client",
+      "action": "send",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "client",
+      "action": "expect",
+      "verdict": "approximate",
+      "note": "pattern becomes a fixed byte watermark learned by simulation"
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "client",
+      "action": "expect",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "client",
+      "action": "close",
+      "verdict": "exact",
+      "note": "ASTF closes with FIN when the program ends"
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "server",
+      "action": "accept",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "server",
+      "action": "expect",
+      "verdict": "approximate",
+      "note": "pattern becomes a fixed byte watermark learned by simulation"
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "server",
+      "action": "send",
+      "verdict": "approximate",
+      "note": "fill() content becomes one repeated byte in ASTF"
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "server",
+      "action": "expect",
+      "verdict": "approximate",
+      "note": "pattern becomes a fixed byte watermark learned by simulation"
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "server",
+      "action": "send",
+      "verdict": "approximate",
+      "note": "fill() content becomes one repeated byte in ASTF"
+    },
+    {
+      "scenario": "web_browse",
+      "flow": "browse",
+      "side": "server",
+      "action": "close",
+      "verdict": "exact",
+      "note": "ASTF closes with FIN when the program ends"
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "connect",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "send",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "expect",
+      "verdict": "approximate",
+      "note": "pattern becomes a fixed byte watermark learned by simulation"
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "expect",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "loop",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "client",
+      "action": "close",
+      "verdict": "exact",
+      "note": "ASTF closes with FIN when the program ends"
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "server",
+      "action": "accept",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "server",
+      "action": "expect",
+      "verdict": "approximate",
+      "note": "pattern becomes a fixed byte watermark learned by simulation"
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "server",
+      "action": "send",
+      "verdict": "approximate",
+      "note": "fill() content becomes one repeated byte in ASTF"
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "server",
+      "action": "loop",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "web_get",
+      "flow": "page",
+      "side": "server",
+      "action": "close",
+      "verdict": "exact",
+      "note": "ASTF closes with FIN when the program ends"
+    },
+    {
+      "scenario": "lookup",
+      "flow": "query",
+      "side": "client",
+      "action": "connect",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "lookup",
+      "flow": "query",
+      "side": "client",
+      "action": "send",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "lookup",
+      "flow": "query",
+      "side": "client",
+      "action": "expect",
+      "verdict": "approximate",
+      "note": "min_bytes becomes a fixed byte watermark learned by simulation"
+    },
+    {
+      "scenario": "lookup",
+      "flow": "query",
+      "side": "client",
+      "action": "close",
+      "verdict": "exact",
+      "note": "UDP flows end when the program ends"
+    },
+    {
+      "scenario": "lookup",
+      "flow": "query",
+      "side": "server",
+      "action": "accept",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "lookup",
+      "flow": "query",
+      "side": "server",
+      "action": "expect",
+      "verdict": "approximate",
+      "note": "min_bytes becomes a fixed byte watermark learned by simulation"
+    },
+    {
+      "scenario": "lookup",
+      "flow": "query",
+      "side": "server",
+      "action": "send",
+      "verdict": "exact",
+      "note": ""
+    },
+    {
+      "scenario": "lookup",
+      "flow": "query",
+      "side": "server",
+      "action": "close",
+      "verdict": "exact",
+      "note": "UDP flows end when the program ends"
+    },
+    {
+      "scenario": "*",
+      "flow": "*",
+      "side": "load",
+      "action": "objective",
+      "verdict": "approximate",
+      "note": "throughput becomes 26500.9 sessions/s from 47168 payload bytes per session; headers below L7 are not counted"
+    },
+    {
+      "scenario": "*",
+      "flow": "*",
+      "side": "load",
+      "action": "phases",
+      "verdict": "approximate",
+      "note": "ramps need runtime multiplier updates from the driver"
+    }
+  ]
+}
