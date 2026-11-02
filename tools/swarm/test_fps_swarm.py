@@ -760,3 +760,13 @@ def test_scan_workflow_runs_the_sweep_on_schedule_with_the_repository_token() ->
     assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
     assert "python3 tools/swarm/fps_swarm.py sweep --dry-run" in step["run"]
     assert "github.event_name == 'workflow_dispatch'" in step["env"]["DRY_RUN"]
+
+
+def test_stale_comment_matches_the_protocol_example() -> None:
+    text = PROTOCOL.read_text(encoding="utf-8")
+    match = re.search(r"```markdown\n(<!-- fps:stale.*?)```", text, re.DOTALL)
+    assert match, "Swarm-Protocol.md has no stale comment example"
+    last = cc(
+        1, key="ENG-04", agent="claude-7f3a2c", lease=T0 + dt.timedelta(minutes=30)
+    )
+    assert fs.stale_comment(23, last) == match.group(1)
