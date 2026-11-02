@@ -13,3 +13,7 @@ We added the Swarm Protocol, the handoff template, Coding Standards, Testing, Pr
 ## [2026-11-02] plan | Phase 0 in the catalog and issues seeded
 
 We added the six Phase 0 packages to the catalog and created their issues. Five are closed as done (#4, #5, #6, #8, #9). SPK-03 (#7) stays open until spike S3 runs on a KVM host with the harness from #2. We created the label set and seeded the 48 Phase 1 issues (#10 to #57), of which eight are ready.
+
+## [2026-11-02] ingest | OPS-02 Swarm helper command
+
+We added `tools/swarm/fps_swarm.py`, which runs every step of the [Swarm Protocol](Swarm-Protocol.md) over the REST API, and updated that page to show each helper command next to its raw calls. The page now also defines the `fps:block` marker that the promotion sweep reads. The evidence is `docs/handoff/OPS-02.md` and the offline tests in `tools/swarm/test_fps_swarm.py`, which include two agents that claim one issue at the same time and resolve to one holder.
