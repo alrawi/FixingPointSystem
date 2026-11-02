@@ -47,7 +47,7 @@ We wrap every step of this protocol in one command, [`tools/swarm/fps_swarm.py`]
 | `fps_swarm.py release N --next X` | Release steps 3 and 4 |
 | `fps_swarm.py block N --reason X --blocked-by M` | Block steps 2 and 3 |
 | `fps_swarm.py review N --pr R` | Finish steps 4 and 5 |
-| `fps_swarm.py promote`, `stale`, or `sweep` | The promotion sweep, the stale sweep, or both, each with `--dry-run` |
+| `fps_swarm.py promote`, `stale`, or `sweep` | The promotion sweep, the stale sweep, or both, each with `--dry-run`; the [scanner](#the-scanner) runs `sweep` every 30 minutes |
 
 The command reads the agent identifier from `FPS_AGENT_ID` and the repository from `FPS_REPO`, and the flags `--agent` and `--repo` override them. It exits with 0 on success, with 1 when the protocol refuses the step, for example because another card holds the lease, and with 2 on a usage or API error. Git work stays with the agent, so `claim` prints the card id, key, branch, and handoff path that the next steps need. The tests in `tools/swarm/` replay recorded API responses and never reach the network.
 
@@ -138,8 +138,8 @@ An issue is claimable when it is open, carries `status:ready` or `status:stale`,
 Each session starts with the same sequence of steps.
 
 1. Read [Home](Home.md), the newest entries of [Log](Log.md), and the `AGENTS.md` file at the repository root.
-2. Run the promotion sweep below. The OPS-03 scanner automates it once it exists.
-3. Run the stale sweep. For every `status:in-progress` issue whose holder card has expired, replace the label with `status:stale`.
+2. Run the promotion sweep below. The [scanner](#the-scanner) also runs it every 30 minutes, so this step usually finds nothing to change.
+3. Run the stale sweep. For every `status:in-progress` issue whose holder card has expired, replace the label with `status:stale` and post one stale comment that names the expiry time.
 4. Pick an item with the selection rule below.
 
 The helper runs both sweeps and lists claimable items in two commands.
@@ -167,6 +167,28 @@ for q in 'type:wp,status:stale' 'type:wp,status:ready' 'type:bug,status:stale' '
     --jq '.[] | select([.labels[].name] | index("needs:split") | not) | [.number, .title, ([.labels[].name] | join(","))] | @tsv'
 done
 ```
+
+The stale sweep posts one comment on every item that it marks stale. The comment starts with a marker that names the expired lease, which is the latest lease among the active cards, or `none` when no card is active. The sweep posts no second comment for a lease that already has one.
+
+```markdown
+<!-- fps:stale lease=2026-11-02T09:30:00Z -->
+**Stale lease**
+
+The lease of `claude-7f3a2c` on ENG-04 expired at 2026-11-02T09:30:00Z (UTC), so the stale sweep replaced `status:in-progress` with `status:stale`.
+Any agent may now resume the item with `fps_swarm.py takeover 23`.
+```
+
+## The scanner
+
+The workflow [`.github/workflows/swarm-scan.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/.github/workflows/swarm-scan.yml) runs `fps_swarm.py sweep` every 30 minutes, so labels stay current when no agent session is running. It holds no sweep logic of its own, and agents and the scanner therefore apply the same rules. The job uses only the repository token with the permissions `issues: write` and `contents: read`, and `gh` reads that token from `GH_TOKEN`.
+
+The owner runs the scanner by hand from the Actions tab with **Run workflow**. The `dry_run` input defaults to true, and a dry run prints the planned changes, one `<issue>\t<status>` row per change, and changes nothing. Scheduled runs carry no inputs and always apply their changes.
+
+```bash
+gh api repos/$FPS_REPO/actions/workflows/swarm-scan.yml/dispatches -f ref=main -f 'inputs[dry_run]=true'
+```
+
+Label changes made with the repository token start no other workflow, because GitHub suppresses workflow events from that token. The board sync of OPS-04 therefore does not see the scanner's relabels until the next label event on the same issue.
 
 ## Selection rule
 
