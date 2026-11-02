@@ -25,6 +25,8 @@ The host must run Linux on bare metal with virtualization enabled in the firmwar
 
 ## Running
 
+An agent such as Claude Code can run the whole spike from `RUNBOOK.md`.
+
 ```bash
 sudo apt install -y qemu-system-x86 qemu-utils cloud-image-utils curl
 sudo VCPUS=16 MEM_MB=8192 QUEUES=8 spikes/s3-afxdp/host/launch-vms.sh
