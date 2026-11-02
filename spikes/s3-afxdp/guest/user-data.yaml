@@ -9,7 +9,10 @@ users:
       - "@SSH_KEY@"
 package_update: true
 packages:
+  # Ubuntu 24.04 ships dpdk-testpmd in dpdk-dev and the AF_XDP driver in librte-net-af-xdp24.
   - dpdk
+  - dpdk-dev
+  - librte-net-af-xdp24
   - xdp-tools
   - ethtool
   - linux-tools-generic

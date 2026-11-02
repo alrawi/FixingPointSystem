@@ -45,6 +45,8 @@ sudo KERNEL=hwe QUEUE_SET="…" spikes/s3-afxdp/host/run-all.sh
 sudo spikes/s3-afxdp/host/stop-vms.sh
 ```
 
+After `launch-vms.sh` returns, confirm in both guests that `command -v dpdk-testpmd` prints a path and that `ls /usr/lib/x86_64-linux-gnu/dpdk/pmds-24.0/librte_net_af_xdp.so.24` succeeds. Use `ssh -i $WORK/id_ed25519 -p 2221 ubuntu@127.0.0.1` for the sender and port 2222 for the receiver. Stop and report if either check fails.
+
 The first boot takes several minutes while cloud-init installs packages. If every receiver row reports `median_pps` of 0 while the sender rows do not, run `sudo sysctl -w net.bridge.bridge-nf-call-iptables=0`, then repeat the run step. Report that you changed this setting.
 
 ## 4. Record
