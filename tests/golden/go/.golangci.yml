@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# The linters that docs/wiki/Coding-Standards.md requires for Go code.
+version: "2"
+linters:
+  enable:
+    - errcheck
+    - errorlint
+    - gosec
+    - revive
+    - staticcheck
