@@ -33,3 +33,6 @@ We added `tools/swarm/fps_swarm.py`, which runs every step of the [Swarm Protoco
 ## [2026-11-02] ingest | ENG-01 Engine crate skeleton
 
 We created the engine crates `fps-io`, `fps-flow`, `fps-interp`, and `fps-stats` under `engine/` and added the [Engine](Engine.md) page, which records the four rules of the `SessionIo` seam, the in memory duplex, and the four changes that the port of the S1 program model and template parser made. `fps-interp` and `fps-stats` stay empty until ENG-04 and ENG-09. Spike S1 keeps its own copy of the ported files, and the Engine page records that duplication. We added the `test-eng` target to [Testing](Testing.md) and linked the new page from [Home](Home.md). The root `Cargo.toml` glob picked up the new crates without an edit. The evidence is `make test-eng` and `docs/handoff/ENG-01.md` on the branch `wp/ENG-01`.
+## [2026-11-02] decision | Agents register with the controller
+
+The owner decided that agents dial the controller and register themselves, which reverses the direction in the CON-01 draft. We added CON-06 to the catalog to change the agent control protocol, and AGT-02 and CTL-06 now depend on it.
