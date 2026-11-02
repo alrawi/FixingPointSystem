@@ -9,6 +9,8 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 | `schemas/scenario.schema.json` | Scenarios and flow program actions |
 | `schemas/test-config.schema.json` | Test configuration |
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
+| `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels |
+| `metrics/catalog.schema.json` | Format of the metric catalog |
 | `examples/` | Example modules and tests that every validator run checks |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol between the controller and agents (gRPC, proto3) |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |
@@ -33,6 +35,28 @@ Each flow runs one session. The client side and the server side each execute the
 | `raw` | Write hex bytes without templating. Only `strike` and `fuzzer` modules may use it. |
 
 For UDP flows, `connect` binds the peer address, `accept` binds the port and waits for the first datagram, and `close` releases the socket.
+
+## Metric catalog
+
+The catalog in `metrics/catalog.yaml` names every metric once. The agent records metrics under these names, the controller derives and serves them, and test criteria refer to them. A metric that the catalog lacks cannot appear in a criterion or in the OpenAPI document.
+
+Each entry carries six fields and an optional formula.
+
+| Field | Meaning |
+|---|---|
+| `name` | Dotted lower case name, for example `sessions.failed` |
+| `type` | `counter` only increases during a run, `gauge` is a value at one instant, and `histogram` is an HDR distribution |
+| `unit` | One unit from the schema, for example `sessions`, `bytes`, or `us` |
+| `level` | `application`, `scenario`, `flow_action`, `transport`, or `port_host` |
+| `labels` | Labels the metric carries, each declared in the `labels` section |
+| `description` | What the metric counts or measures |
+| `formula` | For a derived gauge, the arithmetic over other catalog metrics that the controller evaluates |
+
+The levels follow the counter table of the specification. Its application and scenario row splits into two levels. The scenario level holds the session, transaction, and byte counters labeled by application and scenario, and the application view of the API sums them over the scenario label. The application level holds the mix and realism gauges.
+
+A metric reference names a counter or a gauge directly. A reference to a histogram appends one statistic, which is `p50`, `p90`, `p99`, `p999`, `min`, `max`, `mean`, or `count`, as in `sessions.response_time.p99`. A criterion carries no labels and applies to the whole run, so the controller aggregates the metric over every label before it compares the value.
+
+The OpenAPI document names the metric behind a response field with the `x-fps-metric` keyword. Every property of `RunSummary` carries one. Prometheus exposition maps a catalog name to `fps_` followed by the name with dots replaced by underscores, and adds `_total` to counters.
 
 ## Template grammar
 
@@ -67,6 +91,7 @@ cargo install wasm-tools --locked
 wasm-tools component wit contracts/extension/fps-extension.wit
 ```
 
+The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax, scenario references in mixes, host pool sizes, and port references. The metric rules check that catalog names and labels are unique and declared, that formulas refer to catalog counters and gauges, and that every metric in test criteria and in `x-fps-metric` annotations exists in the catalog.
 The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax, scenario references in mixes, host pool sizes, and port references.
 
 The plan checker validates the agent plans in `examples/plans/`. It needs the protobuf packages in `tools/contracts/requirements-proto.txt`, and CI runs it in the `proto` job together with `buf lint` and `buf breaking`.

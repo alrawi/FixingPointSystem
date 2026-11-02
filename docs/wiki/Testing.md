@@ -35,19 +35,47 @@ We use eight levels. Each package ships the levels that its workstream requires 
 
 ## Commands
 
-OPS-01 adds a root `Makefile` that runs each workstream's tests with one command. Until OPS-01 merges, run the underlying commands directly.
+The root [`Makefile`](https://github.com/alrawi/FixingPointSystem/blob/main/Makefile) runs every check with one command and each workstream's checks with another. We run `make lint test` before every pull request.
 
 ```bash
-make test                 # every fast level of every workstream
-make test-eng             # one workstream
 make lint                 # every formatter and linter
-make e2e                  # end to end suites; needs root for the namespace harness
+make test                 # every fast level of every workstream
+make test-con             # one workstream, here the contracts
+make lint-ops test-ops    # the linters and tests of one workstream
+make help                 # the registered targets
 
 # Equivalent commands per language
 cargo test -p fps-interp
 (cd controller && go test -race ./...)
 python3 -m pytest realism
 ```
+
+The targets that exist today are listed below.
+
+| Target | Runs |
+|---|---|
+| `lint-rust` | `cargo fmt --check` and `cargo clippy -D warnings` over the whole Cargo workspace |
+| `lint-shell` | shellcheck on every tracked `*.sh` file |
+| `lint-deny` | `cargo deny check`, skipped with a notice when cargo-deny is missing |
+| `lint-ops` | `tools/plan/plan.py check`, `render --check`, and `lint` |
+| `test-con` | the contract validator and its tests |
+| `test-ops` | the plan tool tests, the Cargo workspace probe, and a parse of `go.work` |
+| `test-spk` | the Rust spike crates and the S4 translator tests |
+
+A workstream adds its targets in a block of its own above the aggregate targets at the bottom of the `Makefile`. The block appends to `LINT_TARGETS` and `TEST_TARGETS` on separate lines and delegates to the workstream's own commands, so parallel packages never edit the same line. The `make e2e` target arrives with the namespace harness of QA-01 and needs root.
+
+```make
+# CTL controller
+LINT_TARGETS += lint-ctl
+lint-ctl:
+	cd controller && go vet ./... && golangci-lint run
+
+TEST_TARGETS += test-ctl
+test-ctl:
+	cd controller && go test -race ./...
+```
+
+The Rust workspace in the root `Cargo.toml` takes its members from a glob, so a new crate under `spikes/` or `engine/` builds without an edit there. The `test-ops-workspace` target proves this on every run by building an empty probe crate under `engine/` in a temporary copy of the workspace root. The Go workspace in `go.work` lists no modules yet, and the package that creates `controller/` or `cli/` adds one `use` line for it. The handoff file of [OPS-01](https://github.com/alrawi/FixingPointSystem/blob/main/docs/handoff/OPS-01.md) explains both choices.
 
 Fast levels finish within five minutes on a CI runner. A test that needs longer moves to the end to end or performance level.
 
@@ -160,6 +188,21 @@ We measure line coverage on changed packages with `cargo llvm-cov`, `go test -co
 ## Test data rules
 
 Test data is synthetic, small, and licensed with the repository. Captures that contain personal data, credentials, or third party content never enter the repository. Fixture captures under `modules/*/fixtures/` stay below 1 MB each.
+
+## CI workflows
+
+Each workstream owns one workflow file, `.github/workflows/<workstream>.yml`, so packages add CI jobs without editing a shared file. The file [`ops.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/.github/workflows/ops.yml) is the first instance and the template for the others. The repository wide jobs for contracts, Rust, licenses, and shell scripts stay in `ci.yml`.
+
+A workstream workflow follows six rules.
+
+1. **Name it after the workstream.** The file is `ctl.yml`, the workflow `name` is `ctl`, and the job id names the level, as in `test`.
+2. **Run the make targets.** The job installs its toolchains and then runs `make lint-<ws> test-<ws>`, so CI and agents run the same commands.
+3. **Filter by paths.** The `push` and `pull_request` triggers list the workstream's catalog paths and the shared root files `Cargo.toml`, `Cargo.lock`, `Makefile`, `go.work`, and `.github/**`.
+4. **Pin the toolchain.** Go and Python versions are explicit, and Rust uses the stable toolchain as in `ci.yml`.
+5. **Grant least privilege.** The workflow sets `permissions` to `contents: read` unless a job must write.
+6. **Keep slow levels apart.** End to end, realism, and performance jobs live in their own workflow files with the triggers that the levels table names, so the fast workflow stays within five minutes.
+
+A path filtered workflow does not run on pull requests that miss its paths, and GitHub then reports a required check as pending. The owner therefore marks only `ci.yml` jobs as required checks, or marks a workstream job as required only after removing its path filter.
 
 ## Gate suites
 

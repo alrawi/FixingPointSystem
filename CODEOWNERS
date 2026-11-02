@@ -1,0 +1,7 @@
+# Owner review for the paths that only owner approved packages may change.
+# Branch protection on main must enable "Require review from Code Owners" for
+# GitHub to enforce these entries.
+
+/contracts/        @alrawi
+/docs/decisions/   @alrawi
+/CODEOWNERS        @alrawi

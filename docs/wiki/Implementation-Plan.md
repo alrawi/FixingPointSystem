@@ -78,6 +78,15 @@ Each seam has one owner and one definition. A package that needs a seam to chang
 | Byte stream and datagram I/O | `SessionIo`, `DatagramIo` in `engine/fps-io` | TRN | ENG |
 | Realism report | `realism/schema/` (RLM-01) | RLM | CTL, QA |
 
+### Counter catalog
+
+The [metric catalog](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/metrics/catalog.yaml) from CON-02 names 48 counters, gauges, and histograms across five levels, which are application, scenario, flow action, transport, and port and host. The [contracts README](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/README.md#metric-catalog) explains the fields. Packages that record, serve, or chart metrics follow four rules.
+
+1. Code uses catalog names exactly, and ENG-09 checks its snapshot names against the catalog file.
+2. A criterion or an API field that names a histogram appends one statistic, for example `sessions.response_time.p99`.
+3. An OpenAPI field that carries a metric names it with `x-fps-metric`, and the validator rejects names that the catalog lacks.
+4. A new metric is a contract change, so it needs a CON package and owner approval.
+
 ## Phases and gates
 
 Each phase ends at a gate, and a QA package automates the gate as a test suite. The owner signs off each gate.

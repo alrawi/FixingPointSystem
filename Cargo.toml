@@ -1,6 +1,21 @@
 [workspace]
 resolver = "2"
-members = ["spikes/s1-engine", "spikes/s2-tls"]
+# Members are globs, so a new crate under spikes/ or engine/ joins the workspace
+# without an edit to this file.
+#
+# Cargo treats a glob that matches nothing as a literal path and then fails, and
+# engine/ does not exist yet. The character classes below therefore match the two
+# six letter roots spikes/ and engine/ position by position ([es] is s or e, [np] is
+# p or n, and so on), so the pattern always matches the spike crates. Once engine/
+# holds a crate, a later package may split it into "spikes/*" and "engine/*".
+#
+# The glob modules/*/native joins this list with the first module that ships a
+# native crate, for the same reason. See docs/handoff/OPS-01.md.
+#
+# Every directory that a glob matches must hold a Cargo.toml, so the spikes without
+# Rust code are excluded by name.
+members = ["[es][np][gi][ik][ne][es]/*"]
+exclude = ["spikes/s3-afxdp", "spikes/s4-trex-astf"]
 
 [workspace.package]
 version = "0.0.1"

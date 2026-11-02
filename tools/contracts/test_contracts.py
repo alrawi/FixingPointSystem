@@ -262,3 +262,111 @@ def test_openapi_null_value_is_reported(tmp_path):
     finally:
         broken.unlink(missing_ok=True)
     assert any("null value" in m for m in messages(report))
+
+
+# --- metric catalog ---------------------------------------------------------
+
+@pytest.fixture()
+def catalog_doc() -> dict:
+    return v.load_yaml(v.CATALOG)
+
+
+def load_catalog_doc(doc: dict, tmp_path: Path) -> tuple[v.MetricCatalog, v.Report]:
+    path = tmp_path / "catalog.yaml"
+    path.write_text(yaml.safe_dump(doc))
+    report = v.Report()
+    return v.load_catalog(path, report), report
+
+
+def test_catalog_is_valid_and_covers_four_levels():
+    report = v.Report()
+    catalog = v.load_catalog(v.CATALOG, report)
+    assert not report.findings, messages(report)
+    levels = {m["level"] for m in catalog.metrics.values()}
+    assert levels == {"application", "scenario", "flow_action", "transport", "port_host"}
+    assert {"counter", "gauge", "histogram"} <= {m["type"] for m in catalog.metrics.values()}
+
+
+def test_catalog_schema_is_valid_json_schema():
+    import json
+    v.Draft202012Validator.check_schema(json.loads(v.CATALOG_SCHEMA.read_text()))
+
+
+def test_example_criteria_metrics_exist():
+    catalog = v.default_catalog()
+    assert catalog.check_reference("sessions.failed_ratio") is None
+    assert catalog.check_reference("mix.max_abs_error_pp") is None
+
+
+def test_unknown_criteria_metric_fails(smoke, index):
+    smoke["criteria"].append({"metric": "sessions.vanished_ratio", "op": "<", "value": 1})
+    msgs = messages(check_test(smoke, index))
+    assert any("unknown metric 'sessions.vanished_ratio'" in m for m in msgs)
+
+
+def test_unknown_criteria_metric_fails_the_cli(tmp_path):
+    doc = v.load_yaml(EXAMPLES / "tests/http_smoke.yaml")
+    doc["criteria"] = [{"metric": "made.up", "op": "==", "value": 0}]
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(yaml.safe_dump(doc))
+    assert v.main(["--quiet", "--no-openapi", "--tests", str(bad)]) == 1
+
+
+@pytest.mark.parametrize("ref,needle", [
+    ("sessions.response_time.p99", None),
+    ("tcp.rtt.mean", None),
+    ("sessions.response_time", "needs a statistic suffix"),
+    ("sessions.failed.p99", "applies only to histograms"),
+    ("sessions.response_time.p42", "unknown metric"),
+])
+def test_histogram_statistics(ref, needle):
+    problem = v.default_catalog().check_reference(ref)
+    assert (problem is None) if needle is None else (needle in problem)
+
+
+def test_catalog_duplicate_and_undeclared_label(catalog_doc, tmp_path):
+    catalog_doc["metrics"].append(copy.deepcopy(catalog_doc["metrics"][0]))
+    catalog_doc["metrics"][1]["labels"] = ["application", "colour"]
+    _, report = load_catalog_doc(catalog_doc, tmp_path)
+    msgs = messages(report)
+    assert any("duplicate metric" in m for m in msgs)
+    assert any("label 'colour' is not declared" in m for m in msgs)
+
+
+def test_catalog_formula_references(catalog_doc, tmp_path):
+    ratio = next(m for m in catalog_doc["metrics"] if m["name"] == "sessions.failed_ratio")
+    ratio["formula"] = "sessions.failed / sessions.missing + sessions.response_time"
+    _, report = load_catalog_doc(catalog_doc, tmp_path)
+    msgs = messages(report)
+    assert any("unknown metric 'sessions.missing'" in m for m in msgs)
+    assert any("histogram 'sessions.response_time'" in m for m in msgs)
+
+
+def test_catalog_formula_requires_gauge(catalog_doc, tmp_path):
+    ratio = next(m for m in catalog_doc["metrics"] if m["name"] == "sessions.failed_ratio")
+    ratio["type"] = "counter"
+    _, report = load_catalog_doc(catalog_doc, tmp_path)
+    assert report.errors
+
+
+def test_catalog_name_collides_with_histogram_statistic(catalog_doc, tmp_path):
+    catalog_doc["metrics"].append({"name": "tcp.rtt.p99", "type": "gauge", "unit": "us",
+                                   "level": "transport", "labels": [], "description": "x"})
+    _, report = load_catalog_doc(catalog_doc, tmp_path)
+    assert any("collides with a statistic" in m for m in messages(report))
+
+
+def test_openapi_unknown_metric_fails():
+    doc = v.load_yaml(v.OPENAPI)
+    doc["components"]["schemas"]["RunSummary"]["properties"]["bytes_tx"]["x-fps-metric"] = "bytes.sent"
+    report = v.Report()
+    v.check_openapi_metrics(doc, v.OPENAPI, report, v.default_catalog())
+    assert any("unknown metric 'bytes.sent'" in m for m in messages(report))
+
+
+def test_openapi_summary_property_needs_metric():
+    doc = v.load_yaml(v.OPENAPI)
+    doc["components"]["schemas"]["RunSummary"]["properties"]["goodput_bps"] = {"type": "number"}
+    report = v.Report()
+    v.check_openapi_metrics(doc, v.OPENAPI, report, v.default_catalog())
+    assert any("goodput_bps" in f.path for f in report.errors)

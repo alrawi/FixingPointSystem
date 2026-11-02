@@ -23,10 +23,23 @@ CONTRACTS = REPO / "contracts"
 SCHEMAS = CONTRACTS / "schemas"
 OPENAPI = CONTRACTS / "openapi" / "fps-api-v1.yaml"
 EXAMPLES = CONTRACTS / "examples"
+METRICS = CONTRACTS / "metrics"
+CATALOG = METRICS / "catalog.yaml"
+CATALOG_SCHEMA = METRICS / "catalog.schema.json"
 
 CORE_FUNCTIONS = {"fill": 1, "hex": 1, "rand_int": 2}
 SESSION_FIELDS = {"id", "flow"}
 RESERVED_ACTION_TYPES = {"raw": {"strike", "fuzzer"}}
+
+# Statistics that a metric reference may append to a histogram name, as in
+# sessions.response_time.p99. A histogram reference without one is an error.
+HISTOGRAM_STATS = ("p50", "p90", "p99", "p999", "min", "max", "mean", "count")
+
+# OpenAPI extension keyword that names the catalog metric behind a field.
+METRIC_KEYWORD = "x-fps-metric"
+
+# Schemas whose every property must name a catalog metric.
+METRIC_SCHEMAS = ("RunSummary",)
 
 # Endpoints that the specification's API table requires (method, path).
 REQUIRED_OPERATIONS = {
@@ -109,6 +122,87 @@ def schema_errors(schema: dict, doc: Any, report: Report, file: Path) -> bool:
         ok = False
         report.error(file, _pointer(err.absolute_path), err.message)
     return ok
+
+
+# ---------------------------------------------------------------------------
+# Metric catalog
+# ---------------------------------------------------------------------------
+
+METRIC_TOKEN = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+")
+FORMULA_REST = re.compile(r"^[\s0-9.+\-*/()]*$")
+
+
+@dataclass
+class MetricCatalog:
+    """Metric definitions keyed by name, loaded from contracts/metrics/catalog.yaml."""
+
+    metrics: dict[str, dict] = field(default_factory=dict)
+
+    def check_reference(self, ref: str) -> str | None:
+        """Return an error message when ref names no catalog metric, else None."""
+        if ref in self.metrics:
+            if self.metrics[ref]["type"] == "histogram":
+                return (f"histogram '{ref}' needs a statistic suffix, one of "
+                        f"{', '.join(HISTOGRAM_STATS)}")
+            return None
+        base, _, stat = ref.rpartition(".")
+        if stat in HISTOGRAM_STATS and base in self.metrics:
+            if self.metrics[base]["type"] == "histogram":
+                return None
+            return f"'{stat}' applies only to histograms, and '{base}' is a {self.metrics[base]['type']}"
+        return f"unknown metric '{ref}'; add it to contracts/metrics/catalog.yaml"
+
+
+def load_catalog(path: Path, report: Report) -> MetricCatalog:
+    """Validate the catalog file and return its metrics. Invalid entries are left out."""
+    catalog = MetricCatalog()
+    doc = load_yaml(path)
+    with open(CATALOG_SCHEMA, encoding="utf-8") as fh:
+        schema = json.load(fh)
+    if not schema_errors(schema, doc, report, path):
+        return catalog
+    declared = doc["labels"]
+    for i, metric in enumerate(doc["metrics"]):
+        where = f"/metrics/{i}"
+        name = metric["name"]
+        if name in catalog.metrics:
+            report.error(path, where + "/name", f"duplicate metric '{name}'")
+            continue
+        for label in metric["labels"]:
+            if label not in declared:
+                report.error(path, where + "/labels", f"label '{label}' is not declared under labels")
+        catalog.metrics[name] = metric
+    for i, metric in enumerate(doc["metrics"]):
+        where = f"/metrics/{i}"
+        name = metric["name"]
+        base, _, stat = name.rpartition(".")
+        if stat in HISTOGRAM_STATS and catalog.metrics.get(base, {}).get("type") == "histogram":
+            report.error(path, where + "/name", f"'{name}' collides with a statistic of histogram '{base}'")
+        formula = metric.get("formula")
+        if formula is None:
+            continue
+        if not FORMULA_REST.match(METRIC_TOKEN.sub("", formula)):
+            report.error(path, where + "/formula", f"formula '{formula}' may only combine metric names and arithmetic")
+        for ref in METRIC_TOKEN.findall(formula):
+            target = catalog.metrics.get(ref)
+            if ref == name:
+                report.error(path, where + "/formula", f"formula of '{name}' refers to itself")
+            elif target is None:
+                report.error(path, where + "/formula", f"formula refers to unknown metric '{ref}'")
+            elif target["type"] == "histogram":
+                report.error(path, where + "/formula", f"formula refers to histogram '{ref}'")
+    return catalog
+
+
+_DEFAULT_CATALOG: MetricCatalog | None = None
+
+
+def default_catalog() -> MetricCatalog:
+    """Return the repository catalog, loaded once. Findings go to run() instead."""
+    global _DEFAULT_CATALOG
+    if _DEFAULT_CATALOG is None:
+        _DEFAULT_CATALOG = load_catalog(CATALOG, Report())
+    return _DEFAULT_CATALOG
 
 
 # ---------------------------------------------------------------------------
@@ -401,9 +495,15 @@ def check_module_dir(mod_dir: Path, report: Report, index: ModuleIndex) -> None:
 # Test configuration checks
 # ---------------------------------------------------------------------------
 
-def check_test_config(doc: dict, file: Path, report: Report, index: ModuleIndex) -> None:
+def check_test_config(doc: dict, file: Path, report: Report, index: ModuleIndex,
+                      catalog: MetricCatalog | None = None) -> None:
     if not schema_errors(load_schema("test-config.schema.json"), doc, report, file):
         return
+    catalog = catalog or default_catalog()
+    for i, criterion in enumerate(doc.get("criteria", [])):
+        problem = catalog.check_reference(criterion["metric"])
+        if problem:
+            report.error(file, f"/criteria/{i}/metric", problem)
     net = doc["network"]
     port_names = [p["name"] for p in net["ports"]]
     for i, name in enumerate(port_names):
@@ -497,8 +597,38 @@ def _null_values(doc: Any, path: tuple = ()) -> Iterable[str]:
             yield from _null_values(value, path + (i,))
 
 
-def check_openapi(path: Path, report: Report) -> None:
+def _metric_annotations(doc: Any, path: tuple = ()) -> Iterable[tuple[str, Any]]:
+    if isinstance(doc, dict):
+        for key, value in doc.items():
+            if key == METRIC_KEYWORD:
+                yield _pointer(path + (key,)), value
+            else:
+                yield from _metric_annotations(value, path + (key,))
+    elif isinstance(doc, list):
+        for i, value in enumerate(doc):
+            yield from _metric_annotations(value, path + (i,))
+
+
+def check_openapi_metrics(doc: dict, path: Path, report: Report, catalog: MetricCatalog) -> None:
+    """Check every x-fps-metric annotation and require one on each metric schema property."""
+    for pointer, ref in _metric_annotations(doc):
+        if not isinstance(ref, str):
+            report.error(path, pointer, f"{METRIC_KEYWORD} must be a metric name string")
+            continue
+        problem = catalog.check_reference(ref)
+        if problem:
+            report.error(path, pointer, problem)
+    schemas = (doc.get("components") or {}).get("schemas") or {}
+    for name in METRIC_SCHEMAS:
+        for prop, body in ((schemas.get(name) or {}).get("properties") or {}).items():
+            if not isinstance(body, dict) or METRIC_KEYWORD not in body:
+                report.error(path, f"/components/schemas/{name}/properties/{prop}",
+                             f"property names no catalog metric; add {METRIC_KEYWORD}")
+
+
+def check_openapi(path: Path, report: Report, catalog: MetricCatalog | None = None) -> None:
     doc = load_yaml(path)
+    check_openapi_metrics(doc, path, report, catalog or default_catalog())
     try:
         from openapi_spec_validator import validate
     except ImportError:
@@ -534,21 +664,25 @@ def check_openapi(path: Path, report: Report) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def run(modules_dirs: list[Path], tests: list[Path], openapi: Path | None) -> Report:
+def run(modules_dirs: list[Path], tests: list[Path], openapi: Path | None,
+        catalog_path: Path = CATALOG) -> Report:
     report = Report()
-    for name in ("module-manifest.schema.json", "scenario.schema.json", "test-config.schema.json"):
+    for schema_path in [SCHEMAS / n for n in ("module-manifest.schema.json", "scenario.schema.json",
+                                              "test-config.schema.json")] + [CATALOG_SCHEMA]:
         try:
-            Draft202012Validator.check_schema(load_schema(name))
+            with open(schema_path, encoding="utf-8") as fh:
+                Draft202012Validator.check_schema(json.load(fh))
         except Exception as exc:
-            report.error(SCHEMAS / name, "", f"invalid JSON Schema: {exc}")
+            report.error(schema_path, "", f"invalid JSON Schema: {exc}")
+    catalog = load_catalog(catalog_path, report)
     if openapi is not None:
-        check_openapi(openapi, report)
+        check_openapi(openapi, report, catalog)
     index = ModuleIndex()
     for root in modules_dirs:
         for mod_dir in sorted(p for p in root.iterdir() if p.is_dir()):
             check_module_dir(mod_dir, report, index)
     for test in tests:
-        check_test_config(load_yaml(test), test, report, index)
+        check_test_config(load_yaml(test), test, report, index, catalog)
     return report
 
 
@@ -559,12 +693,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tests", type=Path, nargs="*",
                         help="test configuration files (default: contracts/examples/tests/*.yaml)")
     parser.add_argument("--no-openapi", action="store_true", help="skip the OpenAPI document")
+    parser.add_argument("--catalog", type=Path, default=CATALOG,
+                        help="metric catalog (default: contracts/metrics/catalog.yaml)")
     parser.add_argument("--quiet", action="store_true", help="print only errors")
     args = parser.parse_args(argv)
 
     modules = args.modules or [EXAMPLES / "modules"]
     tests = args.tests if args.tests is not None else sorted((EXAMPLES / "tests").glob("*.yaml"))
-    report = run(modules, tests, None if args.no_openapi else OPENAPI)
+    report = run(modules, tests, None if args.no_openapi else OPENAPI, args.catalog)
     for finding in report.findings:
         if not args.quiet or finding.severity == "error":
             print(finding)
