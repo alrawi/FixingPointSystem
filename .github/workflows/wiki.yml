@@ -1,0 +1,24 @@
+name: wiki
+
+on:
+  push:
+    branches: [main]
+    paths: [docs/wiki/**, tools/wiki/**]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish docs/wiki to the GitHub wiki
+        env:
+          TOKEN: ${{ github.token }}
+        run: tools/wiki/publish.sh "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git"

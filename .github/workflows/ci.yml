@@ -19,8 +19,13 @@ jobs:
       - run: python -m pip install -r tools/contracts/requirements.txt
       - name: Validate contracts and examples
         run: python tools/contracts/validate.py
-      - name: Validator and S4 translator tests
-        run: python -m pytest -q tools/contracts spikes/s4-trex-astf
+      - name: Validator, plan, and S4 translator tests
+        run: python -m pytest -q tools/contracts tools/plan spikes/s4-trex-astf
+      - name: Work package catalog and wiki
+        run: |
+          python tools/plan/plan.py check
+          python tools/plan/plan.py render --check
+          python tools/plan/plan.py lint
 
   rust:
     runs-on: ubuntu-24.04
@@ -48,4 +53,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Lint shell scripts
-        run: shellcheck spikes/s1-engine/run-bench.sh spikes/s3-afxdp/host/*.sh spikes/s3-afxdp/guest/*.sh
+        run: shellcheck spikes/s1-engine/run-bench.sh spikes/s3-afxdp/host/*.sh spikes/s3-afxdp/guest/*.sh tools/swarm/*.sh tools/wiki/*.sh

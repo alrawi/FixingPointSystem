@@ -8,11 +8,17 @@ FixingPointSystem is an open source, modular generator of realistic application 
 
 | Path | Contents |
 |---|---|
+| `AGENTS.md` | Standing instructions for coding agents |
+| `plan/work-packages.yaml` | Work package catalog for Phases 1 to 3 |
+| `docs/wiki/` | Source of the [project wiki](https://github.com/alrawi/FixingPointSystem/wiki), published on merge |
+| `docs/handoff/` | Handoff template and one progress file per work package |
 | `docs/spec/specification.md` | Feasibility assessment and v1 specification |
 | `docs/decisions/` | Architecture decision records for decisions D1 through D9 |
 | `docs/phase0/` | Phase 0 plan, spike briefs, and the Gate 0 report |
 | `contracts/` | OpenAPI document, JSON Schemas for modules, scenarios, and tests, plus examples |
 | `tools/contracts/` | Contract validator and its tests |
+| `tools/plan/` | Catalog checker, wiki renderer, wiki linter, and issue seeder |
+| `tools/swarm/`, `tools/wiki/` | Label bootstrap and wiki publisher |
 | `spikes/s1-engine/` | Rust prototype of the flow program interpreter over kernel sockets |
 | `spikes/s2-tls/` | Rust benchmark of TLS handshake cost per core |
 | `spikes/s3-afxdp/` | Harness for AF_XDP throughput on KVM guests with virtio-net |
@@ -39,6 +45,10 @@ cargo run --release -p fps-spike-engine -- bench \
 # Run the TLS handshake benchmark
 cargo run --release -p fps-spike-tls -- --duration 5
 ```
+
+## Contributing
+
+Agents and people coordinate through the [Swarm Protocol](https://github.com/alrawi/FixingPointSystem/wiki/Swarm-Protocol). Start with `AGENTS.md` and the [wiki home page](https://github.com/alrawi/FixingPointSystem/wiki).
 
 ## Decisions
 
