@@ -13,3 +13,7 @@ We added the Swarm Protocol, the handoff template, Coding Standards, Testing, Pr
 ## [2026-11-02] plan | Phase 0 in the catalog and issues seeded
 
 We added the six Phase 0 packages to the catalog and created their issues. Five are closed as done (#4, #5, #6, #8, #9). SPK-03 (#7) stays open until spike S3 runs on a KVM host with the harness from #2. We created the label set and seeded the 48 Phase 1 issues (#10 to #57), of which eight are ready.
+
+## [2026-11-02] ingest | CON-02 Counter catalog v0.1
+
+We added the metric catalog `contracts/metrics/catalog.yaml` with 48 metrics, its JSON Schema, and the validator rule that every metric in test criteria and in OpenAPI `x-fps-metric` annotations exists in the catalog. We added a Counter catalog section to [Implementation Plan](Implementation-Plan.md). Evidence is in `docs/handoff/CON-02.md` and `tools/contracts/test_contracts.py`.

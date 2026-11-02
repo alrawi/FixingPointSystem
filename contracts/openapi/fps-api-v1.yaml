@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FixingPointSystem Controller API
-  version: 0.1.0
+  version: 0.1.1
   summary: Contract v0.1 for the controller REST API.
   description: >
     The controller stores test configurations, installs modules, starts runs on
@@ -533,22 +533,23 @@ components:
               items:
                 type: object
                 properties:
-                  metric: { type: string }
+                  metric: { type: string, description: Metric name from contracts/metrics/catalog.yaml. }
                   op: { type: string }
                   value: { type: number }
                   observed: { type: number }
                   passed: { type: boolean }
     RunSummary:
       type: object
+      description: Whole run totals. Each property names its metric in contracts/metrics/catalog.yaml through x-fps-metric.
       properties:
-        sessions_attempted: { type: integer }
-        sessions_succeeded: { type: integer }
-        sessions_failed: { type: integer }
-        bytes_tx: { type: integer }
-        bytes_rx: { type: integer }
-        throughput_bps: { type: number }
-        sessions_per_second: { type: number }
-        concurrent_sessions: { type: integer }
+        sessions_attempted: { type: integer, x-fps-metric: sessions.attempted }
+        sessions_succeeded: { type: integer, x-fps-metric: sessions.succeeded }
+        sessions_failed: { type: integer, x-fps-metric: sessions.failed }
+        bytes_tx: { type: integer, x-fps-metric: bytes.tx }
+        bytes_rx: { type: integer, x-fps-metric: bytes.rx }
+        throughput_bps: { type: number, x-fps-metric: throughput.bps }
+        sessions_per_second: { type: number, x-fps-metric: sessions.rate }
+        concurrent_sessions: { type: integer, x-fps-metric: sessions.concurrent }
     MetricView:
       enum: [application, scenario, port, tcp, tls, realism]
     MetricSample:
@@ -558,7 +559,7 @@ components:
         ts: { type: string, format: date-time }
         view: { $ref: "#/components/schemas/MetricView" }
         key: { type: string, description: "Application, scenario, or port name that the sample describes." }
-        values: { type: object, additionalProperties: { type: number } }
+        values: { type: object, additionalProperties: { type: number }, description: Values keyed by metric name from contracts/metrics/catalog.yaml. }
     MetricSeriesSet:
       type: object
       required: [view, samples]
