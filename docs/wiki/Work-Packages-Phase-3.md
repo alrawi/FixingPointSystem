@@ -203,7 +203,7 @@ Acceptance.
 Phase 3 · size M · workstream CTL
 
 - **Depends on.** CTL-07, CTL-08, CTL-12
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/multiagent/`
 
 Split plans across several agents, check clock synchronization, and aggregate results.
 

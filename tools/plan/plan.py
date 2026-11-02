@@ -66,8 +66,11 @@ def check(plan: dict) -> list[str]:
             errors.append(f"{wid}: unknown workstream {wp.get('workstream')}")
             continue
         allowed = list(ws.get("paths", [])) + list(ws.get("shared_paths", []))
+        excluded = tuple(ws.get("excluded_paths", []))
         for p in wp.get("paths", []):
-            if not any(p == a or p.startswith(a) or a.startswith(p) for a in allowed) \
+            if excluded and p.startswith(excluded):
+                errors.append(f"{wid}: path {p} is excluded from workstream {ws['id']}")
+            elif not any(p == a or p.startswith(a) for a in allowed) \
                     and not p.startswith(GLOBAL_PATHS):
                 errors.append(f"{wid}: path {p} is outside workstream {ws['id']}")
     for wid, wp in by_id.items():
@@ -261,12 +264,15 @@ def existing_issues() -> dict[str, dict]:
 
 
 def seed(plan: dict, phase: int, apply: bool) -> int:
-    existing = existing_issues() if apply else {}
+    existing = existing_issues()
     closed = {k for k, v in existing.items() if v["state"] == "closed"}
     for wp in plan["work_packages"]:
         if wp["phase"] != phase or wp["id"] in existing:
             continue
         ready = all(d in closed for d in wp["depends_on"])
+        # A dependency counts as done only when its issue closed as completed.
+        ready = ready and all(existing[d].get("state_reason") in (None, "completed")
+                              for d in wp["depends_on"])
         title = f"[{wp['id']}] {wp['title']}"
         labels = issue_labels(wp, ready)
         if not apply:

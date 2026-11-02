@@ -127,7 +127,7 @@ flowchart LR
   UI_00 --> UI_01
   UI_01 --> UI_02
   classDef critical stroke-width:3px
-  class OPS_01,QA_01,CON_01,CON_02,CON_03,CON_04,ENG_01,ENG_03,ENG_04,ENG_06,ENG_08,ENG_09,ENG_10,TRN_01,TRN_02,HST_02,AGT_01,AGT_02,CTL_01,CTL_02,CTL_05,CTL_06,CTL_07,CTL_08,MOD_01,MOD_02,RLM_01,QA_04 critical
+  class OPS_01,QA_01,CON_01,CON_02,CON_03,CON_04,ENG_01,ENG_03,ENG_04,ENG_06,ENG_08,ENG_09,ENG_10,TRN_01,TRN_02,HST_01,HST_02,AGT_01,AGT_02,CTL_01,CTL_02,CTL_03,CTL_05,CTL_06,CTL_07,CTL_08,CTL_09,MOD_01,MOD_02,RLM_01,RLM_02,QA_04 critical
 ```
 
 ## Summary
@@ -158,25 +158,25 @@ flowchart LR
 | [TRN-01](#trn-01-kernel-tcp-backend) | Kernel TCP backend | M | ENG-01 | yes |
 | [TRN-02](#trn-02-kernel-udp-backend) | Kernel UDP backend | S | TRN-01, ENG-06 | yes |
 | [TRN-03](#trn-03-operating-system-profiles-for-the-kernel-backend) | Operating system profiles for the kernel backend | S | TRN-01 |  |
-| [HST-01](#hst-01-host-pool-allocator) | Host pool allocator | S | ENG-01 |  |
+| [HST-01](#hst-01-host-pool-allocator) | Host pool allocator | S | ENG-01 | yes |
 | [HST-02](#hst-02-kernel-port-setup) | Kernel port setup | M | HST-01, QA-01 | yes |
 | [AGT-01](#agt-01-standalone-agent-mode) | Standalone agent mode | M | ENG-10, TRN-02, HST-02, CON-01 | yes |
 | [AGT-02](#agt-02-agent-grpc-service) | Agent gRPC service | M | AGT-01, CON-01 | yes |
 | [AGT-03](#agt-03-capability-detection) | Capability detection | S | CON-01 |  |
 | [CTL-01](#ctl-01-controller-skeleton) | Controller skeleton | S | OPS-01 | yes |
 | [CTL-02](#ctl-02-rest-layer-from-the-openapi-contract) | REST layer from the OpenAPI contract | M | CTL-01 | yes |
-| [CTL-03](#ctl-03-configuration-store-and-validation) | Configuration store and validation | M | CTL-02 |  |
+| [CTL-03](#ctl-03-configuration-store-and-validation) | Configuration store and validation | M | CTL-02 | yes |
 | [CTL-04](#ctl-04-module-registry) | Module registry | M | CTL-02 |  |
 | [CTL-05](#ctl-05-test-compiler) | Test compiler | M | CTL-01, CON-01 | yes |
 | [CTL-06](#ctl-06-agent-manager) | Agent manager | M | CTL-01, CON-01 | yes |
 | [CTL-07](#ctl-07-run-orchestrator) | Run orchestrator | M | CTL-03, CTL-05, CTL-06 | yes |
 | [CTL-08](#ctl-08-metrics-aggregation-and-streaming) | Metrics aggregation and streaming | M | CTL-07, CON-02 | yes |
-| [CTL-09](#ctl-09-criteria-evaluation-and-reports) | Criteria evaluation and reports | S | CTL-08 |  |
+| [CTL-09](#ctl-09-criteria-evaluation-and-reports) | Criteria evaluation and reports | S | CTL-08 | yes |
 | [CTL-10](#ctl-10-capabilities-endpoint) | Capabilities endpoint | S | CTL-04, CTL-06 |  |
 | [MOD-01](#mod-01-http11-module) | HTTP/1.1 module | M | ENG-04, CON-04 | yes |
 | [MOD-02](#mod-02-dns-module) | DNS module | M | ENG-06, CON-04 | yes |
 | [RLM-01](#rlm-01-realism-runner-and-ndpi-conformance) | Realism runner and nDPI conformance | M | none | yes |
-| [RLM-02](#rlm-02-parser-error-checks-with-zeek-and-tshark) | Parser error checks with Zeek and tshark | S | RLM-01 |  |
+| [RLM-02](#rlm-02-parser-error-checks-with-zeek-and-tshark) | Parser error checks with Zeek and tshark | S | RLM-01 | yes |
 | [RLM-03](#rlm-03-module-realism-ci-job) | Module realism CI job | M | RLM-01, QA-01, AGT-01 |  |
 | [QA-04](#qa-04-gate-1-acceptance-suite) | Gate 1 acceptance suite | M | QA-01, AGT-02, CTL-09, MOD-01, MOD-02, RLM-02 | yes |
 | [UI-00](#ui-00-web-ui-stack-decision) | Web UI stack decision | S | none |  |
@@ -682,7 +682,7 @@ Acceptance.
 
 ### HST-01 Host pool allocator
 
-Phase 1 · size S · workstream HST
+Phase 1 · size S · workstream HST · critical path
 
 - **Depends on.** ENG-01
 - **Paths.** `engine/fps-hosts/`
@@ -779,7 +779,7 @@ Acceptance.
 Phase 1 · size S · workstream CTL · critical path
 
 - **Depends on.** OPS-01
-- **Paths.** `controller/`
+- **Paths.** `controller/cmd/`, `controller/internal/app/`, `controller/go.mod`, `controller/.golangci.yml`
 
 Create the Go module with the controller binary, configuration loading, structured logging, and lint settings.
 
@@ -798,7 +798,7 @@ Acceptance.
 Phase 1 · size M · workstream CTL · critical path
 
 - **Depends on.** CTL-01
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/api/`
 
 Generate the server interface from contracts/openapi/fps-api-v1.yaml and add problem details, scoped tokens, and stubs.
 
@@ -814,10 +814,10 @@ Acceptance.
 
 ### CTL-03 Configuration store and validation
 
-Phase 1 · size M · workstream CTL
+Phase 1 · size M · workstream CTL · critical path
 
 - **Depends on.** CTL-02
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/store/`
 
 Store test configurations and validate them against the schema, module references, and agent capacity.
 
@@ -835,7 +835,7 @@ Acceptance.
 Phase 1 · size M · workstream CTL
 
 - **Depends on.** CTL-02
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/registry/`
 
 List, install, inspect, and delete module packages with manifest validation and content digests.
 
@@ -853,7 +853,7 @@ Acceptance.
 Phase 1 · size M · workstream CTL · critical path
 
 - **Depends on.** CTL-01, CON-01
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/compiler/`
 
 Compile a test configuration into per agent plans by normalizing the mix and splitting rates and host pools by core count.
 
@@ -872,7 +872,7 @@ Acceptance.
 Phase 1 · size M · workstream CTL · critical path
 
 - **Depends on.** CTL-01, CON-01
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/agents/`, `controller/internal/fakeagent/`
 
 Track agent registration, inventory, reservation, and heartbeat timeouts.
 
@@ -890,7 +890,7 @@ Acceptance.
 Phase 1 · size M · workstream CTL · critical path
 
 - **Depends on.** CTL-03, CTL-05, CTL-06
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/runs/`
 
 Drive the run state machine from pending to a final state and contain agent faults.
 
@@ -909,7 +909,7 @@ Acceptance.
 Phase 1 · size M · workstream CTL · critical path
 
 - **Depends on.** CTL-07, CON-02
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/metrics/`
 
 Merge agent snapshots into run metrics, serve the metrics views, stream them over Server Sent Events, and expose Prometheus metrics.
 
@@ -923,10 +923,10 @@ Acceptance.
 
 ### CTL-09 Criteria evaluation and reports
 
-Phase 1 · size S · workstream CTL
+Phase 1 · size S · workstream CTL · critical path
 
 - **Depends on.** CTL-08
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/report/`
 
 Evaluate pass and fail criteria and produce JSON and CSV reports.
 
@@ -943,7 +943,7 @@ Acceptance.
 Phase 1 · size S · workstream CTL
 
 - **Depends on.** CTL-04, CTL-06
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/api/capabilities.go`
 
 Serve GET /v1/capabilities from the registry and agent inventory.
 
@@ -1017,7 +1017,7 @@ Acceptance.
 
 ### RLM-02 Parser error checks with Zeek and tshark
 
-Phase 1 · size S · workstream RLM
+Phase 1 · size S · workstream RLM · critical path
 
 - **Depends on.** RLM-01
 - **Paths.** `realism/`

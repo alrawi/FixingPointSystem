@@ -23,7 +23,7 @@ Every session follows the same nine steps. `docs/wiki/Swarm-Protocol.md` gives t
 2. Read `docs/wiki/Home.md` and the newest entries of `docs/wiki/Log.md`.
 3. Run the promotion sweep and the stale sweep.
 4. Select one package with the selection rule and claim it with a status card.
-5. Create or resume the branch `wp/<ID>` and the handoff file `docs/handoff/<ID>.md`.
+5. Create or resume the branch `wp/<ID>` (or `bug/<number>`) and its handoff file under `docs/handoff/`. Push a claim commit at once.
 6. Work in plan steps of at most 30 minutes. Checkpoint after each step by pushing code, updating the handoff file, and renewing the lease.
 7. Before every push, confirm that your status card still holds the lease.
 8. Finish when the Definition of Done in `docs/wiki/Implementation-Plan.md` holds, and ingest the result into the wiki.
@@ -33,9 +33,9 @@ Every session follows the same nine steps. `docs/wiki/Swarm-Protocol.md` gives t
 
 These rules hold without exception.
 
-- Change only the paths of your work package, your handoff file, and the wiki pages your ingest requires.
+- Change only the paths of your work item, your handoff file, and `docs/wiki/`.
 - Do not edit `contracts/` or `docs/decisions/` outside a CON package or an owner approved decision package.
-- Do not force push, rewrite published history, or merge pull requests. The owner merges.
+- Do not force push, rebase published branches, or merge pull requests. The owner merges. An agent that lost its lease pushes only to `salvage/<ID>-<agent id>`.
 - Do not hold more than one lease.
 - Do not commit captures with personal data, credentials, or third party content.
 - Add only dependencies with a GPL-3.0 compatible license.

@@ -8,7 +8,7 @@ The plan covers feature 1 of the [specification](https://github.com/alrawi/Fixin
 
 A work package is atomic when one agent can finish it in one session without coordinating with another agent during the work. We enforce five properties.
 
-1. **One workstream.** A package changes paths that a single workstream owns. The catalog checker rejects any other path, except the package's own CI workflow, a proposed decision record, and its handoff file.
+1. **One workstream.** A package changes paths that a single workstream owns. The catalog checker rejects any other path, except the package's own CI workflow, a proposed decision record that the owner must accept, its handoff file, and the wiki ingest. Packages that may run in parallel own disjoint subdirectories, for example `controller/internal/store/` and `controller/internal/compiler/`. Where two packages share a crate, such as ENG-05, ENG-06, and ENG-07 in `engine/fps-interp/`, each adds its own module files and merges `origin/main` before review.
 2. **One session.** Size S takes up to two hours of agent work and about 300 changed lines. Size M takes up to five hours and about 800 lines. Size L marks an epic, which a planner splits before anyone claims it.
 3. **Contract seams.** A package depends on other packages only through a contract or a published Rust trait, Go interface, or file format. It never depends on another package's internal code.
 4. **Testable alone.** A package ships with fakes for its neighbors, so its tests pass before the neighbors exist. For example, CTL-07 tests the run orchestrator against the fake agent from CTL-06.
@@ -106,6 +106,14 @@ flowchart LR
   ENG01 --> TRN01[TRN-01 kernel TCP] --> TRN02[TRN-02 kernel UDP]
   ENG06 --> TRN02
   OPS01 --> QA01[QA-01 harness] --> HST02[HST-02 port setup]
+  ENG01 --> HST01[HST-01 host pools] --> HST02
+  CON04 --> ENG06
+  CON04 --> MOD01
+  CON04 --> MOD02
+  CON01 --> CTL05
+  CON01 --> CTL06
+  CON02 --> CTL08
+  QA01 --> QA04
   ENG10 --> AGT01[AGT-01 standalone agent]
   TRN02 --> AGT01
   HST02 --> AGT01
@@ -126,14 +134,14 @@ flowchart LR
   RLM02 --> QA04
 ```
 
-Packages with no dependencies start immediately. In Phase 1 these packages are OPS-01, OPS-02, OPS-04, CON-01, CON-02, CON-03, RLM-01, and UI-00. Eight agents can therefore work from the first hour.
+Packages with no dependencies start immediately. In Phase 1 these packages are OPS-01, OPS-02, OPS-04, CON-01, CON-02, CON-03, RLM-01, and UI-00. Five of them carry `needs:owner`. Agents draft those packages at once, and each one finishes when the owner approves the contract or decision, or creates the secret that OPS-04 needs.
 
 ## Definition of Done
 
 A package is done when every item below holds. The reviewer agent checks each item, and the owner merges only after an approving review.
 
 1. Every acceptance checkbox of the package holds, and the pull request description shows how each one was verified.
-2. The change touches only the package's paths and its handoff file.
+2. The change touches only the package's paths, its handoff file, and `docs/wiki/`.
 3. New code follows [Coding Standards](Coding-Standards.md), and every linter of the workstream passes with no new suppressions.
 4. New behavior has tests at the levels that [Testing](Testing.md) requires. Every fixed defect has a regression test.
 5. CI passes on the pull request.
@@ -153,4 +161,4 @@ python3 tools/plan/plan.py seed --phase 1 # print the issues that seeding would 
 python3 tools/plan/plan.py seed --phase 1 --apply
 ```
 
-A planner splits an epic by adding child packages with new ids in the same workstream, pointing the children's dependencies at the epic's dependencies, and pointing the epic's dependents at the last child. The epic then becomes a tracking issue that closes when its children close.
+A planner splits an epic by adding child packages with new ids in the same workstream. Each child depends on the epic's dependencies, and every dependent of the epic depends on all children. The epic then becomes a tracking issue that closes when its children close. After a plan pull request merges, the planner runs the seeder for the affected phase. The seeder matches existing issues by the `[ID]` prefix of their titles, so an issue created by hand must use that prefix and the labels that `tools/plan/plan.py` assigns.

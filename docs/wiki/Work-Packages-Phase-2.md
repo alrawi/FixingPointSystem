@@ -371,7 +371,7 @@ Acceptance.
 Phase 2 · size M · workstream CTL
 
 - **Depends on.** CTL-04
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/registry/signing/`
 
 Sign module archives and publish a signed registry index.
 
@@ -388,7 +388,7 @@ Acceptance.
 Phase 2 · size M · workstream CTL
 
 - **Depends on.** CTL-08, CON-05, AGT-05
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/mixcontrol/`
 
 Correct per scenario rates every second until the byte share of each scenario is within 2 points of its weight.
 
@@ -405,7 +405,7 @@ Acceptance.
 Phase 2 · size S · workstream CTL
 
 - **Depends on.** CTL-09
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/report/html/`
 
 Render the run report as a self contained HTML page.
 
@@ -422,7 +422,7 @@ Acceptance.
 Phase 2 · size M · workstream CTL
 
 - **Depends on.** CTL-07, AGT-05
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/captures/`
 
 Start filtered captures through agents and serve the pcapng files.
 
@@ -439,7 +439,7 @@ Acceptance.
 Phase 2 · size M · workstream CTL
 
 - **Depends on.** CTL-06, AGT-02
-- **Paths.** `controller/`
+- **Paths.** `controller/internal/pki/`
 
 Issue agent certificates at enrollment and require mutual TLS on the control channel.
 

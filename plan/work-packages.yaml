@@ -75,6 +75,7 @@ workstreams:
   - id: MOD
     name: Application and content modules
     paths: [modules/]
+    excluded_paths: [modules/tls/]
     languages: [YAML, Rust]
   - id: RLM
     name: Realism validation
@@ -536,6 +537,7 @@ work_packages:
     phase: 1
     workstream: HST
     size: S
+    critical: true
     depends_on: [ENG-01]
     paths: [engine/fps-hosts/]
     summary: >-
@@ -621,7 +623,7 @@ work_packages:
     size: S
     critical: true
     depends_on: [OPS-01]
-    paths: [controller/]
+    paths: [controller/cmd/, controller/internal/app/, controller/go.mod, controller/.golangci.yml]
     summary: >-
       Create the Go module with the controller binary, configuration loading, structured
       logging, and lint settings.
@@ -639,7 +641,7 @@ work_packages:
     size: M
     critical: true
     depends_on: [CTL-01]
-    paths: [controller/]
+    paths: [controller/internal/api/]
     summary: >-
       Generate the server interface from contracts/openapi/fps-api-v1.yaml and add problem
       details, scoped tokens, and stubs.
@@ -655,8 +657,9 @@ work_packages:
     phase: 1
     workstream: CTL
     size: M
+    critical: true
     depends_on: [CTL-02]
-    paths: [controller/]
+    paths: [controller/internal/store/]
     summary: >-
       Store test configurations and validate them against the schema, module references,
       and agent capacity.
@@ -672,7 +675,7 @@ work_packages:
     workstream: CTL
     size: M
     depends_on: [CTL-02]
-    paths: [controller/]
+    paths: [controller/internal/registry/]
     summary: >-
       List, install, inspect, and delete module packages with manifest validation and
       content digests.
@@ -689,7 +692,7 @@ work_packages:
     size: M
     critical: true
     depends_on: [CTL-01, CON-01]
-    paths: [controller/]
+    paths: [controller/internal/compiler/]
     summary: >-
       Compile a test configuration into per agent plans by normalizing the mix and splitting
       rates and host pools by core count.
@@ -707,7 +710,7 @@ work_packages:
     size: M
     critical: true
     depends_on: [CTL-01, CON-01]
-    paths: [controller/]
+    paths: [controller/internal/agents/, controller/internal/fakeagent/]
     summary: >-
       Track agent registration, inventory, reservation, and heartbeat timeouts.
     deliverables:
@@ -723,7 +726,7 @@ work_packages:
     size: M
     critical: true
     depends_on: [CTL-03, CTL-05, CTL-06]
-    paths: [controller/]
+    paths: [controller/internal/runs/]
     summary: >-
       Drive the run state machine from pending to a final state and contain agent faults.
     deliverables:
@@ -740,7 +743,7 @@ work_packages:
     size: M
     critical: true
     depends_on: [CTL-07, CON-02]
-    paths: [controller/]
+    paths: [controller/internal/metrics/]
     summary: >-
       Merge agent snapshots into run metrics, serve the metrics views, stream them over
       Server Sent Events, and expose Prometheus metrics.
@@ -754,8 +757,9 @@ work_packages:
     phase: 1
     workstream: CTL
     size: S
+    critical: true
     depends_on: [CTL-08]
-    paths: [controller/]
+    paths: [controller/internal/report/]
     summary: >-
       Evaluate pass and fail criteria and produce JSON and CSV reports.
     deliverables:
@@ -769,7 +773,7 @@ work_packages:
     workstream: CTL
     size: S
     depends_on: [CTL-04, CTL-06]
-    paths: [controller/]
+    paths: [controller/internal/api/capabilities.go]
     summary: >-
       Serve GET /v1/capabilities from the registry and agent inventory.
     deliverables:
@@ -835,6 +839,7 @@ work_packages:
     phase: 1
     workstream: RLM
     size: S
+    critical: true
     depends_on: [RLM-01]
     paths: [realism/]
     summary: >-
@@ -1067,7 +1072,7 @@ work_packages:
     workstream: CTL
     size: M
     depends_on: [CTL-04]
-    paths: [controller/]
+    paths: [controller/internal/registry/signing/]
     summary: >-
       Sign module archives and publish a signed registry index.
     deliverables:
@@ -1081,7 +1086,7 @@ work_packages:
     workstream: CTL
     size: M
     depends_on: [CTL-08, CON-05, AGT-05]
-    paths: [controller/]
+    paths: [controller/internal/mixcontrol/]
     summary: >-
       Correct per scenario rates every second until the byte share of each scenario is
       within 2 points of its weight.
@@ -1096,7 +1101,7 @@ work_packages:
     workstream: CTL
     size: S
     depends_on: [CTL-09]
-    paths: [controller/]
+    paths: [controller/internal/report/html/]
     summary: >-
       Render the run report as a self contained HTML page.
     deliverables:
@@ -1110,7 +1115,7 @@ work_packages:
     workstream: CTL
     size: M
     depends_on: [CTL-07, AGT-05]
-    paths: [controller/]
+    paths: [controller/internal/captures/]
     summary: >-
       Start filtered captures through agents and serve the pcapng files.
     deliverables:
@@ -1124,7 +1129,7 @@ work_packages:
     workstream: CTL
     size: M
     depends_on: [CTL-06, AGT-02]
-    paths: [controller/]
+    paths: [controller/internal/pki/]
     summary: >-
       Issue agent certificates at enrollment and require mutual TLS on the control channel.
     deliverables:
@@ -1795,7 +1800,7 @@ work_packages:
     workstream: CTL
     size: M
     depends_on: [CTL-07, CTL-08, CTL-12]
-    paths: [controller/]
+    paths: [controller/internal/multiagent/]
     summary: >-
       Split plans across several agents, check clock synchronization, and aggregate results.
     deliverables:

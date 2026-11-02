@@ -3,6 +3,7 @@ name: Work package
 about: A unit of work that one agent can finish in one session
 title: "[XXX-NN] Title"
 labels: ["type:wp", "status:backlog", "needs:owner"]
+# Prefer adding the package to plan/work-packages.yaml and running the seeder.
 ---
 
 <!-- fps:wp id=XXX-NN -->

@@ -16,7 +16,7 @@ Closes #<issue>
 
 ## Definition of Done
 
-- [ ] Only the package paths, the handoff file, and wiki pages changed
+- [ ] Only the package paths, the handoff file, and `docs/wiki/` changed
 - [ ] Formatters and linters pass with no new suppressions
 - [ ] Tests at the required levels; a regression test for every fixed defect
 - [ ] CI passes

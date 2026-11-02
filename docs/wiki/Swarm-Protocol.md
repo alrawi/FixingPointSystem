@@ -80,67 +80,113 @@ The holder of a work package is decided by one rule. Among cards whose state is 
 | Lease length | 90 minutes from the latest checkpoint |
 | Maximum time between checkpoints | 30 minutes of work |
 | Claim settle wait | 20 seconds |
+| Minimum lease left before a push | 10 minutes |
 | Stale after | Lease expiry; no grace period |
 
 An agent checkpoints before any command that may run longer than ten minutes, because a crash during that command must not lose earlier work.
+
+Agents compute every lease time from GitHub server time, because local clocks differ between sandboxes. The `Date` header of any API response gives that time.
+
+```bash
+now_utc() { gh api -i "repos/$FPS_REPO" 2>/dev/null | sed -n 's/^[Dd]ate: //p' | head -1 \
+  | python3 -c 'import sys,email.utils as e; print(e.parsedate_to_datetime(sys.stdin.read()).strftime("%Y-%m-%dT%H:%M:%SZ"))'; }
+lease_in() { python3 -c 'import sys,datetime as d; t=d.datetime.strptime(sys.argv[1],"%Y-%m-%dT%H:%M:%SZ"); print((t+d.timedelta(minutes=int(sys.argv[2]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$(now_utc)" "$1"; }
+LEASE=$(lease_in 90)
+```
+
+## Work items and naming
+
+Agents claim two kinds of issues. Both follow the same protocol and differ only in naming.
+
+| Item | Issue labels | Key | Branch | Handoff file | Allowed paths |
+|---|---|---|---|---|---|
+| Work package | `type:wp` | catalog id, for example `ENG-04` | `wp/ENG-04` | `docs/handoff/ENG-04.md` | The package's `paths` in the catalog |
+| Bug | `type:bug` | `bug-<issue number>`, for example `bug-142` | `bug/142` | `docs/handoff/bug-142.md` | The paths of the workstream in the bug's `ws:` label |
+
+Every pull request may also change `docs/wiki/` for the ingest step. Follow up issues are not claimable until triage turns them into work packages or bugs.
+
+## Claimable status
+
+An issue is claimable when it is open, carries `status:ready` or `status:stale`, and carries neither `needs:split` nor `type:followup`. The label `needs:owner` does not prevent a claim. It means that the owner must act before the package can finish, for example by approving a contract or creating a secret, and the agent prepares everything up to that point and then blocks the package.
 
 ## Session start
 
 Each session starts with the same sequence of steps.
 
 1. Read [Home](Home.md), the newest entries of [Log](Log.md), and the `AGENTS.md` file at the repository root.
-2. Run the promotion sweep. For every `status:backlog` issue whose listed dependencies have all closed, replace the label with `status:ready`. The OPS-03 scanner automates this step once it exists.
+2. Run the promotion sweep below. The OPS-03 scanner automates it once it exists.
 3. Run the stale sweep. For every `status:in-progress` issue whose holder card has expired, replace the label with `status:stale`.
-4. Pick a work package with the selection rule below.
+4. Pick an item with the selection rule below.
+
+The promotion sweep applies three rules. A label change that returns 404 means that another agent already made it, and the sweep ignores that error.
+
+1. A `status:backlog` work package becomes `status:ready` when every dependency id in its body maps to an issue that closed with `state_reason` equal to `completed`. The sweep skips issues labeled `needs:split` or `type:followup`.
+2. A `status:blocked` item becomes `status:ready` when every issue that its blocking comment names has closed as completed. The sweep adds `has-handoff`.
+3. A closed item that still carries a status label gets `status:done` in place of that label.
 
 ```bash
-# List claimable work packages
-gh api -X GET "repos/$FPS_REPO/issues" -f state=open -f labels='type:wp,status:ready' -f per_page=100 \
-  --jq '.[] | [.number, .title, ([.labels[].name] | join(","))] | @tsv'
-gh api -X GET "repos/$FPS_REPO/issues" -f state=open -f labels='type:wp,status:stale' -f per_page=100 \
-  --jq '.[] | [.number, .title] | @tsv'
+# Map catalog ids to issue numbers and states once per sweep
+gh api --paginate -X GET "repos/$FPS_REPO/issues" -f state=all -f labels=type:wp -f per_page=100 \
+  --jq '.[] | [(.title | capture("^\\[(?<id>[A-Z]+-[0-9]+)\\]").id), .number, .state, (.state_reason // "")] | @tsv' > ids.tsv
+# Dependencies of one backlog issue, read from its body
+gh api "repos/$FPS_REPO/issues/$N" --jq '.body' | sed -n 's/^- \*\*Depends on\.\*\* //p'
+# List claimable items
+for q in 'type:wp,status:stale' 'type:wp,status:ready' 'type:bug,status:stale' 'type:bug,status:ready'; do
+  gh api -X GET "repos/$FPS_REPO/issues" -f state=open -f labels="$q" -f per_page=100 \
+    --jq '.[] | select([.labels[].name] | index("needs:split") | not) | [.number, .title, ([.labels[].name] | join(","))] | @tsv'
+done
 ```
 
 ## Selection rule
 
-An agent picks the first package in this order and skips packages outside its competence.
+An agent picks the first claimable item in this order and skips items outside its competence.
 
-1. `status:stale` packages with the `critical-path` label.
-2. `status:ready` packages with the `critical-path` label.
-3. Other `status:stale` packages.
-4. Other `status:ready` packages.
+1. Stale items with the `critical-path` label.
+2. Ready items with the `critical-path` label.
+3. Pull requests waiting for review, when the agent acts as a reviewer. See [Review](#review).
+4. Other stale items, then other ready items. Bugs come before work packages within each group.
 
-Within each group, the agent prefers the lowest phase and then the lowest issue number. The agent never claims a package labeled `needs:split` and never holds two leases at once.
+Within each group, the agent prefers the lowest phase and then the lowest issue number. The agent never holds two leases at once.
 
-## Claim
+## Claim or resume
 
-The agent claims a package in six steps.
+The agent claims an item in seven steps. The same steps resume an item that has earlier progress, which is the case when the label `has-handoff` is present or the branch already exists.
 
-1. Confirm that every dependency issue is closed.
-2. Post a status card with state `active`, a lease 90 minutes ahead, and `Takeover of` set to `none`.
-3. Wait 20 seconds and read every card on the issue.
-4. Apply the holder rule. If another card holds the lease, edit the new card to state `superseded` and return to the selection rule.
-5. Replace the status label with `status:in-progress` and add the agent's GitHub login as an assignee.
-6. Create the branch `wp/<ID>` from `main`, copy the handoff template to `docs/handoff/<ID>.md`, fill in the goal and plan, commit, push, and open a pull request that carries the `wip` label and the text `Closes #<issue>`.
+1. Confirm that the item is claimable and that every dependency issue closed as completed.
+2. Read every card on the issue. If an unexpired active card exists, pick another item.
+3. Post a status card with state `active`, a lease 90 minutes ahead, and `Takeover of` set to the identifier of the newest earlier card, or `none`.
+4. Wait 20 seconds, read every card again, and apply the holder rule. If another card holds the lease, edit the new card to state `superseded` and return to the selection rule.
+5. Replace the status label with `status:in-progress`. Add the GitHub login of the agent as an assignee for visibility; the card remains the authority, because agents may share one login.
+6. Prepare the branch. When `origin/wp/<ID>` exists, check it out, read the handoff file, run its verification commands, and reuse the open pull request. Otherwise create the branch from `origin/main` and copy the handoff template to `docs/handoff/<ID>.md`.
+7. Append a session log row to the handoff file, commit, and push immediately. This first push marks the branch as taken, so an earlier holder that still believes it holds the lease meets a rejected push. Open the pull request when none exists, with the `wip` label and the text `Closes #<issue>`.
 
 ```bash
-N=23; ID=ENG-04
-LEASE=$(date -u -d '+90 min' +%Y-%m-%dT%H:%M:%SZ)
-# Post the card (card.md holds the card text) and keep its id
-CARD=$(gh api "repos/$FPS_REPO/issues/$N/comments" -F body=@card.md --jq .id)
-sleep 20
+N=23; ID=ENG-04; BR="wp/$ID"
+# Read cards: comment id and marker line
 gh api "repos/$FPS_REPO/issues/$N/comments" --paginate \
   --jq '.[] | select(.body | startswith("<!-- fps:card")) | [.id, (.body | split("\n")[0])] | @tsv'
+# Post a card (card.md holds the card text) and keep its id
+CARD=$(gh api "repos/$FPS_REPO/issues/$N/comments" -F body=@card.md --jq .id)
+sleep 20   # then read the cards again and apply the holder rule
 # After winning
-gh api -X DELETE "repos/$FPS_REPO/issues/$N/labels/status%3Aready"
-gh api "repos/$FPS_REPO/issues/$N/labels" -f 'labels[]=status:in-progress'
-gh api "repos/$FPS_REPO/issues/$N/assignees" -f "assignees[]=$(gh api user --jq .login)"
-git switch -c "wp/$ID" origin/main
-cp docs/handoff/TEMPLATE.md "docs/handoff/$ID.md"   # then fill it in
-git add "docs/handoff/$ID.md" && git commit -m "Start $ID handoff" && git push -u origin "wp/$ID"
-gh api "repos/$FPS_REPO/pulls" -f title="[$ID] Flow program interpreter" -f head="wp/$ID" \
-  -f base=main -f body="Closes #$N. Work in progress; see docs/handoff/$ID.md." --jq .number
-gh api "repos/$FPS_REPO/issues/<pr-number>/labels" -f 'labels[]=wip'
+for l in status%3Aready status%3Astale; do gh api -X DELETE "repos/$FPS_REPO/issues/$N/labels/$l" --silent 2>/dev/null || true; done
+gh api "repos/$FPS_REPO/issues/$N/labels" -f 'labels[]=status:in-progress' --silent
+gh api "repos/$FPS_REPO/issues/$N/assignees" -f "assignees[]=$(gh api user --jq .login)" --silent
+git fetch origin
+if git rev-parse -q --verify "origin/$BR" >/dev/null; then
+  git switch "$BR" 2>/dev/null || git switch -c "$BR" --track "origin/$BR"
+else
+  git switch -c "$BR" origin/main && cp docs/handoff/TEMPLATE.md "docs/handoff/$ID.md"
+fi
+# Append the session log row, then
+git add "docs/handoff/$ID.md" && git commit -m "Claim $ID" -m "Work-Package: $ID" -m "Agent: $FPS_AGENT_ID"
+git push -u origin "$BR"
+PR=$(gh api -X GET "repos/$FPS_REPO/pulls" -f head="alrawi:$BR" -f state=open --jq '.[0].number // empty')
+if [ -z "$PR" ]; then
+  PR=$(gh api "repos/$FPS_REPO/pulls" -f title="[$ID] Flow program interpreter" -f head="$BR" \
+    -f base=main -f body="Closes #$N. Work in progress, see docs/handoff/$ID.md." --jq .number)
+fi
+gh api "repos/$FPS_REPO/issues/$PR/labels" -f 'labels[]=wip' --silent
 ```
 
 We open the pull request at claim time, because a visible pull request shows reviewers and successors the work as it grows. The `wip` label tells the owner not to merge it. GitHub's REST API cannot convert a draft pull request to ready, so we do not use drafts.
@@ -151,8 +197,8 @@ A checkpoint makes the current state recoverable. The agent performs five steps.
 
 1. Run the fast tests of the workstream and record the result in the handoff file.
 2. Update the plan checkboxes, progress, next action, and session log in `docs/handoff/<ID>.md`.
-3. Read the cards on the issue and confirm that the agent's card still holds the lease. If it does not, stop work, push nothing, and post a comment that names the unpushed state.
-4. Commit and push. A checkpoint commit may contain unfinished code when the handoff file says so.
+3. Read the cards on the issue and confirm that the agent's card still holds the lease with at least 10 minutes left. If the card lost the lease, stop work and push the local commits to `salvage/<ID>-<agent id>` and never to the work branch. Post a comment that names the salvage branch, so the current holder can pick commits from it.
+4. Merge `origin/main` into the branch when `main` moved, then commit and push. A checkpoint commit may contain unfinished code when the handoff file says so.
 5. Edit the status card with the new lease, progress, last commit, and next action.
 
 ```bash
@@ -162,7 +208,7 @@ git push
 gh api -X PATCH "repos/$FPS_REPO/issues/comments/$CARD" -F body=@card.md
 ```
 
-An agent never force pushes a `wp/` branch. A rejected push means that another agent advanced the branch, and the agent must stop and read the cards.
+An agent never force pushes and never rebases a published branch. A rejected push means that another agent advanced the branch, and the agent must stop, read the cards, and push to a salvage branch. Conflicts in `docs/wiki/Log.md` resolve by keeping both entries in date order.
 
 ## Progress percentage
 
@@ -177,6 +223,10 @@ An agent that must stop on purpose releases the lease. Typical reasons are a low
 3. Edit the card to state `released`.
 4. Replace `status:in-progress` with `status:ready` and add `has-handoff`. Remove the assignee.
 
+## Oversized packages
+
+An agent that finds a package too large for one session does not grow its scope. It finishes the current plan step, checkpoints, and blocks the package with the labels `status:blocked`, `needs:split`, and `needs:owner`. The blocking comment proposes child packages with titles, paths, and dependencies. A planner agent or the owner then allocates new ids in the same workstream, adds the children to the catalog in a plan pull request, and runs the seeder after it merges. Each child depends on the epic's dependencies, and every dependent of the epic depends on all children. The epic becomes a tracking issue that closes when its children close.
+
 ## Block
 
 An agent that cannot continue because of a missing decision, a contract gap, or an open dependency blocks the package.
@@ -189,27 +239,21 @@ Whoever resolves the blocker relabels the issue `status:ready`. The next agent r
 
 ## Takeover
 
-Any agent may take over a package whose holder card has expired. The previous agent may have crashed, so the takeover never waits for permission.
+A takeover is a claim of an item whose newest card is expired, released, or blocked. [Claim or resume](#claim-or-resume) covers it, because step 3 names the previous holder and step 6 resumes the branch. The new holder never waits for permission, since the previous agent may have crashed. When the branch fails its verification commands, the new holder fixes it forward from the last commit that the handoff marks as verified and records the failure in the session log.
 
-1. Post a new card with state `active` and `Takeover of` set to the previous agent identifier.
-2. Wait 20 seconds and apply the holder rule.
-3. Replace `status:stale` or `status:ready` with `status:in-progress`.
-4. Fetch `wp/<ID>`, read `docs/handoff/<ID>.md`, and run its verification commands.
-5. Append a session log entry that records the takeover, the commit it started from, and the verification result.
-6. When verification fails, fix the branch forward from the last commit that the handoff marks as verified. Do not rewrite history.
-
-An agent that returns after its lease expired must treat its own package like anybody else's. It reads the cards, and when another card holds the lease it edits its old card to `superseded` and pushes nothing.
+An agent that returns after its lease expired treats its own item like anybody else's. It reads the cards, and when another card holds the lease it edits its old card to `superseded`, pushes its local commits to a salvage branch, and stops.
 
 ## Finish
 
-An agent finishes a package when the [Definition of Done](Implementation-Plan.md#definition-of-done) holds.
+An agent finishes an item when the [Definition of Done](Implementation-Plan.md#definition-of-done) holds. The agent completes every step while its lease is active.
 
-1. Set the handoff status to `ready for review` and progress to 100%.
-2. Push, then remove the `wip` label from the pull request.
-3. Replace `status:in-progress` with `status:review` and edit the card to state `done`.
-4. Ingest the result into the wiki as [Wiki Maintenance](Wiki-Maintenance.md) describes, in the same pull request.
+1. Ingest the result into the wiki as [Wiki Maintenance](Wiki-Maintenance.md) describes.
+2. Merge `origin/main` into the branch and run the full tests of the workstream.
+3. Set the handoff status to `ready for review` and progress to 100%, then push.
+4. Remove the `wip` label from the pull request.
+5. Replace `status:in-progress` with `status:review` and edit the card to state `done`.
 
-A reviewer agent then reviews the pull request. The owner merges it, and the `Closes #<issue>` text closes the issue. When review requests changes, any agent may claim the package again from `status:review` with a new card.
+A reviewer agent then reviews the pull request. The owner merges it, and the `Closes #<issue>` text closes the issue. The promotion sweep then replaces the status label with `status:done`.
 
 ## Review
 
@@ -230,7 +274,15 @@ A reviewer agent never reviews its own change. It checks the pull request agains
 Verdict: approve
 ```
 
-The verdict is `approve` or `changes`. A `changes` verdict lists each required change as a checkbox.
+The verdict is `approve` or `changes`. A `changes` verdict lists each required change as a checkbox, and the reviewer then replaces `status:review` with `status:ready` and adds `has-handoff`. Any agent may claim the item again and resume it.
+
+Reviewers find work with one query. Items in review without a review comment at the current head commit wait for a reviewer.
+
+```bash
+gh api -X GET "repos/$FPS_REPO/issues" -f state=open -f labels=status:review -f per_page=100 \
+  --jq '.[] | [.number, .title] | @tsv'
+gh api "repos/$FPS_REPO/issues/$PR/comments" --jq '[.[] | select(.body | startswith("<!-- fps:review"))] | length'
+```
 
 ## Creating tickets
 
@@ -239,7 +291,7 @@ Agents create tickets with the REST API and the templates in `.github/ISSUE_TEMP
 | Ticket | When | Labels | Ready immediately |
 |---|---|---|---|
 | Work package from the catalog | A planner seeds a phase with `tools/plan/plan.py seed --phase N --apply` | Set by the seeder | When its dependencies are closed |
-| Split of an epic or an oversized package | A package needs more than one session | `type:wp`, `needs:owner` | After a plan pull request adds the children to the catalog |
+| Split of an epic or an oversized package | A package needs more than one session, see [Oversized packages](#oversized-packages) | Set by the seeder after the plan pull request | When its dependencies are closed |
 | Bug | A test or a review finds a defect outside the current package | `type:bug`, `ws:<workstream>`, `status:ready` | Yes |
 | Follow up | Work that the current package should not absorb | `type:followup`, `ws:<workstream>`, `status:backlog` | After triage by the owner or a planner |
 | Contract change | An implementation needs a contract change | `type:wp`, `ws:con`, `needs:owner` | After owner approval |
@@ -253,6 +305,6 @@ An agent fixes a defect inside its own package without a ticket. It creates a ti
 
 ## Guarantees and limits
 
-The protocol bounds lost work to one checkpoint interval, which is at most 30 minutes. Two agents that claim within the same settle window resolve to one holder through the lowest comment id. A returning agent cannot overwrite a successor, because it must hold the lease before it pushes, and Git rejects a push onto a branch that moved.
+The protocol bounds lost work to one checkpoint interval, which is at most 30 minutes, and salvage branches keep even that work reachable. Two agents that claim within the same settle window resolve to one holder through the lowest comment id. A returning agent cannot overwrite a successor for two reasons. It must hold the lease with 10 minutes left before it pushes, and the successor pushes a claim commit right after winning, so Git rejects the stale agent's push as a non fast forward.
 
 The protocol does not prevent an agent from ignoring it. The owner reviews every merge, and the review checklist verifies the handoff file and the card history.
