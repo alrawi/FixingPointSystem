@@ -58,7 +58,9 @@ The targets that exist today are listed below.
 | `lint-shell` | shellcheck on every tracked `*.sh` file |
 | `lint-deny` | `cargo deny check`, skipped with a notice when cargo-deny is missing |
 | `lint-ops` | `tools/plan/plan.py check`, `render --check`, and `lint` |
+| `lint-ctl` | `gofmt -l`, `go vet`, and `golangci-lint run` over the controller, skipping golangci-lint with a notice when it is missing |
 | `test-con` | the contract validator and its tests |
+| `test-ctl` | `go test -race ./...` over the controller |
 | `test-ops` | the plan tool tests, the Cargo workspace probe, and a parse of `go.work` |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
 | `test-eng` | every crate under `engine/`, see [Engine](Engine.md) |
@@ -78,7 +80,7 @@ test-ctl:
 	cd controller && go test -race ./...
 ```
 
-The Rust workspace in the root `Cargo.toml` takes its members from a glob, so a new crate under `spikes/` or `engine/` builds without an edit there. The `test-ops-workspace` target proves this on every run by building an empty probe crate under `engine/` in a temporary copy of the workspace root. The Go workspace in `go.work` lists no modules yet, and the package that creates `controller/` or `cli/` adds one `use` line for it. The handoff file of [OPS-01](https://github.com/alrawi/FixingPointSystem/blob/main/docs/handoff/OPS-01.md) explains both choices.
+The Rust workspace in the root `Cargo.toml` takes its members from a glob, so a new crate under `spikes/` or `engine/` builds without an edit there. The `test-ops-workspace` target proves this on every run by building an empty probe crate under `engine/` in a temporary copy of the workspace root. The Go workspace in `go.work` lists `./controller` since CTL-01, and the package that creates `cli/` adds one `use` line for it. The handoff file of [OPS-01](https://github.com/alrawi/FixingPointSystem/blob/main/docs/handoff/OPS-01.md) explains both choices.
 
 Fast levels finish within five minutes on a CI runner. A test that needs longer moves to the end to end or performance level.
 
@@ -198,7 +200,7 @@ Each workstream owns one workflow file, `.github/workflows/<workstream>.yml`, so
 
 A workstream workflow follows six rules.
 
-1. **Name it after the workstream.** The file is `ctl.yml`, the workflow `name` is `ctl`, and the job id names the level, as in `test`.
+1. **Name it after the workstream.** The workflow `name` is the workstream, as in `ctl`, and the job id names the level, as in `test`. The file usually carries the same name, as `ops.yml` does. The controller workflow is `controller.yml` at the owner's request.
 2. **Run the make targets.** The job installs its toolchains and then runs `make lint-<ws> test-<ws>`, so CI and agents run the same commands.
 3. **Filter by paths.** The `push` and `pull_request` triggers list the workstream's catalog paths and the shared root files `Cargo.toml`, `Cargo.lock`, `Makefile`, `go.work`, and `.github/**`.
 4. **Pin the toolchain.** Go and Python versions are explicit, and Rust uses the stable toolchain as in `ci.yml`.

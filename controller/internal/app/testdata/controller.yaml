@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Example controller configuration. Every key is optional, and a missing key keeps
+# its default.
+listen: 127.0.0.1:8443
+log_level: debug
+shutdown_timeout: 5s
+read_header_timeout: 3s
