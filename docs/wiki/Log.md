@@ -14,6 +14,9 @@ We added the Swarm Protocol, the handoff template, Coding Standards, Testing, Pr
 
 We added the six Phase 0 packages to the catalog and created their issues. Five are closed as done (#4, #5, #6, #8, #9). SPK-03 (#7) stays open until spike S3 runs on a KVM host with the harness from #2. We created the label set and seeded the 48 Phase 1 issues (#10 to #57), of which eight are ready.
 
+## [2026-11-02] ingest | CON-03 Extension interface v0.1
+
+We added the WIT package `fps:extension@0.1.0` with the five hooks, a typed template function catalog, and six engine calls, together with its semantics and the mapping to the Rust traits in `contracts/extension/README.md`. Decision record D10 proposes native first party extensions behind the same traits and waits for the owner. We updated Home, the seam table in Implementation Plan, and the module layout in Coding Standards. The evidence is `docs/handoff/CON-03.md` on the branch `wp/CON-03`.
 ## [2026-11-02] ingest | OPS-01 Repository scaffolding for Phase 1
 
 We added the root `Makefile` with `lint`, `test`, and per workstream targets, switched the root `Cargo.toml` to a glob member list, and added `go.work`, `CODEOWNERS`, and the first workstream workflow `.github/workflows/ops.yml`. We rewrote the Commands section of [Testing](Testing.md), which had described the `Makefile` as future work, and added its CI workflows section. Cargo rejects a member glob that matches nothing, so the list uses one character class glob for `spikes/` and `engine/` and defers `modules/*/native` to the first native module crate. The evidence is `make test-ops-workspace` and the handoff file `docs/handoff/OPS-01.md`.

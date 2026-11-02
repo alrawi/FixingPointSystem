@@ -43,6 +43,8 @@ A new agent reads four pages in order before claiming work.
 | Source | Summary |
 |---|---|
 | [Specification](https://github.com/alrawi/FixingPointSystem/blob/main/docs/spec/specification.md) | Feasibility assessment and v1 specification |
+| [Decision records](https://github.com/alrawi/FixingPointSystem/tree/main/docs/decisions) | Decisions D1 to D9, and D10 on native first party extensions as a proposal |
+| [Contracts](https://github.com/alrawi/FixingPointSystem/tree/main/contracts) | OpenAPI document, schemas, extension WIT world, and examples |
 | [Decision records](https://github.com/alrawi/FixingPointSystem/tree/main/docs/decisions) | Decisions D1 to D9 and later proposals |
 | [Contracts](https://github.com/alrawi/FixingPointSystem/tree/main/contracts) | OpenAPI document, schemas, agent control protocol, and examples |
 | [Gate 0 report](https://github.com/alrawi/FixingPointSystem/blob/main/docs/phase0/gate0-report.md) | Spike results and items carried into Phase 1 |

@@ -236,7 +236,7 @@ A module directory has the same layout for every protocol.
 modules/dns/
   manifest.yaml          name, version, type, license, provides, parameters, provenance
   scenarios/*.yaml       flow programs
-  native/                optional Rust crate that implements template functions
+  native/                optional Rust crate that implements the extension traits (D10, proposed)
   fixtures/              synthetic reference captures and expected labels
   tests/                 interpreter and transcript tests
   README.md              parameters, scenarios, realism results
