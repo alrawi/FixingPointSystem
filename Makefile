@@ -108,6 +108,16 @@ test-spk:
 	$(PYTHON) -m pytest -q spikes/s4-trex-astf
 
 # ---------------------------------------------------------------------------
+# ENG agent engine
+
+# Every crate under engine/ is tested by package name, which equals its
+# directory name, so a new engine crate joins this target without an edit here.
+# lint-rust already covers the engine crates.
+ENG_CRATES := $(notdir $(patsubst %/,%,$(dir $(wildcard engine/*/Cargo.toml))))
+
+TEST_TARGETS += test-eng
+test-eng:
+	$(CARGO) test $(addprefix -p ,$(ENG_CRATES))
 # RLM realism validation. realism/requirements-dev.txt lists the tools, and the
 # optional ndpiReader test skips when nDPI is not installed.
 
