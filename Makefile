@@ -108,6 +108,14 @@ test-spk:
 	$(PYTHON) -m pytest -q spikes/s4-trex-astf
 
 # ---------------------------------------------------------------------------
+# AGT agent
+
+# Capability detection against fake system roots and the agent.proto mirror test.
+TEST_TARGETS += test-agt
+test-agt:
+	$(CARGO) test -p fps-agent
+
+# ---------------------------------------------------------------------------
 # Aggregate targets. New workstream blocks go above this line, because make
 # expands the prerequisite lists below when it reads them.
 

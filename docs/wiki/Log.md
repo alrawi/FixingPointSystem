@@ -29,3 +29,7 @@ We drafted the agent control protocol in `contracts/proto/fps/agent/v1/agent.pro
 ## [2026-11-02] ingest | OPS-02 Swarm helper command
 
 We added `tools/swarm/fps_swarm.py`, which runs every step of the [Swarm Protocol](Swarm-Protocol.md) over the REST API, and updated that page to show each helper command next to its raw calls. The page now also defines the `fps:block` marker that the promotion sweep reads. The evidence is `docs/handoff/OPS-02.md` and the offline tests in `tools/swarm/test_fps_swarm.py`, which include two agents that claim one issue at the same time and resolve to one holder.
+
+## [2026-11-02] ingest | AGT-03 Capability detection
+
+We created the crate `engine/fps-agent` with capability detection. It reads cores, NUMA nodes, memory, port drivers, the kernel version, and AF_XDP support from `/proc` and `/sys` under an injectable system root and fills a Rust mirror of the proto `Capabilities` message, which a contract test compares with `agent.proto`. We added the Capability detection section and a seam row to [Implementation Plan](Implementation-Plan.md) and the `test-agt` target to [Testing](Testing.md). NUMA nodes, the kernel release, and per port XDP hints have no field in contract version 0.1.0, and follow up #74 proposes them. The evidence is `docs/handoff/AGT-03.md` and `engine/fps-agent/tests/detect.rs`.
