@@ -2,9 +2,12 @@
 //! The sysctl profile of a kernel test port.
 //!
 //! Every key of the profile is per network namespace, so the profile changes
-//! only the namespace of the port and never the host. A key that older kernels
-//! keep global, such as `net.core.rmem_max` before Linux 6.x, is optional, and
-//! setup skips it when the namespace has no such key.
+//! only the namespace of the port and never the host. The keys
+//! `net.core.rmem_max` and `net.core.wmem_max` are optional. Older kernels keep
+//! them global, and newer kernels do not let a child namespace raise them above
+//! the host value, so setup skips them when they are missing or do not take
+//! the value. The TCP buffer limits `tcp_rmem` and `tcp_wmem` are required and
+//! bound the autotuned buffers without that host limit.
 
 /// Whether setup fails when the namespace lacks a key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

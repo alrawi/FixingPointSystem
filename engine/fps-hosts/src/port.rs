@@ -485,7 +485,8 @@ impl KernelPort {
         self.original
     }
 
-    /// The optional sysctl keys that the namespace lacks, which setup skipped.
+    /// The optional sysctl keys that the namespace lacks or that the kernel
+    /// did not let setup change, which setup skipped.
     pub fn skipped_sysctls(&self) -> &[&'static str] {
         &self.skipped
     }
@@ -753,17 +754,26 @@ fn apply_sysctls(spec: &PortSpec, ip: &mut dyn IpRunner) -> Result<Vec<&'static 
             }
         }
         let assign = format!("{}={}", entry.key, entry.value);
-        ip.ip(&["netns", "exec", ns.as_str(), "sysctl", "-q", "-w", &assign])
-            .map_err(step_err(spec, "write sysctl"))?;
-        let got = read(ip).map_err(step_err(spec, "read sysctl"))?;
-        if !same_value(&entry.value, &got) {
-            return Err(PortError::SysctlMismatch {
-                port: spec.name.clone(),
-                key: entry.key,
-                want: entry.value,
-                got: got.trim().to_owned(),
-            });
+        let written = ip.ip(&["netns", "exec", ns.as_str(), "sysctl", "-q", "-w", &assign]);
+        let got = read(ip);
+        let took = matches!((&written, &got), (Ok(_), Ok(v)) if same_value(&entry.value, v));
+        if took {
+            continue;
         }
+        if entry.need == Need::Optional {
+            // Linux 6.x refuses to raise net.core.rmem_max of a child
+            // namespace above the host value, and setup leaves the host alone.
+            skipped.push(entry.key);
+            continue;
+        }
+        written.map_err(step_err(spec, "write sysctl"))?;
+        let got = got.map_err(step_err(spec, "read sysctl"))?;
+        return Err(PortError::SysctlMismatch {
+            port: spec.name.clone(),
+            key: entry.key,
+            want: entry.value,
+            got: got.trim().to_owned(),
+        });
     }
     Ok(skipped)
 }
