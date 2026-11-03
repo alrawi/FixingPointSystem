@@ -297,3 +297,42 @@ The tests run over loopback addresses with the kernel backend and are listed bel
 | `tests/loopback.rs` setup | Pinning to an allowed core, a bind failure that fails the start, and the configuration checks |
 | `tests/properties.rs` | Session ids stay unique across workers, and the collector total equals the sum of the newest snapshot of every worker in any arrival order |
 | unit tests | The clock on a paused Tokio clock, the stop state order, opener address selection, and the collector |
+## UDP datagram sessions
+
+ENG-06 added UDP flows to the interpreter under the datagram rules of [scenario contract v0.2](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/README.md#datagram-rules-for-udp). A UDP flow keeps datagram boundaries, so it runs over its own seam in place of the `SessionIo` byte stream.
+
+### The DatagramIo seam
+
+The crate [`fps-io`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-io) defines the trait `DatagramIo`, a connected datagram socket that carries one session. It has three methods.
+
+| Method | Behavior |
+|---|---|
+| `poll_send` | Sends the bytes as one datagram, and fails with `InvalidInput` above `MAX_DATAGRAM`, which is 65,507 bytes |
+| `poll_recv` | Consumes one whole datagram and returns its full length, and when the buffer is smaller it keeps the first bytes and still returns the full length, as `recv` with `MSG_TRUNC` does on Linux |
+| `close` | Releases the socket, after which every operation on this side fails with `NotConnected`, while the peer observes nothing |
+
+`DatagramIoExt` adds the async helpers `send_datagram` and `recv_datagram`. Returning the full length from `poll_recv` lets the interpreter detect an oversized datagram without a second buffer, and a kernel backend gets the same behavior from `MSG_TRUNC`. TRN-04 implements the trait over kernel UDP sockets.
+
+`fps_io::memory::datagram_pair(queue)` returns two connected `MemoryDatagram` ends for tests. Each direction queues at most `queue` datagrams, and a datagram sent into a full queue or to a closed end is dropped without an error and counted by `dropped`, as UDP drops it. A queue of 0 therefore models a path that loses every datagram. `MemoryDatagram::readable` waits for a datagram without consuming it, which a test opener uses to implement `accept`.
+
+### Running a UDP side
+
+`Session::run_datagram_program` opens a UDP side with a `DatagramOpener` and runs its body, and `Session::open_datagram` and `Session::run_datagram` split the two steps, as their TCP counterparts do. `DatagramOpener` takes the same `OpenRequest` as `Opener`. For `connect` it returns a socket connected to the peer, and for `accept` it binds the port, waits for the first datagram, and returns a socket on which that datagram stays queued for the first `expect`. The open timeout of `Limits` bounds both.
+
+The TCP and UDP paths share one loop over the compiled ops, so `delay`, `set`, `loop`, `branch`, and the generator behave the same. Only three actions differ.
+
+1. `send` renders the template and writes it as one datagram. A rendering above 65,507 bytes fails the session with reason `internal` before anything is sent.
+2. `expect` reads exactly one datagram within its `timeout_ms` and consumes all of it. `bytes: N` requires exactly N bytes, `min_bytes: N` at least N bytes, and `pattern` the pattern somewhere in the datagram. A datagram that breaks the rule fails with reason `pattern_mismatch` and `FailureKind::DatagramMismatch`, and the interpreter never joins two datagrams or keeps part of one for the next `expect`. The whole datagram becomes `last` when a template of the side refers to it.
+3. `close` releases the socket in every mode, because UDP has no close handshake.
+
+`Session::set_max_datagram` sets the datagram limit of `expect`, clamped to the range from 1 to 65,507 bytes with 65,507 as the default. A longer datagram fails with reason `pattern_mismatch` and `FailureKind::DatagramTooLarge`, and it still counts in `bytes_rx`. The datagram lands in the 64 KiB scratch buffer of the session and is copied into `last` only when a template needs it. A connected socket reports ICMP port unreachable as `ConnectionRefused`, which fails the session with reason `connect_refused`. When the `stop` future completes first, the session closes the socket and fails with reason `aborted`.
+
+The compiled `Op::Expect` of `fps-flow` does not carry the per action `max_datagram` of the contract yet, so the session limit applies to every `expect` of the side. The validator already rejects a fixed size rule above the action limit, and the ENG-06 log entry records the follow up for `fps-flow`.
+
+### Tests
+
+| Test | What it checks |
+|---|---|
+| `fps-interp/tests/datagrams.rs` | The DNS lookup example of the contract end to end, one datagram per `send`, `last` as the whole datagram, the three stop rules against one datagram, no joining, the datagram limit at and above its value, the 65,507 byte bound of `send` and `expect`, the clamp of `set_max_datagram`, expect and accept timeouts on the paused clock, lost datagrams, per datagram timeouts in a loop, `connect_refused`, `aborted`, and the three close modes |
+| `fps-io/tests/datagram.rs` | Property tests that datagrams keep their boundaries, order, and full length through any buffer size, and that a full queue keeps the oldest datagrams |
+| `fps-io` unit tests | Truncation with the full length, the send bound, queue drops, `readable`, and `close` |

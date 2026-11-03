@@ -110,6 +110,22 @@ pub enum FailureKind {
         /// The limit.
         limit: usize,
     },
+    /// A UDP datagram is longer than the datagram limit of the `expect`.
+    #[error("datagram of {size} bytes exceeds the datagram limit of {limit} bytes")]
+    DatagramTooLarge {
+        /// Full length of the received datagram.
+        size: usize,
+        /// The datagram limit.
+        limit: usize,
+    },
+    /// A UDP datagram breaks the stop rule of the `expect` that read it.
+    #[error("datagram of {size} bytes does not match {rule}")]
+    DatagramMismatch {
+        /// Length of the received datagram.
+        size: usize,
+        /// The stop rule, such as `bytes 12`.
+        rule: String,
+    },
     /// The peer reset the session.
     #[error("peer reset the session")]
     Reset {
@@ -169,7 +185,9 @@ impl FailureKind {
             FailureKind::ExpectTimeout { .. } | FailureKind::DrainTimeout { .. } => {
                 Reason::ExpectTimeout
             }
-            FailureKind::PatternOverflow { .. } => Reason::PatternMismatch,
+            FailureKind::PatternOverflow { .. }
+            | FailureKind::DatagramTooLarge { .. }
+            | FailureKind::DatagramMismatch { .. } => Reason::PatternMismatch,
             FailureKind::Reset { .. } => Reason::UnexpectedReset,
             FailureKind::PeerClosed { .. } | FailureKind::BrokenPipe { .. } => Reason::PeerClosed,
             FailureKind::Tls { .. } => Reason::TlsFailure,
@@ -190,6 +208,17 @@ impl FailureKind {
             io::ErrorKind::UnexpectedEof => FailureKind::PeerClosed { received: 0 },
             io::ErrorKind::InvalidData => FailureKind::Tls { source },
             _ => FailureKind::Io { source },
+        }
+    }
+
+    /// Classifies a transport error of an established UDP session. A
+    /// connected socket reports ICMP port unreachable from the peer as
+    /// [`io::ErrorKind::ConnectionRefused`], which fails the session with
+    /// reason `connect_refused`.
+    pub(crate) fn from_datagram_io(source: io::Error) -> Self {
+        match source.kind() {
+            io::ErrorKind::ConnectionRefused => FailureKind::Refused { source },
+            _ => FailureKind::from_io(source),
         }
     }
 
