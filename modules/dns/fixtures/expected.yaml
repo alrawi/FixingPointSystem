@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of dns.pcapng, which capture.sh records in the QA-01 harness.
+# Every session of the fixture is DNS on port 53, over UDP for the lookups and
+# over TCP for the fallback after a truncated answer, and nDPI must classify at
+# least 99% of them as DNS from payload alone. realism/schema/labels.schema.json
+# defines the format.
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: dns
+    match: {transport: udp, server_port: 53}
+  - application: dns
+    match: {transport: tcp, server_port: 53}
+applications:
+  dns: {ndpi: [DNS]}
