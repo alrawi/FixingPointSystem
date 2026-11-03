@@ -336,6 +336,7 @@ dependencies = [
  "rand_pcg",
  "serde_json",
  "serde_norway",
+ "socket2",
  "thiserror",
 ]
 

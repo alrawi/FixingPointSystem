@@ -468,6 +468,11 @@ impl HostPool {
         self.ipv6
     }
 
+    /// The gateway address, if the pool names one.
+    pub fn gateway(&self) -> Option<IpAddr> {
+        self.gateway
+    }
+
     /// The range of every host index of the pool.
     pub fn range(&self) -> HostRange {
         HostRange::new(0, self.count)

@@ -16,13 +16,22 @@
 //! 3. [`HostSelector`] maps a session id to a host of a range with round
 //!    robin, uniform, or Zipf selection, derived from the run seed only
 //!    ([`select`]).
+//! 4. [`port::setup`] configures a kernel test port for one slice in a
+//!    network namespace of its own, and [`KernelPort::teardown`] removes it
+//!    ([`port`], [`sysctl`], [`ipcmd`]).
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod ipcmd;
 pub mod pool;
+pub mod port;
 pub mod select;
 pub mod slice;
+pub mod sysctl;
 
+pub use ipcmd::{CommandError, FakeIp, IpCommand, IpRunner};
 pub use pool::{HostPool, Ipv4Prefix, Ipv6Prefix, MacAddr, PoolError, PoolSpec};
+pub use port::{cleanup, setup, InterfaceAddr, KernelPort, LinkState, PortError, PortSpec};
 pub use select::{HostSelector, SelectError, Selection};
 pub use slice::{check_partition, HostRange, SliceError};
+pub use sysctl::{BufferSizes, ProfileError, SysctlProfile};
