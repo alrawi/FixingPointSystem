@@ -1,0 +1,53 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: dns
+version: 0.1.0
+type: app
+summary: DNS lookups over UDP with TCP fallback, and an authoritative server that answers A, AAAA, CNAME, MX, and TXT queries from a zone file.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: dns, transport: udp, port: 53 }
+  - { protocol: dns, transport: tcp, port: 53 }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    host: { type: string, minLength: 1, default: www.example.test, description: Name that the lookup scenarios query. }
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 53, description: UDP and TCP port of the server side. }
+functions:
+  - name: query
+    summary: Query message in RFC 1035 wire format with one question and a transaction id from the session generator, with the TCP length prefix when tcp is true.
+    params:
+      - { name: name, type: text }
+      - { name: qtype, type: text, default: A }
+      - { name: tcp, type: boolean, default: false }
+  - name: answer_ip
+    summary: First A or AAAA address in the answer section of a response, as text.
+    params:
+      - { name: message, type: bytes }
+  - name: response
+    summary: Response to a query message, answered from the zone file or, when address is set, with that one address. A UDP response longer than udp_size keeps only the question and sets TC.
+    params:
+      - { name: query, type: bytes }
+      - { name: address, type: text, default: "" }
+      - { name: ttl, type: int, default: 300 }
+      - { name: tcp, type: boolean, default: false }
+      - { name: udp_size, type: int, default: 512 }
+  - name: tcp_length
+    summary: Message length that a two byte TCP length prefix announces, as text.
+    params:
+      - { name: prefix, type: bytes }
+scenarios:
+  - scenarios/lookup_a.yaml
+  - scenarios/lookup_aaaa.yaml
+  - scenarios/lookup_cname.yaml
+  - scenarios/lookup_mx.yaml
+  - scenarios/lookup_txt.yaml
+  - scenarios/nxdomain.yaml
+  - scenarios/tcp_fallback.yaml
+fixtures:
+  - { capture: fixtures/dns.pcapng, expect: { ndpi: [DNS] } }
+provenance:
+  source: synthetic
+  notes: Messages follow RFC 1035 and RFC 3596, with truncation and TCP fallback as RFC 7766 describes. The server answers from zones/example.test.zone, whose names lie under the reserved .test domain and whose addresses lie in the documentation ranges of RFC 5737 and RFC 3849.
