@@ -28,7 +28,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Done and verified
 
-- Steps 1 to 4. `cargo test -p fps-interp` passes 33 tests (8 unit, 2 catalog, 13 failure, 10 session). `cargo clippy -p fps-interp --all-targets -- -D warnings` and `cargo fmt --check` are clean, and `cargo deny check` passes.
+- Steps 1 to 4. `cargo test -p fps-interp` passes 34 tests (9 unit, 2 catalog, 13 failure, 10 session). `cargo clippy -p fps-interp --all-targets -- -D warnings` and `cargo fmt --check` are clean, and `cargo deny check` passes.
 - Step 5. The Engine page has the section "The flow program interpreter", and `docs/wiki/log/2026-11-03T1152-ingest-eng-04-flow-program-interpreter.md` carries the shared page notes. `plan.py check`, `render --check`, and `lint` pass.
 
 Acceptance. Client and server programs run against each other over `fps_io::memory::duplex` in `tests/sessions.rs` and `tests/failures.rs`. Each of the nine catalog reasons has a test in `tests/failures.rs` that triggers it.
@@ -55,6 +55,7 @@ none
 - `InvalidData` from the transport reports `tls_failure`, as `tokio-rustls` reports TLS errors that way.
 - A `stop` future aborts the transport with a reset and reports `aborted`.
 - Negative counts, negative fixed delays, and rejected distribution parameters report `internal`.
+- `Failure` boxes its kind, so `Result<(), Failure>` stays below the 128 byte limit of `clippy::result_large_err` that CI clippy enforces.
 - Failures report the catalog action index in document order with the opener at 0, not the compiled op index.
 
 ## Pitfalls

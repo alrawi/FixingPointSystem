@@ -565,7 +565,7 @@ impl<'a> Session<'a> {
             action_index: 0,
             action_type: self.side.opener(),
             reason: kind.reason(),
-            kind,
+            kind: Box::new(kind),
         }
     }
 
@@ -577,7 +577,7 @@ impl<'a> Session<'a> {
             action_index,
             action_type,
             reason: kind.reason(),
-            kind,
+            kind: Box::new(kind),
         }
     }
 }

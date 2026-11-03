@@ -106,7 +106,7 @@ flows:
     assert_failure(&pair.client, Reason::ExpectTimeout, 2, "expect");
     let f = pair.client.unwrap_err();
     assert!(matches!(
-        f.kind,
+        *f.kind,
         FailureKind::ExpectTimeout {
             timeout_ms: 50,
             received: 0
@@ -139,7 +139,7 @@ flows:
     let pair = run_pair(text, opts).await;
     assert_failure(&pair.client, Reason::ExpectTimeout, 1, "close");
     assert!(matches!(
-        pair.client.unwrap_err().kind,
+        *pair.client.unwrap_err().kind,
         FailureKind::DrainTimeout { timeout_ms: 100 }
     ));
 }
@@ -212,7 +212,7 @@ flows:
     let pair = run_pair(text, Opts::default()).await;
     assert_failure(&pair.client, Reason::PeerClosed, 1, "expect");
     assert!(matches!(
-        pair.client.unwrap_err().kind,
+        *pair.client.unwrap_err().kind,
         FailureKind::PeerClosed { received: 5 }
     ));
     pair.server.unwrap();
@@ -235,7 +235,7 @@ flows:
     let pair = run_pair(text, Opts::default()).await;
     assert_failure(&pair.client, Reason::PeerClosed, 2, "send");
     assert!(matches!(
-        pair.client.unwrap_err().kind,
+        *pair.client.unwrap_err().kind,
         FailureKind::BrokenPipe { .. }
     ));
     pair.server.unwrap();

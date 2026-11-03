@@ -221,20 +221,32 @@ pub struct Failure {
     pub action_type: &'static str,
     /// The catalog reason.
     pub reason: Reason,
-    /// The detail and its cause.
+    /// The detail and its cause, boxed so that `Result<(), Failure>` stays small.
     #[source]
-    pub kind: FailureKind,
+    pub kind: Box<FailureKind>,
 }
 
 impl Failure {
     /// Returns the failure label `extension_<kind>` when a module function
     /// failed, as `contracts/extension/README.md` names it.
     pub fn extension_label(&self) -> Option<String> {
-        match &self.kind {
+        match &*self.kind {
             FailureKind::Render {
                 source: TemplateError::Function { kind, .. },
             } => Some(format!("extension_{kind}")),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Clippy's `result_large_err` rejects error types above 128 bytes, and
+    /// older local toolchains do not run that lint, so we pin the size here.
+    #[test]
+    fn failure_stays_small() {
+        assert!(std::mem::size_of::<Failure>() <= 128);
     }
 }
