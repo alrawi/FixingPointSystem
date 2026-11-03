@@ -12,4 +12,4 @@ Each file records one decision from the specification's decision table, with the
 - [D8. User interface in v1](0008-user-interface.md)
 - [D9. Team model](0009-team-model.md)
 - [D10. Native first party extensions](0010-native-extensions.md) (Proposed)
-- [D11. Web UI stack](0011-web-ui-stack.md) (Proposed)
+- [D11. Web UI stack](0011-web-ui-stack.md) (Accepted)

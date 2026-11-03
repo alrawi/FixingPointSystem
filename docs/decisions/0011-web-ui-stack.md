@@ -1,6 +1,6 @@
 # D11. Web UI stack
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-11-03)
 - Date: 2026-11-03
 - Deciders: repository owner
 
