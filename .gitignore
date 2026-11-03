@@ -7,5 +7,6 @@ __pycache__/
 *.pcap
 *.pcapng
 !contracts/examples/**/fixtures/*.pcapng
+!modules/*/fixtures/*.pcapng
 spikes/*/results/raw/
 .DS_Store
