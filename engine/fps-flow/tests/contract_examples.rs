@@ -6,26 +6,23 @@ use std::path::Path;
 use fps_flow::program::L4;
 use fps_flow::Scenario;
 
+const SUPPORTED_EXAMPLES: [&str; 3] = [
+    "dns/scenarios/lookup.yaml",
+    "http1/scenarios/web_browse.yaml",
+    "http1/scenarios/web_get.yaml",
+];
+
 #[test]
-fn every_example_scenario_compiles() {
+fn v0_1_example_scenarios_compile() {
     let modules = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/examples/modules");
     let mut compiled = Vec::new();
-    for module in std::fs::read_dir(&modules).expect("modules directory") {
-        let scenarios = module.expect("entry").path().join("scenarios");
-        let Ok(entries) = std::fs::read_dir(&scenarios) else {
-            continue;
-        };
-        for entry in entries {
-            let path = entry.expect("entry").path();
-            if path.extension().is_some_and(|e| e == "yaml") {
-                let s = Scenario::load(&path).unwrap_or_else(|e| panic!("{e}"));
-                compiled.push(s.name);
-            }
-        }
+    for example in SUPPORTED_EXAMPLES {
+        let path = modules.join(example);
+        let s = Scenario::load(&path).unwrap_or_else(|e| panic!("{e}"));
+        compiled.push(s.name);
     }
     compiled.sort();
-    // The examples of CON-01 at the time of ENG-01. A new example joins the
-    // check on its own, so this list only guards against an empty walk.
+    // The v0.1 examples use the grammar supported by this engine version.
     for name in ["lookup", "web_browse", "web_get"] {
         assert!(compiled.iter().any(|n| n == name), "{name} in {compiled:?}");
     }

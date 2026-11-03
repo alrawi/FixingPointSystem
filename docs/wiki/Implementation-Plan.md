@@ -71,7 +71,7 @@ Each seam has one owner and one definition. A package that needs a seam to chang
 | Seam | Defined in | Producer | Consumers |
 |---|---|---|---|
 | REST API | `contracts/openapi/fps-api-v1.yaml` | CTL | CLI, UI, QA |
-| Module manifest and scenarios | `contracts/schemas/` | CON | MOD, ENG, CTL, CAP |
+| Module manifest and scenarios | `contracts/schemas/`, scenario contract v0.2 with the template grammar and the manifest function catalog (CON-04) | CON | MOD, ENG, CTL, CAP |
 | Agent control protocol and plans | `contracts/proto/` and `contracts/examples/plans/` (CON-01) | CTL | AGT |
 | Counter catalog | `contracts/metrics/catalog.yaml` (CON-02) | ENG | CTL, UI, RLM |
 | Extension interface | `contracts/extension/fps-extension.wit` and the Rust traits in `contracts/extension/README.md` (CON-03) | ENG | MOD |

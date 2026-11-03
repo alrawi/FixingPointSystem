@@ -4,7 +4,7 @@ name: http1
 version: 0.1.0
 type: app
 summary: HTTP/1.1 client and server scenarios with keepalive and configurable object sizes.
-engine_api: ">=0.1, <0.2"
+engine_api: ">=0.2, <0.3"
 license: GPL-3.0-only
 provides:
   - { protocol: http, transport: tcp, port: 80 }
@@ -18,9 +18,24 @@ parameters:
     server_port: { type: integer, minimum: 1, maximum: 65535, default: 8080 }
     requests: { type: integer, minimum: 1, default: 4 }
     body_size: { type: integer, minimum: 0, default: 4096 }
+functions:
+  - name: request
+    summary: Request line and header block, ending with the empty line.
+    params:
+      - { name: method, type: text }
+      - { name: path, type: text }
+      - { name: host, type: text }
+      - { name: accept, type: text, default: "*/*" }
+  - name: response
+    summary: Status line, Content-Type and Content-Length headers, the empty line, and the body.
+    params:
+      - { name: status, type: int }
+      - { name: body, type: bytes, default: "" }
+      - { name: content_type, type: text, default: text/html }
 scenarios:
   - scenarios/web_get.yaml
   - scenarios/web_browse.yaml
+  - scenarios/web_page.yaml
 assets:
   - { name: html_body, generator: content.html }
 provenance:
