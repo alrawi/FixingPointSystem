@@ -71,3 +71,28 @@ The tests cover three levels. Unit tests check configuration parsing and the log
 ## Dependencies
 
 The module uses the standard library and one dependency, `go.yaml.in/yaml/v3`, which is the maintained successor of `gopkg.in/yaml.v3` under the MIT and Apache-2.0 licenses.
+
+## Test compiler
+
+The package `internal/compiler` turns one test configuration and one agent inventory into one plan per agent. CTL-05 added it. `compiler.Compile` is a pure function. It reads no clock, draws no random numbers, and does no I/O, so the same request always yields the same plans, ordered by agent id. The plan types mirror the [canonical JSON mapping](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/README.md#canonical-json-mapping) of `fps.agent.v1.Plan` field for field, and `Plan.MarshalCanonical` writes the layout of `contracts/examples/plans/`. We will switch to generated protobuf types once the controller generates code from `contracts/proto/`.
+
+A request carries five inputs.
+
+| Field | Meaning |
+|---|---|
+| `RunID` | The run id. Each plan id is `<RunID>/<agent id>` |
+| `Config` | The test configuration, decoded with `compiler.ParseConfig`, which rejects unknown keys |
+| `Agents` | The agent id, the core count, the backend, and optionally the interface names of each agent |
+| `Scenarios` | The installed scenarios with their module name, version, digest, YAML source, and an optional bytes per session estimate |
+| `Seed`, `EngineAPI` | The seed to use when the configuration sets no `timeline.seed`, and the engine contract version, which defaults to 0.2.0 |
+
+The compiler applies six rules.
+
+1. **Mix.** Each entry resolves to `<module>/<scenario>`, and a bare name must be unique in the catalog. Weights normalize to sum 1 and act as session shares, also for the `bytes` basis, until CTL-12 adds byte based correction. The entry id is the scenario name, with `_2`, `_3`, and so on for repeats.
+2. **Workers.** Agents sort by id, and each agent contributes one worker per core, where worker i pins to core i. Every worker carries an equal share, so the share of an agent follows its core count.
+3. **Host pools.** Each pool divides over all workers in that order. Every worker gets the pool count divided by the number of workers, and the first workers get one more host each until the remainder is used up. An agent therefore owns a contiguous slice, and the compiler fails with `ErrPoolTooSmall` when an agent would get no host of a pool. A pool without `mac_base` gets the locally administered base `02:xx:yy:00:00:00`, where xx and yy hold the pool index, which keeps MAC addresses unique across agents.
+4. **Rates.** `sessions_per_second` divides equally over the workers. `throughput_bps` first becomes a session rate through the weighted bytes per session estimate of the mix and fails with `ErrNoByteEstimate` when a scenario has none. `concurrent_sessions` and `simulated_users` round to whole sessions, which divide over the mix by largest remainder and over the workers with a rotating start, so the leftover sessions spread across workers.
+5. **Phases.** A hold phase runs at the steady target. A linear or step phase ramps up from the current fraction to 1, or ramps down to 0 when the load already stands at 1. A step phase takes one step per started second.
+6. **Checks.** The compiler checks the rules that it relies on, such as unknown pools and ports, pool roles, pool counts against the usable addresses of their prefixes, and the inventory. Full schema validation belongs to the configuration store.
+
+Golden tests compile the contract examples `http_smoke.yaml` on one agent and `enterprise_mix_10g.yaml` on one agent with eight cores, two agents with four and two cores, and two agents with three and two cores whose pools do not divide evenly. The goldens live in `controller/internal/compiler/testdata/<case>/<agent>.json`, and `python3 tools/contracts/check_plans.py --modules contracts/examples/modules controller/internal/compiler/testdata/*/*.json` accepts all of them. A determinism test compiles every case a second time with the inventory and the catalog reversed and expects identical bytes. The tests use the Go golden file helper through a `replace` line in `controller/go.mod`.

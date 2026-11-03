@@ -1,0 +1,5 @@
+# Unit tests may unwrap, expect, and panic. Library code may not, see
+# docs/wiki/Coding-Standards.md.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

@@ -1,0 +1,96 @@
+== compiled
+scenario web_browse
+  var host = Str("www.example.test")
+  var image_size = Int(52000)
+  var page_size = Int(18000)
+  var server_port = Int(8080)
+flow browse module http1 l4 tcp
+  client
+    port
+      dynamic, 1 segment
+      [0] vars.server_port
+    0 send
+      dynamic, 3 segments
+      [0] lit 22 "GET / HTTP/1.1\r\nHost: "
+      [1] vars.host
+      [2] lit 23 "\r\nAccept: text/html\r\n\r\n"
+    1 expect pattern "\r\n\r\n" timeout 5000 ms
+    2 expect bytes timeout 5000 ms
+      dynamic, 1 segment
+      [0] vars.page_size
+    3 delay LogNormal { mu: 3.0, sigma: 0.8, unit_ms: 1.0 }
+    4 send
+      dynamic, 3 segments
+      [0] lit 30 "GET /logo.png HTTP/1.1\r\nHost: "
+      [1] vars.host
+      [2] lit 23 "\r\nAccept: image/png\r\n\r\n"
+    5 expect pattern "\r\n\r\n" timeout 5000 ms
+    6 expect bytes timeout 5000 ms
+      dynamic, 1 segment
+      [0] vars.image_size
+    7 close fin
+  server
+    port
+      dynamic, 1 segment
+      [0] vars.server_port
+    0 expect pattern "\r\n\r\n" timeout 5000 ms
+    1 send
+      dynamic, 4 segments
+      [0] lit 73 "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: "
+      [1] vars.page_size
+      [2] lit 4 "\r\n\r\n"
+      [3] fill
+          n = vars.page_size
+    2 expect pattern "\r\n\r\n" timeout 30000 ms
+    3 send
+      dynamic, 4 segments
+      [0] lit 58 "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: "
+      [1] vars.image_size
+      [2] lit 4 "\r\n\r\n"
+      [3] fill
+          n = vars.image_size
+    4 close fin
+== folded
+scenario web_browse
+  var host = Str("www.example.test")
+  var image_size = Int(52000)
+  var page_size = Int(18000)
+  var server_port = Int(8080)
+flow browse module http1 l4 tcp
+  client
+    port
+      constant, 1 segment
+      [0] lit 4 "8080"
+    0 send
+      constant, 1 segment
+      [0] lit 61 "GET / HTTP/1.1\r\nHost: www.example.test\r\nAccept: text/html\r\n\r\n"
+    1 expect pattern "\r\n\r\n" timeout 5000 ms
+    2 expect bytes timeout 5000 ms
+      constant, 1 segment
+      [0] lit 5 "18000"
+    3 delay LogNormal { mu: 3.0, sigma: 0.8, unit_ms: 1.0 }
+    4 send
+      constant, 1 segment
+      [0] lit 69 "GET /logo.png HTTP/1.1\r\nHost: www.example.test\r\nAccept: image/png\r\n\r\n"
+    5 expect pattern "\r\n\r\n" timeout 5000 ms
+    6 expect bytes timeout 5000 ms
+      constant, 1 segment
+      [0] lit 5 "52000"
+    7 close fin
+  server
+    port
+      constant, 1 segment
+      [0] lit 4 "8080"
+    0 expect pattern "\r\n\r\n" timeout 5000 ms
+    1 send
+      dynamic, 2 segments
+      [0] lit 82 "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: 18000\r\n\r\n"
+      [1] fill
+          n = int 18000
+    2 expect pattern "\r\n\r\n" timeout 30000 ms
+    3 send
+      dynamic, 2 segments
+      [0] lit 67 "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 52000\r\n\r\n"
+      [1] fill
+          n = int 52000
+    4 close fin

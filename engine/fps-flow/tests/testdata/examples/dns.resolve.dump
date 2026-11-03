@@ -1,0 +1,74 @@
+== compiled
+scenario resolve
+  var answer = Str("192.0.2.1")
+  var host = Str("www.example.test")
+  var server_port = Int(53)
+flow query module dns l4 udp
+  client
+    port
+      dynamic, 1 segment
+      [0] vars.server_port
+    0 send
+      dynamic, 1 segment
+      [0] call dns.query
+          name = vars.host
+          qtype = text "A"
+    1 expect min_bytes timeout 2000 ms
+      constant, 1 segment
+      [0] lit 2 "12"
+    2 set
+      server_ip =
+        dynamic, 1 segment
+        [0] call dns.answer_ip
+            #0 = last
+    3 close fin
+  server
+    port
+      dynamic, 1 segment
+      [0] vars.server_port
+    0 expect min_bytes timeout 2000 ms
+      constant, 1 segment
+      [0] lit 2 "12"
+    1 send
+      dynamic, 1 segment
+      [0] call dns.response
+          #0 = last
+          address = vars.answer
+    2 close fin
+== folded
+scenario resolve
+  var answer = Str("192.0.2.1")
+  var host = Str("www.example.test")
+  var server_port = Int(53)
+flow query module dns l4 udp
+  client
+    port
+      constant, 1 segment
+      [0] lit 2 "53"
+    0 send
+      dynamic, 1 segment
+      [0] call dns.query
+          name = text "www.example.test"
+          qtype = text "A"
+    1 expect min_bytes timeout 2000 ms
+      constant, 1 segment
+      [0] lit 2 "12"
+    2 set
+      server_ip =
+        dynamic, 1 segment
+        [0] call dns.answer_ip
+            #0 = last
+    3 close fin
+  server
+    port
+      constant, 1 segment
+      [0] lit 2 "53"
+    0 expect min_bytes timeout 2000 ms
+      constant, 1 segment
+      [0] lit 2 "12"
+    1 send
+      dynamic, 1 segment
+      [0] call dns.response
+          #0 = last
+          address = text "192.0.2.1"
+    2 close fin

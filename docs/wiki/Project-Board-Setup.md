@@ -31,6 +31,8 @@ The [scanner](Swarm-Protocol.md#the-scanner) changes labels every 30 minutes wit
 
 OPS-04 adds a workflow that copies each status label into the Status field. It needs a token with project access, because the default workflow token cannot write to a user owned project. The owner creates a fine grained token with read and write access to projects and stores it as the repository secret `FPS_PROJECT_TOKEN`.
 
+[Operations](Operations.md#project-board-status-sync) describes the `project-sync` workflow, its schedule, and the owner setup steps.
+
 ## Seeding the board
 
 A planner agent seeds one phase at a time. The command prints the planned issues without `--apply`.

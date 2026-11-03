@@ -1,0 +1,14 @@
+{
+  "errors": [
+    {
+      "type": "INSUFFICIENT_SCOPES",
+      "locations": [
+        {
+          "line": 1,
+          "column": 1
+        }
+      ],
+      "message": "Your token has not been granted the required scopes to execute this query."
+    }
+  ]
+}

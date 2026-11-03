@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 #
 # RLM realism validation. realism/requirements-dev.txt lists the tools, and the
-# optional ndpiReader test skips when nDPI is not installed.
+# optional tests of ndpiReader, tshark, and Zeek skip when the tool is not installed.
 
 LINT_TARGETS += lint-rlm
 lint-rlm:
