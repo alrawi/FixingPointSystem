@@ -39,6 +39,7 @@ A new agent reads four pages in order before claiming work.
 | [Testing](Testing.md) | Test levels, modular tests, module tests, regression tests, the namespace harness, and gate suites |
 | [Controller](Controller.md) | The controller module, its flags, configuration file, logging, health endpoint, and checks |
 | [Engine](Engine.md) | Engine crates, the `SessionIo` seam, and the scenario and template compiler |
+| [Transport](Transport.md) | Transport backends, starting with the kernel TCP backend, its socket options, and its loopback tests |
 
 ### Raw sources in the repository
 
