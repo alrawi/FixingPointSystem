@@ -3,7 +3,7 @@
 
 ``python3 -m realism score --pcap FILE --labels FILE`` writes a JSON realism
 report and exits with 0 when every check passes, 1 when a check fails, and 2 on a
-usage, input, or classifier error.
+usage, input, classifier, or parser error.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from pathlib import Path
 from realism.capture import CaptureError
 from realism.classifier import DEFAULT_TIMEOUT_S, ClassifierError, NdpiClassifier
 from realism.labels import LabelsError
+from realism.parsers import PARSER_NAMES, ParserError, resolve
 from realism.report import score
 
 EXIT_PASS = 0
@@ -30,6 +31,21 @@ def _threshold(text: str) -> float:
     if not 0.0 <= value <= 1.0:
         raise argparse.ArgumentTypeError("threshold must be from 0 to 1")
     return value
+
+
+def _parser_list(text: str) -> tuple[str, ...] | None:
+    """Read the value of ``--parsers``, where None means every installed parser."""
+    if text == "auto":
+        return None
+    if text == "none":
+        return ()
+    names = tuple(name.strip() for name in text.split(",") if name.strip())
+    unknown = [name for name in names if name not in PARSER_NAMES]
+    if unknown or not names:
+        raise argparse.ArgumentTypeError(
+            f"expected auto, none, or a list of {', '.join(PARSER_NAMES)}"
+        )
+    return names
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -55,8 +71,17 @@ def _parser() -> argparse.ArgumentParser:
         "--timeout",
         type=float,
         default=DEFAULT_TIMEOUT_S,
-        help="seconds that ndpiReader may run, default %(default)s",
+        help="seconds that ndpiReader and each parser may run, default %(default)s",
     )
+    score_cmd.add_argument(
+        "--parsers",
+        type=_parser_list,
+        default=None,
+        help="auto (default) runs every installed parser, none skips the parser error "
+        "check, and a list such as tshark,zeek requires each named parser",
+    )
+    score_cmd.add_argument("--tshark", help="path of tshark, defaults to FPS_TSHARK or the path")
+    score_cmd.add_argument("--zeek", help="path of zeek, defaults to FPS_ZEEK or the path")
     return parser
 
 
@@ -65,8 +90,27 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     classifier = NdpiClassifier(reader=args.ndpi_reader, timeout_s=args.timeout)
     try:
-        report = score(args.pcap, args.labels, classifier, threshold=args.threshold)
-    except (CaptureError, LabelsError, ClassifierError) as exc:
+        parsers, missing = resolve(
+            PARSER_NAMES if args.parsers is None else args.parsers,
+            tshark=args.tshark,
+            zeek=args.zeek,
+            timeout_s=args.timeout,
+            required=args.parsers is not None,
+        )
+        for name in missing:
+            print(
+                f"realism score: {name} is not installed, the parser check skips it",
+                file=sys.stderr,
+            )
+        report = score(
+            args.pcap,
+            args.labels,
+            classifier,
+            threshold=args.threshold,
+            parsers=None if args.parsers == () else parsers,
+            missing_parsers=missing,
+        )
+    except (CaptureError, LabelsError, ClassifierError, ParserError) as exc:
         print(f"realism score failed: {exc}", file=sys.stderr)
         return EXIT_ERROR
     text = report.to_json()

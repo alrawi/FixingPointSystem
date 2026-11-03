@@ -3,6 +3,7 @@ module github.com/alrawi/FixingPointSystem/controller
 go 1.24
 
 require (
+	github.com/alrawi/FixingPointSystem/tests/golden/go v0.0.0
 	github.com/getkin/kin-openapi v0.133.0
 	github.com/oapi-codegen/oapi-codegen/v2 v2.6.0
 	github.com/oapi-codegen/runtime v1.3.1
@@ -31,3 +32,5 @@ require (
 	golang.org/x/tools v0.30.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace github.com/alrawi/FixingPointSystem/tests/golden/go => ../tests/golden/go

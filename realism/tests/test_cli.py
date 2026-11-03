@@ -27,6 +27,7 @@ def test_score_writes_a_passing_report(
 ) -> None:
     out = tmp_path / "report.json"
     argv = ["score", "--pcap", str(_capture(tmp_path)), "--labels", str(labels_file())]
+    argv += ["--parsers", "none"]
     argv += ["--ndpi-reader", str(fake_reader(CSV_PASS)), "--output", str(out)]
     assert main(argv) == EXIT_PASS
     report = json.loads(out.read_text())
@@ -41,6 +42,7 @@ def test_score_exits_1_when_conformance_fails(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     argv = ["score", "--pcap", str(_capture(tmp_path)), "--labels", str(labels_file())]
+    argv += ["--parsers", "none"]
     argv += ["--ndpi-reader", str(fake_reader())]
     assert main(argv) == EXIT_FAIL
     report = json.loads(capsys.readouterr().out)
@@ -57,6 +59,7 @@ def test_score_exits_2_on_input_errors(
     assert main([*argv, "--ndpi-reader", str(fake_reader())]) == EXIT_ERROR
     assert "read capture" in capsys.readouterr().err
     argv = ["score", "--pcap", str(_capture(tmp_path)), "--labels", str(labels_file())]
+    argv += ["--parsers", "none"]
     assert main([*argv, "--ndpi-reader", str(tmp_path / "none")]) == EXIT_ERROR
     assert "not found" in capsys.readouterr().err
 

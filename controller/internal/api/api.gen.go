@@ -250,12 +250,15 @@ func (e GetRunReportParamsFormat) Valid() bool {
 
 // Agent defines model for Agent.
 type Agent struct {
-	Address string             `json:"address"`
-	Backend *AgentBackend      `json:"backend,omitempty"`
-	Cores   *int               `json:"cores,omitempty"`
-	Id      string             `json:"id"`
-	Labels  *map[string]string `json:"labels,omitempty"`
-	Ports   *[]struct {
+	// Address Peer address of the open control session and absent while the agent is offline.
+	Address *string       `json:"address,omitempty"`
+	Backend *AgentBackend `json:"backend,omitempty"`
+	Cores   *int          `json:"cores,omitempty"`
+
+	// Id Agent identity from its client certificate.
+	Id     string             `json:"id"`
+	Labels *map[string]string `json:"labels,omitempty"`
+	Ports  *[]struct {
 		Driver    *string `json:"driver,omitempty"`
 		Name      string  `json:"name"`
 		SpeedMbps *int    `json:"speed_mbps,omitempty"`
@@ -434,9 +437,9 @@ type PageToken = string
 
 // RegisterAgentJSONBody defines parameters for RegisterAgent.
 type RegisterAgentJSONBody struct {
-	// Address gRPC endpoint of the agent.
-	Address string             `json:"address"`
-	Labels  *map[string]string `json:"labels,omitempty"`
+	// Id Agent identity that the client certificate of the agent names.
+	Id     string             `json:"id"`
+	Labels *map[string]string `json:"labels,omitempty"`
 }
 
 // CreateConfigJSONBody defines parameters for CreateConfig.

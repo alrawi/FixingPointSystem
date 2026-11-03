@@ -39,6 +39,10 @@ A new agent reads four pages in order before claiming work.
 | [Testing](Testing.md) | Test levels, modular tests, module tests, regression tests, the namespace harness, and gate suites |
 | [Controller](Controller.md) | The controller module, its flags, configuration file, logging, health endpoint, and checks |
 | [Engine](Engine.md) | Engine crates, the `SessionIo` seam, and the scenario and template compiler |
+| [Transport](Transport.md) | Transport backends, starting with the kernel TCP backend, its socket options, and its loopback tests |
+| [Hosts](Hosts.md) | Host pool address mapping, slicing by agent and worker, and seeded host selection |
+| [Contracts](Contracts.md) | Contract files and versions, the agent initiated control protocol, and the contract checks |
+| [Realism](Realism.md) | The realism runner, its conformance and parser error checks, and the report seam |
 
 ### Raw sources in the repository
 

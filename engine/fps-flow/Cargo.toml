@@ -15,4 +15,5 @@ serde_yaml = { package = "serde_norway", version = "0.9" }
 thiserror = "2"
 
 [dev-dependencies]
+fps-golden = { path = "../../tests/golden/rust" }
 proptest = "1"

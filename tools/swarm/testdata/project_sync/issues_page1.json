@@ -1,0 +1,106 @@
+{
+  "data": {
+    "repository": {
+      "issues": {
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "Y3Vyc29yOjUw"
+        },
+        "nodes": [
+          {
+            "id": "I_kwDOFPS0011",
+            "number": 11,
+            "labels": {
+              "nodes": [
+                {
+                  "name": "status:review"
+                },
+                {
+                  "name": "type:wp"
+                },
+                {
+                  "name": "phase:1"
+                }
+              ]
+            },
+            "projectItems": {
+              "nodes": [
+                {
+                  "id": "PVTI_11",
+                  "project": {
+                    "id": "PVT_kwHOAAlrawi4AAA1"
+                  },
+                  "fieldValueByName": {
+                    "optionId": "5e6f7a8b",
+                    "name": "Review"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": "I_kwDOFPS0012",
+            "number": 12,
+            "labels": {
+              "nodes": [
+                {
+                  "name": "status:in-progress"
+                },
+                {
+                  "name": "type:wp"
+                },
+                {
+                  "name": "ws:ops"
+                }
+              ]
+            },
+            "projectItems": {
+              "nodes": [
+                {
+                  "id": "PVTI_12",
+                  "project": {
+                    "id": "PVT_kwHOAAlrawi4AAA1"
+                  },
+                  "fieldValueByName": {
+                    "optionId": "61e4505c",
+                    "name": "Ready"
+                  }
+                },
+                {
+                  "id": "PVTI_x",
+                  "project": {
+                    "id": "PVT_kwDOOtherOrg"
+                  },
+                  "fieldValueByName": {
+                    "optionId": "zz",
+                    "name": "Todo"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": "I_kwDOFPS0013",
+            "number": 13,
+            "labels": {
+              "nodes": [
+                {
+                  "name": "status:ready"
+                },
+                {
+                  "name": "type:wp"
+                },
+                {
+                  "name": "needs:owner"
+                }
+              ]
+            },
+            "projectItems": {
+              "nodes": []
+            }
+          }
+        ]
+      }
+    }
+  }
+}

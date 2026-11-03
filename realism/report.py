@@ -10,17 +10,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from realism import __version__, conformance
+from realism import __version__, conformance, parser_errors
 from realism.capture import summarize
 from realism.classifier import Classifier
 from realism.labels import load
+from realism.parsers import ParserRunner
 
 REPORT_FORMAT = "fps-realism-report"
-REPORT_VERSION = "0.1.0"
+REPORT_VERSION = "0.2.0"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "realism-report.schema.json"
 LABELS_SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "labels.schema.json"
 
@@ -68,11 +70,15 @@ def score(
     labels_path: Path,
     classifier: Classifier,
     threshold: float | None = None,
+    parsers: Sequence[ParserRunner] | None = None,
+    missing_parsers: Sequence[str] = (),
 ) -> Report:
     """Score a capture against its labels and return the realism report.
 
     The threshold argument overrides the threshold of the labels file, which
-    overrides the default of 0.99.
+    overrides the default of 0.99. With ``parsers``, even an empty sequence, the
+    report also carries the parser error check, and ``missing_parsers`` names the
+    requested parsers that were not installed.
     """
     labels = load(labels_path)
     summary = summarize(pcap)
@@ -80,7 +86,11 @@ def score(
         threshold = (
             labels.threshold if labels.threshold is not None else conformance.DEFAULT_THRESHOLD
         )
-    result = conformance.check(pcap, summary.sessions, labels, classifier, threshold)
+    checks = [conformance.check(pcap, summary.sessions, labels, classifier, threshold).to_dict()]
+    if parsers is not None:
+        checks.append(
+            parser_errors.check(pcap, summary.sessions, labels, parsers, missing_parsers).to_dict()
+        )
     return Report(
         capture={
             "file": pcap.name,
@@ -92,5 +102,5 @@ def score(
             "sessions": len(summary.sessions),
         },
         labels={"file": labels_path.name, "sha256": _sha256(labels_path)},
-        checks=[result.to_dict()],
+        checks=checks,
     )

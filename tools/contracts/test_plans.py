@@ -155,3 +155,75 @@ def test_app_sim_needs_both_roles(plan: dict, tmp_path: Path) -> None:
     doc = copy.deepcopy(plan)
     doc["hostPools"] = [p for p in doc["hostPools"] if p["role"] == "HOST_ROLE_CLIENT"]
     assert any("app_sim needs" in m for m in errors_for(doc, tmp_path))
+
+
+# Agent control protocol 0.1.0 as CON-06 revised it. Agents dial the controller, so the
+# controller serves the only service and the agent serves none.
+
+GRPC_CODES = {
+    "INVALID_ARGUMENT": 3,
+    "NOT_FOUND": 5,
+    "RESOURCE_EXHAUSTED": 8,
+    "FAILED_PRECONDITION": 9,
+    "UNIMPLEMENTED": 12,
+    "INTERNAL": 13,
+}
+
+
+def _file() -> object:
+    return cp.proto_pool().FindFileByName(cp.AGENT_PROTO)
+
+
+def test_controller_service_is_the_only_service() -> None:
+    assert list(_file().services_by_name) == ["ControllerService"]
+
+
+def test_register_is_unary_and_session_is_bidirectional() -> None:
+    svc = _file().services_by_name["ControllerService"]
+    register, session = svc.methods_by_name["Register"], svc.methods_by_name["Session"]
+    assert not register.client_streaming and not register.server_streaming
+    assert session.client_streaming and session.server_streaming
+    assert register.input_type.name == "RegisterRequest"
+    assert session.input_type.name == "SessionRequest"
+    assert session.output_type.name == "SessionResponse"
+
+
+def _oneof(message: str, oneof: str) -> dict[str, str]:
+    desc = cp.proto_pool().FindMessageTypeByName(f"fps.agent.v1.{message}")
+    return {f.name: f.message_type.name for f in desc.oneofs_by_name[oneof].fields}
+
+
+def test_agent_messages_cover_heartbeats_results_and_counters() -> None:
+    assert _oneof("SessionRequest", "body") == {
+        "open": "SessionOpen",
+        "heartbeat": "Heartbeat",
+        "result": "CommandResult",
+        "snapshot": "CounterSnapshot",
+    }
+
+
+def test_controller_messages_cover_prepare_start_and_stop() -> None:
+    assert _oneof("SessionResponse", "body") == {
+        "heartbeat_ack": "HeartbeatAck",
+        "prepare": "PrepareCommand",
+        "start": "StartCommand",
+        "stop": "StopCommand",
+    }
+    assert _oneof("CommandResult", "result") == {
+        "prepare": "PrepareResult",
+        "start": "StartResult",
+        "stop": "StopResult",
+    }
+
+
+def test_error_codes_equal_grpc_status_codes() -> None:
+    enum = cp.proto_pool().FindEnumTypeByName("fps.agent.v1.ErrorCode")
+    values = {v.name: v.number for v in enum.values}
+    assert values.pop("ERROR_CODE_UNSPECIFIED") == 0
+    assert values == {f"ERROR_CODE_{k}": n for k, n in GRPC_CODES.items()}
+
+
+def test_readme_lists_every_error_code() -> None:
+    readme = (cp.v.CONTRACTS / "README.md").read_text(encoding="utf-8")
+    for name in GRPC_CODES:
+        assert f"`ERROR_CODE_{name}`" in readme
