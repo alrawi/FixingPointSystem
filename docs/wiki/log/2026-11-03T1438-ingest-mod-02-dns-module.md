@@ -1,0 +1,10 @@
+## [2026-11-03] ingest | MOD-02 DNS module
+
+We added the `dns` module under `modules/dns/` and a section on it at the end of the component page [Modules](Modules.md). The native crate `fps-module-dns` implements `dns.query`, `dns.answer_ip`, `dns.response`, and `dns.tcp_length` behind the `TemplateFn` trait of `fps-flow`, with an RFC 1035 codec and a zone file parser, and the manifest lists the four functions under `functions` with contract v0.2. The server answers A, AAAA, CNAME, MX, and TXT queries from `zones/example.test.zone`, truncates UDP answers above 512 bytes, and the scenario `tcp_fallback` repeats a truncated query over TCP. Seven scenarios run over UDP sessions of ENG-06 and one TCP flow. The tests validate the module, run client and server against each other over the in memory datagram pair and duplex, compare golden transcripts at seed 42, and compare the native catalog with the manifest. The example `fixture_peer` records 160 sessions in the QA-01 harness, and nDPI classifies 160 of 160 as DNS with no tshark parser errors. The new file `mk/mod-dns.mk` adds `lint-mod-dns`, `test-mod-dns`, and `e2e-mod-dns`, and `.github/workflows/mod-dns.yml` runs them. The evidence is `make lint-mod-dns test-mod-dns`, `sudo make e2e-mod-dns`, and `docs/handoff/MOD-02.md` on the branch `wp/MOD-02`.
+
+### Shared page notes
+
+- The module table near the top of [Modules](Modules.md) could gain the row for `dns`, with the crate `fps-module-dns`, the seven scenarios, and the fixture result of 160 sessions with nDPI ratio 1.0 for DNS. We left the table unchanged and added our section at the end of the page.
+- [Testing](Testing.md) could add the rows `lint-mod-dns`, `test-mod-dns`, and `e2e-mod-dns` to the target table. The last one needs root.
+- `fixture_peer` of the dns module runs UDP flows over Tokio UDP sockets. When TRN-02 merges, a later package can switch it to the kernel UDP backend.
+- A test configuration cannot name a zone file yet. A later contract change could add a module setting for it, which `Dns::new` already accepts.
