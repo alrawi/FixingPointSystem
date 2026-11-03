@@ -2,14 +2,14 @@
 """Gate 1 verdict and report.
 
 The script reads the files that run.sh leaves in an output directory, decides
-the Gate 1 verdict, and writes ``gate1-report.md`` and ``gate1-summary.json``.
+the Gate 1 verdict, and writes ``report.md`` and ``summary.json``.
 
     python3 -I gate1_report.py --out-dir OUT [--threshold 0.99] [--min-sessions 100]
     python3 -I gate1_report.py --raised-threshold OUT
 
 The first form exits with 0 when every gate check passes and with 1 when one
 fails. The second form prints a threshold just above the lowest measured
-conformance ratio of ``OUT/gate1-summary.json``, which the negative proof of
+conformance ratio of ``OUT/summary.json``, which the negative proof of
 the suite passes back to run.sh.
 
 The gate has five checks.
@@ -358,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     try:
         if args.raised_threshold is not None:
-            summary = load_json(args.raised_threshold / "gate1-summary.json")
+            summary = load_json(args.raised_threshold / "summary.json")
             print(
                 raised_threshold(
                     {str(k): float(v) for k, v in summary.get("ratios", {}).items()}
@@ -378,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"gate1_report.py: {e}", file=sys.stderr)
         return 2
     passed = all(c.passed for c in checks)
-    (out / "gate1-report.md").write_text(
+    (out / "report.md").write_text(
         render(checks, run_report, realism, context, args.threshold), encoding="utf-8"
     )
     summary_doc = {
@@ -389,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         "ratios": ratios,
         "checks": [c.__dict__ for c in checks],
     }
-    (out / "gate1-summary.json").write_text(
+    (out / "summary.json").write_text(
         json.dumps(summary_doc, indent=2) + "\n", encoding="utf-8"
     )
     for c in checks:

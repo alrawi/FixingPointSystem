@@ -214,16 +214,16 @@ def test_main_writes_report_and_summary(
 ) -> None:
     write_inputs(tmp_path, run_report(), realism())
     assert g.main(["--out-dir", str(tmp_path)]) == 0
-    md = (tmp_path / "gate1-report.md").read_text()
+    md = (tmp_path / "report.md").read_text()
     assert "**Verdict: PASS**" in md
     assert "| Conformance of dns | 100.00% (100 of 100) | >= 99.00% | pass |" in md
     assert "| Client run | run_1 |" in md
-    summary = json.loads((tmp_path / "gate1-summary.json").read_text())
+    summary = json.loads((tmp_path / "summary.json").read_text())
     assert summary["passed"] is True
     assert g.main(["--raised-threshold", str(tmp_path)]) == 0
     assert capsys.readouterr().out.strip() == "1.001"
     assert g.main(["--out-dir", str(tmp_path), "--threshold", "1.001"]) == 1
-    assert "**Verdict: FAIL**" in (tmp_path / "gate1-report.md").read_text()
+    assert "**Verdict: FAIL**" in (tmp_path / "report.md").read_text()
 
 
 def test_main_reports_missing_inputs(tmp_path: Path) -> None:

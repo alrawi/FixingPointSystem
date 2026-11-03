@@ -8,7 +8,7 @@ This suite automates the exit criterion of Phase 1, an HTTP/1.1 and DNS mix that
 |---|---|
 | `run.sh` | The suite, which runs the controller, the agent, the harness, and the realism runner and writes the gate report |
 | `prove-threshold.sh` | The negative proof, which scores a passing capture again with a threshold above the measured ratios and expects the gate to fail |
-| `gate1_report.py` | Decides the verdict from the run report, the metrics, and the realism report, and writes `gate1-report.md` and `gate1-summary.json` |
+| `gate1_report.py` | Decides the verdict from the run report, the metrics, and the realism report, and writes `report.md` and `summary.json` |
 | `test_gate1_report.py` | Unit tests of the report generator |
 | `test-config.yaml` | The test configuration that the suite stores through `POST /v1/configs`, with `@NAME@` markers for the agent, the rate, and the duration |
 | `expected.yaml` | The labels of the realism runner for the ports of the mix |
@@ -39,8 +39,8 @@ make lint-qa-gate1 test-qa-gate1    # shellcheck, ruff, mypy, and the unit tests
 
 | File in OUT | Content |
 |---|---|
-| `gate1-report.md` | The gate report with every check and its measured value |
-| `gate1-summary.json` | The verdict, the threshold, the ratio of each application, and every check |
+| `report.md` | The gate report with every check and its measured value |
+| `summary.json` | The verdict, the threshold, the ratio of each application, and every check |
 | `gate1.pcapng` | The capture of the router's client arm |
 | `realism.json` | The realism report |
 | `run-report.json`, `run-report.csv` | `GET /v1/runs/{id}/report` of the client run in JSON and CSV |

@@ -12,9 +12,9 @@ set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 out=${1:?usage: prove-threshold.sh OUT_DIR}
-[[ -s $out/gate1-summary.json ]] || { echo "prove-threshold.sh: $out holds no gate1-summary.json" >&2; exit 2; }
+[[ -s $out/summary.json ]] || { echo "prove-threshold.sh: $out holds no summary.json" >&2; exit 2; }
 python3 -I -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1]))["passed"] else 1)' \
-  "$out/gate1-summary.json" || { echo "prove-threshold.sh: the run in $out did not pass" >&2; exit 1; }
+  "$out/summary.json" || { echo "prove-threshold.sh: the run in $out did not pass" >&2; exit 1; }
 
 raised=$out/raised
 rm -rf "$raised"
@@ -29,4 +29,4 @@ if [[ $rc -ne 1 ]]; then
   echo "prove-threshold.sh: the gate exited with $rc at threshold $threshold, want 1" >&2
   exit 1
 fi
-echo "prove-threshold.sh: the gate fails at threshold $threshold, above the measured ratios, see $raised/gate1-report.md"
+echo "prove-threshold.sh: the gate fails at threshold $threshold, above the measured ratios, see $raised/report.md"

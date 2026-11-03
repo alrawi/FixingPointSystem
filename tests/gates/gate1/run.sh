@@ -17,7 +17,7 @@
 # stores test-config.yaml once per agent, starts the server run, records the
 # router's client arm, and starts the client run. When the client run ends it
 # stops the server run, fetches the report and the metrics of the client run,
-# scores the capture with the realism runner, and writes OUT_DIR/gate1-report.md.
+# scores the capture with the realism runner, and writes OUT_DIR/report.md.
 #
 # The second form scores OUT_DIR/gate1.pcapng again and rewrites the report,
 # which shows that a raised threshold fails the gate without a new run.
@@ -74,7 +74,7 @@ score_and_report() {
   rc=0
   python3 -I "$here/gate1_report.py" --out-dir "$dir" --threshold "$threshold" \
     --min-sessions "$min_sessions" || rc=$?
-  cat "$dir/gate1-report.md"
+  cat "$dir/report.md"
   return "$rc"
 }
 

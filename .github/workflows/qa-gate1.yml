@@ -72,8 +72,8 @@ jobs:
       - name: Gate report in the job summary
         if: always()
         run: |
-          if [ -f gate1-out/gate1-report.md ]; then
-            cat gate1-out/gate1-report.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -f gate1-out/report.md ]; then
+            cat gate1-out/report.md >> "$GITHUB_STEP_SUMMARY"
           fi
           sudo chown -R "$(id -u):$(id -g)" target gate1-out 2>/dev/null || true
       - uses: actions/upload-artifact@v4
