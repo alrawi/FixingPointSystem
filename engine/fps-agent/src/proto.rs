@@ -3,9 +3,10 @@
 //!
 //! Each type mirrors one message or enum of
 //! `contracts/proto/fps/agent/v1/agent.proto` field for field, with the proto
-//! field name as the Rust field name. The table below gives the mapping. We
-//! keep these hand written mirrors until the package that serves
-//! `AgentService` adds generated types, and the contract test in
+//! field name as the Rust field name. The table below gives the mapping.
+//! Capability detection fills these hand written mirrors, and
+//! [`crate::convert::capabilities_to_pb`] copies them into the generated
+//! types of [`crate::pb`] for `Register`. The contract test in
 //! `tests/contract.rs` reads the proto file and fails when the two drift.
 //!
 //! | Proto | Rust |

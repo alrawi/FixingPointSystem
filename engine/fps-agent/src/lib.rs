@@ -2,7 +2,7 @@
 //! The FixingPointSystem agent.
 //!
 //! This crate holds the agent side of the control protocol in
-//! `contracts/proto/fps/agent/v1/agent.proto`. It has two parts today.
+//! `contracts/proto/fps/agent/v1/agent.proto`. It has three parts.
 //!
 //! 1. Capability detection. [`capabilities::detect`] reads `/proc` and
 //!    `/sys` under a [`sysroot::SystemRoot`], and
@@ -15,17 +15,25 @@
 //!    functions, [`assemble`] turns the plan into engine workers, `fps-runtime`
 //!    runs the TCP flows, [`udp`] runs the UDP flows over the datagram
 //!    openers, and [`criteria`] evaluates the pass and fail rules.
+//! 3. The controller session. [`session::serve`] dials the controller,
+//!    registers, and serves `prepare`, `start`, and `stop` on the session
+//!    stream with the run path of the standalone mode. [`pb`] holds the
+//!    generated messages and stubs, and [`convert`] maps them to the types
+//!    of the run path.
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 pub mod assemble;
 pub mod capabilities;
+pub mod convert;
 pub mod criteria;
 pub mod error;
 pub mod modules;
+pub mod pb;
 pub mod plan;
 pub mod proto;
 pub mod run;
+pub mod session;
 pub mod sysroot;
 pub mod udp;
 
