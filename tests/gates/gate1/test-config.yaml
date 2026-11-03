@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Test configuration of the Gate 1 suite. run.sh replaces the @NAME@ markers
+# before it stores the configuration through POST /v1/configs. The mix carries
+# two HTTP/1.1 scenarios of the http1 module and one A lookup of the dns
+# module, each on its own server port, because two mix entries must not
+# listen on the same transport and port. The pools come from the benchmarking
+# range 198.18.0.0/15 of RFC 2544.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: gate1_@ROLE@
+  description: The Gate 1 mix of HTTP/1.1 and DNS, run by the @ROLE@ agent.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: @AGENT@/eth0 }
+    - { name: server0, location: @AGENT@/eth0 }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 198.18.0.0/24, count: 64 }
+    - { name: servers, port: server0, role: server, ipv4: 198.19.0.0/24, count: 8 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: http1/single_fetch, weight: 0.35, params: { server_port: 80, body_size: 4096 } }
+    - { scenario: http1/keepalive_browse, weight: 0.25, params: { server_port: 8080, objects: 3, page_size: 9000, object_size: 4000 } }
+    - { scenario: dns/lookup_a, weight: 0.4, params: { server_port: 53 } }
+load:
+  objective: { type: sessions_per_second, value: @RATE@ }
+  phases:
+    - { name: ramp_up, duration_s: 5, shape: linear }
+    - { name: steady, duration_s: @STEADY_S@, shape: hold }
+timeline: { seed: 7 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "<=", value: 0.01 }
