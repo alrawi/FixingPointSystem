@@ -25,11 +25,11 @@ The owner completes seven steps in about ten minutes.
 
 ## Keeping the Status field current
 
-Labels change through the REST API, and the Status field does not follow labels by itself. The views that filter by label stay correct without any automation. The Board views group by the Status field, and they stay correct after the owner completes OPS-04.
+Labels change through the REST API, and the Status field does not follow labels by itself. The views that filter by label stay correct without any automation. The Board views group by the Status field, and they stay correct once the owner stores the token below.
 
-The [scanner](Swarm-Protocol.md#the-scanner) changes labels every 30 minutes with the repository token, and GitHub starts no workflow for events from that token. A label event workflow alone therefore misses the scanner's relabels, and OPS-04 must also cover them, for example with its own schedule.
+The [scanner](Swarm-Protocol.md#the-scanner) changes labels every 30 minutes with the repository token, and GitHub starts no workflow for events from that token. The OPS-04 workflow `project-sync` therefore runs on label events and also on a schedule a few minutes after each scanner run.
 
-OPS-04 adds a workflow that copies each status label into the Status field. It needs a token with project access, because the default workflow token cannot write to a user owned project. The owner creates a fine grained token with read and write access to projects and stores it as the repository secret `FPS_PROJECT_TOKEN`.
+The workflow needs a token with project access, because the default workflow token cannot write to a user owned project. The owner creates a fine grained token with read and write access to projects and read access to the issues of this repository, and stores it as the repository secret `FPS_PROJECT_TOKEN`. Without the secret the workflow succeeds and changes nothing.
 
 [Operations](Operations.md#project-board-status-sync) describes the `project-sync` workflow, its schedule, and the owner setup steps.
 

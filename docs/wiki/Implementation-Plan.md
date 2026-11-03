@@ -72,12 +72,11 @@ Each seam has one owner and one definition. A package that needs a seam to chang
 |---|---|---|---|
 | REST API | `contracts/openapi/fps-api-v1.yaml` | CTL | CLI, UI, QA |
 | Module manifest and scenarios | `contracts/schemas/`, scenario contract v0.2 with the template grammar and the manifest function catalog (CON-04) | CON | MOD, ENG, CTL, CAP |
-| Agent control protocol and plans | `contracts/proto/` and `contracts/examples/plans/` (CON-01) | CTL | AGT |
+| Agent control protocol and plans | `contracts/proto/` and `contracts/examples/plans/` (CON-01, CON-06). Agents dial the controller, which serves `ControllerService` | CTL | AGT |
 | Counter catalog | `contracts/metrics/catalog.yaml` (CON-02) | ENG | CTL, UI, RLM |
 | Extension interface | `contracts/extension/fps-extension.wit` and the Rust traits in `contracts/extension/README.md` (CON-03) | ENG | MOD |
 | Byte stream and datagram I/O | `SessionIo`, `DatagramIo` in `engine/fps-io` | TRN | ENG |
 | Host capabilities | `HostCapabilities` and `SystemRoot` in `engine/fps-agent` (AGT-03) | AGT | TRN backend selection, CTL through `Capabilities` |
-| Realism report | `realism/schema/` (RLM-01) | RLM | CTL, QA |
 | Realism report | [`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) (RLM-01) | RLM | CTL, QA |
 
 ### Counter catalog
@@ -107,7 +106,7 @@ The realism runner from RLM-01 writes one JSON report per capture with `python3 
 1. A check adds one entry to `checks` with the common fields `check`, `passed`, and `metrics`. Its schema adds a definition under `$defs` and one `if` and `then` entry in `$defs.check.allOf`.
 2. Metric names and labels in a report come from the metric catalog, for example `realism.conformance_ratio` with the labels `application` and `classifier`.
 3. Classifiers run out of process. The nDPI classifier calls `ndpiReader -d`, so port based guesses never count toward conformance.
-4. The report passes when it has at least one check and every check passes. The conformance check passes when every labelled application reaches the threshold, which is 0.99 unless the labels file or the command sets another.
+4. The report passes when it has at least one check and every check passes. RLM-02 added the `parser_errors` check, which counts tshark and Zeek parser errors per application. The conformance check passes when every labelled application reaches the threshold, which is 0.99 unless the labels file or the command sets another.
 
 ## Phases and gates
 

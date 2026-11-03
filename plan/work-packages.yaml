@@ -742,7 +742,7 @@ work_packages:
       Implement the agent side of the control protocol with registration, heartbeat,
       prepare, start, stop, and the counter stream.
     deliverables:
-      - A tonic server and a client loop that registers with a configured controller.
+      - A tonic client loop that registers with a configured controller and serves commands on the session stream.
       - State handling that rejects out of order calls with gRPC status codes.
     acceptance:
       - A test with a fake controller drives prepare, start, and stop and receives counter snapshots.
@@ -860,7 +860,7 @@ work_packages:
     summary: >-
       Track agent registration, inventory, reservation, and heartbeat timeouts.
     deliverables:
-      - The controller side of Register and Heartbeat and the /v1/agents operations.
+      - The controller side of Register and the Session stream, and the /v1/agents operations.
       - A fake agent package for tests in other controller packages.
     acceptance:
       - A test with three fake agents covers reservation, release, and a missed heartbeat.

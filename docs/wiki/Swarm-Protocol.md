@@ -409,6 +409,7 @@ Each shared file that every package used to edit is replaced by files that one p
 | `go.work` | Never edited in packages; builds run with `GOWORK=off` | The new module's own `go.mod` |
 | `.github/workflows/ci.yml` | Edited only by OPS packages | `.github/workflows/<area>.yml`, named after the area it tests |
 | Shared wiki pages | Home, Implementation Plan, Testing, Swarm Protocol, Coding Standards, and the sidebar are edited by the coordinator | The workstream's component page and the `Shared page notes` of the log entry |
+| New component page | Linked from Home and the sidebar by the coordinator after the batch | A link from the package's log entry, which `plan.py lint` counts until then |
 
 `Cargo.lock` stays shared, because Cargo writes it. A package that adds a Rust dependency says so in its pull request, and the merge train regenerates the file when two such pull requests meet.
 

@@ -224,6 +224,10 @@ def lint(wiki: Path = WIKI) -> list[str]:
         for target, _ in LINK_RE.findall(text):
             if "/" not in target and target not in pages:
                 errors.append(f"log/{entry.name}: broken link to {target}")
+            elif "/" not in target:
+                # A new component page is reachable from its log entry until the
+                # coordinator links it from Home after the batch.
+                linked.add(target)
         if "\u2014" in text:
             errors.append(f"log/{entry.name}: contains an em dash")
     if (wiki / "log").is_dir():
