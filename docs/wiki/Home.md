@@ -37,12 +37,13 @@ A new agent reads four pages in order before claiming work.
 |---|---|
 | [Coding Standards](Coding-Standards.md) | Rules and examples for Rust, Go, Python, TypeScript, shell, contracts, commits, and documentation |
 | [Testing](Testing.md) | Test levels, modular tests, module tests, regression tests, the namespace harness, and gate suites |
-| [Controller](Controller.md) | The controller module, its flags, configuration file, logging, health endpoint, and checks |
+| [Controller](Controller.md) | The controller module, its flags, configuration file, logging, health endpoint, REST layer, test compiler, and checks |
 | [Engine](Engine.md) | Engine crates, the `SessionIo` seam, and the scenario and template compiler |
 | [Transport](Transport.md) | Transport backends, starting with the kernel TCP backend, its socket options, and its loopback tests |
 | [Hosts](Hosts.md) | Host pool address mapping, slicing by agent and worker, and seeded host selection |
 | [Contracts](Contracts.md) | Contract files and versions, the agent initiated control protocol, and the contract checks |
 | [Realism](Realism.md) | The realism runner, its conformance and parser error checks, and the report seam |
+| [Operations](Operations.md) | Repository operations, including the Project board status sync and its owner setup |
 
 ### Raw sources in the repository
 
@@ -57,4 +58,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phase 0 is complete, including spike S3. Phase 1 has 13 packages merged, and the rest are seeded as issues. The coordinator updates this line after each batch.
+Phase 0 is complete, including spike S3. Phase 1 has 24 packages merged after three batches, and the rest are seeded as issues. The coordinator updates this line after each batch.

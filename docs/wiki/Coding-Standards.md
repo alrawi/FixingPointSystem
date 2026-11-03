@@ -77,8 +77,18 @@ Randomness comes from a generator derived from the run seed and the session id, 
 
 ```rust
 /// Returns the generator for one session. The same seed and id always give the same stream.
+/// `Pcg64Mcg::new` forces the two lowest state bits to 1, so the id sits above them.
 pub fn session_rng(run_seed: u64, session_id: u64) -> rand_pcg::Pcg64Mcg {
-    rand_pcg::Pcg64Mcg::new(u128::from(run_seed) << 64 | u128::from(session_id))
+    let high = splitmix64(run_seed);
+    rand_pcg::Pcg64Mcg::new(u128::from(high) << 64 | u128::from(session_id) << 2)
+}
+
+/// SplitMix64 finalizer, which spreads nearby seeds over the whole state.
+fn splitmix64(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 ```
 

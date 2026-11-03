@@ -793,7 +793,7 @@ Implement the agent side of the control protocol with registration, heartbeat, p
 
 Deliverables.
 
-- A tonic server and a client loop that registers with a configured controller.
+- A tonic client loop that registers with a configured controller and serves commands on the session stream.
 - State handling that rejects out of order calls with gRPC status codes.
 
 Acceptance.
@@ -923,7 +923,7 @@ Track agent registration, inventory, reservation, and heartbeat timeouts.
 
 Deliverables.
 
-- The controller side of Register and Heartbeat and the /v1/agents operations.
+- The controller side of Register and the Session stream, and the /v1/agents operations.
 - A fake agent package for tests in other controller packages.
 
 Acceptance.

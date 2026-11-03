@@ -97,3 +97,12 @@ def test_log_entry_with_bad_heading_fails(tmp_path: Path) -> None:
     (tmp_path / "log").mkdir()
     (tmp_path / "log" / "2026-11-03T1200-ingest-x.md").write_text("# wrong\n", encoding="utf-8")
     assert any("first line" in e for e in plan.lint(tmp_path))
+
+
+def test_page_linked_only_from_a_log_entry_is_not_an_orphan(tmp_path: Path) -> None:
+    (tmp_path / "Home.md").write_text("# Home\n", encoding="utf-8")
+    (tmp_path / "Transport.md").write_text("# Transport\n", encoding="utf-8")
+    (tmp_path / "log").mkdir()
+    (tmp_path / "log" / "2026-11-03T1200-ingest-x.md").write_text(
+        "## [2026-11-03] ingest | X\n\nSee [Transport](Transport.md).\n", encoding="utf-8")
+    assert plan.lint(tmp_path) == []

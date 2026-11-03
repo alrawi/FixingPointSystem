@@ -21,3 +21,4 @@
 - [Hosts](Hosts.md)
 - [Contracts](Contracts.md)
 - [Realism](Realism.md)
+- [Operations](Operations.md)
