@@ -10,6 +10,9 @@ publish.workspace = true
 [dependencies]
 fps-io = { path = "../fps-io" }
 libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+# serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
+serde_norway = "0.9"
 socket2 = { version = "0.6", features = ["all"] }
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "net", "time"] }
