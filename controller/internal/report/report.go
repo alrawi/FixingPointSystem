@@ -107,13 +107,17 @@ func (r Report) API() api.RunReport {
 }
 
 // JSON renders the report as indented JSON of the RunReport schema with a
-// final newline.
+// final newline. Operators such as < stay unescaped, because the report is
+// served as application/json and never embedded in HTML.
 func (r Report) JSON() ([]byte, error) {
-	body, err := json.MarshalIndent(r.API(), "", "  ")
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(r.API()); err != nil {
 		return nil, fmt.Errorf("encode report of run %s: %w", r.Run.ID, err)
 	}
-	return append(body, '\n'), nil
+	return buf.Bytes(), nil
 }
 
 // CSVHeader is the header row of the CSV report.

@@ -106,7 +106,7 @@ func (a *API) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, pa
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Content-Type-Options", "nosniff")
 	if format == api.GetRunReportParamsFormatCsv && safeName.MatchString(run.ID) {
-		h.Set("Content-Disposition", `attachment; filename="run-`+run.ID+`-report.csv"`)
+		h.Set("Content-Disposition", `attachment; filename="report-`+run.ID+`.csv"`)
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)

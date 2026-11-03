@@ -257,5 +257,6 @@ func compare(observed float64, op string, value float64) bool {
 	return false
 }
 
-// formatNumber renders v in the shortest form that parses back to v.
-func formatNumber(v float64) string { return strconv.FormatFloat(v, 'g', -1, 64) }
+// formatNumber renders v in plain decimal notation, which spreadsheets read
+// as a number, with the fewest digits that parse back to v.
+func formatNumber(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
