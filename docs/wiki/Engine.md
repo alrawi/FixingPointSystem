@@ -93,3 +93,46 @@ We rewrite the golden files with `UPDATE_GOLDEN=1 cargo test -p fps-flow` and re
 ## Known duplication
 
 Spike S1 in `spikes/s1-engine` keeps its own copies of `program.rs` and `template.rs`, so its benchmark harness builds and reproduces the Gate 0 numbers unchanged. The engine crates are the source of truth for new work. A later package may switch the spike to the engine crates or retire it, and until then a fix in one copy does not reach the other.
+
+## The session scheduler
+
+ENG-08 added the crate [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched), which turns one worker rate of a plan into session starts. A `Schedule` serves one mix entry on one worker, and its scheduled times are a pure function of the configuration, the run seed, and the stream, so a replay reproduces every start.
+
+The crate has four parts, which are listed below.
+
+| Item | Contents |
+|---|---|
+| `LoadProfile` | The validated `LoadPhase` list with the fraction at a time, its integral, and the inverse of the integral |
+| `Schedule` | Session starts for a `SessionsPerSecond` or a `ConcurrentSessions` objective, with a concurrency cap |
+| `Drain` | The iterator that `Schedule::drain(&clock, open)` returns for one clock reading |
+| `Clock` and `ManualClock` | The injected clock, which reports the time since the run start |
+
+A worker calls `drain` with its clock and its open session count, starts every session that the drain yields, and sleeps until `next_due` returns a time. When `next_due` returns `None`, only a closing session can release the next start. The crate never reads the wall clock, so the runtime of ENG-10 backs the clock with its timer and tests use `ManualClock`.
+
+### Rate objectives
+
+A rate objective places starts with the time change method. The schedule draws the arrivals of a unit rate process in operational time and maps each one back through the integral of the target rate. Constant arrivals place start `k` where the expected count reaches `k + 0.5`, so every phase holds its expected count rounded. Poisson arrivals add exponential gaps with mean 1 in operational time, which gives a nonhomogeneous Poisson process whose intensity follows the phases. A linear ramp from 0 to 100 sessions per second over 10 seconds therefore holds exactly 500 constant starts, of which 125 fall in the first 5 seconds.
+
+At the concurrency cap the default policy `CapPolicy::Defer` holds an arrival until a session closes, and the start keeps its scheduled time so that the caller can measure the delay. The policy `CapPolicy::Skip` drops the arrival and counts it in `skipped`.
+
+### Concurrency objectives
+
+A concurrency objective starts a session whenever the open sessions fall below the target, which is the floor of the steady target times the current fraction, bounded by the cap. Such a start carries the drain time as its scheduled time. `next_due` returns the first time at which the target exceeds the open sessions, or `None` while the target is met.
+
+### Phase shapes
+
+We follow the `PhaseShape` comments of `agent.proto`. A hold phase keeps `start_fraction`, and a linear phase moves from `start_fraction` to `end_fraction`. Step `i` of a step phase with `n` steps, counting from 0, holds `start + (end - start) * i / n`, so the phase begins at the start fraction and the end fraction takes effect where the phase ends. The five step ramp down of the example plan therefore runs at 100, 80, 60, 40, and 20 percent.
+
+### Seeds and streams
+
+Each schedule seeds `Pcg64Mcg` from the run seed and a stream, and `stream_id(worker_id, mix_index)` gives every worker rate its own stream. `Pcg64Mcg` forces the two lowest state bits to 1, so the crate keeps the stream above those bits and mixes the seed into the high half with SplitMix64.
+
+### Tests
+
+The tests of the crate cover the four levels that the ENG workstream requires except performance, which ENG-10 measures with the runtime. They are listed below.
+
+1. Two schedules with the same seed are identical, other seeds and streams differ, and a drain in 1 ms ticks or at every `next_due` time yields the same starts as one drain at the end.
+2. A two sided KS test at alpha 0.05 accepts the Poisson inter arrival times at a constant rate and the rescaled gaps during a linear ramp, and it rejects constant arrivals.
+3. Phase boundary tests count the starts of ramp up, steady, and ramp down, step ramps up and down, and the concurrency targets at each phase.
+4. Property tests check the inverse of the integral, ordering, bounds, reproducibility, and the constant arrival count over generated profiles.
+5. Contract tests parse every shape name of `test-config.schema.json` and schedule the phases of `examples/plans/http_dns_smoke.json`.
