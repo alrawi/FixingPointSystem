@@ -139,6 +139,27 @@ class Capture:
         self.add(udp(c, cp, s, sp, query))
         self.add(udp(s, sp, c, cp, reply))
 
+    def dns_malformed_answer(
+        self,
+        client: tuple[str, int],
+        server: tuple[str, int],
+        txid: int,
+        name: str = "www.example.com",
+    ) -> None:
+        """Append a DNS A query and an answer whose record data is cut short.
+
+        The answer record declares four bytes of address data and carries two, so
+        a DNS parser fails on the reply and on no other packet.
+        """
+        qname = b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\x00"
+        question = qname + struct.pack("!HH", 1, 1)
+        query = struct.pack("!HHHHHH", txid, 0x0100, 1, 0, 0, 0) + question
+        answer = struct.pack("!HHIH", 1, 1, 300, 4) + bytes([192, 0])
+        reply = struct.pack("!HHHHHH", txid, 0x8180, 1, 1, 0, 0) + question + b"\xc0\x0c" + answer
+        (c, cp), (s, sp) = client, server
+        self.add(udp(c, cp, s, sp, query))
+        self.add(udp(s, sp, c, cp, reply))
+
     def write_pcap(self, path: Path) -> Path:
         """Write the frames as a classic little endian pcap with microseconds."""
         out = [struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)]

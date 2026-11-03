@@ -11,7 +11,7 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
 | `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels |
 | `metrics/catalog.schema.json` | Format of the metric catalog |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol between the controller and agents (gRPC, proto3) |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.1.0 between the controller and agents (gRPC, proto3). Agents dial the controller. |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |
 | `examples/` | Example modules, tests, and agent plans that every validator run checks |
 
@@ -165,28 +165,72 @@ buf lint contracts/proto
 
 ## Agent control protocol
 
-The controller compiles each test configuration into one `Plan` per agent and drives every agent through `AgentService`. The agent serves the service over gRPC with mutual TLS, and the controller is its only client. The controller learns the agent address from `POST /v1/agents` and then calls `Register`.
+The controller compiles each test configuration into one `Plan` per agent. Each agent dials the controller and registers itself, so an agent behind NAT or in a cloud needs no inbound port. The controller serves `ControllerService` over gRPC with mutual TLS, and every agent is a client. The agent serves no gRPC service.
 
-| RPC | Allowed in state | Result |
+| RPC | Kind | Purpose |
 |---|---|---|
-| `Register` | any, when unbound or bound to the same controller | Binds the agent and returns `Capabilities` |
-| `Heartbeat` | any, from the bound controller | Renews the binding and reports state, plan, phase, and the agent clock |
-| `Prepare` | `IDLE`, `STOPPED`, `FAILED` | Verifies module digests, loads scenarios, binds ports, and moves to `PREPARED` |
-| `Start` | `PREPARED` | Moves to `RUNNING` at once or at `start_at` |
-| `Stop` | `PREPARED`, `RUNNING`, `STOPPING`, `STOPPED` | Ramps down or aborts and moves to `STOPPED`, or releases an unstarted plan and moves to `IDLE` |
-| `StreamCounters` | `PREPARED` to `STOPPED` | Streams one snapshot per interval and ends after the final snapshot |
+| `Register` | unary | The agent announces its identity, `Capabilities`, state, and loaded plan. The controller returns its `controller_id`, a session token, and the heartbeat interval and timeout. |
+| `Session` | bidirectional stream | Carries all control traffic of one registered agent until the connection ends |
 
-The agent moves to `STOPPED` on its own when the last load phase ends. When no heartbeat arrives within the heartbeat timeout, the agent aborts the run, releases the plan, and drops the binding, so that no traffic runs without a controller.
+### Registration and identity
 
-The agent reports errors with gRPC status codes.
+The agent identity is the identity in its client certificate, and `RegisterRequest.agent_id` must equal it. The controller rejects an identity that it does not accept with `PERMISSION_DENIED`, and a request whose `agent_id` differs from the certificate with `UNAUTHENTICATED`. Operators may enroll an identity ahead of time with `POST /v1/agents`, which sets its labels. A repeated `Register` for the same identity is idempotent, returns a new session token, and revokes the previous one. The controller rejects an agent whose `Capabilities.engine_api` it cannot drive with `FAILED_PRECONDITION`.
+
+### Session stream
+
+The agent opens `Session` right after `Register`. The agent sends `SessionRequest` messages and the controller sends `SessionResponse` messages.
+
+| Direction | Message | When |
+|---|---|---|
+| agent to controller | `open` | First message, with the agent identity and the session token. Any other first message, a repeated `open`, or a revoked token ends the stream with `UNAUTHENTICATED`. |
+| agent to controller | `heartbeat` | Once per heartbeat interval, and at once after every state change. It carries the state, plan, phase, and agent clock. |
+| controller to agent | `heartbeat_ack` | Once per heartbeat, with `command_id` zero, the echoed sequence, and the controller clock |
+| controller to agent | `prepare` | Carries the plan, the counter interval, and the per worker option |
+| controller to agent | `start` | Starts the prepared plan at once or at `start_at` |
+| controller to agent | `stop` | Ramps down or aborts a run, or releases an unstarted plan |
+| agent to controller | `result` | Exactly one per command, with the echoed `command_id` and either a result or a `CommandError` |
+| agent to controller | `snapshot` | One counter snapshot per counter interval from the start of the run until the final snapshot |
+
+The controller sends at most one command at a time and waits for its result before the next, except that `stop` may follow any command without waiting. At most one session per agent is open, and a new session for the same identity ends the older one with `ABORTED`.
+
+### Agent state machine
+
+| Command | Allowed in state | Result |
+|---|---|---|
+| `prepare` | `IDLE`, `STOPPED`, `FAILED` | Moves through `PREPARING` and verifies module digests, loads scenarios, binds ports, and moves to `PREPARED` |
+| `start` | `PREPARED` | Moves to `RUNNING` at once or at `start_at` and begins the counter snapshots |
+| `stop` | `PREPARED`, `RUNNING`, `STOPPING`, `STOPPED` | Ramps down through `STOPPING` or aborts and moves to `STOPPED` with a final snapshot, or releases an unstarted plan and moves to `IDLE` |
+
+The agent moves to `STOPPED` on its own when the last load phase ends, and sends a final snapshot with `is_final` and a heartbeat. An internal error moves the agent to `FAILED`, and the next heartbeat explains it in `message`.
+
+### Connection loss
+
+Both sides watch the same heartbeat timeout. When the controller receives no heartbeat within the timeout, it marks the agent offline and marks a run on that agent degraded. When the agent receives nothing from the controller within the timeout, it aborts any run, releases the plan, and moves to `IDLE`, so that no traffic runs without a controller.
+
+After a lost connection, the agent dials again with exponential backoff, calls `Register` with its current state and `plan_id`, and opens a new session. When it returns within the heartbeat timeout, the run continues and the controller resumes it from the reported state. Counter snapshots keep their sequence numbers across sessions, and the counters are cumulative, so the controller drops duplicates and loses no data.
+
+### Error codes
+
+A failed command returns a `CommandError` in its `result`. The numbers of `ErrorCode` equal the gRPC status codes of the same name. A failed command leaves the agent state unchanged, except for `ERROR_CODE_INTERNAL`, which moves the agent to `FAILED`.
 
 | Code | Meaning |
 |---|---|
-| `INVALID_ARGUMENT` | The plan breaks a rule of this contract |
-| `FAILED_PRECONDITION` | The call is out of order, a module digest does not match, or another controller holds the binding |
-| `NOT_FOUND` | The `plan_id` does not name the loaded plan |
-| `RESOURCE_EXHAUSTED` | The plan needs more workers, cores, or ports than the agent has |
-| `UNIMPLEMENTED` | The plan needs a backend or module type that the agent does not support |
+| `ERROR_CODE_INVALID_ARGUMENT` | The plan or the command breaks a rule of this contract |
+| `ERROR_CODE_NOT_FOUND` | The `plan_id` does not name the loaded plan |
+| `ERROR_CODE_RESOURCE_EXHAUSTED` | The plan needs more workers, cores, or ports than the agent has |
+| `ERROR_CODE_FAILED_PRECONDITION` | The command is out of order for the agent state, or a module digest does not match |
+| `ERROR_CODE_UNIMPLEMENTED` | The plan needs a backend or module type that the agent does not support |
+| `ERROR_CODE_INTERNAL` | The agent failed for a reason of its own |
+
+The `Register` call and the `Session` stream end with gRPC status codes.
+
+| Code | Meaning |
+|---|---|
+| `UNAUTHENTICATED` | The `agent_id` differs from the certificate identity, or the session token is missing, revoked, or not the first message |
+| `PERMISSION_DENIED` | The controller does not accept this agent identity |
+| `FAILED_PRECONDITION` | The controller cannot drive the contract version that the agent reports |
+| `ABORTED` | A newer session for the same agent replaced this one |
+| `UNAVAILABLE` | The controller shuts down, and the agent dials again |
 
 ### Plan rules
 
@@ -202,4 +246,4 @@ A plan carries everything that an agent needs except the module packages, which 
 
 ### Canonical JSON mapping
 
-The standalone agent mode reads a plan file in the proto3 JSON mapping of `fps.agent.v1.Plan`. A canonical plan file uses lowerCamelCase field names, writes enum values by name, writes 64 bit integers such as `seed` as strings, writes durations as strings such as `"30s"`, and leaves out fields that hold their default value. A field that is absent therefore means zero, an empty string, or false. Numbers in `params` are JSON numbers, and the interpreter treats an integral number as an integer. The checker rejects unknown fields and any file that differs from the canonical form of its own content. `examples/plans/http_dns_smoke.json` shows a two worker plan for the `http1` and `dns` example modules.
+The standalone agent mode reads a plan file in the proto3 JSON mapping of `fps.agent.v1.Plan`. A canonical plan file uses lowerCamelCase field names, writes enum values by name, writes 64 bit integers such as `seed` as strings, writes durations as strings such as `"30s"`, and leaves out fields that hold their default value. A field that is absent therefore means zero, an empty string, or false. Numbers in `params` are JSON numbers, and the interpreter treats an integral number as an integer. The checker rejects unknown fields and any file that differs from the canonical form of its own content. `examples/plans/http_dns_smoke.json` shows a two worker plan for the `http1` and `dns` example modules. It is the `plan` field of a `prepare` command, and CON-06 left the `Plan` message unchanged, so the example stays valid.

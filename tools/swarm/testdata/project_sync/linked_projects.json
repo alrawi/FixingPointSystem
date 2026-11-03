@@ -1,0 +1,94 @@
+{
+  "data": {
+    "repository": {
+      "projectsV2": {
+        "nodes": [
+          {
+            "id": "PVT_kwHOAAlrawi4AAA1",
+            "number": 1,
+            "title": "FixingPointSystem v1",
+            "owner": {
+              "login": "alrawi"
+            },
+            "field": {
+              "id": "PVTSSF_lAHOAAlrawi4AAA1zgStatus",
+              "name": "Status",
+              "options": [
+                {
+                  "id": "f75ad846",
+                  "name": "Backlog"
+                },
+                {
+                  "id": "61e4505c",
+                  "name": "Ready"
+                },
+                {
+                  "id": "47fc9ee4",
+                  "name": "In progress"
+                },
+                {
+                  "id": "98236657",
+                  "name": "Blocked"
+                },
+                {
+                  "id": "1b2c3d4e",
+                  "name": "Stale"
+                },
+                {
+                  "id": "5e6f7a8b",
+                  "name": "Review"
+                },
+                {
+                  "id": "9c0d1e2f",
+                  "name": "Done"
+                }
+              ]
+            }
+          },
+          {
+            "id": "PVT_kwDOOtherOrg",
+            "number": 4,
+            "title": "Org roadmap",
+            "owner": {
+              "login": "some-org"
+            },
+            "field": {
+              "id": "PVTSSF_lAHOAAlrawi4AAA1zgStatus",
+              "name": "Status",
+              "options": [
+                {
+                  "id": "f75ad846",
+                  "name": "Backlog"
+                },
+                {
+                  "id": "61e4505c",
+                  "name": "Ready"
+                },
+                {
+                  "id": "47fc9ee4",
+                  "name": "In progress"
+                },
+                {
+                  "id": "98236657",
+                  "name": "Blocked"
+                },
+                {
+                  "id": "1b2c3d4e",
+                  "name": "Stale"
+                },
+                {
+                  "id": "5e6f7a8b",
+                  "name": "Review"
+                },
+                {
+                  "id": "9c0d1e2f",
+                  "name": "Done"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}
