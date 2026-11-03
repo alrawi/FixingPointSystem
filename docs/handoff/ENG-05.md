@@ -64,7 +64,7 @@ none. The coordinator should accept or move the additive `fps-flow` change, whic
 ## Verify the current state
 
 ```bash
-cargo test -p fps-flow --lib template      # 26 tests pass
+cargo test -p fps-flow --lib template      # 23 tests pass
 cargo test -p fps-interp --test vectored   # 6 tests pass
 FPS_BENCH_OUT=/tmp/r.json cargo bench -p fps-interp --bench bulk   # prints a ratio above 0.75
 python3 bench/compare.py /tmp/r.json bench/baselines/fps-interp-bulk-container.json
