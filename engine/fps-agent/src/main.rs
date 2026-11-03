@@ -20,10 +20,12 @@ use std::time::Duration;
 
 use fps_agent::assemble::Sides;
 use fps_agent::capabilities::{AfXdpSupport, HostCapabilities};
+use fps_agent::session::Config;
 use fps_agent::{detect, Outcome, RunOptions, SystemRoot};
 
 const USAGE: &str = "usage: fps-agent capabilities [--root DIR]
-       fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS]";
+       fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS]
+       fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--label KEY=VALUE]...";
 
 /// The exit code of a run whose criteria hold.
 const EXIT_PASS: u8 = 0;
@@ -37,6 +39,9 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("run") {
         return run(&args[1..]);
+    }
+    if args.first().map(String::as_str) == Some("connect") {
+        return connect(&args[1..]);
     }
     let root = match parse_args(&args) {
         Ok(root) => root,
@@ -77,6 +82,114 @@ fn run(args: &[String]) -> ExitCode {
             ExitCode::from(EXIT_ERROR)
         }
     }
+}
+
+fn connect(args: &[String]) -> ExitCode {
+    let (cfg, root) = match parse_connect_args(args) {
+        Ok(c) => c,
+        Err(message) => {
+            eprintln!("{message}\n{USAGE}");
+            return ExitCode::from(EXIT_ERROR);
+        }
+    };
+    tracing_subscriber::fmt()
+        .json()
+        .with_writer(std::io::stderr)
+        .with_current_span(false)
+        .init();
+    let mut cfg = cfg;
+    match detect(&root) {
+        Ok(host) => {
+            let mut caps = host.to_capabilities();
+            caps.modules = fps_agent::modules::installed(&cfg.modules)
+                .into_iter()
+                .map(|m| fps_agent::proto::ModuleRef {
+                    name: m.name,
+                    version: m.version,
+                    digest: m.digest,
+                })
+                .collect();
+            caps.labels = std::mem::take(&mut cfg.capabilities.labels)
+                .into_iter()
+                .collect();
+            cfg.capabilities = fps_agent::convert::capabilities_to_pb(&caps);
+        }
+        Err(e) => {
+            eprintln!(
+                "fps-agent: error: capability detection failed: {}",
+                chain(&e)
+            );
+            return ExitCode::from(EXIT_ERROR);
+        }
+    }
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("fps-agent: error: start the async runtime: {e}");
+            return ExitCode::from(EXIT_ERROR);
+        }
+    };
+    let result = rt.block_on(fps_agent::session::serve(cfg, shutdown()));
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("fps-agent: error: {}", chain(&e));
+            ExitCode::from(EXIT_ERROR)
+        }
+    }
+}
+
+/// Completes on SIGINT or SIGTERM.
+async fn shutdown() {
+    use tokio::signal::unix::{signal, SignalKind};
+    match signal(SignalKind::terminate()) {
+        Ok(mut term) => {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+        }
+        Err(_) => {
+            let _ = tokio::signal::ctrl_c().await;
+        }
+    }
+}
+
+fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
+    let (mut controller, mut id, mut modules) = (None, None, None);
+    let (mut root, mut sides) = (SystemRoot::host(), Sides::Both);
+    let mut labels = std::collections::HashMap::new();
+    let mut it = args.iter();
+    while let Some(flag) = it.next() {
+        let value = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
+        match flag.as_str() {
+            "--controller" => controller = Some(value.clone()),
+            "--agent-id" => id = Some(value.clone()),
+            "--modules" => modules = Some(PathBuf::from(value)),
+            "--root" => root = SystemRoot::new(value),
+            "--side" => {
+                sides = Sides::parse(value).ok_or_else(|| format!("unknown side {value:?}"))?;
+            }
+            "--label" => {
+                let (k, v) = value
+                    .split_once('=')
+                    .ok_or_else(|| format!("--label {value:?} is not KEY=VALUE"))?;
+                labels.insert(k.to_owned(), v.to_owned());
+            }
+            other => return Err(format!("unknown flag {other}")),
+        }
+    }
+    let mut cfg = Config::new(
+        controller.ok_or("missing --controller")?,
+        id.ok_or("missing --agent-id")?,
+        modules.ok_or("missing --modules")?,
+    );
+    cfg.sides = sides;
+    cfg.capabilities.labels = labels;
+    Ok((cfg, root))
 }
 
 fn chain(e: &dyn std::error::Error) -> String {

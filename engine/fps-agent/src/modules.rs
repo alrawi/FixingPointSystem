@@ -265,6 +265,37 @@ fn load_module(m: &ModuleRef, dir: &Path) -> Result<Manifest, ModuleError> {
     Ok(manifest)
 }
 
+/// Lists the modules installed under `dir`, one per subdirectory that holds a
+/// `manifest.yaml`, with the name and version of the manifest and the tree
+/// digest, sorted by name. The agent reports them in `Capabilities.modules`.
+/// A subdirectory whose manifest or tree cannot be read is left out.
+pub fn installed(dir: &Path) -> Vec<ModuleRef> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let root = entry.path();
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let path = root.join("manifest.yaml");
+        let Ok(manifest) = Manifest::load(&path) else {
+            continue;
+        };
+        let Ok(digest) = tree_digest(&manifest.name, &root) else {
+            continue;
+        };
+        out.push(ModuleRef {
+            version: manifest_version(&path).unwrap_or_default(),
+            name: manifest.name,
+            digest,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
 /// Reads the top level `version` of a manifest, which the `fps-flow`
 /// manifest reader leaves out.
 fn manifest_version(path: &Path) -> Option<String> {

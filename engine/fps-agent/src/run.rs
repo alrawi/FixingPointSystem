@@ -17,7 +17,7 @@
 //! and every error before or during the run is a [`RunError`].
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use fps_interp::Side;
@@ -203,22 +203,283 @@ impl SideRun {
     }
 }
 
+/// A plan that passed its checks, with its modules loaded and its workers
+/// assembled, which waits for [`Prepared::start`].
+pub struct Prepared {
+    plan: Plan,
+    assembly: crate::assemble::Assembly,
+    profile: LoadProfile,
+    reports: Side,
+    notes: Vec<String>,
+    summary: String,
+}
+
+impl std::fmt::Debug for Prepared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Prepared")
+            .field("plan_id", &self.plan.plan_id)
+            .field("summary", &self.summary)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Checks `plan`, loads its modules from `modules_dir`, and assembles the
+/// workers of `sides`.
+pub fn prepare(plan: Plan, modules_dir: &Path, sides: Sides) -> Result<Prepared, RunError> {
+    plan.check()?;
+    let loaded = modules::load(&plan, modules_dir)?;
+    let assembly = assemble(&plan, &loaded, sides)?;
+    let profile = load_profile(&plan)?;
+    let reports = if assembly.has_clients() {
+        Side::Client
+    } else {
+        Side::Server
+    };
+    let summary = format!(
+        "plan {} with {} tcp and {} udp client workers and {} tcp and {} udp server workers, native functions [{}], load {:?}",
+        plan.plan_id,
+        assembly.tcp_clients.len(),
+        assembly.udp_clients.len(),
+        assembly.tcp_servers.len(),
+        assembly.udp_servers.len(),
+        loaded.functions.modules().join(", "),
+        plan.load_duration()
+    );
+    Ok(Prepared {
+        plan,
+        assembly,
+        profile,
+        reports,
+        notes: loaded.notes,
+        summary,
+    })
+}
+
+impl Prepared {
+    /// Returns the plan.
+    pub fn plan(&self) -> &Plan {
+        &self.plan
+    }
+
+    /// Returns the notes of module loading, such as a module that runs
+    /// without native functions.
+    pub fn notes(&self) -> &[String] {
+        &self.notes
+    }
+
+    /// Returns one line that describes the workers and the load.
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    /// Starts the server workers and then the client workers, which take
+    /// cumulative snapshots every `interval`.
+    pub fn start(self, interval: Duration) -> Result<Active, RunError> {
+        let Prepared {
+            plan,
+            assembly,
+            profile,
+            reports,
+            ..
+        } = self;
+        let servers = SideRun::start(
+            plan.seed,
+            interval,
+            assembly.tcp_servers,
+            assembly.udp_servers,
+        )?;
+        let clients = match SideRun::start(
+            plan.seed,
+            interval,
+            assembly.tcp_clients,
+            assembly.udp_clients,
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                servers.stop(Duration::ZERO);
+                let _ = servers.join(Side::Server);
+                return Err(e);
+            }
+        };
+        Ok(Active {
+            plan,
+            profile,
+            reports,
+            servers,
+            clients,
+            start: Instant::now(),
+            baseline: None,
+            reset: false,
+        })
+    }
+}
+
+/// A started plan.
+///
+/// The caller samples it with [`Active::sample`], asks [`Active::is_done`]
+/// whether the load ended, and calls [`Active::finish`] once to collect the
+/// final totals. [`Active::stop`] ends the run early.
+pub struct Active {
+    plan: Plan,
+    profile: LoadProfile,
+    reports: Side,
+    servers: SideRun,
+    clients: SideRun,
+    start: Instant,
+    baseline: Option<(Snapshot, Snapshot)>,
+    reset: bool,
+}
+
+impl std::fmt::Debug for Active {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Active")
+            .field("plan_id", &self.plan.plan_id)
+            .field("elapsed", &self.start.elapsed())
+            .finish_non_exhaustive()
+    }
+}
+
+/// The totals of a finished run.
+#[derive(Debug)]
+pub struct Finished {
+    /// The totals of the side that the process reports.
+    pub shown: Snapshot,
+    /// The final client side totals, when the process ran client workers.
+    pub client: Option<Snapshot>,
+    /// The final server side totals, when the process ran server workers.
+    pub server: Option<Snapshot>,
+    /// The totals of the reported side at the end of the warmup.
+    pub baseline: Option<Snapshot>,
+    /// The time from the start to the end of the run.
+    pub elapsed: Duration,
+}
+
+impl Active {
+    /// Returns the plan.
+    pub fn plan(&self) -> &Plan {
+        &self.plan
+    }
+
+    /// Returns the time since the start.
+    pub fn elapsed(&self) -> Duration {
+        self.start.elapsed()
+    }
+
+    /// Returns the name of the load phase at `elapsed`, or an empty string
+    /// after the last phase.
+    pub fn phase_at(&self, elapsed: Duration) -> String {
+        self.profile
+            .phase_at(elapsed.as_secs_f64())
+            .map(|p| p.name.clone())
+            .unwrap_or_default()
+    }
+
+    /// Returns true when the run ended on its own. Client workers end when
+    /// their schedules end and their sessions close. A process with server
+    /// workers only ends `linger` after the load phases.
+    pub fn is_done(&self, linger: Duration) -> bool {
+        if self.clients.is_empty() {
+            self.start.elapsed() >= self.plan.load_duration() + linger
+        } else {
+            self.clients.is_finished()
+        }
+    }
+
+    /// Returns true when every client worker ended, which is at once for a
+    /// process without client workers.
+    pub fn clients_finished(&self) -> bool {
+        self.clients.is_finished()
+    }
+
+    /// Resets client sessions that stay open [`CLIENT_GRACE`] after the load
+    /// phases, and returns a message the first time it does.
+    pub fn enforce_grace(&mut self) -> Option<String> {
+        if self.clients.is_empty()
+            || self.reset
+            || self.start.elapsed() < self.plan.load_duration() + CLIENT_GRACE
+        {
+            return None;
+        }
+        self.clients.stop(Duration::ZERO);
+        self.reset = true;
+        Some(format!(
+            "client sessions still open {CLIENT_GRACE:?} after the load phases, resetting them"
+        ))
+    }
+
+    /// Returns the cumulative totals of the reported side and records the
+    /// warmup baseline once the warmup has passed.
+    pub fn sample(&mut self) -> Result<Snapshot, RunError> {
+        let elapsed = self.start.elapsed();
+        let c = self.clients.total(Side::Client)?;
+        let s = self.servers.total(Side::Server)?;
+        if self.baseline.is_none() && !self.plan.warmup.is_zero() && elapsed >= self.plan.warmup {
+            self.baseline = Some((c.clone(), s.clone()));
+        }
+        Ok(if self.reports == Side::Client { c } else { s })
+    }
+
+    /// Stops new client sessions and lets open sessions finish within
+    /// `ramp_down`. [`Active::finish`] then stops the servers.
+    pub fn stop(&self, ramp_down: Duration) {
+        self.clients.stop(ramp_down);
+        if ramp_down.is_zero() {
+            self.servers.stop(Duration::ZERO);
+        }
+    }
+
+    /// Waits for the client workers, stops the server workers with
+    /// `server_ramp_down`, waits for them, and returns the final totals.
+    pub fn finish(self, server_ramp_down: Duration) -> Result<Finished, RunError> {
+        let Active {
+            reports,
+            servers,
+            clients,
+            start,
+            baseline,
+            ..
+        } = self;
+        let has_clients = !clients.is_empty();
+        let has_servers = !servers.is_empty();
+        let client_total = clients.join(Side::Client);
+        servers.stop(server_ramp_down);
+        let server_total = servers.join(Side::Server);
+        let (client_total, server_total) = (client_total?, server_total?);
+        let shown = if reports == Side::Client {
+            client_total.clone()
+        } else {
+            server_total.clone()
+        };
+        Ok(Finished {
+            shown,
+            client: has_clients.then_some(client_total),
+            server: has_servers.then_some(server_total),
+            baseline: baseline.map(|(c, s)| match reports {
+                Side::Client => c,
+                Side::Server => s,
+            }),
+            elapsed: start.elapsed(),
+        })
+    }
+
+    /// Resets every session at once and waits for every worker, for an
+    /// error path that discards the totals.
+    pub fn abort(self) {
+        self.stop(Duration::ZERO);
+        let _ = self.finish(Duration::ZERO);
+    }
+}
+
 /// Writes snapshot lines with increasing sequence numbers.
 struct Printer<'a> {
     out: &'a mut dyn Write,
     plan_id: String,
-    profile: LoadProfile,
     sequence: u64,
 }
 
 impl Printer<'_> {
-    fn line(&mut self, snap: &Snapshot, elapsed: Duration, is_final: bool) -> Result<(), RunError> {
+    fn line(&mut self, snap: &Snapshot, phase: String, is_final: bool) -> Result<(), RunError> {
         self.sequence += 1;
-        let phase = self
-            .profile
-            .phase_at(elapsed.as_secs_f64())
-            .map(|p| p.name.clone())
-            .unwrap_or_default();
         let meta = SnapshotMeta {
             plan_id: self.plan_id.clone(),
             sequence: self.sequence,
@@ -241,76 +502,26 @@ pub fn run(
     log: &mut dyn Write,
 ) -> Result<RunSummary, RunError> {
     let plan = Plan::load(&opts.plan)?;
-    let loaded = modules::load(&plan, &opts.modules)?;
-    for note in &loaded.notes {
+    let prepared = prepare(plan, &opts.modules, opts.sides)?;
+    for note in prepared.notes() {
         writeln!(log, "fps-agent: {note}")?;
     }
-    let assembly = assemble(&plan, &loaded, opts.sides)?;
-    let profile = load_profile(&plan)?;
-    let load = plan.load_duration();
-    let reports = if assembly.has_clients() {
-        Side::Client
-    } else {
-        Side::Server
-    };
-    writeln!(
-        log,
-        "fps-agent: plan {} with {} tcp and {} udp client workers and {} tcp and {} udp server workers, native functions [{}], load {:?}",
-        plan.plan_id,
-        assembly.tcp_clients.len(),
-        assembly.udp_clients.len(),
-        assembly.tcp_servers.len(),
-        assembly.udp_servers.len(),
-        loaded.functions.modules().join(", "),
-        load
-    )?;
-
-    let mut servers = SideRun::start(
-        plan.seed,
-        opts.interval,
-        assembly.tcp_servers,
-        assembly.udp_servers,
-    )?;
-    let mut clients = match SideRun::start(
-        plan.seed,
-        opts.interval,
-        assembly.tcp_clients,
-        assembly.udp_clients,
-    ) {
-        Ok(c) => c,
-        Err(e) => {
-            servers.stop(Duration::ZERO);
-            let _ = servers.join(Side::Server);
-            return Err(e);
-        }
-    };
-    let start = Instant::now();
+    writeln!(log, "fps-agent: {}", prepared.summary())?;
+    let criteria_plan = prepared.plan().criteria.clone();
+    let mut active = prepared.start(opts.interval)?;
     let mut printer = Printer {
         out,
-        plan_id: plan.plan_id.clone(),
-        profile,
+        plan_id: active.plan().plan_id.clone(),
         sequence: 0,
     };
-    let mut baseline: Option<(Snapshot, Snapshot)> = None;
-    let mut next = start + opts.interval;
-    let mut aborted = false;
+    let mut next = Instant::now() + opts.interval;
     let result = (|| -> Result<(), RunError> {
         loop {
-            let done = if clients.is_empty() {
-                start.elapsed() >= load + opts.linger
-            } else {
-                clients.is_finished()
-            };
-            if done {
+            if active.is_done(opts.linger) {
                 return Ok(());
             }
-            if !clients.is_empty() && !aborted && start.elapsed() >= load + CLIENT_GRACE {
-                writeln!(
-                    log,
-                    "fps-agent: client sessions still open {CLIENT_GRACE:?} after the load phases, resetting them"
-                )?;
-                clients.stop(Duration::ZERO);
-                aborted = true;
+            if let Some(message) = active.enforce_grace() {
+                writeln!(log, "fps-agent: {message}")?;
             }
             let now = Instant::now();
             if now < next {
@@ -318,54 +529,30 @@ pub fn run(
                 continue;
             }
             next += opts.interval;
-            let elapsed = start.elapsed();
-            let c = clients.total(Side::Client)?;
-            let s = servers.total(Side::Server)?;
-            if baseline.is_none() && !plan.warmup.is_zero() && elapsed >= plan.warmup {
-                baseline = Some((c.clone(), s.clone()));
-            }
-            let shown = if reports == Side::Client { &c } else { &s };
-            printer.line(shown, elapsed, false)?;
+            let elapsed = active.elapsed();
+            let shown = active.sample()?;
+            printer.line(&shown, active.phase_at(elapsed), false)?;
         }
     })();
     if let Err(e) = result {
-        clients.stop(Duration::ZERO);
-        servers.stop(Duration::ZERO);
-        let _ = clients.join(Side::Client);
-        let _ = servers.join(Side::Server);
+        active.abort();
         return Err(e);
     }
-    let has_clients = !clients.is_empty();
-    let has_servers = !servers.is_empty();
-    let client_total = clients.join(Side::Client);
-    servers.stop(SERVER_RAMP_DOWN);
-    let server_total = servers.join(Side::Server);
-    let (client_total, server_total) = (client_total?, server_total?);
-    let shown = if reports == Side::Client {
-        &client_total
-    } else {
-        &server_total
-    };
-    printer.line(shown, start.elapsed(), true)?;
+    let phase_end = active.phase_at(active.elapsed());
+    let finished = active.finish(SERVER_RAMP_DOWN)?;
+    printer.line(&finished.shown, phase_end, true)?;
     let lines = printer.sequence;
 
-    let base = baseline.as_ref().map(|(c, s)| match reports {
-        Side::Client => c,
-        Side::Server => s,
-    });
-    let criteria = evaluate(&plan.criteria, shown, base)?;
-    for side in [
-        (has_clients, "client", &client_total),
-        (has_servers, "server", &server_total),
-    ] {
-        if side.0 {
+    let criteria = evaluate(&criteria_plan, &finished.shown, finished.baseline.as_ref())?;
+    for side in [("client", &finished.client), ("server", &finished.server)] {
+        if let (name, Some(total)) = side {
             writeln!(
                 log,
                 "fps-agent: {} sessions attempted {} succeeded {} failed {}",
-                side.1,
-                side.2.counter_total(metric::SESSIONS_ATTEMPTED),
-                side.2.counter_total(metric::SESSIONS_SUCCEEDED),
-                side.2.counter_total(metric::SESSIONS_FAILED)
+                name,
+                total.counter_total(metric::SESSIONS_ATTEMPTED),
+                total.counter_total(metric::SESSIONS_SUCCEEDED),
+                total.counter_total(metric::SESSIONS_FAILED)
             )?;
         }
     }
@@ -396,8 +583,8 @@ pub fn run(
     Ok(RunSummary {
         outcome,
         criteria,
-        client: has_clients.then_some(client_total),
-        server: has_servers.then_some(server_total),
+        client: finished.client,
+        server: finished.server,
         lines,
     })
 }
