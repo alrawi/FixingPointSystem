@@ -4,17 +4,22 @@
 ``python3 -m realism score --pcap FILE --labels FILE`` writes a JSON realism
 report and exits with 0 when every check passes, 1 when a check fails, and 2 on a
 usage, input, classifier, or parser error.
+
+``python3 -m realism modules`` prints the native modules that a change set
+selects for the module realism job, and exits with 2 when it cannot read them.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from realism.capture import CaptureError
 from realism.classifier import DEFAULT_TIMEOUT_S, ClassifierError, NdpiClassifier
 from realism.labels import LabelsError
+from realism.modules import ModuleError, discover, matrix, select
 from realism.parsers import PARSER_NAMES, ParserError, resolve
 from realism.report import score
 
@@ -82,12 +87,55 @@ def _parser() -> argparse.ArgumentParser:
     )
     score_cmd.add_argument("--tshark", help="path of tshark, defaults to FPS_TSHARK or the path")
     score_cmd.add_argument("--zeek", help="path of zeek, defaults to FPS_ZEEK or the path")
+    modules_cmd = commands.add_parser(
+        "modules", help="list the native modules that a change set selects"
+    )
+    modules_cmd.add_argument(
+        "--root",
+        type=Path,
+        default=Path("."),
+        help="repository root, default the current directory",
+    )
+    modules_cmd.add_argument(
+        "--changed",
+        help="file with one changed path per line, or - for standard input; "
+        "absent selects every module",
+    )
+    modules_cmd.add_argument(
+        "--format",
+        choices=("matrix", "names"),
+        default="matrix",
+        help="matrix (default) prints a GitHub Actions matrix, names prints one name per line",
+    )
     return parser
+
+
+def _modules(args: argparse.Namespace) -> int:
+    try:
+        changed: list[str] | None = None
+        if args.changed == "-":
+            changed = sys.stdin.read().splitlines()
+        elif args.changed is not None:
+            changed = Path(args.changed).read_text(encoding="utf-8").splitlines()
+        chosen = select(discover(args.root), changed)
+    except OSError as exc:
+        print(f"realism modules failed: read {args.changed}: {exc.strerror}", file=sys.stderr)
+        return EXIT_ERROR
+    except ModuleError as exc:
+        print(f"realism modules failed: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    if args.format == "names":
+        sys.stdout.write("".join(f"{module.name}\n" for module in chosen))
+    else:
+        sys.stdout.write(json.dumps(matrix(chosen), separators=(",", ":")) + "\n")
+    return EXIT_PASS
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command line and return its exit code."""
     args = _parser().parse_args(argv)
+    if args.command == "modules":
+        return _modules(args)
     classifier = NdpiClassifier(reader=args.ndpi_reader, timeout_s=args.timeout)
     try:
         parsers, missing = resolve(
