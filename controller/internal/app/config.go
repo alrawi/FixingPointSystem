@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,7 +31,21 @@ const (
 	DefaultLogLevel          = "info"
 	DefaultShutdownTimeout   = 15 * time.Second
 	DefaultReadHeaderTimeout = 10 * time.Second
+	// DefaultGRPCListen is the TCP address of the agent gRPC service.
+	DefaultGRPCListen = "localhost:8444"
+	// MemoryStorePath keeps the configuration store in memory.
+	MemoryStorePath = ":memory:"
+	// StoreFile is the name of the configuration store under DataDir.
+	StoreFile = "configs.db"
+	// ModulesDir is the name of the module registry under DataDir.
+	ModulesDir = "modules"
+	// MinTokenLength is the shortest API token that the controller accepts.
+	MinTokenLength = 16
 )
+
+// Scopes lists the API token scopes from lowest to highest, as the REST
+// contract names them in x-required-scope.
+var Scopes = []string{"read", "run", "admin"}
 
 // Config holds the settings of one controller process. The YAML keys appear in
 // the struct tags, and the wiki page Controller documents them.
@@ -43,6 +58,37 @@ type Config struct {
 	ShutdownTimeout Duration `yaml:"shutdown_timeout"`
 	// ReadHeaderTimeout bounds how long a client may take to send request headers.
 	ReadHeaderTimeout Duration `yaml:"read_header_timeout"`
+	// DataDir holds the module registry in DataDir/modules and, unless
+	// StorePath names another file, the configuration store in
+	// DataDir/configs.db. Empty keeps the store in memory and the registry in
+	// a temporary directory, so all state ends with the process.
+	DataDir string `yaml:"data_dir"`
+	// StorePath is the SQLite file of the configuration store, or ":memory:".
+	// Empty means DataDir/configs.db, or ":memory:" without DataDir.
+	StorePath string `yaml:"store_path"`
+	// GRPCListen is the TCP address of the agent gRPC service, as host:port.
+	// It speaks plain TCP until mutual TLS arrives with CTL-15.
+	GRPCListen string `yaml:"grpc_listen"`
+	// AgentAutoEnroll accepts agents that no operator enrolled with
+	// POST /v1/agents.
+	AgentAutoEnroll bool `yaml:"agent_auto_enroll"`
+	// Tokens lists the bearer tokens of the REST API. Without tokens every
+	// /v1 operation answers 401.
+	Tokens []Token `yaml:"tokens"`
+}
+
+// Token is one bearer token of the REST API. Exactly one of Token and
+// TokenFile is set.
+type Token struct {
+	// Name labels the token in logs. It never appears in a response.
+	Name string `yaml:"name"`
+	// Scope is read, run, or admin.
+	Scope string `yaml:"scope"`
+	// Token is the secret itself.
+	Token string `yaml:"token"`
+	// TokenFile names a file whose content, without surrounding white space,
+	// is the secret.
+	TokenFile string `yaml:"token_file"`
 }
 
 // Duration is a time.Duration that YAML reads from a Go duration string such as "15s".
@@ -75,6 +121,7 @@ func DefaultConfig() Config {
 		LogLevel:          DefaultLogLevel,
 		ShutdownTimeout:   Duration(DefaultShutdownTimeout),
 		ReadHeaderTimeout: Duration(DefaultReadHeaderTimeout),
+		GRPCListen:        DefaultGRPCListen,
 	}
 }
 
@@ -123,7 +170,85 @@ func (c Config) Validate() error {
 	if c.ReadHeaderTimeout <= 0 {
 		return fmt.Errorf("%w: read_header_timeout must be positive", ErrInvalidConfig)
 	}
+	if _, _, err := net.SplitHostPort(c.GRPCListen); err != nil {
+		return fmt.Errorf("%w: grpc_listen %q: %w", ErrInvalidConfig, c.GRPCListen, err)
+	}
+	names := make(map[string]bool, len(c.Tokens))
+	for i, t := range c.Tokens {
+		if err := t.validate(); err != nil {
+			return fmt.Errorf("%w: tokens[%d]: %w", ErrInvalidConfig, i, err)
+		}
+		if names[t.Name] {
+			return fmt.Errorf("%w: tokens[%d]: name %q repeats", ErrInvalidConfig, i, t.Name)
+		}
+		names[t.Name] = true
+	}
 	return nil
+}
+
+func (t Token) validate() error {
+	if t.Name == "" {
+		return errors.New("name is empty")
+	}
+	if !slices.Contains(Scopes, t.Scope) {
+		return fmt.Errorf("scope %q is not read, run, or admin", t.Scope)
+	}
+	switch {
+	case t.Token != "" && t.TokenFile != "":
+		return errors.New("token and token_file are both set")
+	case t.Token == "" && t.TokenFile == "":
+		return errors.New("neither token nor token_file is set")
+	case t.Token != "" && len(t.Token) < MinTokenLength:
+		return fmt.Errorf("token is shorter than %d bytes", MinTokenLength)
+	}
+	return nil
+}
+
+// ResolvedStorePath returns the path of the configuration store that the
+// settings select.
+func (c Config) ResolvedStorePath() string {
+	switch {
+	case c.StorePath != "":
+		return c.StorePath
+	case c.DataDir != "":
+		return filepath.Join(c.DataDir, StoreFile)
+	default:
+		return MemoryStorePath
+	}
+}
+
+// RegistryDir returns the root of the module registry, or an empty string
+// when DataDir is empty and the registry lives in a temporary directory.
+func (c Config) RegistryDir() string {
+	if c.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(c.DataDir, ModulesDir)
+}
+
+// LoadTokens returns every API token with its scope name, reading each
+// token_file. It fails when a file is unreadable, holds a token shorter than
+// MinTokenLength, or two entries hold the same secret.
+func (c Config) LoadTokens() (map[string]string, error) {
+	out := make(map[string]string, len(c.Tokens))
+	for _, t := range c.Tokens {
+		secret := t.Token
+		if t.TokenFile != "" {
+			data, err := os.ReadFile(filepath.Clean(t.TokenFile))
+			if err != nil {
+				return nil, fmt.Errorf("%w: token %s: %w", ErrInvalidConfig, t.Name, err)
+			}
+			secret = strings.TrimSpace(string(data))
+			if len(secret) < MinTokenLength {
+				return nil, fmt.Errorf("%w: token %s: token_file %s holds fewer than %d bytes", ErrInvalidConfig, t.Name, t.TokenFile, MinTokenLength)
+			}
+		}
+		if _, dup := out[secret]; dup {
+			return nil, fmt.Errorf("%w: token %s: another token has the same secret", ErrInvalidConfig, t.Name)
+		}
+		out[secret] = t.Scope
+	}
+	return out, nil
 }
 
 // ParseLogLevel maps debug, info, warn, or error to its slog level, ignoring case.
