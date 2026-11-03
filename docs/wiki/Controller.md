@@ -518,7 +518,8 @@ Two adapter types connect the registry and the agent manager to the interfaces t
 | `/v1/modules` | `registry.API` |
 | `POST /v1/runs`, `GET /v1/runs/{id}`, `POST /v1/runs/{id}:stop` | `runs.API` |
 | `GET /v1/runs/{id}/metrics` and `:stream` | The `MetricsHandler` of `Controller.SetMetrics`, or 501 |
-| `listRuns`, captures, and `getRunReport` | `pending`, which answers 501 |
+| `getRunReport` | The `ReportHandler` of `Controller.SetReport`, which defaults to `report.API` |
+| `listRuns` and captures | `pending`, which answers 501 |
 
 ### Hook for run metrics
 
@@ -526,7 +527,7 @@ The metrics package of CTL-08 joins the binary in three calls in `serve` of `cmd
 
 ### Tests of the wiring
 
-`TestServerRoutesEveryOperation` walks every operation of the OpenAPI contract with an admin token and checks that exactly the seven pending operations answer 501, each with a detail that names it, so every other operation reaches the package that implements it. Other tests in `internal/wiring` cover the token scopes, the metrics hook, the catalog with two versions of `http1`, the inventory filters, and a gRPC round trip with a fake agent and the observer.
+`TestServerRoutesEveryOperation` walks every operation of the OpenAPI contract with an admin token and checks that exactly the six pending operations answer 501, each with a detail that names it, so every other operation reaches the package that implements it. Other tests in `internal/wiring` cover the token scopes, the metrics hook, the catalog with two versions of `http1`, the inventory filters, and a gRPC round trip with a fake agent and the observer.
 
 `TestEndToEnd` in `cmd/fps-controller` builds the binary and starts it with a temporary configuration that holds an admin token, a run token in a token file, a read token, and a data directory. It runs eleven steps.
 

@@ -1,6 +1,6 @@
 # Agent
 
-This page describes the agent of the AGT workstream. The crate [`fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent) holds the agent binary. AGT-03 added capability detection, which [Implementation Plan](Implementation-Plan.md) describes, and AGT-01 adds the standalone mode, which runs a plan without a controller. AGT-02 will add the client loop that dials the controller.
+This page describes the agent of the AGT workstream. The crate [`fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent) holds the agent binary. AGT-03 added capability detection, which [Implementation Plan](Implementation-Plan.md) describes, and AGT-01 adds the standalone mode, which runs a plan without a controller. AGT-02 added the client loop that dials the controller, which the section [Controller session](#controller-session) describes.
 
 ## Standalone mode
 

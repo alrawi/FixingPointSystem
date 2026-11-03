@@ -1,0 +1,3 @@
+## [2026-11-03] plan | Batch 8 merged
+
+The coordinator merged batch 8, which held [AGT-02](Agent.md#controller-session) in PR #129, RLM-03 in PR #127, and bug #124 in PR #126. The cleanup applied the shared page notes of the three entries to [Agent](Agent.md), [Controller](Controller.md), [Testing](Testing.md), [Modules](Modules.md), and [Home](Home.md). It added the target `test-agt-controller` to `mk/agt.mk` and the job `controller-e2e` to the `agt` workflow, which runs the real controller against the real agent over loopback. Bug #128 tracks run ids that carry the `cfg_` prefix of configuration ids. QA-04, the Gate 1 suite, is the last open package of Phase 1.

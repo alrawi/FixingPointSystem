@@ -14,6 +14,7 @@ on:
       - modules/*/native/**
       - contracts/examples/**
       - tests/harness/**
+      - controller/**
       - Cargo.lock
       - mk/agt.mk
       - .github/workflows/agt.yml
@@ -23,6 +24,7 @@ on:
       - modules/*/native/**
       - contracts/examples/**
       - tests/harness/**
+      - controller/**
       - Cargo.lock
       - mk/agt.mk
       - .github/workflows/agt.yml
@@ -52,3 +54,16 @@ jobs:
       - name: Return the build directory to the runner user for the cache
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" target
+
+  controller-e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: controller/go.mod
+          cache-dependency-path: controller/go.sum
+      - name: Real controller against the real agent over loopback
+        run: make test-agt-controller GO=go

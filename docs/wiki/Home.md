@@ -62,4 +62,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phase 0 is complete, including spike S3. Phase 1 has 50 packages merged after seven batches. The standalone agent runs the HTTP and DNS example plan in the namespace harness, and the controller binary serves the API, the agent service, and metrics. The coordinator updates this line after each batch.
+Phase 0 is complete, including spike S3. Phase 1 has 52 packages merged after eight batches, and only the Gate 1 suite QA-04 remains. The agent dials the controller with `fps-agent connect` and runs the plans it receives, the controller binary serves the API, the agent service, metrics, and run reports, and every module change runs the realism checks on a fresh capture. The coordinator updates this line after each batch.
