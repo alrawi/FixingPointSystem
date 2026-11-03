@@ -96,7 +96,7 @@ func TestLoadConfigFileReadsExample(t *testing.T) {
 		GRPCListen:        "127.0.0.1:8444",
 		AgentAutoEnroll:   true,
 		Tokens: []Token{
-			{Name: "ci", Scope: "run", Token: exampleRunValue},
+			{Name: "ci", Scope: "run", Token: "example-run-token-0123456789"}, //nolint:gosec // G101: fixed value of testdata/controller.yaml, not a credential
 			{Name: "ops", Scope: "admin", TokenFile: "/etc/fps/admin.token"},
 		},
 	}
@@ -156,9 +156,6 @@ func TestNewLoggerRejectsUnknownLevel(t *testing.T) {
 		t.Fatalf("error = %v, want ErrInvalidConfig", err)
 	}
 }
-
-// exampleRunValue is the run token of testdata/controller.yaml.
-var exampleRunValue = "example-run-token-0123456789"
 
 // longToken is a token that meets MinTokenLength.
 const longToken = "token-0123456789abcdef"
