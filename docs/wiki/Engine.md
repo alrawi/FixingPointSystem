@@ -158,3 +158,53 @@ The tests of the crate cover the four levels that the ENG workstream requires ex
 3. Phase boundary tests count the starts of ramp up, steady, and ramp down, step ramps up and down, and the concurrency targets at each phase.
 4. Property tests check the inverse of the integral, ordering, bounds, reproducibility, and the constant arrival count over generated profiles.
 5. Contract tests parse every shape name of `test-config.schema.json` and schedule the phases of `examples/plans/http_dns_smoke.json`.
+
+## The flow program interpreter
+
+ENG-04 filled the crate [`fps-interp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-interp), which runs one side of one TCP session from a compiled `fps_flow::program::Program`. A `Session` holds the read, write, and scratch buffers of the side, its generator, its `set` overlay, and its `last` buffer, and it reuses them for every action. Spike S1 was the prototype, and we kept its two buffer lessons. Reads grow the read buffer in 16 KiB steps, and `expect bytes` discards payload through a 64 KiB scratch buffer, so a bulk body never grows the read buffer.
+
+### Running a side
+
+A side runs in two steps, which `Session::run_program` combines.
+
+1. `Session::open` renders the port and the optional host of `connect` or `accept` and passes an `OpenRequest` to an `Opener`. A transport backend implements `Opener` over its sockets, and tests hand out ends of `fps_io::memory::duplex`.
+2. `Session::run` executes `send`, the three `expect` stop rules, `delay`, `set`, `loop`, `branch`, and the three `close` modes over the open `SessionIo`.
+
+Both steps take a `stop` future. When it completes first, the session aborts the transport with a reset and fails with reason `aborted`, so a stopping run ends every session at once. `send` flushes after each write, because a TLS layer sends buffered records only on flush. `close: fin` shuts down the write side and drains until the peer closes, and a reset after our FIN still counts as a clean close. `Limits` holds the values that a flow program does not set, which are the open timeout of 5 seconds, the drain timeout of 10 seconds, the pattern buffer limit of 16 MiB, and the `last` limit of 16 MiB.
+
+The session copies consumed bytes into `last` only when a template of the program refers to `last`, which `Template::uses_last` tells us. `RenderCtx` receives that buffer and the session's `&mut dyn TemplateFn`, and `fps_flow::function::NoFunctions` serves sessions without modules.
+
+### Seeds and time
+
+`session_rng(run_seed, session_id, side)` returns the `Pcg64Mcg` generator of one side. `Pcg64Mcg::new` forces the two lowest state bits to 1, so we put a SplitMix64 mix of the session id and the seed into the high half and a mix of the seed and a side constant into the low half. Distinct session ids of one run therefore never share a stream, which fixes the collision of bug #90 for the interpreter, and the regression test checks 100000 consecutive ids. Templates, branches, and delays all draw from this one generator in program order.
+
+Delays and timeouts use the Tokio clock, so tests pause it with `start_paused` and run multi second programs in milliseconds. `fps_interp::delay::sample` draws fixed, uniform, exponential, lognormal, and Pareto think times with `rand_distr` and caps every sample at one hour. Parameters that a distribution rejects fail the session with reason `internal`.
+
+### Failure reasons
+
+Every failure is a `Failure` with the flow id, the side, the catalog action index, the action type, a `Reason`, and a `FailureKind` that keeps the cause. The action index counts actions in document order with the opening action at 0, as the `action_index` label of the catalog defines it, so the compiled `LoopEnd` and `Jump` ops do not shift it. The table maps each reason to its trigger.
+
+| Reason | Trigger |
+|---|---|
+| `connect_timeout` | The opener did not finish within the open timeout, or it reported `TimedOut` |
+| `connect_refused` | The opener reported `ConnectionRefused` |
+| `expect_timeout` | An `expect` did not finish within its `timeout_ms`, or the peer did not close within the drain timeout of `close: fin` |
+| `pattern_mismatch` | `expect pattern` buffered more unmatched bytes than the pattern buffer limit |
+| `unexpected_reset` | A read or write met `ConnectionReset` or `ConnectionAborted` outside the drain of `close: fin` |
+| `peer_closed` | An `expect` read end of stream, or a write met `BrokenPipe` |
+| `tls_failure` | The transport reported `InvalidData`, which is how `tokio-rustls` reports TLS errors |
+| `aborted` | The `stop` future completed |
+| `internal` | A template failed to render, a rendered count, port, or delay was out of range, or the transport reported another error |
+
+A failed module call fails with reason `internal`, and `Failure::extension_label` returns the label `extension_<kind>` that `contracts/extension/README.md` names. The contract test `tests/catalog.rs` reads `contracts/metrics/catalog.yaml` and checks that `Reason::ALL` equals the reason values in catalog order.
+
+### Tests
+
+The tests run client and server programs against each other over the in memory duplex. They are listed below.
+
+| Test | What it checks |
+|---|---|
+| `tests/sessions.rs` | Programs that complete, with byte counters, the opener requests, patterns split over one byte reads, the three stop rules and `last`, bytes past an `expect bytes` count, loops, branches, `set`, the five delay distributions on the paused clock, module functions, and the three close modes |
+| `tests/failures.rs` | One test for each of the nine reasons and a second trigger for `connect_timeout`, `expect_timeout`, `peer_closed`, and `internal`, each checking the reason, action index, and action type of both sides |
+| `tests/catalog.rs` | The reasons, sides, and action types against the metric catalog |
+| unit tests | `session_rng` streams and bug #90, delay sample means and supports, and the action index mapping |

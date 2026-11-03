@@ -1,0 +1,11 @@
+## [2026-11-03] ingest | ENG-04 Flow program interpreter
+
+We filled the crate `engine/fps-interp/`, which runs one side of one TCP session from a compiled flow program over any `SessionIo`. It covers every v0.1 action except `spawn` and UDP behavior, the three `expect` stop rules with timeouts, `last`, fixed, uniform, exponential, lognormal, and Pareto delays, and the three close modes. `session_rng` derives each side's generator from the run seed and the session id without the low bit collision of bug #90. Every failure carries a reason of the metric catalog, a catalog action index, and an action type. The tests run client and server programs against each other over the in memory duplex, with one test for each of the nine failure reasons. We added the interpreter section to [Engine](Engine.md#the-flow-program-interpreter). The evidence is `docs/handoff/ENG-04.md` and the tests in `engine/fps-interp/tests/`.
+
+## Shared page notes
+
+- [Engine](Engine.md), crate table, `fps-interp` row. Change the contents to "The session interpreter, the `Opener` seam, `session_rng`, delay sampling, and failure reasons, see [The flow program interpreter](#the-flow-program-interpreter)" and the next package to "ENG-05 adds vectored fill writes, ENG-06 UDP, ENG-07 multi flow instances". We left the row alone because the brief asks for additions at the end of the page.
+- [Coding Standards](Coding-Standards.md), the `session_rng` example. It still puts the session id at bit 2 and the seed in the high half, which avoids the collision but differs from `fps_interp::session_rng`, which also takes the side. Pointing the example at `fps_interp::session_rng` would keep one source of truth.
+- Bug #90 asks for a fix in `engine/fps-flow/tests/common/mod.rs` as well, which belongs to the fps-flow paths, so the bug stays open for that file.
+- Follow up for the ENG workstream. `send` has no timeout, so a peer that never reads blocks a session until the `stop` future fires. The contract defines no send timeout, and a write timeout in `Limits` would need a reason, for which `expect_timeout` is the closest catalog value.
+- Follow up for the ENG workstream. The interpreter reports bytes and failures per side but not `transactions.*` or `sessions.response_time`, which ENG-10 can derive when it wires `fps-stats` into the runtime.
