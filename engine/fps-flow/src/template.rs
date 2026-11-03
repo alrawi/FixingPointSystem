@@ -22,9 +22,7 @@ use rand::{Rng, RngCore};
 use rand_pcg::Pcg64Mcg;
 use serde_yaml::Value as Yaml;
 
-use crate::function::{
-    ArgValue, CallArgs, FnCall, FnErrorKind, NamedArg, TemplateFn, ValueType,
-};
+use crate::function::{ArgValue, CallArgs, FnCall, FnErrorKind, NamedArg, TemplateFn, ValueType};
 
 pub use parse::MAX_CALL_DEPTH;
 

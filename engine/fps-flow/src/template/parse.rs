@@ -93,8 +93,8 @@ fn tokenize(text: &str) -> Result<Vec<Tok>, String> {
             while bytes.get(i).is_some_and(u8::is_ascii_digit) {
                 i += 1;
             }
-            let is_float = bytes.get(i) == Some(&b'.')
-                && bytes.get(i + 1).is_some_and(u8::is_ascii_digit);
+            let is_float =
+                bytes.get(i) == Some(&b'.') && bytes.get(i + 1).is_some_and(u8::is_ascii_digit);
             if is_float {
                 i += 1;
                 while bytes.get(i).is_some_and(u8::is_ascii_digit) {
@@ -118,7 +118,9 @@ fn tokenize(text: &str) -> Result<Vec<Tok>, String> {
             {
                 i += 1;
             }
-            toks.push(Tok::Ident(text.get(start..i).unwrap_or_default().to_string()));
+            toks.push(Tok::Ident(
+                text.get(start..i).unwrap_or_default().to_string(),
+            ));
         } else {
             let ch = text.get(i..).and_then(|s| s.chars().next()).unwrap_or('?');
             return Err(format!("unexpected character '{ch}'"));
@@ -164,7 +166,9 @@ impl Parser {
     fn take(&mut self, want: &Tok) -> Result<(), Fail> {
         match self.bump() {
             Some(t) if &t == want => Ok(()),
-            Some(t) => Err(format!("expected '{}', got '{}'", want.describe(), t.describe()).into()),
+            Some(t) => {
+                Err(format!("expected '{}', got '{}'", want.describe(), t.describe()).into())
+            }
             None => Err(format!("expected '{}', got end of expression", want.describe()).into()),
         }
     }
@@ -194,7 +198,9 @@ impl Parser {
             _ => return Err("expected a literal, a reference, or a call".into()),
         };
         let next = self.peek(0);
-        if (first == "true" || first == "false") && next != Some(&Tok::Dot) && next != Some(&Tok::Open)
+        if (first == "true" || first == "false")
+            && next != Some(&Tok::Dot)
+            && next != Some(&Tok::Open)
         {
             return Ok(Node::Lit(Const::Bool(first == "true")));
         }
@@ -223,8 +229,7 @@ impl Parser {
         let mut keywords = Vec::new();
         if self.peek(0) != Some(&Tok::Close) {
             loop {
-                if matches!(self.peek(0), Some(Tok::Ident(_)))
-                    && self.peek(1) == Some(&Tok::Equals)
+                if matches!(self.peek(0), Some(Tok::Ident(_))) && self.peek(1) == Some(&Tok::Equals)
                 {
                     let key = self.ident()?;
                     self.pos += 1;
@@ -356,12 +361,12 @@ fn bind_core(
     }
     for (key, node) in keywords {
         let at = params.iter().position(|(p, _)| *p == key);
-        let slot = at.and_then(|i| slots.get_mut(i)).ok_or_else(|| {
-            TemplateError::UnknownParameter {
-                function: name.to_string(),
-                param: key.clone(),
-            }
-        })?;
+        let slot =
+            at.and_then(|i| slots.get_mut(i))
+                .ok_or_else(|| TemplateError::UnknownParameter {
+                    function: name.to_string(),
+                    param: key.clone(),
+                })?;
         if slot.is_some() {
             return Err(TemplateError::DuplicateParameter {
                 function: name.to_string(),

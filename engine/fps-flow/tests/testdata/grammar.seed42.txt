@@ -1,0 +1,334 @@
+== text only
+source "GET / HTTP/1.1\r\n"
+constant, 1 segment
+[0] lit 16 "GET / HTTP/1.1\r\n"
+render "GET / HTTP/1.1\r\n"
+== empty template
+source ""
+constant, 0 segments
+render ""
+== text around placeholders
+source "a {{ vars.host }} b {{ session.id }} c"
+dynamic, 5 segments
+[0] lit 2 "a "
+[1] vars.host
+[2] lit 3 " b "
+[3] session.id
+[4] lit 2 " c"
+render "a www.example.test b 7 c"
+== placeholder without spaces
+source "{{vars.size}}"
+dynamic, 1 segment
+[0] vars.size
+render "12"
+== unbalanced open
+source "x {{ vars.host"
+error: unbalanced '{{' in template
+== unbalanced close
+source "x }} y"
+error: unbalanced '}}' in template
+== empty placeholder
+source "{{   }}"
+error: empty placeholder
+== integer literal
+source "{{ 42 }}"
+constant, 1 segment
+[0] lit 2 "42"
+render "42"
+== negative integer literal
+source "{{ -7 }}"
+constant, 1 segment
+[0] lit 2 "-7"
+render "-7"
+== integer out of range
+source "{{ 99999999999999999999 }}"
+error: cannot parse expression '99999999999999999999': integer '99999999999999999999' is out of range
+== float literal
+source "{{ 2.50 }}"
+constant, 1 segment
+[0] lit 3 "2.5"
+render "2.5"
+== negative float literal
+source "{{ -0.5 }}"
+constant, 1 segment
+[0] lit 4 "-0.5"
+render "-0.5"
+== string literal
+source "{{ \'a {{ b\' }}"
+constant, 1 segment
+[0] lit 6 "a {{ b"
+render "a {{ b"
+== boolean literals
+source "{{ true }}/{{ false }}"
+constant, 1 segment
+[0] lit 10 "true/false"
+render "true/false"
+== unterminated string
+source "{{ \'abc }}"
+error: cannot parse expression ''abc': unterminated string literal
+== a float needs digits after the dot
+source "{{ 1. }}"
+error: cannot parse expression '1.': unexpected '.'
+== vars reference
+source "{{ vars.host }}"
+dynamic, 1 segment
+[0] vars.host
+render "www.example.test"
+== vars of every type
+source "{{ vars.size }} {{ vars.ratio }} {{ vars.tls }}"
+dynamic, 5 segments
+[0] vars.size
+[1] lit 1 " "
+[2] vars.ratio
+[3] lit 1 " "
+[4] vars.tls
+render "12 0.25 true"
+== undefined variable renders an error
+source "{{ vars.missing }}"
+dynamic, 1 segment
+[0] vars.missing
+render error: undefined variable 'missing'
+== session.id
+source "{{ session.id }}"
+dynamic, 1 segment
+[0] session.id
+render "7"
+== session.flow
+source "{{ session.flow }}"
+dynamic, 1 segment
+[0] session.flow
+render "page"
+== last
+source "[{{ last }}]"
+dynamic, 3 segments
+[0] lit 1 "["
+[1] last
+[2] lit 1 "]"
+render "[\x01\x02]"
+== unknown session field
+source "{{ session.secret }}"
+error: unknown reference 'session.secret'
+== last has no fields
+source "{{ last.size }}"
+error: unknown reference 'last.size'
+== unknown root
+source "{{ other.x }}"
+error: unknown reference 'other.x'
+== vars needs one name
+source "{{ vars.a.b }}"
+error: unknown reference 'vars.a.b'
+== fill positional
+source "{{ fill(5) }}"
+dynamic, 1 segment
+[0] fill
+    n = int 5
+render "QaB,<"
+== fill keyword
+source "{{ fill(n=5) }}"
+dynamic, 1 segment
+[0] fill
+    n = int 5
+render "QaB,<"
+== fill from a variable
+source "{{ fill(vars.size) }}"
+dynamic, 1 segment
+[0] fill
+    n = vars.size
+render "QaB,<aIHXySM"
+== fill from a nested call
+source "{{ fill(rand_int(1, 3)) }}"
+dynamic, 1 segment
+[0] fill
+    n = rand_int
+        a = int 1
+        b = int 3
+render "Q"
+== hex folds at compile time
+source "{{ hex(\'48 49\') }}"
+constant, 1 segment
+[0] lit 2 "HI"
+render "HI"
+== hex keyword
+source "{{ hex(s=\'0d0a\') }}"
+constant, 1 segment
+[0] lit 2 "\r\n"
+render "\r\n"
+== hex from a variable
+source "{{ hex(vars.digits) }}"
+dynamic, 1 segment
+[0] hex
+    s = vars.digits
+render "\xca\xfe"
+== hex odd digits
+source "{{ hex(\'abc\') }}"
+error: bad hex literal: odd number of digits
+== hex bad digit
+source "{{ hex(\'zz\') }}"
+error: bad hex literal: 'z' is not a hex digit
+== rand_int positional
+source "{{ rand_int(1, 6) }}"
+dynamic, 1 segment
+[0] rand_int
+    a = int 1
+    b = int 6
+render "2"
+== rand_int mixed
+source "{{ rand_int(1, b=6) }}"
+dynamic, 1 segment
+[0] rand_int
+    a = int 1
+    b = int 6
+render "2"
+== rand_int keywords
+source "{{ rand_int(b=6, a=1) }}"
+dynamic, 1 segment
+[0] rand_int
+    a = int 1
+    b = int 6
+render "2"
+== rand_int empty range renders an error
+source "{{ rand_int(6, 1) }}"
+dynamic, 1 segment
+[0] rand_int
+    a = int 6
+    b = int 1
+render error: rand_int(6, 1) has an empty range
+== unknown core function
+source "{{ nope(1) }}"
+error: unknown function 'nope'
+== too many positional
+source "{{ fill(1, 2) }}"
+error: function 'fill' takes at most 1 positional argument(s), got 2
+== missing parameter
+source "{{ rand_int(1) }}"
+error: function 'rand_int' misses required parameter 'b'
+== unknown keyword
+source "{{ fill(m=3) }}"
+error: function 'fill' has no parameter 'm'
+== keyword repeats a positional
+source "{{ rand_int(1, a=2) }}"
+error: function 'rand_int' got parameter 'a' twice
+== int parameter takes no text
+source "{{ fill(\'x\') }}"
+error: parameter 'n' of 'fill' takes int, got text
+== int parameter takes no float
+source "{{ fill(1.5) }}"
+error: parameter 'n' of 'fill' takes int, got float
+== int parameter takes no bytes
+source "{{ fill(last) }}"
+error: parameter 'n' of 'fill' takes int, got bytes
+== text parameter takes no int
+source "{{ hex(1) }}"
+error: parameter 's' of 'hex' takes text, got int
+== module call without arguments
+source "{{ ssh.kexinit() }}"
+dynamic, 1 segment
+[0] call ssh.kexinit
+render "<ssh.kexinit() r75>"
+== module call positional
+source "{{ http1.request(\'GET\', \'/\') }}"
+dynamic, 1 segment
+[0] call http1.request
+    #0 = text "GET"
+    #1 = text "/"
+render "<http1.request(Text(\"GET\"), Text(\"/\")) r75>"
+== module call keywords
+source "{{ dns.query(name=vars.host, qtype=\'A\') }}"
+dynamic, 1 segment
+[0] call dns.query
+    name = vars.host
+    qtype = text "A"
+render "<dns.query(name=Text(\"www.example.test\"), qtype=Text(\"A\")) r75>"
+== module call with every value type
+source "{{ m.f(1, 2.5, \'x\', true, vars.ratio, session.id, session.flow, last) }}"
+dynamic, 1 segment
+[0] call m.f
+    #0 = int 1
+    #1 = float 2.5
+    #2 = text "x"
+    #3 = boolean true
+    #4 = vars.ratio
+    #5 = session.id
+    #6 = session.flow
+    #7 = last
+render "<m.f(Int(1), Float(2.5), Text(\"x\"), Boolean(true), Float(0.25), Int(7), Text(\"page\"), Bytes(\"\\x01\\x02\")) r75>"
+== nested core call in a module call
+source "{{ http1.response(200, body=fill(vars.size)) }}"
+dynamic, 1 segment
+[0] call http1.response
+    #0 = int 200
+    body = fill
+        n = vars.size
+render "<http1.response(Int(200), body=Text(\"QaB,<aIHXySM\")) r92>"
+== nested module call
+source "{{ dns.response(dns.query(name=\'a\'), address=\'192.0.2.1\') }}"
+dynamic, 1 segment
+[0] call dns.response
+    #0 = call dns.query
+        name = text "a"
+    address = text "192.0.2.1"
+render "<dns.response(Bytes(len 31), address=Text(\"192.0.2.1\")) r16>"
+== module call order draws the generator in call order
+source "{{ m.a() }}{{ m.b(rand_int(0, 9)) }}{{ m.c() }}"
+dynamic, 3 segments
+[0] call m.a
+[1] call m.b
+    #0 = rand_int
+        a = int 0
+        b = int 9
+[2] call m.c
+render "<m.a() r75><m.b(Int(6)) r92><m.c() r998>"
+== module error
+source "{{ m.fail() }}"
+dynamic, 1 segment
+[0] call m.fail
+render error: m.fail: invalid_argument: fail was called
+== too many name parts
+source "{{ a.b.c(1) }}"
+error: cannot parse expression 'a.b.c(1)': 'a.b.c' is not a function name; use <module>.<function>
+== positional after keyword
+source "{{ m.f(k=1, 2) }}"
+error: cannot parse expression 'm.f(k=1, 2)': a positional argument follows a keyword argument
+== trailing comma
+source "{{ fill(1,) }}"
+error: cannot parse expression 'fill(1,)': expected a literal, a reference, or a call
+== repeated keyword
+source "{{ m.f(k=1, k=2) }}"
+error: function 'm.f' got parameter 'k' twice
+== missing close paren
+source "{{ fill(1 }}"
+error: cannot parse expression 'fill(1': expected ')', got end of expression
+== operator
+source "{{ 1 + 2 }}"
+error: cannot parse expression '1 + 2': unexpected character '+'
+== reserved module vars
+source "{{ vars.f() }}"
+error: 'vars' is reserved and cannot name a module
+== reserved module session
+source "{{ session.f() }}"
+error: 'session' is reserved and cannot name a module
+== reserved module last
+source "{{ last.f() }}"
+error: 'last' is reserved and cannot name a module
+== reserved module true
+source "{{ true.f() }}"
+error: 'true' is reserved and cannot name a module
+== reserved module false
+source "{{ false.f() }}"
+error: 'false' is reserved and cannot name a module
+== eight levels
+source "{{ m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=1)))))))) }}"
+dynamic, 1 segment
+[0] call m.f
+    x = call m.f
+        x = call m.f
+            x = call m.f
+                x = call m.f
+                    x = call m.f
+                        x = call m.f
+                            x = call m.f
+                                x = int 1
+render "<m.f(x=Bytes(len 27)) r706>"
+== nine levels
+source "{{ m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=1))))))))) }}"
+error: calls nest deeper than 8 levels

@@ -111,10 +111,16 @@ fn fill_length_and_printable() {
 fn hex_decodes_at_compile_time() {
     let t = Template::compile("{{ hex('00ff10') }}").unwrap();
     assert!(t.is_static());
-    assert_eq!(render("{{ hex(s='00ff10') }}", &vars()).unwrap(), vec![0, 255, 16]);
+    assert_eq!(
+        render("{{ hex(s='00ff10') }}", &vars()).unwrap(),
+        vec![0, 255, 16]
+    );
     let t = Template::compile("{{ hex(vars.hexstr) }}").unwrap();
     assert!(!t.is_static());
-    assert_eq!(render_with(&t, &vars(), &Vars::new()).unwrap(), vec![10, 11]);
+    assert_eq!(
+        render_with(&t, &vars(), &Vars::new()).unwrap(),
+        vec![10, 11]
+    );
 }
 
 #[test]
@@ -371,7 +377,10 @@ fn fold_vars_substitutes_constants_only() {
     );
     let mut constants = vars();
     constants.insert("hexstr".into(), Value::Str("zz".into()));
-    assert!(matches!(t.fold_vars(&constants), Err(TemplateError::Hex(_))));
+    assert!(matches!(
+        t.fold_vars(&constants),
+        Err(TemplateError::Hex(_))
+    ));
 }
 
 #[test]
