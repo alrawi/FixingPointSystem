@@ -71,12 +71,12 @@ func newLayout(lowest uint64, sigfig uint) (layout, error) {
 		return layout{}, fmt.Errorf("%w: lowest %d and precision %d are out of range", ErrHistogram, lowest, sigfig)
 	}
 	largestSingle := 2 * uint64(math.Pow10(int(sigfig)))
-	countMag := uint(bits.Len64(largestSingle - 1))
+	countMag := uint(bits.Len64(largestSingle - 1)) //nolint:gosec // G115: Len64 returns 0 to 64
 	halfMag := uint(0)
 	if countMag > 1 {
 		halfMag = countMag - 1
 	}
-	unitMag := uint(bits.Len64(lowest) - 1)
+	unitMag := uint(bits.Len64(lowest) - 1) //nolint:gosec // G115: lowest is at least 1, so Len64 is 1 to 64
 	if unitMag+halfMag+1 > 62 {
 		return layout{}, fmt.Errorf("%w: lowest %d is too large for precision %d", ErrHistogram, lowest, sigfig)
 	}
@@ -113,7 +113,8 @@ func (l layout) countsLen(highest uint64) uint64 {
 
 // position returns the bucket and sub-bucket of value.
 func (l layout) position(value uint64) (bucket, sub uint64) {
-	bucket = uint64(l.leadingZeroCount) - uint64(bits.LeadingZeros64(value|l.subBucketMask))
+	// The mask keeps the leading zeros at or below leadingZeroCount.
+	bucket = uint64(l.leadingZeroCount) - uint64(bits.LeadingZeros64(value|l.subBucketMask)) //nolint:gosec // G115: LeadingZeros64 returns 0 to 64
 	sub = value >> (bucket + uint64(l.unitMagnitude))
 	return bucket, sub
 }
@@ -126,13 +127,14 @@ func (l layout) index(value uint64) uint64 {
 
 // valueAt returns the lowest value of the bucket at counts index i.
 func (l layout) valueAt(i uint64) uint64 {
-	b := int64(i>>l.halfCountMag) - 1
+	b := i >> l.halfCountMag // the bucket plus one
 	s := (i & (l.subBucketHalf - 1)) + l.subBucketHalf
-	if b < 0 {
+	if b == 0 {
 		s -= l.subBucketHalf
-		b = 0
+	} else {
+		b--
 	}
-	return s << (uint64(b) + uint64(l.unitMagnitude))
+	return s << (b + uint64(l.unitMagnitude))
 }
 
 // rangeSize returns the number of values that share the bucket of value.
@@ -207,7 +209,7 @@ func inflate(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %d compressed bytes exceed the limit of %d", ErrHistogram, len(data), maxEncodedLen)
 	}
 	n := binary.BigEndian.Uint32(data[4:])
-	if uint64(n) > uint64(len(data)-8) {
+	if int64(n) > int64(len(data))-8 {
 		return nil, fmt.Errorf("%w: compressed length %d exceeds the %d bytes present", ErrHistogram, n, len(data)-8)
 	}
 	z, err := zlib.NewReader(bytes.NewReader(data[8 : 8+int(n)]))
@@ -237,11 +239,11 @@ func decodeV2(raw []byte) (Hist, error) {
 	sigfig := binary.BigEndian.Uint32(raw[12:])
 	lowest := binary.BigEndian.Uint64(raw[16:])
 	highest := binary.BigEndian.Uint64(raw[24:])
-	if uint64(payloadLen) != uint64(len(raw)-headerLen) {
+	if int64(payloadLen) != int64(len(raw))-headerLen {
 		return Hist{}, fmt.Errorf("%w: payload length %d differs from the %d bytes present", ErrHistogram, payloadLen, len(raw)-headerLen)
 	}
 	if offset != 0 {
-		return Hist{}, fmt.Errorf("%w: normalizing index offset %d is not supported", ErrHistogram, int32(offset))
+		return Hist{}, fmt.Errorf("%w: normalizing index offset %d is not supported", ErrHistogram, offset)
 	}
 	if sigfig > maxSigFig || lowest < 1 || lowest > math.MaxInt64 || highest > math.MaxInt64 || highest < 2*lowest {
 		return Hist{}, fmt.Errorf("%w: header with lowest %d, highest %d, and precision %d is invalid", ErrHistogram, lowest, highest, sigfig)
@@ -256,13 +258,13 @@ func decodeV2(raw []byte) (Hist, error) {
 	payload := raw[headerLen:]
 	var idx uint64
 	for len(payload) > 0 {
-		v, n, err := zigzag(payload)
+		c, zeroRun, n, err := zigzag(payload)
 		if err != nil {
 			return Hist{}, err
 		}
 		payload = payload[n:]
-		if v < 0 {
-			zeros := uint64(-(v + 1)) + 1
+		if zeroRun {
+			zeros := c
 			if zeros > limit-idx {
 				return Hist{}, fmt.Errorf("%w: zero run passes the %d buckets of the header", ErrHistogram, limit)
 			}
@@ -272,8 +274,7 @@ func decodeV2(raw []byte) (Hist, error) {
 		if idx >= limit {
 			return Hist{}, fmt.Errorf("%w: counts pass the %d buckets of the header", ErrHistogram, limit)
 		}
-		if v > 0 {
-			c := uint64(v)
+		if c > 0 {
 			if h.total > math.MaxUint64-c {
 				return Hist{}, fmt.Errorf("%w: total count overflows", ErrHistogram)
 			}
@@ -301,23 +302,31 @@ func (h *Hist) add(i, c uint64) {
 }
 
 // zigzag reads one ZigZag LEB128 value of at most 9 bytes, whose last byte
-// carries 8 bits.
-func zigzag(b []byte) (int64, int, error) {
+// carries 8 bits. A positive value is a count, and a negative value -n is a
+// run of n empty buckets, so zigzag returns the magnitude and whether the
+// value was negative.
+func zigzag(b []byte) (mag uint64, negative bool, n int, err error) {
 	var u uint64
+	var shift uint
 	for i := 0; i < 9; i++ {
 		if i >= len(b) {
-			return 0, 0, fmt.Errorf("%w: truncated count", ErrHistogram)
+			return 0, false, 0, fmt.Errorf("%w: truncated count", ErrHistogram)
 		}
 		if i == 8 {
 			u |= uint64(b[i]) << 56
-			return int64(u>>1) ^ -int64(u&1), 9, nil
+		} else {
+			u |= uint64(b[i]&0x7f) << shift
+			shift += 7
+			if b[i]&0x80 != 0 {
+				continue
+			}
 		}
-		u |= uint64(b[i]&0x7f) << (7 * uint(i))
-		if b[i]&0x80 == 0 {
-			return int64(u>>1) ^ -int64(u&1), i + 1, nil
+		if u&1 == 1 {
+			return u>>1 + 1, true, i + 1, nil
 		}
+		return u >> 1, false, i + 1, nil
 	}
-	return 0, 0, fmt.Errorf("%w: truncated count", ErrHistogram)
+	return 0, false, 0, fmt.Errorf("%w: truncated count", ErrHistogram)
 }
 
 // Merge returns the union of the distributions. Each bucket count is the sum

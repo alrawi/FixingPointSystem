@@ -37,27 +37,25 @@ var _ api.ServerInterface = (*API)(nil)
 // the client leaves.
 func NewAPI(agg *Aggregator, rs RunSource) *API { return &API{agg: agg, runs: rs} }
 
-// lookup returns the run with id, or a 404 problem. ok reports whether rs
-// knows the run, and final whether it ended.
-func (a *API) lookup(w http.ResponseWriter, r *http.Request, id string) (final, ok bool) {
+// lookup reports whether the run with id exists, and otherwise writes a
+// 404 problem. A run exists when the RunSource knows it or the aggregator
+// holds its metrics.
+func (a *API) lookup(w http.ResponseWriter, r *http.Request, id string) bool {
 	if a.runs != nil {
-		run, err := a.runs.Get(id)
+		_, err := a.runs.Get(id)
 		switch {
 		case err == nil:
-			return runs.Final(run.State), true
-		case errors.Is(err, runs.ErrRunNotFound):
-			if a.agg.Has(id) {
-				return true, true
-			}
-		default:
+			return true
+		case !errors.Is(err, runs.ErrRunNotFound):
 			api.WriteProblem(w, r, api.Problemf(http.StatusInternalServerError, "look up run %s: %v", id, err))
-			return false, false
+			return false
 		}
-	} else if a.agg.Has(id) {
-		return false, true
+	}
+	if a.agg.Has(id) {
+		return true
 	}
 	api.WriteProblem(w, r, api.Problemf(http.StatusNotFound, "run %s not found", id))
-	return false, false
+	return false
 }
 
 // GetRunMetrics answers GET /v1/runs/{id}/metrics with the samples of one
@@ -86,7 +84,7 @@ func (a *API) GetRunMetrics(w http.ResponseWriter, r *http.Request, id api.Id, p
 		api.WriteProblem(w, r, api.Problemf(http.StatusBadRequest, "to %s is before from %s", win.To.Format(time.RFC3339), win.From.Format(time.RFC3339)))
 		return
 	}
-	if _, ok := a.lookup(w, r, id); !ok {
+	if !a.lookup(w, r, id) {
 		return
 	}
 	samples, err := a.agg.Samples(id, params.View, win)
@@ -117,7 +115,7 @@ func (a *API) StreamRunMetrics(w http.ResponseWriter, r *http.Request, id api.Id
 			}
 		}
 	}
-	if _, ok := a.lookup(w, r, id); !ok {
+	if !a.lookup(w, r, id) {
 		return
 	}
 	rc := http.NewResponseController(w)

@@ -3,7 +3,7 @@
 package metrics
 
 import (
-	"bufio"
+	"bytes"
 	"math"
 	"net/http"
 	"strconv"
@@ -53,14 +53,14 @@ func (p *Prometheus) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodHead {
 		return
 	}
-	bw := bufio.NewWriter(w)
-	p.write(bw)
-	_ = bw.Flush()
+	var buf bytes.Buffer
+	p.write(&buf)
+	_, _ = w.Write(buf.Bytes())
 }
 
 // write renders every metric family in catalog order, each with the series
 // of every run ordered by run id and labels.
-func (p *Prometheus) write(w *bufio.Writer) {
+func (p *Prometheus) write(w *bytes.Buffer) {
 	byMetric := map[string][]promSeries{}
 	for _, run := range p.agg.Runs() {
 		ss, err := p.agg.Series(run)
@@ -101,7 +101,7 @@ func (p *Prometheus) write(w *bufio.Writer) {
 	}
 }
 
-func writeSample(w *bufio.Writer, name, labels string, v float64) {
+func writeSample(w *bytes.Buffer, name, labels string, v float64) {
 	w.WriteString(name)
 	w.WriteString(labels)
 	w.WriteByte(' ')
@@ -131,6 +131,9 @@ func formatFloat(v float64) string {
 		return "+Inf"
 	case math.IsInf(v, -1):
 		return "-Inf"
+	}
+	if v == math.Trunc(v) && math.Abs(v) < 1e15 {
+		return strconv.FormatFloat(v, 'f', -1, 64) // integers keep every digit
 	}
 	return strconv.FormatFloat(v, 'g', -1, 64)
 }

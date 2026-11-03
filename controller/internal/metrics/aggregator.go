@@ -163,9 +163,9 @@ func (a *Aggregator) Add(agentID string, at time.Time, snap *agentpb.CounterSnap
 	defer a.mu.Unlock()
 	r := a.runs[runID]
 	if r == nil {
-		r = &runMetrics{id: runID, sources: map[string]*source{}}
+		r = &runMetrics{id: runID, sources: map[string]*source{}, updated: sec}
 		a.runs[runID] = r
-		a.evict()
+		a.evict(r)
 	}
 	srcKey := agentID + "\x00aggregate"
 	if !snap.GetAggregate() {
@@ -202,12 +202,15 @@ func (a *Aggregator) Add(agentID string, at time.Time, snap *agentpb.CounterSnap
 	return true
 }
 
-// evict drops the least recently updated runs beyond MaxRuns. The caller
-// holds the lock.
-func (a *Aggregator) evict() {
+// evict drops the least recently updated runs beyond MaxRuns, never keep.
+// The caller holds the lock.
+func (a *Aggregator) evict(keep *runMetrics) {
 	for len(a.runs) > a.cfg.MaxRuns {
 		var oldest *runMetrics
 		for _, r := range a.runs {
+			if r == keep {
+				continue
+			}
 			if oldest == nil || r.updated.Before(oldest.updated) || (r.updated.Equal(oldest.updated) && r.id < oldest.id) {
 				oldest = r
 			}

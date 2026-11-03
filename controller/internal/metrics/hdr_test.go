@@ -132,9 +132,9 @@ func cmpString(a, b string) int {
 // TestRoundTrip records random values with the test encoder in both forms
 // and checks counts, extremes, and that every value lands in its bucket.
 func TestRoundTrip(t *testing.T) {
-	rng := rand.New(rand.NewPCG(1, 2))
+	rng := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // G404: seeded test data
 	for trial := 0; trial < 50; trial++ {
-		n := 1 + rng.IntN(500)
+		n := 1 + rng.Uint64N(500)
 		values := make([]uint64, n)
 		for i := range values {
 			values[i] = rng.Uint64N(uint64(math.Pow10(1 + rng.IntN(9))))
@@ -144,7 +144,7 @@ func TestRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if h.Count() != uint64(n) {
+		if h.Count() != n {
 			t.Fatalf("count %d, want %d", h.Count(), n)
 		}
 		lo, hi := slices.Min(values), slices.Max(values)
@@ -203,7 +203,7 @@ func TestRebucket(t *testing.T) {
 	var want []uint64
 	for i, c := range counts {
 		if c > 0 {
-			want = append(want, canonical.index(src.valueAt(uint64(i))))
+			want = append(want, canonical.index(src.valueAt(uint64(i)))) //nolint:gosec // G115: i is a slice index
 		}
 	}
 	var got []uint64
@@ -248,7 +248,7 @@ func TestDecodeRejectsMalformed(t *testing.T) {
 // fixPayload sets the payload length of an uncompressed encoding to its
 // actual length.
 func fixPayload(b []byte) {
-	binary.BigEndian.PutUint32(b[4:], uint32(len(b)-headerLen))
+	binary.BigEndian.PutUint32(b[4:], uint32(len(b)-headerLen)) //nolint:gosec // G115: test payloads are small
 }
 
 func TestDecodeBomb(t *testing.T) {

@@ -84,8 +84,11 @@ func parseSnapshot(t *testing.T, raw []byte) *agentpb.CounterSnapshot {
 // the given layout, using zero runs as writers do.
 func encodeV2(lowest, highest uint64, sigfig uint32, counts []uint64) []byte {
 	var payload []byte
-	put := func(v int64) {
-		u := uint64(v<<1) ^ uint64(v>>63)
+	put := func(mag uint64, negative bool) {
+		u := mag << 1
+		if negative {
+			u = (mag-1)<<1 | 1
+		}
 		for i := 0; i < 8; i++ {
 			if u < 0x80 {
 				payload = append(payload, byte(u))
@@ -98,7 +101,7 @@ func encodeV2(lowest, highest uint64, sigfig uint32, counts []uint64) []byte {
 	}
 	for i := 0; i < len(counts); {
 		if counts[i] != 0 {
-			put(int64(counts[i]))
+			put(counts[i], false)
 			i++
 			continue
 		}
@@ -107,15 +110,15 @@ func encodeV2(lowest, highest uint64, sigfig uint32, counts []uint64) []byte {
 			j++
 		}
 		if j-i == 1 {
-			put(0)
+			put(0, false)
 		} else {
-			put(-int64(j - i))
+			put(uint64(j-i), true) //nolint:gosec // G115: j is above i
 		}
 		i = j
 	}
 	var b bytes.Buffer
 	_ = binary.Write(&b, binary.BigEndian, uint32(cookieV2|0x10))
-	_ = binary.Write(&b, binary.BigEndian, uint32(len(payload)))
+	_ = binary.Write(&b, binary.BigEndian, uint32(len(payload))) //nolint:gosec // G115: test payloads are small
 	_ = binary.Write(&b, binary.BigEndian, uint32(0))
 	_ = binary.Write(&b, binary.BigEndian, sigfig)
 	_ = binary.Write(&b, binary.BigEndian, lowest)
@@ -133,7 +136,7 @@ func compress(raw []byte) []byte {
 	_ = w.Close()
 	var b bytes.Buffer
 	_ = binary.Write(&b, binary.BigEndian, uint32(cookieV2Compressed|0x10))
-	_ = binary.Write(&b, binary.BigEndian, uint32(z.Len()))
+	_ = binary.Write(&b, binary.BigEndian, uint32(z.Len())) //nolint:gosec // G115: test payloads are small
 	b.Write(z.Bytes())
 	return b.Bytes()
 }
