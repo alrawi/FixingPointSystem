@@ -62,6 +62,35 @@ func TestLoadConfigLayersDefaultsFileAndFlags(t *testing.T) {
 	}
 }
 
+func TestLoadConfigLayersServiceSettings(t *testing.T) {
+	path := writeConfig(t, "grpc_listen: 127.0.0.1:7001\ndata_dir: /from/file\n")
+	tests := []struct {
+		name     string
+		args     []string
+		wantGRPC string
+		wantData string
+	}{
+		{"defaults only", nil, app.DefaultGRPCListen, ""},
+		{"file over defaults", []string{"-config", path}, "127.0.0.1:7001", "/from/file"},
+		{"flags over file", []string{"-config", path, "-grpc-listen", "127.0.0.1:7002", "-data-dir", "/from/flag"}, "127.0.0.1:7002", "/from/flag"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			o, err := parseFlags(tc.args, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := loadConfig(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.GRPCListen != tc.wantGRPC || cfg.DataDir != tc.wantData {
+				t.Errorf("config = %s %q, want %s %q", cfg.GRPCListen, cfg.DataDir, tc.wantGRPC, tc.wantData)
+			}
+		})
+	}
+}
+
 func TestLoadConfigValidatesFlagValues(t *testing.T) {
 	o, err := parseFlags([]string{"-log-level", "chatty"}, io.Discard)
 	if err != nil {
@@ -74,6 +103,7 @@ func TestLoadConfigValidatesFlagValues(t *testing.T) {
 
 func TestRunExitCodes(t *testing.T) {
 	bad := writeConfig(t, "shutdown_timeout: soon\n")
+	tokenFile := writeConfig(t, "tokens: [{name: ops, scope: admin, token_file: "+filepath.Join(t.TempDir(), "absent")+"}]\n")
 	tests := []struct {
 		name       string
 		args       []string
@@ -88,6 +118,9 @@ func TestRunExitCodes(t *testing.T) {
 		{"missing config file", []string{"-config", filepath.Join(t.TempDir(), "absent.yaml")}, exitUsage, "", "no such file"},
 		{"invalid config file", []string{"-config", bad}, exitUsage, "", "invalid duration"},
 		{"port out of range", []string{"-listen", "127.0.0.1:99999", "-log-level", "error"}, exitFailure, "", "controller failed"},
+		{"grpc port out of range", []string{"-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:99999", "-log-level", "error"}, exitFailure, "", "controller failed"},
+		{"grpc listen without port", []string{"-grpc-listen", "localhost"}, exitUsage, "", "grpc_listen"},
+		{"missing token file", []string{"-config", tokenFile, "-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:0"}, exitUsage, "", "token ops"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -110,7 +143,9 @@ func TestRunStopsWhenContextEnds(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var stderr lockedBuffer
 	done := make(chan int, 1)
-	go func() { done <- run(ctx, []string{"-listen", "127.0.0.1:0"}, io.Discard, &stderr) }()
+	go func() {
+		done <- run(ctx, []string{"-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:0"}, io.Discard, &stderr)
+	}()
 
 	addr := waitForListen(t, &stderr)
 	resp, err := http.Get("http://" + addr + app.HealthPath)
@@ -144,7 +179,7 @@ func TestBinaryShutsDownOnSIGTERM(t *testing.T) {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 
-	cfg := writeConfig(t, "listen: 127.0.0.1:0\nshutdown_timeout: 5s\n")
+	cfg := writeConfig(t, "listen: 127.0.0.1:0\ngrpc_listen: 127.0.0.1:0\nshutdown_timeout: 5s\n")
 	var stderr lockedBuffer
 	cmd := exec.Command(bin, "-config", cfg)
 	cmd.Stderr = &stderr
@@ -177,7 +212,10 @@ func TestBinaryShutsDownOnSIGTERM(t *testing.T) {
 		t.Fatal("process did not exit within 10s of SIGTERM")
 	}
 	msgs := logMessages(t, stderr.String())
-	for _, want := range []string{"controller starting", "controller listening", "controller shutting down", "controller stopped"} {
+	for _, want := range []string{
+		"controller starting", "controller listening", "controller shutting down", "controller stopped",
+		"agent service listening", "agent service shutting down", "agent service stopped",
+	} {
 		if !msgs[want] {
 			t.Errorf("logs lack %q:\n%s", want, stderr.String())
 		}

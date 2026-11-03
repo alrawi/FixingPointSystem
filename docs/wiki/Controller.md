@@ -449,3 +449,92 @@ A catalog name maps to `fps_` followed by the name with dots replaced by undersc
 ### Tests of the aggregator
 
 `TestCountersEqualSumOfFakeAgentSnapshots` sends six rounds of cumulative snapshots from three fake agents through the real agent manager, one agent with two workers, adds a stale replay and an empty final snapshot, and checks that every merged counter equals the sum of the newest snapshots. `TestMergeMatchesReference` and `TestHistogramsOfFakeAgentsMatchReference` compare the merged histograms bucket by bucket and statistic by statistic with `testdata/reference_merge.json`, which `Snapshot::merge_all` of `engine/fps-stats` wrote. The generator lives in `testdata/refgen` and reruns with the command in its `Cargo.toml`. Further tests cover derived ratios, gauge means, views, windows and steps, limits, malformed and oversized encodings, a fuzz target of the decoder, the stream, and the Prometheus golden file.
+## Binary wiring
+
+CTL-17 wired every package into `fps-controller`, so the binary serves the whole `/v1` REST API and the agent gRPC service. The package `internal/wiring` builds the components, adapts them to one another, and combines the REST handlers, and `cmd/fps-controller` runs the REST server and the gRPC service side by side.
+
+### Settings of the binary
+
+The configuration file gained six keys, and the binary gained two flags. Every earlier key and flag keeps its meaning.
+
+```yaml
+data_dir: /var/lib/fps          # module registry in data_dir/modules, store in data_dir/configs.db
+store_path: /var/lib/fps/db/configs.db   # optional, overrides the store file, or ":memory:"
+grpc_listen: localhost:8444     # host:port of the agent gRPC service, plain TCP until CTL-15
+agent_auto_enroll: false        # accept agents that no operator enrolled with POST /v1/agents
+tokens:
+  - { name: ci, scope: run, token_file: /etc/fps/ci.token }
+  - { name: ops, scope: admin, token: change-me-0123456789 }
+```
+
+| Key or flag | Default | Meaning |
+|---|---|---|
+| `data_dir`, `-data-dir dir` | none | Directory of the module registry and the configuration store. Without it the store lives in memory and the registry in a temporary directory, so every configuration and module ends with the process, and the controller logs a warning |
+| `store_path` | `data_dir/configs.db`, or `:memory:` without `data_dir` | SQLite file of the configuration store. The controller creates its directory |
+| `grpc_listen`, `-grpc-listen address` | `localhost:8444` | TCP address of `ControllerService`, which agents dial |
+| `agent_auto_enroll` | false | Lets any agent identity register without an enrollment |
+| `tokens` | none | Bearer tokens of the REST API, each with a `name`, a `scope` of `read`, `run`, or `admin`, and exactly one of `token` and `token_file` |
+
+A token holds at least 16 bytes. A `token_file` holds the token alone, and the controller trims the white space around it. Names must be unique, and two entries must not hold the same token. A token that breaks a rule, or a token file that the controller cannot read, ends the process with exit code 2. Without tokens every `/v1` operation answers 401, and the controller logs a warning at startup.
+
+The gRPC service speaks plain TCP and trusts the `agent_id` of each request, because mutual TLS arrives with CTL-15. The controller logs a warning that agent identities are not verified. We therefore bind `grpc_listen` to a loopback or a lab network until then.
+
+### Components
+
+`wiring.New` builds the components in one order and closes what it opened when a step fails.
+
+1. The token check, from `tokens`, as `api.StaticTokens`.
+2. The configuration store, with `store.Open` on the resolved store path.
+3. The module registry, with `registry.Open` on `data_dir/modules` or a temporary directory.
+4. The agent manager, with `agents.ClaimedIdentity`, `agent_auto_enroll`, and an observer that fans each event out to every function registered with `Controller.Observe`.
+5. The run orchestrator over the store, the agent manager, and the registry catalog. Its `Observe` method is the first observer, which `runs` needs to contain agent faults.
+6. The REST handlers and the combined server.
+
+`Controller.Run` serves `ControllerService` and calls `Manager.Run` for the heartbeat sweeps. When its context ends, it aborts the open runs, ends every agent session with `UNAVAILABLE`, and stops the gRPC server within `shutdown_timeout`. The binary cancels both servers when either fails, so a dead gRPC listener never leaves a REST server without agents. The new lifecycle records are `agent service listening` with `addr`, `agent service shutting down`, and `agent service stopped`, and tests read the gRPC port from the `addr` of the listening record.
+
+### Adapters
+
+Two adapter types connect the registry and the agent manager to the interfaces that the other packages define.
+
+| Adapter | Implements | Source |
+|---|---|---|
+| `wiring.Catalog` | `store.ModuleCatalog` and `runs.Catalog` with `Scenarios` | The scenario files of the latest installed version of each module, with the module name, version, and tree digest. Configurations name a module without a version, so older versions stay out of the catalog |
+| `wiring.Catalog` | `api.ModuleLister` with `ModuleSummaries` | Every installed version from `Registry.List` |
+| `wiring.Inventory` | `store.AgentInventory` with `AvailableAgents` | Agents that are online or reserved, with cores, the first known backend, and the port names, as the orchestrator compiles them |
+| `wiring.Inventory` | `api.AgentInventory` with `AgentCapabilities` | Every agent through `agents.ToAPI`, with every backend of its latest registration |
+
+### Combined server
+
+`wiring.Server` is the single `api.ServerInterface` that `api.New` receives. It embeds the handler of every package, and each of those embeds `api.Unimplemented`. Go promotes the method of the package that implements an operation, because it sits one level above the 501 methods that the other handlers inherit. The operations that no package implements sit in an embedded `pending` type at the same level, so no selector is ambiguous. A package that implements a pending operation deletes it from `pending` and embeds its handler, and the compiler reports an ambiguous selector while both remain.
+
+| Operations | Handler |
+|---|---|
+| `/v1/agents` and its actions | `agents.API` |
+| `GET /v1/capabilities` | `api.CapabilitiesAPI` |
+| `/v1/configs` and `:validate` | `store.Handler` |
+| `/v1/modules` | `registry.API` |
+| `POST /v1/runs`, `GET /v1/runs/{id}`, `POST /v1/runs/{id}:stop` | `runs.API` |
+| `GET /v1/runs/{id}/metrics` and `:stream` | The `MetricsHandler` of `Controller.SetMetrics`, or 501 |
+| `listRuns`, captures, and `getRunReport` | `pending`, which answers 501 |
+
+### Hook for run metrics
+
+The metrics package of CTL-08 joins the binary in three calls in `serve` of `cmd/fps-controller/main.go`, where a comment marks the place before `Mount`. `ctl.SetMetrics` takes a value with the methods `GetRunMetrics` and `StreamRunMetrics` of `api.ServerInterface`, `ctl.Observe` adds its agent event observer next to the orchestrator, and `a.Handle("GET /metrics", ...)` mounts the Prometheus endpoint outside `/v1`. The exported fields of `wiring.Controller` give the package the store, the registry, the agent manager, and the orchestrator.
+
+### Tests of the wiring
+
+`TestServerRoutesEveryOperation` walks every operation of the OpenAPI contract with an admin token and checks that exactly the seven pending operations answer 501, each with a detail that names it, so every other operation reaches the package that implements it. Other tests in `internal/wiring` cover the token scopes, the metrics hook, the catalog with two versions of `http1`, the inventory filters, and a gRPC round trip with a fake agent and the observer.
+
+`TestEndToEnd` in `cmd/fps-controller` builds the binary and starts it with a temporary configuration that holds an admin token, a run token in a token file, a read token, and a data directory. It runs eleven steps.
+
+1. It checks that a request without a token answers 401 and that a run token cannot enroll an agent.
+2. It enrolls the agent `local` with the admin token.
+3. A fake agent from `internal/fakeagent` registers over gRPC on the logged port with the port `lo` and automatic heartbeats.
+4. It installs the example modules `http1` and `dns` of `contracts/examples/modules/` as gzip compressed tar archives.
+5. It lists the modules and reads the capabilities with one agent, two modules, and the kernel backend.
+6. It stores `contracts/examples/tests/http_smoke.yaml` as YAML.
+7. It validates the configuration, which passes the module and capacity checks without findings.
+8. It starts a run on `local`, waits until the run is running, and checks the fake agent state.
+9. It stops the run and expects it completed with a passing verdict after the prepare, start, and stop commands.
+10. It sends SIGTERM and expects exit code 0 with the stopped records of both servers.
+11. It starts the binary again on the same data directory and finds the configuration and both modules.

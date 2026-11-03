@@ -1,0 +1,37 @@
+scenario: tcp_fallback
+description: A TXT query over UDP whose answer exceeds 512 bytes, so the server sets TC and the client repeats the query over TCP with the two byte length prefix of RFC 1035 section 4.2.2.
+vars:
+  host: big.example.test
+  server_port: 53
+flows:
+  - id: udp
+    module: dns
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ dns.query(name=vars.host, qtype='TXT') }}"
+      - expect: { min_bytes: 12, max_datagram: 512, timeout_ms: 2000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { min_bytes: 12, max_datagram: 512, timeout_ms: 2000 }
+      - send: "{{ dns.response(last) }}"
+      - close: fin
+  - id: tcp
+    module: dns
+    l4: tcp
+    after: udp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ dns.query(name=vars.host, qtype='TXT', tcp=true) }}"
+      - expect: { bytes: 2, timeout_ms: 2000 }
+      - set: { answer_len: "{{ dns.tcp_length(last) }}" }
+      - expect: { bytes: "{{ vars.answer_len }}", timeout_ms: 2000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { bytes: 2, timeout_ms: 2000 }
+      - set: { query_len: "{{ dns.tcp_length(last) }}" }
+      - expect: { bytes: "{{ vars.query_len }}", timeout_ms: 2000 }
+      - send: "{{ dns.response(last, tcp=true) }}"
+      - close: fin

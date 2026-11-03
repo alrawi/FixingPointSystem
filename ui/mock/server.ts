@@ -2,8 +2,9 @@
 //
 // A mock of the controller REST API for UI tests and local development. It
 // serves the read operations that the UI uses so far from the contract
-// examples, checks the bearer token, and answers everything else with an RFC
-// 9457 problem. It needs only node:http, so it adds no dependency.
+// examples, checks the bearer token, pages module lists, injects configured
+// faults, and answers everything else with an RFC 9457 problem. It needs only
+// node:http, so it adds no dependency.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -13,10 +14,23 @@ import { loadMockData, type MockData } from "./fixtures";
 /** The token that the mock server accepts unless the options name others. */
 export const MOCK_TOKEN = "fps-mock-token";
 
+/** An error answer that replaces the normal answer of matching requests, for error tests. */
+export interface MockFault {
+  /** The method to fail, every method when absent. */
+  method?: string;
+  /** The path below /v1, such as `/modules`, or a pattern for the path below /v1. */
+  path: string | RegExp;
+  status: number;
+  /** The detail of the problem body. */
+  detail?: string;
+}
+
 export interface MockServerOptions {
   /** Tokens that the server accepts. */
   tokens?: string[];
   data?: MockData;
+  /** Errors to answer in place of the normal answers, checked after the token. */
+  faults?: MockFault[];
 }
 
 /** A running mock server. */
@@ -33,6 +47,45 @@ function problem(status: number, title: string, detail: string): Problem {
   return { type: "about:blank", title, status, detail };
 }
 
+/** The largest page_size that the contract allows. */
+const MAX_PAGE_SIZE = 500;
+/** The page_size that the contract names as the default. */
+const DEFAULT_PAGE_SIZE = 50;
+
+/**
+ * Cuts one page out of a list as the PageSize and PageToken parameters
+ * describe. The page token is the offset of the first item, which clients
+ * treat as opaque.
+ */
+function paginate(items: unknown[], url: URL): { status: number; body: unknown } {
+  const sizeText = url.searchParams.get("page_size");
+  const tokenText = url.searchParams.get("page_token");
+  const size = sizeText === null ? DEFAULT_PAGE_SIZE : Number(sizeText);
+  if (!Number.isInteger(size) || size < 1 || size > MAX_PAGE_SIZE) {
+    return {
+      status: 400,
+      body: problem(400, "Bad Request", `page_size must be an integer from 1 to ${MAX_PAGE_SIZE}.`),
+    };
+  }
+  const offset = tokenText === null ? 0 : Number(tokenText);
+  if (!/^\d+$/.test(tokenText ?? "0") || offset > items.length) {
+    return { status: 400, body: problem(400, "Bad Request", "The page_token is not valid.") };
+  }
+  const end = offset + size;
+  return {
+    status: 200,
+    body: {
+      items: items.slice(offset, end),
+      ...(end < items.length ? { next_page_token: String(end) } : {}),
+    },
+  };
+}
+
+function matchesFault(fault: MockFault, method: string, path: string): boolean {
+  if (fault.method !== undefined && fault.method !== method) return false;
+  return typeof fault.path === "string" ? fault.path === path : fault.path.test(path);
+}
+
 function routes(data: MockData): [string, RegExp, Handler][] {
   return [
     ["GET", /^\/v1\/capabilities$/, () => ({ status: 200, body: data.capabilities })],
@@ -44,15 +97,17 @@ function routes(data: MockData): [string, RegExp, Handler][] {
         const items = data.modules
           .map((module) => module.summary)
           .filter((summary) => type === null || summary.type === type);
-        return { status: 200, body: { items } };
+        return paginate(items, url);
       },
     ],
     [
       "GET",
       /^\/v1\/modules\/([^/]+)\/([^/]+)$/,
       (match) => {
+        const name = decodeURIComponent(match[1] ?? "");
+        const version = decodeURIComponent(match[2] ?? "");
         const found = data.modules.find(
-          (module) => module.summary.name === match[1] && module.summary.version === match[2],
+          (module) => module.summary.name === name && module.summary.version === version,
         );
         return found
           ? { status: 200, body: found.manifest }
@@ -77,6 +132,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 export function createMockHandler(options: MockServerOptions = {}) {
   const tokens = new Set(options.tokens ?? [MOCK_TOKEN]);
   const table = routes(options.data ?? loadMockData());
+  const faults = options.faults ?? [];
   return (req: IncomingMessage, res: ServerResponse): void => {
     const url = new URL(req.url ?? "/", "http://mock.invalid");
     const auth = req.headers.authorization ?? "";
@@ -86,12 +142,20 @@ export function createMockHandler(options: MockServerOptions = {}) {
       send(res, 401, problem(401, "Unauthorized", "The bearer token is missing or unknown."));
       return;
     }
+    const method = req.method ?? "GET";
+    const below = url.pathname.replace(/^\/v1(?=\/)/, "");
+    const fault = faults.find((candidate) => matchesFault(candidate, method, below));
+    if (fault) {
+      const detail = fault.detail ?? `The mock answers ${below} with HTTP ${fault.status}.`;
+      send(res, fault.status, problem(fault.status, "Mock Fault", detail));
+      return;
+    }
     let pathMatched = false;
-    for (const [method, pattern, handler] of table) {
+    for (const [routeMethod, pattern, handler] of table) {
       const match = pattern.exec(url.pathname);
       if (!match) continue;
       pathMatched = true;
-      if (method !== req.method) continue;
+      if (routeMethod !== method) continue;
       const { status, body } = handler(match, url);
       send(res, status, body);
       return;

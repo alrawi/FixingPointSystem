@@ -10,7 +10,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormatsModule from "ajv-formats";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { CONTRACTS_DIR, loadMockData } from "./fixtures";
+import { CONTRACTS_DIR, loadMockData, withoutModules } from "./fixtures";
 import { MOCK_TOKEN, startMockServer, type RunningMockServer } from "./server";
 
 const API_ID = "https://github.com/alrawi/FixingPointSystem/contracts/openapi/fps-api-v1.yaml";
@@ -65,6 +65,9 @@ describe("mock server", () => {
     ["/capabilities", "/capabilities"],
     ["/modules", "/modules"],
     ["/modules?type=app", "/modules"],
+    ["/modules?type=fuzzer", "/modules"],
+    ["/modules?page_size=1", "/modules"],
+    ["/modules?page_size=1&page_token=1", "/modules"],
     ["/modules/http1/0.1.0", "/modules/{name}/{version}"],
     ["/modules/dns/0.1.0", "/modules/{name}/{version}"],
     ["/agents", "/agents"],
@@ -98,6 +101,87 @@ describe("mock server", () => {
       headers: { Authorization: `Bearer ${MOCK_TOKEN}` },
     });
     expect(response.status).toBe(405);
+  });
+});
+
+describe("mock module registry", () => {
+  const ajv = buildValidator();
+  const listSchema = pointer(
+    "paths",
+    "/modules",
+    "get",
+    "responses",
+    "200",
+    "content",
+    "application/json",
+    "schema",
+  );
+  const servers: RunningMockServer[] = [];
+
+  afterAll(async () => {
+    await Promise.all(servers.map((server) => server.close()));
+  });
+
+  async function start(options: Parameters<typeof startMockServer>[2]) {
+    const server = await startMockServer(0, "127.0.0.1", options);
+    servers.push(server);
+    return async (path: string) => {
+      const response = await fetch(`${server.baseUrl}${path}`, {
+        headers: { Authorization: `Bearer ${MOCK_TOKEN}` },
+      });
+      return { response, body: (await response.json()) as Record<string, unknown> };
+    };
+  }
+
+  it("pages the module list with an opaque next_page_token", async () => {
+    const get = await start({});
+    const names: unknown[] = [];
+    let path = "/modules?page_size=1";
+    for (let pages = 0; pages < 10; pages += 1) {
+      const { response, body } = await get(path);
+      expect(response.status).toBe(200);
+      expectValid(ajv, listSchema, body);
+      names.push(...(body["items"] as { name: string }[]).map((item) => item.name));
+      const next = body["next_page_token"];
+      if (typeof next !== "string") break;
+      path = `/modules?page_size=1&page_token=${next}`;
+    }
+    expect(names).toEqual(loadMockData().modules.map((module) => module.summary.name));
+  });
+
+  it("answers a page_size outside the contract or a bad page_token with 400", async () => {
+    const get = await start({});
+    for (const path of [
+      "/modules?page_size=0",
+      "/modules?page_size=501",
+      "/modules?page_token=x",
+    ]) {
+      const { response, body } = await get(path);
+      expect(response.status).toBe(400);
+      expectValid(ajv, "components/schemas/Problem", body);
+    }
+  });
+
+  it("serves an empty registry", async () => {
+    const get = await start({ data: withoutModules(loadMockData()) });
+    const { body } = await get("/modules");
+    expectValid(ajv, listSchema, body);
+    expect(body).toEqual({ items: [] });
+    expect((await get("/modules/http1/0.1.0")).response.status).toBe(404);
+  });
+
+  it("answers a configured fault with a problem", async () => {
+    const get = await start({
+      faults: [{ method: "GET", path: /^\/modules(\/|$)/, status: 503, detail: "Down." }],
+    });
+    for (const path of ["/modules", "/modules/http1/0.1.0"]) {
+      const { response, body } = await get(path);
+      expect(response.status).toBe(503);
+      expect(response.headers.get("content-type")).toBe("application/problem+json");
+      expectValid(ajv, "components/schemas/Problem", body);
+      expect(body["detail"]).toBe("Down.");
+    }
+    expect((await get("/capabilities")).response.status).toBe(200);
   });
 });
 

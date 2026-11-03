@@ -1,0 +1,92 @@
+{
+  "report": "fps-realism-report",
+  "version": "0.2.0",
+  "generator": "fps-realism 0.1.0",
+  "passed": true,
+  "capture": {
+    "file": "dns.pcapng",
+    "sha256": "71385fa52fbe22cb37a9b627c0fe6d6a0a3d98ce2f92e3dcaf0a8741fbc9c7d0",
+    "format": "pcapng",
+    "link_types": [
+      1
+    ],
+    "frames": 482,
+    "skipped_frames": 2,
+    "sessions": 160
+  },
+  "labels": {
+    "file": "expected.yaml",
+    "sha256": "3792571686bc5a1a3c1e3e4600e4f76699483c258dbbbb2ee0f2c5ecbdf96ab3"
+  },
+  "checks": [
+    {
+      "check": "conformance",
+      "passed": true,
+      "classifier": "ndpi",
+      "classifier_version": "4.2.0",
+      "threshold": 0.99,
+      "metrics": [
+        {
+          "name": "realism.conformance_ratio",
+          "labels": {
+            "application": "dns",
+            "classifier": "ndpi"
+          },
+          "value": 1.0
+        }
+      ],
+      "applications": [
+        {
+          "application": "dns",
+          "accepted": [
+            "DNS"
+          ],
+          "sessions": 160,
+          "conforming": 160,
+          "ratio": 1.0,
+          "passed": true,
+          "observed": {
+            "DNS": 160
+          }
+        }
+      ],
+      "unlabelled_sessions": 0,
+      "mismatches": [],
+      "mismatches_total": 0
+    },
+    {
+      "check": "parser_errors",
+      "passed": true,
+      "metrics": [],
+      "parsers": [
+        {
+          "parser": "tshark",
+          "version": "4.2.2"
+        }
+      ],
+      "missing_parsers": [],
+      "applications": [
+        {
+          "application": "dns",
+          "sessions": 160,
+          "parser_errors": 0,
+          "malformed_packets": 0,
+          "by_parser": {
+            "tshark": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            }
+          }
+        }
+      ],
+      "unlabelled_errors": {
+        "tshark": 0
+      },
+      "unattributed_errors": {
+        "tshark": 0
+      },
+      "errors": [],
+      "errors_total": 0
+    }
+  ]
+}
