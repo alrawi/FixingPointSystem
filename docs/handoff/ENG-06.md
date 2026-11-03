@@ -4,10 +4,10 @@
 |---|---|
 | Issue | #26 |
 | Branch | `wp/ENG-06` |
-| Pull request | pending |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
-| Current holder | claude-eng-06-bc2f |
+| Pull request | #108 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
+| Current holder | claude-eng-06-bc2f, lease until 2026-11-03T14:25:42Z |
 | Last verified commit | none |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
@@ -23,11 +23,12 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. `DatagramIo`, `DatagramIoExt`, `MAX_DATAGRAM`, and the in memory `datagram_pair` in `fps-io`, with unit and property tests
 - [x] 2. `DatagramOpener` and the UDP `send`, `expect`, and `close` in `fps-interp`, sharing the op loop with TCP
 - [x] 3. Interpreter tests with the DNS lookup example, the datagram limit, and the timeouts
-- [ ] 4. Engine page section, log entry, handoff, and pull request
+- [x] 4. Engine page section, log entry, handoff, and pull request
 
 ## Done and verified
 
 - Steps 1 to 3. `cargo test -p fps-io -p fps-interp` passes, with 15 new interpreter tests in `tests/datagrams.rs`, 3 new component and property tests in `fps-io/tests/datagram.rs`, and 6 new `fps-io` unit tests. `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`, and `cargo deny check` are clean. No dependency was added.
+- Step 4. The Engine page has the section "UDP datagram sessions", and `docs/wiki/log/2026-11-03T1305-ingest-eng-06-udp-datagram-sessions.md` carries the shared page notes. `plan.py check`, `render --check`, and `lint` pass, and `make lint test` passes.
 
 Acceptance.
 - A DNS shaped request and response program passes over the in memory implementation. `the_dns_lookup_example_completes` runs `contracts/examples/modules/dns/scenarios/lookup.yaml` with both sides over `datagram_pair`, and `each_send_is_one_datagram_and_last_is_the_whole_datagram` echoes DNS shaped queries through `last`.
@@ -40,7 +41,7 @@ Acceptance.
 
 ## Next action
 
-Open the pull request and wait for CI.
+Review the pull request #108.
 
 ## Blockers and open questions
 
@@ -58,3 +59,4 @@ none
 | Time (UTC) | Agent | Summary |
 |---|---|---|
 | 2026-11-03T12:55Z | claude-eng-06-bc2f | Claimed the package, built the seam, the interpreter changes, and the tests |
+| 2026-11-03T13:20Z | claude-eng-06-bc2f | Added the Engine page section and the log entry, opened #108 |
