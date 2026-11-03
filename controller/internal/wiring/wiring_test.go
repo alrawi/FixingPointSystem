@@ -48,7 +48,7 @@ const (
 
 // pendingOps are the operations that no package implements yet.
 var pendingOps = []string{
-	"downloadCapture", "getRunMetrics", "getRunReport", "listCaptures",
+	"downloadCapture", "getRunMetrics", "listCaptures",
 	"listRuns", "startCapture", "streamRunMetrics",
 }
 
@@ -189,6 +189,45 @@ func TestSetMetricsRoutesMetricsOperations(t *testing.T) {
 	}
 	if want := []string{"get r1 tcp", "stream r1"}; !slices.Equal(m.calls, want) {
 		t.Errorf("metrics calls = %v, want %v", m.calls, want)
+	}
+}
+
+// fakeReport records the report operations that reach it.
+type fakeReport struct{ calls []string }
+
+func (f *fakeReport) GetRunReport(w http.ResponseWriter, _ *http.Request, id api.Id, p api.GetRunReportParams) {
+	format := "default"
+	if p.Format != nil {
+		format = string(*p.Format)
+	}
+	f.calls = append(f.calls, id+" "+format)
+	w.WriteHeader(http.StatusTeapot)
+}
+
+func TestNewServesRunReports(t *testing.T) {
+	c := newController(t, testConfig(t, ""))
+	if c.Evaluator == nil {
+		t.Fatal("Evaluator = nil, want the CTL-09 evaluator")
+	}
+	h := newHandler(t, c)
+	rec := do(t, h, http.MethodGet, "/v1/runs/absent/report", readToken, "")
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "absent") {
+		t.Errorf("GET /v1/runs/absent/report: status %d body %s, want a 404 problem that names the run", rec.Code, rec.Body)
+	}
+}
+
+func TestSetReportRoutesReportOperation(t *testing.T) {
+	c := newController(t, testConfig(t, ""))
+	f := &fakeReport{}
+	c.SetReport(f)
+	h := newHandler(t, c)
+	for _, url := range []string{"/v1/runs/r1/report", "/v1/runs/r1/report?format=csv"} {
+		if rec := do(t, h, http.MethodGet, url, readToken, ""); rec.Code != http.StatusTeapot {
+			t.Errorf("GET %s: status %d, want 418", url, rec.Code)
+		}
+	}
+	if want := []string{"r1 default", "r1 csv"}; !slices.Equal(f.calls, want) {
+		t.Errorf("report calls = %v, want %v", f.calls, want)
 	}
 }
 

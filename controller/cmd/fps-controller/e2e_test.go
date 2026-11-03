@@ -8,9 +8,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -136,7 +138,8 @@ func (p *controllerProcess) postJSON(t *testing.T, path, token, body string, wan
 // registers a fake agent over gRPC, installs and lists the example modules,
 // stores and validates a configuration, starts a run over REST, reads a
 // snapshot of the fake agent from the run metrics and from GET /metrics, stops
-// the run, and checks after a restart that the configuration and the modules
+// the run, reads its criteria results from the run and from the JSON and CSV
+// report, and checks after a restart that the configuration and the modules
 // persist.
 func TestEndToEnd(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -221,6 +224,9 @@ tokens:
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A criterion on a derived gauge that only the CTL-09 evaluator computes
+	// shows that the run verdict comes from that evaluator.
+	smoke = append(smoke, []byte(resumptionCriterion+"\n")...)
 	var ref struct {
 		ID string `json:"id"`
 	}
@@ -250,6 +256,8 @@ tokens:
 	if final.Verdict == nil || final.Verdict.Passed == nil || !*final.Verdict.Passed {
 		t.Errorf("run verdict = %+v, want passed", final.Verdict)
 	}
+	checkVerdict(t, "GET /v1/runs/"+run.Id, final)
+	checkRunReport(t, p, run.Id)
 	var kinds []string
 	for _, c := range ag.Commands() {
 		switch {
@@ -287,11 +295,27 @@ tokens:
 func checkRunMetrics(t *testing.T, p *controllerProcess, ag *fakeagent.Agent, runID string) {
 	t.Helper()
 	const attempted = 7
-	if _, err := ag.Snapshot(&agentpb.CounterValue{
-		Metric: "sessions.attempted",
-		Labels: map[string]string{"application": "http1", "scenario": "web_get"},
-		Value:  &agentpb.CounterValue_Count{Count: attempted},
-	}); err != nil {
+	scenario := map[string]string{"application": "http1", "scenario": "web_get"}
+	port := map[string]string{"port": "client0"}
+	// The engine reports each counter by its labels and once without labels
+	// for the whole run, which the run orchestrator reads.
+	var counters []*agentpb.CounterValue
+	for _, c := range []struct {
+		metric string
+		labels map[string]string
+		count  uint64
+	}{
+		{"sessions.attempted", scenario, attempted},
+		{"sessions.succeeded", scenario, attempted},
+		{"sessions.failed", scenario, 0},
+		{"tls.handshakes", port, 4},
+		{"tls.resumptions", port, 2},
+	} {
+		counters = append(counters,
+			&agentpb.CounterValue{Metric: c.metric, Labels: c.labels, Value: &agentpb.CounterValue_Count{Count: c.count}},
+			&agentpb.CounterValue{Metric: c.metric, Value: &agentpb.CounterValue_Count{Count: c.count}})
+	}
+	if _, err := ag.Snapshot(counters...); err != nil {
 		t.Fatalf("fake agent snapshot: %v", err)
 	}
 	wantLine := fmt.Sprintf(`fps_sessions_attempted_total{run_id=%q,application="http1",scenario="web_get"} %d`, runID, attempted)
@@ -322,6 +346,89 @@ func checkRunMetrics(t *testing.T, p *controllerProcess, ag *fakeagent.Agent, ru
 	if !promOK {
 		t.Errorf("GET /metrics lacks %q:\n%s", wantLine, exposition)
 	}
+}
+
+// resumptionCriterion is the criterion that TestEndToEnd adds to the example
+// configuration. Its gauge is derived from the two TLS counters that
+// checkRunMetrics sends, which give the ratio 0.5.
+const resumptionCriterion = `  - { metric: tls.resumption_ratio, op: ">=", value: 0.5 }`
+
+// checkVerdict checks that both criteria of the run passed with the values
+// that the snapshot of checkRunMetrics implies.
+func checkVerdict(t *testing.T, what string, run api.Run) {
+	t.Helper()
+	if run.Verdict == nil || run.Verdict.Criteria == nil {
+		t.Errorf("%s: verdict = %+v, want two criteria", what, run.Verdict)
+		return
+	}
+	want := map[string]float32{"sessions.failed_ratio": 0, "tls.resumption_ratio": 0.5}
+	got := map[string]float32{}
+	for _, c := range *run.Verdict.Criteria {
+		if c.Metric == nil || c.Passed == nil || !*c.Passed || c.Observed == nil {
+			t.Errorf("%s: criterion %+v, want a metric that passed with an observed value", what, c)
+			continue
+		}
+		got[*c.Metric] = *c.Observed
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("%s: observed criteria = %v, want %v", what, got, want)
+	}
+}
+
+// checkRunReport fetches the report of the stopped run in JSON and in CSV and
+// checks its criteria results and its summary.
+func checkRunReport(t *testing.T, p *controllerProcess, runID string) {
+	t.Helper()
+	path := "/v1/runs/" + runID + "/report"
+	var rep api.RunReport
+	hdr := p.call(t, http.MethodGet, path, e2eReadToken, "", nil, http.StatusOK, &rep)
+	if ct := hdr.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("GET %s: Content-Type %q, want application/json", path, ct)
+	}
+	if rep.Run.Id != runID || rep.Run.State != api.RunStateCompleted {
+		t.Errorf("GET %s: run %s in state %s, want %s completed", path, rep.Run.Id, rep.Run.State, runID)
+	}
+	checkVerdict(t, "GET "+path, rep.Run)
+	if s := rep.Run.Summary; s == nil || s.SessionsAttempted == nil || *s.SessionsAttempted != 7 {
+		t.Errorf("GET %s: summary = %+v, want sessions_attempted 7", path, rep.Run.Summary)
+	}
+
+	resp, err := p.authGet(path+"?format=csv", e2eReadToken)
+	if err != nil {
+		t.Fatalf("GET %s?format=csv: %v", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s?format=csv: status %d, want 200", path, resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/csv") {
+		t.Errorf("GET %s?format=csv: Content-Type %q, want text/csv", path, ct)
+	}
+	rows, err := csv.NewReader(resp.Body).ReadAll()
+	if err != nil {
+		t.Fatalf("GET %s?format=csv: %v", path, err)
+	}
+	var criteria []string
+	for _, row := range rows {
+		if len(row) >= 6 && row[0] == "criterion" {
+			criteria = append(criteria, strings.Join(row[1:6], " "))
+		}
+	}
+	want := []string{"sessions.failed_ratio == 0 0 pass", "tls.resumption_ratio >= 0.5 0.5 pass"}
+	if !slices.Equal(criteria, want) {
+		t.Errorf("GET %s?format=csv: criterion rows %q, want %q", path, criteria, want)
+	}
+}
+
+// authGet sends GET path with token and returns the response, which the
+// caller closes.
+func (p *controllerProcess) authGet(path, token string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, "http://"+p.restAddr+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	return http.DefaultClient.Do(req)
 }
 
 // getText sends GET path without a token and returns the body of a 200

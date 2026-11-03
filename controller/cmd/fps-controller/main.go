@@ -35,6 +35,7 @@ import (
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/app"
 	"github.com/alrawi/FixingPointSystem/controller/internal/metrics"
+	"github.com/alrawi/FixingPointSystem/controller/internal/report"
 	"github.com/alrawi/FixingPointSystem/controller/internal/wiring"
 )
 
@@ -197,9 +198,10 @@ func serve(ctx context.Context, cfg app.Config, logger *slog.Logger) (err error)
 }
 
 // mountMetrics creates the metrics aggregator, feeds it every agent manager
-// event, routes the run metrics operations to it, and serves the Prometheus
-// exposition at GET /metrics without a token, as scrapers expect. Call it
-// before ctl.Mount.
+// event, routes the run metrics operations to it, builds run reports over its
+// merged metrics with the criteria evaluator of the controller, and serves
+// the Prometheus exposition at GET /metrics without a token, as scrapers
+// expect. Call it before ctl.Mount.
 func mountMetrics(a *app.App, ctl *wiring.Controller, logger *slog.Logger) error {
 	agg, err := metrics.New(metrics.Config{Logger: logger})
 	if err != nil {
@@ -207,6 +209,7 @@ func mountMetrics(a *app.App, ctl *wiring.Controller, logger *slog.Logger) error
 	}
 	ctl.Observe(agg.Observe)
 	ctl.SetMetrics(metrics.NewAPI(agg, ctl.Runs))
+	ctl.SetReport(report.NewAPI(ctl.Evaluator, ctl.Runs, agg))
 	a.Handle("GET /metrics", metrics.NewPrometheus(agg))
 	return nil
 }

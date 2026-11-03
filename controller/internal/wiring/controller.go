@@ -31,6 +31,7 @@ import (
 	"github.com/alrawi/FixingPointSystem/controller/internal/api"
 	"github.com/alrawi/FixingPointSystem/controller/internal/app"
 	"github.com/alrawi/FixingPointSystem/controller/internal/registry"
+	"github.com/alrawi/FixingPointSystem/controller/internal/report"
 	"github.com/alrawi/FixingPointSystem/controller/internal/runs"
 	"github.com/alrawi/FixingPointSystem/controller/internal/store"
 )
@@ -58,6 +59,10 @@ type Controller struct {
 	Agents *agents.Manager
 	// Runs is the run orchestrator.
 	Runs *runs.Orchestrator
+	// Evaluator decides the criteria of every run with the formulas of the
+	// embedded metrics catalog. The orchestrator calls it when a run stops,
+	// and the report handler calls it again over the merged metrics.
+	Evaluator *report.Evaluator
 	// API is the combined REST server.
 	API *Server
 
@@ -125,13 +130,17 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 		return nil, fmt.Errorf("create agent manager: %w", err)
 	}
 
+	if c.Evaluator, err = report.NewEvaluator(nil); err != nil {
+		return nil, fmt.Errorf("create criteria evaluator: %w", err)
+	}
 	catalog := Catalog{Registry: c.Registry}
 	inventory := Inventory{Agents: c.Agents}
 	if c.Runs, err = runs.New(runs.Config{
-		Store:   c.Store,
-		Agents:  c.Agents,
-		Catalog: catalog,
-		Logger:  logger,
+		Store:     c.Store,
+		Agents:    c.Agents,
+		Catalog:   catalog,
+		Evaluator: c.Evaluator.RunEvaluator(),
+		Logger:    logger,
 	}); err != nil {
 		return nil, fmt.Errorf("create run orchestrator: %w", err)
 	}
@@ -147,6 +156,7 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 		Configs:      configs,
 		Modules:      registry.NewAPI(c.Registry, logger),
 		Runs:         runs.NewAPI(c.Runs),
+		Report:       report.NewAPI(c.Evaluator, c.Runs, nil),
 	})
 	return c, nil
 }
@@ -194,6 +204,13 @@ func (c *Controller) observe(ev agents.Event) {
 // Mount. It is the hook for the metrics package of CTL-08.
 func (c *Controller) SetMetrics(h MetricsHandler) {
 	c.API.metrics = h
+}
+
+// SetReport routes the report operation of a run to h. Call it before Mount.
+// New routes it to a report.API without merged metrics, and the binary
+// replaces that handler with one that reads the metrics aggregator.
+func (c *Controller) SetReport(h ReportHandler) {
+	c.API.report = h
 }
 
 // Mount registers the REST API on m with the token check of the settings.
