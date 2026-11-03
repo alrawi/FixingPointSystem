@@ -93,6 +93,22 @@ proptest! {
         );
     }
 
+    /// Regression test of bug #90: ids that differ only in the two lowest
+    /// bits used to share one generator stream.
+    #[test]
+    fn neighboring_session_ids_draw_distinct_streams(seed in any::<u64>(), k in 0u64..(1 << 40)) {
+        let t = Template::compile("{{ rand_int(0, 1000000000) }}").expect("compile");
+        let vars = common::vars();
+        let draws: Vec<Vec<u8>> = (0..4)
+            .map(|i| common::render(&t, &vars, seed, 4 * k + i, b"").expect("render"))
+            .collect();
+        for i in 0..4 {
+            for j in i + 1..4 {
+                prop_assert_ne!(&draws[i], &draws[j]);
+            }
+        }
+    }
+
     #[test]
     fn fill_and_rand_int_repeat_for_one_seed_and_session(
         seed in any::<u64>(),

@@ -8,14 +8,16 @@
 //! destinations, and it limits that choice to a configured local port range
 //! with `IP_LOCAL_PORT_RANGE`. A [`KernelListener`] accepts server sessions on
 //! pool addresses with a configurable backlog. Both apply the buffer size,
-//! Nagle, and linger settings of [`SocketOptions`].
+//! Nagle, linger, TTL, MSS, and window clamp settings of [`SocketOptions`].
+//! An [`OsProfile`] fills the last three from the profile of an operating
+//! system and lists the sysctls that Linux offers only per network namespace.
 //!
 //! Every session is a [`KernelStream`], whose [`fps_io::SessionIo::abort`]
 //! closes the socket with `SO_LINGER` set to zero, so the peer receives a
 //! reset.
 //!
 //! The crate denies `unsafe` code except in one private module that sets the
-//! two socket options that `socket2` does not expose.
+//! three socket options that `socket2` does not expose.
 #![deny(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -23,9 +25,11 @@ mod connect;
 mod error;
 mod listen;
 mod options;
+mod profile;
 mod stream;
-// The module wraps setsockopt for IP_BIND_ADDRESS_NO_PORT and
-// IP_LOCAL_PORT_RANGE, which neither socket2 nor tokio exposes.
+// The module wraps setsockopt for IP_BIND_ADDRESS_NO_PORT,
+// IP_LOCAL_PORT_RANGE, and TCP_WINDOW_CLAMP, which neither socket2 nor tokio
+// exposes.
 #[allow(unsafe_code)]
 mod sys;
 
@@ -33,4 +37,8 @@ pub use connect::Connector;
 pub use error::BackendError;
 pub use listen::{bind_pool, KernelListener};
 pub use options::{ConnectConfig, Linger, ListenConfig, PortRange, SocketOptions};
+pub use profile::{
+    read_proc_sysctl, OsProfile, ProfileError, ProfileSocket, Reference, SysctlMismatch,
+    SystemSettings, BUILTIN_PROFILES,
+};
 pub use stream::KernelStream;

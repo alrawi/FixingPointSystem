@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# macOS 14 client and server stack, as public SYN signatures such as
+# those of p0f describe it on Ethernet with an MTU of 1500.
+name: macos14
+description: macOS 14 with the default TCP settings and a 4 MiB receive buffer limit
+# Applied to every socket of the profile by the kernel backend.
+socket:
+  ttl: 64
+  mss: 1460
+  # Window scale 6 needs a clamp from 2 MiB to just below 4 MiB.
+  window_clamp: 3145728
+# Network namespace settings that Linux offers only as sysctls. HST-02 or the
+# test applies them, and one namespace holds one set.
+system:
+  sack: true
+  timestamps: true
+  window_scaling: true
+  tcp_rmem_max: 4194304
+# The SYN of the real system, for the realism check of RLM-09. Linux decides
+# the option order and rounds the SYN window to whole segments, so the kernel
+# backend reproduces neither.
+reference:
+  syn_window: 65535
+  window_scale: 6
+  options: [mss, nop, ws, nop, nop, ts, sok, eol]
+  dont_fragment: true

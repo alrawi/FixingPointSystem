@@ -1,0 +1,7 @@
+scenario: call_duplicate_param
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ fx.greet('h', name='i') }}"

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! Socket options that `socket2` does not expose.
 //!
-//! `socket2` 0.6 has no setter for `IP_BIND_ADDRESS_NO_PORT` or
-//! `IP_LOCAL_PORT_RANGE`, so this module calls `setsockopt` through `libc`.
-//! It is the only module of the crate that contains `unsafe` code.
+//! `socket2` 0.6 has no setter for `IP_BIND_ADDRESS_NO_PORT`,
+//! `IP_LOCAL_PORT_RANGE`, or `TCP_WINDOW_CLAMP`, so this module calls
+//! `setsockopt` through `libc`. It is the only module of the crate that
+//! contains `unsafe` code.
 
 use std::io;
 
@@ -45,6 +46,52 @@ pub(crate) fn set_local_port_range(sock: &Socket, range: PortRange) -> io::Resul
     }
 }
 
+/// Bounds the receive window of the socket, and with it the window scale
+/// that the handshake advertises, to `clamp` bytes.
+pub(crate) fn set_window_clamp(sock: &Socket, clamp: u32) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        set_u32(sock, libc::IPPROTO_TCP, libc::TCP_WINDOW_CLAMP, clamp)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (sock, clamp);
+        Err(unsupported("TCP_WINDOW_CLAMP"))
+    }
+}
+
+/// Returns the `TCP_WINDOW_CLAMP` of the socket, for the tests of the crate.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn window_clamp(sock: &Socket) -> io::Result<u32> {
+    use std::os::fd::AsRawFd;
+
+    let mut value: u32 = 0;
+    let mut len = LEN_U32;
+    let ptr: *mut libc::c_void = std::ptr::from_mut(&mut value).cast();
+    // SAFETY: `sock` owns the open socket `fd` for the duration of the call,
+    // `ptr` points to `value`, which lives on the stack until the call
+    // returns, and `len` tells the kernel that it may write at most the 4
+    // bytes of `value`. The kernel writes a 32 bit integer for this option.
+    let rc = unsafe {
+        libc::getsockopt(
+            sock.as_raw_fd(),
+            libc::IPPROTO_TCP,
+            libc::TCP_WINDOW_CLAMP,
+            ptr,
+            &mut len,
+        )
+    };
+    if rc == 0 {
+        Ok(value)
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// The length of a 32 bit option value, which always fits `socklen_t`.
+#[cfg(target_os = "linux")]
+const LEN_U32: libc::socklen_t = std::mem::size_of::<u32>() as libc::socklen_t;
+
 #[cfg(not(target_os = "linux"))]
 fn unsupported(option: &str) -> io::Error {
     io::Error::new(
@@ -57,8 +104,8 @@ fn unsupported(option: &str) -> io::Error {
 fn set_u32(sock: &Socket, level: libc::c_int, name: libc::c_int, value: u32) -> io::Result<()> {
     use std::os::fd::AsRawFd;
 
-    // Both options take a 32 bit integer, so the length always fits.
-    const LEN: libc::socklen_t = std::mem::size_of::<u32>() as libc::socklen_t;
+    // Every option of this module takes a 32 bit integer.
+    const LEN: libc::socklen_t = LEN_U32;
     let fd = sock.as_raw_fd();
     let ptr: *const libc::c_void = std::ptr::from_ref(&value).cast();
     // SAFETY: `fd` is an open socket because `sock` owns it for the duration

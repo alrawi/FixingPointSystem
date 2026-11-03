@@ -1,0 +1,11 @@
+scenario: spawn_not_spawned
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - loop:
+          count: 2
+          do:
+            - spawn: { flow: b }
+  - { id: b, module: fx, client: [ { connect: { port: 1 } } ] }

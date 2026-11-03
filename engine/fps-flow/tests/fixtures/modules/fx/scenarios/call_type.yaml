@@ -1,0 +1,8 @@
+scenario: call_type
+vars: { host: www.example.test }
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ fx.greet('h', count=vars.host) }}"

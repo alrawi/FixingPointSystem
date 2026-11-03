@@ -105,3 +105,22 @@ fn load_error_names_the_file() {
         "{text}"
     );
 }
+
+#[test]
+fn every_example_passes_the_checks_with_its_manifest() {
+    let modules = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/examples/modules");
+    let set = fps_flow::ModuleSet::load_dir(&modules).expect("example manifests");
+    let mut checked = 0;
+    for manifest in set.manifests.values() {
+        let ctx = set.context(&manifest.name).expect("context");
+        for rel in &manifest.scenarios {
+            let path = modules.join(&manifest.name).join(rel);
+            let warnings =
+                Scenario::check_file(&path, Some(&ctx)).unwrap_or_else(|e| panic!("{e}"));
+            assert!(warnings.is_empty(), "{warnings:?}");
+            Scenario::load_with(&path, Some(&ctx)).unwrap_or_else(|e| panic!("{e}"));
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 5);
+}

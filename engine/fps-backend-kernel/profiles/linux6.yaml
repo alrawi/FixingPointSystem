@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Linux 6 client and server stack with the defaults of the kernel, which is
+# the stack the kernel backend itself runs.
+name: linux6
+description: Linux 6 with the default sysctls of the kernel
+# Applied to every socket of the profile by the kernel backend.
+socket:
+  ttl: 64
+  mss: 1460
+  # No clamp, so the window scale follows tcp_rmem_max below, which gives 7.
+  window_clamp: null
+# Network namespace settings that Linux offers only as sysctls. HST-02 or the
+# test applies them, and one namespace holds one set.
+system:
+  sack: true
+  timestamps: true
+  window_scaling: true
+  tcp_rmem_max: 6291456
+# The SYN of the real system, for the realism check of RLM-09.
+reference:
+  syn_window: 64240
+  window_scale: 7
+  options: [mss, sok, ts, nop, ws]
+  dont_fragment: true

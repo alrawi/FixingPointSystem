@@ -1,0 +1,7 @@
+scenario: call_foreign_module
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ other.thing() }}"

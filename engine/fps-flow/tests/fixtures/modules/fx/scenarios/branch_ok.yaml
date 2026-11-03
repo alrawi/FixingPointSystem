@@ -1,0 +1,10 @@
+scenario: branch_ok
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - branch:
+          - { p: 0.2, do: [ { send: "x" } ] }
+          - { p: 0.3, do: [ { send: "y" } ] }
+          - { p: 0.5, do: [ { delay: { ms: 5 } } ] }

@@ -1,0 +1,4 @@
+scenario: after_cycle
+flows:
+  - { id: a, module: fx, after: b, client: [ { connect: { port: 1 } } ] }
+  - { id: b, module: fx, after: a, client: [ { connect: { port: 1 } } ] }

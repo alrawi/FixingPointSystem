@@ -92,3 +92,72 @@ The backend leaves four concerns to other packages.
 2. The choice of a source address per session belongs to the host pool allocator of HST-01. The connector takes the address that the caller passes.
 3. TTL, MSS, window, SACK, and timestamp settings per operating system profile belong to TRN-03, which reaches the socket through `KernelStream::tcp_stream`.
 4. Connect timeouts read the Tokio clock, which tests can pause, and the backend draws no randomness.
+
+## Operating system profiles
+
+TRN-03 added operating system profiles to the kernel backend. A profile names the TCP and IP behavior of one system, and test configurations select it by name in `os_profile`. The crate ships three profiles as YAML files in [`engine/fps-backend-kernel/profiles/`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel/profiles), and `OsProfile::builtin` embeds them in the binary. `OsProfile::from_yaml` loads a profile from other text and rejects unknown keys and values outside their range.
+
+### Profile files
+
+Each file has four sections. The backend applies `socket` to every socket, `system` lists the sysctls that Linux offers only per network namespace, and `reference` records the SYN of the real system for the realism check of RLM-09.
+
+| Field | windows11 | linux6 | macos14 | Applied through |
+|---|---|---|---|---|
+| `socket.ttl` | 128 | 64 | 64 | `IP_TTL`, or `IPV6_UNICAST_HOPS` on IPv6 sockets |
+| `socket.mss` | 1460 | 1460 | 1460 | `TCP_MAXSEG` before the handshake |
+| `socket.window_clamp` | 16777215 | none | 3145728 | `TCP_WINDOW_CLAMP` before the handshake |
+| `system.sack` | on | on | on | `net.ipv4.tcp_sack` |
+| `system.timestamps` | off | on | on | `net.ipv4.tcp_timestamps` |
+| `system.window_scaling` | on | on | on | `net.ipv4.tcp_window_scaling` |
+| `system.tcp_rmem_max` | 16777216 | 6291456 | 4194304 | the maximum of `net.ipv4.tcp_rmem` |
+| `reference.window_scale` | 8 | 7 | 6 | the result of the window clamp and `tcp_rmem_max` |
+| `reference.syn_window` | 64240 | 64240 | 65535 | not settable, see the limits below |
+| `reference.options` | mss, nop, ws, nop, nop, sok | mss, sok, ts, nop, ws | mss, nop, ws, nop, nop, ts, sok, eol | not settable, see the limits below |
+
+`OsProfile::socket_options(base)` returns `base` with the TTL, MSS, and window clamp of the profile, so a caller keeps its own buffer, Nagle, and linger settings. `SocketOptions` therefore gained the three fields `ttl`, `mss`, and `window_clamp`, which default to `None` and extend the socket options table above. A listener passes all three to accepted sessions, because Linux copies them from the listening socket. `OsProfile::sysctls` returns the namespace settings as `sysctl -w` pairs for HST-02, and `OsProfile::sysctl_mismatches` with `read_proc_sysctl` reports every sysctl of the current namespace that differs from the profile.
+
+Linux derives the window scale of the handshake as the base 2 logarithm of the smaller of the window clamp and the `tcp_rmem` maximum, less 15. The window clamp can therefore only lower the scale that the namespace allows, and Windows 11 reaches its scale of 8 only in a namespace with a `tcp_rmem` maximum of at least 8 MiB. The unit test `window_clamp_and_rmem_give_the_reference_window_scale` checks this rule against every profile.
+
+`socket2` 0.6 has no setter for `TCP_WINDOW_CLAMP`, so the private module `sys` sets it through the existing `setsockopt` function. The module gained one more `unsafe` block, a `getsockopt` that only the unit tests compile, with its own `SAFETY` comment.
+
+### Limits
+
+The kernel backend cannot set the options below per socket. Each row names the control that Linux offers instead.
+
+| Option | Why the backend cannot set it per socket | Linux control |
+|---|---|---|
+| TCP option order and padding | `tcp_options_write` writes a fixed order, for example mss, sok, ts, nop, ws, so no profile other than linux6 matches its reference order | none |
+| SACK permitted | system wide per network namespace | `net.ipv4.tcp_sack` |
+| Timestamps | system wide per network namespace, and `TCP_TIMESTAMP` sets only an offset | `net.ipv4.tcp_timestamps` |
+| Window scaling on or off | system wide per network namespace | `net.ipv4.tcp_window_scaling` |
+| Window scale above the namespace limit | the clamp only lowers the scale, which the `tcp_rmem` maximum and `net.core.rmem_max` bound | `net.ipv4.tcp_rmem`, and `net.core.rmem_max`, which is global to the host |
+| SYN window value | Linux rounds the window down to whole segments, so 65535 of macOS 14 appears as 64240 | `SO_RCVBUF` changes it only together with autotuning, and the route attribute `initrwnd` |
+| Initial congestion window | per route | the route attribute `initcwnd` |
+| ECN negotiation | per network namespace or per route | `net.ipv4.tcp_ecn` and the route feature `ecn` |
+| Initial sequence numbers and IP identification | the kernel draws them | none |
+| Retransmission and congestion control timing | `TCP_CONGESTION` selects only an algorithm of Linux | `net.ipv4.tcp_congestion_control` and the `rto_min` route attribute |
+
+One network namespace holds one set of sysctls. Two profiles with different `system` sections, such as windows11 and linux6, therefore need separate namespaces, and HST-02 places each host pool in a namespace whose sysctls match its profile.
+
+### Capture test
+
+The capture test `engine/fps-backend-kernel/tests/netns/profiles.sh` runs on the [QA-01 harness](Testing.md#namespace-harness) with an MTU of 9000, so the route alone would allow an MSS of 8960. For each profile it writes the profile sysctls in the client and server namespaces, starts the example `os_profile_probe` as a server and as a client with that profile, and records the client arm. The helper `handshakes.py` then checks the SYN and the SYN-ACK. The SYN must carry the TTL and MSS of the profile, the SYN-ACK must carry the same MSS and a TTL one lower after the routing hop, and both must carry the window scale, SACK permitted, timestamp, and do not fragment settings of the profile. A last session without a profile must show TTL 64 and MSS 8960, which proves that the profiles and not the harness set the values. The test prints each handshake and notes where the option order differs from the reference.
+
+```text
+syn ttl=128 df=1 window=64240 mss=1460 wscale=8 options=mss,nop,nop,sok,nop,ws
+syn-ack ttl=127 df=1 window=64240 mss=1460 wscale=8 options=mss,nop,nop,sok,nop,ws
+syn ttl=64 df=1 window=64240 mss=1460 wscale=7 options=mss,sok,ts,nop,ws
+syn ttl=64 df=1 window=64240 mss=1460 wscale=6 options=mss,sok,ts,nop,ws
+syn ttl=64 df=1 window=62720 mss=8960 wscale=7 options=mss,sok,ts,nop,ws
+```
+
+The lines above are the SYNs of windows11 with its SYN-ACK, linux6, macos14, and the baseline session. The `capture` job of [`.github/workflows/trn.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/.github/workflows/trn.yml) runs the test as root on `ubuntu-24.04` and keeps the captures as a workflow artifact, and the `test` job lints the helpers and runs their unit tests. We run the test locally with the commands below.
+
+```bash
+make build-trn-probe
+sudo make e2e-trn               # pass TRN_PROBE=<target dir>/debug/examples/os_profile_probe for another target directory
+make lint-trn test-trn          # shellcheck, ruff, mypy, and the unit tests of handshakes.py
+cargo test -p fps-backend-kernel
+```
+
+The loopback test `os_profiles_reach_client_and_accepted_sockets` checks without root that every profile sets the TTL and MSS on client and accepted sockets.
