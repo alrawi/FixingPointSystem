@@ -36,7 +36,8 @@ Every step passed the commands below on Rust stable and Linux 6.18.
 | 4 | `cargo test -p fps-backend-kernel --test loopback` | 10 component tests pass in about one second, three repeated runs |
 | 5 | `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` | pass |
 | 5 | `python3 tools/plan/plan.py check`, `render --check`, and `lint` | pass |
-| 5 | `make lint test` | see the session log |
+| 5 | `make lint` and every `TEST_TARGETS` entry except `test-spk` | pass; locally `test-spk` hung in the S1 test `pattern_split_across_reads` under load from other agents, and the CI `rust` job, which runs it, passed |
+| 5 | PR #88 CI at 887124b | all nine checks pass |
 
 ## Remaining
 
@@ -82,3 +83,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | 2026-11-03T02:44Z | claude-trn-01-0b1a | claim | | card 6594096558 |
 | 2026-11-03T02:49Z | claude-trn-01-0b1a | checkpoint | | crate and tests pushed |
 | 2026-11-03T03:05Z | claude-trn-01-0b1a | finish | | ready for review |
+| 2026-11-03T03:30Z | claude-trn-01-0b1a | checkpoint | 887124b | CI green, local checks recorded |
