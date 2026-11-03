@@ -94,6 +94,25 @@ We rewrite the golden files with `UPDATE_GOLDEN=1 cargo test -p fps-flow` and re
 
 Spike S1 in `spikes/s1-engine` keeps its own copies of `program.rs` and `template.rs`, so its benchmark harness builds and reproduces the Gate 0 numbers unchanged. The engine crates are the source of truth for new work. A later package may switch the spike to the engine crates or retire it, and until then a fix in one copy does not reach the other.
 
+## Statistics collection
+
+`fps-stats` collects the counters, gauges, and HDR histograms of `contracts/metrics/catalog.yaml` per worker and turns them into `CounterSnapshot` messages. ENG-09 added it, and ENG-10 wires it into the worker runtime.
+
+We keep the catalog as the static table `fps_stats::CATALOG` with one constant per metric in `fps_stats::metric`, for example `metric::SESSIONS_ATTEMPTED`. The contract test `tests/catalog.rs` reads the YAML file and compares every name, type, unit, label list, and enumerated label value, so a catalog change fails the test until the table follows it.
+
+Each worker owns one `Shard`. The worker registers a series once with `counter`, `gauge`, or `histogram`, which checks the metric type and the labels against the catalog and returns a handle. Recording through a handle with `inc`, `add`, `set`, `adjust`, or `record` indexes a vector that only the owning worker touches, so the hot path takes no lock and uses no atomic instruction. We apply four rules to recorded values.
+
+1. Counters saturate at `u64::MAX`.
+2. Histograms keep three significant digits in the catalog unit and record values above one hour in microseconds as that value. A histogram grows when a value exceeds every earlier value of its series, which allocates at most a few dozen times over its life.
+3. A shard records only gauges that workers can sum, such as `sessions.concurrent`. Ratios and percentages such as `sessions.failed_ratio` are derived after the merge, and their registration fails with `StatsError::NotAdditive`.
+4. A key may omit catalog labels, which aggregates over them. An unknown label, a repeated label, or a value outside the enumerated values fails the registration.
+
+Once per snapshot interval the worker calls `Shard::snapshot` and sends the cumulative `Snapshot` to the collector. The collector keeps the newest snapshot of every worker and merges them with `Snapshot::merge_all`, so a dropped snapshot loses no data. Counters, gauges, and histograms of the same series add up.
+
+`Snapshot::to_proto_json` serializes a snapshot with a `SnapshotMeta` to the proto3 JSON mapping of `CounterSnapshot` in `contracts/proto/fps/agent/v1/agent.proto`. We follow the canonical printer, so field names are lower camel case, 64 bit integers are strings, `hdrV2` is base64 of the compressed HdrHistogram V2 encoding, gauges that JSON numbers cannot hold become `NaN` or `Infinity`, and fields with default values are omitted. An aggregate snapshot sets `aggregate`, and a worker snapshot sets `workerId`. Series appear in catalog order and then in label order, and each histogram is copied into bounds that depend only on its largest value before encoding, so equal values always give equal bytes. The contract test `tests/proto_json.rs` reads the proto file and checks every emitted key against the fields of `CounterSnapshot`, `CounterValue`, and `HistogramValue`.
+
+The component test `tests/concurrency.rs` runs eight worker threads that record 200000 events each and send snapshots to a collector thread while they run. It checks that the aggregate never decreases and that the final aggregate holds every increment and every histogram sample. The property test `tests/merge_props.rs` checks that any split of an event stream over up to eight shards merges to the same JSON as one shard, in either merge order.
+
 ## The session scheduler
 
 ENG-08 added the crate [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched), which turns one worker rate of a plan into session starts. A `Schedule` serves one mix entry on one worker, and its scheduled times are a pure function of the configuration, the run seed, and the stream, so a replay reproduces every start.
