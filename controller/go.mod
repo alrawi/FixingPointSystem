@@ -2,8 +2,6 @@ module github.com/alrawi/FixingPointSystem/controller
 
 go 1.24.0
 
-toolchain go1.24.7
-
 require (
 	github.com/alrawi/FixingPointSystem/tests/golden/go v0.0.0
 	github.com/bufbuild/protocompile v0.14.1
