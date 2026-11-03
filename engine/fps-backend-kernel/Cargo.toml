@@ -1,0 +1,18 @@
+[package]
+name = "fps-backend-kernel"
+description = "Kernel TCP transport backend of the FixingPointSystem engine, which implements SessionIo over Linux sockets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+fps-io = { path = "../fps-io" }
+libc = "0.2"
+socket2 = { version = "0.6", features = ["all"] }
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "net", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
