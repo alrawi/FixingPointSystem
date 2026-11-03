@@ -1,23 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! The interpreter of one session side.
+//!
+//! A TCP side runs over a [`SessionIo`] byte stream and a UDP side over a
+//! [`DatagramIo`] socket. Both run the same loop over the compiled ops and
+//! differ only in `send`, `expect`, and `close`.
 
 use std::future::Future;
+use std::io;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::{Buf, BytesMut};
 use fps_flow::program::{CloseMode, Op, Program, StopRule};
 use fps_flow::template::{Filler, RenderCtx};
 use fps_flow::{Template, TemplateFn, Value, Vars};
-use fps_io::SessionIo;
+use fps_io::{DatagramIo, DatagramIoExt, SessionIo, MAX_DATAGRAM};
 use rand::Rng;
 use rand_pcg::Pcg64Mcg;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::time::error::Elapsed;
 use tokio::time::{timeout_at, Instant};
 
 use crate::delay;
 use crate::failure::{Failure, FailureKind};
-use crate::open::{OpenKind, OpenRequest, Opener};
+use crate::open::{DatagramOpener, OpenKind, OpenRequest, Opener};
 use crate::rng::Side;
 
 /// Growth step of the read buffer. Spike S1 measured that 16 KiB reads keep
@@ -108,6 +115,7 @@ pub struct Session<'a> {
     counters: Vec<i64>,
     pc: usize,
     stats: SideStats,
+    max_datagram: usize,
 }
 
 impl<'a> Session<'a> {
@@ -131,7 +139,23 @@ impl<'a> Session<'a> {
             counters: Vec::new(),
             pc: 0,
             stats: SideStats::default(),
+            max_datagram: MAX_DATAGRAM,
         }
+    }
+
+    /// Sets the largest datagram that an `expect` of a UDP side accepts.
+    ///
+    /// The value is clamped to the range from 1 to
+    /// [`fps_io::MAX_DATAGRAM`], which is also the default. A longer
+    /// datagram fails the session with reason `pattern_mismatch`, and the
+    /// interpreter never truncates it silently.
+    pub fn set_max_datagram(&mut self, limit: usize) {
+        self.max_datagram = limit.clamp(1, MAX_DATAGRAM);
+    }
+
+    /// Returns the datagram limit of `expect` on a UDP side.
+    pub fn max_datagram(&self) -> usize {
+        self.max_datagram
     }
 
     /// Returns the byte counters.
@@ -157,7 +181,54 @@ impl<'a> Session<'a> {
     ) -> Result<(), Failure> {
         tokio::pin!(stop);
         let mut io = self.open_pinned(opener, program, stop.as_mut()).await?;
-        self.run_pinned(&mut io, &program.ops, stop).await
+        self.run_pinned(Wire::<_, NoDatagram>::Stream(&mut io), &program.ops, stop)
+            .await
+    }
+
+    /// Opens a UDP session with `opener` and runs the body of `program`
+    /// under the datagram rules.
+    ///
+    /// When `stop` completes first, the session closes its socket and fails
+    /// with reason `aborted`. The socket is dropped at the end, so a program
+    /// without `close` releases it too.
+    pub async fn run_datagram_program<O: DatagramOpener, F: Future<Output = ()>>(
+        &mut self,
+        opener: &mut O,
+        program: &Program,
+        stop: F,
+    ) -> Result<(), Failure> {
+        tokio::pin!(stop);
+        let mut io = self
+            .open_datagram_pinned(opener, program, stop.as_mut())
+            .await?;
+        self.run_pinned(Wire::<NoStream, _>::Datagram(&mut io), &program.ops, stop)
+            .await
+    }
+
+    /// Renders the opening action of a UDP `program` and opens the socket.
+    pub async fn open_datagram<O: DatagramOpener, F: Future<Output = ()>>(
+        &mut self,
+        opener: &mut O,
+        program: &Program,
+        stop: F,
+    ) -> Result<O::Io, Failure> {
+        tokio::pin!(stop);
+        self.open_datagram_pinned(opener, program, stop).await
+    }
+
+    /// Runs `ops` over an open UDP socket under the datagram rules.
+    ///
+    /// When `stop` completes first, the session closes `io` and fails with
+    /// reason `aborted`.
+    pub async fn run_datagram<D: DatagramIo, F: Future<Output = ()>>(
+        &mut self,
+        io: &mut D,
+        ops: &[Op],
+        stop: F,
+    ) -> Result<(), Failure> {
+        tokio::pin!(stop);
+        self.run_pinned(Wire::<NoStream, _>::Datagram(io), ops, stop)
+            .await
     }
 
     /// Renders the opening action of `program` and opens the transport.
@@ -182,7 +253,8 @@ impl<'a> Session<'a> {
         stop: F,
     ) -> Result<(), Failure> {
         tokio::pin!(stop);
-        self.run_pinned(io, ops, stop).await
+        self.run_pinned(Wire::<_, NoDatagram>::Stream(io), ops, stop)
+            .await
     }
 
     async fn open_pinned<O: Opener, F: Future<Output = ()>>(
@@ -191,6 +263,37 @@ impl<'a> Session<'a> {
         program: &Program,
         stop: Pin<&mut F>,
     ) -> Result<O::Io, Failure> {
+        let (kind, port, host) = self.render_open(program)?;
+        let request = OpenRequest {
+            kind,
+            host: program.host.as_ref().map(|_| host.as_slice()),
+            port,
+        };
+        let opened = race(stop, self.limits.open_timeout, opener.open(request)).await;
+        self.wbuf = host;
+        self.finish_open(opened)
+    }
+
+    async fn open_datagram_pinned<O: DatagramOpener, F: Future<Output = ()>>(
+        &mut self,
+        opener: &mut O,
+        program: &Program,
+        stop: Pin<&mut F>,
+    ) -> Result<O::Io, Failure> {
+        let (kind, port, host) = self.render_open(program)?;
+        let request = OpenRequest {
+            kind,
+            host: program.host.as_ref().map(|_| host.as_slice()),
+            port,
+        };
+        let opened = race(stop, self.limits.open_timeout, opener.open(request)).await;
+        self.wbuf = host;
+        self.finish_open(opened)
+    }
+
+    /// Renders the port and host of the opening action. The host lands in
+    /// the returned buffer, which the caller hands back as the write buffer.
+    fn render_open(&mut self, program: &Program) -> Result<(OpenKind, u16, Vec<u8>), Failure> {
         let fail = |s: &Self, kind| s.open_failure(kind);
         let port = self.render_int(&program.port).map_err(|k| fail(self, k))?;
         let port = u16::try_from(port).map_err(|_| {
@@ -212,27 +315,19 @@ impl<'a> Session<'a> {
             Side::Client => OpenKind::Connect,
             Side::Server => OpenKind::Accept,
         };
-        let request = OpenRequest {
-            kind,
-            host: program.host.as_ref().map(|_| host.as_slice()),
-            port,
-        };
-        let timeout = self.limits.open_timeout;
-        let timeout_ms = millis(timeout);
-        let opened = {
-            let open = tokio::time::timeout(timeout, opener.open(request));
-            tokio::pin!(open);
-            tokio::select! {
-                biased;
-                () = stop => None,
-                r = &mut open => Some(r),
-            }
-        };
-        self.wbuf = host;
+        Ok((kind, port, host))
+    }
+
+    /// Maps the outcome of an open race to the transport or a failure.
+    fn finish_open<T>(
+        &mut self,
+        opened: Option<Result<io::Result<T>, Elapsed>>,
+    ) -> Result<T, Failure> {
+        let timeout_ms = millis(self.limits.open_timeout);
         match opened {
-            None => Err(fail(self, FailureKind::Aborted)),
-            Some(Err(_)) => Err(fail(self, FailureKind::OpenTimeout { timeout_ms })),
-            Some(Ok(Err(e))) => Err(fail(self, FailureKind::from_open_io(e, timeout_ms))),
+            None => Err(self.open_failure(FailureKind::Aborted)),
+            Some(Err(_)) => Err(self.open_failure(FailureKind::OpenTimeout { timeout_ms })),
+            Some(Ok(Err(e))) => Err(self.open_failure(FailureKind::from_open_io(e, timeout_ms))),
             Some(Ok(Ok(io))) => {
                 self.stats.established = true;
                 Ok(io)
@@ -240,9 +335,9 @@ impl<'a> Session<'a> {
         }
     }
 
-    async fn run_pinned<S: SessionIo, F: Future<Output = ()>>(
+    async fn run_pinned<S: SessionIo, D: DatagramIo, F: Future<Output = ()>>(
         &mut self,
-        io: &mut S,
+        mut wire: Wire<'_, S, D>,
         ops: &[Op],
         stop: Pin<&mut F>,
     ) -> Result<(), Failure> {
@@ -250,7 +345,7 @@ impl<'a> Session<'a> {
         self.pc = 0;
         self.counters.clear();
         let outcome = {
-            let body = self.run_ops(io, ops);
+            let body = self.run_ops(&mut wire, ops);
             tokio::pin!(body);
             tokio::select! {
                 biased;
@@ -262,17 +357,30 @@ impl<'a> Session<'a> {
             Some(Ok(())) => Ok(()),
             Some(Err(kind)) => Err(self.failure(ops, kind)),
             None => {
-                io.abort();
+                match wire {
+                    Wire::Stream(io) => io.abort(),
+                    Wire::Datagram(io) => io.close(),
+                }
                 Err(self.failure(ops, FailureKind::Aborted))
             }
         }
     }
 
-    async fn run_ops<S: SessionIo>(&mut self, io: &mut S, ops: &[Op]) -> Result<(), FailureKind> {
+    async fn run_ops<S: SessionIo, D: DatagramIo>(
+        &mut self,
+        wire: &mut Wire<'_, S, D>,
+        ops: &[Op],
+    ) -> Result<(), FailureKind> {
         while let Some(op) = ops.get(self.pc) {
             match op {
-                Op::Send(t) => self.send(io, t).await?,
-                Op::Expect { rule, timeout } => self.expect(io, rule, *timeout).await?,
+                Op::Send(t) => match wire {
+                    Wire::Stream(io) => self.send(*io, t).await?,
+                    Wire::Datagram(io) => self.send_datagram(*io, t).await?,
+                },
+                Op::Expect { rule, timeout } => match wire {
+                    Wire::Stream(io) => self.expect(*io, rule, *timeout).await?,
+                    Wire::Datagram(io) => self.expect_datagram(*io, rule, *timeout).await?,
+                },
                 Op::Delay(d) => {
                     let fixed_ms = match d {
                         fps_flow::program::Delay::Fixed(t) => self.render_int(t)?,
@@ -334,7 +442,11 @@ impl<'a> Session<'a> {
                     self.pc = *to;
                     continue;
                 }
-                Op::Close(mode) => self.close(io, *mode).await?,
+                Op::Close(mode) => match wire {
+                    Wire::Stream(io) => self.close(*io, *mode).await?,
+                    // UDP has no close handshake, so every mode releases the socket.
+                    Wire::Datagram(io) => io.close(),
+                },
             }
             self.pc += 1;
         }
@@ -435,6 +547,94 @@ impl<'a> Session<'a> {
                 Ok(())
             }
         }
+    }
+
+    /// Renders a template and sends it as one datagram.
+    async fn send_datagram<D: DatagramIo>(
+        &mut self,
+        io: &mut D,
+        t: &Template,
+    ) -> Result<(), FailureKind> {
+        self.wbuf.clear();
+        let (mut ctx, out) = self.split();
+        t.render_into(&mut ctx, out)
+            .map_err(|source| FailureKind::Render { source })?;
+        if self.wbuf.len() > MAX_DATAGRAM {
+            return Err(FailureKind::Invalid(format!(
+                "send rendered {} bytes, above the datagram limit of {MAX_DATAGRAM} bytes",
+                self.wbuf.len()
+            )));
+        }
+        io.send_datagram(&self.wbuf)
+            .await
+            .map_err(FailureKind::from_datagram_io)?;
+        self.stats.bytes_tx += self.wbuf.len() as u64;
+        Ok(())
+    }
+
+    /// Reads exactly one datagram, checks it against the stop rule, and
+    /// consumes all of it.
+    async fn expect_datagram<D: DatagramIo>(
+        &mut self,
+        io: &mut D,
+        rule: &StopRule,
+        timeout: Duration,
+    ) -> Result<(), FailureKind> {
+        let deadline = Instant::now() + timeout;
+        // Render the size before the read, so a render error does not eat a datagram.
+        let want = match rule {
+            StopRule::Pattern(_) => 0,
+            StopRule::Bytes(t) => self.render_count(t, "expect bytes")?,
+            StopRule::MinBytes(t) => self.render_count(t, "expect min_bytes")?,
+        };
+        let limit = self.max_datagram;
+        if self.scratch.len() < limit {
+            self.scratch.resize(limit.max(DISCARD_CHUNK), 0);
+        }
+        let Some(buf) = self.scratch.get_mut(..limit) else {
+            return Err(FailureKind::Invalid(
+                "invariant: the scratch buffer holds the datagram limit".into(),
+            ));
+        };
+        let size = match timeout_at(deadline, io.recv_datagram(buf)).await {
+            Err(_) => {
+                return Err(FailureKind::ExpectTimeout {
+                    timeout_ms: millis(timeout),
+                    received: 0,
+                })
+            }
+            Ok(Err(e)) => return Err(FailureKind::from_datagram_io(e)),
+            Ok(Ok(n)) => n,
+        };
+        self.stats.bytes_rx += size as u64;
+        if size > limit {
+            return Err(FailureKind::DatagramTooLarge { size, limit });
+        }
+        let datagram = self.scratch.get(..size).unwrap_or_default();
+        let matched = match rule {
+            StopRule::Pattern(p) => memchr::memmem::find(datagram, p).is_some(),
+            StopRule::Bytes(_) => size == want,
+            StopRule::MinBytes(_) => size >= want,
+        };
+        if !matched {
+            let rule = match rule {
+                StopRule::Pattern(p) => format!("pattern {:?}", String::from_utf8_lossy(p)),
+                StopRule::Bytes(_) => format!("bytes {want}"),
+                StopRule::MinBytes(_) => format!("min_bytes {want}"),
+            };
+            return Err(FailureKind::DatagramMismatch { size, rule });
+        }
+        if self.keep_last {
+            if size > self.limits.max_last {
+                return Err(FailureKind::Invalid(format!(
+                    "expect consumed {size} bytes, above the last limit of {} bytes",
+                    self.limits.max_last
+                )));
+            }
+            self.last.clear();
+            self.last.extend_from_slice(datagram);
+        }
+        Ok(())
     }
 
     /// Consumes `n` buffered bytes, which become `last` when a template of
@@ -579,6 +779,81 @@ impl<'a> Session<'a> {
             reason: kind.reason(),
             kind: Box::new(kind),
         }
+    }
+}
+
+/// The transport of a running side, a byte stream or a datagram socket.
+enum Wire<'w, S, D> {
+    Stream(&'w mut S),
+    Datagram(&'w mut D),
+}
+
+/// The stream type of a UDP side, which has no stream.
+enum NoStream {}
+
+impl AsyncRead for NoStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match *self.get_mut() {}
+    }
+}
+
+impl AsyncWrite for NoStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _data: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match *self.get_mut() {}
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match *self.get_mut() {}
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match *self.get_mut() {}
+    }
+}
+
+impl SessionIo for NoStream {
+    fn abort(&mut self) {
+        match *self {}
+    }
+}
+
+/// The datagram type of a TCP side, which has no datagram socket.
+enum NoDatagram {}
+
+impl DatagramIo for NoDatagram {
+    fn poll_send(&mut self, _cx: &mut Context<'_>, _datagram: &[u8]) -> Poll<io::Result<()>> {
+        match *self {}
+    }
+
+    fn poll_recv(&mut self, _cx: &mut Context<'_>, _buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        match *self {}
+    }
+
+    fn close(&mut self) {
+        match *self {}
+    }
+}
+
+/// Runs `open` under `timeout` and returns `None` when `stop` completes first.
+async fn race<T, F: Future<Output = ()>>(
+    stop: Pin<&mut F>,
+    timeout: Duration,
+    open: impl Future<Output = io::Result<T>>,
+) -> Option<Result<io::Result<T>, Elapsed>> {
+    let open = tokio::time::timeout(timeout, open);
+    tokio::pin!(open);
+    tokio::select! {
+        biased;
+        () = stop => None,
+        r = &mut open => Some(r),
     }
 }
 
