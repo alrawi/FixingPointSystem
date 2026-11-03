@@ -337,3 +337,39 @@ The compiled `Op::Expect` of `fps-flow` does not carry the per action `max_datag
 | `fps-interp/tests/datagrams.rs` | The DNS lookup example of the contract end to end, one datagram per `send`, `last` as the whole datagram, the three stop rules against one datagram, no joining, the datagram limit at and above its value, the 65,507 byte bound of `send` and `expect`, the clamp of `set_max_datagram`, expect and accept timeouts on the paused clock, lost datagrams, per datagram timeouts in a loop, `connect_refused`, `aborted`, and the three close modes |
 | `fps-io/tests/datagram.rs` | Property tests that datagrams keep their boundaries, order, and full length through any buffer size, and that a full queue keeps the oldest datagrams |
 | `fps-io` unit tests | Truncation with the full length, the send bound, queue drops, `readable`, and `close` |
+## Vectored writes for fill bodies
+
+ENG-05 closed Gate 0 carry over item 1 of the [Gate 0 report](https://github.com/alrawi/FixingPointSystem/blob/main/docs/phase0/gate0-report.md). Spike S1 lost 26.1% of its bulk session rate against hand written code, and the spike suspected the copy of each 1 MiB `fill()` body into the write buffer. A `send` now writes large `fill()` bodies straight from the shared filler of the run, and the bytes on the wire stay identical for the same seed.
+
+### Render parts
+
+`Template::render_parts` in `fps-flow` renders a template as a list of `Part` values. A `fill()` at the top level of the template that renders at least `min_ref` bytes becomes `Part::Filler` ranges of `Filler::as_bytes`, one range per wrap of the 1 MiB filler, and every other byte goes into the output buffer and is covered by `Part::Out` ranges. The parts in order equal the bytes of `render_into`, and the render draws the same random numbers, so the session generator stays in step and a replay reproduces every session. A `fill()` inside a module call argument is still copied, because the module function needs its bytes.
+
+### The send path
+
+`send` renders with `render_parts` and the threshold `VECTORED_FILL_MIN`, which is 16 KiB. A rendering without filler parts goes out with one `write_all` as before. A rendering with filler parts goes out with vectored writes of up to 16 slices per call, which resume inside a slice after a partial write, so a 1 MiB body costs one `writev` of three slices on a kernel socket. A transport without vectored writes receives one part per write, and neither path copies the filler. The session keeps its part list between actions, so the send path allocates nothing per action once the list has grown.
+
+### The bulk benchmark
+
+`engine/fps-interp/benches/bulk.rs` repeats the S1 bulk workload in one process over loopback TCP. One iteration runs 16 concurrent `web_get` sessions of 4 requests with 1 MiB bodies on two worker threads, each with its own runtime, and each session runs both sides. It compares three variants.
+
+| Variant | Code |
+|---|---|
+| `interp` | Both sides run in the interpreter |
+| `handwritten` | Hand written code that sends one pre rendered response, the S1 baseline |
+| `handwritten-copy` | Hand written code that renders each response with `render_into`, which is the copy that the interpreter made before ENG-05 |
+
+`cargo bench -p fps-interp --bench bulk` runs the variants under criterion. With `FPS_BENCH_OUT=<file>` the benchmark runs a paired measurement instead, which runs the three variants in rotated order in every round, so that load from other processes falls on all of them alike, and writes the medians of 300 rounds as an fps-bench/v1 result for `bench/compare.py`. The baseline is `bench/baselines/fps-interp-bulk-container.json`.
+
+| Measurement on the 2 vCPU recording host | Interpreter over hand written |
+|---|---|
+| Copying send path before ENG-05 | 0.773 |
+| Hand written code with the copy | 0.69 to 0.72 over 7 runs |
+| Vectored send path | 1.09 to 1.17 over 7 runs, 1.172 in the baseline |
+
+The interpreter now meets the Gate 0 criterion of at most 25% overhead with room to spare, and the copy explains the S1 gap, because hand written code that makes the same copy loses about 30%. The recording host ran other agents during the runs, so absolute rates moved by up to a factor of two between runs, while the paired ratios moved by at most 7%. The baseline therefore gives the rates a 60% tolerance and the ratios a 10% tolerance, and the ratios are the metrics to watch. Loopback hides NIC and virtualization cost, so carry over item 3 still repeats the run on a 4 vCPU KVM guest.
+
+| Test | What it checks |
+|---|---|
+| `fps-flow` template unit tests | `render_parts` joins to the bytes of `render_into` and leaves the generator in step for thresholds from 0 to none, a template without `fill()` is one part, and a negative size fails |
+| `fps-interp/tests/vectored.rs` | The wire bytes of large bodies equal a copying render, one vectored write per response, partial writes of 1,000 bytes, a 20 MiB body across several writes, a small body copied into one write, a transport without vectored writes, and a property test over body sizes, write limits, and seeds |

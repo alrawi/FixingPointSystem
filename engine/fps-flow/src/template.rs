@@ -241,16 +241,51 @@ impl Filler {
     }
 
     /// Appends `n` filler bytes to `out`, starting at an offset drawn from `rng`.
-    pub fn fill<R: Rng + ?Sized>(&self, out: &mut Vec<u8>, mut n: usize, rng: &mut R) {
-        let mut off = rng.gen_range(0..self.buf.len());
+    pub fn fill<R: Rng + ?Sized>(&self, out: &mut Vec<u8>, n: usize, rng: &mut R) {
         out.reserve(n);
+        self.spans(n, rng, |start, end| {
+            out.extend_from_slice(&self.buf[start..end])
+        });
+    }
+
+    /// Returns the filler bytes, which [`Part::Filler`] ranges index.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buf
+    }
+
+    /// Calls `f` with the ranges of the filler that `fill` would copy for
+    /// `n` bytes, in order, after the same single draw from `rng`.
+    fn spans<R: Rng + ?Sized>(&self, mut n: usize, rng: &mut R, mut f: impl FnMut(usize, usize)) {
+        let mut off = rng.gen_range(0..self.buf.len());
         while n > 0 {
             let take = n.min(self.buf.len() - off);
-            out.extend_from_slice(&self.buf[off..off + take]);
+            f(off, off + take);
             n -= take;
             off = 0;
         }
     }
+}
+
+/// One piece of the output of [`Template::render_parts`].
+///
+/// The pieces in order give the bytes that [`Template::render_into`] renders
+/// for the same context, so a writer can send them as one vectored write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    /// The bytes `start..end` of the output buffer of the render.
+    Out {
+        /// First byte.
+        start: usize,
+        /// One past the last byte.
+        end: usize,
+    },
+    /// The bytes `start..end` of [`Filler::as_bytes`].
+    Filler {
+        /// First byte.
+        start: usize,
+        /// One past the last byte.
+        end: usize,
+    },
 }
 
 /// Everything a render needs besides the template itself.
@@ -659,6 +694,61 @@ impl Template {
                 Seg::Lit(b) => out.extend_from_slice(b),
                 Seg::Expr(e) => render_expr(e, ctx, out)?,
             }
+        }
+        Ok(())
+    }
+
+    /// Renders the template as parts, so that large `fill()` bodies point
+    /// into the shared filler instead of being copied.
+    ///
+    /// Every `fill()` at the top level of the template that renders at least
+    /// `min_ref` bytes becomes [`Part::Filler`] ranges, and every other byte
+    /// is appended to `out` and covered by [`Part::Out`] ranges. The parts
+    /// are appended to `parts` in output order. Joined, they equal the bytes
+    /// that [`Template::render_into`] renders, and the render draws the same
+    /// random numbers, so the session generator stays in step. A `fill()`
+    /// inside a module call argument is copied, because the module function
+    /// needs its bytes.
+    ///
+    /// On error the bytes and parts already appended are unspecified.
+    pub fn render_parts<R: RngCore>(
+        &self,
+        ctx: &mut RenderCtx<'_, R>,
+        out: &mut Vec<u8>,
+        parts: &mut Vec<Part>,
+        min_ref: usize,
+    ) -> Result<(), TemplateError> {
+        let mut mark = out.len();
+        for seg in &self.segs {
+            match seg {
+                Seg::Lit(b) => out.extend_from_slice(b),
+                Seg::Expr(Expr::Fill(n)) => {
+                    let n = eval_int(n, ctx)?;
+                    let n = usize::try_from(n).map_err(|_| TemplateError::NegativeFill(n))?;
+                    let filler = ctx.filler;
+                    if n < min_ref {
+                        filler.fill(out, n, ctx.rng);
+                        continue;
+                    }
+                    if out.len() > mark {
+                        parts.push(Part::Out {
+                            start: mark,
+                            end: out.len(),
+                        });
+                    }
+                    filler.spans(n, ctx.rng, |start, end| {
+                        parts.push(Part::Filler { start, end });
+                    });
+                    mark = out.len();
+                }
+                Seg::Expr(e) => render_expr(e, ctx, out)?,
+            }
+        }
+        if out.len() > mark {
+            parts.push(Part::Out {
+                start: mark,
+                end: out.len(),
+            });
         }
         Ok(())
     }

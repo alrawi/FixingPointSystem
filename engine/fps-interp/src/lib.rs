@@ -29,4 +29,4 @@ pub mod session;
 pub use failure::{Failure, FailureKind, Reason};
 pub use open::{DatagramOpener, OpenKind, OpenRequest, Opener};
 pub use rng::{session_rng, Side};
-pub use session::{Limits, Session, SessionCtx, SideStats};
+pub use session::{Limits, Session, SessionCtx, SideStats, VECTORED_FILL_MIN};
