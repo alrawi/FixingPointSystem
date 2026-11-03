@@ -1,0 +1,59 @@
+{
+  "realism": [],
+  "run": {
+    "config_id": "cfg-enterprise",
+    "created_at": "2026-11-03T12:00:00Z",
+    "ended_at": "2026-11-03T12:01:02Z",
+    "engine_version": "0.1.0",
+    "id": "run-pass",
+    "module_versions": {
+      "dns": "0.1.0",
+      "http1": "0.1.0"
+    },
+    "phase": "done",
+    "seed": 42,
+    "started_at": "2026-11-03T12:00:02Z",
+    "state": "completed",
+    "summary": {
+      "bytes_rx": 35000000000,
+      "bytes_tx": 4000000000,
+      "concurrent_sessions": 812,
+      "sessions_attempted": 200000,
+      "sessions_failed": 10,
+      "sessions_per_second": 3333.5,
+      "sessions_succeeded": 199990,
+      "throughput_bps": 1250000000
+    },
+    "verdict": {
+      "criteria": [
+        {
+          "metric": "sessions.failed_ratio",
+          "observed": 0.00005,
+          "op": "<",
+          "passed": true,
+          "value": 0.001
+        },
+        {
+          "metric": "sessions.response_time.p99",
+          "observed": 41000,
+          "op": "<=",
+          "passed": true,
+          "value": 50000
+        },
+        {
+          "metric": "throughput.bps",
+          "observed": 1250000000,
+          "op": ">=",
+          "passed": true,
+          "value": 1000000000
+        },
+        {
+          "metric": "mix.max_abs_error_pp",
+          "op": "<=",
+          "value": 2
+        }
+      ],
+      "passed": true
+    }
+  }
+}

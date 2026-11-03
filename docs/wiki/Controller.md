@@ -540,3 +540,54 @@ The metrics package of CTL-08 joins the binary in three calls in `serve` of `cmd
 9. It stops the run and expects it completed with a passing verdict after the prepare, start, and stop commands.
 10. It sends SIGTERM and expects exit code 0 with the stopped records of both servers.
 11. It starts the binary again on the same data directory and finds the configuration and both modules.
+
+## Criteria and reports
+
+CTL-09 adds `controller/internal/report`, which evaluates the pass and fail criteria of a run and serves `GET /v1/runs/{id}/report` in JSON and CSV.
+
+### Criteria evaluation
+
+An `Evaluator` reads the metric names of the catalog through `metrics.Catalog`. Before it compares anything, `Derive` computes every derived gauge of the catalog again from the merged counters with its formula, so `sessions.failed_ratio` and `tls.resumption_ratio` are ratios of run totals and never a mean of per agent ratios. A formula whose divisor is zero or absent leaves the gauge undefined. The evaluator applies the six operators of `contracts/schemas/test-config.schema.json`, and a test reads the operator enum from the schema, so the two lists cannot drift.
+
+Each criterion gets one of four results with a reason in one sentence.
+
+| Result | Meaning | Decides the verdict |
+|---|---|---|
+| `pass` | The observed value satisfies the rule | No |
+| `fail` | The observed value breaks the rule | Yes, the run fails |
+| `missing` | The run has no value for a catalog metric, for example a ratio over zero attempts or a gauge that no component computes yet | No |
+| `invalid` | The criterion names no catalog metric, puts a statistic on a counter or gauge, names a histogram without a statistic, or uses an unknown operator | Yes, the run fails |
+
+Histogram criteria take one of the statistics of `metrics.Stats`, for example `sessions.response_time.p99`. A run in which every agent failed never passes, as in CTL-07.
+
+### Evaluator for runs
+
+`Evaluator.RunEvaluator` returns a `runs.Evaluator` for `runs.Config.Evaluator`. It evaluates `runs.Outcome.Totals` and maps the results onto `runs.CriterionResult`, so a missing criterion is not evaluated and an invalid one is evaluated and fails. A test checks that it decides like `runs.EvaluateTotals` for every operator wherever both evaluate a criterion. `runs.Outcome` carries no run id, so the evaluator cannot read the aggregator when the run stops, and a histogram criterion is missing at that point. The report evaluates it.
+
+### Report
+
+`Evaluator.Build` joins the run of the orchestrator and the totals of the aggregator. Counters of the run take precedence, because the orchestrator counts the open sessions of a failed agent as failed and sees the final snapshot of every agent. Gauges and histogram statistics come from the aggregator, and the derived gauges are computed from the result. A run that never reached its criteria, such as a running or aborted run, gets a report without a verdict.
+
+| Format | Content |
+|---|---|
+| `json`, the default | The `RunReport` schema, with the summary filled from the run totals, every criterion in the verdict, `observed` and `passed` only for compared criteria, and an empty `realism` list |
+| `csv` | One table with the columns `kind,name,op,threshold,value,result,detail`, with rows of kind `run` for the run fields, `criterion` for each criterion, and `metric` for each run total in catalog order |
+| `html` | 501 until a package adds it |
+
+The CSV report writes numbers in plain decimal notation and prefixes text cells that start with `=`, `+`, `-`, or `@` with an apostrophe, so spreadsheets do not run them as formulas.
+
+### Tests of the report
+
+`TestGoldenReports` serves a passing run, a run with failing criteria, and a degraded run through the generated router, validates every response against the contract, and compares the JSON and CSV bodies with the golden files in `controller/internal/report/testdata/`. In the degraded run one agent crashed with open sessions, and the report counts them as failed. Other tests cover every operator, every catalog formula, the four results, the error responses, and a report built from the real aggregator of CTL-08 with two agents.
+## Metrics in the binary
+
+Bug #119 closed the hook that the Binary wiring section describes. The function `mountMetrics` in `cmd/fps-controller/main.go` runs in `serve` before `ctl.Mount(a)` and makes four calls.
+
+1. `metrics.New(metrics.Config{Logger: logger})` creates one aggregator with the default catalog, the system clock, and the default bounds.
+2. `ctl.Observe(agg.Observe)` adds the aggregator to the agent manager observers after the run orchestrator, so every counter snapshot of an agent reaches both.
+3. `ctl.SetMetrics(metrics.NewAPI(agg, ctl.Runs))` routes `GET /v1/runs/{id}/metrics` and `GET /v1/runs/{id}/metrics:stream` to the aggregator, with the run orchestrator as the `RunSource`. A run that the orchestrator knows answers 200 before its first snapshot, and the stream ends when the run ends.
+4. `a.Handle("GET /metrics", metrics.NewPrometheus(agg))` serves the Prometheus exposition outside `/v1`.
+
+`GET /metrics` needs no token, because Prometheus scrapers usually send none. The exposition holds run identifiers, application names, scenario names, and port names, so an operator who considers them sensitive keeps the listen address on a trusted network. The exported field `wiring.Controller.Runs` already gives the orchestrator, so the wiring package needed no new accessor.
+
+`TestEndToEnd` now runs one more step while the run is running. The fake agent sends a snapshot with `sessions.attempted` equal to 7 for the application `http1` and the scenario `web_get`. The test polls until `GET /v1/runs/{id}/metrics?view=application` returns the key `http1` with that count and `GET /metrics` contains the line `fps_sessions_attempted_total{run_id="<run id>",application="http1",scenario="web_get"} 7`.
