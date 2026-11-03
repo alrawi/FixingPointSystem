@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Validate agent plans in the canonical JSON mapping (contract v0.1).
+"""Validate agent plans in the canonical JSON mapping (agent control protocol 0.1.0).
 
 The checker compiles contracts/proto/fps/agent/v1/agent.proto, parses each plan
 file strictly into the Plan message, confirms that the file is in canonical
@@ -82,10 +82,10 @@ def module_tree_digest(mod_dir: Path) -> str:
 
 
 @lru_cache(maxsize=1)
-def plan_class() -> Any:
-    """Compile the agent proto and return the generated Plan message class."""
+def proto_pool() -> Any:
+    """Compile the agent proto and return a descriptor pool that holds it."""
     try:
-        from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
+        from google.protobuf import descriptor_pb2, descriptor_pool
         from grpc_tools import protoc
     except ImportError as exc:
         raise ProtoUnavailable(
@@ -112,8 +112,16 @@ def plan_class() -> Any:
     pool = descriptor_pool.DescriptorPool()
     for fd in fds.file:
         pool.Add(fd)
+    return pool
+
+
+@lru_cache(maxsize=1)
+def plan_class() -> Any:
+    """Return the generated Plan message class."""
+    from google.protobuf import message_factory
+
     return message_factory.GetMessageClass(
-        pool.FindMessageTypeByName("fps.agent.v1.Plan")
+        proto_pool().FindMessageTypeByName("fps.agent.v1.Plan")
     )
 
 
@@ -161,7 +169,7 @@ def _usable_hosts(
 def check_plan(
     doc: dict, plan: Any, file: Path, report: v.Report, modules_dir: Path | None
 ) -> None:
-    """Apply the semantic rules of contract v0.1 to one parsed plan."""
+    """Apply the semantic rules of the plan contract to one parsed plan."""
     d = canonical(plan)
     for key in ("planId", "runId", "agentId", "engineApi"):
         if not d.get(key):
