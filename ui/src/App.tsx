@@ -12,14 +12,23 @@ import { ModuleDetailPage } from "./pages/ModuleDetailPage";
 import { ModulesPage } from "./pages/ModulesPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
-/** Creates the query cache. Rejected tokens are not retried. */
+/**
+ * True when a failed query may succeed on a second try. Client errors such as
+ * a rejected token or a missing module do not change on their own, so only
+ * timeouts, rate limits, server errors, and network failures are retried.
+ */
+export function isRetryable(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return true;
+  return error.status >= 500 || error.status === 408 || error.status === 429;
+}
+
+/** Creates the query cache. Errors that cannot heal are not retried. */
 export function createQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
       queries: {
         staleTime: 10_000,
-        retry: (failures, error) =>
-          !(error instanceof ApiError && error.isUnauthorized) && failures < 2,
+        retry: (failures, error) => isRetryable(error) && failures < 2,
       },
     },
   });

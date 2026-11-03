@@ -22,15 +22,12 @@ export function useModules() {
   });
 }
 
-/** Loads the manifest of one module. A missing module is not retried. */
+/** Loads the manifest of one module. */
 export function useModule(name: string, version: string) {
   const client = useApiClient();
   return useQuery({
     queryKey: moduleKey(name, version),
     queryFn: ({ signal }) => fetchModule(client, name, version, signal),
-    retry: (failures, error) =>
-      !(error instanceof ApiError && (error.isUnauthorized || error.status === 404)) &&
-      failures < 2,
   });
 }
 

@@ -56,3 +56,32 @@ We serve the mock from a small `node:http` server instead of Prism. The server r
 ESLint stays at version 10 as D11 names it. eslint-plugin-jsx-a11y 6.10.2 declares peer support only up to ESLint 9, so `ui/package.json` overrides its peer range, and we checked that its rules still report violations. openapi-typescript 7.13.0 declares TypeScript 5 as its peer, and a second override lets it run with TypeScript 6.0.3.
 
 The sign in button does not use the `isPending` state of React Aria. That state announces through a live region that keeps a reference to the button after the sign in page unmounts, and axe-core reports the dangling reference as an image without a name. The page shows a status message while it checks the token instead, and a component test guards the fix.
+
+## Module library
+
+UI-02 added the module library, which lists the installed modules and shows the manifest of each one. It uses `GET /modules` and `GET /modules/{name}/{version}` through the generated client.
+
+### Views
+
+| Path | View | Behavior |
+|---|---|---|
+| `/modules` | `ui/src/pages/ModulesPage.tsx` | A table of every installed module with its version, type, license, scenarios, and summary. Each module name links to its detail view. An empty registry shows a sentence in place of the table |
+| `/modules/{name}/{version}` | `ui/src/pages/ModuleDetailPage.tsx` | The manifest fields, the license and provenance, the scenario files, a table of the parameters read from the JSON Schema of the manifest, and a table of the template functions with their call signatures. A module that is not installed shows a notice |
+
+The main navigation gained the entry Modules, which stays current on every detail view. Every view reports an API error in an alert and signs the user out when the controller rejects the token.
+
+### Keyboard navigation
+
+Every module name is a link, so Tab reaches each module and Enter opens it, and the detail view starts with a link back to the list. After a navigation inside the UI, focus moves to the heading of the new view, so keyboard and screen reader users start at the top of the content. The first page of a session keeps the browser focus, which leaves the skip link as the first Tab stop.
+
+### Paging and retries
+
+`fetchModules` in `ui/src/api/client.ts` asks for the largest page that the contract allows, which is 500, and follows `next_page_token` until the last page. A token that repeats ends the listing, so a faulty controller cannot loop the UI. The query cache now retries only errors that may heal, which are network failures, HTTP 408, HTTP 429, and server errors, because a missing module or a rejected token does not change on a second try.
+
+### Mock server
+
+The mock server pages `GET /modules` with `page_size` and `page_token` as the contract describes, and it answers a `page_size` outside 1 to 500 or a bad token with 400. Its options accept faults, which answer matching requests with a problem of a given status, and the helper `withoutModules` builds an empty registry. The contract tests validate the paged lists, the empty registry, and the fault answers against the contract.
+
+### Tests
+
+The component tests in `ui/src/pages/Modules.test.tsx` start a mock server per test and cover an empty registry, the two example modules `dns` and `http1`, an API error of the list, a rejected token, a module that is not installed, an API error of the manifest, and the keyboard path from the navigation to a detail view and back. Each view runs an axe-core scan. Unit tests cover the parameter, signature, and path helpers and the paging of `fetchModules`, and a Playwright test repeats the keyboard path with color contrast checks. The initial JavaScript weighs 110.9 kB gzip against the budget of 250 kB, and the license check passes with no new dependency.
