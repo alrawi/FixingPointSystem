@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# AGT agent under engine/fps-agent/. The rust job of ci.yml runs the fast tests.
+# This workflow runs the example plan in the standalone mode inside the QA-01
+# namespace harness as root, which GitHub hosted runners allow through
+# passwordless sudo.
+name: agt
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - engine/**
+      - modules/*/native/**
+      - contracts/examples/**
+      - tests/harness/**
+      - Cargo.lock
+      - mk/agt.mk
+      - .github/workflows/agt.yml
+  pull_request:
+    paths:
+      - engine/**
+      - modules/*/native/**
+      - contracts/examples/**
+      - tests/harness/**
+      - Cargo.lock
+      - mk/agt.mk
+      - .github/workflows/agt.yml
+
+permissions:
+  contents: read
+
+jobs:
+  standalone-netns:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the harness tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends iproute2 ethtool
+      - name: Build the agent as the runner user
+        run: cargo build -p fps-agent
+      - name: Example plan in the namespace harness as root
+        run: |
+          sudo env "PATH=$PATH" \
+            "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" \
+            "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" \
+            make e2e-agt
+      - name: Return the build directory to the runner user for the cache
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" target

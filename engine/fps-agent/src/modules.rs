@@ -491,6 +491,62 @@ mod tests {
     }
 
     #[test]
+    fn first_party_manifests_get_their_native_functions() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
+        let mut set = ModuleSet::default();
+        for m in ["http1", "dns"] {
+            set.insert(Manifest::load(&root.join(m).join("manifest.yaml")).unwrap());
+        }
+        let mut notes = Vec::new();
+        let f = NativeFunctions::for_modules(&set, &mut notes);
+        assert_eq!(f.modules(), ["http1", "dns"], "{notes:?}");
+        assert!(notes.is_empty(), "{notes:?}");
+
+        // The example manifests list other catalogs, so they get none.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/examples/modules");
+        let mut set = ModuleSet::default();
+        set.insert(Manifest::load(&root.join("dns/manifest.yaml")).unwrap());
+        let f = NativeFunctions::for_modules(&set, &mut notes);
+        assert!(f.modules().is_empty());
+        assert_eq!(notes.len(), 1, "{notes:?}");
+    }
+
+    #[test]
+    fn native_functions_render_module_calls() {
+        use fps_flow::function::NamedArg;
+        use fps_flow::{ArgValue, CallArgs};
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
+        let mut set = ModuleSet::default();
+        set.insert(Manifest::load(&root.join("http1/manifest.yaml")).unwrap());
+        let mut f = NativeFunctions::for_modules(&set, &mut Vec::new());
+        let named = [NamedArg {
+            name: "status",
+            value: ArgValue::Int(204),
+        }];
+        let call = FnCall {
+            module: "http1",
+            function: "response",
+            args: CallArgs {
+                positional: &[],
+                named: &named,
+            },
+        };
+        let mut rng = rand_pcg::Pcg64Mcg::new(1);
+        let mut out = Vec::new();
+        f.render(&call, &mut rng, &mut out).unwrap();
+        assert!(
+            out.starts_with(b"HTTP/1.1 204"),
+            "{}",
+            String::from_utf8_lossy(&out)
+        );
+        let dns = FnCall {
+            module: "dns",
+            ..call
+        };
+        assert!(f.render(&dns, &mut rng, &mut Vec::new()).is_err());
+    }
+
+    #[test]
     fn integral_params_bind_as_integers() {
         let s = Scenario::parse(
             "scenario: t\nvars:\n  n: 1\n  r: 0.5\nflows:\n  - id: f\n    module: m\n    client:\n      - connect: { port: 1 }\n      - send: \"{{ vars.n }}\"\n",

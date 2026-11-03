@@ -450,6 +450,7 @@ dependencies = [
  "fps-stats",
  "hdrhistogram",
  "rand 0.8.8",
+ "rand_pcg",
  "serde",
  "serde_json",
  "sha2",
