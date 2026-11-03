@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of http1.pcapng, which capture.sh records in the QA-01 harness.
+# Every session of the fixture is HTTP on TCP port 8080, and nDPI must classify
+# at least 99% of them as HTTP from payload alone. realism/schema/labels.schema.json
+# defines the format.
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: http1
+    match: {transport: tcp, server_port: 8080}
+applications:
+  http1: {ndpi: [HTTP]}

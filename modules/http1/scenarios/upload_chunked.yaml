@@ -1,0 +1,21 @@
+scenario: upload_chunked
+description: One HTTP/1.1 PUT whose body travels in chunks, as a client that streams a file of unknown length sends it. The server answers with 201 Created and Connection close.
+vars:
+  host: www.example.test
+  server_port: 8080
+  upload_size: 65536
+  chunk_size: 4096
+flows:
+  - id: upload
+    module: http1
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ http1.request('PUT', '/files/report.bin', vars.host, accept='application/json', body=fill(vars.upload_size), content_type='application/octet-stream', chunked=true, chunk_size=vars.chunk_size) }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - expect: { pattern: "0\r\n\r\n", timeout_ms: 5000 }
+      - send: "{{ http1.response(201, content_type='', connection='close') }}"
+      - close: fin

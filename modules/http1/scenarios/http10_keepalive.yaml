@@ -1,0 +1,29 @@
+scenario: http10_keepalive
+description: Several HTTP/1.0 GET requests on one connection that both sides keep open with Connection keep-alive, each answered with a length delimited body.
+vars:
+  host: www.example.test
+  path: /index.html
+  server_port: 8080
+  requests: 3
+  body_size: 4096
+flows:
+  - id: fetch
+    module: http1
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - loop:
+          count: "{{ vars.requests }}"
+          do:
+            - send: "{{ http1.request('GET', vars.path, vars.host, version='1.0', connection='keep-alive') }}"
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+            - expect: { bytes: "{{ vars.body_size }}", timeout_ms: 5000 }
+            - delay: { dist: uniform, min_ms: 5, max_ms: 50 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - loop:
+          count: "{{ vars.requests }}"
+          do:
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 30000 }
+            - send: "{{ http1.response(200, body=fill(vars.body_size), version='1.0', connection='keep-alive') }}"
+      - close: fin

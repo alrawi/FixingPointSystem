@@ -1,0 +1,27 @@
+scenario: upload
+description: HTTP/1.1 POST uploads with length delimited bodies on one keepalive connection. The server answers each upload with 201 Created and an empty body.
+vars:
+  host: www.example.test
+  server_port: 8080
+  uploads: 2
+  upload_size: 65536
+flows:
+  - id: upload
+    module: http1
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - loop:
+          count: "{{ vars.uploads }}"
+          do:
+            - send: "{{ http1.request('POST', '/upload', vars.host, accept='application/json', body=fill(vars.upload_size), content_type='application/octet-stream') }}"
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - loop:
+          count: "{{ vars.uploads }}"
+          do:
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+            - expect: { bytes: "{{ vars.upload_size }}", timeout_ms: 5000 }
+            - send: "{{ http1.response(201, content_type='') }}"
+      - close: fin

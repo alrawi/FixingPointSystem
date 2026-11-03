@@ -1,0 +1,8 @@
+dist
+coverage
+playwright-report
+test-results
+package-lock.json
+src/api/schema.d.ts
+# Markdown follows the repository style of compact tables.
+*.md
