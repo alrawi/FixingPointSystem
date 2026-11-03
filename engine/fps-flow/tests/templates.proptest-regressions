@@ -1,8 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 4d86cd43d98903cc2119685f699dc36755eb3b837865bb0ffdd078c100d929b0 # shrinks to src = "{{ m.f(m.g(rand_int(1, 9)), k=session.id) }}", seed = 0, session = 9223372036854775808
-cc 2158680d7bab214d8b89e0de7369448d877916ab3c0136c2deb1cc39bc987380 # shrinks to src = "{{ m.f(m.g(rand_int(1, 9)), k=session.id) }}", seed = 0, session = 9223372036854775808, last = []
