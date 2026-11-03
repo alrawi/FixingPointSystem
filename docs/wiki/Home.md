@@ -42,6 +42,7 @@ A new agent reads four pages in order before claiming work.
 | [Transport](Transport.md) | Transport backends, starting with the kernel TCP backend, its socket options, and its loopback tests |
 | [Hosts](Hosts.md) | Host pool address mapping, slicing by agent and worker, and seeded host selection |
 | [Contracts](Contracts.md) | Contract files and versions, the agent initiated control protocol, and the contract checks |
+| [Agent](Agent.md) | The agent binary, its standalone `run` mode, plan loading, and module digests |
 | [Modules](Modules.md) | Application modules, starting with http1, their native functions, fixtures, and tests |
 | [Benchmarks](Benchmarks.md) | Benchmark result and baseline format, the comparison tool, and baseline refresh |
 | [Web UI](Web-UI.md) | The accepted web UI stack (D11) and the UI packages |
@@ -61,4 +62,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phase 0 is complete, including spike S3. Phase 1 has 46 packages merged after six batches, including CTL-17, so the controller binary serves the REST API and the agent service, and the rest are seeded as issues. The coordinator updates this line after each batch.
+Phase 0 is complete, including spike S3. Phase 1 has 50 packages merged after seven batches. The standalone agent runs the HTTP and DNS example plan in the namespace harness, and the controller binary serves the API, the agent service, and metrics. The coordinator updates this line after each batch.
