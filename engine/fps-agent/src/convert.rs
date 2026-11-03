@@ -108,6 +108,11 @@ fn param(entry: &str, name: &str, v: &prost_types::Value) -> Result<Json, Conver
     match &v.kind {
         Some(Kind::BoolValue(b)) => Ok(Json::Bool(*b)),
         Some(Kind::StringValue(s)) => Ok(Json::String(s.clone())),
+        // An integral number becomes a JSON integer, as a plan file writes it.
+        #[allow(clippy::cast_possible_truncation)]
+        Some(Kind::NumberValue(n)) if n.fract() == 0.0 && n.abs() < 9.0e15 => {
+            Ok(Json::from(*n as i64))
+        }
         Some(Kind::NumberValue(n)) => serde_json::Number::from_f64(*n)
             .map(Json::Number)
             .ok_or_else(bad),
@@ -333,6 +338,209 @@ pub fn plan_from_pb(p: &pb::Plan) -> Result<Plan, PlanError> {
     Ok(out)
 }
 
+fn pb_duration(d: Duration) -> Option<prost_types::Duration> {
+    if d.is_zero() {
+        return None;
+    }
+    Some(prost_types::Duration {
+        seconds: i64::try_from(d.as_secs()).unwrap_or(i64::MAX),
+        nanos: i32::try_from(d.subsec_nanos()).unwrap_or(0),
+    })
+}
+
+fn pb_param(v: &Json) -> prost_types::Value {
+    use prost_types::value::Kind;
+    let kind = match v {
+        Json::Bool(b) => Kind::BoolValue(*b),
+        Json::String(s) => Kind::StringValue(s.clone()),
+        Json::Number(n) => Kind::NumberValue(n.as_f64().unwrap_or_default()),
+        Json::Null | Json::Array(_) | Json::Object(_) => Kind::NullValue(0),
+    };
+    prost_types::Value { kind: Some(kind) }
+}
+
+/// Builds the generated `Plan` from a plan of the standalone mode, the
+/// inverse of [`plan_from_pb`]. Tests and tools use it to send a plan file
+/// in a `prepare` command.
+pub fn plan_to_pb(p: &Plan) -> pb::Plan {
+    use plan::{Backend, CriterionOp, HostRole, LoadObjective, PhaseShape, Topology};
+    pb::Plan {
+        plan_id: p.plan_id.clone(),
+        run_id: p.run_id.clone(),
+        agent_id: p.agent_id.clone(),
+        test_name: p.test_name.clone(),
+        engine_api: p.engine_api.clone(),
+        seed: p.seed,
+        topology: match p.topology {
+            Topology::Unspecified => 0,
+            Topology::AppSim => 1,
+            Topology::ClientSim => 2,
+            Topology::ServerSim => 3,
+        },
+        backend: match p.backend {
+            Backend::Unspecified => 0,
+            Backend::Kernel => 1,
+            Backend::AfXdp => 2,
+            Backend::Dpdk => 3,
+        },
+        modules: p
+            .modules
+            .iter()
+            .map(|m| pb::ModuleRef {
+                name: m.name.clone(),
+                version: m.version.clone(),
+                digest: m.digest.clone(),
+            })
+            .collect(),
+        scenarios: p
+            .scenarios
+            .iter()
+            .map(|s| pb::ScenarioSource {
+                r#ref: s.r#ref.clone(),
+                module: s.module.clone(),
+                source: s.source.clone(),
+                digest: s.digest.clone(),
+            })
+            .collect(),
+        mix: p
+            .mix
+            .iter()
+            .map(|m| pb::MixEntry {
+                id: m.id.clone(),
+                scenario: m.scenario.clone(),
+                weight: m.weight,
+                params: (!m.params.is_empty()).then(|| prost_types::Struct {
+                    fields: m
+                        .params
+                        .iter()
+                        .map(|(k, v)| (k.clone(), pb_param(v)))
+                        .collect(),
+                }),
+                client_pool: m.client_pool.clone(),
+                server_pool: m.server_pool.clone(),
+            })
+            .collect(),
+        ports: p
+            .ports
+            .iter()
+            .map(|b| pb::PortBinding {
+                name: b.name.clone(),
+                interface_name: b.interface_name.clone(),
+                mtu: b.mtu,
+            })
+            .collect(),
+        host_pools: p
+            .host_pools
+            .iter()
+            .map(|h| pb::HostPoolSlice {
+                name: h.name.clone(),
+                port: h.port.clone(),
+                role: match h.role {
+                    HostRole::Unspecified => 0,
+                    HostRole::Client => 1,
+                    HostRole::Server => 2,
+                },
+                ipv4_prefix: h.ipv4_prefix.clone(),
+                ipv6_prefix: h.ipv6_prefix.clone(),
+                pool_count: h.pool_count,
+                offset: h.offset,
+                count: h.count,
+                gateway: h.gateway.clone(),
+                vlan: h.vlan,
+                mac_base: h.mac_base.clone(),
+                os_profile: h.os_profile.clone(),
+            })
+            .collect(),
+        external_servers: p
+            .external_servers
+            .iter()
+            .map(|e| pb::ExternalServer {
+                name: e.name.clone(),
+                address: e.address.clone(),
+                port: e.port,
+            })
+            .collect(),
+        workers: p
+            .workers
+            .iter()
+            .map(|w| pb::WorkerPlan {
+                worker_id: w.worker_id,
+                core: w.core,
+                hosts: w
+                    .hosts
+                    .iter()
+                    .map(|h| pb::HostRange {
+                        pool: h.pool.clone(),
+                        offset: h.offset,
+                        count: h.count,
+                    })
+                    .collect(),
+                rates: w
+                    .rates
+                    .iter()
+                    .map(|r| {
+                        use pb::worker_rate::Target;
+                        pb::WorkerRate {
+                            mix_entry: r.mix_entry.clone(),
+                            target: match (r.sessions_per_second, r.concurrent_sessions) {
+                                (Some(v), _) => Some(Target::SessionsPerSecond(v)),
+                                (None, Some(v)) => Some(Target::ConcurrentSessions(v)),
+                                (None, None) => None,
+                            },
+                        }
+                    })
+                    .collect(),
+            })
+            .collect(),
+        load: Some(pb::LoadPlan {
+            objective: match p.load.objective {
+                LoadObjective::Unspecified => 0,
+                LoadObjective::ConcurrentSessions => 1,
+                LoadObjective::SessionsPerSecond => 2,
+                LoadObjective::ThroughputBps => 3,
+                LoadObjective::SimulatedUsers => 4,
+            },
+            objective_value: p.load.objective_value,
+            phases: p
+                .load
+                .phases
+                .iter()
+                .map(|ph| pb::LoadPhase {
+                    name: ph.name.clone(),
+                    duration: pb_duration(ph.duration),
+                    shape: match ph.shape {
+                        PhaseShape::Unspecified => 0,
+                        PhaseShape::Hold => 1,
+                        PhaseShape::Linear => 2,
+                        PhaseShape::Step => 3,
+                    },
+                    start_fraction: ph.start_fraction,
+                    end_fraction: ph.end_fraction,
+                    steps: ph.steps,
+                })
+                .collect(),
+        }),
+        warmup: pb_duration(p.warmup),
+        criteria: p
+            .criteria
+            .iter()
+            .map(|c| pb::Criterion {
+                metric: c.metric.clone(),
+                op: match c.op {
+                    CriterionOp::Unspecified => 0,
+                    CriterionOp::Lt => 1,
+                    CriterionOp::Le => 2,
+                    CriterionOp::Gt => 3,
+                    CriterionOp::Ge => 4,
+                    CriterionOp::Eq => 5,
+                    CriterionOp::Ne => 6,
+                },
+                value: c.value,
+            })
+            .collect(),
+    }
+}
+
 fn labels(v: &Json) -> HashMapLabels {
     v.get("labels")
         .and_then(Json::as_object)
@@ -516,6 +724,15 @@ mod tests {
             ..Default::default()
         };
         assert!(plan_from_pb(&p).is_err());
+    }
+
+    #[test]
+    fn the_example_plan_survives_the_round_trip_through_the_generated_types() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../contracts/examples/plans/http_dns_smoke.json");
+        let plan = Plan::load(&path).unwrap();
+        let back = plan_from_pb(&plan_to_pb(&plan)).unwrap();
+        assert_eq!(format!("{back:?}"), format!("{plan:?}"));
     }
 
     #[test]
