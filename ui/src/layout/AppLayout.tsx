@@ -5,7 +5,10 @@ import { NavLink, Outlet } from "react-router";
 import { useSession } from "../auth/session";
 
 /** Navigation entries. Later UI packages add their views here. */
-const NAV_ITEMS = [{ to: "/", label: "Capabilities", end: true }] as const;
+const NAV_ITEMS = [
+  { to: "/", label: "Capabilities", end: true },
+  { to: "/modules", label: "Modules", end: false },
+] as const;
 
 /**
  * The page frame after sign in: a skip link, a banner with the product name

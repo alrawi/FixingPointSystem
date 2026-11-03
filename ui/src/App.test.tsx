@@ -10,7 +10,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MOCK_TOKEN, startMockServer, type RunningMockServer } from "../mock/server";
 import { loadMockData } from "../mock/fixtures";
 import { QueryClient } from "@tanstack/react-query";
-import { App, createQueryClient } from "./App";
+import { ApiError } from "./api/client";
+import { App, createQueryClient, isRetryable } from "./App";
 
 let mock: RunningMockServer;
 
@@ -139,5 +140,17 @@ describe("capabilities", () => {
     window.sessionStorage.setItem("fps.token", MOCK_TOKEN);
     renderApp();
     expect(await screen.findByRole("heading", { level: 1, name: "Page not found" })).toBeDefined();
+  });
+});
+
+describe("isRetryable", () => {
+  it("retries only errors that may heal", () => {
+    for (const status of [500, 502, 503, 408, 429]) {
+      expect(isRetryable(new ApiError(status, undefined))).toBe(true);
+    }
+    for (const status of [400, 401, 403, 404, 409]) {
+      expect(isRetryable(new ApiError(status, undefined))).toBe(false);
+    }
+    expect(isRetryable(new TypeError("Failed to fetch"))).toBe(true);
   });
 });
