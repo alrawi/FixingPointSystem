@@ -4,9 +4,11 @@ go 1.24
 
 require (
 	github.com/alrawi/FixingPointSystem/tests/golden/go v0.0.0
+	github.com/dlclark/regexp2 v1.11.5
 	github.com/getkin/kin-openapi v0.133.0
 	github.com/oapi-codegen/oapi-codegen/v2 v2.6.0
 	github.com/oapi-codegen/runtime v1.3.1
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	go.yaml.in/yaml/v3 v3.0.4
 )
 
