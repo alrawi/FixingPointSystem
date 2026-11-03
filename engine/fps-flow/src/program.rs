@@ -3,9 +3,11 @@
 //!
 //! Each side of a flow compiles into a flat list of operations with jumps, so
 //! the interpreter runs loops and branches without recursion or per call
-//! allocation.
+//! allocation. [`Scenario::fold_constants`] folds the run variables into the
+//! templates, and [`Scenario::dump`] prints the compiled programs.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -379,6 +381,176 @@ impl Scenario {
         }
         Ok(())
     }
+
+    /// Returns the names that any `set` action of the scenario binds. Their
+    /// values differ between sessions.
+    pub fn set_targets(&self) -> HashSet<&str> {
+        let mut out = HashSet::new();
+        for p in self.programs() {
+            for op in &p.ops {
+                if let Op::Set(binds) = op {
+                    out.extend(binds.iter().map(|(k, _)| k.as_str()));
+                }
+            }
+        }
+        out
+    }
+
+    fn programs(&self) -> impl Iterator<Item = &Program> {
+        self.flows
+            .iter()
+            .flat_map(|f| std::iter::once(&f.client).chain(f.server.as_ref()))
+    }
+
+    /// Folds the scenario variables into every template.
+    ///
+    /// The engine calls this once per run, after [`Scenario::override_vars`].
+    /// Variables that a `set` action binds stay references, so the folded
+    /// scenario renders the same bytes as the original in every session.
+    pub fn fold_constants(&mut self) -> Result<(), LoadError> {
+        let targets = self.set_targets();
+        let constants: Vars = self
+            .vars
+            .iter()
+            .filter(|(k, _)| !targets.contains(k.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        for flow in &mut self.flows {
+            let at = format!("flow '{}'", flow.id);
+            fold_program(&mut flow.client, &constants)
+                .map_err(|e| e.within("client").within(&at))?;
+            if let Some(server) = &mut flow.server {
+                fold_program(server, &constants).map_err(|e| e.within("server").within(&at))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns a human readable dump of the compiled scenario for golden
+    /// tests. Variables appear in name order and ops with their indices.
+    pub fn dump(&self) -> String {
+        let mut out = String::new();
+        let _ = writeln!(out, "scenario {}", self.name);
+        let mut names: Vec<&String> = self.vars.keys().collect();
+        names.sort();
+        for name in names {
+            let _ = writeln!(out, "  var {name} = {:?}", self.vars[name]);
+        }
+        for flow in &self.flows {
+            let l4 = match flow.l4 {
+                L4::Tcp => "tcp",
+                L4::Udp => "udp",
+            };
+            let _ = writeln!(out, "flow {} module {} l4 {l4}", flow.id, flow.module);
+            dump_program(&mut out, "client", &flow.client);
+            if let Some(server) = &flow.server {
+                dump_program(&mut out, "server", server);
+            }
+        }
+        out
+    }
+}
+
+fn fold_template(t: &mut Template, constants: &Vars) -> Result<(), LoadError> {
+    *t = t.fold_vars(constants)?;
+    Ok(())
+}
+
+fn fold_program(p: &mut Program, constants: &Vars) -> Result<(), LoadError> {
+    fold_template(&mut p.port, constants)?;
+    if let Some(host) = &mut p.host {
+        fold_template(host, constants)?;
+    }
+    for (i, op) in p.ops.iter_mut().enumerate() {
+        let r = match op {
+            Op::Send(t)
+            | Op::Expect {
+                rule: StopRule::Bytes(t) | StopRule::MinBytes(t),
+                ..
+            }
+            | Op::Delay(Delay::Fixed(t))
+            | Op::LoopStart { count: t, .. } => fold_template(t, constants),
+            Op::Set(binds) => binds
+                .iter_mut()
+                .try_for_each(|(_, t)| fold_template(t, constants)),
+            _ => Ok(()),
+        };
+        r.map_err(|e| e.within(format!("op {i}")))?;
+    }
+    Ok(())
+}
+
+const DUMP_OP: usize = 6;
+
+fn dump_program(out: &mut String, side: &str, p: &Program) {
+    let _ = writeln!(out, "  {side}");
+    let _ = writeln!(out, "    port");
+    p.port.write_dump(out, DUMP_OP);
+    if let Some(host) = &p.host {
+        let _ = writeln!(out, "    host");
+        host.write_dump(out, DUMP_OP);
+    }
+    for (i, op) in p.ops.iter().enumerate() {
+        let _ = write!(out, "    {i} ");
+        match op {
+            Op::Send(t) => {
+                let _ = writeln!(out, "send");
+                t.write_dump(out, DUMP_OP);
+            }
+            Op::Expect { rule, timeout } => {
+                let ms = timeout.as_millis();
+                match rule {
+                    StopRule::Pattern(p) => {
+                        let _ = writeln!(
+                            out,
+                            "expect pattern \"{}\" timeout {ms} ms",
+                            p.escape_ascii()
+                        );
+                    }
+                    StopRule::Bytes(t) | StopRule::MinBytes(t) => {
+                        let kind = if matches!(rule, StopRule::Bytes(_)) {
+                            "bytes"
+                        } else {
+                            "min_bytes"
+                        };
+                        let _ = writeln!(out, "expect {kind} timeout {ms} ms");
+                        t.write_dump(out, DUMP_OP);
+                    }
+                }
+            }
+            Op::Delay(Delay::Fixed(t)) => {
+                let _ = writeln!(out, "delay fixed");
+                t.write_dump(out, DUMP_OP);
+            }
+            Op::Delay(d) => {
+                let _ = writeln!(out, "delay {d:?}");
+            }
+            Op::Set(binds) => {
+                let _ = writeln!(out, "set");
+                for (name, t) in binds {
+                    let _ = writeln!(out, "      {name} =");
+                    t.write_dump(out, DUMP_OP + 2);
+                }
+            }
+            Op::LoopStart { count, end } => {
+                let _ = writeln!(out, "loop end {end}");
+                count.write_dump(out, DUMP_OP);
+            }
+            Op::LoopEnd { start } => {
+                let _ = writeln!(out, "loop_end start {start}");
+            }
+            Op::Branch { arms } => {
+                let arms: Vec<String> = arms.iter().map(|(p, at)| format!("{p}->{at}")).collect();
+                let _ = writeln!(out, "branch {}", arms.join(" "));
+            }
+            Op::Jump(to) => {
+                let _ = writeln!(out, "jump {to}");
+            }
+            Op::Close(mode) => {
+                let _ = writeln!(out, "close {}", format!("{mode:?}").to_lowercase());
+            }
+        }
+    }
 }
 
 fn topo_order(
@@ -749,6 +921,34 @@ flows:
             err.to_string(),
             "flow 'a': client: action 3: loop: action 1: unknown function 'nope'"
         );
+    }
+
+    #[test]
+    fn fold_constants_keeps_variables_that_set_binds() {
+        let text = r#"
+scenario: t
+vars: { token: abc, port: 9000 }
+flows:
+  - id: a
+    module: m
+    client:
+      - connect: { port: "{{ vars.port }}" }
+      - send: "{{ vars.token }}"
+  - id: b
+    module: m
+    after: a
+    client:
+      - connect: { port: "{{ vars.port }}" }
+      - set: { token: "{{ rand_int(1, 9) }}" }
+"#;
+        let mut s = Scenario::parse(text).unwrap();
+        s.override_vars(&[("port".into(), Value::Int(9100))])
+            .unwrap();
+        s.fold_constants().unwrap();
+        let a = &s.flows[0].client;
+        assert_eq!(a.port.as_static(), Some(&b"9100"[..]));
+        assert!(matches!(&a.ops[0], Op::Send(t) if t.variables() == ["token"]));
+        assert!(s.dump().contains("set\n      token =\n"));
     }
 
     #[test]

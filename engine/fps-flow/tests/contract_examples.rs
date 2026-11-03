@@ -1,30 +1,57 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Contract test: every example scenario in `contracts/examples` compiles.
+//! Contract test: every example scenario in `contracts/examples` compiles, and
+//! its compiled programs match the golden dumps under `tests/testdata/examples/`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use fps_flow::program::L4;
+use fps_flow::program::{Op, L4};
 use fps_flow::Scenario;
 
-const SUPPORTED_EXAMPLES: [&str; 3] = [
-    "dns/scenarios/lookup.yaml",
-    "http1/scenarios/web_browse.yaml",
-    "http1/scenarios/web_get.yaml",
-];
+fn examples() -> Vec<(String, PathBuf)> {
+    let modules = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/examples/modules");
+    let mut out = Vec::new();
+    for module in std::fs::read_dir(&modules).expect("examples directory") {
+        let module = module.expect("module entry").path();
+        let Ok(scenarios) = std::fs::read_dir(module.join("scenarios")) else {
+            continue;
+        };
+        for entry in scenarios {
+            let path = entry.expect("scenario entry").path();
+            if path.extension().is_some_and(|e| e == "yaml") {
+                let name = format!(
+                    "{}.{}",
+                    module.file_name().expect("module name").to_string_lossy(),
+                    path.file_stem().expect("scenario name").to_string_lossy()
+                );
+                out.push((name, path));
+            }
+        }
+    }
+    out.sort();
+    out
+}
 
 #[test]
-fn v0_1_example_scenarios_compile() {
-    let modules = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/examples/modules");
-    let mut compiled = Vec::new();
-    for example in SUPPORTED_EXAMPLES {
-        let path = modules.join(example);
-        let s = Scenario::load(&path).unwrap_or_else(|e| panic!("{e}"));
-        compiled.push(s.name);
+fn every_example_scenario_compiles_to_its_golden_dump() {
+    let examples = examples();
+    // The v0.2 examples include module calls with keyword arguments and `last`.
+    for name in [
+        "dns.lookup",
+        "dns.resolve",
+        "http1.web_browse",
+        "http1.web_get",
+        "http1.web_page",
+    ] {
+        assert!(examples.iter().any(|(n, _)| n == name), "{name} missing");
     }
-    compiled.sort();
-    // The v0.1 examples use the grammar supported by this engine version.
-    for name in ["lookup", "web_browse", "web_get"] {
-        assert!(compiled.iter().any(|n| n == name), "{name} in {compiled:?}");
+    for (name, path) in examples {
+        let mut s = Scenario::load(&path).unwrap_or_else(|e| panic!("{e}"));
+        let mut dump = String::from("== compiled\n");
+        dump.push_str(&s.dump());
+        s.fold_constants().unwrap_or_else(|e| panic!("{name}: {e}"));
+        dump.push_str("== folded\n");
+        dump.push_str(&s.dump());
+        fps_golden::assert_golden!(format!("examples/{name}.dump"), dump);
     }
 }
 
@@ -36,8 +63,35 @@ fn dns_lookup_records_udp_and_hex_payloads() {
     let flow = &s.flows[0];
     assert_eq!(flow.l4, L4::Udp);
     match &flow.client.ops[0] {
-        fps_flow::program::Op::Send(t) => assert!(t.is_static()),
+        Op::Send(t) => assert!(t.is_static()),
         other => panic!("first client op is {other:?}"),
+    }
+}
+
+#[test]
+fn dns_resolve_keeps_set_targets_as_references() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../contracts/examples/modules/dns/scenarios/resolve.yaml");
+    let mut s = Scenario::load(&path).expect("resolve.yaml");
+    assert_eq!(
+        s.set_targets().into_iter().collect::<Vec<_>>(),
+        ["server_ip"]
+    );
+    s.fold_constants().expect("fold");
+    let client = &s.flows[0].client;
+    assert_eq!(client.port.as_static(), Some(&b"53"[..]));
+    match &client.ops[0] {
+        Op::Send(t) => {
+            assert!(t.variables().is_empty());
+            let calls = t.module_calls();
+            assert_eq!(calls[0].module, "dns");
+            assert_eq!(calls[0].keywords, ["name", "qtype"]);
+        }
+        other => panic!("first client op is {other:?}"),
+    }
+    match &client.ops[2] {
+        Op::Set(binds) => assert!(binds[0].1.uses_last()),
+        other => panic!("third client op is {other:?}"),
     }
 }
 

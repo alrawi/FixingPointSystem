@@ -9,6 +9,8 @@ These tools run the [Swarm Protocol](https://github.com/alrawi/FixingPointSystem
 | `testdata/` | Recorded API responses that seed the fake |
 | `test_fps_swarm.py` | Unit and component tests, which never reach the network |
 | `bootstrap-labels.sh` | Creates the label set of the protocol |
+| `project_sync.py` | Copies each status label into the Status field of the owner's project over GraphQL, run by `../../.github/workflows/project-sync.yml` with the secret `FPS_PROJECT_TOKEN`; see the wiki page Operations |
+| `test_project_sync.py` | Tests of the project sync that replay GraphQL responses from `testdata/project_sync/` |
 | `../../.github/workflows/swarm-scan.yml` | The scanner, which runs `fps_swarm.py sweep` every 30 minutes and on manual dispatch with a `dry_run` input |
 
 We call every subcommand with the agent identifier in `FPS_AGENT_ID`.

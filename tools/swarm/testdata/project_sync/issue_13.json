@@ -1,0 +1,37 @@
+{
+  "data": {
+    "repository": {
+      "issue": {
+        "id": "I_kwDOFPS0013",
+        "number": 13,
+        "labels": {
+          "nodes": [
+            {
+              "name": "status:in-progress"
+            },
+            {
+              "name": "type:wp"
+            },
+            {
+              "name": "needs:owner"
+            }
+          ]
+        },
+        "projectItems": {
+          "nodes": [
+            {
+              "id": "PVTI_13",
+              "project": {
+                "id": "PVT_kwHOAAlrawi4AAA1"
+              },
+              "fieldValueByName": {
+                "optionId": "61e4505c",
+                "name": "Ready"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -90,6 +90,10 @@
         {
           "if": {"properties": {"check": {"const": "conformance"}}, "required": ["check"]},
           "then": {"$ref": "#/$defs/conformance"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "parser_errors"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/parser_errors"}
         }
       ]
     },
@@ -177,6 +181,117 @@
           }
         },
         "mismatches_total": {"type": "integer", "minimum": 0}
+      }
+    },
+    "parser_counts": {
+      "type": "object",
+      "required": ["parser_errors", "malformed_packets"],
+      "additionalProperties": false,
+      "properties": {
+        "parser_errors": {"type": "integer", "minimum": 0},
+        "malformed_packets": {"type": "integer", "minimum": 0}
+      }
+    },
+    "parser_errors": {
+      "description": "Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran and no parser reported an error.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "parsers", "missing_parsers", "applications",
+        "unlabelled_errors", "unattributed_errors", "errors", "errors_total"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "parser_errors"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "Empty until the metric catalog defines a parser error metric.",
+          "type": "array",
+          "maxItems": 0
+        },
+        "parsers": {
+          "description": "The parsers that ran, in run order.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["parser", "version"],
+            "additionalProperties": false,
+            "properties": {
+              "parser": {"enum": ["tshark", "zeek", "stub"]},
+              "version": {"type": "string"}
+            }
+          }
+        },
+        "missing_parsers": {
+          "description": "Parsers that the runner looked for and did not find.",
+          "type": "array",
+          "items": {"enum": ["tshark", "zeek"]}
+        },
+        "applications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["application", "sessions", "parser_errors", "malformed_packets", "by_parser"],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "sessions": {"type": "integer", "minimum": 1},
+              "parser_errors": {
+                "description": "The largest parser error count of any one parser.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "malformed_packets": {
+                "description": "The largest malformed packet count of any one parser.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "by_parser": {
+                "type": "object",
+                "additionalProperties": {"$ref": "#/$defs/parser_counts"}
+              }
+            }
+          }
+        },
+        "unlabelled_errors": {
+          "description": "Parser errors per parser in sessions that no labels rule names.",
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "unattributed_errors": {
+          "description": "Parser errors per parser that belong to no TCP or UDP session of the capture.",
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "errors": {
+          "description": "The first 100 parser errors in parser order.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "parser", "kind", "name", "message", "frame", "timestamp", "session",
+              "application", "transport", "client", "server"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "parser": {"enum": ["tshark", "zeek", "stub"]},
+              "kind": {"enum": ["malformed", "error", "weird"]},
+              "name": {
+                "description": "The protocol of the faulty layer for tshark, and the weird names for Zeek.",
+                "type": "string"
+              },
+              "message": {"type": "string"},
+              "frame": {"type": ["integer", "null"], "minimum": 1},
+              "timestamp": {"type": ["number", "null"]},
+              "session": {"type": ["integer", "null"], "minimum": 1},
+              "application": {"type": ["string", "null"]},
+              "transport": {"enum": ["tcp", "udp", null]},
+              "client": {"oneOf": [{"$ref": "#/$defs/endpoint"}, {"type": "null"}]},
+              "server": {"oneOf": [{"$ref": "#/$defs/endpoint"}, {"type": "null"}]}
+            }
+          }
+        },
+        "errors_total": {"type": "integer", "minimum": 0}
       }
     }
   }
