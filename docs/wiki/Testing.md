@@ -61,7 +61,7 @@ The targets that exist today are listed below.
 | `lint-ctl` | `gofmt -l`, `go vet`, and `golangci-lint run` over the controller, skipping golangci-lint with a notice when it is missing |
 | `test-con` | the contract validator and its tests |
 | `test-ctl` | `go test -race ./...` over the controller |
-| `test-ops` | the plan tool tests, the Cargo workspace probe, and a parse of `go.work` |
+| `test-ops` | the plan and wiki tool tests and the Cargo workspace probe |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
 | `lint-qa` | gofmt, go vet, and golangci-lint on the Go golden file helper, and ruff and `mypy --strict` on the Python one, each skipped with a notice when its tool is missing |
 | `test-qa` | the match, mismatch, and update tests of the three [golden file helpers](#golden-files) |
@@ -73,7 +73,7 @@ The targets that exist today are listed below.
 | `lint-rlm` | `ruff format --check`, `ruff check`, and `mypy --strict` over `realism/` |
 | `test-rlm` | the realism runner tests, including the ndpiReader test when nDPI is installed |
 
-A workstream adds its targets in a block of its own above the aggregate targets at the bottom of the `Makefile`. The block appends to `LINT_TARGETS` and `TEST_TARGETS` on separate lines and delegates to the workstream's own commands, so parallel packages never edit the same line. End to end targets append to `E2E_TARGETS` in the same way, and `make e2e` runs them. These targets need root, so `make test` leaves them out and an agent runs `sudo make e2e`.
+The root `Makefile` never changes. It includes every file under `mk/`, and each workstream area owns one of them, for example `mk/ctl.mk` or `mk/qa-harness.mk`. A file appends its targets to `LINT_TARGETS` and `TEST_TARGETS` and delegates to the workstream's own commands, so parallel packages never edit the same file. The Rust workspace takes its members from the globs `spikes/*`, `engine/*`, and `modules/*/native`, and the crate `modules/_template/native` keeps the module glob matching, so a new crate needs no edit to the root `Cargo.toml`. The `test-ops-workspace` target proves this on every run. Every Go module builds on its own because the `Makefile` and the workflows set `GOWORK=off`, so a new module needs no edit to `go.work`. End to end targets append to `E2E_TARGETS` in the same way, and `make e2e` runs them. These targets need root, so `make test` leaves them out and an agent runs `sudo make e2e`.
 
 ```make
 # CTL controller
@@ -86,8 +86,6 @@ test-ctl:
 	cd controller && go test -race ./...
 ```
 
-The Rust workspace in the root `Cargo.toml` takes its members from a glob, so a new crate under `spikes/` or `engine/` builds without an edit there. The crate `fps-golden` lives outside both roots and is listed by its path `tests/golden/rust`. The `test-ops-workspace` target proves the glob on every run by building an empty probe crate under `engine/` in a temporary copy of the workspace root, which also holds every member listed by path. The Go workspace in `go.work` lists the module `tests/golden/go`, and the package that creates `controller/` or `cli/` adds one `use` line for it. The handoff file of [OPS-01](https://github.com/alrawi/FixingPointSystem/blob/main/docs/handoff/OPS-01.md) explains both choices.
-The Rust workspace in the root `Cargo.toml` takes its members from a glob, so a new crate under `spikes/` or `engine/` builds without an edit there. The `test-ops-workspace` target proves this on every run by building an empty probe crate under `engine/` in a temporary copy of the workspace root. The Go workspace in `go.work` lists `./controller` since CTL-01, and the package that creates `cli/` adds one `use` line for it. The handoff file of [OPS-01](https://github.com/alrawi/FixingPointSystem/blob/main/docs/handoff/OPS-01.md) explains both choices.
 
 Fast levels finish within five minutes on a CI runner. A test that needs longer moves to the end to end or performance level.
 
@@ -213,7 +211,7 @@ fn plan_renders_stable_json() {
 
 The function `fps_golden::assert_golden(path, output)` takes any path, and `fps_golden::check(path, output, mode)` returns a `Result` for tests that inspect the failure.
 
-The Go module `github.com/alrawi/FixingPointSystem/tests/golden/go` is listed in `go.work`, so modules in the workspace import it without a `replace` line. `golden.Assert` resolves the name under the package's `testdata/`, which is the working directory of `go test`.
+A Go module that imports `github.com/alrawi/FixingPointSystem/tests/golden/go` adds a `replace` line that points at `../tests/golden/go`, because builds run with `GOWORK=off`. `golden.Assert` resolves the name under the package's `testdata/`, which is the working directory of `go test`.
 
 ```go
 import golden "github.com/alrawi/FixingPointSystem/tests/golden/go"
@@ -274,7 +272,7 @@ A workstream workflow follows six rules.
 
 1. **Name it after the workstream.** The workflow `name` is the workstream, as in `ctl`, and the job id names the level, as in `test`. The file usually carries the same name, as `ops.yml` does. The controller workflow is `controller.yml` at the owner's request.
 2. **Run the make targets.** The job installs its toolchains and then runs `make lint-<ws> test-<ws>`, so CI and agents run the same commands.
-3. **Filter by paths.** The `push` and `pull_request` triggers list the workstream's catalog paths and the shared root files `Cargo.toml`, `Cargo.lock`, `Makefile`, `go.work`, and `.github/**`.
+3. **Filter by paths.** The `push` and `pull_request` triggers list the workstream's catalog paths and the area's own `mk/` file and workflow file, and `Cargo.toml` and `Cargo.lock` for Rust areas. The workflow file is named after the area, for example `qa-golden.yml` or `qa-harness.yml`, so two packages never create the same file.
 4. **Pin the toolchain.** Go and Python versions are explicit, and Rust uses the stable toolchain as in `ci.yml`.
 5. **Grant least privilege.** The workflow sets `permissions` to `contents: read` unless a job must write.
 6. **Keep slow levels apart.** End to end, realism, and performance jobs live in their own workflow files with the triggers that the levels table names, so the fast workflow stays within five minutes.
@@ -293,7 +291,7 @@ sudo tests/harness/netns.sh capture stop
 sudo tests/harness/netns.sh down                     # removes every namespace, link, and route
 ```
 
-A test reads addresses from `netns.sh info` and sets `FPS_NETNS` to a name of its own, so several harnesses run side by side. The harness turns off IPv6 and the veth segmentation offloads by default, so captures hold only test traffic in frames no larger than the MTU. The [harness README](https://github.com/alrawi/FixingPointSystem/blob/main/tests/harness/README.md) lists every command and setting. The `harness` job of `.github/workflows/qa.yml` runs the self test as root on `ubuntu-24.04`, including the VLAN case that needs the `8021q` kernel module.
+A test reads addresses from `netns.sh info` and sets `FPS_NETNS` to a name of its own, so several harnesses run side by side. The harness turns off IPv6 and the veth segmentation offloads by default, so captures hold only test traffic in frames no larger than the MTU. The [harness README](https://github.com/alrawi/FixingPointSystem/blob/main/tests/harness/README.md) lists every command and setting. The `harness` job of `.github/workflows/qa-harness.yml` runs the self test as root on `ubuntu-24.04`, including the VLAN case that needs the `8021q` kernel module.
 
 ## Gate suites
 

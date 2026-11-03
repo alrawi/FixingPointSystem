@@ -4,7 +4,7 @@
 
 Gate 1. A two arm run of the HTTP/1.1 and DNS mix through the controller and one kernel backend agent reaches 99% nDPI classification as the intended application, and the REST API skeleton passes its contract tests.
 
-This page lists 49 work packages. Packages marked critical path gate the phase.
+This page lists 50 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -15,6 +15,7 @@ flowchart LR
   OPS_02["OPS-02<br/>Swarm helper command"]
   OPS_03["OPS-03<br/>Stale lease scanner and dependency promoter"]
   OPS_04["OPS-04<br/>Project board status sync"]
+  OPS_06["OPS-06<br/>Conflict free shared files"]
   QA_01["QA-01<br/>Two arm network namespace harness"]
   QA_02["QA-02<br/>Golden file helpers"]
   QA_03["QA-03<br/>Benchmark baseline comparison"]
@@ -61,6 +62,7 @@ flowchart LR
   UI_01["UI-01<br/>Web UI skeleton"]
   UI_02["UI-02<br/>Module library view"]
   OPS_02 --> OPS_03
+  OPS_01 --> OPS_06
   OPS_01 --> QA_01
   OPS_01 --> QA_02
   OPS_01 --> QA_03
@@ -140,6 +142,7 @@ flowchart LR
 | [OPS-02](#ops-02-swarm-helper-command) | Swarm helper command | M | none |  |
 | [OPS-03](#ops-03-stale-lease-scanner-and-dependency-promoter) | Stale lease scanner and dependency promoter | S | OPS-02 |  |
 | [OPS-04](#ops-04-project-board-status-sync) | Project board status sync | S | none |  |
+| [OPS-06](#ops-06-conflict-free-shared-files) | Conflict free shared files | M | OPS-01 |  |
 | [QA-01](#qa-01-two-arm-network-namespace-harness) | Two arm network namespace harness | M | OPS-01 | yes |
 | [QA-02](#qa-02-golden-file-helpers) | Golden file helpers | S | OPS-01 |  |
 | [QA-03](#qa-03-benchmark-baseline-comparison) | Benchmark baseline comparison | M | OPS-01 |  |
@@ -371,6 +374,24 @@ Deliverables.
 Acceptance.
 
 - [ ] Relabeling a test issue moves its card to the matching column within one minute.
+
+### OPS-06 Conflict free shared files
+
+Phase 1 · size M · workstream OPS
+
+- **Depends on.** OPS-01
+- **Paths.** `Makefile`, `Cargo.toml`, `go.work`, `tools/plan/`, `tools/wiki/`, `.github/workflows/`
+
+Replace the files that every package edited with per package files, and add conflict checked batches and a merge train, so parallel pull requests merge cleanly.
+
+Deliverables.
+
+- mk/*.mk per workstream area, plain Cargo globs with modules/_template/native, GOWORK=off, log entry files, contracts/changes/.
+- tools/plan/plan.py batch and the Conflict free merges section of the Swarm Protocol.
+
+Acceptance.
+
+- [ ] `make lint test` passes with no make warnings, and `plan.py batch` holds back packages that share a path.
 
 ## QA Test infrastructure and gate suites
 

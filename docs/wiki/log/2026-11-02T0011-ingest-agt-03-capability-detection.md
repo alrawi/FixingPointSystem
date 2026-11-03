@@ -1,0 +1,3 @@
+## [2026-11-02] ingest | AGT-03 Capability detection
+
+We created the crate `engine/fps-agent` with capability detection. It reads cores, NUMA nodes, memory, port drivers, the kernel version, and AF_XDP support from `/proc` and `/sys` under an injectable system root and fills a Rust mirror of the proto `Capabilities` message, which a contract test compares with `agent.proto`. We added the Capability detection section and a seam row to [Implementation Plan](Implementation-Plan.md) and the `test-agt` target to [Testing](Testing.md). NUMA nodes, the kernel release, and per port XDP hints have no field in contract version 0.1.0, and follow up #74 proposes them. The evidence is `docs/handoff/AGT-03.md` and `engine/fps-agent/tests/detect.rs`.

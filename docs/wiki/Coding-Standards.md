@@ -225,7 +225,7 @@ Contract files follow five rules, and the validator enforces the first three.
 1. YAML uses two space indentation and plain integers for numbers. We write `10000000000`, because some parsers read `10e9` as a string.
 2. Strings that contain `: `, `#`, braces, or a leading special character are quoted.
 3. Every example under `contracts/examples/` validates.
-4. Each contract file carries its version, and `contracts/CHANGELOG.md` records every change.
+4. Each contract file carries its version, and every change adds a file `contracts/changes/<ID>.md` that the coordinator folds into `contracts/CHANGELOG.md` when a version ships.
 5. A field is never removed or renamed in a minor version. Deprecation lasts two minor releases.
 
 ## Modules

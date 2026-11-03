@@ -72,3 +72,28 @@ def test_labels_for_epic_and_ready(catalog: dict) -> None:
 def test_lint_reports_broken_link(tmp_path: Path) -> None:
     (tmp_path / "Home.md").write_text("[a](Missing.md)\n", encoding="utf-8")
     assert plan.lint(tmp_path) == ["Home.md: broken link to Missing.md"]
+
+
+def test_batch_skips_packages_that_share_a_path(catalog: dict) -> None:
+    picked, skipped = plan.batch(catalog, ["ENG-02", "ENG-03", "CTL-02", "CTL-10"], 8)
+    assert "ENG-03" in picked and "CTL-02" in picked
+    assert ("ENG-02", "ENG-03") in skipped
+    assert ("CTL-10", "CTL-02") in skipped
+
+
+def test_batch_respects_the_limit(catalog: dict) -> None:
+    picked, _ = plan.batch(catalog, ["ENG-03", "TRN-01", "HST-01"], 2)
+    assert len(picked) == 2
+
+
+def test_paths_overlap() -> None:
+    assert plan.paths_overlap("controller/", "controller/internal/api/")
+    assert not plan.paths_overlap("controller/internal/api/", "controller/internal/store/")
+    assert not plan.paths_overlap("engine/fps-io/", "engine/fps-io2/")
+
+
+def test_log_entry_with_bad_heading_fails(tmp_path: Path) -> None:
+    (tmp_path / "Home.md").write_text("# Home\n", encoding="utf-8")
+    (tmp_path / "log").mkdir()
+    (tmp_path / "log" / "2026-11-03T1200-ingest-x.md").write_text("# wrong\n", encoding="utf-8")
+    assert any("first line" in e for e in plan.lint(tmp_path))

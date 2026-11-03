@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Go workspace for the controller, the command line client, and the test
-// helpers. Each module has a use line of its own. The package that creates
-// controller/ adds the line "use ./controller", and the package that creates cli/
-// adds "use ./cli". Raise the go line when a module requires a newer Go.
+// Editor convenience only. Builds, tests, and CI run with GOWORK=off, so each Go
+// module stands on its own, and a new module never needs a line here. Do not add
+// use lines in work packages; the coordinator refreshes this file between batches.
 
 go 1.24
 

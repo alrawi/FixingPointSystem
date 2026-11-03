@@ -15,7 +15,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - Makefile
-      - go.work
+      - mk/ctl.mk
   pull_request:
     paths:
       - .github/**
@@ -23,10 +23,13 @@ on:
       - Cargo.toml
       - Cargo.lock
       - Makefile
-      - go.work
+      - mk/ctl.mk
 
 permissions:
   contents: read
+
+env:
+  GOWORK: "off"
 
 jobs:
   test:

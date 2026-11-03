@@ -1,0 +1,3 @@
+## [2026-11-02] ingest | CTL-01 Controller skeleton
+
+We added the Go module `github.com/alrawi/FixingPointSystem/controller` with the `fps-controller` binary, YAML configuration with strict keys, `log/slog` JSON logging, `GET /healthz`, and graceful shutdown on SIGINT and SIGTERM. We added the page [Controller](Controller.md) and linked it from [Home](Home.md). We corrected two stale claims in [Testing](Testing.md), which said that `go.work` lists no modules and named the CTL workflow `ctl.yml`, and added the `lint-ctl` and `test-ctl` targets to its table. The workflow `.github/workflows/controller.yml` pins golangci-lint v2.12.2 through its action. The evidence is `make lint-ctl test-ctl` and the handoff file `docs/handoff/CTL-01.md`.

@@ -15,7 +15,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - Makefile
-      - go.work
+      - mk/rlm.mk
   pull_request:
     paths:
       - realism/**
@@ -24,10 +24,13 @@ on:
       - Cargo.toml
       - Cargo.lock
       - Makefile
-      - go.work
+      - mk/rlm.mk
 
 permissions:
   contents: read
+
+env:
+  GOWORK: "off"
 
 jobs:
   test:
