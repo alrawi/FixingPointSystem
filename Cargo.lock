@@ -343,6 +343,18 @@ dependencies = [
 [[package]]
 name = "fps-interp"
 version = "0.0.1"
+dependencies = [
+ "bytes",
+ "fps-flow",
+ "fps-io",
+ "memchr",
+ "rand 0.8.8",
+ "rand_distr",
+ "rand_pcg",
+ "serde_norway",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "fps-io"
