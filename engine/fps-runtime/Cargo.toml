@@ -1,0 +1,25 @@
+[package]
+name = "fps-runtime"
+description = "Worker runtime of the FixingPointSystem engine, with one single threaded Tokio runtime per worker thread"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Pins a worker thread to one core with sched_setaffinity, so this crate needs no unsafe code.
+core_affinity = "0.8"
+fps-backend-kernel = { path = "../fps-backend-kernel" }
+fps-flow = { path = "../fps-flow" }
+fps-hosts = { path = "../fps-hosts" }
+fps-interp = { path = "../fps-interp" }
+fps-io = { path = "../fps-io" }
+fps-sched = { path = "../fps-sched" }
+fps-stats = { path = "../fps-stats" }
+# Error enums for library code, as docs/wiki/Coding-Standards.md requires.
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "test-util", "time"] }
