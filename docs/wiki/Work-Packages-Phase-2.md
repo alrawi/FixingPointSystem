@@ -4,13 +4,15 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 53 work packages. Packages marked critical path gate the phase.
+This page lists 55 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
 
 ```mermaid
 flowchart LR
+  CON_10["CON-10<br/>Behavior profiles and distributions in the scenario contract"]
+  CTL_21["CTL-21<br/>Throughput rate calibration"]
   CON_05["CON-05<br/>Agent control protocol v0.2"]
   OPS_05["OPS-05<br/>Release workflow"]
   ENG_11["ENG-11<br/>WebAssembly extension host"]
@@ -123,6 +125,8 @@ flowchart LR
 
 | ID | Title | Size | Depends on | Critical |
 |---|---|---|---|---|
+| [CON-10](#con-10-behavior-profiles-and-distributions-in-the-scenario-contract) | Behavior profiles and distributions in the scenario contract | M | CON-04 |  |
+| [CTL-21](#ctl-21-throughput-rate-calibration) | Throughput rate calibration | M | CTL-18, CTL-08 |  |
 | [CON-05](#con-05-agent-control-protocol-v02) | Agent control protocol v0.2 | S | CON-01 |  |
 | [OPS-05](#ops-05-release-workflow) | Release workflow | M | OPS-01 |  |
 | [ENG-11](#eng-11-webassembly-extension-host) | WebAssembly extension host | M | CON-03, ENG-04 |  |
@@ -178,6 +182,25 @@ flowchart LR
 | [QA-05](#qa-05-gate-2-acceptance-suite) | Gate 2 acceptance suite | M | MOD-04, MOD-06, MOD-07, MOD-08, MOD-09, MOD-10, MOD-11, MOD-13, MOD-14, MOD-15, MOD-16, MOD-17, MOD-18, RLM-03, RLM-04, RLM-05, RLM-06, RLM-07, RLM-08, RLM-09, RLM-10, CTL-12, IMG-04 | yes |
 
 ## CON Contracts
+
+### CON-10 Behavior profiles and distributions in the scenario contract
+
+Phase 2 · size M · workstream CON
+
+- **Depends on.** CON-04
+- **Paths.** `contracts/schemas/scenario.schema.json`, `contracts/examples/modules/`
+
+Apply decision D12 item 18. Define the profiles root and the dist module that the specification example uses, such as profiles.chrome and dist.pareto(...).
+
+Deliverables.
+
+- The profiles root and the dist functions in the scenario grammar.
+- The specification example validates.
+- An entry in contracts/changes/CON-10.md.
+
+Acceptance.
+
+- [ ] The schema checks pass on the specification example.
 
 ### CON-05 Agent control protocol v0.2
 
@@ -365,6 +388,23 @@ Acceptance.
 - [ ] A fake controller test changes rates and downloads a capture.
 
 ## CTL Controller
+
+### CTL-21 Throughput rate calibration
+
+Phase 2 · size M · workstream CTL
+
+- **Depends on.** CTL-18, CTL-08
+- **Paths.** `controller/internal/runs/calibrate/`
+
+Apply decision D12 item 10. The compiler turns a throughput objective into a session rate from expected_bytes, and the controller corrects the rate from measured bytes per session during the run.
+
+Deliverables.
+
+- The rate correction loop with bounds on step size.
+
+Acceptance.
+
+- [ ] A test with a wrong estimate converges to within 5 percent of the throughput objective.
 
 ### CTL-11 Module signing and signed index
 

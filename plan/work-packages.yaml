@@ -1029,6 +1029,194 @@ work_packages:
     acceptance:
       - A pull request that breaks the http1 request line fails the job.
 
+  - id: CON-07
+    title: API contract fields for failure reasons and cleanup
+    phase: 1
+    workstream: CON
+    size: S
+    depends_on: [CON-06]
+    paths: [contracts/openapi/]
+    summary: >-
+      Apply decision D12 items 19 and 20. The API says why a run failed and why a criterion
+      passed, failed, or is missing, and the contract needs no generator workaround.
+    deliverables:
+      - A Run field reason with the failure reason as a string.
+      - Criterion result fields observed, passed, and reason in the report verdict items.
+      - "`type: string` on every enum, `GET /metrics` documented outside `/v1`, and `MetricSample.values` with format double."
+      - An entry in contracts/changes/CON-07.md.
+    acceptance:
+      - "`buf lint`, the OpenAPI lint, and `python3 tools/contracts/check_plans.py` pass, and the change is additive."
+
+  - id: CON-08
+    title: Metric catalog views, reasons, and side label
+    phase: 1
+    workstream: CON
+    size: S
+    depends_on: [CON-02]
+    paths: [contracts/metrics/]
+    summary: >-
+      Apply decision D12 items 13, 15, 17, and 21 to the metric catalog.
+    deliverables:
+      - A view field on every catalog metric that names its API MetricView.
+      - The histogram statistic suffixes p50, p90, p99, p999, min, max, mean, and count as the documented fixed list.
+      - The failure reasons datagram_rejected, template_error, and extension_error.
+      - A side label with the values client and server on every session and transport metric.
+      - An entry in contracts/changes/CON-08.md.
+    acceptance:
+      - The catalog checks pass and every metric has a view.
+
+  - id: CON-09
+    title: Test configuration and manifest schema additions
+    phase: 1
+    workstream: CON
+    size: M
+    depends_on: [CON-04]
+    paths: [contracts/schemas/, contracts/examples/tests/, contracts/examples/modules/]
+    summary: >-
+      Apply decision D12 items 7, 9, 10, 14, and 22 to the test configuration and module
+      manifest schemas.
+    deliverables:
+      - A seed of at least 1, with the controller choosing a random nonzero seed when the configuration has none.
+      - The port location rule that agent/interface pins a port to one agent and a bare interface or */interface spreads it across agents.
+      - An optional where filter on a criterion that selects labels such as application.
+      - A modules.<name>.settings object that the manifest of each module describes with a JSON schema, with zone_file for dns.
+      - An expected_bytes estimate per scenario in the module manifest.
+      - An entry in contracts/changes/CON-09.md.
+    acceptance:
+      - The schema checks pass on every example, and one new example uses each addition.
+
+  - id: CTL-18
+    title: Compiler port pinning, host share rates, seeds, and module settings
+    phase: 1
+    workstream: CTL
+    size: M
+    depends_on: [CTL-05, CON-09]
+    paths: [controller/internal/compiler/]
+    summary: >-
+      Apply decision D12 items 7, 8, 9, and 22 in the test compiler.
+    deliverables:
+      - Port locations that name an agent compile to that agent only.
+      - Rates that follow host shares, so a worker without hosts of a pool gets no rate for flows that need that pool while the total rate stays as configured.
+      - A random nonzero seed when the configuration has none.
+      - Module settings validated against the manifest schema and carried in the plan.
+    acceptance:
+      - Golden plans cover a pinned port, a pool smaller than the worker count, and a module setting.
+
+  - id: CTL-19
+    title: Optional token for the metrics endpoint
+    phase: 1
+    workstream: CTL
+    size: S
+    depends_on: [CTL-17]
+    paths: [controller/internal/app/, controller/cmd/]
+    summary: >-
+      Apply decision D12 item 2. `GET /metrics` stays open by default, and a configuration
+      setting can require a bearer token for it.
+    deliverables:
+      - A metrics token setting in the controller configuration.
+      - Tests for an open endpoint, a required token, and a wrong token.
+    acceptance:
+      - "`make lint-ctl test-ctl` passes."
+
+  - id: CTL-20
+    title: Run reasons, criterion results, and criterion filters
+    phase: 1
+    workstream: CTL
+    size: M
+    depends_on: [CTL-09, CON-07, CON-09]
+    paths: [controller/internal/runs/, controller/internal/report/]
+    summary: >-
+      Apply decision D12 items 14 and 19 and close note 4 of the CTL-09 log entry.
+    deliverables:
+      - Run.reason filled for every failed run.
+      - Criterion results with observed, passed, and reason in the JSON report and in GET /v1/runs/{id}.
+      - The where filter of a criterion applied to labeled metrics.
+      - The run id in runs.Outcome, so histogram criteria decide the run state as they decide the report.
+    acceptance:
+      - Golden reports cover a failed run with a reason, a filtered criterion, and a histogram criterion.
+
+  - id: AGT-06
+    title: Kernel requirement and redial policy
+    phase: 1
+    workstream: AGT
+    size: S
+    depends_on: [AGT-02]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Apply decision D12 items 3 and 11. The agent refuses to start on Linux older than 6.3
+      with a clear error, and it redials the controller with a reset, jittered backoff and a
+      limit.
+    deliverables:
+      - A startup check of the kernel version with an error that names the IP_LOCAL_PORT_RANGE requirement.
+      - Backoff that restarts at 200 ms with jitter after an abort.
+      - A flag that limits redialing, which defaults to five minutes of failed attempts, after which the agent exits with a nonzero code.
+    acceptance:
+      - Tests cover an old kernel string, the backoff reset, and the redial limit.
+
+  - id: ENG-14
+    title: Failure reasons and side label in engine statistics
+    phase: 1
+    workstream: ENG
+    size: S
+    depends_on: [ENG-05, CON-08]
+    paths: [engine/fps-stats/]
+    summary: >-
+      Apply the CON-08 catalog additions in the engine statistics, so failure reasons and the
+      client or server side reach the snapshots.
+    deliverables:
+      - Counters for datagram_rejected, template_error, and extension_error.
+      - The side label on session and transport counters.
+    acceptance:
+      - Unit tests show each new reason and both sides in a snapshot.
+
+  - id: RLM-11
+    title: Pinned Zeek and visible parser skips
+    phase: 1
+    workstream: RLM
+    size: S
+    depends_on: [RLM-03]
+    paths: [realism/, .github/workflows/rlm.yml, .github/workflows/realism.yml]
+    summary: >-
+      Apply decision D12 items 5 and 23. CI installs one pinned Zeek version from the Zeek
+      repository, and the report lists each parser that auto mode skipped.
+    deliverables:
+      - One pinned Zeek version in both workflows, set in one place.
+      - A skipped parsers list in the realism report and in its text summary.
+    acceptance:
+      - A test with only tshark installed shows Zeek as skipped.
+
+  - id: QA-08
+    title: Nightly benchmark on the owner host
+    phase: 1
+    workstream: QA
+    size: S
+    depends_on: [QA-03]
+    paths: [.github/workflows/qa-bench.yml, bench/]
+    summary: >-
+      Apply decision D12 item 6. A self hosted runner on the owner's Linux server runs the
+      benchmark every night and compares it with the baseline from the same host.
+    deliverables:
+      - Owner steps to register the self hosted runner with the label fps-bench.
+      - A scheduled job that runs make bench-s1 on that runner with --require-same-host.
+    acceptance:
+      - One scheduled run on the owner host produces a comparison.
+
+  - id: MOD-19
+    title: DNS zone file setting
+    phase: 1
+    workstream: MOD
+    size: S
+    depends_on: [MOD-02, CON-09, CTL-18]
+    paths: [modules/dns/]
+    summary: >-
+      Apply decision D12 item 22 in the dns module. A test configuration names a zone file
+      through the module settings, and the server answers from it.
+    deliverables:
+      - The zone_file setting in the dns manifest schema and its use in the server.
+      - A fixture that answers from a configured zone.
+    acceptance:
+      - The dns tests and the realism job pass with a configured zone.
+
   - id: QA-04
     title: Gate 1 acceptance suite
     phase: 1
@@ -1093,6 +1281,39 @@ work_packages:
       - Component tests cover an empty registry, two modules, and an API error.
 
   # ------------------------------------------------------------------ Phase 2
+
+  - id: CON-10
+    title: Behavior profiles and distributions in the scenario contract
+    phase: 2
+    workstream: CON
+    size: M
+    depends_on: [CON-04]
+    paths: [contracts/schemas/scenario.schema.json, contracts/examples/modules/]
+    summary: >-
+      Apply decision D12 item 18. Define the profiles root and the dist module that the
+      specification example uses, such as profiles.chrome and dist.pareto(...).
+    deliverables:
+      - The profiles root and the dist functions in the scenario grammar.
+      - The specification example validates.
+      - An entry in contracts/changes/CON-10.md.
+    acceptance:
+      - The schema checks pass on the specification example.
+
+  - id: CTL-21
+    title: Throughput rate calibration
+    phase: 2
+    workstream: CTL
+    size: M
+    depends_on: [CTL-18, CTL-08]
+    paths: [controller/internal/runs/calibrate/]
+    summary: >-
+      Apply decision D12 item 10. The compiler turns a throughput objective into a session
+      rate from expected_bytes, and the controller corrects the rate from measured bytes per
+      session during the run.
+    deliverables:
+      - The rate correction loop with bounds on step size.
+    acceptance:
+      - A test with a wrong estimate converges to within 5 percent of the throughput objective.
 
   - id: CON-05
     title: Agent control protocol v0.2

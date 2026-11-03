@@ -13,3 +13,4 @@ Each file records one decision from the specification's decision table, with the
 - [D9. Team model](0009-team-model.md)
 - [D10. Native first party extensions](0010-native-extensions.md) (Proposed)
 - [D11. Web UI stack](0011-web-ui-stack.md) (Accepted)
+- [D12. Answers to the Phase 1 owner questions](0012-phase-1-owner-answers.md) (Accepted)

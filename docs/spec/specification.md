@@ -464,6 +464,7 @@ Nine decisions remain open, and each has a recommended default. We settle them o
 | D9 | Team model | Solo; small core team; open community from day one | Chosen 2026-10-30. Swarm of AI coding agents | Converts effort classes into calendar time |
 | D10 | Native first party extensions | WebAssembly only; native Rust behind the same traits for first party modules | Chosen 2026-11-02. Native Rust for first party modules, WebAssembly for community modules | Speed of built in modules against one extension path |
 | D11 | Web UI stack | React, Svelte, Vue | Chosen 2026-11-03. React 19 with Vite and TypeScript | Ecosystem and accessible widgets against bundle size |
+| D12 | Phase 1 owner questions | 23 items | Answered 2026-11-03, see docs/decisions/0012-phase-1-owner-answers.md | Linux 6.3 or newer, open metrics with an optional token, pinned Zeek |
 
 ## References
 
