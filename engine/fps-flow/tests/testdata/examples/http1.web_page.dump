@@ -1,0 +1,112 @@
+== compiled
+scenario web_page
+  var host = Str("www.example.test")
+  var image_size = Int(52000)
+  var page_size = Int(18000)
+  var server_port = Int(8080)
+flow browse module http1 l4 tcp
+  client
+    port
+      dynamic, 1 segment
+      [0] vars.server_port
+    0 send
+      dynamic, 1 segment
+      [0] call http1.request
+          #0 = text "GET"
+          #1 = text "/"
+          host = vars.host
+          accept = text "text/html"
+    1 expect pattern "\r\n\r\n" timeout 5000 ms
+    2 expect bytes timeout 5000 ms
+      dynamic, 1 segment
+      [0] vars.page_size
+    3 delay LogNormal { mu: 3.0, sigma: 0.8, unit_ms: 1.0 }
+    4 send
+      dynamic, 1 segment
+      [0] call http1.request
+          #0 = text "GET"
+          #1 = text "/logo.png"
+          host = vars.host
+          accept = text "image/png"
+    5 expect pattern "\r\n\r\n" timeout 5000 ms
+    6 expect bytes timeout 5000 ms
+      dynamic, 1 segment
+      [0] vars.image_size
+    7 close fin
+  server
+    port
+      dynamic, 1 segment
+      [0] vars.server_port
+    0 expect pattern "\r\n\r\n" timeout 5000 ms
+    1 send
+      dynamic, 1 segment
+      [0] call http1.response
+          #0 = int 200
+          body = fill
+              n = vars.page_size
+          content_type = text "text/html; charset=utf-8"
+    2 expect pattern "\r\n\r\n" timeout 30000 ms
+    3 send
+      dynamic, 1 segment
+      [0] call http1.response
+          #0 = int 200
+          body = fill
+              n = vars.image_size
+          content_type = text "image/png"
+    4 close fin
+== folded
+scenario web_page
+  var host = Str("www.example.test")
+  var image_size = Int(52000)
+  var page_size = Int(18000)
+  var server_port = Int(8080)
+flow browse module http1 l4 tcp
+  client
+    port
+      constant, 1 segment
+      [0] lit 4 "8080"
+    0 send
+      dynamic, 1 segment
+      [0] call http1.request
+          #0 = text "GET"
+          #1 = text "/"
+          host = text "www.example.test"
+          accept = text "text/html"
+    1 expect pattern "\r\n\r\n" timeout 5000 ms
+    2 expect bytes timeout 5000 ms
+      constant, 1 segment
+      [0] lit 5 "18000"
+    3 delay LogNormal { mu: 3.0, sigma: 0.8, unit_ms: 1.0 }
+    4 send
+      dynamic, 1 segment
+      [0] call http1.request
+          #0 = text "GET"
+          #1 = text "/logo.png"
+          host = text "www.example.test"
+          accept = text "image/png"
+    5 expect pattern "\r\n\r\n" timeout 5000 ms
+    6 expect bytes timeout 5000 ms
+      constant, 1 segment
+      [0] lit 5 "52000"
+    7 close fin
+  server
+    port
+      constant, 1 segment
+      [0] lit 4 "8080"
+    0 expect pattern "\r\n\r\n" timeout 5000 ms
+    1 send
+      dynamic, 1 segment
+      [0] call http1.response
+          #0 = int 200
+          body = fill
+              n = int 18000
+          content_type = text "text/html; charset=utf-8"
+    2 expect pattern "\r\n\r\n" timeout 30000 ms
+    3 send
+      dynamic, 1 segment
+      [0] call http1.response
+          #0 = int 200
+          body = fill
+              n = int 52000
+          content_type = text "image/png"
+    4 close fin
