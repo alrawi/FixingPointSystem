@@ -197,9 +197,10 @@ pub struct InstanceError {
     /// The flows that spawned the failing flow, the direct parent first.
     /// The list is empty for a flow that is not spawned.
     pub spawned_by: Vec<String>,
-    /// The first failure.
+    /// The first failure, boxed so that `Result<(), InstanceError>` stays
+    /// small.
     #[source]
-    pub failure: Failure,
+    pub failure: Box<Failure>,
 }
 
 fn chain(spawned_by: &[String]) -> String {
@@ -658,7 +659,7 @@ impl<'s> ScenarioInstance<'s> {
             scenario: self.scenario.name.clone(),
             flow: failure.flow.clone(),
             spawned_by,
-            failure,
+            failure: Box::new(failure),
         });
         self.aborting = true;
     }
@@ -669,4 +670,22 @@ struct Starter<'a> {
     filler: &'a Filler,
     queue: &'a SpawnQueue,
     abort: &'a watch::Receiver<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Clippy's `result_large_err` rejects error types above 128 bytes.
+    #[test]
+    fn instance_error_stays_small() {
+        assert!(std::mem::size_of::<InstanceError>() <= 128);
+    }
+
+    #[test]
+    fn sides_select_their_side() {
+        assert!(Sides::Both.contains(Side::Client) && Sides::Both.contains(Side::Server));
+        assert!(Sides::Client.contains(Side::Client) && !Sides::Client.contains(Side::Server));
+        assert!(Sides::Server.contains(Side::Server) && !Sides::Server.contains(Side::Client));
+    }
 }

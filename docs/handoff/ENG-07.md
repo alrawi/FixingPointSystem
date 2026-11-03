@@ -60,6 +60,10 @@ Review pull request #120 against the Definition of Done.
 - The first failure aborts the rest of the instance, and a spawned failure fails the whole spawn chain.
 - The abort signal is a `tokio::sync::watch` channel, so `fps-interp` enables the `sync` feature of Tokio. `Cargo.lock` did not change.
 
+## Pitfalls
+
+- CI runs a newer clippy than the first local run, and `result_large_err` rejected `InstanceError` at 136 bytes. The error now boxes its `Failure`, and a unit test pins the size at 128 bytes or less.
+
 ## Session log
 
 | Time (UTC) | Agent | Event | Commit | Note |
@@ -67,3 +71,4 @@ Review pull request #120 against the Definition of Done.
 | 2026-11-03T15:09:35Z | claude-eng-07-74e3 | claim | | Card 6607414675 |
 | 2026-11-03T15:24:07Z | claude-eng-07-74e3 | checkpoint | | Instance runner and tests |
 | 2026-11-03T15:30:00Z | claude-eng-07-74e3 | finish | | Wiki ingest, ready for review |
+| 2026-11-03T15:40:00Z | claude-eng-07-74e3 | checkpoint | | Box the failure of InstanceError for result_large_err |
