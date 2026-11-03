@@ -603,7 +603,8 @@ def test_catalog_formula_requires_gauge(catalog_doc, tmp_path):
 
 def test_catalog_name_collides_with_histogram_statistic(catalog_doc, tmp_path):
     catalog_doc["metrics"].append({"name": "tcp.rtt.p99", "type": "gauge", "unit": "us",
-                                   "level": "transport", "labels": [], "description": "x"})
+                                   "level": "transport", "view": "tcp", "labels": [],
+                                   "description": "x"})
     _, report = load_catalog_doc(catalog_doc, tmp_path)
     assert any("collides with a statistic" in m for m in messages(report))
 
