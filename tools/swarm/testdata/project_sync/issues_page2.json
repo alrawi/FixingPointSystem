@@ -1,0 +1,84 @@
+{
+  "data": {
+    "repository": {
+      "issues": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": "Y3Vyc29yOjU1"
+        },
+        "nodes": [
+          {
+            "id": "I_kwDOFPS0014",
+            "number": 14,
+            "labels": {
+              "nodes": [
+                {
+                  "name": "type:followup"
+                }
+              ]
+            },
+            "projectItems": {
+              "nodes": []
+            }
+          },
+          {
+            "id": "I_kwDOFPS0015",
+            "number": 15,
+            "labels": {
+              "nodes": [
+                {
+                  "name": "status:ready"
+                },
+                {
+                  "name": "status:blocked"
+                },
+                {
+                  "name": "type:wp"
+                }
+              ]
+            },
+            "projectItems": {
+              "nodes": [
+                {
+                  "id": "PVTI_15",
+                  "project": {
+                    "id": "PVT_kwHOAAlrawi4AAA1"
+                  },
+                  "fieldValueByName": {
+                    "optionId": "61e4505c",
+                    "name": "Ready"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": "I_kwDOFPS0016",
+            "number": 16,
+            "labels": {
+              "nodes": [
+                {
+                  "name": "status:stale"
+                },
+                {
+                  "name": "type:wp"
+                }
+              ]
+            },
+            "projectItems": {
+              "nodes": [
+                {
+                  "id": "PVTI_16",
+                  "project": {
+                    "id": "PVT_kwHOAAlrawi4AAA1"
+                  },
+                  "fieldValueByName": null
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

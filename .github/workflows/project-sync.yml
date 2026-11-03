@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Project board status sync (OPS-04). The job copies the status label of each
+# work item into the Status field of the owner's user project with
+# tools/swarm/project_sync.py.
+#
+# A label event syncs the one issue of the event within a minute. The scanner
+# relabels with the repository token, and GitHub starts no workflow for events
+# from that token, so a schedule a few minutes after each scanner run syncs every
+# issue. The default workflow token cannot write a user project, so the job uses
+# the secret FPS_PROJECT_TOKEN. Without the secret the script prints a notice and
+# exits with 0. The repository variable FPS_PROJECT_NUMBER selects the project
+# when more than one project of the owner is linked to the repository.
+name: project-sync
+
+on:
+  issues:
+    types: [opened, reopened, labeled, unlabeled]
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print the planned changes and change nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Label events of one issue run in order, and full syncs never overlap.
+  group: project-sync-${{ github.event.issue.number || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/swarm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Copy status labels into the Status field
+        env:
+          FPS_PROJECT_TOKEN: ${{ secrets.FPS_PROJECT_TOKEN }}
+          FPS_PROJECT_NUMBER: ${{ vars.FPS_PROJECT_NUMBER }}
+          FPS_PROJECT_OWNER: ${{ github.repository_owner }}
+          FPS_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          # Only a manual run carries inputs, so other runs apply the changes.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          args=()
+          if [ "$EVENT_NAME" = "issues" ]; then
+            args+=(--event "$GITHUB_EVENT_PATH")
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          python3 -I tools/swarm/project_sync.py "${args[@]}"
