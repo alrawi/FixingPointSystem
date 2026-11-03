@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: FixingPointSystem Controller API
-  version: 0.1.1
-  summary: Contract v0.1 for the controller REST API.
+  version: 0.2.0
+  summary: Contract v0.2 for the controller REST API.
   description: >
     The controller stores test configurations, installs modules, starts runs on
     agents, and serves metrics and reports. Long operations return HTTP 202 with
@@ -353,6 +353,14 @@ paths:
       tags: [agents]
       operationId: registerAgent
       x-required-scope: admin
+      description: >
+        Agents register themselves. Each agent dials the controller and calls
+        Register of the gRPC ControllerService in
+        contracts/proto/fps/agent/v1/agent.proto, so an agent needs no inbound
+        port. This operation enrolls an agent identity ahead of time and sets
+        its labels. The controller then accepts a Register call from an agent
+        whose client certificate names that identity. The agent appears with
+        state offline until it registers.
       requestBody:
         required: true
         content:
@@ -360,13 +368,13 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [address]
+              required: [id]
               properties:
-                address: { type: string, description: gRPC endpoint of the agent. }
+                id: { type: string, description: Agent identity that the client certificate of the agent names. }
                 labels: { type: object, additionalProperties: { type: string } }
       responses:
         "201":
-          description: Registered.
+          description: Enrolled.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Agent" }
@@ -488,10 +496,10 @@ components:
         modules: { type: array, items: { $ref: "#/components/schemas/ModuleSummary" } }
     Agent:
       type: object
-      required: [id, address, state]
+      required: [id, state]
       properties:
-        id: { type: string }
-        address: { type: string }
+        id: { type: string, description: Agent identity from its client certificate. }
+        address: { type: string, description: Peer address of the open control session and absent while the agent is offline. }
         state: { enum: [online, offline, reserved, busy] }
         version: { type: string }
         cores: { type: integer, minimum: 1 }

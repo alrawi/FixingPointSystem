@@ -1,0 +1,88 @@
+== compiled
+scenario web_get
+  var body_size = Int(4096)
+  var host = Str("www.example.test")
+  var path = Str("/index.html")
+  var requests = Int(4)
+  var server_port = Int(8080)
+  var user_agent = Str("Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1")
+flow page module http1 l4 tcp
+  client
+    port
+      dynamic, 1 segment
+      [0] vars.server_port
+    0 loop end 4
+      dynamic, 1 segment
+      [0] vars.requests
+    1 send
+      dynamic, 7 segments
+      [0] lit 4 "GET "
+      [1] vars.path
+      [2] lit 17 " HTTP/1.1\r\nHost: "
+      [3] vars.host
+      [4] lit 14 "\r\nUser-Agent: "
+      [5] vars.user_agent
+      [6] lit 17 "\r\nAccept: */*\r\n\r\n"
+    2 expect pattern "\r\n\r\n" timeout 5000 ms
+    3 expect bytes timeout 5000 ms
+      dynamic, 1 segment
+      [0] vars.body_size
+    4 loop_end start 0
+    5 close fin
+  server
+    port
+      dynamic, 1 segment
+      [0] vars.server_port
+    0 loop end 3
+      dynamic, 1 segment
+      [0] vars.requests
+    1 expect pattern "\r\n\r\n" timeout 5000 ms
+    2 send
+      dynamic, 4 segments
+      [0] lit 75 "HTTP/1.1 200 OK\r\nServer: fps/0.1\r\nContent-Type: text/html\r\nContent-Length: "
+      [1] vars.body_size
+      [2] lit 4 "\r\n\r\n"
+      [3] fill
+          n = vars.body_size
+    3 loop_end start 0
+    4 close fin
+== folded
+scenario web_get
+  var body_size = Int(4096)
+  var host = Str("www.example.test")
+  var path = Str("/index.html")
+  var requests = Int(4)
+  var server_port = Int(8080)
+  var user_agent = Str("Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1")
+flow page module http1 l4 tcp
+  client
+    port
+      constant, 1 segment
+      [0] lit 4 "8080"
+    0 loop end 4
+      constant, 1 segment
+      [0] lit 1 "4"
+    1 send
+      constant, 1 segment
+      [0] lit 132 "GET /index.html HTTP/1.1\r\nHost: www.example.test\r\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1\r\nAccept: */*\r\n\r\n"
+    2 expect pattern "\r\n\r\n" timeout 5000 ms
+    3 expect bytes timeout 5000 ms
+      constant, 1 segment
+      [0] lit 4 "4096"
+    4 loop_end start 0
+    5 close fin
+  server
+    port
+      constant, 1 segment
+      [0] lit 4 "8080"
+    0 loop end 3
+      constant, 1 segment
+      [0] lit 1 "4"
+    1 expect pattern "\r\n\r\n" timeout 5000 ms
+    2 send
+      dynamic, 2 segments
+      [0] lit 83 "HTTP/1.1 200 OK\r\nServer: fps/0.1\r\nContent-Type: text/html\r\nContent-Length: 4096\r\n\r\n"
+      [1] fill
+          n = int 4096
+    3 loop_end start 0
+    4 close fin

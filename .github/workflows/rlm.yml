@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 #
 # Workstream workflow for RLM. It runs the same make targets that an agent runs
-# locally, installs nDPI so that the optional ndpiReader test runs, and scores a
-# synthetic capture with the installed runner under python -I.
+# locally, installs nDPI, tshark, and Zeek so that the optional tests of the real
+# tools run, and scores a synthetic capture with the installed runner under
+# python -I. Zeek comes from the package repository of the Zeek project, because
+# Ubuntu does not ship it.
 name: rlm
 
 on:
@@ -45,6 +47,18 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q libndpi-bin
           ndpiReader -h | head -1
+      - name: Install tshark and Zeek, which the parser error check calls out of process
+        run: |
+          echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
+          curl -fsSL https://download.opensuse.org/repositories/security:zeek/xUbuntu_24.04/Release.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/zeek.gpg
+          echo "deb [signed-by=/usr/share/keyrings/zeek.gpg] https://download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/ /" \
+            | sudo tee /etc/apt/sources.list.d/zeek.list
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark zeek-core
+          echo /opt/zeek/bin >> "$GITHUB_PATH"
+          tshark --version | head -1
+          /opt/zeek/bin/zeek --version
       - run: python -m pip install -r realism/requirements-dev.txt
       - run: make lint-rlm test-rlm PYTHON=python
       - name: Score a synthetic capture with the installed runner
@@ -54,5 +68,5 @@ jobs:
           python -c 'import sys; from pathlib import Path; from realism.tests.pcapgen import mixed_capture; mixed_capture(5, 5).write_pcapng(Path(sys.argv[1]))' "$tmp/mix.pcapng"
           cp realism/examples/http-dns.labels.yaml "$tmp/labels.yaml"
           cd "$tmp"
-          python -I -m realism score --pcap mix.pcapng --labels labels.yaml --output report.json
-          python -c 'import json; r = json.load(open("report.json")); print(json.dumps(r["checks"][0]["applications"], indent=2))'
+          python -I -m realism score --pcap mix.pcapng --labels labels.yaml --parsers tshark,zeek --output report.json
+          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c["applications"] for c in r["checks"]], indent=2))'
