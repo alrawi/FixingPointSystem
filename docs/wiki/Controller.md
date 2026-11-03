@@ -165,3 +165,48 @@ The compiler applies six rules.
 6. **Checks.** The compiler checks the rules that it relies on, such as unknown pools and ports, pool roles, pool counts against the usable addresses of their prefixes, and the inventory. Full schema validation belongs to the configuration store.
 
 Golden tests compile the contract examples `http_smoke.yaml` on one agent and `enterprise_mix_10g.yaml` on one agent with eight cores, two agents with four and two cores, and two agents with three and two cores whose pools do not divide evenly. The goldens live in `controller/internal/compiler/testdata/<case>/<agent>.json`, and `python3 tools/contracts/check_plans.py --modules contracts/examples/modules controller/internal/compiler/testdata/*/*.json` accepts all of them. A determinism test compiles every case a second time with the inventory and the catalog reversed and expects identical bytes. The tests use the Go golden file helper through a `replace` line in `controller/go.mod`.
+## Configuration store
+
+The package `internal/store` keeps test configurations and validates them. CTL-03 added it. It serves three operations of the REST contract through the type `store.Handler`, which embeds `api.Unimplemented`, so every other operation still answers 501.
+
+| Operation | Scope | Result |
+|---|---|---|
+| `POST /v1/configs` | run | 201 with a `ConfigRef` and a `Location` header, or 422 with a problem whose `errors` name each failing field |
+| `GET /v1/configs/{id}` | read | 200 with the stored configuration as canonical JSON, or 404 |
+| `POST /v1/configs/{id}:validate` | run | 200 with a `ValidationReport`, or 404 |
+
+### Storage
+
+The interface `store.Repository` has the methods `Create` and `Get` and the sentinel errors `ErrConfigNotFound` and `ErrConfigExists`. `store.Open` implements it on a SQLite file with the pure Go driver `modernc.org/sqlite`, so the controller still builds without cgo. The store keeps one connection, turns on WAL for files, and migrates the table layout with `PRAGMA user_version`. The path `:memory:` opens a private database for tests. Each record holds the id, `metadata.name`, the body, and the creation time in UTC. The handler takes its clock and its id generator from `store.Options`, and the default ids are `cfg_` with 24 random hex digits.
+
+### Bodies
+
+A create request sends JSON or YAML, chosen by its `Content-Type`. The handler accepts `application/json`, any `+json` type, `application/yaml`, any `+yaml` type, and the legacy YAML names, and it answers 415 for anything else. Bodies are limited to 1 MiB, and larger bodies get 413. The decoder turns either syntax into canonical JSON with sorted keys and the original digits of every number. YAML must hold exactly one document with string keys and no duplicate keys, timestamps stay strings, and a budget of 100000 nodes stops alias bombs. A malformed body gets 400.
+
+### Validation
+
+`POST /v1/configs` checks the body against `contracts/schemas/test-config.schema.json` with `santhosh-tekuri/jsonschema`. The package embeds a copy of the schema in `internal/store/schema/`, which `go generate ./internal/store/` refreshes, and a test fails when the copy differs from the contract. Each leaf of the schema error becomes one finding with a JSON Pointer. A missing or an unknown property points at the property itself, for example `/metadata/name` or `/speed`, so the problem names the field and not its parent object.
+
+The validate operation runs five checks on the stored document and returns every finding, sorted by path.
+
+1. **Schema.** The same check as on create. When it fails, the report stops here.
+2. **Cross references.** Duplicate port, pool, and phase names, pools on unknown ports, mix pools that do not exist or have the wrong role, an `app_sim` test without a client pool and a server pool, and a `client_sim` test without external servers.
+3. **Scenarios.** Each mix entry must resolve through the interface `store.ModuleCatalog`, which returns `[]compiler.Scenario`. A `<module>/<scenario>` reference must exist, and a bare name must be unique.
+4. **Capacity.** Every agent that a port location names must appear in the interface `store.AgentInventory`, which returns the available agents as `[]compiler.Agent`, and an agent that lists interfaces must have the port interface. The report gives `agents_required` and `agents_available`.
+5. **Dry run.** When both interfaces are present and no error came up, the validator compiles the test with `compiler.Compile` and turns a compiler error into a finding at the path that the error names.
+
+A nil catalog or inventory skips its check and adds an info finding, so the operation works before CTL-04 and CTL-06 land. A failing catalog or inventory answers 500. Server errors are logged with `log/slog` and never reach the client.
+
+### Tests of the store
+
+Every example under `contracts/examples/tests/` stores as YAML and as JSON, reads back unchanged, and validates without findings against fakes of the catalog and the inventory. Each fixture in `internal/store/testdata/invalid/` breaks the schema and names the expected pointer on its first line, as in `# want: /network/ports/0/location`, and the create test expects a 422 problem with an error at that pointer. Each fixture in `internal/store/testdata/unresolved/` passes the schema and must fail validation at its pointer. Coverage of the package is 93.5%.
+
+### Dependencies of the store
+
+| Module | License | Use |
+|---|---|---|
+| `modernc.org/sqlite` v1.46.1 | BSD-3-Clause | The SQLite driver without cgo, with `modernc.org/libc`, `mathutil`, and `memory` (BSD-3-Clause) |
+| `github.com/santhosh-tekuri/jsonschema/v6` v6.0.2 | Apache-2.0 | JSON Schema 2020-12 validation |
+| `golang.org/x/text` v0.21.0 | BSD-3-Clause | The English message printer of the schema errors, now a direct requirement |
+
+We stay on `modernc.org/sqlite` v1.46.1 because v1.47.0 and later need Go 1.25. The go directive now reads `go 1.24.0`, which the new modules require, and `golang.org/x/tools`, `mod`, `sync`, and `sys` moved up to the versions that the driver needs.
