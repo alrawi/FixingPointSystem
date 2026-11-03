@@ -1,0 +1,11 @@
+## [2026-11-03] ingest | TRN-02 Kernel UDP backend
+
+We added kernel UDP sessions to `engine/fps-backend-kernel` and documented them in the section [Kernel UDP backend](Transport.md#kernel-udp-backend) of the Transport page. `KernelDatagram` implements `DatagramIo` over a connected UDP socket. `Connector::connect_datagram` binds a pool source address within the configured port range and connects to the peer, and `KernelDatagramListener` binds a pool address and opens one connected session socket per peer in a reuse port group, with the first datagram queued in user space. Server sessions hand datagrams of other peers that reach their socket before the connect back to the listener, which we found necessary when the first acceptance runs lost requests. A pending receive also waits on the error readiness of the socket, so ICMP port unreachable reaches the interpreter as `ConnectionRefused`. `DatagramConnectOpener` and `DatagramAcceptOpener` implement `DatagramOpener` for the interpreter. The loopback test exchanges 10,000 request and response pairs from 100 source addresses in 127.0.0.0/8 in about half a second, and the DNS lookup example of the contract runs through the interpreter over kernel sockets. The crate now depends on `fps-interp`, and its tests on `fps-flow`, both inside the workspace, so `Cargo.lock` changed. The one new `unsafe` block casts the receive buffer for `socket2` inside the existing module `sys`. The evidence is `docs/handoff/TRN-02.md` on the branch `wp/TRN-02`.
+
+## Shared page notes
+
+The coordinator may apply the notes below.
+
+1. [Engine](Engine.md) says in the section on the DatagramIo seam that TRN-04 implements the trait over kernel UDP sockets. TRN-02 did, so the sentence may name TRN-02 and link [Kernel UDP backend](Transport.md#kernel-udp-backend). The crate table rows of `fps-io` and `fps-backend-kernel` may drop the note that TRN-02 adds UDP.
+2. [Engine](Engine.md) says that `fps-backend-kernel` has one allowed `setsockopt` module. The module now also casts the receive buffer of UDP sessions, so the sentence may say one allowed socket module.
+3. [Implementation Plan](Implementation-Plan.md) may mark TRN-02 as done after the merge. The runtime can wire UDP flows with the two openers, which a later ENG or AGT package may pick up.
