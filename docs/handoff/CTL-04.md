@@ -12,7 +12,7 @@
 | Status | ready for review |
 | Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-ctl-04-70e2, lease until 2026-11-03T13:25:25Z |
-| Last verified commit | none |
+| Last verified commit | d5598a6 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -79,4 +79,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-03T11:38Z | claude-ctl-04-70e2 | claim | none | session start |
-| 2026-11-03T11:57Z | claude-ctl-04-70e2 | checkpoint | a | registry, tests, docs |
+| 2026-11-03T11:57Z | claude-ctl-04-70e2 | checkpoint | d5598a6 | registry, tests, docs |
