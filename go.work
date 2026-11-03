@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Go workspace for the controller and the command line client. It lists no
-// modules yet. The package that creates controller/ adds the line
-// "use ./controller", and the package that creates cli/ adds "use ./cli", each on
-// a line of its own. Raise the go line when a module requires a newer Go.
+// Go workspace for the controller, the command line client, and the test
+// helpers. Each module has a use line of its own. The package that creates
+// controller/ adds the line "use ./controller", and the package that creates cli/
+// adds "use ./cli". Raise the go line when a module requires a newer Go.
 
 go 1.24
 
+use ./tests/golden/go
 use ./controller
