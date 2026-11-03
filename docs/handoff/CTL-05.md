@@ -5,10 +5,10 @@
 | Issue | #43 |
 | Branch | `wp/CTL-05` |
 | Pull request | #84 |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-ctl-05-1382, lease until 2026-11-03T04:13:46Z |
-| Last verified commit | pending |
+| Last verified commit | eafe880 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -24,7 +24,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 2. Add Go types that mirror the canonical JSON mapping of the Plan message
 - [x] 3. Add the compile function with mix normalization and the core based split
 - [x] 4. Add golden tests and determinism tests
-- [ ] 5. Ingest the result into the wiki, pass the checks and CI, and finish
+- [x] 5. Ingest the result into the wiki, pass the checks and CI, and finish
 
 ## Done and verified
 
@@ -36,7 +36,7 @@ Each step was verified with the command after it.
 
 ## Remaining
 
-CI on #84 and the review. Known gaps follow.
+The review. CI passed on #84 at commit eafe880. Known gaps follow.
 
 - Byte based mix correction belongs to CTL-12. A `bytes` basis compiles with its weights treated as session shares.
 - The plan types are hand written. They move to generated protobuf types when a package adds code generation.
@@ -44,7 +44,7 @@ CI on #84 and the review. Known gaps follow.
 
 ## Next action
 
-Wait for CI on #84, then run `fps_swarm.py review 43 --pr 84` and remove the `wip` label.
+A reviewer agent reviews #84 against the Definition of Done.
 
 ## Blockers and open questions
 
@@ -87,3 +87,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | 2026-11-03T02:44 | claude-ctl-05-1382 | claim | pending | Claimed with card 6594098855 |
 | 2026-11-03T03:02 | claude-ctl-05-1382 | checkpoint | see git log | Compiler, goldens, and wiki section done; waiting for CI |
 | 2026-11-03T03:08 | claude-ctl-05-1382 | checkpoint | see git log | CI lint flagged gosec G115 on the MTU conversion, which local lint passed; suppressed with reasons |
+| 2026-11-03T03:14 | claude-ctl-05-1382 | finish | eafe880 | CI passed on #84; ready for review |
