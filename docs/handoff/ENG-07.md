@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #27 |
 | Branch | `wp/ENG-07` |
-| Pull request | pending |
+| Pull request | #120 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-eng-07-74e3, lease until 2026-11-03T16:39:34Z |
 | Last verified commit | none |
 
@@ -21,9 +21,9 @@ Add a scenario instance runner to `fps-interp` that owns shared scenario variabl
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
 - [x] 1. Claim, branch, handoff, and pull request
-- [ ] 2. Read contract v0.2 rules for after, spawn, set, and failure propagation
-- [ ] 3. `ScenarioInstance` with flow states, ordering, spawn, and shared variables
-- [ ] 4. Tests for web_browse ordering and spawned flow failure
+- [x] 2. Read contract v0.2 rules for after, spawn, set, and failure propagation
+- [x] 3. `ScenarioInstance` with flow states, ordering, spawn, and shared variables
+- [x] 4. Tests for web_browse ordering and spawned flow failure
 - [ ] 5. Wiki ingest, log entry, final checks, and review
 
 ## Session log

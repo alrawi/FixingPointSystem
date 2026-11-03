@@ -12,6 +12,8 @@
 //! [`Scenario::check`] accepts every scenario that the contract allows.
 //! [`Scenario::load`] also rejects transport modules, spawned flows, and the
 //! `spawn` and `raw` actions, which later ENG packages add.
+//! [`Scenario::parse_instance`] accepts spawned flows and the `spawn` action
+//! for the scenario instance runner of `fps-interp`.
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
