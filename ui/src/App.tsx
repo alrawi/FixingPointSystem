@@ -8,6 +8,8 @@ import { SessionProvider, useSession } from "./auth/session";
 import { SignInPage } from "./auth/SignInPage";
 import { AppLayout } from "./layout/AppLayout";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage";
+import { ModuleDetailPage } from "./pages/ModuleDetailPage";
+import { ModulesPage } from "./pages/ModulesPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
 /** Creates the query cache. Rejected tokens are not retried. */
@@ -36,6 +38,8 @@ function Routed() {
     <Routes>
       <Route element={<AppLayout />}>
         <Route index element={<CapabilitiesPage />} />
+        <Route path="modules" element={<ModulesPage />} />
+        <Route path="modules/:name/:version" element={<ModuleDetailPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
