@@ -3,8 +3,10 @@
 //!
 //! `socket2` 0.6 has no setter for `IP_BIND_ADDRESS_NO_PORT`,
 //! `IP_LOCAL_PORT_RANGE`, or `TCP_WINDOW_CLAMP`, so this module calls
-//! `setsockopt` through `libc`. It is the only module of the crate that
-//! contains `unsafe` code.
+//! `setsockopt` through `libc`. Neither `socket2` nor Tokio receives into an
+//! initialized `&mut [u8]` with `MSG_TRUNC`, so the module also casts the
+//! buffer of [`crate::KernelDatagram`] receives for `socket2`. It is the only module
+//! of the crate that contains `unsafe` code.
 
 use std::io;
 
@@ -86,6 +88,34 @@ pub(crate) fn window_clamp(sock: &Socket) -> io::Result<u32> {
     } else {
         Err(io::Error::last_os_error())
     }
+}
+
+/// Receives one datagram into `buf` and returns its full length and its
+/// source address.
+///
+/// On Linux the call passes `MSG_TRUNC`, so the length names the whole
+/// datagram even when it exceeds `buf.len()`. `MSG_PEEK` in `flags` leaves
+/// the datagram queued. The socket must be nonblocking, so an empty queue
+/// fails with [`io::ErrorKind::WouldBlock`] for the readiness loop of Tokio.
+pub(crate) fn recv_from(
+    sock: &Socket,
+    buf: &mut [u8],
+    flags: libc::c_int,
+) -> io::Result<(usize, std::net::SocketAddr)> {
+    #[cfg(target_os = "linux")]
+    let flags = flags | libc::MSG_TRUNC;
+    let ptr: *mut [u8] = buf;
+    // SAFETY: `MaybeUninit<u8>` has the size, alignment, and validity of
+    // `u8`, so the cast keeps the length and the exclusive borrow of `buf`.
+    // Every byte of `buf` is initialized, and `recv_from_with_flags` writes
+    // only bytes that the kernel received, so `buf` holds only initialized
+    // bytes when the borrow ends, as its type requires.
+    let uninit = unsafe { &mut *(ptr as *mut [std::mem::MaybeUninit<u8>]) };
+    let (n, from) = sock.recv_from_with_flags(uninit, flags)?;
+    let from = from
+        .as_socket()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "source is not an IP address"))?;
+    Ok((n, from))
 }
 
 /// The length of a 32 bit option value, which always fits `socklen_t`.

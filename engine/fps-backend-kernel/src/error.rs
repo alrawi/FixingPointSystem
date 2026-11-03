@@ -70,6 +70,19 @@ pub enum BackendError {
         #[source]
         source: io::Error,
     },
+    /// Opening the connected server socket of a new UDP session failed.
+    #[error("UDP session on {address} for peer {peer}: {op} failed")]
+    DatagramSession {
+        /// The local address of the listener.
+        address: SocketAddr,
+        /// The peer whose first datagram opened the session.
+        peer: SocketAddr,
+        /// The failed step, for example `bind` or `connect`.
+        op: &'static str,
+        /// The operating system error.
+        #[source]
+        source: io::Error,
+    },
 }
 
 impl BackendError {
@@ -81,7 +94,8 @@ impl BackendError {
         match self {
             Self::Connect { source, .. }
             | Self::Listen { source, .. }
-            | Self::Accept { source, .. } => Some(source.kind()),
+            | Self::Accept { source, .. }
+            | Self::DatagramSession { source, .. } => Some(source.kind()),
             Self::ConnectTimeout { .. } => Some(io::ErrorKind::TimedOut),
             Self::InvalidPortRange { .. } | Self::AddressFamily { .. } => None,
         }

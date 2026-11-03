@@ -313,6 +313,8 @@ dependencies = [
 name = "fps-backend-kernel"
 version = "0.0.1"
 dependencies = [
+ "fps-flow",
+ "fps-interp",
  "fps-io",
  "libc",
  "serde",

@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #32 |
 | Branch | `wp/TRN-02` |
-| Pull request | none yet |
+| Pull request | #114 |
 | Status | in progress |
 | Progress | 0% (0 of 4 plan steps) |
 | Current holder | claude-trn-02-d41d, lease until 2026-11-03T15:51:24Z |
