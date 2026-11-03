@@ -69,7 +69,7 @@ None block the package. We raise four owner questions.
 ## Pitfalls
 
 - golangci-lint refuses to run while another instance holds its lock in the temporary directory. Set `TMPDIR` to a private directory when agents share a machine.
-- gosec G115 flags integer conversions even after range checks in some places. Each suppression names the rule and the reason.
+- gosec G115 flags integer conversions even after range checks, and its range analysis differed between the local run and CI. Every narrowing conversion therefore carries a suppression that names the rule and the reason.
 
 ## Verify the current state
 
@@ -86,3 +86,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-03T02:44 | claude-ctl-05-1382 | claim | pending | Claimed with card 6594098855 |
 | 2026-11-03T03:02 | claude-ctl-05-1382 | checkpoint | see git log | Compiler, goldens, and wiki section done; waiting for CI |
+| 2026-11-03T03:08 | claude-ctl-05-1382 | checkpoint | see git log | CI lint flagged gosec G115 on the MTU conversion, which local lint passed; suppressed with reasons |

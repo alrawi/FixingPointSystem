@@ -309,7 +309,7 @@ func (c *compiled) network(cfg Config, agents []Agent) (map[string]int, error) {
 				return nil, fmt.Errorf("%w: agent %s has no interface %s for port %s", ErrInvalidInventory, ag.ID, iface, p.Name)
 			}
 		}
-		c.ports = append(c.ports, PortBinding{Name: p.Name, InterfaceName: iface, MTU: uint32(p.MTU)})
+		c.ports = append(c.ports, PortBinding{Name: p.Name, InterfaceName: iface, MTU: uint32(p.MTU)}) //nolint:gosec // G115: checked against 9216 above
 	}
 
 	if len(n.HostPools) == 0 {
@@ -377,7 +377,7 @@ func poolSlice(path string, index int, hp HostPool, ports map[string]bool) (Host
 	case hp.VLAN < 0 || hp.VLAN > 4094:
 		return HostPoolSlice{}, invalid(path, "vlan %d is outside 1 to 4094", hp.VLAN)
 	}
-	count := uint64(hp.Count)
+	count := uint64(hp.Count) //nolint:gosec // G115: checked to lie in 1 to MaxUint32 above
 	var gw netip.Addr
 	if hp.Gateway != "" {
 		var err error
@@ -419,7 +419,7 @@ func poolSlice(path string, index int, hp HostPool, ports map[string]bool) (Host
 		Role:       enumName("HOST_ROLE_", hp.Role),
 		IPv4Prefix: hp.IPv4,
 		IPv6Prefix: hp.IPv6,
-		PoolCount:  uint32(count),
+		PoolCount:  uint32(count), //nolint:gosec // G115: checked to lie in 1 to MaxUint32 above
 		Gateway:    hp.Gateway,
 		VLAN:       uint32(hp.VLAN), //nolint:gosec // G115: checked against 4094 above
 		MACBase:    mac,
