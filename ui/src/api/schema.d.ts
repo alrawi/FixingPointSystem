@@ -480,7 +480,7 @@ export interface components {
         };
         /**
          * FixingPointSystem module manifest
-         * @description Contract v0.2. Declares a module's identity, capabilities, parameters, template functions, scenarios, and provenance.
+         * @description Contract v0.3. Declares a module's identity, capabilities, parameters, settings, template functions, scenarios, byte estimates, and provenance.
          */
         "module-manifest.schema": {
             /** @constant */
@@ -514,8 +514,17 @@ export interface components {
                 /** @constant */
                 type: "object";
             };
+            /** @description JSON Schema (draft 2020-12) for module settings, which a test configuration sets once per module under modules.<name>.settings. The root must be an object schema. A module without this key accepts no settings. */
+            settings?: {
+                /** @constant */
+                type: "object";
+            };
             /** @description Scenario files relative to the manifest. */
             scenarios?: components["schemas"]["relpath"][];
+            /** @description Estimated application payload bytes that one session of each scenario moves in both directions with default parameters, keyed by scenario name. The controller derives session rates for the throughput_bps objective from it and corrects the estimate by calibration during the run. */
+            expected_bytes?: {
+                [key: string]: number;
+            };
             assets?: ({
                 name: components["schemas"]["identifier"];
                 path?: components["schemas"]["relpath"];
@@ -576,7 +585,7 @@ export interface components {
         } | unknown | unknown;
         /**
          * FixingPointSystem test configuration
-         * @description Contract v0.1. Composes network, profile, load, timeline, and criteria. Names for ports and devices follow Open Traffic Generator vocabulary.
+         * @description Contract v0.2. Composes network, profile, load, timeline, criteria, and module settings. Names for ports and devices follow Open Traffic Generator vocabulary.
          */
         "test-config.schema": {
             /** @constant */
@@ -598,7 +607,7 @@ export interface components {
             network: {
                 ports: {
                     name: components["schemas"]["name"];
-                    /** @description Agent and interface, as <agent>/<interface>. */
+                    /** @description Where the port runs. <agent>/<interface> pins the port to that one agent. A bare <interface> or *\/<interface> spreads the port across every agent that has the interface, and the controller splits the host pools of the port among those agents. */
                     location: string;
                     mtu?: number;
                 }[];
@@ -639,6 +648,7 @@ export interface components {
                 }[];
             };
             timeline?: {
+                /** @description Seed of every random choice in the run. When the configuration has no seed, the controller chooses a random nonzero seed and records it in the run. */
                 seed?: number;
                 warmup_s?: number;
             };
@@ -647,7 +657,17 @@ export interface components {
                 /** @enum {unknown} */
                 op: "<" | "<=" | ">" | ">=" | "==" | "!=";
                 value: number;
+                /** @description Label filter. The criterion checks only the series of the metric whose labels equal every value given here, for example application: dns. Each key must be a label that the metric catalog lists for the metric. */
+                where?: {
+                    [key: string]: string;
+                };
             }[];
+            /** @description Settings per module, keyed by module name. They hold for every scenario of the module in the test, while profile.mix params hold for one mix entry. The settings schema of the module manifest describes the settings object. */
+            modules?: {
+                [key: string]: {
+                    settings?: Record<string, never>;
+                };
+            };
             $defs: {
                 name: string;
                 host_pool: {

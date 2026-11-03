@@ -60,8 +60,8 @@ CON-09 applied decision D12 items 7, 9, 10, 14, and 22 to the test configuration
 | `settings` | Module manifest | JSON Schema with an object root that describes the module settings | CTL-18, MOD-19 |
 | `expected_bytes` | Module manifest | Estimated application payload bytes per session of each scenario with default parameters | CTL-21 |
 
-The controller compiler still rejects the keys `where` and `modules` and the spread location forms, because it decodes configurations with known fields only. The examples that use them therefore live under `contracts/examples/tests/pending/`, which neither the validator default nor the controller tests read. We check them with the command below, and CTL-18 and CTL-20 move them into `contracts/examples/tests/` once the compiler reads the new fields.
+The controller compiler still rejects the keys `where` and `modules` and the spread location forms, because it decodes configurations with known fields only. The examples that use them therefore live under `contracts/examples/tests-pending/`, which neither the validator default nor the controller tests read. We check them with the command below, and CTL-18 and CTL-20 move them into `contracts/examples/tests/` once the compiler reads the new fields.
 
 ```bash
-python3 tools/contracts/validate.py --tests contracts/examples/tests/*.yaml contracts/examples/tests/pending/*.yaml
+python3 tools/contracts/validate.py --tests contracts/examples/tests/*.yaml contracts/examples/tests-pending/*.yaml
 ```
