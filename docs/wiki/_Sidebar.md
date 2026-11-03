@@ -22,3 +22,5 @@
 - [Contracts](Contracts.md)
 - [Realism](Realism.md)
 - [Operations](Operations.md)
+- [Benchmarks](Benchmarks.md)
+- [Web UI](Web-UI.md)

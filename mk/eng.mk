@@ -10,3 +10,4 @@ ENG_CRATES := $(notdir $(patsubst %/,%,$(dir $(wildcard engine/*/Cargo.toml))))
 TEST_TARGETS += test-eng
 test-eng:
 	$(CARGO) test $(addprefix -p ,$(ENG_CRATES))
+	$(PYTHON) -m pytest -q engine/fps-flow/tests

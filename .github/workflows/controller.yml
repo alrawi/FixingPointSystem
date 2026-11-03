@@ -12,6 +12,9 @@ on:
     paths:
       - .github/**
       - controller/**
+      - contracts/schemas/**
+      - contracts/openapi/**
+      - contracts/proto/**
       - Cargo.toml
       - Cargo.lock
       - Makefile
@@ -20,6 +23,9 @@ on:
     paths:
       - .github/**
       - controller/**
+      - contracts/schemas/**
+      - contracts/openapi/**
+      - contracts/proto/**
       - Cargo.toml
       - Cargo.lock
       - Makefile

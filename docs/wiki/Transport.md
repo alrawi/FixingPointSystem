@@ -43,7 +43,7 @@ Accepted sessions inherit the buffer size, Nagle, and linger options from the li
 
 ### Socket options
 
-`SocketOptions` has four fields, and the same type configures clients and listeners.
+`SocketOptions` configures clients and listeners with one type. TRN-03 added the fields `ttl`, `mss`, and `window_clamp` for the OS profiles described below.
 
 | Field | Option | Default | Note |
 |---|---|---|---|

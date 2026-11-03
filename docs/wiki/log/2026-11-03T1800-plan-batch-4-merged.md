@@ -1,0 +1,3 @@
+## [2026-11-03] plan | Batch 4 merged
+
+The coordinator merged the nine batch 4 packages, ENG-02, ENG-04, HST-02, TRN-03, CTL-03, CTL-04, CTL-06, QA-03, and UI-00, after the owner delegated merging on 2026-11-03. The owner accepted D11, the React web UI stack. We applied the shared page notes of the batch to Home, the sidebar, Testing, Controller, Engine, Transport, Coding Standards, the specification decision table, `mk/eng.mk`, and the controller workflow, and we recorded in the [Swarm Protocol](Swarm-Protocol.md#merge-train) that the coordinator merges and hands the owner only design conflicts, contract changes, and decision records. Bug #90 is closed.

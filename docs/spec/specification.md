@@ -462,6 +462,8 @@ Nine decisions remain open, and each has a recommended default. We settle them o
 | D7 | v1 application list | Any 15 modules | Chosen 2026-10-30. HTTP/1.1, HTTP/2, HTTPS (TLS 1.2 and 1.3), DNS, SMTP, IMAP, POP3, FTP, SSH, SMB2, SIP with RTP, HLS video, NTP, LDAP, MQTT | Sets which DPI and firewall test cases v1 covers |
 | D8 | User interface in v1 | None; minimal web UI | Chosen 2026-10-30. Full web UI (recommended default was none) | Moves effort from interface to engine and content |
 | D9 | Team model | Solo; small core team; open community from day one | Chosen 2026-10-30. Swarm of AI coding agents | Converts effort classes into calendar time |
+| D10 | Native first party extensions | WebAssembly only; native Rust behind the same traits for first party modules | Chosen 2026-11-02. Native Rust for first party modules, WebAssembly for community modules | Speed of built in modules against one extension path |
+| D11 | Web UI stack | React, Svelte, Vue | Chosen 2026-11-03. React 19 with Vite and TypeScript | Ecosystem and accessible widgets against bundle size |
 
 ## References
 

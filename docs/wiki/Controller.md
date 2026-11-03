@@ -12,6 +12,10 @@ The module has two packages after CTL-01.
 | `internal/app/` | Configuration loading and validation, the JSON logger, the HTTP server, `/healthz`, and graceful shutdown |
 | `internal/api/` | The REST layer generated from the OpenAPI contract, with problem responses and token scopes (CTL-02) |
 | `internal/compiler/` | Compiles a test configuration and an agent inventory into per agent plans (CTL-05) |
+| `internal/store/` | Stores and validates test configurations and serves the /v1/configs operations (CTL-03) |
+| `internal/registry/` | The local module registry, manifest checks, tree digests, and the /v1/modules operations (CTL-04) |
+| `internal/agents/` | The agent manager with Register and Session, the inventory, and /v1/agents (CTL-06) |
+| `internal/fakeagent/` | Fake agents for controller tests (CTL-06) |
 
 Later packages add their own directories under `internal/`, as the [Implementation Plan](Implementation-Plan.md) assigns them. The `app.App` type owns every dependency, and the module has no package level mutable state. A later package mounts its handlers with `App.Handle` before `App.Run` starts, for example CTL-02 for the `/v1` API.
 
