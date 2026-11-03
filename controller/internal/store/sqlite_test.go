@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -99,7 +100,7 @@ func TestSQLiteConcurrentCreates(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			id := "c" + string(rune('A'+i))
+			id := fmt.Sprintf("c%d", i)
 			if err := s.Create(ctx, Record{ID: id, Name: id, Body: []byte(`{}`), CreatedAt: time.Unix(0, 0)}); err != nil {
 				errs <- err
 				return
