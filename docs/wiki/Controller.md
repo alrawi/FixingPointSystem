@@ -342,3 +342,41 @@ The module gained three direct dependencies and two tools.
 | `google.golang.org/grpc/cmd/protoc-gen-go-grpc` v1.5.1 | Apache-2.0 | A tool of the generator only |
 
 The grpc release needs Go 1.24.0, so `go mod tidy` writes `go 1.24.0` in place of `go 1.24`, and it raised `golang.org/x/net`, `x/sys`, `x/text`, `x/sync`, `x/mod`, and `x/tools` as indirect dependencies.
+
+## Run orchestrator
+
+The package `internal/runs` drives test runs. It moves each run through the run state machine of the specification, reserves the agents of the run, compiles one plan per agent, sends the prepare, start, and stop commands, and contains agent faults. It serves `POST /v1/runs`, `GET /v1/runs/{id}`, and `POST /v1/runs/{id}:stop` as the type `runs.API`, which embeds `api.Unimplemented`, so every other run operation still answers 501.
+
+### State machine
+
+A run moves from pending to preparing, running, and stopping, then ends as completed, failed, or aborted. The table lists every allowed transition, and `runs.Transition` rejects every other pair with `ErrInvalidTransition`.
+
+| From | To |
+|---|---|
+| `pending` | `preparing`, `failed`, `aborted` |
+| `preparing` | `running`, `failed`, `aborted` |
+| `running` | `stopping`, `failed`, `aborted` |
+| `stopping` | `completed`, `failed`, `aborted` |
+| `completed`, `failed`, `aborted` | none |
+
+Only `stopping` may complete, because the orchestrator collects the final counters and evaluates the criteria while it stops.
+
+### Lifecycle
+
+`Create` loads the configuration from the store, parses it, picks the agents, reserves them for the run id, and compiles the plans before it answers. A request without agents takes every agent that the operator reserved, and the operator reservation returns to the operator when the run ends. Any error in these steps restores the reservations and creates no run, so `POST /v1/runs` answers 422 for an unknown or invalid configuration or agent, 409 for an agent that is offline, busy, or held by another run and for a request without reserved agents, and 202 with a `Location` header otherwise. The run then proceeds in the background. It sends the plans, starts them, and waits while the agents run. It stops when every agent finished or failed, or when a stop request arrives.
+
+### Stops
+
+A graceful stop sends `STOP_MODE_RAMP_DOWN` with `Config.DrainTimeout` to every active agent and still evaluates the criteria. A forced stop cancels the pending commands, sends `STOP_MODE_ABORT` to every agent that holds the plan, and ends the run as aborted without a verdict. A forced stop during a ramp down also aborts. A stop before the run starts aborts it, and a stop of an ended run answers 409. `Close` aborts every open run with the reason controller shutdown.
+
+### Fault containment
+
+`Orchestrator.Observe` takes the events of the agent manager, and the controller wires it as `agents.Config.Observer`. An agent that reports `FAILED`, loses its plan, or goes offline after a crash or a missed heartbeat fails within its run. The run turns degraded, names the agent in `FailedAgents`, and keeps the other agents running. A failure while preparing or starting fails the run, and a run whose agents all fail ends as failed.
+
+### Criteria
+
+When a run stops, the orchestrator sums the newest unlabeled counters of every agent and derives `sessions.failed_ratio`. The sessions that a failed agent attempted without success or failure count as failed, because the crash ended them. `Config.Evaluator` decides the verdict, and a failing verdict ends the run as failed and a passing one as completed. The default `EvaluateTotals` checks every criterion whose metric appears in the totals and skips the others, which leaves the full catalog to CTL-09.
+
+### Tests of the orchestrator
+
+`state_test.go` checks all 49 pairs of states against the allowed table. The orchestrator tests use the real agent manager, fake agents, the real compiler, an in memory store, and a fake clock. `TestFailingAgentEndsRunByCriteria` lets one of two agents fail or crash under way and checks that a failure ratio of 0.5% completes the degraded run and a ratio of 30% fails it against the criterion of 10%. Other tests cover finishing agents, missed heartbeats, a graceful stop, forced stops while preparing, running, and ramping down, a prepare error, operator reservations, create errors, and `Close`. The REST tests validate every exchange against the OpenAPI document.
