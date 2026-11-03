@@ -46,3 +46,7 @@ The seven scenarios are `lookup_a`, `lookup_aaaa`, `lookup_cname`, `lookup_mx`, 
 `fixtures/capture.sh` records 160 sessions in the QA-01 harness, 140 over UDP and 20 over TCP. TCP flows run over the kernel TCP backend, and UDP flows run over Tokio UDP sockets inside `fixture_peer` until the kernel UDP backend of TRN-02 merges. nDPI 4.2.0 classifies 160 of 160 sessions as DNS, and tshark 4.2.2 reports no parser errors. The workflow `mod-dns` scores the committed fixture and records and scores a fresh capture as root on every change.
 
 The dns module adds two gaps to the list above. The zone of a run is the bundled zone, because neither the manifest nor the test configuration can name a zone file yet. Queries carry no EDNS OPT record, so the server applies the 512 byte limit of RFC 1035 to every UDP answer.
+
+## Joining the realism job
+
+RLM-03 added the workflow `realism`, which records a fresh capture of every native module that a change touches and scores it with nDPI, tshark, and Zeek, as [Realism](Realism.md) describes. A new module joins the job when it ships `native/Cargo.toml`, `fixtures/capture.sh`, and `fixtures/expected.yaml`, and its capture script takes the same arguments as the scripts of `http1` and `dns`. The module needs no edit to the workflow, because `python3 -m realism modules` finds it.

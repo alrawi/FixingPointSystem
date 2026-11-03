@@ -68,7 +68,8 @@ The targets that exist today are listed below.
 | `lint-qa` | shellcheck on the harness scripts, and ruff and mypy on its Python helper when they are installed |
 | `test-qa` | the unit tests of the harness pcapng helper |
 | `e2e-qa` | the namespace harness self test, which needs root |
-| `test-agt` | `cargo test -p fps-agent`, the capability detection tests against fake system roots and the `agent.proto` mirror test |
+| `test-agt` | `cargo test -p fps-agent`, the capability detection tests against fake system roots, the `agent.proto` mirror test, and the controller session tests of `tests/session.rs` against a fake controller |
+| `test-agt-controller` | the real `fps-controller` against the real agent over loopback with `engine/fps-agent/tests/controller_e2e.sh`, which needs Go, curl, tar, and python3 but no root; the `agt` workflow runs it |
 | `test-eng` | every crate under `engine/`, such as `fps-flow` with its Rust and Python loader parity fixtures, `fps-interp`, `fps-runtime`, `fps-sched`, `fps-stats`, `fps-hosts`, and `fps-backend-kernel`, see [Engine](Engine.md) |
 | `lint-rlm` | `ruff format --check`, `ruff check`, and `mypy --strict` over `realism/` |
 | `test-rlm` | the realism runner tests, including the ndpiReader, tshark, and Zeek tests when the tools are installed |
@@ -76,6 +77,7 @@ The targets that exist today are listed below.
 | `e2e-mod-http1` | the http1 fixture capture and score in the namespace harness, as root |
 | `lint-mod-dns`, `test-mod-dns` | the dns module manifest, its native functions, and its golden transcripts |
 | `e2e-mod-dns` | the dns fixture capture and score in the namespace harness, as root |
+| `e2e-rlm-modules` | a fresh capture and score of every native module in the namespace harness, as root; the `realism` workflow runs it for the modules a change touches |
 | `lint-ui`, `test-ui` | the web UI linters, unit tests, bundle budget, license check, and client currency check |
 | `e2e-ui` | the Playwright browser tests of the web UI, outside `make e2e` because they need a browser |
 | `lint-qa-bench`, `test-qa-bench` | ruff and mypy over `bench/`, and the tests of `bench/compare.py` and `bench/s1_adapter.py` |

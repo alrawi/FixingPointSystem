@@ -16,3 +16,12 @@ E2E_TARGETS += e2e-agt
 e2e-agt:
 	$(CARGO) build -p fps-agent
 	engine/fps-agent/tests/netns_smoke.sh $(AGT_TARGET_DIR)/debug/fps-agent
+
+# AGT-02 runs the real fps-controller against the real agent over loopback.
+# It needs Go, curl, tar, and python3 but no root, and it stays out of make
+# test because it builds both binaries.
+AGT_CONTROLLER ?= $(AGT_TARGET_DIR)/fps-controller
+test-agt-controller:
+	$(CARGO) build -p fps-agent
+	cd controller && GOWORK=off $(GO) build -o $(abspath $(AGT_CONTROLLER)) ./cmd/fps-controller
+	engine/fps-agent/tests/controller_e2e.sh $(AGT_CONTROLLER) $(AGT_TARGET_DIR)/debug/fps-agent
