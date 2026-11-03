@@ -11,12 +11,12 @@
     {
       "name": "dns",
       "version": "0.1.0",
-      "digest": "sha256:30d8ff09716eeb9acd5beafc3bd9792e3b8adcf35a435b29df2962c8e259db62"
+      "digest": "sha256:68e7a24ce6a1dc3ddc2c8258b98cc842fc07b9ab384237b98e4cb9709568454c"
     },
     {
       "name": "http1",
       "version": "0.1.0",
-      "digest": "sha256:340e2397156564d53653709c34cfd8451ed5573e81bbd0584157355fae4c7612"
+      "digest": "sha256:2773351127bdfbd21d2364b8a808be398ac9eba4ccd7ef475d02287332ded88c"
     }
   ],
   "scenarios": [

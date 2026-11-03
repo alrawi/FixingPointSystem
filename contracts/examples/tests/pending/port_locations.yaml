@@ -1,0 +1,26 @@
+# Uses decision D12 item 7. The controller compiler reads bare and */ locations after CTL-18.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: port_locations
+  description: One client port pinned to agent-a, one client port spread with */eth1, and one server port spread with a bare interface.
+topology: app_sim
+network:
+  ports:
+    - { name: pinned_clients, location: agent-a/eth1 }
+    - { name: spread_clients, location: "*/eth1" }
+    - { name: servers0, location: eth2 }
+  host_pools:
+    - { name: lab, port: pinned_clients, role: client, ipv4: 10.20.0.0/24, count: 100 }
+    - { name: users, port: spread_clients, role: client, ipv4: 10.10.0.0/16, count: 4000 }
+    - { name: web, port: servers0, role: server, ipv4: 172.16.0.0/24, count: 10 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: http1/web_get, weight: 1, client_pool: lab, server_pool: web }
+    - { scenario: http1/web_browse, weight: 3, client_pool: users, server_pool: web }
+load:
+  objective: { type: sessions_per_second, value: 2000 }
+  phases:
+    - { name: steady, duration_s: 60, shape: hold }
+timeline: { seed: 1 }

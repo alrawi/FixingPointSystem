@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/alrawi/FixingPointSystem/contracts/schemas/module-manifest.schema.json",
   "title": "FixingPointSystem module manifest",
-  "description": "Contract v0.2. Declares a module's identity, capabilities, parameters, template functions, scenarios, and provenance.",
+  "description": "Contract v0.3. Declares a module's identity, capabilities, parameters, settings, template functions, scenarios, byte estimates, and provenance.",
   "type": "object",
   "additionalProperties": false,
   "required": ["apiVersion", "kind", "name", "version", "type", "engine_api", "license", "provenance"],
@@ -57,11 +57,23 @@
       "required": ["type"],
       "properties": { "type": { "const": "object" } }
     },
+    "settings": {
+      "description": "JSON Schema (draft 2020-12) for module settings, which a test configuration sets once per module under modules.<name>.settings. The root must be an object schema. A module without this key accepts no settings.",
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "const": "object" } }
+    },
     "scenarios": {
       "description": "Scenario files relative to the manifest.",
       "type": "array",
       "items": { "$ref": "#/$defs/relpath" },
       "uniqueItems": true
+    },
+    "expected_bytes": {
+      "description": "Estimated application payload bytes that one session of each scenario moves in both directions with default parameters, keyed by scenario name. The controller derives session rates for the throughput_bps objective from it and corrects the estimate by calibration during the run.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": { "type": "integer", "minimum": 1 }
     },
     "assets": {
       "type": "array",

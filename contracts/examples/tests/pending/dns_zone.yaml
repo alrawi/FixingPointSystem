@@ -1,0 +1,29 @@
+# Uses decision D12 item 22. The controller compiler reads modules after CTL-18, and the dns server reads zone_file after MOD-19.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: dns_zone
+  description: DNS lookups that the server answers from a configured zone file.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/lo }
+    - { name: server0, location: local/lo }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 16.0.0.0/24, count: 254 }
+    - { name: servers, port: server0, role: server, ipv4: 48.0.0.0/24, count: 1 }
+modules:
+  dns:
+    settings:
+      zone_file: zones/example.test.zone
+profile:
+  basis: sessions
+  mix:
+    - { scenario: dns/resolve, weight: 1 }
+load:
+  objective: { type: sessions_per_second, value: 500 }
+  phases:
+    - { name: steady, duration_s: 20, shape: hold }
+timeline: { seed: 3 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "==", value: 0 }
