@@ -4,7 +4,8 @@
 //! The workload repeats the Spike S1 bulk run in one process over loopback
 //! TCP. One iteration runs 16 concurrent `web_get` sessions of 4 requests
 //! with 1 MiB bodies, and every session runs its client and its server
-//! side. Three variants share the sockets and the runtime.
+//! side. Two engine workers, each a thread with its own runtime, run eight
+//! sessions each. Three variants share the setup.
 //!
 //! - `interp` runs both sides with the interpreter, so large `fill()`
 //!   bodies go out as vectored writes from the shared filler.
@@ -14,8 +15,12 @@
 //!   into a buffer with `render_into`, which is the copy that the
 //!   interpreter made before vectored writes.
 //!
-//! `benches/bulk_adapter.py` turns the criterion estimates into an
-//! fps-bench/v1 result for `bench/compare.py`.
+//! `cargo bench -p fps-interp --bench bulk` runs the variants under
+//! criterion. With `FPS_BENCH_OUT=<file>` the benchmark skips criterion and
+//! runs a paired measurement instead, which interleaves the variants round
+//! by round so that load from other processes falls on all of them alike,
+//! and writes an fps-bench/v1 result for `bench/compare.py`.
+//! `FPS_BENCH_ROUNDS` sets the number of measured rounds, 300 by default.
 
 use std::future::Future;
 use std::io;
@@ -27,7 +32,7 @@ use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{criterion_group, Criterion, Throughput};
 use fps_flow::function::NoFunctions;
 use fps_flow::program::Op;
 use fps_flow::template::{Filler, RenderCtx};
@@ -419,4 +424,144 @@ fn bulk(c: &mut Criterion) {
 }
 
 criterion_group!(benches, bulk);
-criterion_main!(benches);
+
+const VARIANTS: [(&str, Variant); 3] = [
+    ("interp", Variant::Interp),
+    ("handwritten", Variant::Handwritten),
+    ("handwritten-copy", Variant::HandwrittenCopy),
+];
+/// The Gate 0 criterion, a session rate of at least 75% of hand written code.
+const MIN_RATIO: f64 = 0.75;
+const WARMUP_ROUNDS: usize = 10;
+
+fn median(v: &mut [f64]) -> f64 {
+    v.sort_by(f64::total_cmp);
+    let m = v.len() / 2;
+    if v.len().is_multiple_of(2) {
+        (v[m - 1] + v[m]) / 2.0
+    } else {
+        v[m]
+    }
+}
+
+/// Reads the host facts that `bench/compare.py` checks.
+fn host_json() -> String {
+    let cpu = std::fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|t| {
+            t.lines()
+                .find(|l| l.starts_with("model name"))
+                .and_then(|l| l.split_once(':'))
+                .map(|(_, v)| v.trim().to_string())
+        })
+        .unwrap_or_else(|| "unknown".into());
+    let vcpus = thread::available_parallelism().map_or(0, usize::from);
+    let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .map_or_else(|_| "unknown".into(), |k| k.trim().to_string());
+    format!(r#"{{"cpu": {cpu:?}, "vcpus": {vcpus}, "kernel": {kernel:?}}}"#)
+}
+
+/// Tolerance of the absolute rates. Five consecutive 300 round runs on the
+/// shared 2 vCPU recording host differed by up to a factor of two in
+/// absolute rate, because other processes loaded the host, so the rates
+/// only catch gross regressions.
+const RATE_TOLERANCE: f64 = 0.60;
+/// Tolerance of the ratios, which moved by at most 7% between those runs,
+/// because the paired rounds put the same load on every variant. The
+/// ratios are the metrics to watch.
+const RATIO_TOLERANCE: f64 = 0.10;
+
+fn metric(name: &str, value: f64, tolerance: f64, unit: &str) -> String {
+    format!(
+        r#"    "{name}": {{"value": {value:.4}, "better": "higher", "tolerance": {tolerance:.2}, "unit": "{unit}"}}"#
+    )
+}
+
+/// Runs the variants in rotated order round by round and writes the
+/// medians as an fps-bench/v1 result.
+fn paired(out: &std::ffi::OsStr) {
+    let rounds: usize = std::env::var("FPS_BENCH_ROUNDS")
+        .ok()
+        .and_then(|r| r.parse().ok())
+        .unwrap_or(300);
+    let setup = Arc::new(Setup::new());
+    let workers: Vec<Worker> = (0..WORKERS)
+        .map(|_| Worker::spawn(Arc::clone(&setup)))
+        .collect();
+    let mut times = [Vec::new(), Vec::new(), Vec::new()];
+    let (mut ratios, mut copy_ratios) = (Vec::new(), Vec::new());
+    let mut base = 0u64;
+    for round in 0..WARMUP_ROUNDS + rounds {
+        let mut t = [0f64; 3];
+        for k in 0..VARIANTS.len() {
+            let i = (round + k) % VARIANTS.len();
+            t[i] = iteration(&workers, VARIANTS[i].1, base).as_secs_f64();
+            base += CONCURRENCY as u64;
+        }
+        if round >= WARMUP_ROUNDS {
+            for i in 0..3 {
+                times[i].push(t[i]);
+            }
+            ratios.push(t[1] / t[0]);
+            copy_ratios.push(t[1] / t[2]);
+        }
+    }
+    let mut metrics = Vec::new();
+    for (i, (name, _)) in VARIANTS.iter().enumerate() {
+        let rate = CONCURRENCY as f64 / median(&mut times[i]);
+        let bits = rate * (REQUESTS * BODY * 8) as f64;
+        metrics.push(metric(
+            &format!("bulk-1mib-{name}.sessions_per_s"),
+            rate,
+            RATE_TOLERANCE,
+            "sessions/s",
+        ));
+        metrics.push(metric(
+            &format!("bulk-1mib-{name}.l7_bits_per_s"),
+            bits,
+            RATE_TOLERANCE,
+            "bit/s",
+        ));
+    }
+    let ratio = median(&mut ratios);
+    metrics.push(metric(
+        "bulk-1mib.interp_over_baseline",
+        ratio,
+        RATIO_TOLERANCE,
+        "ratio",
+    ));
+    metrics.push(metric(
+        "bulk-1mib.copy_over_baseline",
+        median(&mut copy_ratios),
+        RATIO_TOLERANCE,
+        "ratio",
+    ));
+    let recorded = std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .map_or_else(
+            |_| "unknown".into(),
+            |o| String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        );
+    let doc = format!(
+        "{{\n  \"format\": \"fps-bench/v1\",\n  \"suite\": \"fps-interp-bulk\",\n  \"recorded\": \"{recorded}\",\n  \"source\": \"FPS_BENCH_ROUNDS={rounds} cargo bench -p fps-interp --bench bulk\",\n  \"host\": {},\n  \"metrics\": {{\n{}\n  }}\n}}\n",
+        host_json(),
+        metrics.join(",\n")
+    );
+    std::fs::write(out, doc).unwrap();
+    let verdict = if ratio >= MIN_RATIO {
+        "meets"
+    } else {
+        "misses"
+    };
+    println!("interp over hand written {ratio:.3} over {rounds} rounds, {verdict} the {MIN_RATIO} criterion");
+}
+
+fn main() {
+    if let Some(out) = std::env::var_os("FPS_BENCH_OUT") {
+        paired(&out);
+        return;
+    }
+    benches();
+    Criterion::default().configure_from_args().final_summary();
+}
