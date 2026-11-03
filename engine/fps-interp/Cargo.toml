@@ -23,6 +23,14 @@ thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "time"] }
 
 [dev-dependencies]
+# The bulk benchmark in benches/bulk.rs. Apache-2.0 or MIT. The default
+# features add plotting and rayon, which the benchmark does not need.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+proptest = "1"
 # serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
 serde_yaml = { package = "serde_norway", version = "0.9" }
-tokio = { version = "1", features = ["io-util", "macros", "rt", "test-util", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "test-util", "time"] }
+
+[[bench]]
+name = "bulk"
+harness = false

@@ -34,3 +34,15 @@ We record three gaps that later packages close.
 1. `validate.py --modules modules/http1` treats every subdirectory of the module as a module and fails, so `lint-mod-http1` validates through a parent directory that links to the module.
 2. The root `.gitignore` ignores `*.pcapng` outside `contracts/examples`, so module fixtures need `git add -f` until the ignore list allows `modules/*/fixtures/*.pcapng`.
 3. The fixture comes from `fixture_peer` and not from the agent, because the agent does not run plans yet. Gate 1 records its capture through the agent.
+
+## The dns module
+
+MOD-02 added the `dns` module under [`modules/dns`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/dns). Its native crate `fps-module-dns` holds an RFC 1035 codec with name compression, a parser for zone files in master file format, and four template functions. `dns.query` renders a query with a transaction id from the session generator, `dns.response` answers it from the zone or from one given address, `dns.answer_ip` returns the first address of an answer for a `set` action, and `dns.tcp_length` reads the two byte length prefix of a TCP message. The catalog extends the contract example by appending optional parameters and the function `tcp_length`, so every example call keeps its meaning. The module README lists every parameter and the answer rules.
+
+The server answers as an authoritative server of `zones/example.test.zone`, which holds A, AAAA, CNAME, MX, TXT, NS, and SOA records with names under `.test` and addresses in the documentation ranges. It follows CNAME chains, answers a missing name with NXDOMAIN and the SOA record, and adds glue addresses to MX answers. A UDP answer longer than 512 bytes keeps only the question and sets TC, and the scenario `tcp_fallback` then repeats the question over TCP, where each side reads the length prefix with `expect bytes: 2` and the message with `expect bytes` of the bound length.
+
+The seven scenarios are `lookup_a`, `lookup_aaaa`, `lookup_cname`, `lookup_mx`, `lookup_txt`, `nxdomain`, and `tcp_fallback`. We test the module at the same four levels as http1. The parser also survives 20,000 random inputs without a panic. The transcript files carry the flow id in their names, as in `tcp_fallback.udp.seed42.c2s.bin`, and a UDP transcript prefixes each datagram with its length so the file keeps the boundaries.
+
+`fixtures/capture.sh` records 160 sessions in the QA-01 harness, 140 over UDP and 20 over TCP. TCP flows run over the kernel TCP backend, and UDP flows run over Tokio UDP sockets inside `fixture_peer` until the kernel UDP backend of TRN-02 merges. nDPI 4.2.0 classifies 160 of 160 sessions as DNS, and tshark 4.2.2 reports no parser errors. The workflow `mod-dns` scores the committed fixture and records and scores a fresh capture as root on every change.
+
+The dns module adds two gaps to the list above. The zone of a run is the bundled zone, because neither the manifest nor the test configuration can name a zone file yet. Queries carry no EDNS OPT record, so the server applies the 512 byte limit of RFC 1035 to every UDP answer.

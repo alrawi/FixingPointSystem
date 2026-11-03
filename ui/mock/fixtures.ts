@@ -120,3 +120,8 @@ export function loadMockData(contractsDir = CONTRACTS_DIR): MockData {
     },
   };
 }
+
+/** Returns the data set with no module installed, for tests of an empty registry. */
+export function withoutModules(data: MockData): MockData {
+  return { ...data, modules: [], capabilities: { ...data.capabilities, modules: [] } };
+}

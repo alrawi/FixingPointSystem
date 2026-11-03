@@ -1,0 +1,17 @@
+{
+  "format": "fps-bench/v1",
+  "suite": "fps-interp-bulk",
+  "recorded": "2026-11-03T14:48:26Z",
+  "source": "FPS_BENCH_ROUNDS=300 cargo bench -p fps-interp --bench bulk",
+  "host": {"cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz", "vcpus": 2, "kernel": "6.18.44-fc-v230"},
+  "metrics": {
+    "bulk-1mib-interp.sessions_per_s": {"value": 672.9240, "better": "higher", "tolerance": 0.60, "unit": "sessions/s"},
+    "bulk-1mib-interp.l7_bits_per_s": {"value": 22579581333.6276, "better": "higher", "tolerance": 0.60, "unit": "bit/s"},
+    "bulk-1mib-handwritten.sessions_per_s": {"value": 569.8388, "better": "higher", "tolerance": 0.60, "unit": "sessions/s"},
+    "bulk-1mib-handwritten.l7_bits_per_s": {"value": 19120616670.9826, "better": "higher", "tolerance": 0.60, "unit": "bit/s"},
+    "bulk-1mib-handwritten-copy.sessions_per_s": {"value": 407.1067, "better": "higher", "tolerance": 0.60, "unit": "sessions/s"},
+    "bulk-1mib-handwritten-copy.l7_bits_per_s": {"value": 13660233172.6369, "better": "higher", "tolerance": 0.60, "unit": "bit/s"},
+    "bulk-1mib.interp_over_baseline": {"value": 1.1718, "better": "higher", "tolerance": 0.10, "unit": "ratio"},
+    "bulk-1mib.copy_over_baseline": {"value": 0.7189, "better": "higher", "tolerance": 0.10, "unit": "ratio"}
+  }
+}

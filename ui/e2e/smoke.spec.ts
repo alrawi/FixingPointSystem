@@ -39,3 +39,25 @@ test("the skip link moves focus to the main region", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(page.getByRole("main")).toBeFocused();
 });
+
+test("browses the module library with the keyboard", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("API token").fill(MOCK_TOKEN);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Capabilities" })).toBeVisible();
+
+  const nav = page.getByRole("navigation", { name: "Main" });
+  await nav.getByRole("link", { name: "Modules" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { level: 1, name: "Modules" })).toBeFocused();
+  const table = page.getByRole("table", { name: "Installed modules" });
+  await expect(table.getByRole("link", { name: "http1 0.1.0" })).toBeVisible();
+  await expectAccessible(page);
+
+  await table.getByRole("link", { name: "http1 0.1.0" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { level: 1, name: "Module http1 0.1.0" })).toBeFocused();
+  await expect(page.getByRole("table", { name: "Parameters" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Functions" })).toBeVisible();
+  await expectAccessible(page);
+});

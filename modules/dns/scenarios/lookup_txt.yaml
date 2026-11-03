@@ -1,0 +1,20 @@
+scenario: lookup_txt
+description: One TXT query over UDP for the SPF record of the zone apex.
+vars:
+  host: example.test
+  qtype: TXT
+  server_port: 53
+flows:
+  - id: query
+    module: dns
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ dns.query(name=vars.host, qtype=vars.qtype) }}"
+      - expect: { min_bytes: 12, max_datagram: 512, timeout_ms: 2000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { min_bytes: 12, max_datagram: 512, timeout_ms: 2000 }
+      - send: "{{ dns.response(last) }}"
+      - close: fin

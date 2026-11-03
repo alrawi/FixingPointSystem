@@ -10,6 +10,14 @@ export type Schemas = components["schemas"];
 export type Capabilities = Schemas["Capabilities"];
 export type Agent = Schemas["Agent"];
 export type ModuleSummary = Schemas["ModuleSummary"];
+export type ModuleType = Schemas["ModuleType"];
+/**
+ * A module manifest as GET /modules/{name}/{version} returns it. The generator
+ * copies the `$defs` of the schema into the type, which no manifest carries.
+ */
+export type ModuleManifest = Omit<Schemas["module-manifest.schema"], "$defs">;
+/** A template function that a module declares in its manifest. */
+export type ModuleFunction = Schemas["function"];
 export type MetricSample = Schemas["MetricSample"];
 export type Problem = Schemas["Problem"];
 
@@ -83,4 +91,60 @@ export async function fetchCapabilities(
   signal?: AbortSignal,
 ): Promise<Capabilities> {
   return unwrap(await client.GET("/capabilities", signal ? { signal } : {}));
+}
+
+/** The largest page that GET /modules returns, from the PageSize parameter of the contract. */
+export const MAX_PAGE_SIZE = 500;
+
+/** Options of fetchModules. */
+export interface FetchModulesOptions {
+  /** Lists only modules of this type. */
+  type?: ModuleType;
+  /** Page size of each request, the contract maximum by default. */
+  pageSize?: number;
+  signal?: AbortSignal;
+}
+
+/** Fetches every installed module, following `next_page_token` until the last page. */
+export async function fetchModules(
+  client: ApiClient,
+  options: FetchModulesOptions = {},
+): Promise<ModuleSummary[]> {
+  const modules: ModuleSummary[] = [];
+  const seen = new Set<string>();
+  let pageToken: string | undefined;
+  for (;;) {
+    const page = unwrap(
+      await client.GET("/modules", {
+        params: {
+          query: {
+            page_size: options.pageSize ?? MAX_PAGE_SIZE,
+            ...(options.type === undefined ? {} : { type: options.type }),
+            ...(pageToken === undefined ? {} : { page_token: pageToken }),
+          },
+        },
+        ...(options.signal ? { signal: options.signal } : {}),
+      }),
+    );
+    modules.push(...page.items);
+    pageToken = page.next_page_token;
+    // A token that repeats would loop forever, so it ends the listing.
+    if (pageToken === undefined || pageToken === "" || seen.has(pageToken)) return modules;
+    seen.add(pageToken);
+  }
+}
+
+/** Fetches the manifest of one installed module. */
+export async function fetchModule(
+  client: ApiClient,
+  name: string,
+  version: string,
+  signal?: AbortSignal,
+): Promise<ModuleManifest> {
+  return unwrap(
+    await client.GET("/modules/{name}/{version}", {
+      params: { path: { name, version } },
+      ...(signal ? { signal } : {}),
+    }),
+  );
 }

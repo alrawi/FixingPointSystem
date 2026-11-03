@@ -4,13 +4,16 @@
 //
 // Usage:
 //
-//	fps-controller [-config file] [-listen host:port] [-log-level level]
+//	fps-controller [-config file] [-listen host:port] [-grpc-listen host:port]
+//	               [-data-dir dir] [-log-level level]
 //	fps-controller -version
 //
 // Settings come from three layers, where a later layer wins. The layers are the
 // built in defaults, the YAML file named by -config, and the flags that appear on
 // the command line. The process logs JSON lines to standard error, serves
-// GET /healthz, and on SIGINT or SIGTERM drains in flight requests for up to
+// GET /healthz and the /v1 REST API on the listen address, and serves the agent
+// gRPC service on the grpc_listen address. On SIGINT or SIGTERM it aborts the
+// open runs, ends the agent sessions, and drains in flight requests for up to
 // shutdown_timeout before it exits.
 //
 // Exit codes are 0 after a clean shutdown, 1 when the controller fails at run
@@ -23,12 +26,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"runtime/debug"
 	"syscall"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/app"
+	"github.com/alrawi/FixingPointSystem/controller/internal/wiring"
 )
 
 // Exit codes of the process.
@@ -49,6 +54,8 @@ func main() {
 type options struct {
 	configPath string
 	listen     string
+	grpcListen string
+	dataDir    string
 	logLevel   string
 	version    bool
 	set        map[string]bool
@@ -62,6 +69,8 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.SetOutput(stderr)
 	fs.StringVar(&o.configPath, "config", "", "path of the YAML configuration `file`")
 	fs.StringVar(&o.listen, "listen", app.DefaultListen, "TCP `address` of the HTTP server")
+	fs.StringVar(&o.grpcListen, "grpc-listen", app.DefaultGRPCListen, "TCP `address` of the agent gRPC service")
+	fs.StringVar(&o.dataDir, "data-dir", "", "`directory` of the module registry and the configuration store")
 	fs.StringVar(&o.logLevel, "log-level", app.DefaultLogLevel, "log `level`: debug, info, warn, or error")
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
@@ -87,6 +96,12 @@ func loadConfig(o options) (app.Config, error) {
 	}
 	if o.set["listen"] {
 		cfg.Listen = o.listen
+	}
+	if o.set["grpc-listen"] {
+		cfg.GRPCListen = o.grpcListen
+	}
+	if o.set["data-dir"] {
+		cfg.DataDir = o.dataDir
 	}
 	if o.set["log-level"] {
 		cfg.LogLevel = o.logLevel
@@ -132,15 +147,50 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	logger.Info("controller starting", "version", version(), "config", o.configPath)
 
-	a := app.New(cfg, logger)
-	ln, err := a.Listen(ctx)
-	if err != nil {
+	if err := serve(ctx, cfg, logger); err != nil {
 		logger.Error("controller failed", "error", err)
-		return exitFailure
-	}
-	if err := a.Run(ctx, ln); err != nil {
-		logger.Error("controller failed", "error", err)
+		if errors.Is(err, app.ErrInvalidConfig) {
+			return exitUsage
+		}
 		return exitFailure
 	}
 	return exitOK
+}
+
+// serve builds the controller, serves the REST API and the agent gRPC service
+// until ctx ends or one of them fails, and then shuts both down.
+func serve(ctx context.Context, cfg app.Config, logger *slog.Logger) (err error) {
+	ctl, err := wiring.New(ctx, wiring.Options{Config: cfg, Logger: logger})
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, ctl.Close()) }()
+
+	a := app.New(cfg, logger)
+	// Hook for CTL-08: here, before Mount, pass the handler of
+	// internal/metrics to ctl.SetMetrics, add its event observer with
+	// ctl.Observe, and mount the Prometheus endpoint with
+	// a.Handle("GET /metrics", ...).
+	ctl.Mount(a)
+
+	ln, err := a.Listen(ctx)
+	if err != nil {
+		return err
+	}
+	gln, err := ctl.ListenGRPC(ctx)
+	if err != nil {
+		return errors.Join(err, ln.Close())
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	grpcDone := make(chan error, 1)
+	go func() {
+		err := ctl.Run(runCtx, gln)
+		cancel() // a failing agent service stops the REST server too
+		grpcDone <- err
+	}()
+	httpErr := a.Run(runCtx, ln)
+	cancel()
+	return errors.Join(httpErr, <-grpcDone)
 }

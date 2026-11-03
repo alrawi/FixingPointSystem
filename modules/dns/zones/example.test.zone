@@ -1,0 +1,43 @@
+; SPDX-License-Identifier: GPL-3.0-only
+;
+; The synthetic zone that the dns module answers from. Every name lies under
+; the reserved .test domain (RFC 6761), and every address lies in the
+; documentation ranges 192.0.2.0/24 (RFC 5737) and 2001:db8::/32 (RFC 3849).
+; The record big.example.test carries more than 512 bytes of text, so a UDP
+; answer to it is truncated and the client retries over TCP.
+$ORIGIN example.test.
+$TTL 300
+@               IN SOA   ns1 hostmaster (
+                         2026110301 ; serial
+                         7200       ; refresh
+                         3600       ; retry
+                         1209600    ; expire
+                         300 )      ; negative caching TTL
+                IN NS    ns1
+                IN NS    ns2
+                IN A     192.0.2.1
+                IN AAAA  2001:db8::1
+                IN MX    10 mail
+                IN MX    20 mail2
+                IN TXT   "v=spf1 ip4:192.0.2.0/24 ip6:2001:db8::/32 -all"
+ns1             IN A     192.0.2.53
+                IN AAAA  2001:db8::53
+ns2             IN A     192.0.2.54
+www             IN A     192.0.2.1
+                IN AAAA  2001:db8::1
+mail            IN A     192.0.2.25
+                IN AAAA  2001:db8::25
+mail2           IN A     192.0.2.26
+api        60   IN A     192.0.2.10
+                IN A     192.0.2.11
+cdn             IN CNAME edge
+edge       60   IN A     192.0.2.80
+                IN AAAA  2001:db8::80
+static          IN CNAME cdn
+alias           IN CNAME www
+_dmarc          IN TXT   "v=DMARC1; p=reject; rua=mailto:dmarc@example.test"
+big             IN TXT   (
+                "fps-part-000-afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuzz"
+                "fps-part-001-hmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw166"
+                "fps-part-002-oty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dd"
+                "fps-part-003-v05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkpuz49ejoty38dinsx27chmrw16bglqv05afkk" )

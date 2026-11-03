@@ -425,3 +425,110 @@ impl Template {
         self.render_int(&mut ctx)
     }
 }
+
+/// Renders `t` with `render_into` and with `render_parts`, joins the parts,
+/// and returns both outputs, the parts, and the next draw of each generator.
+fn render_both(t: &Template, min_ref: usize) -> (Vec<u8>, Vec<u8>, Vec<Part>, (u64, u64)) {
+    let filler = Filler::new(3);
+    let vars = vars();
+    let overlay = Vars::new();
+    let mut draws = [0u64; 2];
+    let mut outputs = [Vec::new(), Vec::new()];
+    let mut parts = Vec::new();
+    for (i, out) in outputs.iter_mut().enumerate() {
+        let mut rng = Pcg64Mcg::new(77);
+        let mut echo = Echo;
+        let mut ctx = RenderCtx {
+            vars: &vars,
+            overlay: &overlay,
+            session_id: 42,
+            flow: "page",
+            last: b"ok",
+            rng: &mut rng,
+            filler: &filler,
+            functions: &mut echo,
+        };
+        if i == 0 {
+            t.render_into(&mut ctx, out).unwrap();
+        } else {
+            let mut buf = b"kept".to_vec();
+            t.render_parts(&mut ctx, &mut buf, &mut parts, min_ref)
+                .unwrap();
+            for p in &parts {
+                match *p {
+                    Part::Out { start, end } => {
+                        assert!(start >= 4, "parts never cover bytes before the render");
+                        out.extend_from_slice(&buf[start..end]);
+                    }
+                    Part::Filler { start, end } => {
+                        out.extend_from_slice(&filler.as_bytes()[start..end]);
+                    }
+                }
+            }
+        }
+        draws[i] = rng.next_u64();
+    }
+    let [a, b] = outputs;
+    (a, b, parts, (draws[0], draws[1]))
+}
+
+#[test]
+fn render_parts_joins_to_render_into_and_keeps_the_generator_in_step() {
+    let t = Template::compile(
+        "HTTP {{ vars.n }}\r\n{{ fill(3000000) }}|{{ rand_int(1, 9) }}{{ fill(2) }}{{ m.f(fill(20)) }}{{ fill(vars.n) }}",
+    )
+    .unwrap();
+    for min_ref in [0, 1, 3, 4096, usize::MAX] {
+        let (into, joined, parts, (a, b)) = render_both(&t, min_ref);
+        assert_eq!(into, joined, "min_ref {min_ref}");
+        assert_eq!(a, b, "min_ref {min_ref}");
+        let referenced = parts
+            .iter()
+            .filter(|p| matches!(p, Part::Filler { .. }))
+            .count();
+        if min_ref == usize::MAX {
+            assert_eq!(referenced, 0);
+        } else {
+            // 3 MB wraps the 1 MiB filler at least three times.
+            assert!(referenced >= 4, "min_ref {min_ref}: {parts:?}");
+        }
+    }
+}
+
+#[test]
+fn render_parts_without_fill_is_one_out_part() {
+    let t = Template::compile("GET {{ vars.host }} {{ session.id }}").unwrap();
+    let (into, joined, parts, _) = render_both(&t, 0);
+    assert_eq!(into, joined);
+    assert_eq!(
+        parts,
+        vec![Part::Out {
+            start: 4,
+            end: 4 + into.len()
+        }]
+    );
+}
+
+#[test]
+fn render_parts_reports_a_negative_fill() {
+    let filler = Filler::new(1);
+    let vars = vars();
+    let overlay = Vars::new();
+    let mut rng = Pcg64Mcg::new(1);
+    let mut none = NoFunctions;
+    let mut ctx = RenderCtx {
+        vars: &vars,
+        overlay: &overlay,
+        session_id: 0,
+        flow: "f",
+        last: &[],
+        rng: &mut rng,
+        filler: &filler,
+        functions: &mut none,
+    };
+    let t = Template::compile("{{ fill(-1) }}").unwrap();
+    let err = t
+        .render_parts(&mut ctx, &mut Vec::new(), &mut Vec::new(), 0)
+        .unwrap_err();
+    assert_eq!(err, TemplateError::NegativeFill(-1));
+}
