@@ -43,8 +43,8 @@ type (
 
 var _ api.ServerInterface = (*Server)(nil)
 
-// Handlers holds the handler of every package for NewServer. Metrics is
-// optional.
+// Handlers holds the handler of every package for NewServer. Metrics and
+// Report are optional.
 type Handlers struct {
 	// Agents serves /v1/agents.
 	Agents *agents.API
@@ -59,6 +59,8 @@ type Handlers struct {
 	// Metrics serves the two metrics operations of a run. Nil answers them
 	// with 501 until the metrics package of CTL-08 is wired.
 	Metrics MetricsHandler
+	// Report serves GET /v1/runs/{id}/report. Nil answers it with 501.
+	Report ReportHandler
 }
 
 // NewServer returns the combined server over h.
@@ -69,7 +71,7 @@ func NewServer(h Handlers) *Server {
 		configOps:     h.Configs,
 		moduleOps:     h.Modules,
 		runOps:        h.Runs,
-		pending:       pending{metrics: h.Metrics},
+		pending:       pending{metrics: h.Metrics, report: h.Report},
 	}
 }
 
@@ -83,10 +85,19 @@ type MetricsHandler interface {
 	StreamRunMetrics(w http.ResponseWriter, r *http.Request, id api.Id, params api.StreamRunMetricsParams)
 }
 
+// ReportHandler serves the report operation of a run, which CTL-09 adds in
+// internal/report. Controller.SetReport replaces the handler that New sets.
+type ReportHandler interface {
+	// GetRunReport serves GET /v1/runs/{id}/report.
+	GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, params api.GetRunReportParams)
+}
+
 // pending answers the operations that no package implements yet. It forwards
-// the metrics operations to a MetricsHandler when one is set.
+// the metrics operations to a MetricsHandler and the report operation to a
+// ReportHandler when one is set.
 type pending struct {
 	metrics MetricsHandler
+	report  ReportHandler
 }
 
 // ListRuns answers listRuns with a 501 problem.
@@ -109,9 +120,13 @@ func (pending) DownloadCapture(w http.ResponseWriter, r *http.Request, id api.Id
 	api.Unimplemented{}.DownloadCapture(w, r, id, captureID)
 }
 
-// GetRunReport answers getRunReport with a 501 problem.
-func (pending) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, params api.GetRunReportParams) {
-	api.Unimplemented{}.GetRunReport(w, r, id, params)
+// GetRunReport forwards getRunReport to the report handler, or answers 501.
+func (p pending) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, params api.GetRunReportParams) {
+	if p.report == nil {
+		api.Unimplemented{}.GetRunReport(w, r, id, params)
+		return
+	}
+	p.report.GetRunReport(w, r, id, params)
 }
 
 // GetRunMetrics forwards getRunMetrics to the metrics handler, or answers 501.

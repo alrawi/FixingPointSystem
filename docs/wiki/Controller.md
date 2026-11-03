@@ -592,3 +592,14 @@ Bug #119 closed the hook that the Binary wiring section describes. The function 
 `GET /metrics` needs no token, because Prometheus scrapers usually send none. The exposition holds run identifiers, application names, scenario names, and port names, so an operator who considers them sensitive keeps the listen address on a trusted network. The exported field `wiring.Controller.Runs` already gives the orchestrator, so the wiring package needed no new accessor.
 
 `TestEndToEnd` now runs one more step while the run is running. The fake agent sends a snapshot with `sessions.attempted` equal to 7 for the application `http1` and the scenario `web_get`. The test polls until `GET /v1/runs/{id}/metrics?view=application` returns the key `http1` with that count and `GET /metrics` contains the line `fps_sessions_attempted_total{run_id="<run id>",application="http1",scenario="web_get"} 7`.
+
+## Reports in the binary
+
+Bug #124 joined the criteria evaluator and the report endpoint of CTL-09 to the binary. The wiring adds two pieces.
+
+1. `wiring.New` creates `report.NewEvaluator(nil)` with the embedded metrics catalog before the run orchestrator, keeps it in the exported field `Controller.Evaluator`, and passes `Evaluator.RunEvaluator()` as `runs.Config.Evaluator`. Every stopped run therefore derives the catalog formulas, such as `tls.resumption_ratio`, from its totals and gives each criterion the result pass, fail, missing, or invalid. The simple evaluator `runs.EvaluateTotals` no longer runs in the binary.
+2. `wiring.Server` forwards `getRunReport` from `pending` to a `ReportHandler`. `wiring.New` sets `report.NewAPI(ev, ctl.Runs, nil)`, which builds reports from the run totals alone, and `Controller.SetReport` replaces it before `Mount`. The function `mountMetrics` in `cmd/fps-controller/main.go` calls `ctl.SetReport(report.NewAPI(ctl.Evaluator, ctl.Runs, agg))`, so the binary builds reports over the merged metrics of the aggregator.
+
+`GET /v1/runs/{id}/report` answers JSON by default and CSV with `format=csv`. The format `html` still answers 501 from `report.API`. `TestServerRoutesEveryOperation` now expects six pending operations, and `TestNewServesRunReports` and `TestSetReportRoutesReportOperation` cover the default handler and the hook.
+
+`TestEndToEnd` proves the path through the binary. The example configuration gains the criterion `tls.resumption_ratio >= 0.5`, whose gauge only the CTL-09 evaluator computes. The fake agent snapshot carries `sessions.attempted`, `sessions.succeeded`, `sessions.failed`, `tls.handshakes`, and `tls.resumptions` both with labels and without, because the orchestrator reads only the unlabeled run totals. After the stop the test reads both criteria as passed with the observed values 0 and 0.5 from `GET /v1/runs/{id}`, from the JSON report, and from the criterion rows of the CSV report, and it checks `sessions_attempted` 7 in the report summary.
