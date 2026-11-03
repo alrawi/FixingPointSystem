@@ -65,6 +65,7 @@ Agents and people coordinate through the [Swarm Protocol](https://github.com/alr
 | D9 | Team model | Swarm of AI coding agents |
 | D10 | Native first party extensions | Native Rust for first party modules, WebAssembly for community modules |
 | D11 | Web UI stack | React with Vite and TypeScript |
+| D12 | Phase 1 owner questions | Linux 6.3 or newer for agents, and 22 more answers in docs/decisions/0012 |
 
 ## Authorized use
 

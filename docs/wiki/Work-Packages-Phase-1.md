@@ -4,7 +4,7 @@
 
 Gate 1. A two arm run of the HTTP/1.1 and DNS mix through the controller and one kernel backend agent reaches 99% nDPI classification as the intended application, and the REST API skeleton passes its contract tests.
 
-This page lists 51 work packages. Packages marked critical path gate the phase.
+This page lists 62 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -58,6 +58,17 @@ flowchart LR
   RLM_01["RLM-01<br/>Realism runner and nDPI conformance"]
   RLM_02["RLM-02<br/>Parser error checks with Zeek and tshark"]
   RLM_03["RLM-03<br/>Module realism CI job"]
+  CON_07["CON-07<br/>API contract fields for failure reasons and cleanup"]
+  CON_08["CON-08<br/>Metric catalog views, reasons, and side label"]
+  CON_09["CON-09<br/>Test configuration and manifest schema additions"]
+  CTL_18["CTL-18<br/>Compiler port pinning, host share rates, seeds, and module settings"]
+  CTL_19["CTL-19<br/>Optional token for the metrics endpoint"]
+  CTL_20["CTL-20<br/>Run reasons, criterion results, and criterion filters"]
+  AGT_06["AGT-06<br/>Kernel requirement and redial policy"]
+  ENG_14["ENG-14<br/>Failure reasons and side label in engine statistics"]
+  RLM_11["RLM-11<br/>Pinned Zeek and visible parser skips"]
+  QA_08["QA-08<br/>Nightly benchmark on the owner host"]
+  MOD_19["MOD-19<br/>DNS zone file setting"]
   QA_04["QA-04<br/>Gate 1 acceptance suite"]
   UI_00["UI-00<br/>Web UI stack decision"]
   UI_01["UI-01<br/>Web UI skeleton"]
@@ -129,6 +140,23 @@ flowchart LR
   RLM_01 --> RLM_03
   QA_01 --> RLM_03
   AGT_01 --> RLM_03
+  CON_06 --> CON_07
+  CON_02 --> CON_08
+  CON_04 --> CON_09
+  CTL_05 --> CTL_18
+  CON_09 --> CTL_18
+  CTL_17 --> CTL_19
+  CTL_09 --> CTL_20
+  CON_07 --> CTL_20
+  CON_09 --> CTL_20
+  AGT_02 --> AGT_06
+  ENG_05 --> ENG_14
+  CON_08 --> ENG_14
+  RLM_03 --> RLM_11
+  QA_03 --> QA_08
+  MOD_02 --> MOD_19
+  CON_09 --> MOD_19
+  CTL_18 --> MOD_19
   QA_01 --> QA_04
   AGT_02 --> QA_04
   CTL_09 --> QA_04
@@ -193,6 +221,17 @@ flowchart LR
 | [RLM-01](#rlm-01-realism-runner-and-ndpi-conformance) | Realism runner and nDPI conformance | M | none | yes |
 | [RLM-02](#rlm-02-parser-error-checks-with-zeek-and-tshark) | Parser error checks with Zeek and tshark | S | RLM-01 | yes |
 | [RLM-03](#rlm-03-module-realism-ci-job) | Module realism CI job | M | RLM-01, QA-01, AGT-01 |  |
+| [CON-07](#con-07-api-contract-fields-for-failure-reasons-and-cleanup) | API contract fields for failure reasons and cleanup | S | CON-06 |  |
+| [CON-08](#con-08-metric-catalog-views-reasons-and-side-label) | Metric catalog views, reasons, and side label | S | CON-02 |  |
+| [CON-09](#con-09-test-configuration-and-manifest-schema-additions) | Test configuration and manifest schema additions | M | CON-04 |  |
+| [CTL-18](#ctl-18-compiler-port-pinning-host-share-rates-seeds-and-module-settings) | Compiler port pinning, host share rates, seeds, and module settings | M | CTL-05, CON-09 |  |
+| [CTL-19](#ctl-19-optional-token-for-the-metrics-endpoint) | Optional token for the metrics endpoint | S | CTL-17 |  |
+| [CTL-20](#ctl-20-run-reasons-criterion-results-and-criterion-filters) | Run reasons, criterion results, and criterion filters | M | CTL-09, CON-07, CON-09 |  |
+| [AGT-06](#agt-06-kernel-requirement-and-redial-policy) | Kernel requirement and redial policy | S | AGT-02 |  |
+| [ENG-14](#eng-14-failure-reasons-and-side-label-in-engine-statistics) | Failure reasons and side label in engine statistics | S | ENG-05, CON-08 |  |
+| [RLM-11](#rlm-11-pinned-zeek-and-visible-parser-skips) | Pinned Zeek and visible parser skips | S | RLM-03 |  |
+| [QA-08](#qa-08-nightly-benchmark-on-the-owner-host) | Nightly benchmark on the owner host | S | QA-03 |  |
+| [MOD-19](#mod-19-dns-zone-file-setting) | DNS zone file setting | S | MOD-02, CON-09, CTL-18 |  |
 | [QA-04](#qa-04-gate-1-acceptance-suite) | Gate 1 acceptance suite | M | QA-01, AGT-02, CTL-09, CTL-17, MOD-01, MOD-02, RLM-02 | yes |
 | [UI-00](#ui-00-web-ui-stack-decision) | Web UI stack decision | S | none |  |
 | [UI-01](#ui-01-web-ui-skeleton) | Web UI skeleton | M | UI-00 |  |
@@ -300,6 +339,69 @@ Acceptance.
 
 - [ ] `buf lint` and `python3 tools/contracts/check_plans.py` pass.
 - [ ] The owner approves the pull request.
+
+### CON-07 API contract fields for failure reasons and cleanup
+
+Phase 1 · size S · workstream CON
+
+- **Depends on.** CON-06
+- **Paths.** `contracts/openapi/`
+
+Apply decision D12 items 19 and 20. The API says why a run failed and why a criterion passed, failed, or is missing, and the contract needs no generator workaround.
+
+Deliverables.
+
+- A Run field reason with the failure reason as a string.
+- Criterion result fields observed, passed, and reason in the report verdict items.
+- `type: string` on every enum, `GET /metrics` documented outside `/v1`, and `MetricSample.values` with format double.
+- An entry in contracts/changes/CON-07.md.
+
+Acceptance.
+
+- [ ] `buf lint`, the OpenAPI lint, and `python3 tools/contracts/check_plans.py` pass, and the change is additive.
+
+### CON-08 Metric catalog views, reasons, and side label
+
+Phase 1 · size S · workstream CON
+
+- **Depends on.** CON-02
+- **Paths.** `contracts/metrics/`
+
+Apply decision D12 items 13, 15, 17, and 21 to the metric catalog.
+
+Deliverables.
+
+- A view field on every catalog metric that names its API MetricView.
+- The histogram statistic suffixes p50, p90, p99, p999, min, max, mean, and count as the documented fixed list.
+- The failure reasons datagram_rejected, template_error, and extension_error.
+- A side label with the values client and server on every session and transport metric.
+- An entry in contracts/changes/CON-08.md.
+
+Acceptance.
+
+- [ ] The catalog checks pass and every metric has a view.
+
+### CON-09 Test configuration and manifest schema additions
+
+Phase 1 · size M · workstream CON
+
+- **Depends on.** CON-04
+- **Paths.** `contracts/schemas/`, `contracts/examples/tests/`, `contracts/examples/modules/`
+
+Apply decision D12 items 7, 9, 10, 14, and 22 to the test configuration and module manifest schemas.
+
+Deliverables.
+
+- A seed of at least 1, with the controller choosing a random nonzero seed when the configuration has none.
+- The port location rule that agent/interface pins a port to one agent and a bare interface or */interface spreads it across agents.
+- An optional where filter on a criterion that selects labels such as application.
+- A modules.<name>.settings object that the manifest of each module describes with a JSON schema, with zone_file for dns.
+- An expected_bytes estimate per scenario in the module manifest.
+- An entry in contracts/changes/CON-09.md.
+
+Acceptance.
+
+- [ ] The schema checks pass on every example, and one new example uses each addition.
 
 ## OPS Repository and swarm tooling
 
@@ -462,6 +564,24 @@ Deliverables.
 Acceptance.
 
 - [ ] A synthetic 15% regression fails against a 10% tolerance, and a 5% regression passes.
+
+### QA-08 Nightly benchmark on the owner host
+
+Phase 1 · size S · workstream QA
+
+- **Depends on.** QA-03
+- **Paths.** `.github/workflows/qa-bench.yml`, `bench/`
+
+Apply decision D12 item 6. A self hosted runner on the owner's Linux server runs the benchmark every night and compares it with the baseline from the same host.
+
+Deliverables.
+
+- Owner steps to register the self hosted runner with the label fps-bench.
+- A scheduled job that runs make bench-s1 on that runner with --require-same-host.
+
+Acceptance.
+
+- [ ] One scheduled run on the owner host produces a comparison.
 
 ### QA-04 Gate 1 acceptance suite
 
@@ -676,6 +796,24 @@ Acceptance.
 - [ ] A loopback test drives the http1 web_get example at a fixed rate and reports matching counters.
 - [ ] Stop completes within the configured ramp down time plus one second.
 
+### ENG-14 Failure reasons and side label in engine statistics
+
+Phase 1 · size S · workstream ENG
+
+- **Depends on.** ENG-05, CON-08
+- **Paths.** `engine/fps-stats/`
+
+Apply the CON-08 catalog additions in the engine statistics, so failure reasons and the client or server side reach the snapshots.
+
+Deliverables.
+
+- Counters for datagram_rejected, template_error, and extension_error.
+- The side label on session and transport counters.
+
+Acceptance.
+
+- [ ] Unit tests show each new reason and both sides in a snapshot.
+
 ## TRN Transport backends
 
 ### TRN-01 Kernel TCP backend
@@ -825,6 +963,25 @@ Deliverables.
 Acceptance.
 
 - [ ] Tests cover a virtio-net guest, a host without XDP, and a host with two NUMA nodes.
+
+### AGT-06 Kernel requirement and redial policy
+
+Phase 1 · size S · workstream AGT
+
+- **Depends on.** AGT-02
+- **Paths.** `engine/fps-agent/`
+
+Apply decision D12 items 3 and 11. The agent refuses to start on Linux older than 6.3 with a clear error, and it redials the controller with a reset, jittered backoff and a limit.
+
+Deliverables.
+
+- A startup check of the kernel version with an error that names the IP_LOCAL_PORT_RANGE requirement.
+- Backoff that restarts at 200 ms with jitter after an abort.
+- A flag that limits redialing, which defaults to five minutes of failed attempts, after which the agent exits with a nonzero code.
+
+Acceptance.
+
+- [ ] Tests cover an old kernel string, the backoff reset, and the redial limit.
 
 ## CTL Controller
 
@@ -1028,6 +1185,64 @@ Acceptance.
 
 - [ ] An end to end test starts the binary, registers a fake agent over gRPC, stores a config, lists modules, and starts a run over REST.
 
+### CTL-18 Compiler port pinning, host share rates, seeds, and module settings
+
+Phase 1 · size M · workstream CTL
+
+- **Depends on.** CTL-05, CON-09
+- **Paths.** `controller/internal/compiler/`
+
+Apply decision D12 items 7, 8, 9, and 22 in the test compiler.
+
+Deliverables.
+
+- Port locations that name an agent compile to that agent only.
+- Rates that follow host shares, so a worker without hosts of a pool gets no rate for flows that need that pool while the total rate stays as configured.
+- A random nonzero seed when the configuration has none.
+- Module settings validated against the manifest schema and carried in the plan.
+
+Acceptance.
+
+- [ ] Golden plans cover a pinned port, a pool smaller than the worker count, and a module setting.
+
+### CTL-19 Optional token for the metrics endpoint
+
+Phase 1 · size S · workstream CTL
+
+- **Depends on.** CTL-17
+- **Paths.** `controller/internal/app/`, `controller/cmd/`
+
+Apply decision D12 item 2. `GET /metrics` stays open by default, and a configuration setting can require a bearer token for it.
+
+Deliverables.
+
+- A metrics token setting in the controller configuration.
+- Tests for an open endpoint, a required token, and a wrong token.
+
+Acceptance.
+
+- [ ] `make lint-ctl test-ctl` passes.
+
+### CTL-20 Run reasons, criterion results, and criterion filters
+
+Phase 1 · size M · workstream CTL
+
+- **Depends on.** CTL-09, CON-07, CON-09
+- **Paths.** `controller/internal/runs/`, `controller/internal/report/`
+
+Apply decision D12 items 14 and 19 and close note 4 of the CTL-09 log entry.
+
+Deliverables.
+
+- Run.reason filled for every failed run.
+- Criterion results with observed, passed, and reason in the JSON report and in GET /v1/runs/{id}.
+- The where filter of a criterion applied to labeled metrics.
+- The run id in runs.Outcome, so histogram criteria decide the run state as they decide the report.
+
+Acceptance.
+
+- [ ] Golden reports cover a failed run with a reason, a filtered criterion, and a histogram criterion.
+
 ## MOD Application and content modules
 
 ### MOD-01 HTTP/1.1 module
@@ -1067,6 +1282,24 @@ Deliverables.
 Acceptance.
 
 - [ ] tshark parses every fixture message without errors, and nDPI classifies at least 99% of sessions as DNS.
+
+### MOD-19 DNS zone file setting
+
+Phase 1 · size S · workstream MOD
+
+- **Depends on.** MOD-02, CON-09, CTL-18
+- **Paths.** `modules/dns/`
+
+Apply decision D12 item 22 in the dns module. A test configuration names a zone file through the module settings, and the server answers from it.
+
+Deliverables.
+
+- The zone_file setting in the dns manifest schema and its use in the server.
+- A fixture that answers from a configured zone.
+
+Acceptance.
+
+- [ ] The dns tests and the realism job pass with a configured zone.
 
 ## RLM Realism validation
 
@@ -1122,6 +1355,24 @@ Deliverables.
 Acceptance.
 
 - [ ] A pull request that breaks the http1 request line fails the job.
+
+### RLM-11 Pinned Zeek and visible parser skips
+
+Phase 1 · size S · workstream RLM
+
+- **Depends on.** RLM-03
+- **Paths.** `realism/`, `.github/workflows/rlm.yml`, `.github/workflows/realism.yml`
+
+Apply decision D12 items 5 and 23. CI installs one pinned Zeek version from the Zeek repository, and the report lists each parser that auto mode skipped.
+
+Deliverables.
+
+- One pinned Zeek version in both workflows, set in one place.
+- A skipped parsers list in the realism report and in its text summary.
+
+Acceptance.
+
+- [ ] A test with only tshark installed shows Zeek as skipped.
 
 ## UI Web UI
 

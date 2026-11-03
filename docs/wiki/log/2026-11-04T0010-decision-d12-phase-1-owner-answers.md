@@ -1,0 +1,3 @@
+## [2026-11-04] decision | D12 answers to the Phase 1 owner questions
+
+The owner answered all 23 open questions of Phase 1, and decision record `docs/decisions/0012-phase-1-owner-answers.md` keeps them. Agents need Linux 6.3 or newer, `GET /metrics` stays open with an optional token, CI pins one Zeek version, and the owner's Linux server becomes the benchmark host. The plan gains the Phase 1 follow ups CON-07, CON-08, CON-09, CTL-18, CTL-19, CTL-20, AGT-06, ENG-14, RLM-11, QA-08, and MOD-19, which [Work Packages Phase 1](Work-Packages-Phase-1.md) lists, and the Phase 2 packages CON-10 and CTL-21. [Coding Standards](Coding-Standards.md) now names the private `sys` module rule for socket options.

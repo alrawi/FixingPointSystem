@@ -30,7 +30,7 @@ The agent, the engine, backends, and native module code use Rust. The toolchain 
 | Licenses and advisories | `cargo deny check` | `deny.toml` |
 | Tests | `cargo test --workspace` | |
 
-Each crate declares these lints in `lib.rs` or `main.rs`. Backend crates that need `unsafe` for AF_XDP or DPDK replace `forbid` with `deny` and justify every block.
+Each crate declares these lints in `lib.rs` or `main.rs`. Backend crates that need `unsafe` for AF_XDP or DPDK replace `forbid` with `deny` and justify every block. A crate that needs a socket option without a safe wrapper calls it through `libc` in one private `sys` module, which alone allows `unsafe`, and tests every call, as decision D12 item 4 allows.
 
 ```rust
 // SPDX-License-Identifier: GPL-3.0-only
