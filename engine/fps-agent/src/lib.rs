@@ -2,19 +2,34 @@
 //! The FixingPointSystem agent.
 //!
 //! This crate holds the agent side of the control protocol in
-//! `contracts/proto/fps/agent/v1/agent.proto`. Today it detects host
-//! capabilities. [`capabilities::detect`] reads `/proc` and `/sys` under a
-//! [`sysroot::SystemRoot`], and [`capabilities::HostCapabilities::to_capabilities`]
-//! fills [`proto::Capabilities`], the Rust mirror of the proto `Capabilities`
-//! message.
+//! `contracts/proto/fps/agent/v1/agent.proto`. It has two parts today.
+//!
+//! 1. Capability detection. [`capabilities::detect`] reads `/proc` and
+//!    `/sys` under a [`sysroot::SystemRoot`], and
+//!    [`capabilities::HostCapabilities::to_capabilities`] fills
+//!    [`proto::Capabilities`], the Rust mirror of the proto `Capabilities`
+//!    message.
+//! 2. The standalone mode. [`run::run`] executes a [`plan::Plan`] in its
+//!    canonical JSON mapping without a controller. [`modules`] loads the
+//!    plan modules with digest checks and registers their native template
+//!    functions, [`assemble`] turns the plan into engine workers, `fps-runtime`
+//!    runs the TCP flows, [`udp`] runs the UDP flows over the datagram
+//!    openers, and [`criteria`] evaluates the pass and fail rules.
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod assemble;
 pub mod capabilities;
+pub mod criteria;
 pub mod error;
+pub mod modules;
+pub mod plan;
 pub mod proto;
+pub mod run;
 pub mod sysroot;
+pub mod udp;
 
 pub use capabilities::{detect, HostCapabilities};
 pub use error::DetectError;
+pub use run::{run, Outcome, RunError, RunOptions};
 pub use sysroot::SystemRoot;
