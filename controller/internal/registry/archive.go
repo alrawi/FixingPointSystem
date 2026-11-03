@@ -9,8 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -138,26 +138,27 @@ func writeEntry(r io.Reader, target string, size int64) error {
 
 // copyTree copies the module tree at src into the empty directory dst with the
 // same rules as unpack, so a directory install and an archive install accept
-// the same trees.
+// the same trees. Reads go through an os.Root, so a link cannot lead outside
+// src.
 func copyTree(src, dst string, lim Limits) error {
+	root, err := os.OpenRoot(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	fsys := root.FS()
 	var total int64
 	files := 0
-	return filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
+	return fs.WalkDir(fsys, ".", func(name string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
 			return err
-		}
-		rel, err := filepath.Rel(src, p)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
+		case name == ".":
 			return nil
-		}
-		name := filepath.ToSlash(rel)
-		if !entryPath.MatchString(name) || hasDotSegment(path.Clean(name)) {
+		case !entryPath.MatchString(name) || hasDotSegment(name):
 			return fmt.Errorf("%w: file %q has a path that a manifest cannot name", ErrArchive, name)
 		}
-		target := filepath.Join(dst, rel)
+		target := filepath.Join(dst, filepath.FromSlash(name))
 		switch {
 		case d.IsDir():
 			return os.MkdirAll(target, 0o750)
@@ -173,7 +174,7 @@ func copyTree(src, dst string, lim Limits) error {
 		if files > lim.MaxFiles || total > lim.MaxBytes {
 			return fmt.Errorf("%w: limits are %d files and %d bytes", ErrArchiveTooLarge, lim.MaxFiles, lim.MaxBytes)
 		}
-		in, err := os.Open(filepath.Clean(p))
+		in, err := fsys.Open(name)
 		if err != nil {
 			return err
 		}

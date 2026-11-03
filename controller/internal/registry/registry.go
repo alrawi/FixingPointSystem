@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -327,8 +328,15 @@ func sortEntries(es []Entry) {
 }
 
 // checkTree validates the module tree in dir and returns its index entry.
+// Every read goes through an os.Root, so no path in the manifest can reach
+// outside the tree.
 func checkTree(dir string) (Entry, error) {
-	data, err := os.ReadFile(filepath.Clean(filepath.Join(dir, ManifestFile)))
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return Entry{}, fmt.Errorf("open module tree: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	data, err := fs.ReadFile(root.FS(), ManifestFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Entry{}, invalid("", "file:"+ManifestFile, "the module has no manifest at its root")
@@ -341,7 +349,7 @@ func checkTree(dir string) (Entry, error) {
 	}
 	verr := &ValidationError{Module: moduleLabel(m)}
 	for _, p := range m.Files() {
-		info, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(p)))
+		info, err := root.Lstat(filepath.FromSlash(p))
 		if err != nil || !info.Mode().IsRegular() {
 			verr.Findings = append(verr.Findings, Finding{Path: "file:" + p, Message: "the manifest names a file that the module does not contain"})
 		}
@@ -349,7 +357,7 @@ func checkTree(dir string) (Entry, error) {
 	names := make([]string, 0, len(m.Scenarios))
 	seen := map[string]string{}
 	for i, p := range m.Scenarios {
-		name, err := scenarioName(filepath.Join(dir, filepath.FromSlash(p)))
+		name, err := scenarioName(root.FS(), p)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
 				verr.Findings = append(verr.Findings, Finding{Path: fmt.Sprintf("/scenarios/%d", i), Message: err.Error()})
@@ -384,8 +392,8 @@ var identifier = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 
 // scenarioName reads the scenario field of a scenario file. Full scenario
 // validation belongs to the configuration validator.
-func scenarioName(p string) (string, error) {
-	data, err := os.ReadFile(filepath.Clean(p))
+func scenarioName(fsys fs.FS, p string) (string, error) {
+	data, err := fs.ReadFile(fsys, p)
 	if err != nil {
 		return "", err
 	}

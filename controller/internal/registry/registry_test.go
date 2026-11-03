@@ -28,16 +28,13 @@ const (
 func readTree(t *testing.T, dir string) map[string][]byte {
 	t.Helper()
 	files := map[string][]byte{}
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	fsys := os.DirFS(dir)
+	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		rel, err := filepath.Rel(dir, p)
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(filepath.Clean(p))
-		files[filepath.ToSlash(rel)] = data
+		data, err := fs.ReadFile(fsys, p)
+		files[p] = data
 		return err
 	})
 	if err != nil {

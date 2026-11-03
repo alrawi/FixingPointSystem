@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -30,25 +29,22 @@ const DigestPrefix = "sha256:"
 func TreeDigest(dir string) (string, error) {
 	type line struct{ path, text string }
 	var lines []line
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if p == dir {
-			return nil
-		}
-		rel, err := filepath.Rel(dir, p)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return "", fmt.Errorf("digest module tree %s: %w", dir, err)
+	}
+	defer func() { _ = root.Close() }()
+	fsys := root.FS()
+	err = fs.WalkDir(fsys, ".", func(rel string, d fs.DirEntry, err error) error {
 		switch {
+		case err != nil:
+			return err
 		case d.IsDir():
 			return nil
 		case !d.Type().IsRegular():
 			return fmt.Errorf("%s: %w", rel, ErrSymlink)
 		}
-		sum, err := fileSHA256(p)
+		sum, err := fileSHA256(fsys, rel)
 		if err != nil {
 			return err
 		}
@@ -67,8 +63,8 @@ func TreeDigest(dir string) (string, error) {
 	return DigestPrefix + hex.EncodeToString(sum[:]), nil
 }
 
-func fileSHA256(p string) (string, error) {
-	f, err := os.Open(filepath.Clean(p))
+func fileSHA256(fsys fs.FS, p string) (string, error) {
+	f, err := fsys.Open(p)
 	if err != nil {
 		return "", err
 	}

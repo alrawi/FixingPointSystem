@@ -34,7 +34,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 - Steps 1 to 4. `cd controller && go test -race ./internal/registry/` passes. `TestInstallExampleModules` and `TestAPIInstallExamplesAndManage` install the example http1 and dns modules from a directory and from tar and gzip archives, and both match the digests of `contracts/examples/plans/http_dns_smoke.json`. `TestAPIInstallRejectsLicenses` and `TestInstallRejects` show that unknown and incompatible licenses fail with a 422 problem whose only finding names `/license`. Every API response validates against the OpenAPI contract with kin-openapi.
 - Fuzz targets `FuzzParseManifest` and `FuzzCheckLicense` ran for 15 and 10 seconds without a failure.
-- Step 5. `make lint-ctl test-ctl` passes with golangci-lint 2.5.0 locally (0 issues), and `plan.py check`, `render --check`, and `lint` pass.
+- Step 5. `make lint-ctl test-ctl` passes with golangci-lint 2.5.0 and 2.12.2 locally (0 issues), and `plan.py check`, `render --check`, and `lint` pass.
 
 ## Remaining
 
@@ -63,6 +63,7 @@ none
 ## Pitfalls
 
 - The shared disk filled up during fuzzing. Clear `$GOCACHE/fuzz` after fuzz runs.
+- CI pins golangci-lint v2.12.2, whose gosec flags file reads inside `filepath.WalkDir` callbacks (G122) and joined paths (G703). Lint with that version, and read module trees through `os.OpenRoot` and its `FS`.
 
 ## Verify the current state
 

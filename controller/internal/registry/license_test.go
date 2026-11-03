@@ -69,9 +69,9 @@ func TestCompareVersions(t *testing.T) {
 		"0.1.0", "0.2.0-alpha", "0.2.0-alpha.1", "0.2.0-alpha.beta", "0.2.0-beta.2",
 		"0.2.0-beta.11", "0.2.0-rc.1", "0.2.0", "0.10.0", "1.0.0", "10.0.0",
 	}
-	for i := range ordered {
-		for j := range ordered {
-			got := compareVersions(ordered[i], ordered[j])
+	for i, a := range ordered {
+		for j, b := range ordered {
+			got := compareVersions(a, b)
 			want := 0
 			if i < j {
 				want = -1
@@ -79,7 +79,7 @@ func TestCompareVersions(t *testing.T) {
 				want = 1
 			}
 			if sign(got) != want {
-				t.Errorf("compareVersions(%s, %s) = %d, want sign %d", ordered[i], ordered[j], got, want)
+				t.Errorf("compareVersions(%s, %s) = %d, want sign %d", a, b, got, want)
 			}
 		}
 	}
