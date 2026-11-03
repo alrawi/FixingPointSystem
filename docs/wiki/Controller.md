@@ -400,6 +400,55 @@ An `AgentCapability` carries the `Agent` schema and every backend that the agent
 | `agents` and `modules` | The lists of the two sources in their own order |
 
 Every array is present and empty when its source is empty or nil. A failing source gives a 500 problem whose detail names the source. `TestContractCapabilities` serves two fake agents and two modules and validates the response against the OpenAPI document with the contract loader. `TestCapabilitiesVersions` compares the two version constants with the OpenAPI document and the heading of `contracts/README.md`, so a contract release that forgets them fails the build.
+
+## Metrics aggregation
+
+The package `internal/metrics` merges the counter snapshots of the agents of a run into run metrics and serves them. It implements `GET /v1/runs/{id}/metrics` and `GET /v1/runs/{id}/metrics:stream` as the type `metrics.API`, which embeds `api.Unimplemented`, and `GET /metrics` in the Prometheus text format as the handler `metrics.Prometheus`. The binary creates one `Aggregator` with `metrics.New`, calls `Aggregator.Observe` from `agents.Config.Observer` next to `Orchestrator.Observe`, mounts `metrics.NewAPI(agg, orchestrator)` with the other operation sets, and mounts `metrics.NewPrometheus(agg)` at `/metrics`.
+
+### Merge rules
+
+The aggregator finds the run of a snapshot from its plan id, which the compiler writes as `<run id>/<agent id>`. It keeps the newest value of every series of every agent and worker by sequence number, so a repeated snapshot after a reconnection changes nothing, and a snapshot that leaves a series out keeps its earlier cumulative value. An agent that sends per worker snapshots contributes only those, because `per_worker` replaces the aggregate snapshot. The merge applies one rule per kind.
+
+| Kind | Rule |
+|---|---|
+| Counter | Sum |
+| Gauge in a count or rate unit | Sum |
+| Gauge in the units `ratio`, `percent`, or `percentage_points` | Mean |
+| Gauge with a catalog `formula` | Recomputed from the merged counters of its group, never merged |
+| Histogram | Bucket by bucket sum of the HDR counts |
+
+The catalog comes from an embedded copy of `contracts/metrics/catalog.yaml`, and a test keeps the copy equal to the contract. The aggregator drops entries whose metric, kind, or labels the catalog does not admit, histograms whose encoding is malformed, and series beyond `Config.MaxSeries` for one run, and `Aggregator.Dropped` counts them.
+
+### HDR histograms
+
+We decode the HdrHistogram V2 encoding, compressed or not, with our own decoder in `hdr.go`. The Go library `hdrhistogram-go` panics on truncated input, allocates the dense counts array that a header asks for, and cannot bound the inflated size, while our decoder keeps the counts sparse and bounds every length. Every histogram lands in the layout of `engine/fps-stats`, which has a lowest value of 1 and 3 significant digits, so a merge of agent histograms is exact. A histogram of another layout moves into that layout by the value of each bucket, as the add of HdrHistogram does. The statistics `p50`, `p90`, `p99`, `p999`, `min`, `max`, `mean`, and `count` follow the Rust crate `hdrhistogram`.
+
+### Views and windows
+
+The aggregator records the six views once per second of controller time and keeps up to `Config.MaxPoints` points per run. Each view groups the merged series by one key and adds the key `*` for the whole run. A histogram appears in a sample as one value per statistic, such as `sessions.response_time.p99`.
+
+| View | Metrics | Key |
+|---|---|---|
+| `application` | Scenario and flow action metrics, and the `mix.` gauges | `application` |
+| `scenario` | Scenario and flow action metrics | `application/scenario` |
+| `port` | Port and host metrics | `port` |
+| `tcp` | Transport metrics that start with `tcp.` | `port` |
+| `tls` | Transport metrics that start with `tls.` | `port` |
+| `realism` | The `realism.` gauges | `application` |
+
+`GET /v1/runs/{id}/metrics` returns the points between `from` and `to`, both inclusive, and `step_s` keeps the newest point of every step. A run that the orchestrator knows but that sent no snapshot yet answers with an empty sample list. The responses use the type `metrics.Sample` with float64 values in place of the generated float32, because a float32 holds integers exactly only up to 2^24, and the tests validate every response against the OpenAPI document.
+
+### Stream
+
+`GET /v1/runs/{id}/metrics:stream` sends Server Sent Events once per `Config.StreamInterval`, which defaults to one second. Each tick sends one event per current sample of every requested view, or of all six views when the request names none, with the sample as JSON in `data` and the tick number in `id`. When the run ends, the stream sends the final samples and an event named `end` whose data holds the run state, and closes.
+
+### Prometheus
+
+A catalog name maps to `fps_` followed by the name with dots replaced by underscores, and counters add `_total`, as `contracts/README.md` describes. Every series carries the label `run_id` and its catalog labels. A histogram becomes a summary with the quantiles 0.5, 0.9, 0.99, and 0.999, a `_count`, and a `_sum` that equals the HDR mean times the count. The handler writes the text format 0.0.4 with the standard library, so the controller module gained no dependency, and `testdata/prometheus.txt` holds its golden output. The handler serves every run that the aggregator holds, up to `Config.MaxRuns`, and `Aggregator.Forget` drops a run.
+
+### Tests of the aggregator
+
+`TestCountersEqualSumOfFakeAgentSnapshots` sends six rounds of cumulative snapshots from three fake agents through the real agent manager, one agent with two workers, adds a stale replay and an empty final snapshot, and checks that every merged counter equals the sum of the newest snapshots. `TestMergeMatchesReference` and `TestHistogramsOfFakeAgentsMatchReference` compare the merged histograms bucket by bucket and statistic by statistic with `testdata/reference_merge.json`, which `Snapshot::merge_all` of `engine/fps-stats` wrote. The generator lives in `testdata/refgen` and reruns with the command in its `Cargo.toml`. Further tests cover derived ratios, gauge means, views, windows and steps, limits, malformed and oversized encodings, a fuzz target of the decoder, the stream, and the Prometheus golden file.
 ## Binary wiring
 
 CTL-17 wired every package into `fps-controller`, so the binary serves the whole `/v1` REST API and the agent gRPC service. The package `internal/wiring` builds the components, adapts them to one another, and combines the REST handlers, and `cmd/fps-controller` runs the REST server and the gRPC service side by side.

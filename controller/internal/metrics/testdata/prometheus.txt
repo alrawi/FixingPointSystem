@@ -1,0 +1,28 @@
+# HELP fps_sessions_attempted_total Sessions that the engine started. Unit sessions.
+# TYPE fps_sessions_attempted_total counter
+fps_sessions_attempted_total{run_id="run-1",application="http1",scenario="web_get"} 2
+fps_sessions_attempted_total{run_id="run-2",application="http1",scenario="web_get"} 40
+# HELP fps_sessions_failed_total Sessions that ended with a failed or timed out action, by failure reason. Unit sessions.
+# TYPE fps_sessions_failed_total counter
+fps_sessions_failed_total{run_id="run-2",application="http1",reason="expect_timeout",scenario="web_get"} 4
+# HELP fps_sessions_failed_ratio Fraction of attempted sessions that failed. Test criteria use it without labels for the whole run. Unit ratio.
+# TYPE fps_sessions_failed_ratio gauge
+fps_sessions_failed_ratio{run_id="run-1",application="http1",scenario="web_get"} 0
+fps_sessions_failed_ratio{run_id="run-2",application="http1",scenario="web_get"} 0.1
+# HELP fps_sessions_concurrent Sessions open at the sample instant. Unit sessions.
+# TYPE fps_sessions_concurrent gauge
+fps_sessions_concurrent{run_id="run-2",application="http1",scenario="web_get"} 3.5
+# HELP fps_throughput_bps Application payload throughput in both directions over the last sample interval. Unit bits_per_second.
+# TYPE fps_throughput_bps gauge
+fps_throughput_bps{run_id="run-2",application="http1",scenario="web_get"} +Inf
+# HELP fps_tcp_rtt Smoothed round trip time samples of TCP sessions. Unit us. Quantiles of the HDR histogram.
+# TYPE fps_tcp_rtt summary
+fps_tcp_rtt{run_id="run-2",port="p1",quantile="0.5"} 20
+fps_tcp_rtt{run_id="run-2",port="p1",quantile="0.9"} 4001
+fps_tcp_rtt{run_id="run-2",port="p1",quantile="0.99"} 4001
+fps_tcp_rtt{run_id="run-2",port="p1",quantile="0.999"} 4001
+fps_tcp_rtt_sum{run_id="run-2",port="p1"} 4061
+fps_tcp_rtt_count{run_id="run-2",port="p1"} 4
+# HELP fps_port_bytes_tx_total Bytes that the port sent, including all headers. Unit bytes.
+# TYPE fps_port_bytes_tx_total counter
+fps_port_bytes_tx_total{run_id="run-2",port="eth\"1\\"} 1099511627776
