@@ -116,6 +116,9 @@ pub enum Op {
     },
     /// Continue at the given op index.
     Jump(usize),
+    /// Start the same side of the named flow, which declares `spawned: true`.
+    /// Only [`Scenario::parse_instance`] compiles this op.
+    Spawn(String),
     /// End the session.
     Close(CloseMode),
 }
@@ -149,6 +152,10 @@ pub struct Flow {
     pub module: String,
     /// Transport protocol.
     pub l4: L4,
+    /// Flow ids that must complete before this flow starts.
+    pub after: Vec<String>,
+    /// True when the flow starts only through a `spawn` action.
+    pub spawned: bool,
     /// The client side.
     pub client: Program,
     /// The server side, when the scenario emulates the server.
@@ -190,7 +197,22 @@ impl Scenario {
     /// runs on this engine version, so features that it does not run yet,
     /// such as `spawn`, fail with [`LoadError::Unsupported`].
     pub fn parse_with(text: &str, modules: Option<&ModuleContext>) -> Result<Self, LoadError> {
-        build(text, modules, true, &mut Vec::new())
+        build(text, modules, Mode::Session, &mut Vec::new())
+    }
+
+    /// Reads, checks, and compiles a scenario file for a scenario instance
+    /// runner, as [`Scenario::parse_instance`] describes.
+    pub fn load_instance(path: &Path, modules: Option<&ModuleContext>) -> Result<Self, LoadError> {
+        let text = read(path)?;
+        Self::parse_instance(&text, modules).map_err(|e| e.in_file(path))
+    }
+
+    /// Checks and compiles scenario text for a runner that executes whole
+    /// scenario instances. Unlike [`Scenario::parse_with`], it accepts flows
+    /// with `spawned: true` and compiles the `spawn` action to [`Op::Spawn`],
+    /// so a runner that executes flows one by one never sees them.
+    pub fn parse_instance(text: &str, modules: Option<&ModuleContext>) -> Result<Self, LoadError> {
+        build(text, modules, Mode::Instance, &mut Vec::new())
     }
 
     /// Applies the contract rules to scenario text and returns the warnings.
@@ -200,7 +222,7 @@ impl Scenario {
     /// when the contract allows them.
     pub fn check(text: &str, modules: Option<&ModuleContext>) -> Result<Vec<Warning>, LoadError> {
         let mut warnings = Vec::new();
-        build(text, modules, false, &mut warnings)?;
+        build(text, modules, Mode::Check, &mut warnings)?;
         Ok(warnings)
     }
 
@@ -394,6 +416,9 @@ fn dump_program(out: &mut String, side: &str, p: &Program) {
             Op::Close(mode) => {
                 let _ = writeln!(out, "close {}", format!("{mode:?}").to_lowercase());
             }
+            Op::Spawn(flow) => {
+                let _ = writeln!(out, "spawn {flow}");
+            }
         }
     }
 }
@@ -405,13 +430,31 @@ fn read(path: &Path) -> Result<String, LoadError> {
     })
 }
 
-/// Checks and compiles scenario text. With `runnable` false the compiler
+/// What a compiled scenario is for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Only the verdict counts, so every contract feature passes.
+    Check,
+    /// Flows run one by one, so `spawn` and spawned flows fail.
+    Session,
+    /// A scenario instance runner runs the flows, so `spawn` compiles.
+    Instance,
+}
+
+impl Mode {
+    /// Reject the features that this engine version does not run yet.
+    fn runnable(self) -> bool {
+        self != Mode::Check
+    }
+}
+
+/// Checks and compiles scenario text. In [`Mode::Check`] the compiler
 /// accepts the contract features that this engine does not run yet and
 /// leaves them out of the programs, so only the verdict counts.
 fn build(
     text: &str,
     modules: Option<&ModuleContext>,
-    runnable: bool,
+    mode: Mode,
     warnings: &mut Vec<Warning>,
 ) -> Result<Scenario, LoadError> {
     let doc: Yaml = serde_yaml::from_str(text).map_err(|e| LoadError::Syntax {
@@ -440,7 +483,7 @@ fn build(
     let mut flows = Vec::new();
     let mut after: HashMap<String, Vec<String>> = HashMap::new();
     for (i, f) in flows_y.iter().enumerate() {
-        let (flow, deps) = compile_flow(f, runnable).map_err(|e| e.in_flow(Some(i), None))?;
+        let (flow, deps) = compile_flow(f, mode).map_err(|e| e.in_flow(Some(i), None))?;
         if after.contains_key(&flow.id) {
             return Err(LoadError::DuplicateFlow {
                 at: Box::default(),
@@ -499,20 +542,17 @@ fn topo_order(
     Ok(ordered)
 }
 
-fn compile_flow(f: &Yaml, runnable: bool) -> Result<(Flow, Vec<String>), LoadError> {
+fn compile_flow(f: &Yaml, mode: Mode) -> Result<(Flow, Vec<String>), LoadError> {
     let id = f
         .get("id")
         .and_then(Yaml::as_str)
         .ok_or_else(|| missing("id"))?
         .to_string();
-    compile_flow_body(f, id.clone(), runnable).map_err(|e| e.in_flow(None, Some(&id)))
+    compile_flow_body(f, id.clone(), mode).map_err(|e| e.in_flow(None, Some(&id)))
 }
 
-fn compile_flow_body(
-    f: &Yaml,
-    id: String,
-    runnable: bool,
-) -> Result<(Flow, Vec<String>), LoadError> {
+fn compile_flow_body(f: &Yaml, id: String, mode: Mode) -> Result<(Flow, Vec<String>), LoadError> {
+    let runnable = mode.runnable();
     let module = f
         .get("module")
         .and_then(Yaml::as_str)
@@ -526,7 +566,8 @@ fn compile_flow_body(
     if runnable && f.get("transport").is_some() {
         return Err(unsupported("a transport module").at_field("transport"));
     }
-    if runnable && f.get("spawned").and_then(Yaml::as_bool).unwrap_or(false) {
+    let spawned = f.get("spawned").and_then(Yaml::as_bool).unwrap_or(false);
+    if mode == Mode::Session && spawned {
         return Err(unsupported("a spawned flow").at_field("spawned"));
     }
     let deps = match f.get("after") {
@@ -538,7 +579,10 @@ fn compile_flow_body(
             .collect(),
         Some(other) => return Err(invalid(format!("bad 'after' {other:?}")).at_field("after")),
     };
-    let c = Compiler { runnable };
+    let c = Compiler {
+        runnable,
+        spawn: mode == Mode::Instance,
+    };
     let client_y = f
         .get("client")
         .and_then(Yaml::as_sequence)
@@ -558,6 +602,8 @@ fn compile_flow_body(
             id,
             module,
             l4,
+            after: deps.clone(),
+            spawned,
             client,
             server,
         },
@@ -601,6 +647,8 @@ fn template(v: &Yaml, field: &str) -> Result<Template, LoadError> {
 struct Compiler {
     /// Reject the features that this engine version does not run yet.
     runnable: bool,
+    /// Compile `spawn` to [`Op::Spawn`] for a scenario instance runner.
+    spawn: bool,
 }
 
 impl Compiler {
@@ -779,6 +827,13 @@ impl Compiler {
                 other => return Err(invalid(format!("unknown close mode {other:?}"))),
             })),
             "connect" | "accept" => return Err(invalid(format!("'{kind}' may only open a side"))),
+            "spawn" if self.spawn => {
+                let flow = body
+                    .get("flow")
+                    .and_then(Yaml::as_str)
+                    .ok_or_else(|| missing("flow"))?;
+                ops.push(Op::Spawn(flow.to_string()));
+            }
             "spawn" | "raw" if self.runnable => {
                 return Err(unsupported(format!("the '{kind}' action")))
             }
@@ -849,6 +904,33 @@ flows:
             s.flows.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(),
             ["a", "b"]
         );
+    }
+
+    #[test]
+    fn instance_mode_compiles_spawn_and_keeps_flow_relations() {
+        let text = r#"
+scenario: t
+flows:
+  - id: ctl
+    module: m
+    client:
+      - connect: { port: 21 }
+      - spawn: { flow: data }
+      - close: fin
+  - { id: data, module: m, spawned: true, client: [ { connect: { port: 20 } } ] }
+  - { id: tail, module: m, after: [ctl, data], client: [ { connect: { port: 1 } } ] }
+"#;
+        assert!(matches!(
+            Scenario::parse(text),
+            Err(LoadError::Unsupported { .. })
+        ));
+        let s = Scenario::parse_instance(text, None).unwrap();
+        assert_eq!(s.flows[0].client.ops[0], Op::Spawn("data".into()));
+        assert!(s.flows[1].spawned && !s.flows[0].spawned);
+        assert_eq!(s.flows[2].after, ["ctl", "data"]);
+        assert!(s.dump().contains("0 spawn data"));
+        let raw = "scenario: t\nflows:\n  - { id: a, module: strike, client: [ { connect: { port: 1 } }, { raw: { hex: '00' } } ] }\n";
+        assert!(Scenario::parse_instance(raw, None).is_err());
     }
 
     #[test]

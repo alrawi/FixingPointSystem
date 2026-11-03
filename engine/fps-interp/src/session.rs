@@ -24,6 +24,7 @@ use tokio::time::{timeout_at, Instant};
 
 use crate::delay;
 use crate::failure::{Failure, FailureKind};
+use crate::instance::{SpawnQueue, SpawnRequest};
 use crate::open::{DatagramOpener, OpenKind, OpenRequest, Opener};
 use crate::rng::Side;
 
@@ -127,6 +128,7 @@ pub struct Session<'a> {
     pc: usize,
     stats: SideStats,
     max_datagram: usize,
+    spawns: Option<SpawnQueue>,
 }
 
 impl<'a> Session<'a> {
@@ -152,7 +154,17 @@ impl<'a> Session<'a> {
             pc: 0,
             stats: SideStats::default(),
             max_datagram: MAX_DATAGRAM,
+            spawns: None,
         }
+    }
+
+    /// Hands `spawn` actions of this side to `queue`.
+    ///
+    /// A [`crate::ScenarioInstance`] sets the queue and starts the requested
+    /// flows. A side without a queue fails at its first `spawn` with reason
+    /// `invalid`, because only a scenario instance runs spawned flows.
+    pub fn set_spawn_queue(&mut self, queue: SpawnQueue) {
+        self.spawns = Some(queue);
     }
 
     /// Sets the largest datagram that an `expect` of a UDP side accepts.
@@ -459,9 +471,29 @@ impl<'a> Session<'a> {
                     // UDP has no close handshake, so every mode releases the socket.
                     Wire::Datagram(io) => io.close(),
                 },
+                Op::Spawn(flow) => self.spawn(flow)?,
             }
             self.pc += 1;
         }
+        Ok(())
+    }
+
+    /// Queues the start of the same side of `flow` with the variables that
+    /// this side sees now, so the spawned flow reads every `set` so far.
+    fn spawn(&mut self, flow: &str) -> Result<(), FailureKind> {
+        let Some(queue) = &self.spawns else {
+            return Err(FailureKind::Invalid(format!(
+                "spawn of flow '{flow}' runs only in a scenario instance"
+            )));
+        };
+        let mut vars = self.vars.clone();
+        vars.extend(self.overlay.iter().map(|(k, v)| (k.clone(), v.clone())));
+        queue.push(SpawnRequest {
+            parent: self.flow.to_string(),
+            side: self.side,
+            flow: flow.to_string(),
+            vars,
+        });
         Ok(())
     }
 
@@ -973,6 +1005,7 @@ fn locate(ops: &[Op], pc: usize) -> (usize, &'static str) {
         Some(Op::LoopStart { .. } | Op::LoopEnd { .. }) => "loop",
         Some(Op::Branch { .. } | Op::Jump(_)) => "branch",
         Some(Op::Close(_)) => "close",
+        Some(Op::Spawn(_)) => "spawn",
         // A failure after the last op, such as an abort at the end.
         None => "close",
     };

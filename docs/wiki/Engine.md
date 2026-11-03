@@ -373,3 +373,36 @@ The interpreter now meets the Gate 0 criterion of at most 25% overhead with room
 |---|---|
 | `fps-flow` template unit tests | `render_parts` joins to the bytes of `render_into` and leaves the generator in step for thresholds from 0 to none, a template without `fill()` is one part, and a negative size fails |
 | `fps-interp/tests/vectored.rs` | The wire bytes of large bodies equal a copying render, one vectored write per response, partial writes of 1,000 bytes, a 20 MiB body across several writes, a small body copied into one write, a transport without vectored writes, and a property test over body sizes, write limits, and seeds |
+## Scenario instances
+
+ENG-07 added `ScenarioInstance` to `fps-interp`, which runs every flow of one scenario together with `after` ordering, `spawn`, and shared scenario variables. The source is [`engine/fps-interp/src/instance.rs`](https://github.com/alrawi/FixingPointSystem/blob/main/engine/fps-interp/src/instance.rs).
+
+### Loading
+
+`Scenario::parse_instance` and `Scenario::load_instance` in `fps-flow` compile a scenario for an instance runner. They accept flows with `spawned: true` and compile `spawn` to the new op `Op::Spawn`, while `Scenario::parse` and `Scenario::load` keep rejecting both with `LoadError::Unsupported`, so a runner that executes flows one by one never meets them. Every `Flow` now carries its `after` list and its `spawned` flag. A `Session` without a spawn queue fails at a `spawn` with reason `internal` and action type `spawn`.
+
+### Rules
+
+| Topic | Rule |
+|---|---|
+| Sides | `InstanceConfig::sides` selects the client sides, the server sides, or both. A flow without a local side completes at once |
+| `after` | A flow that is not spawned starts once every flow of its `after` list is done. Flows without `after` start together |
+| `spawn` | A side that runs `spawn` starts the same side of the target flow at once. A side may spawn a flow many times, and the k-th spawn of the client pairs with the k-th spawn of the server |
+| Variables | A side reads the shared variables as they stood when it started. A spawned side also reads every `set` of its parent side before the `spawn`. When a side completes, its `set` bindings join the shared variables |
+| Session ids | Flow sessions take ids from `first_session_id` in start order, and both sides of one flow session share an id |
+| Failure | The first failed side fails the instance. The instance aborts every running side with reason `aborted`, starts nothing further, and marks the flows that never started as skipped |
+| Spawned failure | A failed spawned flow also fails its parent and every flow up its spawn chain. `InstanceError::spawned_by` lists the chain from the direct parent |
+| Stop | When the stop future completes, the instance aborts every running side, and the first aborted side fails it |
+
+A flow that depends through `after` on a spawned flow waits until that flow ran and completed, and it is skipped when no side spawned it. The contract gives no rule for the instance after a failure, so we chose to fail fast, because the peer of a failed side cannot finish its exchange either.
+
+### The engine seam
+
+`FlowEnv` hands the instance a fresh `Opener` or `DatagramOpener` and fresh module functions for every flow side that it starts, so sides run concurrently. The instance polls all sides on the task that awaits `ScenarioInstance::run`, so the future is not `Send`, like the worker sessions of `fps-runtime`, which run on a current thread runtime. `records` lists each finished side with its session id, byte counters, and failure reason in completion order, `state` gives the `FlowState` of each flow, and `later_failures` keeps the failures after the first one.
+
+| Test | What it checks |
+|---|---|
+| `fps-interp/tests/instances.rs` | The web_browse scenario of the specification runs its lookup flow before its page flow and dials the address that the lookup bound, one sided client and server instances order their own sides, a spawned data flow reads the port that its parent parsed, a flow with `after` on a spawned flow waits for it, a spawned flow failure fails its parent and the instance and skips the dependents, a failed flow skips its dependents, stop aborts the running flows, and a single session rejects `spawn` |
+| `fps-flow` unit tests | `parse_instance` compiles `spawn` and keeps `after` and `spawned`, `parse` still rejects them, and `raw` stays unsupported |
+
+The web_browse test uses plain HTTP for the page flow and test doubles of the `dns` functions, because the engine runs no transport modules yet and the specification example is illustrative.

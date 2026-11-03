@@ -20,7 +20,8 @@ rand_distr = "0.4"
 rand_pcg = "0.3"
 # Error enums for library code, as docs/wiki/Coding-Standards.md requires.
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "time"] }
+# sync for the abort signal of a scenario instance.
+tokio = { version = "1", features = ["io-util", "macros", "sync", "time"] }
 
 [dev-dependencies]
 # The bulk benchmark in benches/bulk.rs. Apache-2.0 or MIT. The default
@@ -29,7 +30,7 @@ criterion = { version = "0.5", default-features = false, features = ["cargo_benc
 proptest = "1"
 # serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
 serde_yaml = { package = "serde_norway", version = "0.9" }
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "test-util", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [[bench]]
 name = "bulk"

@@ -16,17 +16,27 @@
 //! [`Session::run_datagram_program`] and a [`DatagramOpener`]. Each `send`
 //! writes one datagram, each `expect` reads and consumes exactly one
 //! datagram, which also becomes `last`, and `close` releases the socket.
-//! The `spawn` action belongs to a later package.
+//!
+//! A [`ScenarioInstance`] runs every flow of one scenario that
+//! [`fps_flow::Scenario::parse_instance`] compiled. It orders flows by
+//! `after`, starts spawned flows at each `spawn`, shares the variables that
+//! `set` binds between flows, and fails as a whole when any flow fails,
+//! including a spawned one.
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 pub mod delay;
 pub mod failure;
+pub mod instance;
 pub mod open;
 pub mod rng;
 pub mod session;
 
 pub use failure::{Failure, FailureKind, Reason};
+pub use instance::{
+    FlowEnv, FlowState, InstanceConfig, InstanceError, ScenarioInstance, SideRecord, Sides,
+    SpawnQueue, SpawnRequest,
+};
 pub use open::{DatagramOpener, OpenKind, OpenRequest, Opener};
 pub use rng::{session_rng, Side};
 pub use session::{Limits, Session, SessionCtx, SideStats, VECTORED_FILL_MIN};

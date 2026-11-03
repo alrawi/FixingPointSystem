@@ -1,0 +1,9 @@
+## [2026-11-03] ingest | ENG-07 Multi flow scenario instances
+
+We added `ScenarioInstance` to `engine/fps-interp/`, which runs all flows of one scenario with `after` ordering, `spawn`, and shared scenario variables, and fails the instance when any flow fails, a spawned flow included. The new public items in `fps-interp` are `ScenarioInstance`, `FlowEnv`, `FlowState`, `InstanceConfig`, `InstanceError`, `SideRecord`, `Sides`, `SpawnQueue`, `SpawnRequest`, and `Session::set_spawn_queue`. No existing public item of `fps-interp` changed. We added the section [Scenario instances](Engine.md#scenario-instances) to the [Engine](Engine.md) page. The evidence is `docs/handoff/ENG-07.md`, pull request #120, and the tests in `engine/fps-interp/tests/instances.rs`.
+
+## Shared page notes
+
+- Path exception for the coordinator. `engine/fps-flow/src/program.rs` and `engine/fps-flow/src/lib.rs` changed outside the catalog paths of ENG-07, because the compiled programs dropped `spawn` and the `after` and `spawned` fields of a flow. The change only adds items, which are `Op::Spawn`, the fields `Flow::after` and `Flow::spawned`, and `Scenario::parse_instance` and `Scenario::load_instance`. `Scenario::parse` and `Scenario::load` behave as before. No code outside `fps-flow` and `fps-interp` matches on `Op` or builds a `Flow`.
+- [Engine](Engine.md), crate table. The `fps-interp` row can replace "ENG-07 adds multi flow instances" with a link to [Scenario instances](Engine.md#scenario-instances), and the sentence on `Scenario::load` in the loader section can mention `Scenario::parse_instance`.
+- Contract follow up for a CON package. The contract names no rule for the other flows of an instance after a failure. We chose to fail fast, and the rule could join the flow program semantics of `contracts/README.md`.
