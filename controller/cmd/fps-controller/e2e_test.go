@@ -134,8 +134,10 @@ func (p *controllerProcess) postJSON(t *testing.T, path, token, body string, wan
 
 // TestEndToEnd builds the binary, starts it with a temporary configuration,
 // registers a fake agent over gRPC, installs and lists the example modules,
-// stores and validates a configuration, starts and stops a run over REST, and
-// checks after a restart that the configuration and the modules persist.
+// stores and validates a configuration, starts a run over REST, reads a
+// snapshot of the fake agent from the run metrics and from GET /metrics, stops
+// the run, and checks after a restart that the configuration and the modules
+// persist.
 func TestEndToEnd(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGTERM is not deliverable on Windows")
@@ -242,6 +244,7 @@ tokens:
 	if s, _ := ag.State(); s != agentpb.AgentState_AGENT_STATE_RUNNING {
 		t.Errorf("fake agent state = %v, want RUNNING", s)
 	}
+	checkRunMetrics(t, p, ag, run.Id)
 	p.postJSON(t, "/v1/runs/"+run.Id+":stop", e2eRunToken, "{}", http.StatusAccepted, nil)
 	final := waitRunState(t, p, run.Id, api.RunStateCompleted)
 	if final.Verdict == nil || final.Verdict.Passed == nil || !*final.Verdict.Passed {
@@ -277,6 +280,67 @@ tokens:
 		t.Errorf("modules after restart = %v, want %v", got, wantModules)
 	}
 	p2.stop(t)
+}
+
+// checkRunMetrics sends one counter snapshot from the fake agent and waits
+// until the run metrics and the Prometheus exposition both carry its count.
+func checkRunMetrics(t *testing.T, p *controllerProcess, ag *fakeagent.Agent, runID string) {
+	t.Helper()
+	const attempted = 7
+	if _, err := ag.Snapshot(&agentpb.CounterValue{
+		Metric: "sessions.attempted",
+		Labels: map[string]string{"application": "http1", "scenario": "web_get"},
+		Value:  &agentpb.CounterValue_Count{Count: attempted},
+	}); err != nil {
+		t.Fatalf("fake agent snapshot: %v", err)
+	}
+	wantLine := fmt.Sprintf(`fps_sessions_attempted_total{run_id=%q,application="http1",scenario="web_get"} %d`, runID, attempted)
+	var restOK, promOK bool
+	var set struct {
+		View    string `json:"view"`
+		Samples []struct {
+			Key    string             `json:"key"`
+			Values map[string]float64 `json:"values"`
+		} `json:"samples"`
+	}
+	var exposition string
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) && (!restOK || !promOK) {
+		p.getJSON(t, "/v1/runs/"+runID+"/metrics?view=application", e2eReadToken, &set)
+		for _, s := range set.Samples {
+			if s.Key == "http1" && s.Values["sessions.attempted"] == attempted {
+				restOK = true
+			}
+		}
+		exposition = p.getText(t, "/metrics")
+		promOK = slices.Contains(strings.Split(exposition, "\n"), wantLine)
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !restOK {
+		t.Errorf("GET /v1/runs/%s/metrics?view=application = %+v, want key http1 with sessions.attempted %d", runID, set, attempted)
+	}
+	if !promOK {
+		t.Errorf("GET /metrics lacks %q:\n%s", wantLine, exposition)
+	}
+}
+
+// getText sends GET path without a token and returns the body of a 200
+// response.
+func (p *controllerProcess) getText(t *testing.T, path string) string {
+	t.Helper()
+	resp, err := http.Get("http://" + p.restAddr + path)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: status %d, want 200\nbody: %s", path, resp.StatusCode, data)
+	}
+	return string(data)
 }
 
 // listModules returns name@version of every installed module.

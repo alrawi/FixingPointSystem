@@ -579,3 +579,15 @@ The CSV report writes numbers in plain decimal notation and prefixes text cells 
 ### Tests of the report
 
 `TestGoldenReports` serves a passing run, a run with failing criteria, and a degraded run through the generated router, validates every response against the contract, and compares the JSON and CSV bodies with the golden files in `controller/internal/report/testdata/`. In the degraded run one agent crashed with open sessions, and the report counts them as failed. Other tests cover every operator, every catalog formula, the four results, the error responses, and a report built from the real aggregator of CTL-08 with two agents.
+## Metrics in the binary
+
+Bug #119 closed the hook that the Binary wiring section describes. The function `mountMetrics` in `cmd/fps-controller/main.go` runs in `serve` before `ctl.Mount(a)` and makes four calls.
+
+1. `metrics.New(metrics.Config{Logger: logger})` creates one aggregator with the default catalog, the system clock, and the default bounds.
+2. `ctl.Observe(agg.Observe)` adds the aggregator to the agent manager observers after the run orchestrator, so every counter snapshot of an agent reaches both.
+3. `ctl.SetMetrics(metrics.NewAPI(agg, ctl.Runs))` routes `GET /v1/runs/{id}/metrics` and `GET /v1/runs/{id}/metrics:stream` to the aggregator, with the run orchestrator as the `RunSource`. A run that the orchestrator knows answers 200 before its first snapshot, and the stream ends when the run ends.
+4. `a.Handle("GET /metrics", metrics.NewPrometheus(agg))` serves the Prometheus exposition outside `/v1`.
+
+`GET /metrics` needs no token, because Prometheus scrapers usually send none. The exposition holds run identifiers, application names, scenario names, and port names, so an operator who considers them sensitive keeps the listen address on a trusted network. The exported field `wiring.Controller.Runs` already gives the orchestrator, so the wiring package needed no new accessor.
+
+`TestEndToEnd` now runs one more step while the run is running. The fake agent sends a snapshot with `sessions.attempted` equal to 7 for the application `http1` and the scenario `web_get`. The test polls until `GET /v1/runs/{id}/metrics?view=application` returns the key `http1` with that count and `GET /metrics` contains the line `fps_sessions_attempted_total{run_id="<run id>",application="http1",scenario="web_get"} 7`.
