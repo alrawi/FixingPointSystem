@@ -60,7 +60,7 @@ The targets that exist today are listed below.
 | `lint-ops` | `tools/plan/plan.py check`, `render --check`, and `lint` |
 | `lint-ctl` | `gofmt -l`, `go vet`, and `golangci-lint run` over the controller, skipping golangci-lint with a notice when it is missing |
 | `test-con` | the contract validator and its tests |
-| `test-ctl` | `go test -race ./...` over the controller, including the configuration store fixtures in `controller/internal/store/testdata/`, the registry tests, the agent manager tests with `controller/internal/fakeagent` as the fake for agent neighbors, the REST layer contract test, the check that the generated code in `controller/internal/api/` matches the contract, and the compiler goldens in `controller/internal/compiler/testdata/` |
+| `test-ctl` | `go test -race ./...` over the controller, including the configuration store fixtures in `controller/internal/store/testdata/`, the registry tests, the agent manager tests with `controller/internal/fakeagent` as the fake for agent neighbors, the REST layer and capabilities contract tests, the check that the generated code in `controller/internal/api/` matches the contract, and the compiler goldens in `controller/internal/compiler/testdata/` |
 | `test-ops` | the plan and wiki tool tests and the Cargo workspace probe |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
 | `lint-qa` | gofmt, go vet, and golangci-lint on the Go golden file helper, and ruff and `mypy --strict` on the Python one, each skipped with a notice when its tool is missing |
@@ -69,9 +69,13 @@ The targets that exist today are listed below.
 | `test-qa` | the unit tests of the harness pcapng helper |
 | `e2e-qa` | the namespace harness self test, which needs root |
 | `test-agt` | `cargo test -p fps-agent`, the capability detection tests against fake system roots and the `agent.proto` mirror test |
-| `test-eng` | every crate under `engine/`, such as `fps-flow` with its Rust and Python loader parity fixtures, `fps-interp`, `fps-sched`, `fps-stats`, `fps-hosts`, and `fps-backend-kernel`, see [Engine](Engine.md) |
+| `test-eng` | every crate under `engine/`, such as `fps-flow` with its Rust and Python loader parity fixtures, `fps-interp`, `fps-runtime`, `fps-sched`, `fps-stats`, `fps-hosts`, and `fps-backend-kernel`, see [Engine](Engine.md) |
 | `lint-rlm` | `ruff format --check`, `ruff check`, and `mypy --strict` over `realism/` |
 | `test-rlm` | the realism runner tests, including the ndpiReader, tshark, and Zeek tests when the tools are installed |
+| `lint-mod-http1`, `test-mod-http1` | the http1 module manifest, its native functions, and its golden transcripts |
+| `e2e-mod-http1` | the http1 fixture capture and score in the namespace harness, as root |
+| `lint-ui`, `test-ui` | the web UI linters, unit tests, bundle budget, license check, and client currency check |
+| `e2e-ui` | the Playwright browser tests of the web UI, outside `make e2e` because they need a browser |
 | `lint-qa-bench`, `test-qa-bench` | ruff and mypy over `bench/`, and the tests of `bench/compare.py` and `bench/s1_adapter.py` |
 | `bench-s1` | a real spike S1 run compared with the S1 baseline, outside `make test` |
 | `lint-trn`, `test-trn` | the kernel backend profile tooling |
@@ -153,7 +157,7 @@ func TestRunStateTransitions(t *testing.T) {
 
 A module package proves four things with tests inside its own directory.
 
-1. **The module validates.** `python3 tools/contracts/validate.py --modules modules/<name>` passes.
+1. **The module validates.** The module's `lint-mod-<name>` target passes. It runs `tools/contracts/validate.py --modules` on a parent directory that holds only the module, because the validator treats each subdirectory of the given directory as a module.
 2. **Client and server agree.** An interpreter test runs every scenario with both sides over the in memory duplex and checks success counters.
 3. **Bytes stay stable.** A transcript test renders each scenario with seed 42 and compares the bytes in both directions with golden files in `tests/testdata/`.
 4. **Traffic looks real.** The fixture capture from a harness run passes every realism check that applies to the module, and `fixtures/expected.yaml` records the expected labels.

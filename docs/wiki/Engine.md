@@ -8,10 +8,11 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 
 | Crate | Contents | Next package |
 |---|---|---|
-| [`fps-io`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-io) | The `SessionIo` trait and the in memory duplex `fps_io::memory::duplex` | ENG-06 adds `DatagramIo` |
+| [`fps-io`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-io) | The `SessionIo` trait, the in memory duplex `fps_io::memory::duplex`, and the `DatagramIo` seam with the in memory `datagram_pair`, see [UDP datagram sessions](#udp-datagram-sessions) | Backends add kernel UDP (TRN-02) |
 | [`fps-flow`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-flow) | The scenario model, the loader, the program compiler, the template compiler of contract v0.2, and the `TemplateFn` dispatch trait | ENG-02 adds the semantic checks |
-| [`fps-interp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-interp) | The session interpreter, the `Opener` seam, `session_rng`, delay sampling, and failure reasons, see [The flow program interpreter](#the-flow-program-interpreter) | ENG-05 adds vectored fill writes, ENG-06 UDP, ENG-07 multi flow instances |
+| [`fps-interp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-interp) | The session interpreter, the `Opener` seam, `session_rng`, delay sampling, and failure reasons, see [The flow program interpreter](#the-flow-program-interpreter) | UDP sessions since ENG-06. ENG-05 adds vectored fill writes, ENG-07 multi flow instances |
 | [`fps-stats`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-stats) | The catalog table, per worker shards, HDR histograms, the snapshot merge, and the proto3 JSON mapping of `CounterSnapshot` | ENG-10 publishes one snapshot per second from the worker runtime |
+| [`fps-runtime`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-runtime) | Worker threads, optional core pinning, the Tokio clock of the scheduler, statistics snapshots, stop and abort | AGT-01 builds a `RuntimeConfig` from the agent plan |
 | [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched) | Load profile, session schedule, drain iterator, and injected clock | ENG-10 drives it from the worker runtime |
 | [`fps-hosts`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-hosts) | Host pool address mapping, slicing, and seeded host selection, see [Hosts](Hosts.md) | HST-02 adds kernel port setup |
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `SessionIo` over kernel TCP sockets, see [Transport](Transport.md) | TRN-02 adds UDP |

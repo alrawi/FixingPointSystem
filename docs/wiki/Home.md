@@ -42,6 +42,7 @@ A new agent reads four pages in order before claiming work.
 | [Transport](Transport.md) | Transport backends, starting with the kernel TCP backend, its socket options, and its loopback tests |
 | [Hosts](Hosts.md) | Host pool address mapping, slicing by agent and worker, and seeded host selection |
 | [Contracts](Contracts.md) | Contract files and versions, the agent initiated control protocol, and the contract checks |
+| [Modules](Modules.md) | Application modules, starting with http1, their native functions, fixtures, and tests |
 | [Benchmarks](Benchmarks.md) | Benchmark result and baseline format, the comparison tool, and baseline refresh |
 | [Web UI](Web-UI.md) | The accepted web UI stack (D11) and the UI packages |
 | [Realism](Realism.md) | The realism runner, its conformance and parser error checks, and the report seam |
@@ -60,4 +61,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phase 0 is complete, including spike S3. Phase 1 has 33 packages merged after four batches, and the rest are seeded as issues. The coordinator updates this line after each batch.
+Phase 0 is complete, including spike S3. Phase 1 has 39 packages merged after five batches, and the rest are seeded as issues. The coordinator updates this line after each batch.
