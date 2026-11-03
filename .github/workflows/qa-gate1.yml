@@ -82,6 +82,7 @@ jobs:
           name: gate1-report
           path: |
             gate1-out/*.md
+            gate1-out/*.pcapng
             gate1-out/*.json
             gate1-out/*.csv
             gate1-out/*.log

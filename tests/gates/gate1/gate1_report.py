@@ -21,8 +21,11 @@ The gate has five checks.
 4. The conformance check of the realism report passed.
 5. The parser error check of the realism report passed with the reference
    parsers that the suite named.
-6. The capture holds as many sessions of every application as the agent
-   attempted, so the scored traffic is the traffic of the run.
+6. The capture holds between 99% and 100% of the sessions of every
+   application that the agent attempted, so the scored traffic is the
+   traffic of the run. Two sessions that reuse one 5-tuple, such as two DNS
+   queries from the same client address and source port, form one session
+   of the realism runner, so the capture may hold slightly fewer sessions.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from typing import Any
 
 APPLICATIONS = ("http1", "dns")
 RAISE_STEP = 0.001
+CAPTURE_TOLERANCE = 0.01
 
 
 class GateInputError(Exception):
@@ -194,12 +198,13 @@ def evaluate(
     for app in APPLICATIONS:
         captured = int(apps.get(app, {}).get("sessions", 0))
         want = attempted.get(app, 0)
+        least = want * (1 - CAPTURE_TOLERANCE)
         checks.append(
             Check(
                 f"Captured sessions of {app}",
-                want > 0 and captured == want,
+                want > 0 and least <= captured <= want,
                 f"{captured} captured, {want} attempted by the agent",
-                "equal and above 0",
+                f"from {fmt_ratio(1 - CAPTURE_TOLERANCE)} to 100% of the attempted sessions",
             )
         )
     return checks, ratios

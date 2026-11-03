@@ -195,6 +195,20 @@ def test_capture_that_misses_sessions_fails() -> None:
     assert failed(checks) == ["Captured sessions of http1"]
 
 
+def test_capture_with_merged_five_tuple_passes() -> None:
+    checks, _ = g.evaluate(
+        run_report(), realism(dns=(99, 99)), metrics(dns=100), 0.99, 99
+    )
+    assert failed(checks) == []
+
+
+def test_capture_with_foreign_sessions_fails() -> None:
+    checks, _ = g.evaluate(
+        run_report(), realism(dns=(101, 101)), metrics(dns=100), 0.99, 100
+    )
+    assert failed(checks) == ["Captured sessions of dns"]
+
+
 def test_raised_threshold_needs_a_ratio() -> None:
     with pytest.raises(g.GateInputError):
         g.raised_threshold({})
