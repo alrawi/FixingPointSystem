@@ -315,6 +315,18 @@ name = "fps-golden"
 version = "0.0.1"
 
 [[package]]
+name = "fps-hosts"
+version = "0.0.1"
+dependencies = [
+ "proptest",
+ "rand 0.8.8",
+ "rand_pcg",
+ "serde_json",
+ "serde_norway",
+ "thiserror",
+]
+
+[[package]]
 name = "fps-interp"
 version = "0.0.1"
 
