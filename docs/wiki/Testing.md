@@ -60,7 +60,7 @@ The targets that exist today are listed below.
 | `lint-ops` | `tools/plan/plan.py check`, `render --check`, and `lint` |
 | `lint-ctl` | `gofmt -l`, `go vet`, and `golangci-lint run` over the controller, skipping golangci-lint with a notice when it is missing |
 | `test-con` | the contract validator and its tests |
-| `test-ctl` | `go test -race ./...` over the controller, including the configuration store fixtures in `controller/internal/store/testdata/`, the registry tests, the agent manager tests with `controller/internal/fakeagent` as the fake for agent neighbors, the REST layer and capabilities contract tests, the check that the generated code in `controller/internal/api/` matches the contract, and the compiler goldens in `controller/internal/compiler/testdata/` |
+| `test-ctl` | `go test -race ./...` over the controller, including the configuration store fixtures in `controller/internal/store/testdata/`, the registry tests, the agent manager tests with `controller/internal/fakeagent` as the fake for agent neighbors, the REST layer and capabilities contract tests, the binary end to end test `TestEndToEnd`, the route coverage test of `internal/wiring`, the metrics aggregation tests, the check that the generated code in `controller/internal/api/` matches the contract, and the compiler goldens in `controller/internal/compiler/testdata/` |
 | `test-ops` | the plan and wiki tool tests and the Cargo workspace probe |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
 | `lint-qa` | gofmt, go vet, and golangci-lint on the Go golden file helper, and ruff and `mypy --strict` on the Python one, each skipped with a notice when its tool is missing |
@@ -74,6 +74,8 @@ The targets that exist today are listed below.
 | `test-rlm` | the realism runner tests, including the ndpiReader, tshark, and Zeek tests when the tools are installed |
 | `lint-mod-http1`, `test-mod-http1` | the http1 module manifest, its native functions, and its golden transcripts |
 | `e2e-mod-http1` | the http1 fixture capture and score in the namespace harness, as root |
+| `lint-mod-dns`, `test-mod-dns` | the dns module manifest, its native functions, and its golden transcripts |
+| `e2e-mod-dns` | the dns fixture capture and score in the namespace harness, as root |
 | `lint-ui`, `test-ui` | the web UI linters, unit tests, bundle budget, license check, and client currency check |
 | `e2e-ui` | the Playwright browser tests of the web UI, outside `make e2e` because they need a browser |
 | `lint-qa-bench`, `test-qa-bench` | ruff and mypy over `bench/`, and the tests of `bench/compare.py` and `bench/s1_adapter.py` |

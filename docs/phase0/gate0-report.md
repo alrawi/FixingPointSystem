@@ -39,7 +39,7 @@ Full TLS 1.3 handshakes, ECDSA P-256 leaf, X25519, half of each core's time spen
 
 ## Items carried into Phase 1
 
-1. Write `fill()` bodies as vectored writes from the shared filler buffer, then rerun the S1 bulk workload against the 25% overhead criterion.
+1. Done in ENG-05. Vectored fill writes raised the 1 MiB body ratio from 0.773 to about 1.1 of hand written code, within the 25% overhead criterion.
 2. Done on a small host. TRN-11 must repeat S3 at the full size (16 vCPU, up to 8 queues) to measure scaling, and must verify the kernel XSK bind mode directly, because the DPDK log line that S3 counted appears in both modes.
 3. Repeat S1 on a 4 vCPU KVM guest with virtio-net, because loopback hides NIC and virtualization cost.
 4. Add UDP, `spawn`, and transport modules to the interpreter, which S1 left out of scope.

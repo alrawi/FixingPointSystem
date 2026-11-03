@@ -8,16 +8,16 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 
 | Crate | Contents | Next package |
 |---|---|---|
-| [`fps-io`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-io) | The `SessionIo` trait, the in memory duplex `fps_io::memory::duplex`, and the `DatagramIo` seam with the in memory `datagram_pair`, see [UDP datagram sessions](#udp-datagram-sessions) | Backends add kernel UDP (TRN-02) |
+| [`fps-io`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-io) | The `SessionIo` trait, the in memory duplex `fps_io::memory::duplex`, and the `DatagramIo` seam with the in memory `datagram_pair`, see [UDP datagram sessions](#udp-datagram-sessions) | Kernel UDP since TRN-02 |
 | [`fps-flow`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-flow) | The scenario model, the loader, the program compiler, the template compiler of contract v0.2, and the `TemplateFn` dispatch trait | ENG-02 adds the semantic checks |
-| [`fps-interp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-interp) | The session interpreter, the `Opener` seam, `session_rng`, delay sampling, and failure reasons, see [The flow program interpreter](#the-flow-program-interpreter) | UDP sessions since ENG-06. ENG-05 adds vectored fill writes, ENG-07 multi flow instances |
+| [`fps-interp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-interp) | The session interpreter, the `Opener` seam, `session_rng`, delay sampling, and failure reasons, see [The flow program interpreter](#the-flow-program-interpreter) | UDP sessions since ENG-06 and vectored fill writes since ENG-05, see [Vectored writes for fill bodies](#vectored-writes-for-fill-bodies). ENG-07 adds multi flow instances |
 | [`fps-stats`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-stats) | The catalog table, per worker shards, HDR histograms, the snapshot merge, and the proto3 JSON mapping of `CounterSnapshot` | ENG-10 publishes one snapshot per second from the worker runtime |
 | [`fps-runtime`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-runtime) | Worker threads, optional core pinning, the Tokio clock of the scheduler, statistics snapshots, stop and abort | AGT-01 builds a `RuntimeConfig` from the agent plan |
 | [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched) | Load profile, session schedule, drain iterator, and injected clock | ENG-10 drives it from the worker runtime |
 | [`fps-hosts`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-hosts) | Host pool address mapping, slicing, and seeded host selection, see [Hosts](Hosts.md) | HST-02 adds kernel port setup |
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `SessionIo` over kernel TCP sockets, see [Transport](Transport.md) | TRN-02 adds UDP |
 
-Every crate carries `#![forbid(unsafe_code)]` and the lint header, except `fps-backend-kernel`, which carries `#![deny(unsafe_code)]` with one allowed `setsockopt` module that [Transport](Transport.md#unsafe-code) explains. Every crate also carries from [Coding Standards](Coding-Standards.md#rust). A `clippy.toml` in each crate with tests lets unit tests call `unwrap`, `expect`, and `panic`, which library code may not. We run the tests of every engine crate with `make test-eng`, and the `rust` job of `ci.yml` runs them on every pull request.
+Every crate carries `#![forbid(unsafe_code)]` and the lint header, except `fps-backend-kernel`, which carries `#![deny(unsafe_code)]` with one allowed socket module that [Transport](Transport.md#unsafe-code) explains. The lint header comes from [Coding Standards](Coding-Standards.md#rust). A `clippy.toml` in each crate with tests lets unit tests call `unwrap`, `expect`, and `panic`, which library code may not. We run the tests of every engine crate with `make test-eng`, and the `rust` job of `ci.yml` runs them on every pull request.
 
 ## The SessionIo seam
 
@@ -312,7 +312,7 @@ The crate [`fps-io`](https://github.com/alrawi/FixingPointSystem/tree/main/engin
 | `poll_recv` | Consumes one whole datagram and returns its full length, and when the buffer is smaller it keeps the first bytes and still returns the full length, as `recv` with `MSG_TRUNC` does on Linux |
 | `close` | Releases the socket, after which every operation on this side fails with `NotConnected`, while the peer observes nothing |
 
-`DatagramIoExt` adds the async helpers `send_datagram` and `recv_datagram`. Returning the full length from `poll_recv` lets the interpreter detect an oversized datagram without a second buffer, and a kernel backend gets the same behavior from `MSG_TRUNC`. TRN-04 implements the trait over kernel UDP sockets.
+`DatagramIoExt` adds the async helpers `send_datagram` and `recv_datagram`. Returning the full length from `poll_recv` lets the interpreter detect an oversized datagram without a second buffer, and a kernel backend gets the same behavior from `MSG_TRUNC`. TRN-02 implements the trait over kernel UDP sockets, see [Kernel UDP backend](Transport.md#kernel-udp-backend).
 
 `fps_io::memory::datagram_pair(queue)` returns two connected `MemoryDatagram` ends for tests. Each direction queues at most `queue` datagrams, and a datagram sent into a full queue or to a closed end is dropped without an error and counted by `dropped`, as UDP drops it. A queue of 0 therefore models a path that loses every datagram. `MemoryDatagram::readable` waits for a datagram without consuming it, which a test opener uses to implement `accept`.
 
