@@ -61,4 +61,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phase 0 is complete, including spike S3. Phase 1 has 39 packages merged after five batches, and the rest are seeded as issues. The coordinator updates this line after each batch.
+Phase 0 is complete, including spike S3. Phase 1 has 46 packages merged after six batches, including CTL-17, so the controller binary serves the REST API and the agent service, and the rest are seeded as issues. The coordinator updates this line after each batch.

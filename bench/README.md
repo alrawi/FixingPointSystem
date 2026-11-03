@@ -77,6 +77,7 @@ Run files named `<run>-r<N>` are repetitions, and the adapter reports their mean
 | File | Suite | Host | Source |
 |---|---|---|---|
 | `baselines/s1-engine-phase0-container.json` | `s1-engine` | 2 vCPU Firecracker microVM, Intel Xeon at 2.10 GHz, Linux 6.18.44 | `spikes/s1-engine/results/phase0-container/` of 2026-11-02 |
+| `baselines/fps-interp-bulk-container.json` | `fps-interp-bulk` | 2 vCPU Firecracker microVM, Intel Xeon at 2.30 GHz, Linux 6.18.44 | `FPS_BENCH_OUT=<file> cargo bench -p fps-interp --bench bulk` of 2026-11-03 |
 
 A test checks that the S1 baseline equals the adapter output of its committed raw files, so a hand edit of a number fails CI.
 

@@ -17,6 +17,8 @@ The module has two packages after CTL-01.
 | `internal/agents/` | The agent manager with Register and Session, the inventory, and /v1/agents (CTL-06) |
 | `internal/fakeagent/` | Fake agents for controller tests (CTL-06) |
 | `internal/runs/` | The run state machine, the orchestrator, and the run operations of /v1/runs (CTL-07) |
+| `internal/metrics/` | Snapshot aggregation, the metrics views and stream, and Prometheus exposition (CTL-08) |
+| `internal/wiring/` | Builds the controller from its packages, the registry and agent adapters, and the combined REST server (CTL-17) |
 
 Later packages add their own directories under `internal/`, as the [Implementation Plan](Implementation-Plan.md) assigns them. The `app.App` type owns every dependency, and the module has no package level mutable state. A later package mounts its handlers with `App.Handle` before `App.Run` starts, for example CTL-02 for the `/v1` API.
 
