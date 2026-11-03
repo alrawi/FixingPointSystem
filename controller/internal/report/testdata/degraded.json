@@ -1,0 +1,54 @@
+{
+  "realism": [],
+  "run": {
+    "config_id": "cfg-enterprise",
+    "created_at": "2026-11-03T12:00:00Z",
+    "degraded": true,
+    "ended_at": "2026-11-03T12:01:02Z",
+    "engine_version": "0.1.0",
+    "id": "run-degraded",
+    "module_versions": {
+      "dns": "0.1.0",
+      "http1": "0.1.0"
+    },
+    "phase": "done",
+    "seed": 42,
+    "started_at": "2026-11-03T12:00:02Z",
+    "state": "failed",
+    "summary": {
+      "bytes_rx": 8000000000,
+      "bytes_tx": 1000000000,
+      "concurrent_sessions": 300,
+      "sessions_attempted": 60000,
+      "sessions_failed": 320,
+      "sessions_succeeded": 59680,
+      "throughput_bps": 1200000000
+    },
+    "verdict": {
+      "criteria": [
+        {
+          "metric": "sessions.failed_ratio",
+          "observed": 0.0053333333,
+          "op": "<",
+          "passed": false,
+          "value": 0.001
+        },
+        {
+          "metric": "sessions.failed_ratio",
+          "observed": 0.0053333333,
+          "op": "<",
+          "passed": true,
+          "value": 0.01
+        },
+        {
+          "metric": "sessions.response_time.p99",
+          "observed": 48000,
+          "op": "<=",
+          "passed": true,
+          "value": 50000
+        }
+      ],
+      "passed": false
+    }
+  }
+}
