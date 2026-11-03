@@ -4,12 +4,13 @@
 //! The interpreter renders the host and port of the opening action and asks
 //! an [`Opener`] for the session transport. A transport backend implements
 //! the trait over its sockets, and tests hand out ends of the in memory
-//! duplex of `fps-io`.
+//! duplex of `fps-io`. UDP flows open through a [`DatagramOpener`] in
+//! place of an [`Opener`].
 
 use std::future::Future;
 use std::io;
 
-use fps_io::SessionIo;
+use fps_io::{DatagramIo, SessionIo};
 
 /// The action that opens a session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +42,23 @@ pub struct OpenRequest<'a> {
 pub trait Opener {
     /// The transport of an opened session.
     type Io: SessionIo;
+
+    /// Opens the session that `request` describes.
+    fn open(&mut self, request: OpenRequest<'_>) -> impl Future<Output = io::Result<Self::Io>>;
+}
+
+/// Opens the datagram socket of one UDP session side.
+///
+/// For `connect`, the opener returns a socket connected to the peer
+/// address. For `accept`, it binds the port, waits for the first datagram,
+/// binds the session to the source address of that datagram, and returns a
+/// socket on which that datagram stays queued for the first `expect`, as
+/// the datagram rules of `contracts/README.md` require. The interpreter
+/// bounds the returned future with its open timeout and classifies errors
+/// as [`Opener`] describes.
+pub trait DatagramOpener {
+    /// The socket of an opened session.
+    type Io: DatagramIo;
 
     /// Opens the session that `request` describes.
     fn open(&mut self, request: OpenRequest<'_>) -> impl Future<Output = io::Result<Self::Io>>;

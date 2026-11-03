@@ -10,8 +10,13 @@
 //! session id, and time comes from the Tokio clock, so tests pause it.
 //!
 //! A failed side returns a [`Failure`], whose [`Reason`] is one value of the
-//! `reason` label of `contracts/metrics/catalog.yaml`. The `spawn` action
-//! and UDP flows belong to later packages.
+//! `reason` label of `contracts/metrics/catalog.yaml`.
+//!
+//! UDP flows run over [`fps_io::DatagramIo`] with
+//! [`Session::run_datagram_program`] and a [`DatagramOpener`]. Each `send`
+//! writes one datagram, each `expect` reads and consumes exactly one
+//! datagram, which also becomes `last`, and `close` releases the socket.
+//! The `spawn` action belongs to a later package.
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -22,6 +27,6 @@ pub mod rng;
 pub mod session;
 
 pub use failure::{Failure, FailureKind, Reason};
-pub use open::{OpenKind, OpenRequest, Opener};
+pub use open::{DatagramOpener, OpenKind, OpenRequest, Opener};
 pub use rng::{session_rng, Side};
 pub use session::{Limits, Session, SessionCtx, SideStats};
