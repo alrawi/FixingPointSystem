@@ -1,0 +1,28 @@
+# Two agents with unequal cores. The pools divide evenly over the six
+# workers, so every worker gets the same share.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: two_agents
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: agent-a/eth1, mtu: 1500 }
+    - { name: server0, location: agent-a/eth2 }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 10.0.0.0/22, count: 600, gateway: 10.0.0.1, vlan: 100 }
+    - { name: servers, port: server0, role: server, ipv4: 172.16.0.0/24, count: 6, mac_base: "02:aa:00:00:00:00", os_profile: linux6 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: web_get, weight: 3, client_pool: clients, server_pool: servers, params: { requests: 2, body_size: 1024 } }
+    - { scenario: dns/lookup, weight: 1 }
+load:
+  objective: { type: sessions_per_second, value: 1200 }
+  phases:
+    - { name: ramp_up, duration_s: 10, shape: step }
+    - { name: steady, duration_s: 30 }
+    - { name: ramp_down, duration_s: 2.5, shape: linear }
+timeline: { seed: 42, warmup_s: 5 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "<", value: 0.001 }
