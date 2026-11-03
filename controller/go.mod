@@ -1,15 +1,18 @@
 module github.com/alrawi/FixingPointSystem/controller
 
-go 1.24
+go 1.24.0
 
 require (
 	github.com/alrawi/FixingPointSystem/tests/golden/go v0.0.0
+	github.com/bufbuild/protocompile v0.14.1
 	github.com/dlclark/regexp2 v1.11.5
 	github.com/getkin/kin-openapi v0.133.0
 	github.com/oapi-codegen/oapi-codegen/v2 v2.6.0
 	github.com/oapi-codegen/runtime v1.3.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	go.yaml.in/yaml/v3 v3.0.4
+	google.golang.org/grpc v1.79.3
+	google.golang.org/protobuf v1.36.11
 )
 
 require (
@@ -28,11 +31,20 @@ require (
 	github.com/speakeasy-api/openapi-overlay v0.10.2 // indirect
 	github.com/vmware-labs/yaml-jsonpath v0.3.2 // indirect
 	github.com/woodsbury/decimal128 v1.3.0 // indirect
-	golang.org/x/mod v0.23.0 // indirect
-	golang.org/x/sync v0.11.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
-	golang.org/x/tools v0.30.0 // indirect
+	golang.org/x/mod v0.30.0 // indirect
+	golang.org/x/net v0.48.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
+	golang.org/x/tools v0.39.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.5.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 replace github.com/alrawi/FixingPointSystem/tests/golden/go => ../tests/golden/go
+
+tool (
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc
+	google.golang.org/protobuf/cmd/protoc-gen-go
+)

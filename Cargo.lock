@@ -304,6 +304,8 @@ version = "0.0.1"
 dependencies = [
  "fps-io",
  "libc",
+ "serde",
+ "serde_norway",
  "socket2",
  "thiserror",
  "tokio",

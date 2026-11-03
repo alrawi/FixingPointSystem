@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fps_backend_kernel::{
-    bind_pool, ConnectConfig, Connector, KernelListener, Linger, ListenConfig, PortRange,
-    SocketOptions,
+    bind_pool, ConnectConfig, Connector, KernelListener, Linger, ListenConfig, OsProfile,
+    PortRange, SocketOptions, BUILTIN_PROFILES,
 };
 use fps_io::SessionIo;
 use socket2::SockRef;
@@ -246,6 +246,7 @@ async fn socket_options_reach_client_and_accepted_sockets() {
         recv_buffer: Some(32 * 1024),
         nodelay: false,
         linger: Linger::Abort,
+        ..SocketOptions::default()
     };
     let listener = KernelListener::bind(
         SocketAddr::new(v4(16, 0, 1), 0),
@@ -291,6 +292,47 @@ async fn socket_options_reach_client_and_accepted_sockets() {
     let sock = SockRef::from(defaults.tcp_stream().unwrap());
     assert!(sock.tcp_nodelay().unwrap());
     assert_eq!(sock.linger().unwrap(), None);
+}
+
+#[tokio::test]
+async fn os_profiles_reach_client_and_accepted_sockets() {
+    for (i, name) in BUILTIN_PROFILES.into_iter().enumerate() {
+        let profile = OsProfile::builtin(name).unwrap();
+        let socket = profile.socket_options(SocketOptions::default());
+        let octet = u8::try_from(i).unwrap() + 1;
+        let listener = KernelListener::bind(
+            SocketAddr::new(v4(19, 0, octet), 0),
+            &ListenConfig {
+                socket: socket.clone(),
+                ..ListenConfig::default()
+            },
+        )
+        .unwrap();
+        let connector = Connector::new(ConnectConfig {
+            socket,
+            ..ConnectConfig::default()
+        });
+        let client = connector
+            .connect(v4(19, 1, octet), listener.local_addr())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        for (side, io) in [("client", &client), ("server", &server)] {
+            let sock = SockRef::from(io.tcp_stream().unwrap());
+            assert_eq!(
+                sock.ttl_v4().unwrap(),
+                u32::from(profile.socket.ttl),
+                "{name} {side} ttl"
+            );
+            // Loopback allows an MSS near 64 KiB, so the profile MSS decides.
+            // Connected sockets report it less the timestamp option.
+            let mss = sock.tcp_mss().unwrap();
+            assert!(
+                (1400..=u32::from(profile.socket.mss)).contains(&mss),
+                "{name} {side} mss {mss}"
+            );
+        }
+    }
 }
 
 #[tokio::test]
