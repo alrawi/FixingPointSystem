@@ -1,0 +1,274 @@
+{
+  "format": "fps-bench/v1",
+  "suite": "s1-engine",
+  "recorded": "2026-11-02T04:02:22Z",
+  "source": "spikes/s1-engine/results/phase0-container",
+  "host": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "vcpus": 2,
+    "kernel": "6.18.44-fc-v185",
+    "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+    "date": "2026-11-02T04:02:22Z",
+    "label": "phase0-container"
+  },
+  "metrics": {
+    "concurrency-browse.l7_bits_per_s": {
+      "value": 4575437512.867064,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "bit/s"
+    },
+    "concurrency-browse.latency_p50_us": {
+      "value": 446207.0,
+      "better": "lower",
+      "tolerance": 0.15,
+      "unit": "us"
+    },
+    "concurrency-browse.latency_p99_us": {
+      "value": 1013759.0,
+      "better": "lower",
+      "tolerance": 0.25,
+      "unit": "us"
+    },
+    "concurrency-browse.sessions_failed": {
+      "value": 0.0,
+      "better": "lower",
+      "tolerance": 0.0,
+      "unit": "sessions"
+    },
+    "concurrency-browse.sessions_per_s": {
+      "value": 8137.988433,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "sessions/s"
+    },
+    "cps-baseline.l7_bits_per_s": {
+      "value": 47505652.734069,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "bit/s"
+    },
+    "cps-baseline.latency_p50_us": {
+      "value": 2217.0,
+      "better": "lower",
+      "tolerance": 0.15,
+      "unit": "us"
+    },
+    "cps-baseline.latency_p99_us": {
+      "value": 4073.0,
+      "better": "lower",
+      "tolerance": 0.25,
+      "unit": "us"
+    },
+    "cps-baseline.sessions_failed": {
+      "value": 0.0,
+      "better": "lower",
+      "tolerance": 0.0,
+      "unit": "sessions"
+    },
+    "cps-baseline.sessions_per_s": {
+      "value": 28010.408452,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "sessions/s"
+    },
+    "cps-interp-1core.l7_bits_per_s": {
+      "value": 45139204.536362,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "bit/s"
+    },
+    "cps-interp-1core.latency_p50_us": {
+      "value": 2111.0,
+      "better": "lower",
+      "tolerance": 0.15,
+      "unit": "us"
+    },
+    "cps-interp-1core.latency_p99_us": {
+      "value": 5271.0,
+      "better": "lower",
+      "tolerance": 0.25,
+      "unit": "us"
+    },
+    "cps-interp-1core.sessions_failed": {
+      "value": 0.0,
+      "better": "lower",
+      "tolerance": 0.0,
+      "unit": "sessions"
+    },
+    "cps-interp-1core.sessions_per_s": {
+      "value": 26615.097014,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "sessions/s"
+    },
+    "cps-interp.l7_bits_per_s": {
+      "value": 46967753.968393,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "bit/s"
+    },
+    "cps-interp.latency_p50_us": {
+      "value": 2243.0,
+      "better": "lower",
+      "tolerance": 0.15,
+      "unit": "us"
+    },
+    "cps-interp.latency_p99_us": {
+      "value": 4099.0,
+      "better": "lower",
+      "tolerance": 0.25,
+      "unit": "us"
+    },
+    "cps-interp.sessions_failed": {
+      "value": 0.0,
+      "better": "lower",
+      "tolerance": 0.0,
+      "unit": "sessions"
+    },
+    "cps-interp.sessions_per_s": {
+      "value": 27693.251161,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "sessions/s"
+    },
+    "cps.interp_over_baseline": {
+      "value": 0.988677,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "ratio"
+    },
+    "keepalive-baseline.l7_bits_per_s": {
+      "value": 2134663148.934077,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "bit/s"
+    },
+    "keepalive-baseline.latency_p50_us": {
+      "value": 4064.0,
+      "better": "lower",
+      "tolerance": 0.15,
+      "unit": "us"
+    },
+    "keepalive-baseline.latency_p99_us": {
+      "value": 6125.0,
+      "better": "lower",
+      "tolerance": 0.25,
+      "unit": "us"
+    },
+    "keepalive-baseline.sessions_failed": {
+      "value": 0.0,
+      "better": "lower",
+      "tolerance": 0.0,
+      "unit": "sessions"
+    },
+    "keepalive-baseline.sessions_per_s": {
+      "value": 15473.955788,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "sessions/s"
+    },
+    "keepalive-interp.l7_bits_per_s": {
+      "value": 2047317391.325463,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "bit/s"
+    },
+    "keepalive-interp.latency_p50_us": {
+      "value": 4241.0,
+      "better": "lower",
+      "tolerance": 0.15,
+      "unit": "us"
+    },
+    "keepalive-interp.latency_p99_us": {
+      "value": 6487.0,
+      "better": "lower",
+      "tolerance": 0.25,
+      "unit": "us"
+    },
+    "keepalive-interp.sessions_failed": {
+      "value": 0.0,
+      "better": "lower",
+      "tolerance": 0.0,
+      "unit": "sessions"
+    },
+    "keepalive-interp.sessions_per_s": {
+      "value": 14840.795286,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "sessions/s"
+    },
+    "keepalive.interp_over_baseline": {
+      "value": 0.959082,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "ratio"
+    },
+    "throughput-baseline.l7_bits_per_s": {
+      "value": 55012958781.65394,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "bit/s"
+    },
+    "throughput-baseline.latency_p50_us": {
+      "value": 9591.0,
+      "better": "lower",
+      "tolerance": 0.15,
+      "unit": "us"
+    },
+    "throughput-baseline.latency_p99_us": {
+      "value": 14639.0,
+      "better": "lower",
+      "tolerance": 0.25,
+      "unit": "us"
+    },
+    "throughput-baseline.sessions_failed": {
+      "value": 0.0,
+      "better": "lower",
+      "tolerance": 0.0,
+      "unit": "sessions"
+    },
+    "throughput-baseline.sessions_per_s": {
+      "value": 1639.173147,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "sessions/s"
+    },
+    "throughput-interp.l7_bits_per_s": {
+      "value": 40654881501.17561,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "bit/s"
+    },
+    "throughput-interp.latency_p50_us": {
+      "value": 12911.0,
+      "better": "lower",
+      "tolerance": 0.15,
+      "unit": "us"
+    },
+    "throughput-interp.latency_p99_us": {
+      "value": 20095.0,
+      "better": "lower",
+      "tolerance": 0.25,
+      "unit": "us"
+    },
+    "throughput-interp.sessions_failed": {
+      "value": 0.0,
+      "better": "lower",
+      "tolerance": 0.0,
+      "unit": "sessions"
+    },
+    "throughput-interp.sessions_per_s": {
+      "value": 1211.358043,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "sessions/s"
+    },
+    "throughput.interp_over_baseline": {
+      "value": 0.739006,
+      "better": "higher",
+      "tolerance": 0.1,
+      "unit": "ratio"
+    }
+  }
+}

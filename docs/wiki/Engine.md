@@ -35,12 +35,12 @@ Tests use `fps_io::memory::duplex(capacity)`, which returns two connected `Memor
 
 `fps-flow` holds the program model and the template parser of spike S1 with their tests. We changed four things in the port.
 
-1. Errors are the typed enums `LoadError` and `TemplateError` from `thiserror`, in place of `anyhow`. Each `LoadError` names its location from the file inward, for example `web_get.yaml: flow 'page': client: action 3: loop: action 1`. ENG-02 replaces the location string with structured fields.
+1. Errors are the typed enums `LoadError` and `TemplateError` from `thiserror`, in place of `anyhow`. Each `LoadError` carries a typed `Location`, which [The scenario loader](#the-scenario-loader) describes.
 2. `Flow` records `l4`, so the DNS example over UDP compiles. The interpreter of ENG-04 runs TCP flows only, and ENG-06 adds datagram sessions for UDP flows.
 3. Rendering takes any sized `rand::RngCore`, and the filler buffer comes from `rand_pcg::Pcg64Mcg`, which gives the same bytes on every platform. The spike used `SmallRng`, whose algorithm may change between platforms and releases.
 4. The contract test `tests/contract_examples.rs` compiles every scenario under `contracts/examples/modules/`, so a new example joins the check on its own.
 
-The crate still rejects transport modules, spawned flows, and the `spawn` and `raw` actions with `LoadError::Unsupported`.
+`Scenario::load` still rejects transport modules, spawned flows, and the `spawn` and `raw` actions with `LoadError::Unsupported`, while `Scenario::check` accepts them when the contract allows them.
 
 ## Templates
 
@@ -158,6 +158,53 @@ The tests of the crate cover the four levels that the ENG workstream requires ex
 3. Phase boundary tests count the starts of ramp up, steady, and ramp down, step ramps up and down, and the concurrency targets at each phase.
 4. Property tests check the inverse of the integral, ordering, bounds, reproducibility, and the constant arrival count over generated profiles.
 5. Contract tests parse every shape name of `test-config.schema.json` and schedule the phases of `examples/plans/http_dns_smoke.json`.
+
+## The scenario loader
+
+ENG-02 brought the loader of `fps-flow` to parity with the semantic rules of `tools/contracts/validate.py`. Loading a scenario now runs two passes. The first pass in `check.rs` walks the YAML document and applies the rules of `check_scenario` in the same order, and the second pass compiles the programs as before. Both validators therefore give every scenario the same verdict, and a shared fixture set proves it.
+
+### Entry points
+
+| Function | Module calls | Features the engine does not run yet |
+|---|---|---|
+| `Scenario::load(path)` and `Scenario::parse(text)` | Unchecked | Rejected with `LoadError::Unsupported` |
+| `Scenario::load_with(path, ctx)` and `Scenario::parse_with(text, ctx)` | Checked when `ctx` is given | Rejected with `LoadError::Unsupported` |
+| `Scenario::check(text, ctx)` and `Scenario::check_file(path, ctx)` | Checked when `ctx` is given | Accepted, and the warnings are returned |
+
+The context is a `ModuleContext`, which `ModuleSet::load_dir(root).context(name)` builds from the manifests under a modules directory. It holds the module that ships the scenario, its type, and the function catalog of the module itself and of every required module. A required module without an installed manifest keeps its calls unchecked, and the check reports a warning, as the Python validator does.
+
+### Typed locations
+
+Every `LoadError` variant except `Read` carries a boxed `Location` with the file, the variable, the flow index and id, the side, the path of action steps through loops and branch arms, and the field. `Location::pointer` renders the JSON pointer that the Python validator prints, for example `/flows/0/client/1/loop/do/0/spawn`, and the `Display` form counts actions from 1, for example `last_after_loop.yaml: flow 'a': client: action 3`. `LoadError::kind` names the variant, so tests compare error kinds without matching on messages.
+
+### Rules
+
+The loader rejects a scenario for each rule below. The rules on templates use the declared variable types, where a variable that only a `set` action binds has type `any`.
+
+| Rule | Variant |
+|---|---|
+| Two flows share an id | `DuplicateFlow` |
+| An `after` entry names the flow itself, an unknown flow, or closes a cycle | `SelfDependency`, `UnknownFlow`, `Cycle` |
+| A flow module is neither the owner nor a required module | `ForeignFlowModule` |
+| A side does not open with `connect` or `accept` | `MissingOpener` |
+| A `spawn` names an unknown flow or a flow without `spawned: true` | `UnknownSpawnTarget`, `NotSpawned` |
+| Branch probabilities do not sum to 1 | `BranchSum` |
+| A uniform delay has `min_ms` above `max_ms` | `UniformRange` |
+| `raw` appears outside a strike or fuzzer module | `ReservedAction` |
+| `max_datagram` on TCP, or a UDP expect that cannot fit one datagram | `MaxDatagramOnTcp`, `DatagramLimit` |
+| `last` where no `expect` always ran earlier on the same side | `LastWithoutExpect` |
+| A call names a foreign module or a function that the manifest lacks | `ForeignModule`, `UnknownModuleFunction` |
+| An undefined variable, or a call with a wrong arity, parameter, or argument type | `Template` with the matching `TemplateError` |
+
+The rule on `last` follows the Python validator. A loop body counts only when its count is a positive integer literal, and a branch counts only when every arm runs an `expect`. `Template::check` holds the typed template rules and reads the catalogs through `CheckScope`, and `manifest.rs` reads the `functions` catalog of a manifest.
+
+### Shared fixtures
+
+The fixtures live in `engine/fps-flow/tests/fixtures/`. Four fixture modules hold 43 scenarios, 12 accepted and 31 rejected, and `verdicts.yaml` lists each scenario with its verdict, the Rust error kind, and the JSON pointer of the first error. The Rust test `tests/fixtures.rs` checks every verdict, kind, and pointer with `Scenario::check_file`. The Python test `tests/test_fixtures.py` runs the module and scenario checks of `validate.py` over the same modules and checks every verdict and pointer. The workflow `eng.yml` runs the Python half, and the rust job of `ci.yml` runs the Rust half. A new rule therefore needs one fixture and one line in `verdicts.yaml`, and both tests pick it up.
+
+### Limits
+
+The Rust loader does not run the JSON Schema step of the Python validator. Its compiler catches most structural errors, but some schema rules, such as identifier patterns and a `set` value that is not a string, still pass in Rust. The fixtures therefore cover only schema valid scenarios. The Rust loader stops at the first error, while the Python validator reports every finding.
 
 ## The flow program interpreter
 

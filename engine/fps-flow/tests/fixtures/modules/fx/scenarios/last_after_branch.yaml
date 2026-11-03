@@ -1,0 +1,10 @@
+scenario: last_after_branch
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - branch:
+          - { p: 0.5, do: [ { expect: { bytes: 1 } } ] }
+          - { p: 0.5, do: [ { send: "x" } ] }
+      - set: { copy: "{{ last }}" }

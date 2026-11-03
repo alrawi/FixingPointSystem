@@ -1,175 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! Scenario loader and flow program compiler.
 //!
-//! Each side of a flow compiles into a flat list of operations with jumps, so
-//! the interpreter runs loops and branches without recursion or per call
-//! allocation. [`Scenario::fold_constants`] folds the run variables into the
+//! Loading runs the semantic rules of `tools/contracts/validate.py` first, in
+//! [`crate::check`], and then compiles each side of a flow into a flat list
+//! of operations with jumps, so the interpreter runs loops and branches
+//! without recursion or per call allocation. [`Scenario::fold_constants`] folds the run variables into the
 //! templates, and [`Scenario::dump`] prints the compiled programs.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use serde_yaml::Value as Yaml;
 
-use crate::template::{Template, TemplateError, Value, Vars};
+use crate::check::check_document;
+use crate::error::{invalid, missing, unsupported};
+pub use crate::error::{LoadError, Warning};
+use crate::location::Side;
+use crate::manifest::ModuleContext;
+use crate::template::{Template, Value, Vars};
 
 /// Timeout of an `expect` that names none.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_millis(10_000);
-
-/// Errors that loading or compiling a scenario reports.
-///
-/// The `at` field names where the error occurred, from the outermost scope
-/// inward, for example `web_get.yaml: flow 'page': client: action 2`.
-#[derive(Debug, thiserror::Error)]
-pub enum LoadError {
-    /// The scenario file could not be read.
-    #[error("reading {path}")]
-    Read {
-        /// The scenario file.
-        path: PathBuf,
-        /// The underlying error.
-        #[source]
-        source: std::io::Error,
-    },
-    /// The text is not valid YAML.
-    #[error("{}invalid YAML: {message}", prefix(.at))]
-    Syntax {
-        /// Location of the error.
-        at: String,
-        /// Message of the YAML parser.
-        message: String,
-    },
-    /// A required field is absent or has the wrong type.
-    #[error("{}missing '{field}'", prefix(.at))]
-    Missing {
-        /// Location of the error.
-        at: String,
-        /// The field name.
-        field: &'static str,
-    },
-    /// A field holds a value that the grammar rejects.
-    #[error("{}{reason}", prefix(.at))]
-    Invalid {
-        /// Location of the error.
-        at: String,
-        /// What is wrong.
-        reason: String,
-    },
-    /// The scenario uses a feature that this engine version does not run yet.
-    #[error("{}{feature} is not supported by this engine version", prefix(.at))]
-    Unsupported {
-        /// Location of the error.
-        at: String,
-        /// The feature.
-        feature: String,
-    },
-    /// A template failed to compile.
-    #[error("{}{error}", prefix(.at))]
-    Template {
-        /// Location of the error.
-        at: String,
-        /// The template error.
-        error: TemplateError,
-    },
-    /// Two flows share one id.
-    #[error("{}duplicate flow id '{id}'", prefix(.at))]
-    DuplicateFlow {
-        /// Location of the error.
-        at: String,
-        /// The repeated id.
-        id: String,
-    },
-    /// An `after` entry names a flow that does not exist.
-    #[error("{}flow '{flow}' depends on unknown flow '{dependency}'", prefix(.at))]
-    UnknownFlow {
-        /// Location of the error.
-        at: String,
-        /// The dependent flow.
-        flow: String,
-        /// The missing dependency.
-        dependency: String,
-    },
-    /// The `after` relation has a cycle.
-    #[error("{}dependency cycle among flows {flows:?}", prefix(.at))]
-    Cycle {
-        /// Location of the error.
-        at: String,
-        /// The flows that cannot be ordered.
-        flows: Vec<String>,
-    },
-    /// An override names a variable that the scenario does not declare.
-    #[error("{}scenario has no variable '{name}'", prefix(.at))]
-    UnknownVariable {
-        /// Location of the error.
-        at: String,
-        /// The variable name.
-        name: String,
-    },
-}
-
-fn prefix(at: &str) -> String {
-    if at.is_empty() {
-        String::new()
-    } else {
-        format!("{at}: ")
-    }
-}
-
-impl LoadError {
-    /// Prepends an enclosing scope to the location of the error.
-    fn within(mut self, scope: impl std::fmt::Display) -> Self {
-        let at = match &mut self {
-            LoadError::Read { .. } => return self,
-            LoadError::Syntax { at, .. }
-            | LoadError::Missing { at, .. }
-            | LoadError::Invalid { at, .. }
-            | LoadError::Unsupported { at, .. }
-            | LoadError::Template { at, .. }
-            | LoadError::DuplicateFlow { at, .. }
-            | LoadError::UnknownFlow { at, .. }
-            | LoadError::Cycle { at, .. }
-            | LoadError::UnknownVariable { at, .. } => at,
-        };
-        *at = if at.is_empty() {
-            scope.to_string()
-        } else {
-            format!("{scope}: {at}")
-        };
-        self
-    }
-}
-
-impl From<TemplateError> for LoadError {
-    fn from(error: TemplateError) -> Self {
-        LoadError::Template {
-            at: String::new(),
-            error,
-        }
-    }
-}
-
-fn missing(field: &'static str) -> LoadError {
-    LoadError::Missing {
-        at: String::new(),
-        field,
-    }
-}
-
-fn invalid(reason: impl Into<String>) -> LoadError {
-    LoadError::Invalid {
-        at: String::new(),
-        reason: reason.into(),
-    }
-}
-
-fn unsupported(feature: impl Into<String>) -> LoadError {
-    LoadError::Unsupported {
-        at: String::new(),
-        feature: feature.into(),
-    }
-}
 
 /// The condition that ends an `expect`.
 #[derive(Clone, Debug, PartialEq)]
@@ -314,58 +167,50 @@ pub struct Scenario {
 }
 
 impl Scenario {
-    /// Reads and compiles a scenario file.
+    /// Reads, checks, and compiles a scenario file without a module
+    /// context, so flow modules and module calls stay unchecked.
     pub fn load(path: &Path) -> Result<Self, LoadError> {
-        let text = std::fs::read_to_string(path).map_err(|source| LoadError::Read {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        Self::parse(&text).map_err(|e| e.within(path.display()))
+        Self::load_with(path, None)
     }
 
-    /// Compiles scenario text.
+    /// Reads, checks, and compiles a scenario file that the module of
+    /// `modules` ships. Module calls are checked against its function
+    /// catalogs.
+    pub fn load_with(path: &Path, modules: Option<&ModuleContext>) -> Result<Self, LoadError> {
+        let text = read(path)?;
+        Self::parse_with(&text, modules).map_err(|e| e.in_file(path))
+    }
+
+    /// Checks and compiles scenario text without a module context.
     pub fn parse(text: &str) -> Result<Self, LoadError> {
-        let doc: Yaml = serde_yaml::from_str(text).map_err(|e| LoadError::Syntax {
-            at: String::new(),
-            message: e.to_string(),
-        })?;
-        let name = doc
-            .get("scenario")
-            .and_then(Yaml::as_str)
-            .ok_or_else(|| missing("scenario"))?;
-        let mut vars = Vars::new();
-        if let Some(Yaml::Mapping(m)) = doc.get("vars") {
-            for (k, v) in m {
-                let k = k
-                    .as_str()
-                    .ok_or_else(|| invalid("variable names must be strings"))?;
-                let v = Value::from_yaml(v).map_err(|e| LoadError::from(e).within(k))?;
-                vars.insert(k.to_string(), v);
-            }
-        }
-        let flows_y = doc
-            .get("flows")
-            .and_then(Yaml::as_sequence)
-            .ok_or_else(|| missing("flows"))?;
-        let mut flows = Vec::new();
-        let mut after: HashMap<String, Vec<String>> = HashMap::new();
-        for f in flows_y {
-            let (flow, deps) = compile_flow(f)?;
-            if after.contains_key(&flow.id) {
-                return Err(LoadError::DuplicateFlow {
-                    at: String::new(),
-                    id: flow.id,
-                });
-            }
-            after.insert(flow.id.clone(), deps);
-            flows.push(flow);
-        }
-        let flows = topo_order(flows, &after)?;
-        Ok(Scenario {
-            name: name.to_string(),
-            vars,
-            flows,
-        })
+        Self::parse_with(text, None)
+    }
+
+    /// Checks and compiles scenario text in a module context. The result
+    /// runs on this engine version, so features that it does not run yet,
+    /// such as `spawn`, fail with [`LoadError::Unsupported`].
+    pub fn parse_with(text: &str, modules: Option<&ModuleContext>) -> Result<Self, LoadError> {
+        build(text, modules, true, &mut Vec::new())
+    }
+
+    /// Applies the contract rules to scenario text and returns the warnings.
+    ///
+    /// The verdict equals the verdict of `tools/contracts/validate.py` for
+    /// the semantic rules, so features that the engine does not run yet pass
+    /// when the contract allows them.
+    pub fn check(text: &str, modules: Option<&ModuleContext>) -> Result<Vec<Warning>, LoadError> {
+        let mut warnings = Vec::new();
+        build(text, modules, false, &mut warnings)?;
+        Ok(warnings)
+    }
+
+    /// Reads a scenario file and applies [`Scenario::check`].
+    pub fn check_file(
+        path: &Path,
+        modules: Option<&ModuleContext>,
+    ) -> Result<Vec<Warning>, LoadError> {
+        let text = read(path)?;
+        Self::check(&text, modules).map_err(|e| e.in_file(path))
     }
 
     /// Replaces the values of declared variables.
@@ -373,7 +218,7 @@ impl Scenario {
         for (k, v) in overrides {
             if !self.vars.contains_key(k) {
                 return Err(LoadError::UnknownVariable {
-                    at: format!("scenario '{}'", self.name),
+                    at: Box::default(),
                     name: k.clone(),
                 });
             }
@@ -415,12 +260,12 @@ impl Scenario {
             .filter(|(k, _)| !targets.contains(k.as_str()))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        for flow in &mut self.flows {
-            let at = format!("flow '{}'", flow.id);
-            fold_program(&mut flow.client, &constants)
-                .map_err(|e| e.within("client").within(&at))?;
+        for (i, flow) in self.flows.iter_mut().enumerate() {
+            let id = flow.id.clone();
+            let at = |e: LoadError, side| e.in_side(side).in_flow(Some(i), Some(&id));
+            fold_program(&mut flow.client, &constants).map_err(|e| at(e, Side::Client))?;
             if let Some(server) = &mut flow.server {
-                fold_program(server, &constants).map_err(|e| e.within("server").within(&at))?;
+                fold_program(server, &constants).map_err(|e| at(e, Side::Server))?;
             }
         }
         Ok(())
@@ -475,7 +320,7 @@ fn fold_program(p: &mut Program, constants: &Vars) -> Result<(), LoadError> {
                 .try_for_each(|(_, t)| fold_template(t, constants)),
             _ => Ok(()),
         };
-        r.map_err(|e| e.within(format!("op {i}")))?;
+        r.map_err(|e| e.at_field(&format!("op {i}")))?;
     }
     Ok(())
 }
@@ -553,6 +398,68 @@ fn dump_program(out: &mut String, side: &str, p: &Program) {
     }
 }
 
+fn read(path: &Path) -> Result<String, LoadError> {
+    std::fs::read_to_string(path).map_err(|source| LoadError::Read {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Checks and compiles scenario text. With `runnable` false the compiler
+/// accepts the contract features that this engine does not run yet and
+/// leaves them out of the programs, so only the verdict counts.
+fn build(
+    text: &str,
+    modules: Option<&ModuleContext>,
+    runnable: bool,
+    warnings: &mut Vec<Warning>,
+) -> Result<Scenario, LoadError> {
+    let doc: Yaml = serde_yaml::from_str(text).map_err(|e| LoadError::Syntax {
+        at: Box::default(),
+        message: e.to_string(),
+    })?;
+    check_document(&doc, modules, warnings)?;
+    let name = doc
+        .get("scenario")
+        .and_then(Yaml::as_str)
+        .ok_or_else(|| missing("scenario"))?;
+    let mut vars = Vars::new();
+    if let Some(Yaml::Mapping(m)) = doc.get("vars") {
+        for (k, v) in m {
+            let k = k
+                .as_str()
+                .ok_or_else(|| invalid("variable names must be strings"))?;
+            let v = Value::from_yaml(v).map_err(|e| LoadError::from(e).in_var(k))?;
+            vars.insert(k.to_string(), v);
+        }
+    }
+    let flows_y = doc
+        .get("flows")
+        .and_then(Yaml::as_sequence)
+        .ok_or_else(|| missing("flows"))?;
+    let mut flows = Vec::new();
+    let mut after: HashMap<String, Vec<String>> = HashMap::new();
+    for (i, f) in flows_y.iter().enumerate() {
+        let (flow, deps) = compile_flow(f, runnable).map_err(|e| e.in_flow(Some(i), None))?;
+        if after.contains_key(&flow.id) {
+            return Err(LoadError::DuplicateFlow {
+                at: Box::default(),
+                id: flow.id,
+            }
+            .in_flow(Some(i), None)
+            .at_field("id"));
+        }
+        after.insert(flow.id.clone(), deps);
+        flows.push(flow);
+    }
+    let flows = topo_order(flows, &after)?;
+    Ok(Scenario {
+        name: name.to_string(),
+        vars,
+        flows,
+    })
+}
+
 fn topo_order(
     flows: Vec<Flow>,
     after: &HashMap<String, Vec<String>>,
@@ -567,10 +474,12 @@ fn topo_order(
             let deps = after.get(&f.id).map(Vec::as_slice).unwrap_or_default();
             if let Some(d) = deps.iter().find(|d| !after.contains_key(*d)) {
                 return Err(LoadError::UnknownFlow {
-                    at: String::new(),
+                    at: Box::default(),
                     flow: f.id.clone(),
                     dependency: d.clone(),
-                });
+                }
+                .in_flow(None, Some(&f.id))
+                .at_field("after"));
             }
             if deps.iter().all(|d| done.contains(d)) {
                 done.insert(f.id.clone());
@@ -581,7 +490,7 @@ fn topo_order(
         }
         if next.len() == before {
             return Err(LoadError::Cycle {
-                at: String::new(),
+                at: Box::default(),
                 flows: next.into_iter().map(|f| f.id).collect(),
             });
         }
@@ -590,16 +499,20 @@ fn topo_order(
     Ok(ordered)
 }
 
-fn compile_flow(f: &Yaml) -> Result<(Flow, Vec<String>), LoadError> {
+fn compile_flow(f: &Yaml, runnable: bool) -> Result<(Flow, Vec<String>), LoadError> {
     let id = f
         .get("id")
         .and_then(Yaml::as_str)
-        .ok_or_else(|| missing("id").within("flow"))?
+        .ok_or_else(|| missing("id"))?
         .to_string();
-    compile_flow_body(f, id.clone()).map_err(|e| e.within(format!("flow '{id}'")))
+    compile_flow_body(f, id.clone(), runnable).map_err(|e| e.in_flow(None, Some(&id)))
 }
 
-fn compile_flow_body(f: &Yaml, id: String) -> Result<(Flow, Vec<String>), LoadError> {
+fn compile_flow_body(
+    f: &Yaml,
+    id: String,
+    runnable: bool,
+) -> Result<(Flow, Vec<String>), LoadError> {
     let module = f
         .get("module")
         .and_then(Yaml::as_str)
@@ -608,13 +521,13 @@ fn compile_flow_body(f: &Yaml, id: String) -> Result<(Flow, Vec<String>), LoadEr
     let l4 = match f.get("l4").and_then(Yaml::as_str) {
         None | Some("tcp") => L4::Tcp,
         Some("udp") => L4::Udp,
-        Some(other) => return Err(invalid(format!("unknown l4 '{other}'"))),
+        Some(other) => return Err(invalid(format!("unknown l4 '{other}'")).at_field("l4")),
     };
-    if f.get("transport").is_some() {
-        return Err(unsupported("a transport module"));
+    if runnable && f.get("transport").is_some() {
+        return Err(unsupported("a transport module").at_field("transport"));
     }
-    if f.get("spawned").and_then(Yaml::as_bool).unwrap_or(false) {
-        return Err(unsupported("a spawned flow"));
+    if runnable && f.get("spawned").and_then(Yaml::as_bool).unwrap_or(false) {
+        return Err(unsupported("a spawned flow").at_field("spawned"));
     }
     let deps = match f.get("after") {
         None => vec![],
@@ -623,15 +536,21 @@ fn compile_flow_body(f: &Yaml, id: String) -> Result<(Flow, Vec<String>), LoadEr
             .iter()
             .filter_map(|x| x.as_str().map(String::from))
             .collect(),
-        Some(other) => return Err(invalid(format!("bad 'after' {other:?}"))),
+        Some(other) => return Err(invalid(format!("bad 'after' {other:?}")).at_field("after")),
     };
+    let c = Compiler { runnable };
     let client_y = f
         .get("client")
         .and_then(Yaml::as_sequence)
         .ok_or_else(|| missing("client"))?;
-    let client = compile_side(client_y, "connect").map_err(|e| e.within("client"))?;
+    let client = c
+        .side(client_y, Side::Client)
+        .map_err(|e| e.in_side(Side::Client))?;
     let server = match f.get("server").and_then(Yaml::as_sequence) {
-        Some(s) => Some(compile_side(s, "accept").map_err(|e| e.within("server"))?),
+        Some(s) => Some(
+            c.side(s, Side::Server)
+                .map_err(|e| e.in_side(Side::Server))?,
+        ),
         None => None,
     };
     Ok((
@@ -664,175 +583,223 @@ fn single_key(action: &Yaml) -> Result<(&str, &Yaml), LoadError> {
     }
 }
 
-fn compile_side(actions: &[Yaml], opener: &'static str) -> Result<Program, LoadError> {
-    let first = actions.first().ok_or_else(|| invalid("no actions"))?;
-    let (kind, body) = single_key(first)?;
-    if kind != opener {
-        return Err(invalid(format!(
-            "actions must start with '{opener}', found '{kind}'"
-        )));
-    }
-    let port = Template::from_yaml_count(body.get("port").ok_or_else(|| missing("port"))?)
-        .map_err(|e| LoadError::from(e).within(opener))?;
-    let host = match body.get("host").and_then(Yaml::as_str) {
-        Some(h) => Some(Template::compile(h).map_err(|e| LoadError::from(e).within(opener))?),
-        None => None,
-    };
-    let mut ops = Vec::new();
-    compile_actions(&actions[1..], &mut ops, 2)?;
-    Ok(Program { port, host, ops })
-}
-
 fn num(v: &Yaml, key: &'static str) -> Result<f64, LoadError> {
     v.get(key)
         .and_then(Yaml::as_f64)
         .ok_or_else(|| missing(key))
 }
 
-/// Compiles a list of actions. `first` is the one based number of the first
-/// action in its list, which keeps error locations aligned with the file.
-fn compile_actions(actions: &[Yaml], ops: &mut Vec<Op>, first: usize) -> Result<(), LoadError> {
-    for (i, action) in actions.iter().enumerate() {
-        compile_action(action, ops).map_err(|e| e.within(format!("action {}", first + i)))?;
-    }
-    Ok(())
+fn template(v: &Yaml, field: &str) -> Result<Template, LoadError> {
+    let t = match v {
+        Yaml::String(s) => Template::compile(s),
+        other => Template::from_yaml_count(other),
+    };
+    t.map_err(|e| LoadError::from(e).at_field(field))
 }
 
-fn compile_action(action: &Yaml, ops: &mut Vec<Op>) -> Result<(), LoadError> {
-    let (kind, body) = single_key(action)?;
-    match kind {
-        "send" => ops.push(Op::Send(Template::compile(
-            body.as_str()
-                .ok_or_else(|| invalid("send takes a string"))?,
-        )?)),
-        "expect" => {
-            let timeout = body
-                .get("timeout_ms")
-                .and_then(Yaml::as_u64)
-                .map(Duration::from_millis)
-                .unwrap_or(DEFAULT_TIMEOUT);
-            let rule = if let Some(p) = body.get("pattern").and_then(Yaml::as_str) {
-                if p.is_empty() {
-                    return Err(invalid("expect pattern is empty"));
-                }
-                StopRule::Pattern(p.as_bytes().to_vec())
-            } else if let Some(b) = body.get("bytes") {
-                StopRule::Bytes(Template::from_yaml_count(b)?)
-            } else if let Some(b) = body.get("min_bytes") {
-                StopRule::MinBytes(Template::from_yaml_count(b)?)
-            } else {
-                return Err(invalid("expect needs pattern, bytes, or min_bytes"));
-            };
-            ops.push(Op::Expect { rule, timeout });
+/// Compiles the action lists of one flow.
+struct Compiler {
+    /// Reject the features that this engine version does not run yet.
+    runnable: bool,
+}
+
+impl Compiler {
+    fn side(&self, actions: &[Yaml], side: Side) -> Result<Program, LoadError> {
+        let opener = side.opener();
+        let first = actions.first().ok_or_else(|| invalid("no actions"))?;
+        let (kind, body) = single_key(first).map_err(|e| e.in_action(0, None))?;
+        if kind != opener {
+            return Err(LoadError::MissingOpener {
+                at: Box::default(),
+                side,
+                found: kind.to_string(),
+            }
+            .in_action(0, None));
         }
-        "delay" => {
-            let d = match body.get("dist").and_then(Yaml::as_str) {
-                None => Delay::Fixed(Template::from_yaml_count(
-                    body.get("ms").ok_or_else(|| missing("ms"))?,
-                )?),
-                Some("exponential") => Delay::Exponential {
-                    mean_ms: num(body, "mean_ms")?,
-                },
-                Some("uniform") => Delay::Uniform {
-                    min_ms: num(body, "min_ms")?,
-                    max_ms: num(body, "max_ms")?,
-                },
-                Some("lognormal") => Delay::LogNormal {
-                    mu: num(body, "mu")?,
-                    sigma: num(body, "sigma")?,
-                    unit_ms: match body.get("unit").and_then(Yaml::as_str).unwrap_or("s") {
-                        "s" => 1000.0,
-                        "ms" => 1.0,
-                        u => return Err(invalid(format!("unknown delay unit '{u}'"))),
-                    },
-                },
-                Some("pareto") => Delay::Pareto {
-                    alpha: num(body, "alpha")?,
-                    scale_ms: num(body, "scale_ms")?,
-                },
-                Some(d) => return Err(invalid(format!("unknown delay distribution '{d}'"))),
-            };
-            ops.push(Op::Delay(d));
-        }
-        "set" => {
-            let m = body
+        let open = |e: LoadError| e.in_action(0, Some(opener));
+        let port = template(
+            body.get("port").ok_or_else(|| open(missing("port")))?,
+            "port",
+        )
+        .map_err(open)?;
+        let host = match body.get("host").and_then(Yaml::as_str) {
+            Some(h) => {
+                Some(Template::compile(h).map_err(|e| open(LoadError::from(e).at_field("host")))?)
+            }
+            None => None,
+        };
+        let mut ops = Vec::new();
+        self.actions(actions, 1, &mut ops)?;
+        Ok(Program { port, host, ops })
+    }
+
+    /// Compiles `actions[from..]`, naming each action by its index in the
+    /// list.
+    fn actions(&self, actions: &[Yaml], from: usize, ops: &mut Vec<Op>) -> Result<(), LoadError> {
+        for (i, action) in actions.iter().enumerate().skip(from) {
+            let kind = action
                 .as_mapping()
-                .ok_or_else(|| invalid("set takes a mapping"))?;
-            let mut binds = Vec::new();
-            for (k, v) in m {
-                let k = k
-                    .as_str()
-                    .ok_or_else(|| invalid("set keys must be strings"))?;
-                let v = match v {
-                    Yaml::String(s) => Template::compile(s)?,
-                    other => Template::literal(Value::from_yaml(other)?.to_string()),
+                .filter(|m| m.len() == 1)
+                .and_then(|m| m.keys().next())
+                .and_then(Yaml::as_str);
+            self.action(action, ops).map_err(|e| e.in_action(i, kind))?;
+        }
+        Ok(())
+    }
+
+    fn action(&self, action: &Yaml, ops: &mut Vec<Op>) -> Result<(), LoadError> {
+        let (kind, body) = single_key(action)?;
+        match kind {
+            "send" => ops.push(Op::Send(Template::compile(
+                body.as_str()
+                    .ok_or_else(|| invalid("send takes a string"))?,
+            )?)),
+            "expect" => {
+                let timeout = body
+                    .get("timeout_ms")
+                    .and_then(Yaml::as_u64)
+                    .map(Duration::from_millis)
+                    .unwrap_or(DEFAULT_TIMEOUT);
+                let rule = if let Some(p) = body.get("pattern").and_then(Yaml::as_str) {
+                    if p.is_empty() {
+                        return Err(invalid("expect pattern is empty").at_field("pattern"));
+                    }
+                    StopRule::Pattern(p.as_bytes().to_vec())
+                } else if let Some(b) = body.get("bytes") {
+                    StopRule::Bytes(template(b, "bytes")?)
+                } else if let Some(b) = body.get("min_bytes") {
+                    StopRule::MinBytes(template(b, "min_bytes")?)
+                } else {
+                    return Err(invalid("expect needs pattern, bytes, or min_bytes"));
                 };
-                binds.push((k.to_string(), v));
+                ops.push(Op::Expect { rule, timeout });
             }
-            ops.push(Op::Set(binds));
-        }
-        "loop" => {
-            let count =
-                Template::from_yaml_count(body.get("count").ok_or_else(|| missing("count"))?)?;
-            let body_y = body
-                .get("do")
-                .and_then(Yaml::as_sequence)
-                .ok_or_else(|| missing("do"))?;
-            let start = ops.len();
-            ops.push(Op::LoopStart {
-                count,
-                end: usize::MAX,
-            });
-            compile_actions(body_y, ops, 1).map_err(|e| e.within("loop"))?;
-            let end = ops.len();
-            ops.push(Op::LoopEnd { start });
-            if let Some(Op::LoopStart { end: e, .. }) = ops.get_mut(start) {
-                *e = end;
+            "delay" => {
+                let d = match body.get("dist").and_then(Yaml::as_str) {
+                    None => Delay::Fixed(template(
+                        body.get("ms").ok_or_else(|| missing("ms"))?,
+                        "ms",
+                    )?),
+                    Some("exponential") => Delay::Exponential {
+                        mean_ms: num(body, "mean_ms")?,
+                    },
+                    Some("uniform") => Delay::Uniform {
+                        min_ms: num(body, "min_ms")?,
+                        max_ms: num(body, "max_ms")?,
+                    },
+                    Some("lognormal") => Delay::LogNormal {
+                        mu: num(body, "mu")?,
+                        sigma: num(body, "sigma")?,
+                        unit_ms: match body.get("unit").and_then(Yaml::as_str).unwrap_or("s") {
+                            "s" => 1000.0,
+                            "ms" => 1.0,
+                            u => return Err(invalid(format!("unknown delay unit '{u}'"))),
+                        },
+                    },
+                    Some("pareto") => Delay::Pareto {
+                        alpha: num(body, "alpha")?,
+                        scale_ms: num(body, "scale_ms")?,
+                    },
+                    Some(d) => return Err(invalid(format!("unknown delay distribution '{d}'"))),
+                };
+                ops.push(Op::Delay(d));
             }
-        }
-        "branch" => {
-            let arms_y = body
-                .as_sequence()
-                .ok_or_else(|| invalid("branch takes a list"))?;
-            let at = ops.len();
-            ops.push(Op::Branch { arms: vec![] });
-            let mut arms = Vec::new();
-            let mut jumps = Vec::new();
-            let mut cumulative = 0.0;
-            for (i, arm) in arms_y.iter().enumerate() {
-                let scope = format!("branch arm {}", i + 1);
-                cumulative += num(arm, "p").map_err(|e| e.within(&scope))?;
-                arms.push((cumulative, ops.len()));
-                let do_y = arm
+            "set" => {
+                let m = body
+                    .as_mapping()
+                    .ok_or_else(|| invalid("set takes a mapping"))?;
+                let mut binds = Vec::new();
+                for (k, v) in m {
+                    let k = k
+                        .as_str()
+                        .ok_or_else(|| invalid("set keys must be strings"))?;
+                    let v = match v {
+                        Yaml::String(s) => Template::compile(s),
+                        other => Value::from_yaml(other).map(|v| Template::literal(v.to_string())),
+                    }
+                    .map_err(|e| LoadError::from(e).at_field(k))?;
+                    binds.push((k.to_string(), v));
+                }
+                ops.push(Op::Set(binds));
+            }
+            "loop" => {
+                let count = template(body.get("count").ok_or_else(|| missing("count"))?, "count")?;
+                let body_y = body
                     .get("do")
                     .and_then(Yaml::as_sequence)
-                    .ok_or_else(|| missing("do").within(&scope))?;
-                compile_actions(do_y, ops, 1).map_err(|e| e.within(&scope))?;
-                jumps.push(ops.len());
-                ops.push(Op::Jump(usize::MAX));
+                    .ok_or_else(|| missing("do"))?;
+                let start = ops.len();
+                ops.push(Op::LoopStart {
+                    count,
+                    end: usize::MAX,
+                });
+                self.actions(body_y, 0, ops)?;
+                let end = ops.len();
+                ops.push(Op::LoopEnd { start });
+                if let Some(Op::LoopStart { end: e, .. }) = ops.get_mut(start) {
+                    *e = end;
+                }
             }
-            if (cumulative - 1.0_f64).abs() > 1e-6 {
-                return Err(invalid(format!(
-                    "branch probabilities sum to {cumulative}, not 1"
-                )));
+            "branch" => {
+                let arms_y = body
+                    .as_sequence()
+                    .ok_or_else(|| invalid("branch takes a list"))?;
+                let at = ops.len();
+                ops.push(Op::Branch { arms: vec![] });
+                let mut arms = Vec::new();
+                let mut jumps = Vec::new();
+                let mut cumulative = 0.0;
+                for (i, arm) in arms_y.iter().enumerate() {
+                    cumulative += num(arm, "p").map_err(|e| e.in_arm(i))?;
+                    arms.push((cumulative, ops.len()));
+                    let do_y = arm
+                        .get("do")
+                        .and_then(Yaml::as_sequence)
+                        .ok_or_else(|| missing("do").in_arm(i))?;
+                    self.actions(do_y, 0, ops).map_err(|e| e.in_arm(i))?;
+                    jumps.push(ops.len());
+                    ops.push(Op::Jump(usize::MAX));
+                }
+                if (cumulative - 1.0_f64).abs() > 1e-6 {
+                    return Err(LoadError::BranchSum {
+                        at: Box::default(),
+                        sum: cumulative,
+                    });
+                }
+                let end = ops.len();
+                for j in jumps {
+                    ops[j] = Op::Jump(end);
+                }
+                ops[at] = Op::Branch { arms };
             }
-            let end = ops.len();
-            for j in jumps {
-                ops[j] = Op::Jump(end);
+            "close" => ops.push(Op::Close(match body.as_str() {
+                Some("fin") => CloseMode::Fin,
+                Some("rst") => CloseMode::Rst,
+                Some("half") => CloseMode::Half,
+                other => return Err(invalid(format!("unknown close mode {other:?}"))),
+            })),
+            "connect" | "accept" => return Err(invalid(format!("'{kind}' may only open a side"))),
+            "spawn" | "raw" if self.runnable => {
+                return Err(unsupported(format!("the '{kind}' action")))
             }
-            ops[at] = Op::Branch { arms };
+            // The contract check accepts these actions, and the programs leave
+            // them out until a later package runs them.
+            "spawn" => {
+                body.get("flow")
+                    .and_then(Yaml::as_str)
+                    .ok_or_else(|| missing("flow"))?;
+            }
+            "raw" => {
+                let hex = body
+                    .get("hex")
+                    .and_then(Yaml::as_str)
+                    .ok_or_else(|| missing("hex"))?;
+                crate::template::decode_hex(hex).map_err(|e| LoadError::from(e).at_field("hex"))?;
+            }
+            other => return Err(invalid(format!("unknown action '{other}'"))),
         }
-        "close" => ops.push(Op::Close(match body.as_str() {
-            Some("fin") => CloseMode::Fin,
-            Some("rst") => CloseMode::Rst,
-            Some("half") => CloseMode::Half,
-            other => return Err(invalid(format!("unknown close mode {other:?}"))),
-        })),
-        "connect" | "accept" => return Err(invalid(format!("'{kind}' may only open a side"))),
-        "spawn" | "raw" => return Err(unsupported(format!("the '{kind}' action"))),
-        other => return Err(invalid(format!("unknown action '{other}'"))),
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(test)]

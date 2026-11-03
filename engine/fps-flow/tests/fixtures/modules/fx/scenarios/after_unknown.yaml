@@ -1,0 +1,3 @@
+scenario: after_unknown
+flows:
+  - { id: a, module: fx, after: nope, client: [ { connect: { port: 1 } } ] }

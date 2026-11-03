@@ -1,0 +1,9 @@
+scenario: minimal
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "ping"
+      - expect: { pattern: "pong" }
+      - close: fin

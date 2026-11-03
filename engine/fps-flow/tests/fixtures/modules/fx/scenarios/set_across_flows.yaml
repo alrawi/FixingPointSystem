@@ -1,0 +1,13 @@
+scenario: set_across_flows
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ vars.token }}"
+  - id: b
+    module: fx
+    after: a
+    client:
+      - connect: { port: 80 }
+      - set: { token: "{{ rand_int(1, 9) }}" }

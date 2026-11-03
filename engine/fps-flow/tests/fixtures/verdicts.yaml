@@ -1,0 +1,195 @@
+# Shared verdicts of the scenario loader fixtures. Rust (tests/fixtures.rs) and
+# Python (tests/test_fixtures.py, which runs tools/contracts/validate.py) read
+# this file, and both must reach every verdict. pointer is the JSON pointer of
+# the first error, and error names the LoadError variant that Rust reports.
+cases:
+  - scenario: fx/scenarios/minimal.yaml
+    verdict: accept
+    about: "One client flow with send, expect, and close."
+  - scenario: fx/scenarios/after_order.yaml
+    verdict: accept
+    about: "After as a string and as a list, declared out of order."
+  - scenario: fx/scenarios/spawn_ok.yaml
+    verdict: accept
+    about: "A spawn of a flow that declares spawned: true. The engine does not run it yet, so only the check accepts it."
+  - scenario: fx/scenarios/branch_ok.yaml
+    verdict: accept
+    about: "Three arms whose probabilities sum to 1."
+  - scenario: fx/scenarios/last_ok.yaml
+    verdict: accept
+    about: "last after an expect, after a loop with a positive count, and after a branch whose every arm expects."
+  - scenario: fx/scenarios/calls_ok.yaml
+    verdict: accept
+    about: "Calls into the module and a required module with positional, keyword, and default parameters."
+  - scenario: fx/scenarios/unchecked_module.yaml
+    verdict: accept
+    about: "A call into a required module whose manifest is not installed is a warning only."
+  - scenario: fx/scenarios/set_across_flows.yaml
+    verdict: accept
+    about: "A variable that a set action binds is visible to templates of every flow."
+  - scenario: fx/scenarios/udp_ok.yaml
+    verdict: accept
+    about: "UDP expects that fit the datagram limit."
+  - scenario: fx/scenarios/delays_ok.yaml
+    verdict: accept
+    about: "Every delay distribution with valid bounds."
+  - scenario: fx/scenarios/server_ok.yaml
+    verdict: accept
+    about: "A server side that opens with accept."
+  - scenario: st/scenarios/raw_ok.yaml
+    verdict: accept
+    about: "A strike module may use raw."
+  - scenario: fx/scenarios/duplicate_flow.yaml
+    verdict: reject
+    error: DuplicateFlow
+    pointer: /flows/1/id
+    about: "Two flows share an id."
+  - scenario: fx/scenarios/after_unknown.yaml
+    verdict: reject
+    error: UnknownFlow
+    pointer: /flows/0/after
+    about: "after names a flow that does not exist."
+  - scenario: fx/scenarios/after_self.yaml
+    verdict: reject
+    error: SelfDependency
+    pointer: /flows/0/after
+    about: "A flow depends on itself."
+  - scenario: fx/scenarios/after_cycle.yaml
+    verdict: reject
+    error: Cycle
+    about: "Two flows depend on each other."
+  - scenario: fx/scenarios/spawn_unknown.yaml
+    verdict: reject
+    error: UnknownSpawnTarget
+    pointer: /flows/0/client/1/spawn
+    about: "spawn names a flow that does not exist."
+  - scenario: fx/scenarios/spawn_not_spawned.yaml
+    verdict: reject
+    error: NotSpawned
+    pointer: /flows/0/client/1/loop/do/0/spawn
+    about: "spawn inside a loop names a flow without spawned: true."
+  - scenario: fx/scenarios/branch_sum.yaml
+    verdict: reject
+    error: BranchSum
+    pointer: /flows/0/client/1/branch
+    about: "Branch probabilities sum to 0.9."
+  - scenario: fx/scenarios/branch_sum_nested.yaml
+    verdict: reject
+    error: BranchSum
+    pointer: /flows/0/client/1/branch/0/do/0/branch
+    about: "A nested branch inside an arm sums to 1.1."
+  - scenario: fx/scenarios/uniform_range.yaml
+    verdict: reject
+    error: UniformRange
+    pointer: /flows/0/client/1/delay
+    about: "A uniform delay with min_ms above max_ms."
+  - scenario: fx/scenarios/raw_reserved.yaml
+    verdict: reject
+    error: ReservedAction
+    pointer: /flows/0/client/1/raw
+    about: "raw in an app module."
+  - scenario: fx/scenarios/max_datagram_tcp.yaml
+    verdict: reject
+    error: MaxDatagramOnTcp
+    pointer: /flows/0/client/1/expect/max_datagram
+    about: "max_datagram on a TCP flow."
+  - scenario: fx/scenarios/datagram_bytes.yaml
+    verdict: reject
+    error: DatagramLimit
+    pointer: /flows/0/client/2/expect/bytes
+    about: "A UDP expect of more bytes than its max_datagram."
+  - scenario: fx/scenarios/datagram_pattern.yaml
+    verdict: reject
+    error: DatagramLimit
+    pointer: /flows/0/client/1/expect/pattern
+    about: "A UDP pattern longer than max_datagram."
+  - scenario: fx/scenarios/server_opener.yaml
+    verdict: reject
+    error: MissingOpener
+    pointer: /flows/0/server/0
+    about: "A server side that starts with send."
+  - scenario: fx/scenarios/flow_module_foreign.yaml
+    verdict: reject
+    error: ForeignFlowModule
+    pointer: /flows/0/module
+    about: "A flow names a module that is neither the owner nor required."
+  - scenario: fx/scenarios/last_first.yaml
+    verdict: reject
+    error: LastWithoutExpect
+    pointer: /flows/0/client/1/send
+    about: "last before any expect."
+  - scenario: fx/scenarios/last_after_loop.yaml
+    verdict: reject
+    error: LastWithoutExpect
+    pointer: /flows/0/client/2/send
+    about: "A loop whose count is a template may run zero times."
+  - scenario: fx/scenarios/last_after_branch.yaml
+    verdict: reject
+    error: LastWithoutExpect
+    pointer: /flows/0/client/2/set/copy
+    about: "Only one branch arm expects."
+  - scenario: fx/scenarios/last_other_side.yaml
+    verdict: reject
+    error: LastWithoutExpect
+    pointer: /flows/0/server/1/send
+    about: "An expect on the client side does not cover the server side."
+  - scenario: fx/scenarios/call_foreign_module.yaml
+    verdict: reject
+    error: ForeignModule
+    pointer: /flows/0/client/1/send
+    about: "A call into a module that the manifest does not require."
+  - scenario: fx/scenarios/call_unknown_function.yaml
+    verdict: reject
+    error: UnknownModuleFunction
+    pointer: /flows/0/client/1/send
+    about: "A call to a function that the required module does not declare."
+  - scenario: fx/scenarios/call_missing_param.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A call that omits a required parameter."
+  - scenario: fx/scenarios/call_unknown_param.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/set/x
+    about: "A keyword that names no parameter."
+  - scenario: fx/scenarios/call_arity.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "Too many positional arguments."
+  - scenario: fx/scenarios/call_duplicate_param.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A positional argument and a keyword bind the same parameter."
+  - scenario: fx/scenarios/call_type.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A text variable binds an int parameter."
+  - scenario: fx/scenarios/call_type_nested.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A module call renders bytes, which a text parameter does not take."
+  - scenario: fx/scenarios/core_var_type.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "fill() takes an int, and the variable holds text."
+  - scenario: fx/scenarios/undefined_var.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/0/connect/port
+    about: "A template reads a variable that neither vars nor set declares."
+  - scenario: fx/scenarios/unknown_core_function.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A call without module prefix to a function outside the core."
+  - scenario: fx/scenarios/unbalanced.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "An opening brace pair without a closing one."

@@ -1,0 +1,7 @@
+scenario: unknown_core_function
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ upper('x') }}"

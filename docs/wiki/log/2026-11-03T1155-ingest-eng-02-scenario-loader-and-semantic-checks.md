@@ -1,0 +1,10 @@
+## [2026-11-03] ingest | ENG-02 Scenario loader and semantic checks
+
+We brought the scenario loader in `engine/fps-flow` to parity with the semantic rules of `tools/contracts/validate.py`. Every `LoadError` now carries a typed `Location` with the file, the flow, the side, and the action path, and `Location::pointer` prints the same JSON pointer as the Python validator. The loader checks flows, `after`, `spawn`, `branch`, delays, datagram limits, the placement of `last`, and module calls against the manifest `functions` catalog, which the new `ModuleSet` and `ModuleContext` read. `Scenario::check` gives the contract verdict, and `Scenario::load` also rejects the features that the engine does not run yet. A shared fixture set under `engine/fps-flow/tests/fixtures/` with 43 scenarios feeds a Rust test and a Python test, and both reach every verdict in `verdicts.yaml`. We also fixed the session generator helper of the template tests for bug #90 and added a regression property. We described the design in [The scenario loader](Engine.md#the-scenario-loader) of [Engine](Engine.md). The evidence is `docs/handoff/ENG-02.md`, `engine/fps-flow/tests/fixtures.rs`, and `engine/fps-flow/tests/test_fixtures.py`.
+
+## Shared page notes
+
+- `mk/eng.mk`. Add `$(PYTHON) -m pytest -q engine/fps-flow/tests` to `test-eng`, so `make test` runs the Python half of the parity test. The new workflow `.github/workflows/eng.yml` already runs it in CI.
+- [Testing](Testing.md), table of targets. `test-eng` then runs the loader parity fixtures in both languages.
+- [Home](Home.md). ENG-02 is ready for review. The interpreter of ENG-04 and the WebAssembly loader of ENG-11 can call `Scenario::load_with` with a `ModuleContext` to check module calls before a run.
+- Bug #90. The test helper `session_rng` in `engine/fps-flow/tests/common/mod.rs` now follows the Coding Standards example, and no other copy of the old construction remains in `engine/` or `spikes/`, so the bug can close after this pull request merges.

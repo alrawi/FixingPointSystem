@@ -1,6 +1,6 @@
 [package]
 name = "fps-hosts"
-description = "Host pool allocator of the FixingPointSystem engine: address mapping, slicing, and host selection"
+description = "Host pools of the FixingPointSystem engine: address mapping, slicing, host selection, and kernel port setup"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,10 +10,11 @@ publish.workspace = true
 [dependencies]
 rand = { version = "0.8", default-features = false }
 rand_pcg = "0.3"
+serde_json = "1"
 thiserror = "2"
 
 [dev-dependencies]
 proptest = "1"
-serde_json = "1"
+socket2 = "0.6"
 # serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
 serde_yaml = { package = "serde_norway", version = "0.9" }

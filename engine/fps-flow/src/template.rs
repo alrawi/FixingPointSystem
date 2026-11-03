@@ -11,6 +11,7 @@
 //! Rendering appends bytes to a caller supplied buffer, so a session reuses
 //! one allocation. Module calls go through the [`TemplateFn`] seam.
 
+mod check;
 mod dump;
 mod parse;
 
@@ -24,6 +25,7 @@ use serde_yaml::Value as Yaml;
 
 use crate::function::{ArgValue, CallArgs, FnCall, FnErrorKind, NamedArg, TemplateFn, ValueType};
 
+pub use check::{CheckError, CheckScope, CheckWarning};
 pub use parse::MAX_CALL_DEPTH;
 
 /// Errors that template compilation or rendering reports.

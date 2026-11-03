@@ -1,0 +1,12 @@
+scenario: last_after_loop
+vars: { n: 2 }
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - loop:
+          count: "{{ vars.n }}"
+          do:
+            - expect: { bytes: 1 }
+      - send: "{{ last }}"
