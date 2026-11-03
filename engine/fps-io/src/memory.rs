@@ -1,19 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! In memory duplex transport for tests.
+//! In memory transports for tests.
 //!
 //! [`duplex`] returns two connected [`MemoryIo`] ends. Each end implements
 //! [`SessionIo`], including [`SessionIo::abort`], so tests can run a client
 //! and a server program against each other without sockets and can observe
 //! resets the way a TCP peer observes them.
+//!
+//! [`datagram_pair`] returns two connected [`MemoryDatagram`] ends, which
+//! implement [`DatagramIo`] with UDP semantics, so datagrams keep their
+//! boundaries and a full queue drops datagrams in place of waiting.
 
+use std::collections::VecDeque;
+use std::future::poll_fn;
 use std::io;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::task::{Context, Poll, Waker};
 
 use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
 
+use crate::datagram::{DatagramIo, MAX_DATAGRAM};
 use crate::SessionIo;
 
 /// Returns two connected ends of an in memory byte stream.
@@ -161,6 +168,179 @@ impl SessionIo for MemoryIo {
     }
 }
 
+/// Returns two connected ends of an in memory datagram socket.
+///
+/// Each direction queues at most `queue` datagrams. A datagram sent while
+/// its direction is full, or after the receiving end closed, is dropped
+/// without an error, as UDP drops it, and [`MemoryDatagram::dropped`]
+/// counts it. A `queue` of 0 drops every datagram.
+pub fn datagram_pair(queue: usize) -> (MemoryDatagram, MemoryDatagram) {
+    let shared = Arc::new(Datagrams {
+        inbox: [Mutex::default(), Mutex::default()],
+        closed: [AtomicBool::new(false), AtomicBool::new(false)],
+        dropped: [AtomicU64::new(0), AtomicU64::new(0)],
+        queue,
+    });
+    (
+        MemoryDatagram {
+            shared: Arc::clone(&shared),
+            side: 0,
+        },
+        MemoryDatagram { shared, side: 1 },
+    )
+}
+
+#[derive(Debug, Default)]
+struct Inbox {
+    datagrams: VecDeque<Vec<u8>>,
+    /// The task that waits for the next datagram.
+    waker: Option<Waker>,
+}
+
+#[derive(Debug)]
+struct Datagrams {
+    /// `inbox[i]` holds the datagrams that end `i` has yet to receive.
+    inbox: [Mutex<Inbox>; 2],
+    /// `closed[i]` is true once end `i` called [`DatagramIo::close`].
+    closed: [AtomicBool; 2],
+    /// `dropped[i]` counts the datagrams that end `i` sent and nobody received.
+    dropped: [AtomicU64; 2],
+    queue: usize,
+}
+
+impl Datagrams {
+    fn inbox(&self, side: usize) -> MutexGuard<'_, Inbox> {
+        // A test that panicked while it held the lock leaves a usable queue.
+        self.inbox[side]
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// One end of an in memory datagram socket.
+///
+/// [`DatagramIo::poll_recv`] truncates a datagram that does not fit the
+/// buffer and returns its full length, as `recv` with `MSG_TRUNC` does.
+/// Dropping an end closes it.
+#[derive(Debug)]
+pub struct MemoryDatagram {
+    shared: Arc<Datagrams>,
+    /// Index of this end, 0 or 1.
+    side: usize,
+}
+
+impl MemoryDatagram {
+    /// Returns the number of datagrams that this end sent and that the peer
+    /// never received, because its queue was full or it had closed.
+    pub fn dropped(&self) -> u64 {
+        self.shared.dropped[self.side].load(Ordering::Acquire)
+    }
+
+    /// Returns the number of datagrams that wait for this end.
+    pub fn queued(&self) -> usize {
+        self.shared.inbox(self.side).datagrams.len()
+    }
+
+    /// Waits until a datagram waits for this end, without consuming it.
+    ///
+    /// A server opener calls it to implement `accept`, which waits for the
+    /// first datagram and leaves it queued for the first `expect`.
+    pub async fn readable(&self) -> io::Result<()> {
+        poll_fn(|cx| self.poll_readable(cx)).await
+    }
+
+    fn poll_readable(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.check_open()?;
+        let mut inbox = self.shared.inbox(self.side);
+        if inbox.datagrams.is_empty() {
+            inbox.waker = Some(cx.waker().clone());
+            Poll::Pending
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn check_open(&self) -> io::Result<()> {
+        if self.shared.closed[self.side].load(Ordering::Acquire) {
+            Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "this end of the memory datagram socket was closed",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl DatagramIo for MemoryDatagram {
+    fn poll_send(&mut self, _cx: &mut Context<'_>, datagram: &[u8]) -> Poll<io::Result<()>> {
+        self.check_open()?;
+        if datagram.len() > MAX_DATAGRAM {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "datagram of {} bytes exceeds {MAX_DATAGRAM} bytes",
+                    datagram.len()
+                ),
+            )));
+        }
+        let peer = 1 - self.side;
+        let waker = {
+            let mut inbox = self.shared.inbox(peer);
+            if self.shared.closed[peer].load(Ordering::Acquire)
+                || inbox.datagrams.len() >= self.shared.queue
+            {
+                self.shared.dropped[self.side].fetch_add(1, Ordering::AcqRel);
+                return Poll::Ready(Ok(()));
+            }
+            inbox.datagrams.push_back(datagram.to_vec());
+            inbox.waker.take()
+        };
+        if let Some(w) = waker {
+            w.wake();
+        }
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_recv(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        self.check_open()?;
+        let mut inbox = self.shared.inbox(self.side);
+        match inbox.datagrams.pop_front() {
+            Some(d) => {
+                let n = d.len().min(buf.len());
+                buf[..n].copy_from_slice(&d[..n]);
+                Poll::Ready(Ok(d.len()))
+            }
+            None => {
+                inbox.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
+
+    fn close(&mut self) {
+        if !self.shared.closed[self.side].swap(true, Ordering::AcqRel) {
+            let waker = {
+                let mut inbox = self.shared.inbox(self.side);
+                let unread = inbox.datagrams.len() as u64;
+                inbox.datagrams.clear();
+                // Datagrams that arrived but were never read count as dropped by the peer.
+                self.shared.dropped[1 - self.side].fetch_add(unread, Ordering::AcqRel);
+                inbox.waker.take()
+            };
+            if let Some(w) = waker {
+                w.wake();
+            }
+        }
+    }
+}
+
+impl Drop for MemoryDatagram {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +416,93 @@ mod tests {
         drop(a);
         let mut buf = [0u8; 1];
         assert_eq!(b.read(&mut buf).await.unwrap(), 0);
+    }
+
+    use crate::datagram::DatagramIoExt;
+
+    #[tokio::test]
+    async fn datagrams_keep_their_boundaries() {
+        let (mut a, mut b) = datagram_pair(8);
+        a.send_datagram(b"one").await.unwrap();
+        a.send_datagram(b"").await.unwrap();
+        a.send_datagram(b"three").await.unwrap();
+        let mut buf = [0u8; 64];
+        assert_eq!(b.recv_datagram(&mut buf).await.unwrap(), 3);
+        assert_eq!(&buf[..3], b"one");
+        assert_eq!(b.recv_datagram(&mut buf).await.unwrap(), 0);
+        assert_eq!(b.recv_datagram(&mut buf).await.unwrap(), 5);
+        assert_eq!(&buf[..5], b"three");
+        b.send_datagram(b"back").await.unwrap();
+        assert_eq!(a.recv_datagram(&mut buf).await.unwrap(), 4);
+    }
+
+    #[tokio::test]
+    async fn an_oversized_datagram_is_truncated_and_reports_its_length() {
+        let (mut a, mut b) = datagram_pair(8);
+        a.send_datagram(b"0123456789").await.unwrap();
+        a.send_datagram(b"next").await.unwrap();
+        let mut buf = [0u8; 4];
+        assert_eq!(b.recv_datagram(&mut buf).await.unwrap(), 10);
+        assert_eq!(&buf, b"0123");
+        // The rest of the datagram is gone, not left for the next receive.
+        assert_eq!(b.recv_datagram(&mut buf).await.unwrap(), 4);
+        assert_eq!(&buf, b"next");
+    }
+
+    #[tokio::test]
+    async fn send_rejects_a_datagram_above_the_udp_limit() {
+        let (mut a, b) = datagram_pair(8);
+        a.send_datagram(&vec![0u8; MAX_DATAGRAM]).await.unwrap();
+        let err = a
+            .send_datagram(&vec![0u8; MAX_DATAGRAM + 1])
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(b.queued(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_full_queue_drops_datagrams() {
+        let (mut a, mut b) = datagram_pair(2);
+        for d in [b"1", b"2", b"3"] {
+            a.send_datagram(d).await.unwrap();
+        }
+        assert_eq!(a.dropped(), 1);
+        let mut buf = [0u8; 1];
+        b.recv_datagram(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"1");
+        b.recv_datagram(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"2");
+    }
+
+    #[tokio::test]
+    async fn recv_waits_for_a_datagram_and_readable_does_not_consume() {
+        let (mut a, mut b) = datagram_pair(4);
+        let reader = tokio::spawn(async move {
+            b.readable().await.unwrap();
+            assert_eq!(b.queued(), 1);
+            let mut buf = [0u8; 8];
+            let n = b.recv_datagram(&mut buf).await.unwrap();
+            buf[..n].to_vec()
+        });
+        tokio::task::yield_now().await;
+        a.send_datagram(b"late").await.unwrap();
+        assert_eq!(reader.await.unwrap(), b"late");
+    }
+
+    #[tokio::test]
+    async fn close_is_silent_for_the_peer_and_final_for_this_end() {
+        let (mut a, mut b) = datagram_pair(4);
+        b.send_datagram(b"unread").await.unwrap();
+        a.close();
+        a.close();
+        let mut buf = [0u8; 8];
+        let err = a.recv_datagram(&mut buf).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotConnected);
+        let err = a.send_datagram(b"x").await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotConnected);
+        // The peer sends into the void, as UDP to a closed port does.
+        b.send_datagram(b"lost").await.unwrap();
+        assert_eq!(b.dropped(), 2);
     }
 }

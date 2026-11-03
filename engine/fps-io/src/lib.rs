@@ -4,10 +4,15 @@
 //! The interpreter runs one side of a session over any type that implements
 //! [`SessionIo`]. Transport backends implement the trait for kernel sockets,
 //! AF_XDP, or DPDK streams, and tests use the in memory duplex in [`memory`].
+//! UDP sessions keep datagram boundaries and run over [`DatagramIo`] in
+//! place of [`SessionIo`], with the in memory pair [`memory::datagram_pair`].
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod datagram;
 pub mod memory;
+
+pub use datagram::{DatagramIo, DatagramIoExt, MAX_DATAGRAM};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 

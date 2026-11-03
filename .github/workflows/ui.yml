@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# UI web UI. The check job runs make lint-ui test-ui, which covers formatting,
+# lint, strict types, the currency of the generated client, the license check,
+# unit and component tests against the mock server, the build, and the bundle
+# budget. The browser job runs the Playwright smoke tests with axe-core.
+name: ui
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ui/**
+      - contracts/openapi/**
+      - contracts/schemas/**
+      - contracts/examples/**
+      - mk/ui.mk
+      - .github/workflows/ui.yml
+  pull_request:
+    paths:
+      - ui/**
+      - contracts/openapi/**
+      - contracts/schemas/**
+      - contracts/examples/**
+      - mk/ui.mk
+      - .github/workflows/ui.yml
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: make lint-ui test-ui
+
+  browser:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: make ui-deps
+      - name: Install the Playwright browser
+        working-directory: ui
+        run: npx playwright install --with-deps chromium-headless-shell
+      - run: make e2e-ui
+      - name: Keep the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-playwright-report
+          path: ui/playwright-report
+          if-no-files-found: ignore
