@@ -368,6 +368,7 @@ dependencies = [
 name = "fps-module-http1"
 version = "0.0.1"
 dependencies = [
+ "fps-backend-kernel",
  "fps-flow",
  "fps-golden",
  "fps-interp",

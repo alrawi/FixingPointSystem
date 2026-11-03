@@ -55,6 +55,8 @@ scenarios:
   - scenarios/upload_chunked.yaml
   - scenarios/http10_fetch.yaml
   - scenarios/http10_keepalive.yaml
+fixtures:
+  - { capture: fixtures/http1.pcapng, expect: { ndpi: [HTTP] } }
 provenance:
   source: synthetic
   notes: Messages follow RFC 9110 and RFC 9112 for HTTP/1.1 and RFC 1945 for HTTP/1.0. Every body comes from the seeded fill() generator, and every host name lies under the reserved .test domain.
