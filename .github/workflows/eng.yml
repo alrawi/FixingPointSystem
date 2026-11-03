@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Workstream workflow for ENG. The Rust tests of the engine crates run in the
+# rust job of ci.yml. This workflow runs the Python half of the loader parity
+# test of ENG-02, which applies tools/contracts/validate.py to the shared
+# fixtures under engine/fps-flow/tests/fixtures. The Rust half,
+# engine/fps-flow/tests/fixtures.rs, reads the same fixtures and verdicts.
+name: eng
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - engine/fps-flow/tests/**
+      - tools/contracts/**
+      - contracts/schemas/**
+      - .github/workflows/eng.yml
+  pull_request:
+    paths:
+      - engine/fps-flow/tests/**
+      - tools/contracts/**
+      - contracts/schemas/**
+      - .github/workflows/eng.yml
+
+permissions:
+  contents: read
+
+jobs:
+  loader-parity:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r tools/contracts/requirements.txt
+      - name: Python verdicts of the shared loader fixtures
+        run: python -m pytest -q engine/fps-flow/tests

@@ -1,0 +1,13 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: st
+version: 0.1.0
+type: strike
+summary: Strike module that may use raw.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+scenarios:
+  - scenarios/raw_ok.yaml
+provenance:
+  source: synthetic
+  notes: Test fixture of the scenario loader. All content is generated.

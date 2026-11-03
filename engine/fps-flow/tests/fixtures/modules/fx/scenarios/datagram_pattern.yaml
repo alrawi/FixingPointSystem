@@ -1,0 +1,8 @@
+scenario: datagram_pattern
+flows:
+  - id: a
+    module: fx
+    l4: udp
+    client:
+      - connect: { port: 53 }
+      - expect: { pattern: "abcdef", max_datagram: 4 }

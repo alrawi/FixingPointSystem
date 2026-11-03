@@ -1,0 +1,27 @@
+scenario: last_ok
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "q"
+      - expect: { min_bytes: 1 }
+      - send: "{{ last }}"
+  - id: b
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - loop:
+          count: 2
+          do:
+            - expect: { bytes: 4 }
+      - send: "{{ last }}"
+  - id: c
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - branch:
+          - { p: 0.5, do: [ { expect: { bytes: 1 } } ] }
+          - { p: 0.5, do: [ { expect: { pattern: "z" } } ] }
+      - set: { echo: "{{ last }}" }
+      - send: "{{ vars.echo }}"

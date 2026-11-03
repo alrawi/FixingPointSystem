@@ -1,0 +1,7 @@
+scenario: raw_reserved
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - raw: { hex: "0d0a" }

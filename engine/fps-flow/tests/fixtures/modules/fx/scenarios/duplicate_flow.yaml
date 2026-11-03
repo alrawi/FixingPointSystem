@@ -1,0 +1,4 @@
+scenario: duplicate_flow
+flows:
+  - { id: a, module: fx, client: [ { connect: { port: 1 } } ] }
+  - { id: a, module: fx, client: [ { connect: { port: 2 } } ] }

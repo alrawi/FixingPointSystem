@@ -4,9 +4,9 @@
 use std::io;
 use std::time::Duration;
 
-use socket2::SockRef;
+use socket2::{Domain, SockRef};
 
-use crate::BackendError;
+use crate::{sys, BackendError};
 
 /// An inclusive range of local ports for client sessions.
 ///
@@ -98,6 +98,16 @@ pub struct SocketOptions {
     pub nodelay: bool,
     /// The `SO_LINGER` behavior on close.
     pub linger: Linger,
+    /// `IP_TTL` on IPv4 sockets and `IPV6_UNICAST_HOPS` on IPv6 sockets, or
+    /// `None` for `net.ipv4.ip_default_ttl`. An [`crate::OsProfile`] sets it.
+    pub ttl: Option<u8>,
+    /// `TCP_MAXSEG`, the MSS that the SYN or SYN-ACK advertises, or `None`
+    /// for the MSS of the route. The kernel uses the smaller of the two.
+    pub mss: Option<u16>,
+    /// `TCP_WINDOW_CLAMP` in bytes, which bounds the receive window and the
+    /// window scale of the handshake, or `None` for no clamp. Linux raises
+    /// values below half of `SOCK_MIN_RCVBUF` to that half.
+    pub window_clamp: Option<u32>,
 }
 
 impl Default for SocketOptions {
@@ -107,6 +117,9 @@ impl Default for SocketOptions {
             recv_buffer: None,
             nodelay: true,
             linger: Linger::Default,
+            ttl: None,
+            mss: None,
+            window_clamp: None,
         }
     }
 }
@@ -132,6 +145,22 @@ impl SocketOptions {
         };
         if let Some(value) = linger {
             sock.set_linger(value).map_err(|e| ("set SO_LINGER", e))?;
+        }
+        if let Some(ttl) = self.ttl {
+            if sock.domain().map_err(|e| ("get SO_DOMAIN", e))? == Domain::IPV6 {
+                sock.set_unicast_hops_v6(u32::from(ttl))
+                    .map_err(|e| ("set IPV6_UNICAST_HOPS", e))?;
+            } else {
+                sock.set_ttl_v4(u32::from(ttl))
+                    .map_err(|e| ("set IP_TTL", e))?;
+            }
+        }
+        if let Some(mss) = self.mss {
+            sock.set_tcp_mss(u32::from(mss))
+                .map_err(|e| ("set TCP_MAXSEG", e))?;
+        }
+        if let Some(clamp) = self.window_clamp {
+            sys::set_window_clamp(&sock, clamp).map_err(|e| ("set TCP_WINDOW_CLAMP", e))?;
         }
         Ok(())
     }
@@ -210,5 +239,29 @@ mod tests {
         assert_eq!(opts.linger, Linger::Default);
         assert_eq!(ListenConfig::default().backlog, 4096);
         assert_eq!(ConnectConfig::default().local_ports, None);
+        assert_eq!((opts.ttl, opts.mss, opts.window_clamp), (None, None, None));
+    }
+
+    #[test]
+    fn ttl_mss_and_window_clamp_reach_ipv4_and_ipv6_sockets() {
+        use socket2::{Protocol, Socket, Type};
+        let opts = SocketOptions {
+            ttl: Some(128),
+            mss: Some(1400),
+            window_clamp: Some(3_145_728),
+            ..SocketOptions::default()
+        };
+        let v4 = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).unwrap();
+        opts.apply(SockRef::from(&v4)).unwrap();
+        assert_eq!(v4.ttl_v4().unwrap(), 128);
+        assert_eq!(v4.tcp_mss().unwrap(), 1400);
+        #[cfg(target_os = "linux")]
+        assert_eq!(sys::window_clamp(&v4).unwrap(), 3_145_728);
+        // Hosts without IPv6 cannot create the socket, so the check skips.
+        if let Ok(v6) = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP)) {
+            opts.apply(SockRef::from(&v6)).unwrap();
+            assert_eq!(v6.unicast_hops_v6().unwrap(), 128);
+            assert_eq!(v6.tcp_mss().unwrap(), 1400);
+        }
     }
 }

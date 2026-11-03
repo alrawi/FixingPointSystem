@@ -1,0 +1,7 @@
+scenario: spawn_unknown
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - spawn: { flow: ghost_flow }

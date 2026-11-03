@@ -1,0 +1,7 @@
+scenario: call_unknown_function
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ aux.nope(1) }}"

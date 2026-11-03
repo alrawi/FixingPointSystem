@@ -1,0 +1,9 @@
+scenario: datagram_bytes
+flows:
+  - id: a
+    module: fx
+    l4: udp
+    client:
+      - connect: { port: 53 }
+      - send: "q"
+      - expect: { bytes: 2000, max_datagram: 1000 }

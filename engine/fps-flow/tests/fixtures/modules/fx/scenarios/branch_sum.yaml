@@ -1,0 +1,9 @@
+scenario: branch_sum
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - branch:
+          - { p: 0.5, do: [ { send: "x" } ] }
+          - { p: 0.4, do: [ { send: "y" } ] }

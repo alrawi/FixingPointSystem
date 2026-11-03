@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# TRN transport backends. The capture job runs the OS profile capture test on
+# the QA-01 namespace harness as root, which GitHub hosted runners allow
+# through passwordless sudo. The Rust tests of the backend run in ci.yml.
+name: trn
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - engine/fps-backend-kernel/**
+      - tests/harness/**
+      - mk/trn.mk
+      - .github/workflows/trn.yml
+      - Cargo.toml
+      - Cargo.lock
+  pull_request:
+    paths:
+      - engine/fps-backend-kernel/**
+      - tests/harness/**
+      - mk/trn.mk
+      - .github/workflows/trn.yml
+      - Cargo.toml
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r tests/harness/requirements.txt
+      - run: make lint-trn test-trn
+
+  capture:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the harness tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends iproute2 tcpdump ethtool
+      - name: Build the probe
+        run: make build-trn-probe
+      - name: OS profile capture test
+        run: sudo env FPS_KEEP_CAPTURES="$RUNNER_TEMP/captures" make e2e-trn
+      - name: Keep the captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trn-profile-captures
+          path: ${{ runner.temp }}/captures
+          if-no-files-found: ignore

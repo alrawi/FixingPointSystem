@@ -1,0 +1,10 @@
+scenario: last_other_side
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - expect: { bytes: 1 }
+    server:
+      - accept: { port: 80 }
+      - send: "{{ last }}"

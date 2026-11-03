@@ -1,0 +1,12 @@
+scenario: calls_ok
+vars: { host: www.example.test, size: 12 }
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ fx.greet(vars.host) }}"
+      - send: "{{ fx.greet('h', count=vars.size) }}"
+      - send: "{{ aux.frame(fill(vars.size), kind=rand_int(1, 3)) }}"
+      - expect: { min_bytes: 1 }
+      - send: "{{ aux.frame(last) }}"

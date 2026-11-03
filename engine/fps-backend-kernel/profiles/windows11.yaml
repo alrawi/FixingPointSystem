@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Windows 11 client and server stack, as public SYN signatures such as
+# those of p0f describe it on Ethernet with an MTU of 1500.
+name: windows11
+description: Windows 11 with the default TCP settings and receive window autotuning
+# Applied to every socket of the profile by the kernel backend.
+socket:
+  ttl: 128
+  mss: 1460
+  # Window scale 8 needs a clamp of at least 8 MiB and tcp_rmem_max below.
+  window_clamp: 16777215
+# Network namespace settings that Linux offers only as sysctls. HST-02 or the
+# test applies them, and one namespace holds one set.
+system:
+  sack: true
+  timestamps: false
+  window_scaling: true
+  tcp_rmem_max: 16777216
+# The SYN of the real system, for the realism check of RLM-09. Linux decides
+# the option order, so the kernel backend cannot reproduce it.
+reference:
+  syn_window: 64240
+  window_scale: 8
+  options: [mss, nop, ws, nop, nop, sok]
+  dont_fragment: true

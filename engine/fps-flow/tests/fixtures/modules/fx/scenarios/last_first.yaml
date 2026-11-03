@@ -1,0 +1,7 @@
+scenario: last_first
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ last }}"
