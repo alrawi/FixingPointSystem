@@ -1,15 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Template compiler and renderer for the contract v0.1 core grammar.
+//! Template compiler and renderer for the contract v0.2 grammar.
 //!
-//! Templates compile once per scenario into segments. Rendering appends bytes
-//! to a caller supplied buffer, so a session reuses one allocation.
+//! Templates compile once per scenario into segments. A segment is either a
+//! literal byte string or an expression slot. The compiler folds every part
+//! that renders the same bytes in every session into the literal segments, so
+//! a template without session dependent parts renders with one copy.
+//! [`Template::fold_vars`] repeats the folding once the run fixes the scenario
+//! variables.
+//!
+//! Rendering appends bytes to a caller supplied buffer, so a session reuses
+//! one allocation. Module calls go through the [`TemplateFn`] seam.
 
+mod dump;
+mod parse;
+
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
-use rand::Rng;
+use rand::{Rng, RngCore};
 use rand_pcg::Pcg64Mcg;
 use serde_yaml::Value as Yaml;
+
+use crate::function::{
+    ArgValue, CallArgs, FnCall, FnErrorKind, NamedArg, TemplateFn, ValueType,
+};
+
+pub use parse::MAX_CALL_DEPTH;
 
 /// Errors that template compilation or rendering reports.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -21,28 +38,74 @@ pub enum TemplateError {
     #[error("empty placeholder")]
     EmptyPlaceholder,
     /// An expression does not follow the grammar.
-    #[error("cannot parse expression '{0}'")]
-    Syntax(String),
+    #[error("cannot parse expression '{expr}': {reason}")]
+    Syntax {
+        /// The expression text.
+        expr: String,
+        /// What the parser expected.
+        reason: String,
+    },
+    /// Calls nest deeper than [`MAX_CALL_DEPTH`].
+    #[error("calls nest deeper than {max} levels")]
+    TooDeep {
+        /// The limit.
+        max: usize,
+    },
     /// A reference names an unknown root or session field.
     #[error("unknown reference '{0}'")]
     UnknownReference(String),
-    /// A call names a function outside the core grammar.
+    /// A call without module prefix names a function outside the core grammar.
     #[error("unknown function '{0}'")]
     UnknownFunction(String),
-    /// A call names a module helper, which needs the extension host.
-    #[error("module helper '{0}' needs an extension, which this engine version does not run")]
-    ModuleHelper(String),
-    /// A core function received the wrong number of arguments.
-    #[error("function '{name}' got {got} argument(s)")]
+    /// A call uses a reserved root as its module name.
+    #[error("'{0}' is reserved and cannot name a module")]
+    ReservedModule(String),
+    /// A call has more positional arguments than the function has parameters.
+    #[error("function '{name}' takes at most {max} positional argument(s), got {got}")]
     Arity {
         /// Function name.
         name: String,
-        /// Number of arguments given.
+        /// Number of parameters.
+        max: usize,
+        /// Number of positional arguments given.
         got: usize,
     },
-    /// An argument has a form that the function does not take.
-    #[error("'{0}' cannot be an argument here")]
-    BadArgument(String),
+    /// A keyword names no parameter of the function.
+    #[error("function '{function}' has no parameter '{param}'")]
+    UnknownParameter {
+        /// Function name.
+        function: String,
+        /// The keyword.
+        param: String,
+    },
+    /// A call names one parameter twice.
+    #[error("function '{function}' got parameter '{param}' twice")]
+    DuplicateParameter {
+        /// Function name, with the module prefix for module calls.
+        function: String,
+        /// The repeated parameter.
+        param: String,
+    },
+    /// A call omits a required parameter.
+    #[error("function '{function}' misses required parameter '{param}'")]
+    MissingParameter {
+        /// Function name.
+        function: String,
+        /// The missing parameter.
+        param: String,
+    },
+    /// An argument has a type that cannot bind the parameter.
+    #[error("parameter '{param}' of '{function}' takes {expected}, got {got}")]
+    ArgumentType {
+        /// Function name.
+        function: String,
+        /// Parameter name.
+        param: String,
+        /// Declared parameter type.
+        expected: ValueType,
+        /// Type of the argument.
+        got: ValueType,
+    },
     /// A `hex()` literal is malformed.
     #[error("bad hex literal: {0}")]
     Hex(String),
@@ -66,6 +129,18 @@ pub enum TemplateError {
     /// A YAML value has a type that a variable or count cannot take.
     #[error("unsupported value {0}")]
     UnsupportedValue(String),
+    /// A module function failed.
+    #[error("{module}.{function}: {kind}: {message}")]
+    Function {
+        /// Module name.
+        module: String,
+        /// Function name.
+        function: String,
+        /// Failure class, which names the failure label.
+        kind: FnErrorKind,
+        /// Message of the module.
+        message: String,
+    },
 }
 
 /// A scenario variable value.
@@ -115,11 +190,16 @@ impl Value {
         match self {
             Value::Int(i) => Some(*i),
             Value::Str(s) => s.trim().parse().ok(),
-            // The range check keeps the cast exact.
-            Value::Float(f) if f.fract() == 0.0 && f.abs() < 9.0e15 => Some(*f as i64),
-            _ => None,
+            Value::Float(f) => float_as_i64(*f),
+            Value::Bool(_) => None,
         }
     }
+}
+
+/// Converts a float with an exact integer form.
+fn float_as_i64(f: f64) -> Option<i64> {
+    // The range check keeps the cast exact.
+    (f.fract() == 0.0 && f.abs() < 9.0e15).then_some(f as i64)
 }
 
 impl fmt::Display for Value {
@@ -174,7 +254,7 @@ impl Filler {
 }
 
 /// Everything a render needs besides the template itself.
-pub struct RenderCtx<'a, R: Rng + ?Sized> {
+pub struct RenderCtx<'a, R: RngCore> {
     /// Scenario variables.
     pub vars: &'a Vars,
     /// Variables bound by `set` during this session. They shadow `vars`.
@@ -183,43 +263,246 @@ pub struct RenderCtx<'a, R: Rng + ?Sized> {
     pub session_id: u64,
     /// Flow id that `{{ session.flow }}` renders.
     pub flow: &'a str,
+    /// The bytes that the previous `expect` of this side consumed.
+    pub last: &'a [u8],
     /// Session random number generator.
     pub rng: &'a mut R,
     /// Shared filler for `fill()`.
     pub filler: &'a Filler,
+    /// Module functions of the session.
+    pub functions: &'a mut dyn TemplateFn,
 }
 
-impl<R: Rng + ?Sized> RenderCtx<'_, R> {
-    fn lookup(&self, name: &str) -> Result<&Value, TemplateError> {
-        self.overlay
+impl<'a, R: RngCore> RenderCtx<'a, R> {
+    fn lookup(&self, name: &str) -> Result<&'a Value, TemplateError> {
+        let (overlay, vars): (&'a Vars, &'a Vars) = (self.overlay, self.vars);
+        overlay
             .get(name)
-            .or_else(|| self.vars.get(name))
+            .or_else(|| vars.get(name))
             .ok_or_else(|| TemplateError::UndefinedVariable(name.to_string()))
     }
 }
 
+/// A value that the compiler knows without a session.
 #[derive(Clone, Debug, PartialEq)]
-enum Arg {
+enum Const {
     Int(i64),
-    Str(String),
+    Float(f64),
+    Bool(bool),
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+impl Const {
+    fn from_value(v: &Value) -> Self {
+        match v {
+            Value::Int(i) => Const::Int(*i),
+            Value::Float(f) => Const::Float(*f),
+            Value::Bool(b) => Const::Bool(*b),
+            Value::Str(s) => Const::Text(s.clone()),
+        }
+    }
+
+    fn value_type(&self) -> ValueType {
+        match self {
+            Const::Int(_) => ValueType::Int,
+            Const::Float(_) => ValueType::Float,
+            Const::Bool(_) => ValueType::Boolean,
+            Const::Text(_) => ValueType::Text,
+            Const::Bytes(_) => ValueType::Bytes,
+        }
+    }
+
+    fn val(&self) -> Val<'_> {
+        match self {
+            Const::Int(i) => Val::Int(*i),
+            Const::Float(f) => Val::Float(*f),
+            Const::Bool(b) => Val::Bool(*b),
+            Const::Text(s) => Val::Text(Cow::Borrowed(s)),
+            Const::Bytes(b) => Val::Bytes(Cow::Borrowed(b)),
+        }
+    }
+}
+
+/// A module function call slot.
+#[derive(Clone, Debug, PartialEq)]
+struct ModuleCall {
+    module: String,
+    function: String,
+    positional: Vec<Expr>,
+    named: Vec<(String, Expr)>,
+}
+
+/// A checked expression. Core function arguments are bound to their
+/// parameters in declaration order.
+#[derive(Clone, Debug, PartialEq)]
+enum Expr {
+    Const(Const),
     Var(String),
     SessionId,
+    SessionFlow,
+    Last,
+    Fill(Box<Expr>),
+    Hex(Box<Expr>),
+    RandInt(Box<Expr>, Box<Expr>),
+    Call(Box<ModuleCall>),
+}
+
+impl Expr {
+    /// The static type, with [`ValueType::Any`] for variables.
+    fn value_type(&self) -> ValueType {
+        match self {
+            Expr::Const(c) => c.value_type(),
+            Expr::Var(_) => ValueType::Any,
+            Expr::SessionId | Expr::RandInt(..) => ValueType::Int,
+            Expr::SessionFlow | Expr::Fill(_) => ValueType::Text,
+            Expr::Last | Expr::Hex(_) | Expr::Call(_) => ValueType::Bytes,
+        }
+    }
+
+    /// Folds the parts that need no session. `constants` holds the variables
+    /// that may be substituted.
+    fn fold(self, constants: Option<&Vars>) -> Result<Expr, TemplateError> {
+        let fold_box = |e: Box<Expr>| e.fold(constants).map(Box::new);
+        Ok(match self {
+            Expr::Var(name) => match constants.and_then(|c| c.get(&name)) {
+                Some(v) => Expr::Const(Const::from_value(v)),
+                None => Expr::Var(name),
+            },
+            Expr::Hex(s) => match *fold_box(s)? {
+                Expr::Const(Const::Text(s)) => Expr::Const(Const::Bytes(decode_hex(&s)?)),
+                other => Expr::Hex(Box::new(other)),
+            },
+            Expr::Fill(n) => Expr::Fill(fold_box(n)?),
+            Expr::RandInt(a, b) => Expr::RandInt(fold_box(a)?, fold_box(b)?),
+            Expr::Call(call) => {
+                let ModuleCall {
+                    module,
+                    function,
+                    positional,
+                    named,
+                } = *call;
+                Expr::Call(Box::new(ModuleCall {
+                    module,
+                    function,
+                    positional: positional
+                        .into_iter()
+                        .map(|e| e.fold(constants))
+                        .collect::<Result<_, _>>()?,
+                    named: named
+                        .into_iter()
+                        .map(|(k, e)| e.fold(constants).map(|e| (k, e)))
+                        .collect::<Result<_, _>>()?,
+                }))
+            }
+            other @ (Expr::Const(_) | Expr::SessionId | Expr::SessionFlow | Expr::Last) => other,
+        })
+    }
+
+    fn visit<'e>(&'e self, f: &mut dyn FnMut(&'e Expr)) {
+        f(self);
+        match self {
+            Expr::Fill(e) | Expr::Hex(e) => e.visit(f),
+            Expr::RandInt(a, b) => {
+                a.visit(f);
+                b.visit(f);
+            }
+            Expr::Call(c) => {
+                for e in c.positional.iter().chain(c.named.iter().map(|(_, e)| e)) {
+                    e.visit(f);
+                }
+            }
+            Expr::Const(_) | Expr::Var(_) | Expr::SessionId | Expr::SessionFlow | Expr::Last => {}
+        }
+    }
+
+    /// Names the expression in error messages.
+    fn label(&self) -> String {
+        match self {
+            Expr::Var(n) => format!("vars.{n}"),
+            Expr::SessionId => "session.id".into(),
+            Expr::SessionFlow => "session.flow".into(),
+            Expr::Last => "last".into(),
+            Expr::Fill(_) => "fill()".into(),
+            Expr::Hex(_) => "hex()".into(),
+            Expr::RandInt(..) => "rand_int()".into(),
+            Expr::Call(c) => format!("{}.{}()", c.module, c.function),
+            Expr::Const(c) => {
+                let mut out = Vec::new();
+                c.val().write_to(&mut out);
+                String::from_utf8_lossy(&out).into_owned()
+            }
+        }
+    }
+}
+
+/// A value during rendering, borrowed where possible.
+#[derive(Debug)]
+enum Val<'v> {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Text(Cow<'v, str>),
+    Bytes(Cow<'v, [u8]>),
+}
+
+impl Val<'_> {
+    fn from_value(v: &Value) -> Val<'_> {
+        match v {
+            Value::Int(i) => Val::Int(*i),
+            Value::Float(f) => Val::Float(*f),
+            Value::Bool(b) => Val::Bool(*b),
+            Value::Str(s) => Val::Text(Cow::Borrowed(s)),
+        }
+    }
+
+    fn arg(&self) -> ArgValue<'_> {
+        match self {
+            Val::Int(i) => ArgValue::Int(*i),
+            Val::Float(f) => ArgValue::Float(*f),
+            Val::Bool(b) => ArgValue::Boolean(*b),
+            Val::Text(s) => ArgValue::Text(s),
+            Val::Bytes(b) => ArgValue::Bytes(b),
+        }
+    }
+
+    fn write_to(&self, out: &mut Vec<u8>) {
+        use std::io::Write;
+        // Writing into a Vec cannot fail.
+        let _ = match self {
+            Val::Int(i) => write!(out, "{i}"),
+            Val::Float(f) => write!(out, "{f}"),
+            Val::Bool(b) => write!(out, "{b}"),
+            Val::Text(s) => out.write_all(s.as_bytes()),
+            Val::Bytes(b) => out.write_all(b),
+        };
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 enum Seg {
     Lit(Vec<u8>),
-    Var(String),
-    SessionId,
-    SessionFlow,
-    Fill(Arg),
-    RandInt(Arg, Arg),
+    Expr(Expr),
 }
 
 /// A compiled template.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Template {
     segs: Vec<Seg>,
+}
+
+/// One module call that a template makes, for checks against the function
+/// catalog before a run starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallSite<'t> {
+    /// Module name.
+    pub module: &'t str,
+    /// Function name without the module prefix.
+    pub function: &'t str,
+    /// Number of positional arguments.
+    pub positional: usize,
+    /// Keyword names in call order.
+    pub keywords: Vec<&'t str>,
 }
 
 impl Template {
@@ -230,26 +513,29 @@ impl Template {
         }
     }
 
-    /// Compiles template source text.
+    /// Compiles template source text and folds every part that needs no
+    /// session.
     pub fn compile(src: &str) -> Result<Self, TemplateError> {
-        let mut segs = Vec::new();
+        let mut t = Template { segs: Vec::new() };
         let mut rest = src;
         while let Some(open) = rest.find("{{") {
-            if open > 0 {
-                push_lit(&mut segs, &rest.as_bytes()[..open]);
-            }
-            let after = &rest[open + 2..];
+            let (text, after) = rest.split_at(open);
+            t.push_lit(text.as_bytes());
+            let after = after.get(2..).unwrap_or_default();
             let close = after.find("}}").ok_or(TemplateError::Unbalanced("{{"))?;
-            compile_expr(after[..close].trim(), &mut segs)?;
-            rest = &after[close + 2..];
+            let (expr, tail) = after.split_at(close);
+            let expr = expr.trim();
+            if expr.is_empty() {
+                return Err(TemplateError::EmptyPlaceholder);
+            }
+            t.push_expr(parse::parse_expression(expr)?.fold(None)?);
+            rest = tail.get(2..).unwrap_or_default();
         }
         if rest.contains("}}") {
             return Err(TemplateError::Unbalanced("}}"));
         }
-        if !rest.is_empty() {
-            push_lit(&mut segs, rest.as_bytes());
-        }
-        Ok(Template { segs })
+        t.push_lit(rest.as_bytes());
+        Ok(t)
     }
 
     /// Compiles a YAML scalar that is either an integer or a template.
@@ -264,32 +550,106 @@ impl Template {
         }
     }
 
+    /// Returns a copy in which every reference to a variable in `constants`
+    /// is replaced by its value, folded again.
+    ///
+    /// The caller passes the scenario variables after test parameter
+    /// overrides, without the variables that any `set` action binds, because
+    /// those differ between sessions. The result renders the same bytes as
+    /// the original for every session and draws the same random numbers.
+    pub fn fold_vars(&self, constants: &Vars) -> Result<Self, TemplateError> {
+        let mut t = Template { segs: Vec::new() };
+        for seg in &self.segs {
+            match seg {
+                Seg::Lit(b) => t.push_lit(b),
+                Seg::Expr(e) => t.push_expr(e.clone().fold(Some(constants))?),
+            }
+        }
+        Ok(t)
+    }
+
+    fn push_lit(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        if let Some(Seg::Lit(prev)) = self.segs.last_mut() {
+            prev.extend_from_slice(bytes);
+        } else {
+            self.segs.push(Seg::Lit(bytes.to_vec()));
+        }
+    }
+
+    fn push_expr(&mut self, expr: Expr) {
+        if let Expr::Const(c) = &expr {
+            let mut bytes = Vec::new();
+            c.val().write_to(&mut bytes);
+            self.push_lit(&bytes);
+        } else {
+            self.segs.push(Seg::Expr(expr));
+        }
+    }
+
     /// Returns true when the template renders the same bytes in every session.
     pub fn is_static(&self) -> bool {
         self.segs.iter().all(|s| matches!(s, Seg::Lit(_)))
     }
 
+    /// Returns the bytes of a static template, and `None` otherwise.
+    pub fn as_static(&self) -> Option<&[u8]> {
+        match self.segs.as_slice() {
+            [] => Some(&[]),
+            [Seg::Lit(b)] => Some(b),
+            _ => None,
+        }
+    }
+
+    /// Returns true when the template refers to `last`.
+    pub fn uses_last(&self) -> bool {
+        let mut found = false;
+        self.visit(&mut |e| found |= matches!(e, Expr::Last));
+        found
+    }
+
+    fn visit<'e>(&'e self, f: &mut dyn FnMut(&'e Expr)) {
+        for seg in &self.segs {
+            if let Seg::Expr(e) = seg {
+                e.visit(f);
+            }
+        }
+    }
+
     /// Returns the scenario variables that the template reads, in order.
     pub fn variables(&self) -> Vec<&str> {
         let mut out = Vec::new();
-        for seg in &self.segs {
-            match seg {
-                Seg::Var(n) | Seg::Fill(Arg::Var(n)) => out.push(n.as_str()),
-                Seg::RandInt(a, b) => {
-                    for arg in [a, b] {
-                        if let Arg::Var(n) = arg {
-                            out.push(n.as_str());
-                        }
-                    }
-                }
-                _ => {}
+        self.visit(&mut |e| {
+            if let Expr::Var(n) = e {
+                out.push(n.as_str());
             }
-        }
+        });
+        out
+    }
+
+    /// Returns the module calls of the template, outer calls before the
+    /// calls in their arguments.
+    pub fn module_calls(&self) -> Vec<CallSite<'_>> {
+        let mut out = Vec::new();
+        self.visit(&mut |e| {
+            if let Expr::Call(c) = e {
+                out.push(CallSite {
+                    module: &c.module,
+                    function: &c.function,
+                    positional: c.positional.len(),
+                    keywords: c.named.iter().map(|(k, _)| k.as_str()).collect(),
+                });
+            }
+        });
         out
     }
 
     /// Renders the template and appends the bytes to `out`.
-    pub fn render_into<R: Rng + ?Sized>(
+    ///
+    /// On error the bytes already appended are unspecified.
+    pub fn render_into<R: RngCore>(
         &self,
         ctx: &mut RenderCtx<'_, R>,
         out: &mut Vec<u8>,
@@ -297,33 +657,14 @@ impl Template {
         for seg in &self.segs {
             match seg {
                 Seg::Lit(b) => out.extend_from_slice(b),
-                Seg::Var(name) => {
-                    let v = ctx.lookup(name)?;
-                    out.extend_from_slice(v.to_string().as_bytes());
-                }
-                Seg::SessionId => out.extend_from_slice(ctx.session_id.to_string().as_bytes()),
-                Seg::SessionFlow => out.extend_from_slice(ctx.flow.as_bytes()),
-                Seg::Fill(arg) => {
-                    let n = arg_int(arg, ctx)?;
-                    let n = usize::try_from(n).map_err(|_| TemplateError::NegativeFill(n))?;
-                    let filler = ctx.filler;
-                    filler.fill(out, n, ctx.rng);
-                }
-                Seg::RandInt(a, b) => {
-                    let (lo, hi) = (arg_int(a, ctx)?, arg_int(b, ctx)?);
-                    if lo > hi {
-                        return Err(TemplateError::EmptyRange { lo, hi });
-                    }
-                    let v = ctx.rng.gen_range(lo..=hi);
-                    out.extend_from_slice(v.to_string().as_bytes());
-                }
+                Seg::Expr(e) => render_expr(e, ctx, out)?,
             }
         }
         Ok(())
     }
 
     /// Renders the template into a new vector.
-    pub fn render_to_vec<R: Rng + ?Sized>(
+    pub fn render_to_vec<R: RngCore>(
         &self,
         ctx: &mut RenderCtx<'_, R>,
     ) -> Result<Vec<u8>, TemplateError> {
@@ -333,10 +674,7 @@ impl Template {
     }
 
     /// Renders the template and parses the result as an integer.
-    pub fn render_int<R: Rng + ?Sized>(
-        &self,
-        ctx: &mut RenderCtx<'_, R>,
-    ) -> Result<i64, TemplateError> {
+    pub fn render_int<R: RngCore>(&self, ctx: &mut RenderCtx<'_, R>) -> Result<i64, TemplateError> {
         let bytes = self.render_to_vec(ctx)?;
         let text = String::from_utf8_lossy(&bytes);
         let text = text.trim();
@@ -345,125 +683,131 @@ impl Template {
     }
 }
 
-fn push_lit(segs: &mut Vec<Seg>, bytes: &[u8]) {
-    if let Some(Seg::Lit(prev)) = segs.last_mut() {
-        prev.extend_from_slice(bytes);
-    } else {
-        segs.push(Seg::Lit(bytes.to_vec()));
+/// Renders a top level expression straight into `out`.
+fn render_expr<R: RngCore>(
+    e: &Expr,
+    ctx: &mut RenderCtx<'_, R>,
+    out: &mut Vec<u8>,
+) -> Result<(), TemplateError> {
+    match e {
+        Expr::SessionId => Val::Text(Cow::Owned(ctx.session_id.to_string())).write_to(out),
+        Expr::Fill(n) => fill(n, ctx, out)?,
+        Expr::Call(c) => call_module(c, ctx, out)?,
+        other => eval(other, ctx)?.write_to(out),
     }
-}
-
-fn arg_int<R: Rng + ?Sized>(arg: &Arg, ctx: &RenderCtx<'_, R>) -> Result<i64, TemplateError> {
-    match arg {
-        Arg::Int(i) => Ok(*i),
-        Arg::Var(name) => ctx
-            .lookup(name)?
-            .as_i64()
-            .ok_or_else(|| TemplateError::NotInteger(format!("vars.{name}"))),
-        Arg::SessionId => i64::try_from(ctx.session_id)
-            .map_err(|_| TemplateError::NotInteger("session.id".into())),
-        Arg::Str(s) => s.parse().map_err(|_| TemplateError::NotInteger(s.clone())),
-    }
-}
-
-fn is_ident(s: &str) -> bool {
-    let mut chars = s.chars();
-    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-fn parse_ref(text: &str) -> Result<Seg, TemplateError> {
-    let parts: Vec<&str> = text.split('.').collect();
-    if !parts.iter().all(|p| is_ident(p)) {
-        return Err(TemplateError::Syntax(text.to_string()));
-    }
-    match parts.as_slice() {
-        ["vars", name] => Ok(Seg::Var((*name).to_string())),
-        ["session", "id"] => Ok(Seg::SessionId),
-        ["session", "flow"] => Ok(Seg::SessionFlow),
-        _ => Err(TemplateError::UnknownReference(text.to_string())),
-    }
-}
-
-fn parse_arg(text: &str) -> Result<Arg, TemplateError> {
-    let text = text.trim();
-    if let Ok(i) = text.parse::<i64>() {
-        return Ok(Arg::Int(i));
-    }
-    if let Some(s) = quoted(text) {
-        return Ok(Arg::Str(s.to_string()));
-    }
-    match parse_ref(text)? {
-        Seg::Var(n) => Ok(Arg::Var(n)),
-        Seg::SessionId => Ok(Arg::SessionId),
-        _ => Err(TemplateError::BadArgument(text.to_string())),
-    }
-}
-
-/// Returns the content of a single quoted literal.
-fn quoted(text: &str) -> Option<&str> {
-    text.strip_prefix('\'')?.strip_suffix('\'')
-}
-
-fn split_args(text: &str) -> Vec<String> {
-    let mut args = Vec::new();
-    let mut cur = String::new();
-    let mut in_quotes = false;
-    for ch in text.chars() {
-        if ch == '\'' {
-            in_quotes = !in_quotes;
-        }
-        if ch == ',' && !in_quotes {
-            args.push(cur.trim().to_string());
-            cur.clear();
-        } else {
-            cur.push(ch);
-        }
-    }
-    if !cur.trim().is_empty() {
-        args.push(cur.trim().to_string());
-    }
-    args
-}
-
-fn compile_expr(expr: &str, segs: &mut Vec<Seg>) -> Result<(), TemplateError> {
-    if expr.is_empty() {
-        return Err(TemplateError::EmptyPlaceholder);
-    }
-    if let Ok(i) = expr.parse::<i64>() {
-        push_lit(segs, i.to_string().as_bytes());
-        return Ok(());
-    }
-    if let Some(s) = quoted(expr) {
-        push_lit(segs, s.as_bytes());
-        return Ok(());
-    }
-    if let Some(open) = expr.find('(') {
-        let inner = expr[open + 1..]
-            .strip_suffix(')')
-            .ok_or_else(|| TemplateError::Syntax(expr.to_string()))?;
-        let name = expr[..open].trim();
-        let args = split_args(inner);
-        match (name, args.as_slice()) {
-            ("fill", [n]) => segs.push(Seg::Fill(parse_arg(n)?)),
-            ("rand_int", [lo, hi]) => segs.push(Seg::RandInt(parse_arg(lo)?, parse_arg(hi)?)),
-            ("hex", [s]) => match parse_arg(s)? {
-                Arg::Str(s) => push_lit(segs, &decode_hex(&s)?),
-                _ => return Err(TemplateError::BadArgument(s.clone())),
-            },
-            (n, _) if n.contains('.') => return Err(TemplateError::ModuleHelper(n.to_string())),
-            ("fill" | "hex" | "rand_int", a) => {
-                return Err(TemplateError::Arity {
-                    name: name.to_string(),
-                    got: a.len(),
-                })
-            }
-            (n, _) => return Err(TemplateError::UnknownFunction(n.to_string())),
-        }
-        return Ok(());
-    }
-    segs.push(parse_ref(expr)?);
     Ok(())
+}
+
+fn fill<R: RngCore>(
+    n: &Expr,
+    ctx: &mut RenderCtx<'_, R>,
+    out: &mut Vec<u8>,
+) -> Result<(), TemplateError> {
+    let n = eval_int(n, ctx)?;
+    let n = usize::try_from(n).map_err(|_| TemplateError::NegativeFill(n))?;
+    let filler = ctx.filler;
+    filler.fill(out, n, ctx.rng);
+    Ok(())
+}
+
+/// Evaluates an argument expression.
+fn eval<'v, 'a: 'v, R: RngCore>(
+    e: &'v Expr,
+    ctx: &mut RenderCtx<'a, R>,
+) -> Result<Val<'v>, TemplateError> {
+    Ok(match e {
+        Expr::Const(c) => c.val(),
+        Expr::Var(name) => Val::from_value(ctx.lookup(name)?),
+        Expr::SessionId => Val::Int(
+            i64::try_from(ctx.session_id)
+                .map_err(|_| TemplateError::NotInteger("session.id".into()))?,
+        ),
+        Expr::SessionFlow => Val::Text(Cow::Borrowed(ctx.flow)),
+        Expr::Last => Val::Bytes(Cow::Borrowed(ctx.last)),
+        Expr::Fill(n) => {
+            let mut buf = Vec::new();
+            fill(n, ctx, &mut buf)?;
+            // The filler alphabet is ASCII, so the conversion never fails.
+            Val::Text(Cow::Owned(String::from_utf8(buf).unwrap_or_default()))
+        }
+        Expr::Hex(s) => {
+            let v = eval(s, ctx)?;
+            match v {
+                Val::Text(s) => Val::Bytes(Cow::Owned(decode_hex(&s)?)),
+                other => {
+                    return Err(TemplateError::ArgumentType {
+                        function: "hex".into(),
+                        param: "s".into(),
+                        expected: ValueType::Text,
+                        got: other.arg().value_type(),
+                    })
+                }
+            }
+        }
+        Expr::RandInt(a, b) => {
+            let (lo, hi) = (eval_int(a, ctx)?, eval_int(b, ctx)?);
+            if lo > hi {
+                return Err(TemplateError::EmptyRange { lo, hi });
+            }
+            Val::Int(ctx.rng.gen_range(lo..=hi))
+        }
+        Expr::Call(c) => {
+            let mut buf = Vec::new();
+            call_module(c, ctx, &mut buf)?;
+            Val::Bytes(Cow::Owned(buf))
+        }
+    })
+}
+
+fn eval_int<R: RngCore>(e: &Expr, ctx: &mut RenderCtx<'_, R>) -> Result<i64, TemplateError> {
+    let v = eval(e, ctx)?;
+    match v {
+        Val::Int(i) => Some(i),
+        Val::Text(s) => s.trim().parse().ok(),
+        Val::Float(f) => float_as_i64(f),
+        Val::Bool(_) | Val::Bytes(_) => None,
+    }
+    .ok_or_else(|| TemplateError::NotInteger(e.label()))
+}
+
+/// Evaluates the arguments of a module call in call order and dispatches it.
+fn call_module<R: RngCore>(
+    c: &ModuleCall,
+    ctx: &mut RenderCtx<'_, R>,
+    out: &mut Vec<u8>,
+) -> Result<(), TemplateError> {
+    let mut pos_vals = Vec::with_capacity(c.positional.len());
+    for e in &c.positional {
+        pos_vals.push(eval(e, ctx)?);
+    }
+    let mut named_vals = Vec::with_capacity(c.named.len());
+    for (k, e) in &c.named {
+        named_vals.push((k.as_str(), eval(e, ctx)?));
+    }
+    let positional: Vec<ArgValue<'_>> = pos_vals.iter().map(Val::arg).collect();
+    let named: Vec<NamedArg<'_>> = named_vals
+        .iter()
+        .map(|(name, v)| NamedArg {
+            name,
+            value: v.arg(),
+        })
+        .collect();
+    let call = FnCall {
+        module: &c.module,
+        function: &c.function,
+        args: CallArgs {
+            positional: &positional,
+            named: &named,
+        },
+    };
+    ctx.functions
+        .render(&call, &mut *ctx.rng, out)
+        .map_err(|e| TemplateError::Function {
+            module: c.module.clone(),
+            function: c.function.clone(),
+            kind: e.kind,
+            message: e.message,
+        })
 }
 
 /// Decodes a hexadecimal string and ignores white space between digits.
@@ -485,158 +829,4 @@ pub fn decode_hex(s: &str) -> Result<Vec<u8>, TemplateError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn render(t: &str, vars: &Vars) -> Result<Vec<u8>, TemplateError> {
-        let filler = Filler::new(1);
-        let mut rng = Pcg64Mcg::new(9);
-        let overlay = Vars::new();
-        let mut ctx = RenderCtx {
-            vars,
-            overlay: &overlay,
-            session_id: 42,
-            flow: "page",
-            rng: &mut rng,
-            filler: &filler,
-        };
-        Template::compile(t)?.render_to_vec(&mut ctx)
-    }
-
-    fn vars() -> Vars {
-        let mut v = Vars::new();
-        v.insert("host".into(), Value::Str("example.test".into()));
-        v.insert("n".into(), Value::Int(5));
-        v
-    }
-
-    #[test]
-    fn literal_and_vars() {
-        assert_eq!(
-            render("GET / HTTP/1.1\r\nHost: {{ vars.host }}\r\n", &vars()).unwrap(),
-            b"GET / HTTP/1.1\r\nHost: example.test\r\n"
-        );
-    }
-
-    #[test]
-    fn session_fields() {
-        assert_eq!(
-            render("{{session.id}}-{{ session.flow }}", &vars()).unwrap(),
-            b"42-page"
-        );
-    }
-
-    #[test]
-    fn fill_length_and_printable() {
-        let out = render("{{ fill(vars.n) }}|{{ fill(3000000) }}", &vars()).unwrap();
-        assert_eq!(out.len(), 5 + 1 + 3_000_000);
-        assert!(out.iter().all(|b| b.is_ascii()));
-    }
-
-    #[test]
-    fn hex_decodes_at_compile_time() {
-        let t = Template::compile("{{ hex('00ff10') }}").unwrap();
-        assert!(t.is_static());
-        assert_eq!(
-            render("{{ hex('00ff10') }}", &vars()).unwrap(),
-            vec![0, 255, 16]
-        );
-    }
-
-    #[test]
-    fn rand_int_in_range() {
-        for _ in 0..50 {
-            let out = render("{{ rand_int(3, 4) }}", &vars()).unwrap();
-            assert!(out == b"3" || out == b"4");
-        }
-    }
-
-    #[test]
-    fn errors() {
-        assert_eq!(
-            Template::compile("{{ nope(1) }}"),
-            Err(TemplateError::UnknownFunction("nope".into()))
-        );
-        assert_eq!(
-            Template::compile("{{ fill(1, 2) }}"),
-            Err(TemplateError::Arity {
-                name: "fill".into(),
-                got: 2
-            })
-        );
-        assert_eq!(
-            Template::compile("{{ vars.x "),
-            Err(TemplateError::Unbalanced("{{"))
-        );
-        assert_eq!(
-            Template::compile("x }}"),
-            Err(TemplateError::Unbalanced("}}"))
-        );
-        assert!(matches!(
-            Template::compile("{{ hex('abc') }}"),
-            Err(TemplateError::Hex(_))
-        ));
-        assert_eq!(
-            Template::compile("{{ http1.request('GET') }}"),
-            Err(TemplateError::ModuleHelper("http1.request".into()))
-        );
-        assert_eq!(
-            render("{{ vars.missing }}", &vars()),
-            Err(TemplateError::UndefinedVariable("missing".into()))
-        );
-        assert_eq!(
-            render("{{ fill(-1) }}", &vars()),
-            Err(TemplateError::NegativeFill(-1))
-        );
-        assert_eq!(
-            render("{{ rand_int(4, 3) }}", &vars()),
-            Err(TemplateError::EmptyRange { lo: 4, hi: 3 })
-        );
-    }
-
-    #[test]
-    fn render_int() {
-        let filler = Filler::new(1);
-        let mut rng = Pcg64Mcg::new(1);
-        let v = vars();
-        let o = Vars::new();
-        let mut ctx = RenderCtx {
-            vars: &v,
-            overlay: &o,
-            session_id: 0,
-            flow: "f",
-            rng: &mut rng,
-            filler: &filler,
-        };
-        assert_eq!(
-            Template::compile("{{ vars.n }}")
-                .unwrap()
-                .render_int(&mut ctx)
-                .unwrap(),
-            5
-        );
-        assert!(Template::compile("{{ vars.host }}")
-            .unwrap()
-            .render_int(&mut ctx)
-            .is_err());
-    }
-
-    #[test]
-    fn overlay_shadows_scenario_vars() {
-        let filler = Filler::new(1);
-        let mut rng = Pcg64Mcg::new(1);
-        let v = vars();
-        let mut o = Vars::new();
-        o.insert("n".into(), Value::Int(7));
-        let mut ctx = RenderCtx {
-            vars: &v,
-            overlay: &o,
-            session_id: 0,
-            flow: "f",
-            rng: &mut rng,
-            filler: &filler,
-        };
-        let t = Template::compile("{{ vars.n }}").unwrap();
-        assert_eq!(t.render_int(&mut ctx).unwrap(), 7);
-    }
-}
+mod tests;
