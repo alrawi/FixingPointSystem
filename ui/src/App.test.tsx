@@ -9,6 +9,7 @@ import axe from "axe-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MOCK_TOKEN, startMockServer, type RunningMockServer } from "../mock/server";
 import { loadMockData } from "../mock/fixtures";
+import { QueryClient } from "@tanstack/react-query";
 import { App, createQueryClient } from "./App";
 
 let mock: RunningMockServer;
@@ -25,10 +26,10 @@ function renderApp() {
   return render(<App baseUrl={mock.baseUrl} queryClient={queryClient} />);
 }
 
-async function expectNoAxeViolations(container: HTMLElement) {
+async function expectNoAxeViolations() {
   // jsdom computes no layout, so the contrast rule cannot run here; the
   // Playwright smoke test checks contrast in a real browser.
-  const results = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+  const results = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
   expect(results.violations.map((violation) => `${violation.id}: ${violation.help}`)).toEqual([]);
 }
 
@@ -41,10 +42,10 @@ async function signIn(token: string) {
 
 describe("sign in", () => {
   it("shows an accessible sign in form first", async () => {
-    const { container } = renderApp();
+    renderApp();
     expect(screen.getByRole("heading", { level: 1, name: /Sign in/ })).toBeDefined();
     expect(screen.getByLabelText(/API token/).getAttribute("type")).toBe("password");
-    await expectNoAxeViolations(container);
+    await expectNoAxeViolations();
   });
 
   it("refuses a token that the controller rejects", async () => {
@@ -65,7 +66,7 @@ describe("sign in", () => {
 describe("capabilities", () => {
   it("renders the capabilities of the mock server", async () => {
     const expected = loadMockData().capabilities;
-    const { container } = renderApp();
+    renderApp();
     await signIn(MOCK_TOKEN);
 
     await screen.findByRole("heading", { level: 1, name: "Capabilities" });
@@ -87,7 +88,7 @@ describe("capabilities", () => {
       expect(row).not.toBeNull();
       expect(within(row as HTMLElement).getByText(module.version)).toBeDefined();
     }
-    await expectNoAxeViolations(container);
+    await expectNoAxeViolations();
   });
 
   it("lays out a skip link, a banner, the main navigation, and the main region", async () => {
@@ -121,6 +122,16 @@ describe("capabilities", () => {
     expect(screen.getByRole("heading", { level: 1, name: /Sign in/ })).toBeDefined();
     expect(window.sessionStorage.getItem("fps.token")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("reports an API error other than a rejected token and stays signed in", async () => {
+    window.sessionStorage.setItem("fps.token", MOCK_TOKEN);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<App baseUrl={`${mock.baseUrl}/missing`} queryClient={queryClient} />);
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /Capabilities could not be loaded\. The mock does not serve/,
+    );
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeDefined();
   });
 
   it("shows a page for an unknown path", async () => {

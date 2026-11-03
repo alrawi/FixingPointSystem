@@ -65,8 +65,11 @@ export function SignInPage() {
             {notice}
           </p>
         )}
-        <Button type="submit" isPending={pending}>
-          {pending ? "Signing in" : "Sign in"}
+        {pending && <p role="status">Checking the token with the controller</p>}
+        {/* isPending would announce through a live region that keeps a
+            reference to the button after the page unmounts, which axe flags. */}
+        <Button type="submit" isDisabled={pending}>
+          Sign in
         </Button>
       </Form>
     </main>
