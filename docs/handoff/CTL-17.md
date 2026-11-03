@@ -11,8 +11,8 @@
 | Pull request | #116 |
 | Status | ready for review |
 | Progress | 100% (5 of 5 plan steps) |
-| Current holder | claude-ctl-17-e566, lease until 2026-11-03T16:03:52Z |
-| Last verified commit | none |
+| Current holder | claude-ctl-17-e566, lease until 2026-11-03T16:12:30Z |
+| Last verified commit | e7a2c01 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -69,6 +69,7 @@ None.
 
 - `GET /v1/agents` answers a bare JSON array, while `GET /v1/modules` answers a page with `items`.
 - gosec G101 flags string constants whose names contain token, so the end to end test keeps its tokens in a map by scope.
+- The local golangci-lint here is v2.5.0, and CI runs v2.12.2, which flagged two more gosec findings (G101 on a token_file path in a test, G703 on a test file write). We fixed G703 by installing from an in-memory archive and suppressed the G101 line with its reason, the only suppression of the package.
 
 ## Verify the current state
 
@@ -86,3 +87,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-03T14:22Z | claude-ctl-17-e566 | claim | none | Claimed #111 with card 6606279050 |
 | 2026-11-03T14:41Z | claude-ctl-17-e566 | finish | pending | Wiring, settings, end to end test, and wiki done |
+| 2026-11-03T14:50Z | claude-ctl-17-e566 | finish | e7a2c01 | CI green on #116 after two lint fixes |
