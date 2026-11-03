@@ -8,7 +8,7 @@
 | Status | ready for review |
 | Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-eng-08-da83, lease until 2026-11-03T04:13:22Z |
-| Last verified commit | none |
+| Last verified commit | 210e7a6 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -74,4 +74,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-03T02:44Z | claude-eng-08-da83 | claim | none | Claimed with card 6594093107 |
-| 2026-11-03T03:10Z | claude-eng-08-da83 | finish | see branch | Ready for review |
+| 2026-11-03T03:10Z | claude-eng-08-da83 | finish | 210e7a6 | Ready for review, PR #86 |
