@@ -1,0 +1,63 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: fx
+version: 0.1.0
+type: app
+summary: Loader fixtures of an app module.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+requires:
+  - { module: aux, version: ">=0.1" }
+  - { module: ghost, version: ">=0.1" }
+functions:
+  - name: greet
+    summary: A greeting line.
+    params:
+      - { name: name, type: text }
+      - { name: count, type: int, default: 1 }
+scenarios:
+  - scenarios/minimal.yaml
+  - scenarios/after_order.yaml
+  - scenarios/spawn_ok.yaml
+  - scenarios/branch_ok.yaml
+  - scenarios/last_ok.yaml
+  - scenarios/calls_ok.yaml
+  - scenarios/unchecked_module.yaml
+  - scenarios/set_across_flows.yaml
+  - scenarios/udp_ok.yaml
+  - scenarios/delays_ok.yaml
+  - scenarios/server_ok.yaml
+  - scenarios/duplicate_flow.yaml
+  - scenarios/after_unknown.yaml
+  - scenarios/after_self.yaml
+  - scenarios/after_cycle.yaml
+  - scenarios/spawn_unknown.yaml
+  - scenarios/spawn_not_spawned.yaml
+  - scenarios/branch_sum.yaml
+  - scenarios/branch_sum_nested.yaml
+  - scenarios/uniform_range.yaml
+  - scenarios/raw_reserved.yaml
+  - scenarios/max_datagram_tcp.yaml
+  - scenarios/datagram_bytes.yaml
+  - scenarios/datagram_pattern.yaml
+  - scenarios/server_opener.yaml
+  - scenarios/flow_module_foreign.yaml
+  - scenarios/last_first.yaml
+  - scenarios/last_after_loop.yaml
+  - scenarios/last_after_branch.yaml
+  - scenarios/last_other_side.yaml
+  - scenarios/call_foreign_module.yaml
+  - scenarios/call_unknown_function.yaml
+  - scenarios/call_missing_param.yaml
+  - scenarios/call_unknown_param.yaml
+  - scenarios/call_arity.yaml
+  - scenarios/call_duplicate_param.yaml
+  - scenarios/call_type.yaml
+  - scenarios/call_type_nested.yaml
+  - scenarios/core_var_type.yaml
+  - scenarios/undefined_var.yaml
+  - scenarios/unknown_core_function.yaml
+  - scenarios/unbalanced.yaml
+provenance:
+  source: synthetic
+  notes: Test fixture of the scenario loader. All content is generated.

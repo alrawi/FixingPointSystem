@@ -1,0 +1,12 @@
+scenario: spawn_ok
+flows:
+  - id: main
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - spawn: { flow: side }
+  - id: side
+    module: fx
+    spawned: true
+    client:
+      - connect: { port: 81 }

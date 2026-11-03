@@ -1,0 +1,6 @@
+scenario: undefined_var
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: "{{ vars.port }}" }

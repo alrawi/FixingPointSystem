@@ -1,0 +1,7 @@
+scenario: call_unknown_param
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - set: { x: "{{ fx.greet('h', colour=1) }}" }

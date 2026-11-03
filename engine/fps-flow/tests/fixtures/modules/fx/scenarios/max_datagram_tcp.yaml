@@ -1,0 +1,7 @@
+scenario: max_datagram_tcp
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - expect: { bytes: 4, max_datagram: 512 }

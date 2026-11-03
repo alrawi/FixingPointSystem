@@ -1,0 +1,8 @@
+scenario: core_var_type
+vars: { size: "12" }
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ fill(vars.size) }}"

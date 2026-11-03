@@ -1,0 +1,7 @@
+scenario: uniform_range
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - delay: { dist: uniform, min_ms: 9, max_ms: 3 }

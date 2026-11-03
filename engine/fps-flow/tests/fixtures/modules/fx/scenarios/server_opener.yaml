@@ -1,0 +1,8 @@
+scenario: server_opener
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+    server:
+      - send: "x"

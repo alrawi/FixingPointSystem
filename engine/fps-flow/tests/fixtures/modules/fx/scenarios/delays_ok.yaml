@@ -1,0 +1,11 @@
+scenario: delays_ok
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - delay: { ms: 3 }
+      - delay: { dist: uniform, min_ms: 5, max_ms: 5 }
+      - delay: { dist: exponential, mean_ms: 10 }
+      - delay: { dist: lognormal, mu: 0.5, sigma: 1.0 }
+      - delay: { dist: pareto, alpha: 1.5, scale_ms: 2 }

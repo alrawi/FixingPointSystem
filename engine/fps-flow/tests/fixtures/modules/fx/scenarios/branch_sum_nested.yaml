@@ -1,0 +1,13 @@
+scenario: branch_sum_nested
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - branch:
+          - p: 0.5
+            do:
+              - branch:
+                  - { p: 0.6, do: [ { send: "x" } ] }
+                  - { p: 0.5, do: [ { send: "y" } ] }
+          - { p: 0.5, do: [ { send: "z" } ] }
