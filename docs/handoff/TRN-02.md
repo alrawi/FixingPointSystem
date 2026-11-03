@@ -7,7 +7,7 @@
 | Pull request | #114 |
 | Status | ready for review |
 | Progress | 100% (4 of 4 plan steps) |
-| Current holder | claude-trn-02-d41d, lease until 2026-11-03T16:20:14Z |
+| Current holder | claude-trn-02-d41d, lease until 2026-11-03T16:25:56Z |
 | Last verified commit | the head of `wp/TRN-02` at review |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
@@ -36,6 +36,8 @@ Every step passed the commands below on Rust stable and Linux 6.18.
 | 3 | `cargo test -p fps-backend-kernel` | the TCP loopback tests still pass |
 | 4 | `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` | pass |
 | 4 | `python3 tools/plan/plan.py check`, `render --check`, and `lint` | pass |
+| 4 | `make lint` and `make test-eng test-trn` | pass |
+| 4 | PR #114 CI | all thirteen checks pass |
 
 ## Remaining
 
