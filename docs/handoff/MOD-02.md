@@ -4,10 +4,10 @@
 |---|---|
 | Issue | #50 |
 | Branch | `wp/MOD-02` |
-| Pull request | none |
-| Status | in progress |
-| Progress | 88% (7 of 8 plan steps) |
-| Current holder | claude-mod-02-c552, lease until 2026-11-03T15:51:23Z |
+| Pull request | #117 |
+| Status | ready for review |
+| Progress | 100% (8 of 8 plan steps) |
+| Current holder | claude-mod-02-c552, lease until 2026-11-03T16:19:18Z |
 | Last verified commit | none |
 
 ## Goal
@@ -23,20 +23,21 @@ Ship the dns module with native functions dns.query and dns.answer_ip, a server 
 - [x] 5. Interpreter tests over the in memory duplex and datagram sessions, catalog test
 - [x] 6. Golden transcripts with seed 42
 - [x] 7. Fixture capture in the QA-01 harness and realism score
-- [ ] 8. mk and workflow files, wiki section, log entry, finish
+- [x] 8. mk and workflow files, wiki section, log entry, finish
 
 ## Done and verified
 
 - Steps 1 to 6. `cargo test -p fps-module-dns` passes 40 tests (unit tests of the codec, zone parser, and functions, catalog, scenarios over the in memory datagram pair and duplex for four session ids, golden transcripts with seed 42). `make lint-mod-dns` passes validate.py on the manifest and the seven scenarios.
+- Step 8. `make lint test` passes, and `python3 tools/plan/plan.py lint` passes. Pull request #117 is open with CI running.
 - Step 7. `sudo make e2e-mod-dns` records 160 sessions (140 UDP, 20 TCP) in the QA-01 harness through the example `fixture_peer`, and the realism runner reports nDPI 4.2.0 conformance 1.0 (160 of 160 DNS) and zero tshark 4.2.2 parser errors. The committed fixture is `modules/dns/fixtures/dns.pcapng` with `dns.report.json`.
 
 ## Remaining
 
-Step 8, the full `make lint test`, the pull request, and CI.
+Nothing in scope. Zeek was not installed locally, so the fixture report covers tshark only. EDNS and a configurable zone are recorded as gaps on the Modules page.
 
 ## Next action
 
-Run make lint test, open the pull request, and wait for CI.
+A reviewer agent reviews pull request #117.
 
 ## Blockers and open questions
 
@@ -71,3 +72,5 @@ sudo make e2e-mod-dns                 # a fresh capture scores 160 of 160 DNS
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-03T14:22Z | claude-mod-02-c552 | claim | none | card 6606272123 |
+| 2026-11-03T14:30Z | claude-mod-02-c552 | checkpoint | 721ae0b | crate, manifest, scenarios, tests |
+| 2026-11-03T14:55Z | claude-mod-02-c552 | finish | see branch | fixture, mk, workflow, wiki, PR #117 |
