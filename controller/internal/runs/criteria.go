@@ -3,7 +3,8 @@
 package runs
 
 import (
-	"github.com/alrawi/FixingPointSystem/controller/internal/agents/agentpb"
+	"maps"
+
 	"github.com/alrawi/FixingPointSystem/controller/internal/compiler"
 )
 
@@ -22,8 +23,8 @@ const (
 type Outcome struct {
 	// Criteria are the pass and fail rules of the test configuration.
 	Criteria []compiler.CriterionConfig
-	// Totals holds every unlabeled counter of the newest snapshot of each
-	// agent, summed over the agents, plus sessions.failed_ratio. The
+	// Totals holds the newest value of every unlabeled counter and gauge of
+	// each agent, summed over the agents, plus sessions.failed_ratio. The
 	// sessions that a failed agent attempted and never finished count as
 	// failed, because a crash ends them.
 	Totals map[string]float64
@@ -95,23 +96,15 @@ func compare(observed float64, op string, value float64) bool {
 	return false
 }
 
-// totals sums the unlabeled counters and gauges of the newest snapshot of
-// every agent and derives sessions.failed_ratio. For an agent in failed, the
-// sessions that it attempted without success or failure count as failed.
-func totals(snaps map[string]*agentpb.CounterSnapshot, failed map[string]bool) map[string]float64 {
+// totals sums the newest counters of every agent and derives
+// sessions.failed_ratio. For an agent in failed, the sessions that it
+// attempted without success or failure count as failed.
+func totals(counters map[string]map[string]float64, failed map[string]bool) map[string]float64 {
 	out := map[string]float64{}
-	for id, snap := range snaps {
-		agent := map[string]float64{}
-		for _, c := range snap.GetCounters() {
-			if len(c.GetLabels()) > 0 {
-				continue
-			}
-			switch c.GetValue().(type) {
-			case *agentpb.CounterValue_Count:
-				agent[c.GetMetric()] += float64(c.GetCount())
-			case *agentpb.CounterValue_Gauge:
-				agent[c.GetMetric()] += c.GetGauge()
-			}
+	for id, c := range counters {
+		agent := maps.Clone(c)
+		if agent == nil {
+			agent = map[string]float64{}
 		}
 		if failed[id] {
 			open := agent[MetricSessionsAttempted] - agent[MetricSessionsSucceeded] - agent[MetricSessionsFailed]

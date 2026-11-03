@@ -188,8 +188,35 @@ type runAgent struct {
 	status      agentStatus
 	prepared    bool
 	started     bool
-	phase       string
-	snap        *agentpb.CounterSnapshot
+	// seq is the sequence of the newest snapshot, and counters holds the
+	// newest value of every unlabeled counter and gauge. Counters are
+	// cumulative, so a final snapshot without counters loses nothing.
+	seq      uint64
+	counters map[string]float64
+}
+
+// absorb takes the counters of snap when it is newer than every earlier
+// snapshot of a, and reports whether it was. The caller holds the lock.
+func (a *runAgent) absorb(snap *agentpb.CounterSnapshot) bool {
+	if snap.GetSequence() <= a.seq {
+		return false
+	}
+	a.seq = snap.GetSequence()
+	if a.counters == nil {
+		a.counters = map[string]float64{}
+	}
+	for _, c := range snap.GetCounters() {
+		if len(c.GetLabels()) > 0 {
+			continue
+		}
+		switch c.GetValue().(type) {
+		case *agentpb.CounterValue_Count:
+			a.counters[c.GetMetric()] = float64(c.GetCount())
+		case *agentpb.CounterValue_Gauge:
+			a.counters[c.GetMetric()] = c.GetGauge()
+		}
+	}
+	return true
 }
 
 // run is the state of one run. The orchestrator lock guards every field
@@ -590,10 +617,8 @@ func (o *Orchestrator) Observe(ev agents.Event) {
 	switch ev.Kind {
 	case agents.EventSnapshot:
 		snap := ev.Snapshot
-		if snap.GetPlanId() == a.plan.PlanID && (a.snap == nil || snap.GetSequence() > a.snap.GetSequence()) {
-			a.snap = snap
+		if snap.GetPlanId() == a.plan.PlanID && a.absorb(snap) {
 			if p := snap.GetPhase(); p != "" {
-				a.phase = p
 				r.Phase = p
 			}
 		}
@@ -673,7 +698,7 @@ func (o *Orchestrator) stopState(r *run) stopRequest {
 func (o *Orchestrator) drive(r *run) {
 	defer o.wg.Done()
 	if o.stopState(r) != stopNone {
-		o.finish(r, Aborted, "stopped before preparing")
+		o.finish(r, Aborted, o.abortReason("stopped before preparing"))
 		return
 	}
 	if o.transition(r, Preparing) != nil {
@@ -681,7 +706,7 @@ func (o *Orchestrator) drive(r *run) {
 	}
 	err := o.forEach(r, everyAgent, o.prepareAgent)
 	if o.stopState(r) != stopNone {
-		o.abort(r, "stopped while preparing")
+		o.abort(r, o.abortReason("stopped while preparing"))
 		return
 	}
 	if err != nil {
@@ -693,7 +718,7 @@ func (o *Orchestrator) drive(r *run) {
 	}
 	if err := o.forEach(r, everyAgent, o.startAgent); err != nil {
 		if o.stopState(r) == stopForce {
-			o.abort(r, "stopped while starting")
+			o.abort(r, o.abortReason("stopped while starting"))
 			return
 		}
 		o.fail(r, "start: "+err.Error())
@@ -703,7 +728,7 @@ func (o *Orchestrator) drive(r *run) {
 		stop, active, failed := o.progress(r)
 		switch {
 		case stop == stopForce:
-			o.abort(r, o.abortReason())
+			o.abort(r, o.abortReason("stopped by request"))
 			return
 		case active == 0 && failed == len(r.agents):
 			o.finish(r, Failed, "every agent failed")
@@ -722,12 +747,13 @@ func (o *Orchestrator) drive(r *run) {
 // everyAgent selects every agent of a run for forEach.
 func everyAgent(*runAgent) bool { return true }
 
-// abortReason names the cause of a forced stop.
-func (o *Orchestrator) abortReason() string {
+// abortReason names the cause of an abort, which is the shutdown of the
+// orchestrator or else the stop request that reason describes.
+func (o *Orchestrator) abortReason(reason string) string {
 	if o.ctx.Err() != nil {
 		return "controller shutdown"
 	}
-	return "stopped by request"
+	return reason
 }
 
 // progress returns the stop request and the number of active and failed
@@ -763,23 +789,21 @@ func (o *Orchestrator) stopping(r *run) {
 	}
 	_ = o.forEach(r, active, rampDown)
 	if o.stopState(r) == stopForce {
-		o.abort(r, o.abortReason())
+		o.abort(r, o.abortReason("stopped by request"))
 		return
 	}
 	o.mu.Lock()
-	snaps := map[string]*agentpb.CounterSnapshot{}
+	counters := map[string]map[string]float64{}
 	failed := map[string]bool{}
 	nFailed := 0
 	for id, a := range r.agents {
-		if a.snap != nil {
-			snaps[id] = a.snap
-		}
+		counters[id] = a.counters
 		if a.status == agentFailed {
 			failed[id] = true
 			nFailed++
 		}
 	}
-	out := Outcome{Criteria: slices.Clone(r.criteria), Totals: totals(snaps, failed), Agents: len(r.agents), FailedAgents: nFailed}
+	out := Outcome{Criteria: slices.Clone(r.criteria), Totals: totals(counters, failed), Agents: len(r.agents), FailedAgents: nFailed}
 	o.mu.Unlock()
 	v := o.cfg.Evaluator(out)
 	o.mu.Lock()
@@ -808,17 +832,22 @@ func (o *Orchestrator) fail(r *run, reason string) {
 
 func (o *Orchestrator) abortAgents(r *run) {
 	live := func(a *runAgent) bool { return a.prepared && a.status == agentActive }
-	abort := func(_ context.Context, a *runAgent) error {
-		// An abort must reach the agents even after a forced stop or a
-		// shutdown, so it runs outside the run context.
-		return o.stopAgent(context.WithoutCancel(r.force), a, r, agentpb.StopMode_STOP_MODE_ABORT)
+	abort := func(ctx context.Context, a *runAgent) error {
+		return o.stopAgent(ctx, a, r, agentpb.StopMode_STOP_MODE_ABORT)
 	}
-	_ = o.forEach(r, live, abort)
+	// An abort must reach the agents even after a forced stop or a
+	// shutdown, so it runs outside the run context.
+	_ = o.forEachIn(context.WithoutCancel(r.force), r, live, abort)
 }
 
 // forEach runs fn for every agent of r that keep selects, in parallel, each
-// under the command timeout and the run context, and returns the first error.
+// under the command timeout and the run context, and joins the errors.
 func (o *Orchestrator) forEach(r *run, keep func(*runAgent) bool, fn func(context.Context, *runAgent) error) error {
+	return o.forEachIn(r.force, r, keep, fn)
+}
+
+// forEachIn is forEach under the context base in place of the run context.
+func (o *Orchestrator) forEachIn(base context.Context, r *run, keep func(*runAgent) bool, fn func(context.Context, *runAgent) error) error {
 	o.mu.Lock()
 	var sel []*runAgent
 	for _, id := range r.Agents {
@@ -833,7 +862,7 @@ func (o *Orchestrator) forEach(r *run, keep func(*runAgent) bool, fn func(contex
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(r.force, o.cfg.CommandTimeout)
+			ctx, cancel := context.WithTimeout(base, o.cfg.CommandTimeout)
 			defer cancel()
 			errs[i] = fn(ctx, a)
 		}()
@@ -856,6 +885,14 @@ func (o *Orchestrator) prepareAgent(ctx context.Context, a *runAgent) error {
 	a.prepared = true
 	o.mu.Unlock()
 	if _, err := o.cfg.Agents.Prepare(ctx, a.id, &agentpb.PrepareCommand{Plan: plan}); err != nil {
+		// An agent that answers with an error keeps its earlier state, so
+		// it holds no plan to abort. Without an answer it may hold one.
+		var cerr *agents.CommandError
+		if errors.As(err, &cerr) {
+			o.mu.Lock()
+			a.prepared = false
+			o.mu.Unlock()
+		}
 		return fmt.Errorf("agent %s: %w", a.id, err)
 	}
 	return nil
@@ -890,8 +927,8 @@ func (o *Orchestrator) stopAgent(ctx context.Context, a *runAgent, r *run, mode 
 		}
 		return fmt.Errorf("agent %s: %w", a.id, err)
 	}
-	if snap := res.GetFinalSnapshot(); snap != nil && (a.snap == nil || snap.GetSequence() > a.snap.GetSequence()) {
-		a.snap = snap
+	if snap := res.GetFinalSnapshot(); snap != nil {
+		a.absorb(snap)
 	}
 	if a.status == agentActive {
 		a.status = agentFinished
