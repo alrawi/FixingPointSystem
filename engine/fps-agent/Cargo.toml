@@ -1,6 +1,6 @@
 [package]
 name = "fps-agent"
-description = "FixingPointSystem agent: host capability detection and, later, the AgentService server"
+description = "FixingPointSystem agent: host capability detection and the standalone run mode"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,5 +15,26 @@ name = "fps-agent"
 path = "src/main.rs"
 
 [dependencies]
+# Pins the UDP worker threads to their plan cores, as fps-runtime does for TCP.
+core_affinity = "0.8"
+fps-backend-kernel = { path = "../fps-backend-kernel" }
+fps-flow = { path = "../fps-flow" }
+fps-hosts = { path = "../fps-hosts" }
+fps-interp = { path = "../fps-interp" }
+fps-module-dns = { path = "../../modules/dns/native" }
+fps-module-http1 = { path = "../../modules/http1/native" }
+fps-runtime = { path = "../fps-runtime" }
+fps-sched = { path = "../fps-sched" }
+fps-stats = { path = "../fps-stats" }
+# The histogram type of fps-stats snapshots, for criteria over percentiles.
+hdrhistogram = { version = "7", default-features = false }
+# RngCore appears in the signature of the TemplateFn trait.
+rand = { version = "0.8", default-features = false }
+# The canonical JSON mapping of the plan.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# SHA-256 of module trees and scenario sources. MIT or Apache-2.0.
+sha2 = "0.10"
 # Error enums for library code, as docs/wiki/Coding-Standards.md requires.
 thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
