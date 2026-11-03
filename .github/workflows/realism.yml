@@ -1,0 +1,128 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Module realism job of RLM-03. The detect job lists the native modules that the
+# change touches with `python3 -m realism modules`, and a change to a shared
+# path such as the runner, the engine, or the harness selects every module. The
+# module job records a fresh capture of each selected module in the QA-01
+# namespace harness, scores it with nDPI, tshark, and Zeek, fails on a failed
+# conformance or parser error check, and uploads the capture and the realism
+# report as the artifact realism-<module>. The negative control job breaks the
+# http1 request line in its own checkout and requires the same run to fail, so
+# the job keeps the power to catch a broken module.
+name: realism
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - modules/**
+      - realism/**
+      - engine/**
+      - tests/harness/**
+      - Cargo.toml
+      - Cargo.lock
+      - mk/rlm.mk
+      - .github/workflows/realism.yml
+  pull_request:
+    paths:
+      - modules/**
+      - realism/**
+      - engine/**
+      - tests/harness/**
+      - Cargo.toml
+      - Cargo.lock
+      - mk/rlm.mk
+      - .github/workflows/realism.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      any: ${{ steps.select.outputs.any }}
+      http1: ${{ steps.select.outputs.http1 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The pull request merge commit and its first parent, the base branch.
+          fetch-depth: 2
+      - id: select
+        name: Select the modules that the change touches
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          changed=()
+          if [ "$EVENT" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD | tee "$RUNNER_TEMP/changed.txt"
+            changed=(--changed "$RUNNER_TEMP/changed.txt")
+          fi
+          matrix=$(python3 -m realism modules "${changed[@]}")
+          names=$(python3 -m realism modules "${changed[@]}" --format names)
+          echo "selected: ${names:-none}"
+          {
+            echo "matrix=$matrix"
+            if [ -n "$names" ]; then echo "any=true"; else echo "any=false"; fi
+            if grep -qx http1 <<<"$names"; then echo "http1=true"; else echo "http1=false"; fi
+          } >> "$GITHUB_OUTPUT"
+
+  module:
+    needs: detect
+    if: needs.detect.outputs.any == 'true'
+    name: module (${{ matrix.module }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.detect.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: realism-${{ matrix.module }}
+      - name: Install the harness, nDPI, tshark, and Zeek
+        run: realism/ci/install-tools.sh
+      - run: cargo build -p ${{ matrix.crate }} --example fixture_peer
+      - name: Record a capture in the namespace harness and score it
+        run: |
+          sudo env FPS_FIXTURE_PEER="$PWD/target/debug/examples/fixture_peer" \
+            GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" \
+            realism/ci/module-realism.sh "${{ matrix.module }}" "$RUNNER_TEMP/realism/${{ matrix.module }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: realism-${{ matrix.module }}
+          path: ${{ runner.temp }}/realism/${{ matrix.module }}
+          if-no-files-found: warn
+
+  negative-control:
+    needs: detect
+    if: needs.detect.outputs.http1 == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: realism-negative
+      - name: Install the harness, nDPI, tshark, and Zeek
+        run: realism/ci/install-tools.sh
+      - name: Break the http1 request line in this checkout
+        run: python3 -m realism.ci.negative_control modules/http1/native/src/message.rs
+      - run: cargo build -p fps-module-http1 --example fixture_peer
+      - name: Require the module realism run to fail
+        run: |
+          rc=0
+          sudo env FPS_FIXTURE_PEER="$PWD/target/debug/examples/fixture_peer" \
+            realism/ci/module-realism.sh http1 "$RUNNER_TEMP/negative" || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "::error::the broken http1 request line gave exit code $rc instead of 1"
+            exit 1
+          fi
+          echo "the broken http1 request line failed the realism checks as required"
