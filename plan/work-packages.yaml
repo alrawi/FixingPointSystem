@@ -51,8 +51,8 @@ workstreams:
     owner_gated: true
   - id: OPS
     name: Repository and swarm tooling
-    paths: [tools/swarm/, tools/plan/, .github/]
-    shared_paths: [Cargo.toml, Makefile, go.work, CODEOWNERS]
+    paths: [tools/swarm/, tools/plan/, tools/wiki/, .github/]
+    shared_paths: [Cargo.toml, Makefile, go.work, CODEOWNERS, mk/]
     languages: [Python, Shell, YAML]
   - id: QA
     name: Test infrastructure and gate suites
@@ -280,6 +280,23 @@ work_packages:
       - The workflow exits successfully and does nothing when the secret is absent.
     acceptance:
       - Relabeling a test issue moves its card to the matching column within one minute.
+
+  - id: OPS-06
+    title: Conflict free shared files
+    phase: 1
+    workstream: OPS
+    size: M
+    status: done
+    depends_on: [OPS-01]
+    paths: [Makefile, Cargo.toml, go.work, tools/plan/, tools/wiki/, .github/workflows/]
+    summary: >-
+      Replace the files that every package edited with per package files, and add
+      conflict checked batches and a merge train, so parallel pull requests merge cleanly.
+    deliverables:
+      - mk/*.mk per workstream area, plain Cargo globs with modules/_template/native, GOWORK=off, log entry files, contracts/changes/.
+      - tools/plan/plan.py batch and the Conflict free merges section of the Swarm Protocol.
+    acceptance:
+      - "`make lint test` passes with no make warnings, and `plan.py batch` holds back packages that share a path."
 
   - id: QA-01
     title: Two arm network namespace harness

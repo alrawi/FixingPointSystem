@@ -1,0 +1,3 @@
+## [2026-11-03] plan | Conflict free merges
+
+We replaced the files that every package used to edit with files that one package owns. The log is now one file per entry under `docs/wiki/log/`, the root `Makefile` includes `mk/*.mk`, the Cargo workspace uses plain globs with a module template crate, Go builds run with `GOWORK=off`, contract changes go to `contracts/changes/`, and workflow files are named after their area. We added `tools/plan/plan.py batch` to start only batches whose paths do not overlap, and the coordinator role that runs the merge train. [Swarm Protocol](Swarm-Protocol.md#conflict-free-merges) describes the rules.

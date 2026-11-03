@@ -20,6 +20,7 @@ We build the protocol on five rules.
 | Worker agent | Any coding agent | Claims one work package at a time, implements it, and hands it off or finishes it. |
 | Reviewer agent | Any coding agent that did not write the change | Reviews a pull request against the Definition of Done and posts a structured review comment. |
 | Planner agent | Any coding agent asked by the owner | Splits epics, seeds issues from the catalog, and keeps the wiki current. |
+| Coordinator | One agent session that the owner runs | Picks conflict checked batches, runs the merge train, and edits the shared files and pages. See [Conflict free merges](#conflict-free-merges). |
 
 ## Identity
 
@@ -274,7 +275,7 @@ gh api -X PATCH "repos/$FPS_REPO/issues/comments/$CARD" -F body=@card.md
 
 The helper finds the card by the agent identifier, so the agent does not need to remember the comment id. Fields that the command does not name keep their values.
 
-An agent never force pushes and never rebases a published branch. A rejected push means that another agent advanced the branch, and the agent must stop, read the cards, and push to a salvage branch. Conflicts in `docs/wiki/Log.md` resolve by keeping both entries in date order.
+An agent never force pushes and never rebases a published branch. A rejected push means that another agent advanced the branch, and the agent must stop, read the cards, and push to a salvage branch. The per package files in [Conflict free merges](#conflict-free-merges) keep such conflicts rare.
 
 ## Progress percentage
 
@@ -390,6 +391,45 @@ gh api "repos/$FPS_REPO/issues" -f title="[bug] Interpreter drops the last byte 
 ```
 
 An agent fixes a defect inside its own package without a ticket. It creates a ticket for anything outside its paths and leaves that work to another agent.
+
+## Conflict free merges
+
+Parallel pull requests merge cleanly only when no two of them change the same file. We meet that rule with four mechanisms, and the coordinator role runs the last two.
+
+### Per package files
+
+Each shared file that every package used to edit is replaced by files that one package owns.
+
+| Shared file | Rule | Per package file |
+|---|---|---|
+| `docs/wiki/Log.md` | Never edited; the publish workflow builds it | `docs/wiki/log/<YYYY-MM-DD>T<HHMM>-<op>-<slug>.md` |
+| `contracts/CHANGELOG.md` | Edited by the coordinator when a contract version ships | `contracts/changes/<ID>.md` |
+| Root `Makefile` | Never edited; it includes `mk/*.mk` | `mk/<area>.mk`, one per workstream area |
+| Root `Cargo.toml` | Never edited; its globs cover `spikes/*`, `engine/*`, and `modules/*/native` | The new crate's own `Cargo.toml` |
+| `go.work` | Never edited in packages; builds run with `GOWORK=off` | The new module's own `go.mod` |
+| `.github/workflows/ci.yml` | Edited only by OPS packages | `.github/workflows/<area>.yml`, named after the area it tests |
+| Shared wiki pages | Home, Implementation Plan, Testing, Swarm Protocol, Coding Standards, and the sidebar are edited by the coordinator | The workstream's component page and the `Shared page notes` of the log entry |
+
+`Cargo.lock` stays shared, because Cargo writes it. A package that adds a Rust dependency says so in its pull request, and the merge train regenerates the file when two such pull requests meet.
+
+### Conflict checked batches
+
+The coordinator starts a batch only from packages whose catalog paths do not overlap. The command below reads the ready issues and prints the packages to run now and the packages to hold for a later batch.
+
+```bash
+python3 tools/plan/plan.py batch --max 8          # every ready issue on GitHub
+python3 tools/plan/plan.py batch ENG-02 ENG-03    # an explicit candidate list
+```
+
+Two packages in the same directory, such as ENG-02 and ENG-03 in `engine/fps-flow/`, never run in the same batch.
+
+### Merge train
+
+When a batch finishes, the coordinator gives the owner a merge order. After each merge, the coordinator merges `origin/main` into the next pull request, regenerates `Cargo.lock` when needed, waits for CI, and then tells the owner that the next pull request is ready. Each pull request therefore merges without a conflict.
+
+### Coordinator duties after a batch
+
+After the last merge of a batch, the coordinator updates Home and the other shared pages from the `Shared page notes` of the batch's log entries, adds one `plan` log entry, and runs the promotion sweep.
 
 ## Guarantees and limits
 

@@ -1,0 +1,3 @@
+## [2026-11-02] ingest | QA-02 Golden file helpers
+
+We added one golden file helper per language under `tests/golden/`, which are the Rust crate `fps-golden`, a Go module, and a pytest fixture. Each helper rewrites a golden file only when `UPDATE_GOLDEN=1` is set and fails with a unified diff that names the file. We added the `lint-qa` and `test-qa` targets, the workflow `.github/workflows/qa.yml`, and a Golden files section in [Testing](Testing.md). The root `Cargo.toml` lists `tests/golden/rust` as a member, because the member glob covers only `spikes/` and `engine/`, and the `test-ops-workspace` probe copies that crate. The evidence is `make test-qa` and the handoff file `docs/handoff/QA-02.md`.

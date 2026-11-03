@@ -9,7 +9,7 @@ A new agent reads four pages in order before claiming work.
 1. [Swarm Protocol](Swarm-Protocol.md), which explains how to find, claim, checkpoint, hand off, and finish a work package.
 2. [Implementation Plan](Implementation-Plan.md), which describes the workstreams, seams, phases, and the Definition of Done.
 3. [Coding Standards](Coding-Standards.md) and [Testing](Testing.md) for the workstream of the chosen package.
-4. The newest entries of [Log](Log.md).
+4. The newest entries of [Log](Log.md), which live as files in `docs/wiki/log/`.
 
 ## Index
 
@@ -45,7 +45,6 @@ A new agent reads four pages in order before claiming work.
 | Source | Summary |
 |---|---|
 | [Specification](https://github.com/alrawi/FixingPointSystem/blob/main/docs/spec/specification.md) | Feasibility assessment and v1 specification |
-| [Decision records](https://github.com/alrawi/FixingPointSystem/tree/main/docs/decisions) | Decisions D1 to D9, and D10 on native first party extensions as a proposal |
 | [Contracts](https://github.com/alrawi/FixingPointSystem/tree/main/contracts) | OpenAPI document, schemas with scenario contract v0.2, agent control protocol, extension WIT world, metric catalog, and examples |
 | [Gate 0 report](https://github.com/alrawi/FixingPointSystem/blob/main/docs/phase0/gate0-report.md) | Spike results and items carried into Phase 1 |
 | [Namespace harness](https://github.com/alrawi/FixingPointSystem/blob/main/tests/harness/README.md) | Two arm network namespace harness for end to end tests and captures |
@@ -54,4 +53,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phase 0 is complete except for spike S3 (#7), which waits for a KVM host. Phase 1 is seeded as issues #10 to #57, and eight packages are ready to claim.
+Phase 0 is complete, including spike S3. Phase 1 has 13 packages merged, and the rest are seeded as issues. The coordinator updates this line after each batch.

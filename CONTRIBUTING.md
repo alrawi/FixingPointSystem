@@ -8,7 +8,7 @@ The files under `contracts/` define the interfaces between workstreams. A pull r
 
 1. Change only contract files, examples, and the validator in that pull request.
 2. Pass `python3 tools/contracts/validate.py` and `python3 -m pytest tools/contracts`.
-3. Bump the contract version in the changed file and record the change in `contracts/CHANGELOG.md`.
+3. Bump the contract version in the changed file and record the change in a new file `contracts/changes/<ID>.md`.
 4. Receive approval from the repository owner before merge.
 
 Implementation pull requests must not edit contract files.

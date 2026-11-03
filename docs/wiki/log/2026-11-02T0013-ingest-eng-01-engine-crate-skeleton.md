@@ -1,0 +1,3 @@
+## [2026-11-02] ingest | ENG-01 Engine crate skeleton
+
+We created the engine crates `fps-io`, `fps-flow`, `fps-interp`, and `fps-stats` under `engine/` and added the [Engine](Engine.md) page, which records the four rules of the `SessionIo` seam, the in memory duplex, and the four changes that the port of the S1 program model and template parser made. `fps-interp` and `fps-stats` stay empty until ENG-04 and ENG-09. Spike S1 keeps its own copy of the ported files, and the Engine page records that duplication. We added the `test-eng` target to [Testing](Testing.md) and linked the new page from [Home](Home.md). The root `Cargo.toml` glob picked up the new crates without an edit. The evidence is `make test-eng` and `docs/handoff/ENG-01.md` on the branch `wp/ENG-01`.

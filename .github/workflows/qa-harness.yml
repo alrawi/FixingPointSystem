@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# QA namespace harness under tests/harness/. The harness job runs the self test as
+# root, which GitHub hosted runners allow through passwordless sudo.
+name: qa-harness
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - tests/harness/**
+      - mk/qa-harness.mk
+      - .github/workflows/qa-harness.yml
+  pull_request:
+    paths:
+      - tests/harness/**
+      - mk/qa-harness.mk
+      - .github/workflows/qa-harness.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r tests/harness/requirements.txt
+      - run: make lint-qa-harness test-qa-harness
+
+  harness:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the harness tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends iproute2 tcpdump ethtool curl
+          sudo modprobe 8021q
+      - name: Namespace harness self test
+        run: sudo env FPS_REQUIRE_VLAN=1 make e2e-qa-harness

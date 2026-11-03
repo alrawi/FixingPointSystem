@@ -33,7 +33,7 @@ A work package is atomic when one agent can finish it in one session without coo
 | IMG | Appliance image | `image/` | HCL, Shell |
 | UI | Web UI | `ui/` | TypeScript, pending UI-00 |
 
-Shared files such as the root `Cargo.toml`, the root `Makefile`, and `go.work` change only in OPS packages. OPS-01 converts them to glob patterns, so later packages add crates and Go modules without editing them.
+Shared root files such as `Cargo.toml`, `Makefile`, and `go.work` change only in OPS packages, and no package needs to edit them. [Swarm Protocol](Swarm-Protocol.md#conflict-free-merges) lists the per package files that replace them.
 
 ## Target repository layout
 

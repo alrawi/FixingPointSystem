@@ -17,7 +17,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - Makefile
-      - go.work
+      - mk/**
       - CODEOWNERS
   pull_request:
     paths:
@@ -29,11 +29,14 @@ on:
       - Cargo.toml
       - Cargo.lock
       - Makefile
-      - go.work
+      - mk/**
       - CODEOWNERS
 
 permissions:
   contents: read
+
+env:
+  GOWORK: "off"
 
 jobs:
   ops:

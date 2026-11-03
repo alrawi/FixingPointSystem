@@ -300,6 +300,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "fps-module-template"
+version = "0.0.1"
+
+[[package]]
 name = "fps-spike-engine"
 version = "0.0.1"
 dependencies = [

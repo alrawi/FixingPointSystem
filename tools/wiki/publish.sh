@@ -21,8 +21,12 @@ main() {
 
   git clone --quiet --depth 1 "${remote}" "${work}/wiki"
   find "${work}/wiki" -maxdepth 1 -name '*.md' -delete
+  # Log.md in the repository is a stub; the real page is built from docs/wiki/log/.
+  python3 "$(dirname "$0")/build_log.py" --out "${work}/Log.md"
   for page in "${src}"/*.md; do
-    sed -E 's/\]\(([A-Za-z0-9_-]+)\.md(#[^)]*)?\)/](\1\2)/g' "${page}" \
+    local from="${page}"
+    if [[ "$(basename "${page}")" == "Log.md" ]]; then from="${work}/Log.md"; fi
+    sed -E 's/\]\(([A-Za-z0-9_-]+)\.md(#[^)]*)?\)/](\1\2)/g' "${from}" \
       >"${work}/wiki/$(basename "${page}")"
   done
 
