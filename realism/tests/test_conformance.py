@@ -166,6 +166,6 @@ def test_unknown_check_kind_needs_only_the_common_fields() -> None:
     validator = jsonschema.Draft202012Validator(
         {**schema["$defs"]["check"], "$defs": schema["$defs"]}
     )
-    validator.validate({"check": "parser_errors", "passed": True, "metrics": [], "extra": 1})
+    validator.validate({"check": "distribution", "passed": True, "metrics": [], "extra": 1})
     with pytest.raises(jsonschema.ValidationError):
         validator.validate({"check": "conformance", "passed": True, "metrics": []})
