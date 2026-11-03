@@ -1,0 +1,21 @@
+scenario: http10_fetch
+description: One HTTP/1.0 GET without keepalive. The server sends a length delimited body and closes the connection, as HTTP/1.0 servers do by default.
+vars:
+  host: www.example.test
+  path: /index.html
+  server_port: 8080
+  body_size: 4096
+flows:
+  - id: fetch
+    module: http1
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ http1.request('GET', vars.path, vars.host, version='1.0') }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - expect: { bytes: "{{ vars.body_size }}", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "{{ http1.response(200, body=fill(vars.body_size), version='1.0') }}"
+      - close: fin

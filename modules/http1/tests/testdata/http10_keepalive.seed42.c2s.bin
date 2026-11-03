@@ -1,0 +1,18 @@
+GET /index.html HTTP/1.0
+Host: www.example.test
+User-Agent: Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1
+Accept: */*
+Connection: keep-alive
+
+GET /index.html HTTP/1.0
+Host: www.example.test
+User-Agent: Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1
+Accept: */*
+Connection: keep-alive
+
+GET /index.html HTTP/1.0
+Host: www.example.test
+User-Agent: Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1
+Accept: */*
+Connection: keep-alive
+

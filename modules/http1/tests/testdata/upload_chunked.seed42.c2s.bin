@@ -1,0 +1,27 @@
+PUT /files/report.bin HTTP/1.1
+Host: www.example.test
+User-Agent: Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1
+Accept: application/json
+Content-Type: application/octet-stream
+Transfer-Encoding: chunked
+
+100
+5kizk:<,;p=>0O
+QH82=Dxio'6Oyh2osHRLwIo-Dr8sRPZV_G<;b Bv41ZQKVAC6ZLmEUE;NpzzTv5sg>3nUO:.- kFehwI= f=GbABPDMvoft;YgG,>eE05PHksJrkm>"-9WZ0WI.Y"R7Xn
+4oyF:ss1 u2
+i<I4NZtO
+-Bx5qWDcelf8p4VS5tS>XKBKeQqM'Uy,8oy/1Ax>TP.Hmz90<zwg4ih,r08nr3Qycb9WqfT0p4hpQpUvY'bjHS-V"1
+100
+FgQFXVw7yASZq/yiaJ9HyRg55.U2ox:
+;YRPEmc7bL;zin;s;i3JWHq9zmo2RVe_,,W6YkF6F_'QS;HSewI/>vVwZRubm4aPpC
+vM9CwI;BWzOQ,OraN_00m9_Buexcm3psF.BaDk9M1'
+aLr_,T/BI:7Zt.,8QT4WT,-8F:
+k
+=8R
+1qNbs9q,mTuh'<q8J83z2dQyTBA:lXDmkc>L<48w 4"lKRrKmuLs7I<F<CQC7FwWDu_y;-NFZuqA:UOgF
+58
+S5rejq1OJSsSP0T_tOPTi/eMw8SX6BD
+Wz
+PR";d8;SVsEeLf=3Wd26-GMXrU7>W3q6t:O4G9<C476XsAXxIFDay
+0
+

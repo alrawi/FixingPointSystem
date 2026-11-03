@@ -1,0 +1,21 @@
+scenario: single_fetch
+description: One HTTP/1.1 GET on its own connection. The response carries a length delimited body and Connection close, and both sides then close.
+vars:
+  host: www.example.test
+  path: /index.html
+  server_port: 8080
+  body_size: 4096
+flows:
+  - id: fetch
+    module: http1
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ http1.request('GET', vars.path, vars.host, accept='text/html,application/xhtml+xml', connection='close') }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - expect: { bytes: "{{ vars.body_size }}", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "{{ http1.response(200, body=fill(vars.body_size), content_type='text/html; charset=utf-8', connection='close') }}"
+      - close: fin
