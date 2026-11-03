@@ -1,0 +1,12 @@
+## [2026-11-03] ingest | AGT-02 Agent gRPC service
+
+We added the controller session to `engine/fps-agent` and documented it in the section Controller session of [Agent](Agent.md). The command `fps-agent connect --controller URI --agent-id ID --modules DIR` dials the controller, calls `Register` with the detected capabilities and the installed modules, opens the `Session` stream, and serves `prepare`, `start`, and `stop` with the state machine of `contracts/README.md`. The agent serves no gRPC service, as CON-06 decided. It sends heartbeats, command results, and one aggregate counter snapshot per counter interval, dials again with exponential backoff after a lost connection, and aborts its run and releases the plan when the controller stays silent for the heartbeat timeout. The run path of the standalone mode now has three steps, `run::prepare`, `Prepared::start`, and `Active`, which both modes use. `build.rs` generates the messages and stubs of `agent.proto` with `protox` and `tonic-prost-build`, so the build needs no `protoc`. The component tests in `tests/session.rs` drive the agent from an in process fake controller, and the script `tests/controller_e2e.sh` runs the real `fps-controller` against the real agent through a loopback run to `completed` with a passed verdict. The crate gained the dependencies `tonic`, `tonic-prost`, `prost`, `prost-types`, `tokio-stream`, `tracing`, `tracing-subscriber`, and `base64`, and the build dependencies `protox` and `tonic-prost-build`, so `Cargo.lock` changed. The evidence is `docs/handoff/AGT-02.md` on the branch `wp/AGT-02`.
+
+## Shared page notes
+
+The coordinator may apply the notes below.
+
+1. [Agent](Agent.md) may replace the sentence "AGT-02 will add the client loop that dials the controller" in its introduction with a pointer to the section Controller session.
+2. [Testing](Testing.md) may extend the `test-agt` row with `engine/fps-agent/tests/session.rs`, and add a row for `engine/fps-agent/tests/controller_e2e.sh`, which needs a built `fps-controller`, curl, tar, and python3 but no root.
+3. An OPS or AGT package may add a make target and a step of the workflow `agt.yml` that builds `fps-controller` with Go and runs `engine/fps-agent/tests/controller_e2e.sh "$CONTROLLER" "$CARGO_TARGET_DIR/debug/fps-agent"`. This package left `mk/agt.mk` and `agt.yml` unchanged, because they already exist.
+4. [Implementation Plan](Implementation-Plan.md) may mark AGT-02 as done after the merge. GATE-1 can now start a real agent with `fps-agent connect`.

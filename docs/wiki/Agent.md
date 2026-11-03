@@ -67,3 +67,57 @@ The agent evaluates every criterion over the totals of the reported side. Counte
 | End to end | `tests/netns_smoke.sh`, `make e2e-agt` | The example plan, unchanged, runs in the QA-01 harness with the server side in the server namespace and the client side in the client namespace |
 
 The end to end test routes the plan pools `16.0.0.0/24` and `48.0.0.0/24` through the routing namespace and adds a local route for each pool in its namespace. A local run with a debug build completed 38,107 sessions, 34,299 of `http1` and 3,808 of `dns`, on both sides without a failure, which matches the planned load. The workflow [`agt.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/.github/workflows/agt.yml) runs it as root on `ubuntu-24.04`.
+
+## Controller session
+
+AGT-02 added the agent side of the control protocol. The agent dials the controller and serves no gRPC service, as CON-06 decided. The command below registers the agent and serves the commands of the controller until SIGINT or SIGTERM.
+
+```bash
+fps-agent connect --controller http://127.0.0.1:7443 --agent-id local \
+  --modules contracts/examples/modules [--root DIR] [--side both|client|server] [--label site=lab]
+```
+
+The binary detects the host capabilities, adds the installed modules of `--modules` with their tree digests and the `--label` pairs, and calls `Register` with its state and plan. It then opens the `Session` stream with the token that `Register` returned, sends a heartbeat at the interval of the response and at once after every state change, and serves `prepare`, `start`, and `stop`. Logs are JSON lines on standard error from `tracing`. The controller speaks plain TCP until CTL-15 adds mutual TLS, so the agent dials `http://` addresses only.
+
+### Generated types
+
+`build.rs` compiles `contracts/proto/fps/agent/v1/agent.proto` with `protox` and `tonic-prost-build`, so the build needs no `protoc`. The module `fps_agent::pb` holds the messages, the client stub, and the server stub, which the tests use for a fake controller. `fps_agent::convert` turns the `Plan` of a `prepare` command into the plan type of the standalone mode and back, and turns an `fps-stats` snapshot into a `CounterSnapshot` through its proto3 JSON mapping. Both modes therefore run the same plan checks and send the same counters.
+
+### State machine
+
+The module `fps_agent::session` keeps the agent state in one structure behind a mutex that the session task and the run driver thread share. No lock is held across an `.await`.
+
+| Command | Allowed in | Effect |
+|---|---|---|
+| `prepare` | `IDLE`, `STOPPED`, `FAILED` | `PREPARING` at once, then `PREPARED` after the plan checks, the module digests, and the worker assembly on a dedicated thread |
+| `start` | `PREPARED` | `RUNNING` at once, and the run driver thread starts the workers at once or at `start_at` |
+| `stop` | `PREPARED` | Releases the plan and answers with `IDLE` |
+| `stop` | `RUNNING`, `STOPPING` | A ramp down moves to `STOPPING`, an abort resets every session, and the answer carries the final snapshot once the workers end |
+| `stop` | `STOPPED` | Answers again with the final snapshot of the run |
+
+Any other pair fails with `ERROR_CODE_FAILED_PRECONDITION`, and a `plan_id` that does not name the loaded plan fails with `ERROR_CODE_NOT_FOUND`. A plan that breaks a rule or names another agent fails with `ERROR_CODE_INVALID_ARGUMENT`, a module digest, version, or tree that does not match fails with `ERROR_CODE_FAILED_PRECONDITION`, a plan with more workers than cores fails with `ERROR_CODE_RESOURCE_EXHAUSTED`, and a backend or flow kind that the run path lacks fails with `ERROR_CODE_UNIMPLEMENTED`. A failed command leaves the state unchanged. A worker that fails moves the agent to `FAILED`, and the next heartbeat carries the reason in `message`. A run that ends on its own moves to `STOPPED` and sends the final snapshot and a heartbeat.
+
+The run driver thread reuses the run path of the standalone mode. `run::prepare` checks and assembles a plan, `Prepared::start` starts the server workers and then the client workers, and `Active` samples, stops, and finishes the run. The standalone command `fps-agent run` uses the same three steps, so the two modes cannot drift.
+
+### Snapshots, reconnection, and the heartbeat timeout
+
+The driver sends one aggregate `CounterSnapshot` per `counter_interval`, numbered from 1 for each run. A snapshot that the agent takes while the connection is down waits in the agent and goes out on the next session, so the sequence continues across sessions and the controller drops duplicates. Command results belong to the session that received the command, and the agent drops them when that session ends.
+
+After a lost connection the agent dials again with exponential backoff from 200 ms up to 10 s and calls `Register` with its current state and plan, so the controller resumes the run. A session that opened resets the backoff, except one that ended with `ABORTED`, which means that another session of the same identity replaced it. A watchdog compares the time since the last message from the controller with the heartbeat timeout of `Register`. When the timeout passes, the agent aborts any run, releases the plan, moves to `IDLE`, ends the session, and dials again.
+
+### Session tests
+
+| Level | Test | What it shows |
+|---|---|---|
+| Unit | `src/convert.rs` | The example plan survives the round trip through the generated types, and unknown enum numbers, negative durations, and list parameters are errors |
+| Component | `tests/session.rs` | An in process fake controller drives prepare, start, and stop over loopback and receives numbered cumulative snapshots and a final snapshot, out of order calls fail with their codes, a bad plan leaves the state unchanged, a run continues across a reconnection and stops on its own, and a silent controller makes the agent release the plan |
+| End to end | `tests/controller_e2e.sh FPS_CONTROLLER FPS_AGENT` | The real `fps-controller` enrolls the real agent, installs the example modules, and drives a loopback run over REST to `completed` with a passed verdict |
+
+A local run of the end to end script with debug builds completed its run with 148 succeeded `http1` sessions in three seconds at 40 sessions per second. The controller checks port locations against the agent capabilities, which leave out loopback, so the script names the first detected interface while the loopback pools carry the traffic.
+
+### Limits
+
+- `per_worker` snapshots are not implemented. The agent logs a warning and sends aggregate snapshots.
+- The agent does not bind ports during `prepare`. The workers bind their sockets when the run starts.
+- The backoff has no jitter.
+- Mutual TLS waits for CTL-15 on the controller side.
