@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #132 |
 | Branch | `wp/CON-07` |
-| Pull request | none yet |
+| Pull request | #146 |
 | Status | in progress |
 | Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-con-07-4105, lease until 2026-11-03T20:34:22Z |
