@@ -128,14 +128,7 @@ impl SocketOptions {
     /// Applies the options to a socket and returns the name of the failed
     /// option on error.
     pub(crate) fn apply(&self, sock: SockRef<'_>) -> Result<(), (&'static str, io::Error)> {
-        if let Some(size) = self.send_buffer {
-            sock.set_send_buffer_size(size)
-                .map_err(|e| ("set SO_SNDBUF", e))?;
-        }
-        if let Some(size) = self.recv_buffer {
-            sock.set_recv_buffer_size(size)
-                .map_err(|e| ("set SO_RCVBUF", e))?;
-        }
+        self.apply_buffers(&sock)?;
         sock.set_tcp_nodelay(self.nodelay)
             .map_err(|e| ("set TCP_NODELAY", e))?;
         let linger = match self.linger {
@@ -146,6 +139,41 @@ impl SocketOptions {
         if let Some(value) = linger {
             sock.set_linger(value).map_err(|e| ("set SO_LINGER", e))?;
         }
+        self.apply_ttl(&sock)?;
+        if let Some(mss) = self.mss {
+            sock.set_tcp_mss(u32::from(mss))
+                .map_err(|e| ("set TCP_MAXSEG", e))?;
+        }
+        if let Some(clamp) = self.window_clamp {
+            sys::set_window_clamp(&sock, clamp).map_err(|e| ("set TCP_WINDOW_CLAMP", e))?;
+        }
+        Ok(())
+    }
+
+    /// Applies the options that a UDP socket has, which are the buffer sizes
+    /// and the TTL. The TCP options `nodelay`, `linger`, `mss`, and
+    /// `window_clamp` do not apply and stay unused.
+    pub(crate) fn apply_datagram(
+        &self,
+        sock: SockRef<'_>,
+    ) -> Result<(), (&'static str, io::Error)> {
+        self.apply_buffers(&sock)?;
+        self.apply_ttl(&sock)
+    }
+
+    fn apply_buffers(&self, sock: &SockRef<'_>) -> Result<(), (&'static str, io::Error)> {
+        if let Some(size) = self.send_buffer {
+            sock.set_send_buffer_size(size)
+                .map_err(|e| ("set SO_SNDBUF", e))?;
+        }
+        if let Some(size) = self.recv_buffer {
+            sock.set_recv_buffer_size(size)
+                .map_err(|e| ("set SO_RCVBUF", e))?;
+        }
+        Ok(())
+    }
+
+    fn apply_ttl(&self, sock: &SockRef<'_>) -> Result<(), (&'static str, io::Error)> {
         if let Some(ttl) = self.ttl {
             if sock.domain().map_err(|e| ("get SO_DOMAIN", e))? == Domain::IPV6 {
                 sock.set_unicast_hops_v6(u32::from(ttl))
@@ -154,13 +182,6 @@ impl SocketOptions {
                 sock.set_ttl_v4(u32::from(ttl))
                     .map_err(|e| ("set IP_TTL", e))?;
             }
-        }
-        if let Some(mss) = self.mss {
-            sock.set_tcp_mss(u32::from(mss))
-                .map_err(|e| ("set TCP_MAXSEG", e))?;
-        }
-        if let Some(clamp) = self.window_clamp {
-            sys::set_window_clamp(&sock, clamp).map_err(|e| ("set TCP_WINDOW_CLAMP", e))?;
         }
         Ok(())
     }
@@ -240,6 +261,27 @@ mod tests {
         assert_eq!(ListenConfig::default().backlog, 4096);
         assert_eq!(ConnectConfig::default().local_ports, None);
         assert_eq!((opts.ttl, opts.mss, opts.window_clamp), (None, None, None));
+    }
+
+    #[test]
+    fn datagram_sockets_take_ttl_and_buffers_and_skip_tcp_options() {
+        use socket2::{Protocol, Socket, Type};
+        let opts = SocketOptions {
+            ttl: Some(64),
+            recv_buffer: Some(65_536),
+            mss: Some(1400),
+            window_clamp: Some(1 << 20),
+            linger: Linger::Abort,
+            ..SocketOptions::default()
+        };
+        let udp = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        // The TCP options would fail on a UDP socket, so success shows that
+        // apply_datagram skipped them.
+        assert!(opts.apply(SockRef::from(&udp)).is_err());
+        opts.apply_datagram(SockRef::from(&udp)).unwrap();
+        assert_eq!(udp.ttl_v4().unwrap(), 64);
+        // Linux doubles the requested size.
+        assert!(udp.recv_buffer_size().unwrap() >= 65_536);
     }
 
     #[test]

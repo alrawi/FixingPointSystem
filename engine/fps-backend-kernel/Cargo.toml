@@ -1,6 +1,6 @@
 [package]
 name = "fps-backend-kernel"
-description = "Kernel TCP transport backend of the FixingPointSystem engine, which implements SessionIo over Linux sockets"
+description = "Kernel transport backend of the FixingPointSystem engine, which implements SessionIo over TCP and DatagramIo over UDP Linux sockets"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+fps-interp = { path = "../fps-interp" }
 fps-io = { path = "../fps-io" }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
@@ -18,4 +19,5 @@ thiserror = "2"
 tokio = { version = "1", features = ["io-util", "net", "time"] }
 
 [dev-dependencies]
+fps-flow = { path = "../fps-flow" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }

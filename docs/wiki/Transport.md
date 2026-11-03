@@ -8,7 +8,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 
 | Crate | Contents | Next package |
 |---|---|---|
-| [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `Connector`, `KernelListener`, and `KernelStream`, which implement `SessionIo` over kernel TCP sockets | TRN-02 adds kernel UDP, TRN-03 the operating system profiles |
+| [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `Connector`, `KernelListener`, and `KernelStream`, which implement `SessionIo` over kernel TCP sockets, the operating system profiles of TRN-03, and `KernelDatagram`, `KernelDatagramListener`, and the two datagram openers of TRN-02, see [Kernel UDP backend](#kernel-udp-backend) | TRN-04 adds TLS |
 
 The `test-eng` target and the `rust` job of `ci.yml` run the tests of every crate under `engine/`, so the backend needs no make file or workflow of its own.
 
@@ -161,3 +161,64 @@ cargo test -p fps-backend-kernel
 ```
 
 The loopback test `os_profiles_reach_client_and_accepted_sockets` checks without root that every profile sets the TTL and MSS on client and accepted sockets.
+
+## Kernel UDP backend
+
+TRN-02 added UDP sessions to `engine/fps-backend-kernel`. The type `KernelDatagram` implements the `DatagramIo` seam of [Engine](Engine.md#udp-datagram-sessions) over a kernel UDP socket that is connected to the session peer, on the client and on the server side, so every send goes to the peer and every receive returns only its datagrams.
+
+### Client sessions
+
+`Connector::connect_datagram(source, destination)` opens a client session with the same `ConnectConfig` as TCP. It creates the socket, applies the UDP subset of `SocketOptions`, which is the buffer sizes and the TTL, sets `IP_LOCAL_PORT_RANGE` when the configuration names a range, binds the pool source address with port 0, and connects to the destination. The kernel picks the source port at bind time, and a UDP port is not shared between destinations as a TCP port with `IP_BIND_ADDRESS_NO_PORT` is, so the range bounds the concurrent sessions per source address. Connecting a UDP socket sends nothing, so the connect timeout does not apply. An address family mismatch fails with `BackendError::AddressFamily` and every other step with `BackendError::Connect`, which names the step.
+
+### Server sessions
+
+`KernelDatagramListener::bind(address, options)` binds one pool address, and `bind_datagram_pool` binds one listener per address. `accept` waits for the first datagram of a peer without an open session. It then opens a second socket on the listener address and port with `SO_REUSEADDR` and `SO_REUSEPORT`, connects it to the peer, and returns it as a `KernelDatagram` with the first datagram queued in user space for the first receive, as the contract requires. Linux delivers every later datagram of the peer to the connected socket, because a connected socket outranks the unconnected listener in the lookup of a reuse port group. A failure while opening the session socket returns `BackendError::DatagramSession` with the peer and the step, and the listener stays usable. `accept` is cancel safe, so the open timeout of the interpreter loses no datagram.
+
+Two races need care, and the backend handles both in user space.
+
+1. A datagram of the peer can reach the listener after `accept` read the first one and before the session socket connects. The listener keeps a map from peer to the queue of each open session, and after every connect it drains its own socket without blocking, so such datagrams join their session at once. A datagram of a new peer that the drain reads waits in a read ahead queue of at most 1,024 datagrams for the next `accept`.
+2. Between its bind and its connect a session socket is an unconnected member of the reuse port group, and Linux may deliver the first datagram of another peer to it. We saw this in the acceptance test, and a classic BPF reuse port program that always picks the listener does not prevent it once the group holds connected sockets. Server sessions therefore receive with the source address. A datagram of another peer is a stray, which the session hands back to its listener, and the listener opens a session for it on the next `accept`. The session drains its socket the same way right after the connect and again on close.
+
+A datagram of a peer whose session is still open always joins that session. A client that reuses the source address and port of a session that the server still holds open therefore talks to the old session, because UDP has no close that would end it. The acceptance test keeps each client socket open until the next one is bound, so the kernel cannot hand out the same port twice in a row.
+
+### Receives and errors
+
+Receives pass `MSG_TRUNC`, so a datagram longer than the buffer keeps its first bytes and returns its full length, as `DatagramIo` requires. A server session with a buffer smaller than 64 KiB peeks at the source and length first, so it never cuts a stray short. The interpreter receives into a 64 KiB scratch buffer and takes the path with one system call.
+
+A connected socket reports ICMP port unreachable as `ConnectionRefused`, which the interpreter maps to reason `connect_refused`. Linux signals that error with `EPOLLERR` alone, and the poll path of Tokio wakes a reader only on read readiness. A pending receive therefore also waits on `UdpSocket::ready(Interest::ERROR)`, which one boxed future per session holds. `try_io` takes a single interest, because Tokio masks a combined interest to an empty set.
+
+`close` and drop release the socket, and every later operation fails with `NotConnected`. `send` rejects a datagram above 65,507 bytes with `InvalidInput` before it reaches the kernel.
+
+### Interpreter openers
+
+`DatagramConnectOpener` and `DatagramAcceptOpener` implement `fps_interp::DatagramOpener`. The connect opener binds one source address and takes the destination from the rendered host, which must be an IP address, or from its server address when the program names no host. `with_port` replaces the rendered port, as the port override of the runtime does for TCP. The accept opener borrows one listener, and the listener port takes the place of the rendered port. Both map a `BackendError` to an `io::Error` of its `io_kind`. The crate now depends on `fps-interp`, which needs nothing from the backend, and the tests depend on `fps-flow`.
+
+### Unsafe code of the UDP path
+
+The module `sys` gained one function. `socket2` receives into `&mut [MaybeUninit<u8>]`, so `sys::recv_from` casts the initialized receive buffer to that type under a `SAFETY` comment and passes `MSG_TRUNC`. No other UDP code uses `unsafe`.
+
+### UDP tests
+
+| Test | What it checks |
+|---|---|
+| `ten_thousand_request_response_pairs_from_one_hundred_sources` | 10,000 sessions with one request and one response each, from 100 source addresses in 127.21.0.0/24 to one listener, with 100 sessions in flight; every reply matches its request, the server sees all 100 sources, and every source port lies in the configured range |
+| `one_session_carries_many_pairs_over_the_connected_server_socket` | 1,000 pairs over one session, so the server reads from its connected socket after the first datagram |
+| `receives_truncate_and_return_the_full_length_on_both_sides` | `MSG_TRUNC` from the user space queue, the server socket, and the client socket, and a zero length datagram |
+| `datagrams_that_race_the_session_connect_reach_the_session` | Five datagrams that wait before the first `accept` reach one session, a second peer gets its own session, each session hears only its peer, and a closed session gives way to a new one |
+| `a_closed_port_reports_connection_refused` | ICMP port unreachable wakes a pending receive with `ConnectionRefused` |
+| `close_and_oversized_sends_fail_with_their_kinds` | The 65,507 byte bound, a second `close`, and `NotConnected` after `close` |
+| `address_family_mismatch_and_pool_binding` | The family check, `bind_datagram_pool`, and a second listener in the same reuse port group |
+| `ttl_reaches_client_and_server_session_sockets` | The TTL of `SocketOptions` on client and server session sockets |
+| `the_dns_lookup_example_runs_over_kernel_sockets` | The DNS lookup example of the contract through `Session::run_datagram_program` and both openers |
+
+The file `tests/udp_loopback.rs` holds them, and the unit tests cover the queue bound of a session, the destination rules of the connect opener, and the UDP subset of `SocketOptions`. The acceptance test runs in about half a second, and it passed 50 repeated runs.
+
+### UDP limits
+
+| Limit | Reason |
+|---|---|
+| A reused five tuple joins a session that the server still holds open | UDP has no close, and the listener cannot tell a new client from the old one |
+| A stray that reaches a session socket after its close drain is lost | The window between the kernel lookup and the enqueue is a few microseconds, and we found no case in testing |
+| `MSG_TRUNC` and the stray handling work only on Linux | Other systems return only the copied bytes, which the crate does not target |
+| The listener holds at most 1,024 datagrams of new peers and each session at most 64 | Datagrams beyond them are dropped, as a full kernel queue drops them |
+| A server session socket replies from the listener address | A listener on the unspecified address would reply from the address of the route, so we bind specific pool addresses |
