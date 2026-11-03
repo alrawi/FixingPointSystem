@@ -1,0 +1,24 @@
+# want: /load/phases
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: http_smoke
+  description: Small session rate test used by spikes S1 and S4.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/lo }
+    - { name: server0, location: local/lo }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 16.0.0.0/24, count: 254 }
+    - { name: servers, port: server0, role: server, ipv4: 48.0.0.0/24, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: http1/web_get, weight: 1 }
+load:
+  objective: { type: sessions_per_second, value: 1000 }
+  phases: []
+timeline: { seed: 7 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "==", value: 0 }
