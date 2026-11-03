@@ -8,7 +8,7 @@
 | Status | ready for review |
 | Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-ctl-03-78e4, lease until 2026-11-03T13:27:37Z |
-| Last verified commit | f19ac36 |
+| Last verified commit | 98e9a1c |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -30,7 +30,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 Each step was verified with the command after it.
 
-- Steps 2 to 4. `make lint-ctl test-ctl` passes with golangci-lint and reports 0 issues. `go test -race -cover ./internal/store/` reports 93.5%.
+- Steps 2 to 4. `make lint-ctl test-ctl` passes and reports 0 golangci-lint issues, and CI passed on #97 at commit 98e9a1c. `go test -race -cover ./internal/store/` reports 93.5%.
 - The acceptance holds. `TestEveryExampleStoresAndValidates` posts every file under `contracts/examples/tests/` as YAML and as JSON, reads it back, and validates it without findings. `TestInvalidFixturesReturnAProblemNamingTheField` posts each fixture under `testdata/invalid/` and expects a 422 problem with an error at the pointer that the first line of the fixture names. `TestUnresolvedFixturesStoreAndFailValidation` does the same for the validate report with `testdata/unresolved/`.
 - Step 5. `python3 tools/plan/plan.py check`, `render --check`, and `lint` pass. The Controller page has a Configuration store section, and the log entry is under `docs/wiki/log/`.
 
@@ -78,3 +78,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | 2026-11-03T11:40Z | claude-ctl-03-78e4 | claim | none | Claimed with card 6602821433 |
 | 2026-11-03T12:05Z | claude-ctl-03-78e4 | checkpoint | f19ac36 | Store, validation, and handlers with tests |
 | 2026-11-03T12:10Z | claude-ctl-03-78e4 | finish | f19ac36 | Wiki ingested, ready for review |
+| 2026-11-03T12:20Z | claude-ctl-03-78e4 | checkpoint | 98e9a1c | Fixed a gosec G115 finding that only CI golangci-lint v2.12.2 reports, CI green |
