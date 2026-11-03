@@ -1,0 +1,15 @@
+GET / HTTP/1.1
+Host: www.example.test
+User-Agent: Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1
+Accept: text/html,application/xhtml+xml
+
+GET /static/img4380.png HTTP/1.1
+Host: www.example.test
+User-Agent: Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1
+Accept: image/avif,image/webp,image/png,*/*
+
+GET /static/img6940.png HTTP/1.1
+Host: www.example.test
+User-Agent: Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1
+Accept: image/avif,image/webp,image/png,*/*
+

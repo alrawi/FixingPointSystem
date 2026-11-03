@@ -1,0 +1,37 @@
+scenario: keepalive_browse
+description: A page view on one HTTP/1.1 keepalive connection. The page arrives in chunks, and after a think time the client fetches each embedded object with a length delimited body.
+vars:
+  host: www.example.test
+  server_port: 8080
+  page_size: 18000
+  chunk_size: 4096
+  objects: 6
+  object_size: 12000
+flows:
+  - id: browse
+    module: http1
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ http1.request('GET', '/', vars.host, accept='text/html,application/xhtml+xml') }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - expect: { pattern: "0\r\n\r\n", timeout_ms: 5000 }
+      - delay: { dist: lognormal, mu: 3.0, sigma: 0.8, unit: ms }
+      - loop:
+          count: "{{ vars.objects }}"
+          do:
+            - set: { object: "/static/img{{ rand_int(1, 9999) }}.png" }
+            - send: "{{ http1.request('GET', vars.object, vars.host, accept='image/avif,image/webp,image/png,*/*') }}"
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+            - expect: { bytes: "{{ vars.object_size }}", timeout_ms: 5000 }
+      - delay: { dist: exponential, mean_ms: 200 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "{{ http1.response(200, body=fill(vars.page_size), content_type='text/html; charset=utf-8', chunked=true, chunk_size=vars.chunk_size) }}"
+      - loop:
+          count: "{{ vars.objects }}"
+          do:
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 30000 }
+            - send: "{{ http1.response(200, body=fill(vars.object_size), content_type='image/png') }}"
+      - close: fin
