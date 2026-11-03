@@ -33,3 +33,19 @@ Each tool sits behind a protocol with a stub, so unit tests never need the real 
 | `ParserRunner` in `parsers.py` | `TsharkRunner`, `ZeekRunner` | `StubParser` |
 
 Component tests replace each program with a small fake executable that prints fixed output, so they reach every error path of the process boundary. The modules `test_ndpi_reader.py` and `test_parser_tools.py` run the real tools and skip each tool that is not installed. The `rlm` workflow installs nDPI and tshark from Ubuntu and Zeek from the package repository of the Zeek project, so CI runs every optional test. We run the checks locally with `make lint-rlm test-rlm`.
+
+## Module realism job
+
+RLM-03 added the `realism` workflow in [`.github/workflows/realism.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/.github/workflows/realism.yml), which scores fresh traffic of every native module that a pull request touches. It runs three jobs.
+
+| Job | What it does |
+|---|---|
+| `detect` | Lists the changed paths of the pull request and runs `python3 -m realism modules`, which prints a matrix of the selected modules |
+| `module` | Records a fresh capture of each selected module in the QA-01 namespace harness, scores it with nDPI, tshark, and Zeek, and uploads the capture and the report as the artifact `realism-<module>` |
+| `negative-control` | Breaks the http1 request line in its own checkout and requires the same run to exit with 1 |
+
+A native module takes part when its directory under `modules/` holds `native/Cargo.toml`, `fixtures/capture.sh`, and `fixtures/expected.yaml`. Today these are `dns` and `http1`. The capture script must accept an output directory, write `<module>.pcapng` there, and take a prebuilt peer from `FPS_FIXTURE_PEER`, as the scripts of MOD-01 and MOD-02 do. A changed path under `modules/<name>/` selects that module. A changed path under `realism/`, `engine/`, or `tests/harness/`, or a change to the root Cargo files, `mk/rlm.mk`, or the workflow, selects every module, because it can change the traffic or the score of each of them. A push to `main` also selects every module.
+
+[`realism/ci/module-realism.sh`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/ci/module-realism.sh) runs one module. It calls the capture script of the module and then scores the capture with `--parsers tshark,zeek`, so a missing parser stops the run with exit code 2 instead of passing. It writes `<module>.realism.json` next to the capture and adds one row per check to the job summary. It exits with 1 when the conformance check or the parser error check fails. We run every module locally as root with `make e2e-rlm-modules`.
+
+The negative control shows that the job can fail. [`realism/ci/negative_control.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/ci/negative_control.py) removes the space after the method, so every request starts with a line such as `GET/a HTTP/1.1`. In the first run of the job, nDPI classified none of the 120 sessions as HTTP, so the conformance ratio dropped to 0, and Zeek 9.0.1 reported one parser error in each of the 120 sessions. The same run of the unchanged modules passed both checks with tshark 4.2.2 and Zeek 9.0.1. The script exits with 2 when the renderer no longer contains the lines it edits, so a change to `modules/http1/native/src/message.rs` that moves them fails the control instead of hiding it.

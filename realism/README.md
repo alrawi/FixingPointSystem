@@ -87,3 +87,7 @@ The tests build every capture in code with [`tests/pcapgen.py`](tests/pcapgen.py
 python3 -m pip install -r realism/requirements-dev.txt
 make lint-rlm test-rlm
 ```
+
+## Module realism job
+
+`python3 -m realism modules` prints the native modules that a change set selects for the module realism job of the `realism` workflow, as a GitHub Actions matrix or with `--format names` one name per line. `--changed FILE` reads the changed paths, one per line, and `-` reads them from standard input. Without `--changed` every module is selected. [`ci/module-realism.sh`](ci/module-realism.sh) records and scores one module, [`ci/install-tools.sh`](ci/install-tools.sh) installs the tools on a runner, and [`ci/negative_control.py`](ci/negative_control.py) breaks the http1 request line for the negative control. The wiki page Realism describes the job.
