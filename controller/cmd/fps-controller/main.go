@@ -11,10 +11,11 @@
 // Settings come from three layers, where a later layer wins. The layers are the
 // built in defaults, the YAML file named by -config, and the flags that appear on
 // the command line. The process logs JSON lines to standard error, serves
-// GET /healthz and the /v1 REST API on the listen address, and serves the agent
-// gRPC service on the grpc_listen address. On SIGINT or SIGTERM it aborts the
-// open runs, ends the agent sessions, and drains in flight requests for up to
-// shutdown_timeout before it exits.
+// GET /healthz, the /v1 REST API, and the Prometheus exposition at
+// GET /metrics on the listen address, and serves the agent gRPC service on the
+// grpc_listen address. On SIGINT or SIGTERM it aborts the open runs, ends the
+// agent sessions, and drains in flight requests for up to shutdown_timeout
+// before it exits.
 //
 // Exit codes are 0 after a clean shutdown, 1 when the controller fails at run
 // time, and 2 for invalid flags or configuration.
@@ -33,6 +34,7 @@ import (
 	"syscall"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/app"
+	"github.com/alrawi/FixingPointSystem/controller/internal/metrics"
 	"github.com/alrawi/FixingPointSystem/controller/internal/wiring"
 )
 
@@ -167,10 +169,9 @@ func serve(ctx context.Context, cfg app.Config, logger *slog.Logger) (err error)
 	defer func() { err = errors.Join(err, ctl.Close()) }()
 
 	a := app.New(cfg, logger)
-	// Hook for CTL-08: here, before Mount, pass the handler of
-	// internal/metrics to ctl.SetMetrics, add its event observer with
-	// ctl.Observe, and mount the Prometheus endpoint with
-	// a.Handle("GET /metrics", ...).
+	if err := mountMetrics(a, ctl, logger); err != nil {
+		return err
+	}
 	ctl.Mount(a)
 
 	ln, err := a.Listen(ctx)
@@ -193,4 +194,19 @@ func serve(ctx context.Context, cfg app.Config, logger *slog.Logger) (err error)
 	httpErr := a.Run(runCtx, ln)
 	cancel()
 	return errors.Join(httpErr, <-grpcDone)
+}
+
+// mountMetrics creates the metrics aggregator, feeds it every agent manager
+// event, routes the run metrics operations to it, and serves the Prometheus
+// exposition at GET /metrics without a token, as scrapers expect. Call it
+// before ctl.Mount.
+func mountMetrics(a *app.App, ctl *wiring.Controller, logger *slog.Logger) error {
+	agg, err := metrics.New(metrics.Config{Logger: logger})
+	if err != nil {
+		return fmt.Errorf("create metrics aggregator: %w", err)
+	}
+	ctl.Observe(agg.Observe)
+	ctl.SetMetrics(metrics.NewAPI(agg, ctl.Runs))
+	a.Handle("GET /metrics", metrics.NewPrometheus(agg))
+	return nil
 }
