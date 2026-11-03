@@ -3,8 +3,11 @@
 package wiring
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +18,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"google.golang.org/grpc"
@@ -213,19 +217,7 @@ func TestCatalogListsLatestScenarios(t *testing.T) {
 	installExamples(t, reg)
 
 	// A second http1 version must replace the first in the catalog.
-	newer := filepath.Join(t.TempDir(), "http1")
-	if err := os.CopyFS(newer, os.DirFS(filepath.Join(examplesDir, "http1"))); err != nil {
-		t.Fatal(err)
-	}
-	manifest := filepath.Join(newer, "manifest.yaml")
-	data, err := os.ReadFile(manifest) //nolint:gosec // G304: path inside the test directory
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(manifest, []byte(strings.Replace(string(data), "version: 0.1.0", "version: 0.2.0", 1)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := reg.InstallDir(ctx, newer); err != nil {
+	if _, err := reg.Install(ctx, bytes.NewReader(bumpedArchive(t, filepath.Join(examplesDir, "http1"), "0.2.0"))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -260,6 +252,40 @@ func TestCatalogListsLatestScenarios(t *testing.T) {
 	if want := []string{"dns@0.1.0", "http1@0.1.0", "http1@0.2.0"}; !slices.Equal(names, want) {
 		t.Errorf("module summaries = %v, want %v", names, want)
 	}
+}
+
+// bumpedArchive packs the module tree in dir as a tar archive whose manifest
+// carries version in place of 0.1.0.
+func bumpedArchive(t *testing.T, dir, version string) []byte {
+	t.Helper()
+	src := os.DirFS(dir)
+	tree := fstest.MapFS{}
+	err := fs.WalkDir(src, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(src, p)
+		if err != nil {
+			return err
+		}
+		if p == "manifest.yaml" {
+			data = bytes.Replace(data, []byte("version: 0.1.0"), []byte("version: "+version), 1)
+		}
+		tree[p] = &fstest.MapFile{Data: data, Mode: 0o644}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.AddFS(tree); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 // fakeLister is a fixed agent list.
