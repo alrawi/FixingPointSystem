@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alrawi/FixingPointSystem/realism/schema/labels.schema.json",
+  "title": "FixingPointSystem realism labels",
+  "description": "Expected application labels of one capture. The first session rule that matches a session names its intended application, and default labels the sessions that no rule matches.",
+  "type": "object",
+  "required": ["labels", "version"],
+  "additionalProperties": false,
+  "properties": {
+    "labels": {"const": "fps-realism-labels"},
+    "version": {"const": 1},
+    "threshold": {
+      "description": "Conformance threshold per application. The default is 0.99.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "default": {
+      "description": "Application of sessions that no rule matches. Without it such sessions stay unlabelled and do not count.",
+      "type": "string",
+      "minLength": 1
+    },
+    "applications": {
+      "description": "Classifier protocol names that count as each application, per classifier. They replace the built in names for that application and classifier.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["application"],
+        "additionalProperties": false,
+        "properties": {
+          "application": {"type": "string", "minLength": 1},
+          "match": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "transport": {"enum": ["tcp", "udp"]},
+              "client_ip": {"type": "string"},
+              "client_port": {"type": "integer", "minimum": 0, "maximum": 65535},
+              "server_ip": {"type": "string"},
+              "server_port": {"type": "integer", "minimum": 0, "maximum": 65535}
+            }
+          }
+        }
+      }
+    }
+  }
+}

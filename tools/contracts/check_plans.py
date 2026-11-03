@@ -29,7 +29,7 @@ import validate as v
 PROTO_ROOT = v.CONTRACTS / "proto"
 AGENT_PROTO = "fps/agent/v1/agent.proto"
 PLANS = v.EXAMPLES / "plans"
-ENGINE_API = "0.1.0"
+ENGINE_API = "0.2.0"
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
@@ -167,7 +167,7 @@ def check_plan(
         if not d.get(key):
             report.error(file, f"/{key}", f"{key} is required")
     if d.get("engineApi") and not SEMVER.match(d["engineApi"]):
-        report.error(file, "/engineApi", "engineApi must be a version such as 0.1.0")
+        report.error(file, "/engineApi", "engineApi must be a version such as 0.2.0")
     elif (
         d.get("engineApi")
         and d["engineApi"].rsplit(".", 1)[0] != ENGINE_API.rsplit(".", 1)[0]

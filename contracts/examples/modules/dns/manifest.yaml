@@ -3,8 +3,8 @@ kind: Module
 name: dns
 version: 0.1.0
 type: app
-summary: DNS A record lookups over UDP.
-engine_api: ">=0.1, <0.2"
+summary: DNS lookups over UDP.
+engine_api: ">=0.2, <0.3"
 license: GPL-3.0-only
 provides:
   - { protocol: dns, transport: udp, port: 53 }
@@ -12,8 +12,25 @@ parameters:
   type: object
   properties:
     server_port: { type: integer, default: 53 }
+functions:
+  - name: query
+    summary: Query message in RFC 1035 wire format with a transaction id from the session generator.
+    params:
+      - { name: name, type: text }
+      - { name: qtype, type: text, default: A }
+  - name: answer_ip
+    summary: First address in the answer section of a response, as text.
+    params:
+      - { name: message, type: bytes }
+  - name: response
+    summary: Response to a query message that answers its first question with one address.
+    params:
+      - { name: query, type: bytes }
+      - { name: address, type: text }
+      - { name: ttl, type: int, default: 300 }
 scenarios:
   - scenarios/lookup.yaml
+  - scenarios/resolve.yaml
 provenance:
   source: specification
-  notes: Messages follow RFC 1035. The scenario sends one fixed query for www.example.test.
+  notes: Messages follow RFC 1035. The lookup scenario sends one fixed query for www.example.test, and the resolve scenario builds its messages with the module functions.

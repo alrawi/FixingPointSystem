@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Stale lease scanner and dependency promoter (OPS-03). The job runs the sweep of
+# tools/swarm/fps_swarm.py, which applies the promotion rules and then the stale
+# rule of docs/wiki/Swarm-Protocol.md. It uses only the repository token, which
+# gh reads from GH_TOKEN. A manual run with dry_run set prints the planned
+# changes and changes nothing.
+name: swarm-scan
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print the planned changes and change nothing
+        type: boolean
+        default: true
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: swarm-scan
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/swarm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Promotion sweep, then stale sweep
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FPS_REPO: ${{ github.repository }}
+          FPS_AGENT_ID: swarm-scan-${{ github.run_id }}
+          # Scheduled runs carry no inputs, so they always apply the changes.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python3 tools/swarm/fps_swarm.py sweep --dry-run
+          else
+            python3 tools/swarm/fps_swarm.py sweep
+          fi

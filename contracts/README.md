@@ -1,17 +1,16 @@
-# Contracts v0.1
+# Contracts v0.2
 
 These files define the interfaces between FixingPointSystem workstreams. Implementation work must conform to them, and changes follow the process in `CONTRIBUTING.md`.
 
 | File | Defines |
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API (OpenAPI 3.1) |
-| `schemas/module-manifest.schema.json` | Module manifest |
-| `schemas/scenario.schema.json` | Scenarios and flow program actions |
+| `schemas/module-manifest.schema.json` | Module manifest, including the template function catalog |
+| `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.2) |
 | `schemas/test-config.schema.json` | Test configuration |
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
 | `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels |
 | `metrics/catalog.schema.json` | Format of the metric catalog |
-| `examples/` | Example modules and tests that every validator run checks |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol between the controller and agents (gRPC, proto3) |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |
 | `examples/` | Example modules, tests, and agent plans that every validator run checks |
@@ -25,7 +24,7 @@ Each flow runs one session. The client side and the server side each execute the
 | `connect` | Open a session to `host:port`. Without `host`, the engine picks an address from the server pool. |
 | `accept` | Listen on `port` and accept one session. |
 | `send` | Render the template and write the bytes. |
-| `expect` | Read with one of three stop rules. `pattern` consumes through the first match. `bytes` consumes exactly N bytes. `min_bytes` waits for at least N bytes and consumes everything buffered. The default timeout is 10,000 ms. |
+| `expect` | Read with one of three stop rules. `pattern` consumes through the first match. `bytes` consumes exactly N bytes. `min_bytes` waits for at least N bytes and consumes everything buffered. The default timeout is 10,000 ms. The consumed bytes become `last`. UDP flows follow the datagram rules below. |
 | `delay` | Wait a fixed time (`ms`) or a sample from `exponential`, `uniform`, `lognormal`, or `pareto`. Lognormal parameters apply to the natural log of the delay in `unit`, which defaults to seconds. |
 | `set` | Bind scenario variables from templates. |
 | `loop` | Repeat `do` `count` times. |
@@ -34,7 +33,20 @@ Each flow runs one session. The client side and the server side each execute the
 | `close` | `fin` shuts down the write side and drains until the peer closes. `rst` aborts. `half` shuts down the write side and continues. |
 | `raw` | Write hex bytes without templating. Only `strike` and `fuzzer` modules may use it. |
 
-For UDP flows, `connect` binds the peer address, `accept` binds the port and waits for the first datagram, and `close` releases the socket.
+For UDP flows, `connect` binds the peer address, `accept` binds the port and waits for the first datagram, and `close` releases the socket. The datagram that `accept` waits for stays queued for the first `expect`.
+
+### Datagram rules for UDP
+
+A UDP flow keeps datagram boundaries. The engine applies six rules.
+
+1. Each `send` writes its rendered bytes as one datagram. A rendering longer than 65,507 bytes fails the session.
+2. Each `expect` reads exactly one datagram and consumes all of it. The engine never joins two datagrams and never leaves part of a datagram for the next `expect`.
+3. The stop rule checks that one datagram. `bytes: N` requires a datagram of exactly N bytes, `min_bytes: N` requires at least N bytes, and `pattern` requires the pattern somewhere in the datagram. A datagram that breaks the rule fails the session with reason `pattern_mismatch`.
+4. `max_datagram` sets the largest datagram that the `expect` accepts, from 1 to 65,507 bytes with a default of 65,507. A longer datagram fails the session with reason `pattern_mismatch`, and the engine never truncates it silently. The validator rejects `max_datagram` on TCP flows, and on UDP flows it rejects a fixed `bytes`, `min_bytes`, or pattern length that exceeds the limit.
+5. `timeout_ms` bounds the wait for that one datagram. A protocol that answers with several datagrams reads them with one `expect` each, for example inside a `loop`.
+6. A session receives only datagrams from its peer. The client socket connects to the peer address, and the server session binds to the source address of the first datagram, so datagrams from other sources belong to other sessions. The engine does not reorder, deduplicate, or retransmit datagrams.
+
+The engine reads datagrams into one scratch buffer per worker and copies a datagram into the session only when a template of that side refers to `last`, so the limit costs no memory per session.
 
 ## Metric catalog
 
@@ -60,24 +72,73 @@ The OpenAPI document names the metric behind a response field with the `x-fps-me
 
 ## Template grammar
 
-A template is a string with zero or more `{{ expression }}` placeholders. Contract v0.1 defines the core grammar below. Module helper functions such as `http1.request(...)` are template functions that a module extension exports through `extension/fps-extension.wit`. The template syntax for calling them, including keyword arguments, arrives in contract v0.2 (CON-04).
+A template is a string with zero or more `{{ expression }}` placeholders. The engine copies text outside placeholders byte for byte. Scenario contract v0.2 extends the v0.1 grammar with module function calls, keyword arguments, nested calls, float and boolean literals, and the reference `last`. Every v0.1 template keeps its meaning.
 
 ```
-expression := reference | call | literal
-reference  := ident ("." ident)*          # vars.host, session.id
-call       := ident "(" [arg ("," arg)*] ")"
-arg        := reference | literal
-literal    := integer | 'single quoted string'
+template   := { text | "{{" expression "}}" }
+expression := literal | reference | call
+reference  := "last" | "vars" "." ident | "session" "." ident
+call       := name "(" [ arguments ] ")"
+name       := ident | module "." ident
+arguments  := positional { "," positional } { "," keyword } | keyword { "," keyword }
+positional := expression
+keyword    := ident "=" expression
+literal    := integer | float | string | "true" | "false"
+integer    := [ "-" ] digit { digit }
+float      := [ "-" ] digit { digit } "." digit { digit }
+string     := "'" { any character except "'" } "'"
+ident      := ( letter | "_" ) { letter | digit | "_" }
 ```
 
-| Name | Value |
-|---|---|
-| `vars.<name>` | Scenario variable, after test parameter overrides |
-| `session.id` | Session sequence number within the run |
-| `session.flow` | Flow id |
-| `fill(n)` | n printable bytes from a seeded generator |
-| `hex(s)` | Bytes decoded from the hexadecimal string s |
-| `rand_int(a, b)` | Uniform integer in [a, b] from the seeded generator |
+The grammar has five further rules.
+
+1. A placeholder ends at the first `}}`, so a string literal cannot contain `}}` or a single quote. Strings have no escape sequences. Binary content comes from `hex(s)`.
+2. Positional arguments come before keyword arguments, and a keyword names each parameter at most once. A trailing comma is a syntax error.
+3. Arguments may be calls, so `http1.response(200, body=fill(vars.size))` is valid. Calls nest at most 8 levels deep.
+4. A function name with a module prefix calls a template function of that module. The module must be the module that ships the scenario or a module in its `requires` list. Core functions have no prefix.
+5. The module names `vars`, `session`, `last`, `true`, and `false` are reserved, because a template could not tell them apart from references and literals.
+
+| Name | Type | Value |
+|---|---|---|
+| `vars.<name>` | type of the variable | Scenario variable, after test parameter overrides |
+| `session.id` | int | Session sequence number within the run |
+| `session.flow` | text | Flow id |
+| `last` | bytes | The bytes that the previous `expect` of the same side consumed |
+| `fill(n)` | text | n printable bytes from a seeded generator |
+| `hex(s)` | bytes | Bytes decoded from the hexadecimal string s |
+| `rand_int(a, b)` | int | Uniform integer in [a, b] from the seeded generator |
+| `<module>.<name>(...)` | bytes | The bytes that the module's `render` hook returns |
+
+### Module calls
+
+A call such as `dns.query(name=vars.host, qtype='A')` renders through the `render` hook of the module extension, which `extension/fps-extension.wit` defines. The engine passes the function name without the module prefix, the positional arguments in call order, and the keyword arguments in call order. The rendered bytes replace the placeholder in a `send` template. A `set` action parses them as text with the rules of a command line override.
+
+Core functions accept keyword arguments with the parameter names in the table above, so `fill(n=16)` equals `fill(16)`.
+
+### The reference `last`
+
+`last` holds every byte that the most recent `expect` of the same side consumed. A `pattern` expect includes the match, a `bytes` expect holds exactly N bytes, a `min_bytes` expect holds everything it consumed, and on UDP `last` holds the whole datagram. Each `expect` replaces `last`. A side never sees the `last` of the other side, and `last` does not carry into a spawned flow or a flow that runs `after` this one. A `set` action copies a value out of `last` into a variable that later flows read.
+
+A template may refer to `last` only when an `expect` always runs earlier on the same side. The validator checks this rule in document order. An `expect` inside a `loop` counts after the loop only when `count` is a positive integer literal, and an `expect` inside a `branch` counts after the branch only when every arm contains one.
+
+### Types
+
+Values carry one of the types `int`, `float`, `boolean`, `text`, and `bytes`, and a parameter may also take `any`. These names match the `value-type` enum of the extension interface. A variable takes the type of its value under `vars`. A variable that only a `set` action binds has type `any`, because its value depends on the rendered text. An argument binds a parameter of the same type, a `float` parameter also takes an `int`, a `bytes` parameter also takes `text`, and `any` on either side matches everything. A module call result is `bytes`, so it reaches a `text` or `int` parameter only through a variable that a `set` action binds.
+
+### Template function catalog
+
+The validator checks module calls without running extension code. Each module manifest lists its template functions under `functions`, with the same names, parameters, types, and defaults as the `functions` export of its extension. The validator reads that list and reports an unknown function, a missing required parameter, an unknown or repeated keyword, too many positional arguments, and an argument whose type cannot bind its parameter. When the manifest of a required module is not available, the validator reports a warning and leaves the call unchecked.
+
+```yaml
+functions:
+  - name: query
+    summary: Query message in RFC 1035 wire format with a transaction id from the session generator.
+    params:
+      - { name: name, type: text }
+      - { name: qtype, type: text, default: A }
+```
+
+A parameter without `default` is required. A `bytes` default is a string of hexadecimal digit pairs. A manifest that declares `functions` together with an `extension` must list the `render` hook. When the engine loads a module, it compares the manifest catalog with the result of `functions` and rejects the module when the two differ in any function name, parameter name, parameter order, type, or default. The manifest is therefore the single catalog that scenario authors, the validator, and the controller read, and the extension only confirms it.
 
 ## Validation
 
@@ -91,8 +152,7 @@ cargo install wasm-tools --locked
 wasm-tools component wit contracts/extension/fps-extension.wit
 ```
 
-The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax, scenario references in mixes, host pool sizes, and port references. The metric rules check that catalog names and labels are unique and declared, that formulas refer to catalog counters and gauges, and that every metric in test criteria and in `x-fps-metric` annotations exists in the catalog.
-The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax, scenario references in mixes, host pool sizes, and port references.
+The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax and argument types, module calls against the manifest function catalog, the precedence rule of `last`, the UDP datagram rules, scenario references in mixes, host pool sizes, and port references. The metric rules check that catalog names and labels are unique and declared, that formulas refer to catalog counters and gauges, and that every metric in test criteria and in `x-fps-metric` annotations exists in the catalog.
 
 The plan checker validates the agent plans in `examples/plans/`. It needs the protobuf packages in `tools/contracts/requirements-proto.txt`, and CI runs it in the `proto` job together with `buf lint` and `buf breaking`.
 

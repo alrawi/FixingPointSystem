@@ -1,0 +1,7 @@
+scenario: bad_close
+flows:
+  - id: a
+    module: m
+    client:
+      - connect: { port: 1 }
+      - close: sideways

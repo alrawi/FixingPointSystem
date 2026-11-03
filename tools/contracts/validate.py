@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate FixingPointSystem contracts and examples (contract v0.1).
+"""Validate FixingPointSystem contracts and examples (scenario contract v0.2).
 
 The validator runs JSON Schema checks and the semantic rules that JSON Schema
 cannot express. It exits with status 1 when any finding has severity error.
@@ -27,8 +27,6 @@ METRICS = CONTRACTS / "metrics"
 CATALOG = METRICS / "catalog.yaml"
 CATALOG_SCHEMA = METRICS / "catalog.schema.json"
 
-CORE_FUNCTIONS = {"fill": 1, "hex": 1, "rand_int": 2}
-SESSION_FIELDS = {"id", "flow"}
 RESERVED_ACTION_TYPES = {"raw": {"strike", "fuzzer"}}
 
 # Statistics that a metric reference may append to a histogram name, as in
@@ -206,15 +204,54 @@ def default_catalog() -> MetricCatalog:
 
 
 # ---------------------------------------------------------------------------
-# Template grammar
+# Template grammar (scenario contract v0.2)
 # ---------------------------------------------------------------------------
 
 PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}", re.S)
-IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
-REFERENCE = re.compile(rf"^{IDENT}(?:\.{IDENT})*$")
-CALL = re.compile(rf"^({IDENT}(?:\.{IDENT})?)\s*\((.*)\)$", re.S)
-INTEGER = re.compile(r"^-?\d+$")
-STRING = re.compile(r"^'[^']*'$")
+IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+HEX_RE = re.compile(r"(?:[0-9a-fA-F]{2})*")
+
+# Value types of template values and function parameters. They match the
+# value-type enum of contracts/extension/fps-extension.wit.
+VALUE_TYPES = ("int", "float", "boolean", "text", "bytes", "any")
+
+# Template roots that are not module names. A module may not take one of
+# these names, because a template could not tell the two apart.
+RESERVED_ROOTS = {"vars", "session", "last", "true", "false"}
+
+# Calls may nest at most this deep, counting the outermost call as 1.
+MAX_CALL_DEPTH = 8
+
+SESSION_FIELDS = {"id": "int", "flow": "text"}
+
+
+@dataclass(frozen=True)
+class Param:
+    name: str
+    type: str
+    required: bool = True
+
+
+@dataclass(frozen=True)
+class FunctionSig:
+    """Signature of one template function. Every call renders bytes, except
+    that core functions declare their own result type."""
+
+    name: str
+    params: tuple[Param, ...]
+    result: str = "bytes"
+
+
+CORE_FUNCTIONS: dict[str, FunctionSig] = {
+    "fill": FunctionSig("fill", (Param("n", "int"),), "text"),
+    "hex": FunctionSig("hex", (Param("s", "text"),), "bytes"),
+    "rand_int": FunctionSig("rand_int", (Param("a", "int"), Param("b", "int")), "int"),
+}
+
+# Upper bound of the UDP payload over IPv4, and the default datagram limit of
+# an expect on a UDP flow.
+MAX_DATAGRAM = 65507
 
 
 @dataclass
@@ -223,83 +260,307 @@ class TemplateIssue:
     message: str
 
 
-def _split_args(text: str) -> list[str]:
-    args, depth, cur, quote = [], 0, "", False
-    for ch in text:
-        if ch == "'":
-            quote = not quote
-        if ch == "," and not quote and depth == 0:
-            args.append(cur.strip())
-            cur = ""
-            continue
-        if not quote:
-            depth += ch == "("
-            depth -= ch == ")"
-        cur += ch
-    if cur.strip():
-        args.append(cur.strip())
-    return args
+class TemplateSyntaxError(ValueError):
+    """A placeholder that the v0.2 grammar cannot parse."""
 
 
-def check_expression(expr: str, var_names: set[str]) -> list[TemplateIssue]:
-    expr = expr.strip()
-    issues: list[TemplateIssue] = []
-    if not expr:
-        return [TemplateIssue("error", "empty placeholder")]
-    if INTEGER.match(expr) or STRING.match(expr):
-        return issues
-    call = CALL.match(expr)
-    if call:
-        name, raw_args = call.group(1), call.group(2)
-        args = _split_args(raw_args)
-        if "." in name:
-            issues.append(TemplateIssue(
-                "warning", f"helper '{name}' requires a module extension, which contract v0.1 does not define"))
-        elif name not in CORE_FUNCTIONS:
-            issues.append(TemplateIssue("error", f"unknown function '{name}'"))
-        elif len(args) != CORE_FUNCTIONS[name]:
-            issues.append(TemplateIssue(
-                "error", f"function '{name}' takes {CORE_FUNCTIONS[name]} argument(s), got {len(args)}"))
-        for arg in args:
-            if INTEGER.match(arg) or STRING.match(arg):
-                continue
-            if REFERENCE.match(arg):
-                issues.extend(check_reference(arg, var_names))
-            else:
-                issues.append(TemplateIssue("error", f"invalid argument '{arg}'"))
-        if name == "hex" and len(args) == 1 and STRING.match(args[0]):
-            value = args[0][1:-1]
-            if not re.fullmatch(r"(?:[0-9a-fA-F]{2})*", value):
-                issues.append(TemplateIssue("error", "hex() needs an even number of hexadecimal digits"))
-        return issues
-    if REFERENCE.match(expr):
-        return check_reference(expr, var_names)
-    return [TemplateIssue("error", f"cannot parse expression '{expr}'")]
+@dataclass
+class Lit:
+    type: str
+    value: Any
 
 
-def check_reference(ref: str, var_names: set[str]) -> list[TemplateIssue]:
-    parts = ref.split(".")
-    if parts[0] == "vars":
+@dataclass
+class Ref:
+    parts: list[str]
+
+
+@dataclass
+class Call:
+    module: str | None
+    name: str
+    positional: list[Any]
+    keywords: list[tuple[str, Any]]
+
+    @property
+    def qualified(self) -> str:
+        return f"{self.module}.{self.name}" if self.module else self.name
+
+
+@dataclass
+class TemplateScope:
+    """What a template may refer to at one point of a flow program.
+
+    vars maps every visible variable to its value type, or to 'any' when only
+    a run time value fixes the type. modules maps each callable module to its
+    function catalog, or to None when its manifest is not available. A scope
+    whose modules is None leaves module calls unchecked. last is True when an
+    expect earlier on the same side always runs before this point.
+    """
+
+    vars: dict[str, str] = field(default_factory=dict)
+    modules: dict[str, dict[str, FunctionSig] | None] | None = None
+    module_name: str | None = None
+    last: bool = True
+
+
+def _tokenize(text: str) -> list[tuple[str, str]]:
+    tokens: list[tuple[str, str]] = []
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch.isspace():
+            i += 1
+        elif ch in "().,=":
+            tokens.append((ch, ch))
+            i += 1
+        elif ch == "'":
+            end = text.find("'", i + 1)
+            if end < 0:
+                raise TemplateSyntaxError("unterminated string literal")
+            tokens.append(("str", text[i + 1:end]))
+            i = end + 1
+        elif (m := NUMBER_RE.match(text, i)) and (ch != "-" or m.end() > i + 1):
+            kind = "float" if "." in m.group() else "int"
+            tokens.append((kind, m.group()))
+            i = m.end()
+        elif m := IDENT_RE.match(text, i):
+            tokens.append(("ident", m.group()))
+            i = m.end()
+        else:
+            raise TemplateSyntaxError(f"unexpected character '{ch}'")
+    return tokens
+
+
+class _Parser:
+    def __init__(self, text: str):
+        self.tokens = _tokenize(text)
+        self.pos = 0
+
+    def peek(self, offset: int = 0) -> str | None:
+        j = self.pos + offset
+        return self.tokens[j][0] if j < len(self.tokens) else None
+
+    def take(self, kind: str) -> str:
+        if self.peek() != kind:
+            got = self.tokens[self.pos][1] if self.pos < len(self.tokens) else "end of expression"
+            raise TemplateSyntaxError(f"expected '{kind}', got '{got}'")
+        value = self.tokens[self.pos][1]
+        self.pos += 1
+        return value
+
+    def parse(self) -> Any:
+        node = self.expression(1)
+        if self.peek() is not None:
+            raise TemplateSyntaxError(f"unexpected '{self.tokens[self.pos][1]}'")
+        return node
+
+    def expression(self, depth: int) -> Any:
+        kind = self.peek()
+        if kind in ("int", "float"):
+            text = self.take(kind)
+            return Lit(kind, int(text) if kind == "int" else float(text))
+        if kind == "str":
+            return Lit("text", self.take("str"))
+        if kind != "ident":
+            raise TemplateSyntaxError("expected a literal, a reference, or a call")
+        first = self.take("ident")
+        if first in ("true", "false") and self.peek() not in (".", "("):
+            return Lit("boolean", first == "true")
+        parts = [first]
+        while self.peek() == ".":
+            self.take(".")
+            parts.append(self.take("ident"))
+        if self.peek() != "(":
+            return Ref(parts)
+        if len(parts) > 2:
+            raise TemplateSyntaxError(f"'{'.'.join(parts)}' is not a function name; use <module>.<function>")
+        if depth > MAX_CALL_DEPTH:
+            raise TemplateSyntaxError(f"calls nest deeper than {MAX_CALL_DEPTH} levels")
+        self.take("(")
+        call = Call(parts[0] if len(parts) == 2 else None, parts[-1], [], [])
+        if self.peek() != ")":
+            while True:
+                if self.peek() == "ident" and self.peek(1) == "=":
+                    name = self.take("ident")
+                    self.take("=")
+                    call.keywords.append((name, self.expression(depth + 1)))
+                elif call.keywords:
+                    raise TemplateSyntaxError("a positional argument follows a keyword argument")
+                else:
+                    call.positional.append(self.expression(depth + 1))
+                if self.peek() != ",":
+                    break
+                self.take(",")
+        self.take(")")
+        return call
+
+
+def parse_expression(text: str) -> Any:
+    """Parse one placeholder expression into Lit, Ref, and Call nodes."""
+    return _Parser(text).parse()
+
+
+def compatible(param_type: str, arg_type: str) -> bool:
+    """Whether a value of arg_type may bind a parameter of param_type."""
+    if "any" in (param_type, arg_type) or param_type == arg_type:
+        return True
+    return (param_type, arg_type) in {("float", "int"), ("bytes", "text")}
+
+
+def value_type(value: Any) -> str:
+    """Type of a scenario variable value as YAML loads it."""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    return "text"
+
+
+def _check_reference(ref: Ref, scope: TemplateScope, issues: list[TemplateIssue]) -> str:
+    parts, text = ref.parts, ".".join(ref.parts)
+    root = parts[0]
+    if root == "vars":
         if len(parts) != 2:
-            return [TemplateIssue("error", f"'{ref}' must have the form vars.<name>")]
-        if parts[1] not in var_names:
-            return [TemplateIssue("error", f"undefined variable '{parts[1]}'")]
-        return []
-    if parts[0] == "session":
+            issues.append(TemplateIssue("error", f"'{text}' must have the form vars.<name>"))
+            return "any"
+        if parts[1] not in scope.vars:
+            issues.append(TemplateIssue("error", f"undefined variable '{parts[1]}'"))
+            return "any"
+        return scope.vars[parts[1]]
+    if root == "session":
         if len(parts) != 2 or parts[1] not in SESSION_FIELDS:
-            return [TemplateIssue("error", f"unknown session field in '{ref}'")]
-        return []
-    return [TemplateIssue("error", f"unknown reference root '{parts[0]}'")]
+            issues.append(TemplateIssue("error", f"unknown session field in '{text}'"))
+            return "any"
+        return SESSION_FIELDS[parts[1]]
+    if root == "last":
+        if len(parts) != 1:
+            issues.append(TemplateIssue("error", f"'last' has no fields, got '{text}'"))
+        elif not scope.last:
+            issues.append(TemplateIssue(
+                "error", "'last' needs an expect that always runs earlier on the same side"))
+        return "bytes"
+    if scope.modules is not None and root in scope.modules:
+        issues.append(TemplateIssue("error", f"'{text}' names a module function; call it with parentheses"))
+        return "any"
+    issues.append(TemplateIssue("error", f"unknown reference root '{root}'"))
+    return "any"
 
 
-def check_template(text: str, var_names: set[str]) -> list[TemplateIssue]:
+def _resolve_call(call: Call, scope: TemplateScope, issues: list[TemplateIssue]) -> FunctionSig | None:
+    if call.module is None:
+        sig = CORE_FUNCTIONS.get(call.name)
+        if sig is None:
+            issues.append(TemplateIssue("error", f"unknown function '{call.name}'"))
+        return sig
+    if scope.modules is None:
+        return None
+    if call.module not in scope.modules:
+        issues.append(TemplateIssue(
+            "error", f"module '{call.module}' is neither '{scope.module_name}' nor a required module"))
+        return None
+    catalog = scope.modules[call.module]
+    if catalog is None:
+        issues.append(TemplateIssue(
+            "warning", f"cannot check '{call.qualified}', the manifest of module '{call.module}' is not available"))
+        return None
+    sig = catalog.get(call.name)
+    if sig is None:
+        issues.append(TemplateIssue(
+            "error", f"module '{call.module}' declares no template function '{call.name}' in its manifest"))
+    return sig
+
+
+def _check_call(call: Call, scope: TemplateScope, issues: list[TemplateIssue]) -> str:
+    sig = _resolve_call(call, scope, issues)
+    arg_types = [(None, _check_node(a, scope, issues), a) for a in call.positional]
+    arg_types += [(k, _check_node(a, scope, issues), a) for k, a in call.keywords]
+    if sig is None:
+        return "bytes" if call.module else "any"
+    params = {p.name: p for p in sig.params}
+    bound: dict[str, tuple[str, Any]] = {}
+    if len(call.positional) > len(sig.params):
+        issues.append(TemplateIssue(
+            "error", f"function '{call.qualified}' takes at most {len(sig.params)} positional argument(s), "
+                     f"got {len(call.positional)}"))
+    for param, (_, typ, node) in zip(sig.params, arg_types[:len(call.positional)]):
+        bound[param.name] = (typ, node)
+    for name, typ, node in arg_types[len(call.positional):]:
+        if name not in params:
+            issues.append(TemplateIssue("error", f"function '{call.qualified}' has no parameter '{name}'"))
+        elif name in bound:
+            issues.append(TemplateIssue("error", f"function '{call.qualified}' got parameter '{name}' twice"))
+        else:
+            bound[name] = (typ, node)
+    for param in sig.params:
+        if param.name not in bound:
+            if param.required:
+                issues.append(TemplateIssue(
+                    "error", f"function '{call.qualified}' misses required parameter '{param.name}'"))
+            continue
+        typ, node = bound[param.name]
+        if not compatible(param.type, typ):
+            issues.append(TemplateIssue(
+                "error", f"parameter '{param.name}' of '{call.qualified}' takes {param.type}, got {typ}"))
+    if call.qualified == "hex" and "s" in bound:
+        node = bound["s"][1]
+        if isinstance(node, Lit) and node.type == "text" and not HEX_RE.fullmatch(node.value):
+            issues.append(TemplateIssue("error", "hex() needs an even number of hexadecimal digits"))
+    return sig.result
+
+
+def _check_node(node: Any, scope: TemplateScope, issues: list[TemplateIssue]) -> str:
+    if isinstance(node, Lit):
+        return node.type
+    if isinstance(node, Ref):
+        return _check_reference(node, scope, issues)
+    return _check_call(node, scope, issues)
+
+
+def check_expression(expr: str, scope: TemplateScope | set[str] | dict[str, str]) -> list[TemplateIssue]:
+    """Check one placeholder expression and return its issues."""
+    scope = _as_scope(scope)
+    if not expr.strip():
+        return [TemplateIssue("error", "empty placeholder")]
+    try:
+        node = parse_expression(expr)
+    except TemplateSyntaxError as exc:
+        return [TemplateIssue("error", f"cannot parse expression '{expr.strip()}': {exc}")]
+    issues: list[TemplateIssue] = []
+    _check_node(node, scope, issues)
+    return issues
+
+
+def _as_scope(scope: TemplateScope | set[str] | dict[str, str]) -> TemplateScope:
+    if isinstance(scope, TemplateScope):
+        return scope
+    if isinstance(scope, dict):
+        return TemplateScope(vars=dict(scope))
+    return TemplateScope(vars={name: "any" for name in scope})
+
+
+def check_template(text: str, scope: TemplateScope | set[str] | dict[str, str]) -> list[TemplateIssue]:
+    """Check every placeholder of a template. A bare set of names gives every
+    variable the type any and leaves module calls unchecked."""
+    scope = _as_scope(scope)
     issues: list[TemplateIssue] = []
     stripped = PLACEHOLDER.sub("", text)
     if "{{" in stripped or "}}" in stripped:
         issues.append(TemplateIssue("error", "unbalanced '{{' or '}}'"))
     for m in PLACEHOLDER.finditer(text):
-        issues.extend(check_expression(m.group(1), var_names))
+        issues.extend(check_expression(m.group(1), scope))
     return issues
+
+
+def function_catalog(manifest: dict) -> dict[str, FunctionSig]:
+    """Build the template function catalog that a module manifest declares."""
+    catalog: dict[str, FunctionSig] = {}
+    for fn in manifest.get("functions", []) or []:
+        params = tuple(Param(p["name"], p["type"], "default" not in p) for p in fn.get("params", []))
+        catalog[fn["name"]] = FunctionSig(fn["name"], params)
+    return catalog
 
 
 # ---------------------------------------------------------------------------
@@ -334,15 +595,53 @@ def _template_fields(kind: str, body: Any) -> Iterable[tuple[str, str]]:
                 yield key, value
 
 
-def check_scenario(doc: dict, file: Path, report: Report, module: dict | None = None) -> None:
+def _check_side_templates(actions: list, path: list, scope: TemplateScope, seen: bool,
+                          file: Path, report: Report) -> bool:
+    """Check the templates of one action list in order and return whether an
+    expect always ran by its end. A loop body may run zero times unless its
+    count is a positive integer, and a branch guarantees an expect only when
+    every arm does."""
+    for i, action in enumerate(actions or []):
+        if not isinstance(action, dict) or len(action) != 1:
+            continue
+        (kind, body), = action.items()
+        here = path + [i, kind]
+        scope.last = seen
+        for key, text in _template_fields(kind, body):
+            for issue in check_template(text, scope):
+                report.add(issue.severity, file, _pointer(here + ([key] if key else [])), issue.message)
+        if kind == "expect":
+            seen = True
+        elif kind == "loop" and isinstance(body, dict):
+            inner = _check_side_templates(body.get("do", []), here + ["do"], scope, seen, file, report)
+            count = body.get("count")
+            runs = isinstance(count, int) and not isinstance(count, bool) and count >= 1
+            seen = seen or (inner and runs)
+        elif kind == "branch" and isinstance(body, list):
+            arms = [_check_side_templates(arm.get("do", []), here + [j, "do"], scope, seen, file, report)
+                    for j, arm in enumerate(body) if isinstance(arm, dict)]
+            seen = seen or (bool(arms) and all(arms))
+    return seen
+
+
+def check_scenario(doc: dict, file: Path, report: Report, module: dict | None = None,
+                   manifests: dict[str, dict] | None = None) -> None:
+    """Check the semantic rules of one scenario.
+
+    module is the manifest of the module that ships the scenario. manifests
+    maps module names to manifests and supplies the function catalogs of
+    required modules. Without module, module calls stay unchecked.
+    """
     flows = doc.get("flows", [])
-    var_names = set((doc.get("vars") or {}).keys())
+    var_types = {name: value_type(value) for name, value in (doc.get("vars") or {}).items()}
     # Variables bound by `set` actions are also visible to later templates.
+    # Their type depends on the rendered text, so the validator treats it as any.
     for flow in flows:
         for side in ("client", "server"):
             for _, kind, body in _walk_actions(flow.get(side, []), []):
                 if kind == "set" and isinstance(body, dict):
-                    var_names.update(body.keys())
+                    for name in body:
+                        var_types[name] = "any" if name not in var_types else var_types[name]
 
     ids = [f.get("id") for f in flows]
     seen: set[str] = set()
@@ -355,6 +654,13 @@ def check_scenario(doc: dict, file: Path, report: Report, module: dict | None = 
     module_name = (module or {}).get("name")
     module_type = (module or {}).get("type")
     allowed_modules = {module_name} | {r.get("module") for r in (module or {}).get("requires", [])}
+
+    callable_modules: dict[str, dict[str, FunctionSig] | None] | None = None
+    if module is not None:
+        known = dict(manifests or {})
+        known[module_name] = module
+        callable_modules = {name: (function_catalog(known[name]) if name in known else None)
+                            for name in allowed_modules}
 
     deps: dict[str, list[str]] = {}
     spawned_targets: set[str] = set()
@@ -375,6 +681,7 @@ def check_scenario(doc: dict, file: Path, report: Report, module: dict | None = 
             actions = flow.get(side)
             if actions and not (isinstance(actions[0], dict) and opener in actions[0]):
                 report.error(file, f"/flows/{i}/{side}/0", f"{side} actions must start with '{opener}'")
+        udp = flow.get("l4", "tcp") == "udp"
         for side in ("client", "server"):
             for path, kind, body in _walk_actions(flow.get(side, []), ["flows", i, side]):
                 if kind == "spawn" and isinstance(body, dict):
@@ -394,9 +701,10 @@ def check_scenario(doc: dict, file: Path, report: Report, module: dict | None = 
                 if kind in RESERVED_ACTION_TYPES and module_type not in RESERVED_ACTION_TYPES[kind]:
                     report.error(file, _pointer(path),
                                  f"'{kind}' is reserved for module types {sorted(RESERVED_ACTION_TYPES[kind])}")
-                for key, text in _template_fields(kind, body):
-                    for issue in check_template(text, var_names):
-                        report.add(issue.severity, file, _pointer(path + ([key] if key else [])), issue.message)
+                if kind == "expect" and isinstance(body, dict):
+                    _check_expect(body, udp, path, file, report)
+            scope = TemplateScope(vars=var_types, modules=callable_modules, module_name=module_name)
+            _check_side_templates(flow.get(side, []), ["flows", i, side], scope, False, file, report)
 
     for i, flow in enumerate(flows):
         if flow.get("spawned") and flow.get("id") not in spawned_targets:
@@ -422,6 +730,25 @@ def check_scenario(doc: dict, file: Path, report: Report, module: dict | None = 
             visit(fid, [fid])
 
 
+def _check_expect(body: dict, udp: bool, path: list, file: Path, report: Report) -> None:
+    """Datagram rules for expect. On UDP one expect consumes one datagram, so
+    a fixed size rule must fit within max_datagram."""
+    if not udp:
+        if "max_datagram" in body:
+            report.error(file, _pointer(path + ["max_datagram"]), "max_datagram applies only to UDP flows")
+        return
+    limit = body.get("max_datagram", MAX_DATAGRAM)
+    for key in ("bytes", "min_bytes"):
+        size = body.get(key)
+        if isinstance(size, int) and not isinstance(size, bool) and size > limit:
+            report.error(file, _pointer(path + [key]),
+                         f"{key} {size} exceeds the datagram limit of {limit} bytes")
+    pattern = body.get("pattern")
+    if isinstance(pattern, str) and len(pattern.encode()) > limit:
+        report.error(file, _pointer(path + ["pattern"]),
+                     f"pattern is longer than the datagram limit of {limit} bytes")
+
+
 # ---------------------------------------------------------------------------
 # Module checks
 # ---------------------------------------------------------------------------
@@ -430,6 +757,10 @@ def check_scenario(doc: dict, file: Path, report: Report, module: dict | None = 
 class ModuleIndex:
     manifests: dict[str, dict] = field(default_factory=dict)
     scenarios: dict[str, dict[str, dict]] = field(default_factory=dict)
+    # Scenarios that passed the schema, as (module name, path, doc). Their
+    # semantic checks wait until every manifest is loaded, so calls into a
+    # required module find its function catalog.
+    pending: list[tuple[str, Path, dict]] = field(default_factory=list)
 
     def resolve(self, ref: str) -> tuple[str, dict] | None | str:
         """Return (module, scenario doc), None when missing, or 'ambiguous'."""
@@ -459,9 +790,12 @@ def check_module_dir(mod_dir: Path, report: Report, index: ModuleIndex) -> None:
     index.manifests[name] = manifest
     index.scenarios.setdefault(name, {})
 
+    if name in RESERVED_ROOTS:
+        report.error(manifest_path, "/name", f"module name '{name}' is reserved for template references")
     for i, req in enumerate(manifest.get("requires", [])):
         if req["module"] == name:
             report.error(manifest_path, f"/requires/{i}", "module requires itself")
+    check_functions(manifest, manifest_path, report)
     if "parameters" in manifest:
         try:
             Draft202012Validator.check_schema(manifest["parameters"])
@@ -488,7 +822,58 @@ def check_module_dir(mod_dir: Path, report: Report, index: ModuleIndex) -> None:
         if sname in index.scenarios[name]:
             report.error(spath, "/scenario", f"duplicate scenario '{sname}' in module '{name}'")
         index.scenarios[name][sname] = doc
-        check_scenario(doc, spath, report, manifest)
+        index.pending.append((name, spath, doc))
+
+
+def check_index_scenarios(index: ModuleIndex, report: Report) -> None:
+    """Run the semantic checks of every scenario that check_module_dir loaded."""
+    for name, spath, doc in index.pending:
+        check_scenario(doc, spath, report, index.manifests[name], index.manifests)
+    index.pending.clear()
+
+
+def check_functions(manifest: dict, path: Path, report: Report) -> None:
+    """Check the template function catalog of a manifest.
+
+    The validator never runs extension code. It checks scenario calls against
+    this catalog, and the engine rejects a module whose extension returns a
+    different catalog from functions() at load time.
+    """
+    functions = manifest.get("functions") or []
+    hooks = (manifest.get("extension") or {}).get("hooks", [])
+    if functions and manifest.get("extension") and "render" not in hooks:
+        report.error(path, "/extension/hooks", "a module that declares functions must list the render hook")
+    if "render" in hooks and not functions:
+        report.warning(path, "/extension/hooks", "the render hook is listed but the manifest declares no functions")
+    names: set[str] = set()
+    for i, fn in enumerate(functions):
+        where = f"/functions/{i}"
+        if fn["name"] in names:
+            report.error(path, where + "/name", f"duplicate function '{fn['name']}'")
+        names.add(fn["name"])
+        params: set[str] = set()
+        for j, param in enumerate(fn.get("params", [])):
+            pwhere = f"{where}/params/{j}"
+            if param["name"] in params:
+                report.error(path, pwhere + "/name", f"duplicate parameter '{param['name']}' of '{fn['name']}'")
+            params.add(param["name"])
+            if "default" in param:
+                problem = _default_problem(param["type"], param["default"])
+                if problem:
+                    report.error(path, pwhere + "/default", problem)
+
+
+def _default_problem(typ: str, default: Any) -> str | None:
+    if typ == "any":
+        return None
+    if typ == "bytes":
+        if isinstance(default, str) and HEX_RE.fullmatch(default):
+            return None
+        return "a bytes default must be a string of hexadecimal digit pairs"
+    actual = value_type(default)
+    if compatible(typ, actual):
+        return None
+    return f"default of type {actual} does not match parameter type {typ}"
 
 
 # ---------------------------------------------------------------------------
@@ -681,6 +1066,7 @@ def run(modules_dirs: list[Path], tests: list[Path], openapi: Path | None,
     for root in modules_dirs:
         for mod_dir in sorted(p for p in root.iterdir() if p.is_dir()):
             check_module_dir(mod_dir, report, index)
+    check_index_scenarios(index, report)
     for test in tests:
         check_test_config(load_yaml(test), test, report, index, catalog)
     return report

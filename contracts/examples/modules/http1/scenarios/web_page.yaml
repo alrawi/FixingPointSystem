@@ -1,0 +1,27 @@
+scenario: web_page
+description: A page view followed by think time and an image fetch on one keepalive connection. The module functions http1.request and http1.response build every message.
+vars:
+  host: www.example.test
+  server_port: 8080
+  page_size: 18000
+  image_size: 52000
+flows:
+  - id: browse
+    module: http1
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ http1.request('GET', '/', host=vars.host, accept='text/html') }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - expect: { bytes: "{{ vars.page_size }}", timeout_ms: 5000 }
+      - delay: { dist: lognormal, mu: 3.0, sigma: 0.8, unit: ms }
+      - send: "{{ http1.request('GET', '/logo.png', host=vars.host, accept='image/png') }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - expect: { bytes: "{{ vars.image_size }}", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "{{ http1.response(200, body=fill(vars.page_size), content_type='text/html; charset=utf-8') }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 30000 }
+      - send: "{{ http1.response(200, body=fill(vars.image_size), content_type='image/png') }}"
+      - close: fin
