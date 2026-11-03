@@ -56,13 +56,17 @@ impl KernelOpener {
                 let i = match self.listeners.iter().position(|l| l.local_addr() == addr) {
                     Some(i) => i,
                     None => {
-                        let l = KernelListener::bind(addr, &ListenConfig::default())
-                            .map_err(to_io)?;
+                        let l =
+                            KernelListener::bind(addr, &ListenConfig::default()).map_err(to_io)?;
                         self.listeners.push(l);
                         self.listeners.len() - 1
                     }
                 };
-                self.listeners[i].accept().await.map(|(s, _)| s).map_err(to_io)
+                self.listeners[i]
+                    .accept()
+                    .await
+                    .map(|(s, _)| s)
+                    .map_err(to_io)
             }
         }
     }
@@ -142,8 +146,7 @@ fn load(vars: &[(String, Value)]) -> Result<Vec<(String, Scenario)>, String> {
     let ctx = set.context("http1").ok_or("no http1 context")?;
     let mut out = Vec::new();
     for rel in &m.scenarios {
-        let mut s =
-            Scenario::load_with(&dir.join(rel), Some(&ctx)).map_err(|e| e.to_string())?;
+        let mut s = Scenario::load_with(&dir.join(rel), Some(&ctx)).map_err(|e| e.to_string())?;
         let own: Vec<(String, Value)> = vars
             .iter()
             .filter(|(k, _)| s.vars.contains_key(k))
