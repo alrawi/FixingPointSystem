@@ -5,8 +5,8 @@
 | Issue | #132 |
 | Branch | `wp/CON-07` |
 | Pull request | #146 |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-con-07-4105, lease until 2026-11-03T20:34:22Z |
 | Last verified commit | see the session log |
 
@@ -24,7 +24,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 2. Document `GET /metrics` outside `/v1` with an optional bearer token.
 - [x] 3. Regenerate `controller/internal/api` and keep the controller build and tests green.
 - [x] 4. Add `contracts/changes/CON-07.md`, the Contracts page section, and the log entry.
-- [ ] 5. Run the checks, push, wait for CI, and finish the pull request.
+- [x] 5. Run the checks, push, wait for CI, and finish the pull request.
 
 ## Done and verified
 
@@ -37,11 +37,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Pull request CI and owner approval.
+Owner approval. PR CI passed on all 11 checks.
 
 ## Next action
 
-Open the pull request, wait for CI, and run `fps_swarm.py review`.
+Wait for the owner review of pull request #146 and apply any requested changes.
 
 ## Blockers and open questions
 
