@@ -96,8 +96,8 @@ func TestLoadConfigFileReadsExample(t *testing.T) {
 		GRPCListen:        "127.0.0.1:8444",
 		AgentAutoEnroll:   true,
 		Tokens: []Token{
-			{Name: "ci", Scope: "run", Token: "example-run-token-0123456789"}, //nolint:gosec // G101: fixed value of testdata/controller.yaml, not a credential
-			{Name: "ops", Scope: "admin", TokenFile: "/etc/fps/admin.token"},
+			{Name: "ci", Scope: "run", Token: "example-run-token-0123456789"},
+			{Name: "ops", Scope: "admin", TokenFile: "/etc/fps/admin.token"}, //nolint:gosec // G101: a file path from testdata/controller.yaml, not a credential
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
