@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# QA benchmark baselines under bench/. This workflow runs only the unit and
+# component tests of the comparison tool. Real benchmarks need a quiet fixed
+# host and never run on shared runners. One workflow file per workstream area,
+# named after the area, so parallel packages never create the same file.
+name: qa-bench
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - bench/**
+      - spikes/s1-engine/results/**
+      - mk/qa-bench.mk
+      - .github/workflows/qa-bench.yml
+  pull_request:
+    paths:
+      - bench/**
+      - spikes/s1-engine/results/**
+      - mk/qa-bench.mk
+      - .github/workflows/qa-bench.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install -r bench/requirements.txt
+      - run: make lint-qa-bench test-qa-bench PYTHON=python
