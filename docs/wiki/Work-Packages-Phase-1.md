@@ -4,7 +4,7 @@
 
 Gate 1. A two arm run of the HTTP/1.1 and DNS mix through the controller and one kernel backend agent reaches 99% nDPI classification as the intended application, and the REST API skeleton passes its contract tests.
 
-This page lists 50 work packages. Packages marked critical path gate the phase.
+This page lists 51 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -52,6 +52,7 @@ flowchart LR
   CTL_08["CTL-08<br/>Metrics aggregation and streaming"]
   CTL_09["CTL-09<br/>Criteria evaluation and reports"]
   CTL_10["CTL-10<br/>Capabilities endpoint"]
+  CTL_17["CTL-17<br/>Controller binary wiring"]
   MOD_01["MOD-01<br/>HTTP/1.1 module"]
   MOD_02["MOD-02<br/>DNS module"]
   RLM_01["RLM-01<br/>Realism runner and nDPI conformance"]
@@ -114,6 +115,12 @@ flowchart LR
   CTL_08 --> CTL_09
   CTL_04 --> CTL_10
   CTL_06 --> CTL_10
+  CTL_02 --> CTL_17
+  CTL_03 --> CTL_17
+  CTL_04 --> CTL_17
+  CTL_06 --> CTL_17
+  CTL_07 --> CTL_17
+  CTL_10 --> CTL_17
   ENG_04 --> MOD_01
   CON_04 --> MOD_01
   ENG_06 --> MOD_02
@@ -125,13 +132,14 @@ flowchart LR
   QA_01 --> QA_04
   AGT_02 --> QA_04
   CTL_09 --> QA_04
+  CTL_17 --> QA_04
   MOD_01 --> QA_04
   MOD_02 --> QA_04
   RLM_02 --> QA_04
   UI_00 --> UI_01
   UI_01 --> UI_02
   classDef critical stroke-width:3px
-  class OPS_01,QA_01,CON_01,CON_02,CON_03,CON_04,CON_06,ENG_01,ENG_03,ENG_04,ENG_06,ENG_08,ENG_09,ENG_10,TRN_01,TRN_02,HST_01,HST_02,AGT_01,AGT_02,CTL_01,CTL_02,CTL_03,CTL_05,CTL_06,CTL_07,CTL_08,CTL_09,MOD_01,MOD_02,RLM_01,RLM_02,QA_04 critical
+  class OPS_01,QA_01,CON_01,CON_02,CON_03,CON_04,CON_06,ENG_01,ENG_03,ENG_04,ENG_06,ENG_08,ENG_09,ENG_10,TRN_01,TRN_02,HST_01,HST_02,AGT_01,AGT_02,CTL_01,CTL_02,CTL_03,CTL_05,CTL_06,CTL_07,CTL_08,CTL_09,CTL_17,MOD_01,MOD_02,RLM_01,RLM_02,QA_04 critical
 ```
 
 ## Summary
@@ -179,12 +187,13 @@ flowchart LR
 | [CTL-08](#ctl-08-metrics-aggregation-and-streaming) | Metrics aggregation and streaming | M | CTL-07, CON-02 | yes |
 | [CTL-09](#ctl-09-criteria-evaluation-and-reports) | Criteria evaluation and reports | S | CTL-08 | yes |
 | [CTL-10](#ctl-10-capabilities-endpoint) | Capabilities endpoint | S | CTL-04, CTL-06 |  |
+| [CTL-17](#ctl-17-controller-binary-wiring) | Controller binary wiring | M | CTL-02, CTL-03, CTL-04, CTL-06, CTL-07, CTL-10 | yes |
 | [MOD-01](#mod-01-http11-module) | HTTP/1.1 module | M | ENG-04, CON-04 | yes |
 | [MOD-02](#mod-02-dns-module) | DNS module | M | ENG-06, CON-04 | yes |
 | [RLM-01](#rlm-01-realism-runner-and-ndpi-conformance) | Realism runner and nDPI conformance | M | none | yes |
 | [RLM-02](#rlm-02-parser-error-checks-with-zeek-and-tshark) | Parser error checks with Zeek and tshark | S | RLM-01 | yes |
 | [RLM-03](#rlm-03-module-realism-ci-job) | Module realism CI job | M | RLM-01, QA-01, AGT-01 |  |
-| [QA-04](#qa-04-gate-1-acceptance-suite) | Gate 1 acceptance suite | M | QA-01, AGT-02, CTL-09, MOD-01, MOD-02, RLM-02 | yes |
+| [QA-04](#qa-04-gate-1-acceptance-suite) | Gate 1 acceptance suite | M | QA-01, AGT-02, CTL-09, CTL-17, MOD-01, MOD-02, RLM-02 | yes |
 | [UI-00](#ui-00-web-ui-stack-decision) | Web UI stack decision | S | none |  |
 | [UI-01](#ui-01-web-ui-skeleton) | Web UI skeleton | M | UI-00 |  |
 | [UI-02](#ui-02-module-library-view) | Module library view | S | UI-01 |  |
@@ -458,7 +467,7 @@ Acceptance.
 
 Phase 1 · size M · workstream QA · critical path
 
-- **Depends on.** QA-01, AGT-02, CTL-09, MOD-01, MOD-02, RLM-02
+- **Depends on.** QA-01, AGT-02, CTL-09, CTL-17, MOD-01, MOD-02, RLM-02
 - **Paths.** `tests/gates/gate1/`
 
 Automate the Gate 1 criterion end to end with the controller, one agent, the harness, and the realism runner.
@@ -999,6 +1008,25 @@ Deliverables.
 Acceptance.
 
 - [ ] The contract test for /v1/capabilities passes with two fake agents.
+
+### CTL-17 Controller binary wiring
+
+Phase 1 · size M · workstream CTL · critical path
+
+- **Depends on.** CTL-02, CTL-03, CTL-04, CTL-06, CTL-07, CTL-10
+- **Paths.** `controller/cmd/`, `controller/internal/app/`, `controller/internal/wiring/`
+
+Serve the REST API and the agent gRPC service from the controller binary, with the configuration settings they need. Issue #102 raised this gap.
+
+Deliverables.
+
+- Settings for API tokens, the data directory, the store path, and the gRPC listener in internal/app.
+- Adapters from the registry and the agent manager to the capabilities, store, and run interfaces in internal/wiring.
+- cmd/fps-controller opens the store and registry, starts the agent manager's gRPC server, and mounts api.New with every handler.
+
+Acceptance.
+
+- [ ] An end to end test starts the binary, registers a fake agent over gRPC, stores a config, lists modules, and starts a run over REST.
 
 ## MOD Application and content modules
 

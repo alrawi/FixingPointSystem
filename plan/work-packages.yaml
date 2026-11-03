@@ -927,6 +927,24 @@ work_packages:
     acceptance:
       - The contract test for /v1/capabilities passes with two fake agents.
 
+  - id: CTL-17
+    title: Controller binary wiring
+    phase: 1
+    workstream: CTL
+    size: M
+    critical: true
+    depends_on: [CTL-02, CTL-03, CTL-04, CTL-06, CTL-07, CTL-10]
+    paths: [controller/cmd/, controller/internal/app/, controller/internal/wiring/]
+    summary: >-
+      Serve the REST API and the agent gRPC service from the controller binary, with the
+      configuration settings they need. Issue #102 raised this gap.
+    deliverables:
+      - Settings for API tokens, the data directory, the store path, and the gRPC listener in internal/app.
+      - Adapters from the registry and the agent manager to the capabilities, store, and run interfaces in internal/wiring.
+      - cmd/fps-controller opens the store and registry, starts the agent manager's gRPC server, and mounts api.New with every handler.
+    acceptance:
+      - An end to end test starts the binary, registers a fake agent over gRPC, stores a config, lists modules, and starts a run over REST.
+
   - id: MOD-01
     title: HTTP/1.1 module
     phase: 1
@@ -1017,7 +1035,7 @@ work_packages:
     workstream: QA
     size: M
     critical: true
-    depends_on: [QA-01, AGT-02, CTL-09, MOD-01, MOD-02, RLM-02]
+    depends_on: [QA-01, AGT-02, CTL-09, CTL-17, MOD-01, MOD-02, RLM-02]
     paths: [tests/gates/gate1/]
     summary: >-
       Automate the Gate 1 criterion end to end with the controller, one agent, the harness,
