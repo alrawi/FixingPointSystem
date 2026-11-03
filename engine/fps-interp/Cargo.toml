@@ -23,6 +23,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "time"] }
 
 [dev-dependencies]
+proptest = "1"
 # serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
 serde_yaml = { package = "serde_norway", version = "0.9" }
 tokio = { version = "1", features = ["io-util", "macros", "rt", "test-util", "time"] }

@@ -6,14 +6,14 @@
 //! differ only in `send`, `expect`, and `close`.
 
 use std::future::Future;
-use std::io;
+use std::io::{self, IoSlice};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::{Buf, BytesMut};
 use fps_flow::program::{CloseMode, Op, Program, StopRule};
-use fps_flow::template::{Filler, RenderCtx};
+use fps_flow::template::{Filler, Part, RenderCtx};
 use fps_flow::{Template, TemplateFn, Value, Vars};
 use fps_io::{DatagramIo, DatagramIoExt, SessionIo, MAX_DATAGRAM};
 use rand::Rng;
@@ -35,6 +35,16 @@ pub const READ_CHUNK: usize = 16 * 1024;
 /// Spike S1 measured that 64 KiB reads keep bulk bodies near line rate, and
 /// the payload never grows the read buffer.
 pub const DISCARD_CHUNK: usize = 64 * 1024;
+
+/// Smallest `fill()` body that `send` writes straight from the shared
+/// filler. Shorter bodies are copied into the write buffer, which costs
+/// less than an extra I/O slice. Spike S1 measured that copying 1 MiB
+/// bodies cost about a quarter of the bulk session rate.
+pub const VECTORED_FILL_MIN: usize = 16 * 1024;
+
+/// Largest number of I/O slices that one vectored write passes, well below
+/// the `IOV_MAX` of every supported kernel.
+const MAX_SLICES: usize = 16;
 
 /// Limits and timeouts of a session that the flow program does not set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,6 +121,7 @@ pub struct Session<'a> {
     keep_last: bool,
     rbuf: BytesMut,
     wbuf: Vec<u8>,
+    parts: Vec<Part>,
     scratch: Vec<u8>,
     counters: Vec<i64>,
     pc: usize,
@@ -135,6 +146,7 @@ impl<'a> Session<'a> {
             keep_last: false,
             rbuf: BytesMut::with_capacity(READ_CHUNK),
             wbuf: Vec::with_capacity(READ_CHUNK),
+            parts: Vec::new(),
             scratch: Vec::new(),
             counters: Vec::new(),
             pc: 0,
@@ -453,17 +465,28 @@ impl<'a> Session<'a> {
         Ok(())
     }
 
+    /// Renders a template and writes it. Large `fill()` bodies go out as
+    /// slices of the shared filler in one vectored write, so the session
+    /// copies only the bytes around them.
     async fn send<S: SessionIo>(&mut self, io: &mut S, t: &Template) -> Result<(), FailureKind> {
         self.wbuf.clear();
-        let (mut ctx, out) = self.split();
-        t.render_into(&mut ctx, out)
-            .map_err(|source| FailureKind::Render { source })?;
-        io.write_all(&self.wbuf)
-            .await
-            .map_err(FailureKind::from_io)?;
+        self.parts.clear();
+        let mut parts = std::mem::take(&mut self.parts);
+        let rendered = {
+            let (mut ctx, out) = self.split();
+            t.render_parts(&mut ctx, out, &mut parts, VECTORED_FILL_MIN)
+        };
+        self.parts = parts;
+        rendered.map_err(|source| FailureKind::Render { source })?;
+        let sent = if self.parts.iter().any(|p| matches!(p, Part::Filler { .. })) {
+            write_parts(io, &self.wbuf, self.filler.as_bytes(), &self.parts).await
+        } else {
+            io.write_all(&self.wbuf).await.map(|()| self.wbuf.len())
+        };
+        let sent = sent.map_err(FailureKind::from_io)?;
         // A TLS layer buffers records, so the bytes leave only on flush.
         io.flush().await.map_err(FailureKind::from_io)?;
-        self.stats.bytes_tx += self.wbuf.len() as u64;
+        self.stats.bytes_tx += sent as u64;
         Ok(())
     }
 
@@ -840,6 +863,76 @@ impl DatagramIo for NoDatagram {
     fn close(&mut self) {
         match *self {}
     }
+}
+
+/// Returns the bytes of `part`, which index `out` or the filler `filler`.
+fn part_bytes<'b>(part: &Part, out: &'b [u8], filler: &'b [u8]) -> io::Result<&'b [u8]> {
+    let (buf, start, end) = match *part {
+        Part::Out { start, end } => (out, start, end),
+        Part::Filler { start, end } => (filler, start, end),
+    };
+    buf.get(start..end).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invariant: render part {start}..{end} lies outside its buffer"),
+        )
+    })
+}
+
+/// Writes every part in order and returns the number of bytes written.
+///
+/// A transport with vectored writes receives up to [`MAX_SLICES`] parts per
+/// call, and other transports receive one part per call, so neither path
+/// copies the filler slices.
+async fn write_parts<W: AsyncWrite + Unpin>(
+    io: &mut W,
+    out: &[u8],
+    filler: &[u8],
+    parts: &[Part],
+) -> io::Result<usize> {
+    let mut total = 0;
+    if !io.is_write_vectored() {
+        for part in parts {
+            let bytes = part_bytes(part, out, filler)?;
+            io.write_all(bytes).await?;
+            total += bytes.len();
+        }
+        return Ok(total);
+    }
+    // The next part to write and the bytes of it already written.
+    let (mut next, mut skip) = (0, 0);
+    while next < parts.len() {
+        let mut slices = [IoSlice::new(&[]); MAX_SLICES];
+        let mut count = 0;
+        for (i, part) in parts.iter().enumerate().skip(next).take(MAX_SLICES) {
+            let bytes = part_bytes(part, out, filler)?;
+            let bytes = if i == next {
+                bytes.get(skip..).unwrap_or_default()
+            } else {
+                bytes
+            };
+            slices[count] = IoSlice::new(bytes);
+            count += 1;
+        }
+        let mut n = io.write_vectored(&slices[..count]).await?;
+        if n == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
+        }
+        total += n;
+        // Advance past the parts that the write finished.
+        while n > 0 && next < parts.len() {
+            let left = part_bytes(&parts[next], out, filler)?.len() - skip;
+            if n < left {
+                skip += n;
+                n = 0;
+            } else {
+                n -= left;
+                next += 1;
+                skip = 0;
+            }
+        }
+    }
+    Ok(total)
 }
 
 /// Runs `open` under `timeout` and returns `None` when `stop` completes first.
