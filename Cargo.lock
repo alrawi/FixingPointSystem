@@ -273,6 +273,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fps-backend-kernel"
+version = "0.0.1"
+dependencies = [
+ "fps-io",
+ "libc",
+ "socket2",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "fps-flow"
 version = "0.0.1"
 dependencies = [
