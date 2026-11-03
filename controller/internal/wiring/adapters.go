@@ -5,8 +5,8 @@ package wiring
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents"
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents/agentpb"
@@ -53,9 +53,10 @@ func (c Catalog) Scenarios(ctx context.Context) ([]compiler.Scenario, error) {
 			return nil, fmt.Errorf("scenario catalog: module %s %s: manifest names %d scenario files and the index %d scenarios",
 				e.Name, e.Version, len(m.Scenarios), len(e.Scenarios))
 		}
-		dir := c.Registry.Dir(e.Name, e.Version)
+		tree := os.DirFS(c.Registry.Dir(e.Name, e.Version))
 		for i, rel := range m.Scenarios {
-			src, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+			// fs.ReadFile rejects a path that leaves the module tree.
+			src, err := fs.ReadFile(tree, rel)
 			if err != nil {
 				return nil, fmt.Errorf("scenario catalog: module %s %s: read scenario %s: %w", e.Name, e.Version, rel, err)
 			}

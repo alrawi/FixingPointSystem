@@ -236,7 +236,7 @@ func (c Config) LoadTokens() (map[string]string, error) {
 		if t.TokenFile != "" {
 			data, err := os.ReadFile(filepath.Clean(t.TokenFile))
 			if err != nil {
-				return nil, fmt.Errorf("token %s: %w", t.Name, err)
+				return nil, fmt.Errorf("%w: token %s: %w", ErrInvalidConfig, t.Name, err)
 			}
 			secret = strings.TrimSpace(string(data))
 			if len(secret) < MinTokenLength {
