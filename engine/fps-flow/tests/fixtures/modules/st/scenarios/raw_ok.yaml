@@ -1,0 +1,7 @@
+scenario: raw_ok
+flows:
+  - id: a
+    module: st
+    client:
+      - connect: { port: 80 }
+      - raw: { hex: "0d0a" }

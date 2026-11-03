@@ -1,0 +1,7 @@
+scenario: unchecked_module
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ ghost.anything(1, x=2) }}"

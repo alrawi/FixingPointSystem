@@ -1,0 +1,3 @@
+scenario: flow_module_foreign
+flows:
+  - { id: a, module: other, client: [ { connect: { port: 1 } } ] }

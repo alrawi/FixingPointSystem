@@ -122,19 +122,19 @@ source "{{ fill(5) }}"
 dynamic, 1 segment
 [0] fill
     n = int 5
-render "QaB,<"
+render "\nlNEl"
 == fill keyword
 source "{{ fill(n=5) }}"
 dynamic, 1 segment
 [0] fill
     n = int 5
-render "QaB,<"
+render "\nlNEl"
 == fill from a variable
 source "{{ fill(vars.size) }}"
 dynamic, 1 segment
 [0] fill
     n = vars.size
-render "QaB,<aIHXySM"
+render "\nlNEl0B_fQ.m"
 == fill from a nested call
 source "{{ fill(rand_int(1, 3)) }}"
 dynamic, 1 segment
@@ -142,7 +142,7 @@ dynamic, 1 segment
     n = rand_int
         a = int 1
         b = int 3
-render "Q"
+render "U"
 == hex folds at compile time
 source "{{ hex(\'48 49\') }}"
 constant, 1 segment
@@ -171,21 +171,21 @@ dynamic, 1 segment
 [0] rand_int
     a = int 1
     b = int 6
-render "2"
+render "4"
 == rand_int mixed
 source "{{ rand_int(1, b=6) }}"
 dynamic, 1 segment
 [0] rand_int
     a = int 1
     b = int 6
-render "2"
+render "4"
 == rand_int keywords
 source "{{ rand_int(b=6, a=1) }}"
 dynamic, 1 segment
 [0] rand_int
     a = int 1
     b = int 6
-render "2"
+render "4"
 == rand_int empty range renders an error
 source "{{ rand_int(6, 1) }}"
 dynamic, 1 segment
@@ -224,21 +224,21 @@ error: parameter 's' of 'hex' takes text, got int
 source "{{ ssh.kexinit() }}"
 dynamic, 1 segment
 [0] call ssh.kexinit
-render "<ssh.kexinit() r75>"
+render "<ssh.kexinit() r73>"
 == module call positional
 source "{{ http1.request(\'GET\', \'/\') }}"
 dynamic, 1 segment
 [0] call http1.request
     #0 = text "GET"
     #1 = text "/"
-render "<http1.request(Text(\"GET\"), Text(\"/\")) r75>"
+render "<http1.request(Text(\"GET\"), Text(\"/\")) r73>"
 == module call keywords
 source "{{ dns.query(name=vars.host, qtype=\'A\') }}"
 dynamic, 1 segment
 [0] call dns.query
     name = vars.host
     qtype = text "A"
-render "<dns.query(name=Text(\"www.example.test\"), qtype=Text(\"A\")) r75>"
+render "<dns.query(name=Text(\"www.example.test\"), qtype=Text(\"A\")) r73>"
 == module call with every value type
 source "{{ m.f(1, 2.5, \'x\', true, vars.ratio, session.id, session.flow, last) }}"
 dynamic, 1 segment
@@ -251,7 +251,7 @@ dynamic, 1 segment
     #5 = session.id
     #6 = session.flow
     #7 = last
-render "<m.f(Int(1), Float(2.5), Text(\"x\"), Boolean(true), Float(0.25), Int(7), Text(\"page\"), Bytes(\"\\x01\\x02\")) r75>"
+render "<m.f(Int(1), Float(2.5), Text(\"x\"), Boolean(true), Float(0.25), Int(7), Text(\"page\"), Bytes(\"\\x01\\x02\")) r73>"
 == nested core call in a module call
 source "{{ http1.response(200, body=fill(vars.size)) }}"
 dynamic, 1 segment
@@ -259,7 +259,7 @@ dynamic, 1 segment
     #0 = int 200
     body = fill
         n = vars.size
-render "<http1.response(Int(200), body=Text(\"QaB,<aIHXySM\")) r92>"
+render "<http1.response(Int(200), body=Text(\"\\nlNEl0B_fQ.m\")) r103>"
 == nested module call
 source "{{ dns.response(dns.query(name=\'a\'), address=\'192.0.2.1\') }}"
 dynamic, 1 segment
@@ -267,7 +267,7 @@ dynamic, 1 segment
     #0 = call dns.query
         name = text "a"
     address = text "192.0.2.1"
-render "<dns.response(Bytes(len 31), address=Text(\"192.0.2.1\")) r16>"
+render "<dns.response(Bytes(len 31), address=Text(\"192.0.2.1\")) r103>"
 == module call order draws the generator in call order
 source "{{ m.a() }}{{ m.b(rand_int(0, 9)) }}{{ m.c() }}"
 dynamic, 3 segments
@@ -277,7 +277,7 @@ dynamic, 3 segments
         a = int 0
         b = int 9
 [2] call m.c
-render "<m.a() r75><m.b(Int(6)) r92><m.c() r998>"
+render "<m.a() r73><m.b(Int(4)) r686><m.c() r805>"
 == module error
 source "{{ m.fail() }}"
 dynamic, 1 segment
@@ -328,7 +328,7 @@ dynamic, 1 segment
                         x = call m.f
                             x = call m.f
                                 x = int 1
-render "<m.f(x=Bytes(len 27)) r706>"
+render "<m.f(x=Bytes(len 26)) r961>"
 == nine levels
 source "{{ m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=m.f(x=1))))))))) }}"
 error: calls nest deeper than 8 levels

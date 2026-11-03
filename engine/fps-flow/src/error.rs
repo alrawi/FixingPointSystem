@@ -28,7 +28,7 @@ pub enum LoadError {
     #[error("{}invalid YAML: {message}", prefix(.at))]
     Syntax {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// Message of the YAML parser.
         message: String,
     },
@@ -36,7 +36,7 @@ pub enum LoadError {
     #[error("{}missing '{field}'", prefix(.at))]
     Missing {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The field name.
         field: &'static str,
     },
@@ -44,7 +44,7 @@ pub enum LoadError {
     #[error("{}{reason}", prefix(.at))]
     Invalid {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// What is wrong.
         reason: String,
     },
@@ -52,7 +52,7 @@ pub enum LoadError {
     #[error("{}{feature} is not supported by this engine version", prefix(.at))]
     Unsupported {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The feature.
         feature: String,
     },
@@ -60,7 +60,7 @@ pub enum LoadError {
     #[error("{}{error}", prefix(.at))]
     Template {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The template error.
         error: TemplateError,
     },
@@ -68,7 +68,7 @@ pub enum LoadError {
     #[error("{}duplicate flow id '{id}'", prefix(.at))]
     DuplicateFlow {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The repeated id.
         id: String,
     },
@@ -76,7 +76,7 @@ pub enum LoadError {
     #[error("{}flow '{flow}' depends on unknown flow '{dependency}'", prefix(.at))]
     UnknownFlow {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The dependent flow.
         flow: String,
         /// The missing dependency.
@@ -86,7 +86,7 @@ pub enum LoadError {
     #[error("{}dependency cycle among flows {flows:?}", prefix(.at))]
     Cycle {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The flows that cannot be ordered.
         flows: Vec<String>,
     },
@@ -94,7 +94,7 @@ pub enum LoadError {
     #[error("{}scenario has no variable '{name}'", prefix(.at))]
     UnknownVariable {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The variable name.
         name: String,
     },
@@ -102,7 +102,7 @@ pub enum LoadError {
     #[error("{}flow '{flow}' depends on itself", prefix(.at))]
     SelfDependency {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The flow.
         flow: String,
     },
@@ -110,7 +110,7 @@ pub enum LoadError {
     #[error("{}flow module '{module}' is neither '{owner}' nor a required module", prefix(.at))]
     ForeignFlowModule {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The module of the flow.
         module: String,
         /// The module that ships the scenario.
@@ -120,7 +120,7 @@ pub enum LoadError {
     #[error("{}{side} actions must start with '{}', found '{found}'", prefix(.at), .side.opener())]
     MissingOpener {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The side.
         side: Side,
         /// The first action found.
@@ -130,7 +130,7 @@ pub enum LoadError {
     #[error("{}spawn of unknown flow '{flow}'", prefix(.at))]
     UnknownSpawnTarget {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The named flow.
         flow: String,
     },
@@ -138,7 +138,7 @@ pub enum LoadError {
     #[error("{}flow '{flow}' must declare spawned: true", prefix(.at))]
     NotSpawned {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The named flow.
         flow: String,
     },
@@ -146,7 +146,7 @@ pub enum LoadError {
     #[error("{}branch probabilities sum to {sum}, not 1", prefix(.at))]
     BranchSum {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The sum.
         sum: f64,
     },
@@ -154,13 +154,13 @@ pub enum LoadError {
     #[error("{}uniform delay has min_ms greater than max_ms", prefix(.at))]
     UniformRange {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
     },
     /// An action is reserved for other module types.
     #[error("{}'{action}' is reserved for module types {types:?}", prefix(.at))]
     ReservedAction {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The action.
         action: String,
         /// The module types that may use it.
@@ -170,13 +170,13 @@ pub enum LoadError {
     #[error("{}max_datagram applies only to UDP flows", prefix(.at))]
     MaxDatagramOnTcp {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
     },
     /// An `expect` of a UDP flow cannot fit one datagram.
     #[error("{}{field} {size} exceeds the datagram limit of {limit} bytes", prefix(.at))]
     DatagramLimit {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// `bytes`, `min_bytes`, or `pattern`, whose size is its length.
         field: &'static str,
         /// The size that the expect needs.
@@ -188,13 +188,13 @@ pub enum LoadError {
     #[error("{}'last' needs an expect that always runs earlier on the same side", prefix(.at))]
     LastWithoutExpect {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
     },
     /// A template calls a module that is neither the owner nor a required module.
     #[error("{}module '{module}' is neither '{owner}' nor a required module", prefix(.at))]
     ForeignModule {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// The called module.
         module: String,
         /// The module that ships the scenario.
@@ -204,7 +204,7 @@ pub enum LoadError {
     #[error("{}module '{module}' declares no template function '{function}' in its manifest", prefix(.at))]
     UnknownModuleFunction {
         /// Location of the error.
-        at: Location,
+        at: Box<Location>,
         /// Module name.
         module: String,
         /// Function name.
@@ -394,7 +394,7 @@ impl LoadError {
 impl From<TemplateError> for LoadError {
     fn from(error: TemplateError) -> Self {
         LoadError::Template {
-            at: Location::default(),
+            at: Box::default(),
             error,
         }
     }
@@ -402,7 +402,7 @@ impl From<TemplateError> for LoadError {
 
 impl From<CheckError> for LoadError {
     fn from(error: CheckError) -> Self {
-        let at = Location::default();
+        let at = Box::default();
         match error {
             CheckError::Template(error) => LoadError::Template { at, error },
             CheckError::LastWithoutExpect => LoadError::LastWithoutExpect { at },
@@ -422,21 +422,21 @@ impl From<CheckError> for LoadError {
 
 pub(crate) fn missing(field: &'static str) -> LoadError {
     LoadError::Missing {
-        at: Location::default(),
+        at: Box::default(),
         field,
     }
 }
 
 pub(crate) fn invalid(reason: impl Into<String>) -> LoadError {
     LoadError::Invalid {
-        at: Location::default(),
+        at: Box::default(),
         reason: reason.into(),
     }
 }
 
 pub(crate) fn unsupported(feature: impl Into<String>) -> LoadError {
     LoadError::Unsupported {
-        at: Location::default(),
+        at: Box::default(),
         feature: feature.into(),
     }
 }

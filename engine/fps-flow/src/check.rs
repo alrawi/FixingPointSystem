@@ -110,7 +110,11 @@ struct SideAt<'y> {
 }
 
 impl SideAt<'_> {
-    fn at(&self, path: &[Step], field: Option<&str>) -> Location {
+    fn at(&self, path: &[Step], field: Option<&str>) -> Box<Location> {
+        Box::new(self.loc(path, field))
+    }
+
+    fn loc(&self, path: &[Step], field: Option<&str>) -> Location {
         Location {
             flow: Some(FlowRef {
                 index: Some(self.index),
@@ -124,15 +128,15 @@ impl SideAt<'_> {
     }
 }
 
-fn flow_at(index: usize, id: Option<&str>, field: &str) -> Location {
-    Location {
+fn flow_at(index: usize, id: Option<&str>, field: &str) -> Box<Location> {
+    Box::new(Location {
         flow: Some(FlowRef {
             index: Some(index),
             id: id.map(String::from),
         }),
         field: Some(field.to_string()),
         ..Location::default()
-    }
+    })
 }
 
 fn with_at(e: LoadError, at: Location) -> LoadError {
@@ -319,7 +323,7 @@ pub(crate) fn check_document(
         });
         if pending.len() == before {
             return Err(LoadError::Cycle {
-                at: Location::default(),
+                at: Box::default(),
                 flows: pending.into_iter().map(|(id, _)| id.to_string()).collect(),
             });
         }
@@ -466,7 +470,7 @@ fn check_templates(
             kind: Some(kind.to_string()),
         });
         for (field, text) in template_fields(kind, body) {
-            let here = || at.at(path, field);
+            let here = || at.loc(path, field);
             let t = Template::compile(text).map_err(|e| with_at(e.into(), here()))?;
             let mut found = Vec::new();
             let scope = CheckScope {

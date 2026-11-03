@@ -17,7 +17,7 @@ use serde_yaml::Value as Yaml;
 use crate::check::check_document;
 use crate::error::{invalid, missing, unsupported};
 pub use crate::error::{LoadError, Warning};
-use crate::location::{Location, Side};
+use crate::location::Side;
 use crate::manifest::ModuleContext;
 use crate::template::{Template, Value, Vars};
 
@@ -218,7 +218,7 @@ impl Scenario {
         for (k, v) in overrides {
             if !self.vars.contains_key(k) {
                 return Err(LoadError::UnknownVariable {
-                    at: Location::default(),
+                    at: Box::default(),
                     name: k.clone(),
                 });
             }
@@ -415,7 +415,7 @@ fn build(
     warnings: &mut Vec<Warning>,
 ) -> Result<Scenario, LoadError> {
     let doc: Yaml = serde_yaml::from_str(text).map_err(|e| LoadError::Syntax {
-        at: Location::default(),
+        at: Box::default(),
         message: e.to_string(),
     })?;
     check_document(&doc, modules, warnings)?;
@@ -443,7 +443,7 @@ fn build(
         let (flow, deps) = compile_flow(f, runnable).map_err(|e| e.in_flow(Some(i), None))?;
         if after.contains_key(&flow.id) {
             return Err(LoadError::DuplicateFlow {
-                at: Location::default(),
+                at: Box::default(),
                 id: flow.id,
             }
             .in_flow(Some(i), None)
@@ -474,7 +474,7 @@ fn topo_order(
             let deps = after.get(&f.id).map(Vec::as_slice).unwrap_or_default();
             if let Some(d) = deps.iter().find(|d| !after.contains_key(*d)) {
                 return Err(LoadError::UnknownFlow {
-                    at: Location::default(),
+                    at: Box::default(),
                     flow: f.id.clone(),
                     dependency: d.clone(),
                 }
@@ -490,7 +490,7 @@ fn topo_order(
         }
         if next.len() == before {
             return Err(LoadError::Cycle {
-                at: Location::default(),
+                at: Box::default(),
                 flows: next.into_iter().map(|f| f.id).collect(),
             });
         }
@@ -610,7 +610,7 @@ impl Compiler {
         let (kind, body) = single_key(first).map_err(|e| e.in_action(0, None))?;
         if kind != opener {
             return Err(LoadError::MissingOpener {
-                at: Location::default(),
+                at: Box::default(),
                 side,
                 found: kind.to_string(),
             }
@@ -762,7 +762,7 @@ impl Compiler {
                 }
                 if (cumulative - 1.0_f64).abs() > 1e-6 {
                     return Err(LoadError::BranchSum {
-                        at: Location::default(),
+                        at: Box::default(),
                         sum: cumulative,
                     });
                 }

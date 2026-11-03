@@ -1,0 +1,17 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: aux
+version: 0.1.0
+type: app
+summary: Required module with a function catalog.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+functions:
+  - name: frame
+    summary: A framed payload.
+    params:
+      - { name: payload, type: bytes }
+      - { name: kind, type: int, default: 0 }
+provenance:
+  source: synthetic
+  notes: Test fixture of the scenario loader. All content is generated.

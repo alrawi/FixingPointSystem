@@ -1,0 +1,12 @@
+scenario: server_ok
+vars: { port: 8080 }
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: "{{ vars.port }}" }
+      - send: "hi"
+    server:
+      - accept: { port: "{{ vars.port }}" }
+      - expect: { bytes: 2 }
+      - send: "{{ last }}"

@@ -292,9 +292,11 @@ mod tests {
         }
     }
 
+    type Want = fn(&CheckError) -> bool;
+
     #[test]
     fn rejects_what_the_python_validator_rejects() {
-        let cases: [(&str, fn(&CheckError) -> bool); 9] = [
+        let cases: [(&str, Want); 9] = [
             ("{{ vars.nope }}", |e| {
                 matches!(e, CheckError::Template(TemplateError::UndefinedVariable(_)))
             }),

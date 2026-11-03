@@ -74,9 +74,19 @@ pub fn vars() -> Vars {
 }
 
 /// Returns the session generator for a run seed and session id, as the
-/// coding standards define it.
+/// coding standards define it. `Pcg64Mcg::new` forces the two lowest state
+/// bits to 1, so the id sits above them and neighboring ids get distinct
+/// streams (bug #90).
 pub fn session_rng(seed: u64, session_id: u64) -> Pcg64Mcg {
-    Pcg64Mcg::new(u128::from(seed) << 64 | u128::from(session_id))
+    Pcg64Mcg::new(u128::from(splitmix64(seed)) << 64 | u128::from(session_id) << 2)
+}
+
+/// SplitMix64 finalizer, which spreads nearby seeds over the whole state.
+fn splitmix64(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 
 /// Renders a template for one session with [`Echo`] as the module table.
