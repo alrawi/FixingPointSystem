@@ -73,7 +73,7 @@ let mut buf = vec![0u8; want];
 let n = io.read(&mut buf).await?;
 ```
 
-Randomness comes from a generator derived from the run seed and the session id, so a replay reproduces every session.
+Randomness comes from a generator derived from the run seed and the session id, so a replay reproduces every session. Engine code calls `fps_interp::session_rng`, which also separates the client and server sides; the example below shows the construction.
 
 ```rust
 /// Returns the generator for one session. The same seed and id always give the same stream.
@@ -199,7 +199,7 @@ Python code that reads captures or other downloaded files runs with `python3 -I`
 
 ## TypeScript
 
-The web UI stack is pending decision UI-00. Whatever the decision, we apply four rules. The compiler runs in strict mode. A formatter and a linter run in CI with warnings as errors. Components call the API only through the client generated from the OpenAPI contract. Tests run against a mock server built from the contract examples.
+The web UI uses React 19, Vite, and TypeScript in strict mode, as decision [D11](https://github.com/alrawi/FixingPointSystem/blob/main/docs/decisions/0011-web-ui-stack.md) records. We apply four rules. The compiler runs in strict mode. A formatter and a linter run in CI with warnings as errors. Components call the API only through the client generated from the OpenAPI contract. Tests run against a mock server built from the contract examples.
 
 ## Shell
 

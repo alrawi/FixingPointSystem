@@ -16,11 +16,11 @@ We build the protocol on five rules.
 
 | Role | Who | Responsibilities |
 |---|---|---|
-| Owner | The human repository owner | Approves contracts, decisions, gates, and catalog changes. Merges pull requests. |
+| Owner | The human repository owner | Approves contracts, decisions, gates, and catalog changes. Resolves the conflicts that the coordinator cannot resolve mechanically. |
 | Worker agent | Any coding agent | Claims one work package at a time, implements it, and hands it off or finishes it. |
 | Reviewer agent | Any coding agent that did not write the change | Reviews a pull request against the Definition of Done and posts a structured review comment. |
 | Planner agent | Any coding agent asked by the owner | Splits epics, seeds issues from the catalog, and keeps the wiki current. |
-| Coordinator | One agent session that the owner runs | Picks conflict checked batches, runs the merge train, and edits the shared files and pages. See [Conflict free merges](#conflict-free-merges). |
+| Coordinator | One agent session that the owner runs | Picks conflict checked batches, reviews and merges implementation pull requests, runs the merge train, and edits the shared files and pages. See [Conflict free merges](#conflict-free-merges). |
 
 ## Identity
 
@@ -342,7 +342,7 @@ The helper performs steps 4 and 5 and takes the pull request number from the car
 swarm review "$N" --pr 57
 ```
 
-A reviewer agent then reviews the pull request. The owner merges it, and the `Closes #<issue>` text closes the issue. The promotion sweep then replaces the status label with `status:done`.
+A reviewer agent then reviews the pull request. The coordinator merges it after an approving review and green CI, except for contract and decision pull requests, which wait for the owner's approval, and the `Closes #<issue>` text closes the issue. The promotion sweep then replaces the status label with `status:done`.
 
 ## Review
 
@@ -426,7 +426,7 @@ Two packages in the same directory, such as ENG-02 and ENG-03 in `engine/fps-flo
 
 ### Merge train
 
-When a batch finishes, the coordinator gives the owner a merge order. After each merge, the coordinator merges `origin/main` into the next pull request, regenerates `Cargo.lock` when needed, waits for CI, and then tells the owner that the next pull request is ready. Each pull request therefore merges without a conflict.
+The owner delegated merging to the coordinator on 2026-11-03. As each pull request finishes, the coordinator reviews it, merges `origin/main` into it when `main` moved, resolves mechanical conflicts such as two additions to one page, `Cargo.lock`, or `go.mod` with `go mod tidy`, waits for CI, and merges it. The coordinator hands the owner only three kinds of pull request, which are a conflict that needs a design choice, a contract change, and a decision record. Worker agents never merge.
 
 ### Coordinator duties after a batch
 

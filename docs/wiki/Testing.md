@@ -60,7 +60,7 @@ The targets that exist today are listed below.
 | `lint-ops` | `tools/plan/plan.py check`, `render --check`, and `lint` |
 | `lint-ctl` | `gofmt -l`, `go vet`, and `golangci-lint run` over the controller, skipping golangci-lint with a notice when it is missing |
 | `test-con` | the contract validator and its tests |
-| `test-ctl` | `go test -race ./...` over the controller, including the REST layer contract test, the check that the generated code in `controller/internal/api/` matches the contract, and the compiler goldens in `controller/internal/compiler/testdata/` |
+| `test-ctl` | `go test -race ./...` over the controller, including the configuration store fixtures in `controller/internal/store/testdata/`, the registry tests, the agent manager tests with `controller/internal/fakeagent` as the fake for agent neighbors, the REST layer contract test, the check that the generated code in `controller/internal/api/` matches the contract, and the compiler goldens in `controller/internal/compiler/testdata/` |
 | `test-ops` | the plan and wiki tool tests and the Cargo workspace probe |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
 | `lint-qa` | gofmt, go vet, and golangci-lint on the Go golden file helper, and ruff and `mypy --strict` on the Python one, each skipped with a notice when its tool is missing |
@@ -69,9 +69,14 @@ The targets that exist today are listed below.
 | `test-qa` | the unit tests of the harness pcapng helper |
 | `e2e-qa` | the namespace harness self test, which needs root |
 | `test-agt` | `cargo test -p fps-agent`, the capability detection tests against fake system roots and the `agent.proto` mirror test |
-| `test-eng` | every crate under `engine/`, such as `fps-flow`, `fps-sched`, `fps-stats`, `fps-hosts`, and `fps-backend-kernel`, see [Engine](Engine.md) |
+| `test-eng` | every crate under `engine/`, such as `fps-flow` with its Rust and Python loader parity fixtures, `fps-interp`, `fps-sched`, `fps-stats`, `fps-hosts`, and `fps-backend-kernel`, see [Engine](Engine.md) |
 | `lint-rlm` | `ruff format --check`, `ruff check`, and `mypy --strict` over `realism/` |
 | `test-rlm` | the realism runner tests, including the ndpiReader, tshark, and Zeek tests when the tools are installed |
+| `lint-qa-bench`, `test-qa-bench` | ruff and mypy over `bench/`, and the tests of `bench/compare.py` and `bench/s1_adapter.py` |
+| `bench-s1` | a real spike S1 run compared with the S1 baseline, outside `make test` |
+| `lint-trn`, `test-trn` | the kernel backend profile tooling |
+| `e2e-trn` | the OS profile capture test in the namespace harness, as root, after `make build-trn-probe` |
+| `e2e-hst` | the kernel port setup tests in the namespace harness, as root |
 
 The root `Makefile` never changes. It includes every file under `mk/`, and each workstream area owns one of them, for example `mk/ctl.mk` or `mk/qa-harness.mk`. A file appends its targets to `LINT_TARGETS` and `TEST_TARGETS` and delegates to the workstream's own commands, so parallel packages never edit the same file. The Rust workspace takes its members from the globs `spikes/*`, `engine/*`, and `modules/*/native`, and the crate `modules/_template/native` keeps the module glob matching, so a new crate needs no edit to the root `Cargo.toml`. The `test-ops-workspace` target proves this on every run. Every Go module builds on its own because the `Makefile` and the workflows set `GOWORK=off`, so a new module needs no edit to `go.work`. End to end targets append to `E2E_TARGETS` in the same way, and `make e2e` runs them. These targets need root, so `make test` leaves them out and an agent runs `sudo make e2e`.
 

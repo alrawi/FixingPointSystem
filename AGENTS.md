@@ -36,7 +36,7 @@ These rules hold without exception.
 - Change only the paths of your work item, your handoff file, your log entry file, and your workstream's component page in `docs/wiki/`.
 - Never edit the shared files listed in the Conflict free merges section of `docs/wiki/Swarm-Protocol.md`. Use the per package file that the section names.
 - Do not edit `contracts/` or `docs/decisions/` outside a CON package or an owner approved decision package.
-- Do not force push, rebase published branches, or merge pull requests. The owner merges. An agent that lost its lease pushes only to `salvage/<ID>-<agent id>`.
+- Do not force push, rebase published branches, or merge pull requests. The coordinator merges, and the owner approves contract and decision pull requests. An agent that lost its lease pushes only to `salvage/<ID>-<agent id>`.
 - Do not hold more than one lease.
 - Do not commit captures with personal data, credentials, or third party content.
 - Add only dependencies with a GPL-3.0 compatible license.

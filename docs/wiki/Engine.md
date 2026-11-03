@@ -10,7 +10,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 |---|---|---|
 | [`fps-io`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-io) | The `SessionIo` trait and the in memory duplex `fps_io::memory::duplex` | ENG-06 adds `DatagramIo` |
 | [`fps-flow`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-flow) | The scenario model, the loader, the program compiler, the template compiler of contract v0.2, and the `TemplateFn` dispatch trait | ENG-02 adds the semantic checks |
-| [`fps-interp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-interp) | Empty, with the lint header | ENG-04 ports the interpreter of spike S1 |
+| [`fps-interp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-interp) | The session interpreter, the `Opener` seam, `session_rng`, delay sampling, and failure reasons, see [The flow program interpreter](#the-flow-program-interpreter) | ENG-05 adds vectored fill writes, ENG-06 UDP, ENG-07 multi flow instances |
 | [`fps-stats`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-stats) | The catalog table, per worker shards, HDR histograms, the snapshot merge, and the proto3 JSON mapping of `CounterSnapshot` | ENG-10 publishes one snapshot per second from the worker runtime |
 | [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched) | Load profile, session schedule, drain iterator, and injected clock | ENG-10 drives it from the worker runtime |
 | [`fps-hosts`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-hosts) | Host pool address mapping, slicing, and seeded host selection, see [Hosts](Hosts.md) | HST-02 adds kernel port setup |
