@@ -1,0 +1,10 @@
+## [2026-11-03] ingest | CON-06 Agent initiated control connection
+
+We reworked the unreleased agent control protocol 0.1.0 in `contracts/proto/fps/agent/v1/agent.proto`, which applies the owner decision that agents register with the controller. The controller now serves `ControllerService` with the unary `Register` and the bidirectional `Session` stream, and we removed `AgentService` entirely. The session carries heartbeats and their acknowledgements, the `prepare`, `start`, and `stop` commands with their results, and counter snapshots. Failed commands carry the new `ErrorCode` enum, whose numbers equal the gRPC status codes. The `Plan` message and the capability messages are unchanged. The [contracts README](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/README.md) now describes registration, the session messages, the agent state machine, connection loss, and both error code tables. The OpenAPI `registerAgent` operation now enrolls an agent identity ahead of time, and OpenAPI moved to 0.2.0. `tools/contracts/test_plans.py` gained tests for the protocol shape. We created the component page [Contracts](Contracts.md). The handoff is `docs/handoff/CON-06.md`, and the package waits for owner approval.
+
+### Shared page notes
+
+- Home and the sidebar list [Contracts](Contracts.md) under Engineering, which this package added as an approved exception.
+- The seam table of the [Implementation Plan](Implementation-Plan.md) should say that agents dial the controller and that the controller serves `ControllerService`.
+- The AGT-02 entry in `plan/work-packages.yaml` still asks for "A tonic server and a client loop". After CON-06 the agent serves no gRPC service, so the deliverable should read "A tonic client loop that registers with a configured controller and serves commands on the session stream". The CTL-06 deliverable should read "The controller side of Register and the Session stream" in place of "Register and Heartbeat".
+- The Rust mirror comment in `engine/fps-agent/src/proto.rs` names `AgentService`, which AGT-02 should update when it adds generated types.

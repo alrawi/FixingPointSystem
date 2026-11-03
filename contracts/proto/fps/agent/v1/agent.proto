@@ -2,12 +2,16 @@
 //
 // Agent control protocol, contract version 0.1.0.
 //
-// The controller compiles a test configuration into one Plan per agent and
-// drives each agent through AgentService. The agent serves AgentService over
-// gRPC with mutual TLS, and the controller is its only client. The canonical
-// JSON form of a Plan is the proto3 JSON mapping of the Plan message, which
-// the standalone agent mode reads from a file. See contracts/README.md for
-// the state machine, the error codes, and the digest rules.
+// The controller compiles a test configuration into one Plan per agent. Each
+// agent dials the controller, so an agent behind NAT or in a cloud needs no
+// inbound port. The controller serves ControllerService over gRPC with mutual
+// TLS, and agents are its clients. An agent first calls Register and then
+// keeps one bidirectional Session stream open. The controller sends Prepare,
+// Start, and Stop commands down the stream, and the agent sends heartbeats,
+// command results, and counter snapshots up the stream. The canonical JSON
+// form of a Plan is the proto3 JSON mapping of the Plan message, which the
+// standalone agent mode reads from a file. See contracts/README.md for the
+// state machines, the error codes, and the digest rules.
 
 syntax = "proto3";
 
@@ -17,36 +21,24 @@ import "google/protobuf/duration.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
-// AgentService is the control surface of one agent. The agent serves it, and
-// the controller that registered the agent is its only client.
-service AgentService {
-  // Register binds the agent to a controller and returns its capabilities.
-  // A repeated call from the bound controller is idempotent. A call from a
-  // different controller fails with FAILED_PRECONDITION until the current
-  // binding expires.
+// ControllerService is the control surface that the controller offers to
+// agents. The controller serves it, and every agent is a client that dials
+// the controller address from its configuration.
+service ControllerService {
+  // Register announces the agent with its capabilities and its current state
+  // and returns the session parameters. The agent identity comes from its
+  // client certificate and must equal RegisterRequest.agent_id. A repeated
+  // call for the same identity is idempotent and replaces the earlier
+  // session token, which is how an agent resumes after a lost connection.
   rpc Register(RegisterRequest) returns (RegisterResponse);
 
-  // Heartbeat renews the binding and reports the agent state. The agent
-  // aborts any run and drops the binding when no heartbeat arrives within the
-  // heartbeat timeout that Register set.
-  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
-
-  // Prepare verifies module digests, loads scenarios, binds ports, and
-  // configures host pools and workers. It returns once the agent is in state
-  // AGENT_STATE_PREPARED.
-  rpc Prepare(PrepareRequest) returns (PrepareResponse);
-
-  // Start begins the load phases of a prepared plan, optionally at a given
-  // time so that several agents start together.
-  rpc Start(StartRequest) returns (StartResponse);
-
-  // Stop ends a run with a ramp down or aborts it. Stop on a prepared plan
-  // that never started releases its resources.
-  rpc Stop(StopRequest) returns (StopResponse);
-
-  // StreamCounters sends one counter snapshot per interval until the run
-  // reaches AGENT_STATE_STOPPED, and then sends a final snapshot and ends.
-  rpc StreamCounters(StreamCountersRequest) returns (stream StreamCountersResponse);
+  // Session carries all control traffic of one registered agent. The first
+  // message from the agent is SessionRequest.open with the token that
+  // Register returned. The controller then sends commands and heartbeat
+  // acknowledgements, and the agent sends heartbeats, command results, and
+  // counter snapshots. At most one session per agent is open. A new session
+  // for the same agent ends the older one with ABORTED.
+  rpc Session(stream SessionRequest) returns (stream SessionResponse);
 }
 
 // AgentState is the position of the agent in its state machine.
@@ -144,27 +136,58 @@ enum CriterionOp {
   CRITERION_OP_NE = 6;
 }
 
-// RegisterRequest binds the agent to a controller.
-message RegisterRequest {
-  // controller_id names the controller instance.
-  string controller_id = 1;
-  // agent_id is the identifier that the controller assigns to this agent.
-  string agent_id = 2;
-  // heartbeat_interval is the period at which the controller sends Heartbeat.
-  google.protobuf.Duration heartbeat_interval = 3;
-  // heartbeat_timeout is the silence after which the agent aborts any run
-  // and drops the binding. It must exceed heartbeat_interval.
-  google.protobuf.Duration heartbeat_timeout = 4;
+// ErrorCode classifies a failed command. The numbers equal the gRPC status
+// codes of the same name, so implementations can map them directly.
+enum ErrorCode {
+  // ERROR_CODE_UNSPECIFIED is never sent.
+  ERROR_CODE_UNSPECIFIED = 0;
+  // ERROR_CODE_INVALID_ARGUMENT means that the command breaks a rule of this contract.
+  ERROR_CODE_INVALID_ARGUMENT = 3;
+  // ERROR_CODE_NOT_FOUND means that the plan_id does not name the loaded plan.
+  ERROR_CODE_NOT_FOUND = 5;
+  // ERROR_CODE_RESOURCE_EXHAUSTED means that the plan needs more workers,
+  // cores, or ports than the agent has.
+  ERROR_CODE_RESOURCE_EXHAUSTED = 8;
+  // ERROR_CODE_FAILED_PRECONDITION means that the command is out of order for
+  // the agent state, or that a module digest does not match.
+  ERROR_CODE_FAILED_PRECONDITION = 9;
+  // ERROR_CODE_UNIMPLEMENTED means that the plan needs a backend or module
+  // type that the agent does not support.
+  ERROR_CODE_UNIMPLEMENTED = 12;
+  // ERROR_CODE_INTERNAL means that the agent failed for a reason of its own.
+  ERROR_CODE_INTERNAL = 13;
 }
 
-// RegisterResponse confirms the binding.
-message RegisterResponse {
-  // agent_id echoes the assigned identifier.
+// RegisterRequest announces an agent to the controller.
+message RegisterRequest {
+  // agent_id is the stable identity of the agent. It must equal the identity
+  // in the client certificate of the connection.
   string agent_id = 1;
   // capabilities describes what the agent can run.
   Capabilities capabilities = 2;
-  // state is the agent state after the call.
+  // state is the agent state at the time of the call. An agent that dials
+  // for the first time reports AGENT_STATE_IDLE.
   AgentState state = 3;
+  // plan_id names the loaded plan, or is empty in AGENT_STATE_IDLE. It lets
+  // the controller resume a run after a lost connection.
+  string plan_id = 4;
+}
+
+// RegisterResponse returns the session parameters.
+message RegisterResponse {
+  // controller_id names the controller instance.
+  string controller_id = 1;
+  // agent_id echoes the identity of the agent.
+  string agent_id = 2;
+  // session_token authorizes one Session stream. Each Register call returns
+  // a new token and revokes the previous one.
+  string session_token = 3;
+  // heartbeat_interval is the period at which the agent sends a heartbeat.
+  google.protobuf.Duration heartbeat_interval = 4;
+  // heartbeat_timeout is the silence after which either side treats the
+  // session as lost. It must exceed heartbeat_interval. The agent aborts any
+  // run when the controller sends nothing for this long.
+  google.protobuf.Duration heartbeat_timeout = 5;
 }
 
 // Capabilities describes one agent. Field names follow the Agent and
@@ -202,43 +225,90 @@ message PortInfo {
   uint32 mtu = 5;
 }
 
-// HeartbeatRequest renews the binding.
-message HeartbeatRequest {
-  // controller_id names the bound controller.
-  string controller_id = 1;
+// SessionRequest is one message from the agent to the controller on the
+// Session stream.
+message SessionRequest {
+  // body holds exactly one message.
+  oneof body {
+    // open must be the first message of the stream and must not repeat.
+    SessionOpen open = 1;
+    // heartbeat renews the session and reports the agent state.
+    Heartbeat heartbeat = 2;
+    // result answers one command.
+    CommandResult result = 3;
+    // snapshot carries one counter snapshot of a prepared or running plan.
+    CounterSnapshot snapshot = 4;
+  }
 }
 
-// HeartbeatResponse reports the agent state.
-message HeartbeatResponse {
+// SessionResponse is one message from the controller to the agent on the
+// Session stream.
+message SessionResponse {
+  // command_id is positive and unique within the session for a command, and
+  // zero for a heartbeat acknowledgement. The agent echoes it in
+  // CommandResult.command_id.
+  uint64 command_id = 1;
+  // body holds exactly one message.
+  oneof body {
+    // heartbeat_ack answers one heartbeat.
+    HeartbeatAck heartbeat_ack = 2;
+    // prepare loads a plan.
+    PrepareCommand prepare = 3;
+    // start begins the load phases of the prepared plan.
+    StartCommand start = 4;
+    // stop ends a run or releases an unstarted plan.
+    StopCommand stop = 5;
+  }
+}
+
+// SessionOpen binds the stream to a registration.
+message SessionOpen {
+  // agent_id is the identity from RegisterRequest.agent_id.
+  string agent_id = 1;
+  // session_token is the token from the latest RegisterResponse.
+  string session_token = 2;
+}
+
+// Heartbeat renews the session and reports the agent state. The agent sends
+// one per heartbeat interval and one at once after every state change.
+message Heartbeat {
+  // sequence increases by one for every heartbeat of the session, starting at 1.
+  uint64 sequence = 1;
   // state is the current agent state.
-  AgentState state = 1;
+  AgentState state = 2;
   // plan_id names the loaded plan, or is empty in AGENT_STATE_IDLE.
-  string plan_id = 2;
+  string plan_id = 3;
   // phase is the name of the current load phase while running.
-  string phase = 3;
+  string phase = 4;
   // agent_time is the agent clock, which lets the controller estimate skew
-  // before it sets StartRequest.start_at.
-  google.protobuf.Timestamp agent_time = 4;
+  // before it sets StartCommand.start_at.
+  google.protobuf.Timestamp agent_time = 5;
   // message explains AGENT_STATE_FAILED in one sentence.
-  string message = 5;
+  string message = 6;
 }
 
-// PrepareRequest carries the plan for this agent.
-message PrepareRequest {
+// HeartbeatAck answers one heartbeat, so the agent detects a silent controller.
+message HeartbeatAck {
+  // sequence echoes Heartbeat.sequence.
+  uint64 sequence = 1;
+  // controller_time is the controller clock when it sent the acknowledgement.
+  google.protobuf.Timestamp controller_time = 2;
+}
+
+// PrepareCommand carries the plan for this agent.
+message PrepareCommand {
   // plan is the compiled plan.
   Plan plan = 1;
+  // counter_interval is the snapshot period of the run. When absent, the
+  // agent uses one second.
+  google.protobuf.Duration counter_interval = 2;
+  // per_worker requests one snapshot per worker in place of one aggregate
+  // snapshot per interval.
+  bool per_worker = 3;
 }
 
-// PrepareResponse confirms that the plan is loaded.
-message PrepareResponse {
-  // plan_id echoes the plan identifier.
-  string plan_id = 1;
-  // state is AGENT_STATE_PREPARED on success.
-  AgentState state = 2;
-}
-
-// StartRequest starts a prepared plan.
-message StartRequest {
+// StartCommand starts a prepared plan.
+message StartCommand {
   // plan_id names the prepared plan.
   string plan_id = 1;
   // start_at is the agent clock time at which the first phase begins. When
@@ -246,15 +316,8 @@ message StartRequest {
   google.protobuf.Timestamp start_at = 2;
 }
 
-// StartResponse confirms the start.
-message StartResponse {
-  // started_at is the agent clock time at which the first phase began or
-  // will begin.
-  google.protobuf.Timestamp started_at = 1;
-}
-
-// StopRequest stops a run.
-message StopRequest {
+// StopCommand stops a run.
+message StopCommand {
   // plan_id names the plan to stop.
   string plan_id = 1;
   // mode selects a ramp down or an abort.
@@ -264,39 +327,66 @@ message StopRequest {
   google.protobuf.Duration drain_timeout = 3;
 }
 
-// StopResponse reports the end of the run.
-message StopResponse {
-  // state is the agent state after the call, normally AGENT_STATE_STOPPED or
-  // AGENT_STATE_IDLE for a plan that never started.
+// CommandResult answers one command. Exactly one of error and result is set.
+message CommandResult {
+  // command_id echoes SessionResponse.command_id.
+  uint64 command_id = 1;
+  // error is set when the command failed. The agent state is then unchanged,
+  // except for ERROR_CODE_INTERNAL, which moves the agent to AGENT_STATE_FAILED.
+  CommandError error = 2;
+  // result holds the outcome of a command that succeeded.
+  oneof result {
+    // prepare answers a PrepareCommand.
+    PrepareResult prepare = 3;
+    // start answers a StartCommand.
+    StartResult start = 4;
+    // stop answers a StopCommand.
+    StopResult stop = 5;
+  }
+}
+
+// CommandError reports why a command failed.
+message CommandError {
+  // code classifies the failure.
+  ErrorCode code = 1;
+  // message explains the failure in one sentence.
+  string message = 2;
+}
+
+// PrepareResult confirms that the plan is loaded.
+message PrepareResult {
+  // plan_id echoes the plan identifier.
+  string plan_id = 1;
+  // state is AGENT_STATE_PREPARED.
+  AgentState state = 2;
+}
+
+// StartResult confirms the start.
+message StartResult {
+  // started_at is the agent clock time at which the first phase began or
+  // will begin.
+  google.protobuf.Timestamp started_at = 1;
+}
+
+// StopResult reports the end of the run.
+message StopResult {
+  // state is the agent state after the command, normally AGENT_STATE_STOPPED,
+  // or AGENT_STATE_IDLE for a plan that never started.
   AgentState state = 1;
   // final_snapshot is the last counter snapshot of the run, when the run started.
   CounterSnapshot final_snapshot = 2;
 }
 
-// StreamCountersRequest subscribes to counter snapshots.
-message StreamCountersRequest {
-  // plan_id names the plan.
-  string plan_id = 1;
-  // interval is the snapshot period. When absent, the agent uses one second.
-  google.protobuf.Duration interval = 2;
-  // per_worker requests one snapshot per worker in place of one aggregate
-  // snapshot per interval.
-  bool per_worker = 3;
-}
-
-// StreamCountersResponse carries one snapshot.
-message StreamCountersResponse {
-  // snapshot is the counter snapshot.
-  CounterSnapshot snapshot = 1;
-}
-
-// CounterSnapshot holds the counters of one agent, or of one worker when the
-// stream was opened with per_worker. Counters and histograms are cumulative
+// CounterSnapshot holds the counters of one agent, or of one worker when
+// PrepareCommand.per_worker is set. The agent sends one per counter interval
+// from Start until the final snapshot. Counters and histograms are cumulative
 // from the start of the run, so a lost snapshot loses no data.
 message CounterSnapshot {
   // plan_id names the plan.
   string plan_id = 1;
-  // sequence increases by one for every snapshot of the stream, starting at 1.
+  // sequence increases by one for every snapshot of the run, starting at 1.
+  // It continues across sessions, so the controller can drop duplicates
+  // after a reconnection.
   uint64 sequence = 2;
   // time is the agent clock time of the snapshot.
   google.protobuf.Timestamp time = 3;
