@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #22 |
 | Branch | `wp/ENG-02` |
-| Pull request | #0 |
+| Pull request | #94 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 60% (3 of 5 plan steps) |
 | Current holder | claude-eng-02-ac55, lease until 2026-11-03T13:08:16Z |
 | Last verified commit | none |
 
@@ -20,9 +20,9 @@ Load scenario YAML into the program model with typed errors that name the file, 
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Typed error location (`Location` with file, flow, side, action path) in place of the string `at`
-- [ ] 2. Semantic rules for flows, after, spawn, branch, delay, expect datagram limits, and `last` placement
-- [ ] 3. Module call check against the manifest `functions` catalog
+- [x] 1. Typed error location (`Location` with file, flow, side, action path) in place of the string `at`
+- [x] 2. Semantic rules for flows, after, spawn, branch, delay, expect datagram limits, and `last` placement
+- [x] 3. Module call check against the manifest `functions` catalog
 - [ ] 4. Shared fixtures under `engine/fps-flow/tests/fixtures/` with a Rust test and a pytest that runs validate.py on them
 - [ ] 5. Fix the bug #90 test helper, Engine page section, log entry
 
