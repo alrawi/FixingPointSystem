@@ -5,10 +5,10 @@
 | Issue | #133 |
 | Branch | `wp/CON-08` |
 | Pull request | #145 |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-con-08-ec15, lease until 2026-11-03T20:35:07Z |
-| Last verified commit | none |
+| Last verified commit | 5354db3 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -24,14 +24,15 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 2. Update `contracts/metrics/catalog.yaml` with views, reasons, side labels, and the suffix list.
 - [x] 3. Keep the contract, engine, and controller tests green, with minimal mirror edits where CI fails.
 - [x] 4. Add `contracts/changes/CON-08.md`, the Contracts page section, and the log entry.
-- [ ] 5. Run the checks, push, wait for CI, and finish the pull request.
+- [x] 5. Run the checks, push, wait for CI, and finish the pull request.
 
 ## Done and verified
 
 1. `python3 tools/contracts/validate.py` reports 0 errors, and `python3 -m pytest -q tools/contracts` passes 153 tests. A missing `view`, a view that does not fit the level, and an extra histogram suffix each fail the schema.
 2. `cargo test --workspace` passes with the engine mirrors updated, including `engine/fps-stats/tests/catalog.rs` and `engine/fps-interp/tests/catalog.rs`.
 3. `go test ./...` in `controller` passes when `controller/internal/metrics/catalog.yaml` is replaced by the new catalog. We did not commit that copy.
-4. `python3 -m pytest -q realism/tests` passes, and `tools/plan/plan.py check`, `render --check`, and `lint` pass.
+4. Pull request CI passes on commit 5354db3, including the `rust`, `contracts`, `proto`, and `rlm` jobs.
+5. `python3 -m pytest -q realism/tests` passes, and `tools/plan/plan.py check`, `render --check`, and `lint` pass.
 
 ## Remaining
 
@@ -73,3 +74,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-03T19:05Z | claude-con-08-ec15 | claim | none | card 6612946675 |
+| 2026-11-03T19:50Z | claude-con-08-ec15 | finish | 5354db3 | CI green, ready for review |
