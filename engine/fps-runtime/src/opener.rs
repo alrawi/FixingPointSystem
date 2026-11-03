@@ -51,15 +51,9 @@ impl<'a> ClientOpener<'a> {
     ) -> Self {
         let index = sources.selector.select(session);
         let source = if sources.ipv6 {
-            sources
-                .pool
-                .ipv6_addr(index)
-                .map(|a| a.map(IpAddr::V6))
+            sources.pool.ipv6_addr(index).map(|a| a.map(IpAddr::V6))
         } else {
-            sources
-                .pool
-                .ipv4_addr(index)
-                .map(|a| a.map(IpAddr::V4))
+            sources.pool.ipv4_addr(index).map(|a| a.map(IpAddr::V4))
         };
         let source = match source {
             Ok(Some(a)) => Ok(a),
@@ -94,7 +88,9 @@ impl<'a> ClientOpener<'a> {
             None => {
                 let n = self.servers.len() as u64;
                 if n == 0 {
-                    return Err(invalid("no server address for a connect without host".into()));
+                    return Err(invalid(
+                        "no server address for a connect without host".into(),
+                    ));
                 }
                 let i = usize::try_from(self.session % n).unwrap_or(0);
                 *self
@@ -189,22 +185,35 @@ mod tests {
             ipv6: false,
         };
         let connector = Connector::new(Default::default());
-        let servers: Vec<IpAddr> = vec!["127.31.0.1".parse().unwrap(), "127.31.0.2".parse().unwrap()];
+        let servers: Vec<IpAddr> =
+            vec!["127.31.0.1".parse().unwrap(), "127.31.0.2".parse().unwrap()];
         let req = OpenRequest {
             kind: OpenKind::Connect,
             host: None,
             port: 8080,
         };
         let o = ClientOpener::new(&connector, &sources, &servers, None, 3);
-        assert_eq!(o.destination(&req).unwrap(), "127.31.0.2:8080".parse().unwrap());
-        assert_eq!(o.source.clone().unwrap(), "127.30.0.4".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            o.destination(&req).unwrap(),
+            "127.31.0.2:8080".parse().unwrap()
+        );
+        assert_eq!(
+            o.source.clone().unwrap(),
+            "127.30.0.4".parse::<IpAddr>().unwrap()
+        );
         let o = ClientOpener::new(&connector, &sources, &servers, Some(9), 2);
-        assert_eq!(o.destination(&req).unwrap(), "127.31.0.1:9".parse().unwrap());
+        assert_eq!(
+            o.destination(&req).unwrap(),
+            "127.31.0.1:9".parse().unwrap()
+        );
         let host = OpenRequest {
             host: Some(b"127.32.0.9"),
             ..req
         };
-        assert_eq!(o.destination(&host).unwrap(), "127.32.0.9:9".parse().unwrap());
+        assert_eq!(
+            o.destination(&host).unwrap(),
+            "127.32.0.9:9".parse().unwrap()
+        );
         let bad = OpenRequest {
             host: Some(b"www.example.test"),
             ..req

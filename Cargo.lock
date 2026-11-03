@@ -391,6 +391,7 @@ dependencies = [
  "fps-io",
  "fps-sched",
  "fps-stats",
+ "proptest",
  "thiserror",
  "tokio",
 ]

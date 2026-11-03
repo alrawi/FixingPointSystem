@@ -38,9 +38,10 @@ pub(crate) struct WorkerStart {
 /// The body of one worker thread.
 pub(crate) fn run_thread(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
     let worker = start.config.id;
-    let pinned = start.config.core.map(|core| {
-        core_affinity::set_for_current(core_affinity::CoreId { id: core })
-    });
+    let pinned = start
+        .config
+        .core
+        .map(|core| core_affinity::set_for_current(core_affinity::CoreId { id: core }));
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -242,8 +243,10 @@ async fn client_loop(
     tick: &mut tokio::time::Interval,
 ) -> Result<Control, RuntimeError> {
     let wid = worker.id;
-    let mut sched = Schedule::new(c.schedule.clone())
-        .map_err(|source| RuntimeError::Schedule { worker: wid, source })?;
+    let mut sched = Schedule::new(c.schedule.clone()).map_err(|source| RuntimeError::Schedule {
+        worker: wid,
+        source,
+    })?;
     let ctx = Rc::new(ClientCtx {
         connector: Connector::new(c.connect.clone()),
         config: c,

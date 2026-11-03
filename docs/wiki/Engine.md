@@ -255,3 +255,45 @@ The tests run client and server programs against each other over the in memory d
 | `tests/failures.rs` | One test for each of the nine reasons and a second trigger for `connect_timeout`, `expect_timeout`, `peer_closed`, and `internal`, each checking the reason, action index, and action type of both sides |
 | `tests/catalog.rs` | The reasons, sides, and action types against the metric catalog |
 | unit tests | `session_rng` streams and bug #90, delay sample means and supports, and the action index mapping |
+
+## The worker runtime
+
+The crate [`fps-runtime`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-runtime) of ENG-10 runs the workers of one agent. Each worker is one operating system thread with its own single threaded Tokio runtime and a `LocalSet`, so session tasks hold `Rc` and `RefCell` values and never take a lock. `Runtime::start` takes a `RuntimeConfig` with the run seed, the snapshot interval, and one `WorkerConfig` per worker, and returns a `RuntimeHandle` once every worker is ready.
+
+### Workers and pinning
+
+A worker config names the worker id, an optional core, and a role. A worker with a core pins its thread with the `core_affinity` crate, which calls `sched_setaffinity` on Linux, so the crate keeps `#![forbid(unsafe_code)]`. A failed pin does not stop the worker, and `WorkerExit::pinned` reports the result. We chose `core_affinity` under the MIT and Apache 2.0 licenses because the standard library offers no affinity call and `fps-backend-kernel` keeps its only unsafe module for socket options.
+
+Workers share nothing mutable. Each worker owns its sessions, its timers, its `fps_stats::Shard`, its one MiB `Filler`, and either its schedule and connector or its listeners. The compiled `Scenario` sits behind an `Arc` and is only read. `global_session_id` puts the worker id in the top 16 bits of every session id, so sessions of different workers never share a generator stream from `session_rng`.
+
+| Role | What the worker does |
+|---|---|
+| `Role::Client` | Drains its `fps_sched::Schedule` with a `TokioClock`, runs the client side of every start over a kernel `Connector`, and takes each source address from its range of a host pool through an `fps_hosts::HostSelector` |
+| `Role::Server` | Binds one `KernelListener` per listen address, accepts sessions, and runs the server side of each one. `RuntimeHandle::listen_addrs` reports the bound addresses, which matters for port 0 |
+
+A client session dials the rendered `connect` host when the program sets one, which must be an IP address, and otherwise server address `session mod len` of `ClientConfig::servers`. `ClientConfig::port` replaces the rendered port when it is set.
+
+### Clock
+
+`TokioClock` implements the `Clock` trait of `fps-sched` over the Tokio timer of the worker. The client loop drains the schedule, sleeps until `next_due`, and wakes early when a session closes, because a closed session can release a deferred start. The clock follows a paused Tokio clock, so unit tests advance the schedule without waiting.
+
+### Statistics
+
+Every worker registers its session series once and records `sessions.attempted`, `sessions.established`, `sessions.succeeded`, `sessions.failed` by reason, `bytes.tx`, `bytes.rx`, `sessions.concurrent`, and `sessions.duration`, with the `application` label from the flow module and the `scenario` label from the scenario name. Once per snapshot interval, one second by default, and once more when it ends, the worker sends a cumulative `WorkerSnapshot` over a channel. The `Collector` keeps the newest snapshot of every worker and merges them per side, because the session metrics of the catalog carry no `side` label and the two sides of one session must not add up. `RuntimeHandle::collect` reads the snapshots that arrived so far, and `RuntimeHandle::join` returns a `RunReport` with the collector and the exit of every worker.
+
+### Stop and abort
+
+`RuntimeHandle::stop` takes the ramp down time. Every worker then starts no new session, a server worker closes its listeners, and open sessions run on. Sessions still open when the ramp down time ends are aborted, which resets their transports and counts them under reason `aborted`. `RuntimeHandle::abort` aborts every open session at once. A later stop can only shorten a ramp down, and an abort always wins. A client worker also ends on its own when its schedule finishes and its last session closes. Dropping the handle aborts every worker.
+
+### Tests
+
+The tests run over loopback addresses with the kernel backend and are listed below.
+
+| Test | What it checks |
+|---|---|
+| `tests/loopback.rs` web_get | Two client workers drive the http1 `web_get` example at 50 sessions per second for two seconds against two server workers. Both sides report 200 attempted and 200 succeeded sessions, client `bytes.tx` equals server `bytes.rx` and the reverse, and every worker sent one snapshot per second and a final one |
+| `tests/loopback.rs` ramp down | A stop during a run lets every open `web_get` session finish, and the run ends within the ramp down time plus one second |
+| `tests/loopback.rs` stop and abort | Sessions that wait 20 seconds for an answer are aborted at the end of a 700 ms ramp down, the run ends within the ramp down time plus one second, and an abort ends the server workers within one second |
+| `tests/loopback.rs` setup | Pinning to an allowed core, a bind failure that fails the start, and the configuration checks |
+| `tests/properties.rs` | Session ids stay unique across workers, and the collector total equals the sum of the newest snapshot of every worker in any arrival order |
+| unit tests | The clock on a paused Tokio clock, the stop state order, opener address selection, and the collector |

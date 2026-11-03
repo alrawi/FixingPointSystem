@@ -40,4 +40,4 @@ pub use config::{
 };
 pub use error::RuntimeError;
 pub use opener::{global_session_id, ClientOpener};
-pub use runtime::{Runtime, RuntimeHandle, RunReport, WorkerExit};
+pub use runtime::{RunReport, Runtime, RuntimeHandle, WorkerExit};
