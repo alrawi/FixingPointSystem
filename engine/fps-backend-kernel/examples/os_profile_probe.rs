@@ -4,7 +4,8 @@
 //! The namespace capture test `tests/netns/profiles.sh` runs this program in
 //! the client and server namespaces of the QA-01 harness and checks the
 //! handshakes in the capture. Each subcommand takes the name of a built in
-//! profile.
+//! profile, and `serve` and `connect` also take `none`, which keeps the
+//! kernel defaults for the baseline session of the test.
 //!
 //! ```text
 //! os_profile_probe sysctls PROFILE              print name=value per sysctl
@@ -53,7 +54,21 @@ fn run(args: &[String]) -> Result<()> {
         [command, name, rest @ ..] => (command.as_str(), name.as_str(), rest),
         _ => return Err(USAGE.into()),
     };
+    if name == "none" {
+        return match (command, rest) {
+            ("serve", [address, sessions]) => {
+                let config = ListenConfig::default();
+                runtime()?.block_on(serve(&config, address.parse()?, sessions.parse()?))
+            }
+            ("connect", [source, destination]) => {
+                let config = ConnectConfig::default();
+                runtime()?.block_on(connect(&config, source.parse()?, destination.parse()?))
+            }
+            _ => Err(USAGE.into()),
+        };
+    }
     let profile = OsProfile::builtin(name)?;
+    let socket = profile.socket_options(SocketOptions::default());
     match (command, rest) {
         ("sysctls", []) => {
             for (key, value) in profile.sysctls() {
@@ -72,14 +87,20 @@ fn run(args: &[String]) -> Result<()> {
             Ok(())
         }
         ("serve", [address, sessions]) => {
-            let address: SocketAddr = address.parse()?;
-            let sessions: usize = sessions.parse()?;
-            runtime()?.block_on(serve(&profile, address, sessions))
+            warn_on_sysctls(&profile);
+            let config = ListenConfig {
+                socket,
+                ..ListenConfig::default()
+            };
+            runtime()?.block_on(serve(&config, address.parse()?, sessions.parse()?))
         }
         ("connect", [source, destination]) => {
-            let source: IpAddr = source.parse()?;
-            let destination: SocketAddr = destination.parse()?;
-            runtime()?.block_on(connect(&profile, source, destination))
+            warn_on_sysctls(&profile);
+            let config = ConnectConfig {
+                socket,
+                ..ConnectConfig::default()
+            };
+            runtime()?.block_on(connect(&config, source.parse()?, destination.parse()?))
         }
         _ => Err(USAGE.into()),
     }
@@ -105,13 +126,8 @@ fn warn_on_sysctls(profile: &OsProfile) {
     }
 }
 
-async fn serve(profile: &OsProfile, address: SocketAddr, sessions: usize) -> Result<()> {
-    warn_on_sysctls(profile);
-    let config = ListenConfig {
-        socket: profile.socket_options(SocketOptions::default()),
-        ..ListenConfig::default()
-    };
-    let listener = KernelListener::bind(address, &config)?;
+async fn serve(config: &ListenConfig, address: SocketAddr, sessions: usize) -> Result<()> {
+    let listener = KernelListener::bind(address, config)?;
     println!("listening on {}", listener.local_addr());
     for _ in 0..sessions {
         let (mut io, _peer) = listener.accept().await?;
@@ -123,15 +139,10 @@ async fn serve(profile: &OsProfile, address: SocketAddr, sessions: usize) -> Res
     Ok(())
 }
 
-async fn connect(profile: &OsProfile, source: IpAddr, destination: SocketAddr) -> Result<()> {
-    warn_on_sysctls(profile);
-    let connector = Connector::new(ConnectConfig {
-        socket: profile.socket_options(SocketOptions::default()),
-        ..ConnectConfig::default()
-    });
+async fn connect(config: &ConnectConfig, source: IpAddr, destination: SocketAddr) -> Result<()> {
+    let connector = Connector::new(config.clone());
     let mut io = connector.connect(source, destination).await?;
-    io.write_all(format!("hello from {}\n", profile.name).as_bytes())
-        .await?;
+    io.write_all(b"hello\n").await?;
     io.shutdown().await?;
     let mut answer = Vec::new();
     io.read_to_end(&mut answer).await?;
