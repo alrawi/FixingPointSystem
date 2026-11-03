@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn neighbouring_session_ids_get_distinct_streams() {
+    fn neighboring_session_ids_get_distinct_streams() {
         let s = sel(HostRange::new(0, u32::MAX), Selection::Uniform);
         let picks: std::collections::HashSet<u32> = (0..4096).map(|i| s.select(i)).collect();
         assert!(picks.len() > 4090, "{} distinct picks", picks.len());
