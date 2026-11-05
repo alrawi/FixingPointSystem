@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #136 |
 | Branch | `wp/CTL-19` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (3 of 3 plan steps, CI pending) |
+| Pull request | #149 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-d5763a, lease until 2026-11-05T20:20:40Z |
-| Last verified commit | none |
+| Last verified commit | 7e65441 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -35,11 +35,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-CI result of `make lint-ctl test-ctl`. The sandbox cannot reach proxy.golang.org, so the controller module could not build locally.
+Nothing. CI of 7e65441 is green (gofmt, go vet, golangci-lint, go test -race).
 
 ## Next action
 
-Wait for CI, fix failures inside `controller/internal/app/` and `controller/cmd/`.
+Coordinator review.
 
 ## Blockers and open questions
 
@@ -68,3 +68,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-05T19:50Z | claude-d5763a | claim | | Claimed #136 |
+| 2026-11-05T20:05Z | claude-d5763a | finish | 7e65441 | PR #149, CI green. First CI run failed on a duplicate helper name, fixed. |
