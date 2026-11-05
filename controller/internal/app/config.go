@@ -75,6 +75,11 @@ type Config struct {
 	// Tokens lists the bearer tokens of the REST API. Without tokens every
 	// /v1 operation answers 401.
 	Tokens []Token `yaml:"tokens"`
+	// MetricsTokenFile names a file whose content, without surrounding white
+	// space, is the bearer token that GET /metrics requires. Empty keeps the
+	// endpoint open. The setting takes a file and not the secret itself, so
+	// the token never appears in the configuration, in flags, or in logs.
+	MetricsTokenFile string `yaml:"metrics_token_file"`
 }
 
 // Token is one bearer token of the REST API. Exactly one of Token and
@@ -249,6 +254,25 @@ func (c Config) LoadTokens() (map[string]string, error) {
 		out[secret] = t.Scope
 	}
 	return out, nil
+}
+
+// LoadMetricsToken returns the bearer token that GET /metrics requires, read
+// from MetricsTokenFile. It returns an empty string when the setting is empty,
+// which leaves the endpoint open. It fails when the file is unreadable or holds
+// fewer than MinTokenLength bytes.
+func (c Config) LoadMetricsToken() (string, error) {
+	if c.MetricsTokenFile == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(filepath.Clean(c.MetricsTokenFile))
+	if err != nil {
+		return "", fmt.Errorf("%w: metrics_token_file: %w", ErrInvalidConfig, err)
+	}
+	secret := strings.TrimSpace(string(data))
+	if len(secret) < MinTokenLength {
+		return "", fmt.Errorf("%w: metrics_token_file %s holds fewer than %d bytes", ErrInvalidConfig, c.MetricsTokenFile, MinTokenLength)
+	}
+	return secret, nil
 }
 
 // ParseLogLevel maps debug, info, warn, or error to its slog level, ignoring case.
