@@ -30,7 +30,22 @@ The three ratios are 0.959, 0.989, and 0.739, which match the 4.1%, 1.1%, and 26
 
 ## Where benchmarks run
 
-The `qa-bench` workflow runs only the unit and component tests of `bench/`, on Python 3.10 and 3.12, when `bench/`, the S1 results, or its own files change. It runs no benchmark, because shared runners are too noisy for a 10% tolerance. A real run uses `make bench-s1` on a quiet fixed host, and the nightly performance job of the [Testing](Testing.md) page will call the same target once a fixed host exists.
+The `test` job of the `qa-bench` workflow runs only the unit and component tests of `bench/`, on Python 3.10 and 3.12 on hosted runners, when `bench/`, the S1 results, or its own files change. It runs no benchmark, because shared runners are too noisy for a 10% tolerance.
+
+The `nightly` job runs `make bench-s1 BENCH_COMPARE_ARGS=--require-same-host` every night at 02:17 UTC and on request, on a self hosted runner of the owner's Linux server with the labels `self-hosted`, `linux`, and `fps-bench` (decision D12 item 6). It compares the run with `bench/baselines/s1-engine-owner-host.json`, a baseline recorded on that same host, and uploads the log, the converted result, and the JSON report as the artifact `s1-nightly-<run id>`. While that baseline file does not exist, the job records a candidate and ends with a warning. A pull request then turns the candidate into the baseline.
+
+### Owner steps for the runner
+
+The owner registers the runner, and the full steps are in the [README](https://github.com/alrawi/FixingPointSystem/blob/main/bench/README.md#registering-the-owner-host).
+
+1. Install Rust, Python 3.10 or newer, `git`, `make`, and a C linker on the server, and create a dedicated user without sudo for the runner.
+2. In Settings, Actions, Runners, choose New self-hosted runner, download the runner as that user, and run `./config.sh --url https://github.com/alrawi/FixingPointSystem --token <TOKEN> --name owner-host --labels fps-bench --unattended`.
+3. Install it as a service with `sudo ./svc.sh install <user>` and `sudo ./svc.sh start`.
+4. Run the workflow once from the Actions tab, download the candidate artifact, and open the pull request that records `s1-engine-owner-host.json` with the raw results.
+
+### Security caveat
+
+The repository is public, so a self hosted runner must never run a job for a pull request, in particular not for a fork, because the job would run foreign code on the owner's server. The `nightly` job therefore listens only to `schedule` and `workflow_dispatch` on `main`, and the setting "Require approval for all outside collaborators" stays on. Never add a pull request trigger to a job that selects `fps-bench`. The test job and every other job of the repository stay on hosted runners, so no pull request waits for the self hosted runner.
 
 ## Refreshing a baseline
 
