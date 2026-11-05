@@ -92,6 +92,8 @@ The [metric catalog](https://github.com/alrawi/FixingPointSystem/blob/main/contr
 
 AGT-03 detects host capabilities in [`engine/fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent). The function `detect` reads `/proc` and `/sys` under an injectable `SystemRoot` and returns `HostCapabilities`, which `to_capabilities` maps into a hand written mirror of the proto `Capabilities` message. A contract test reads `agent.proto` and fails when the mirror drifts. Consumers rely on five facts.
 
+The agent needs Linux 6.3 or newer for `IP_LOCAL_PORT_RANGE`, and AGT-06 makes it refuse to start on an older kernel.
+
 1. `cores` counts online CPUs, and `memory_bytes` is `MemAvailable`.
 2. `ports` lists every interface except loopback. The driver comes from the device `uevent`, so a virtual interface such as a bridge reports an empty driver, and a link without a speed reports 0.
 3. `backends` lists `BACKEND_AF_XDP` only when the kernel is 4.18 or newer and its config or `/proc/kallsyms` proves AF_XDP sockets. Unknown support leaves the backend out.
@@ -106,7 +108,7 @@ The realism runner from RLM-01 writes one JSON report per capture with `python3 
 1. A check adds one entry to `checks` with the common fields `check`, `passed`, and `metrics`. Its schema adds a definition under `$defs` and one `if` and `then` entry in `$defs.check.allOf`.
 2. Metric names and labels in a report come from the metric catalog, for example `realism.conformance_ratio` with the labels `application` and `classifier`.
 3. Classifiers run out of process. The nDPI classifier calls `ndpiReader -d`, so port based guesses never count toward conformance.
-4. The report passes when it has at least one check and every check passes. RLM-02 added the `parser_errors` check, which counts tshark and Zeek parser errors per application. The conformance check passes when every labelled application reaches the threshold, which is 0.99 unless the labels file or the command sets another.
+4. The report passes when it has at least one check and every check passes. RLM-02 added the `parser_errors` check, which counts tshark and Zeek parser errors per application, and RLM-11 made it list every parser it skipped under `skipped_parsers`, at report format 0.3.0. The conformance check passes when every labelled application reaches the threshold, which is 0.99 unless the labels file or the command sets another.
 
 ## Phases and gates
 

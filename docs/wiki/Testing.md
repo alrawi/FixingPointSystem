@@ -15,7 +15,7 @@ We use eight levels. Each package ships the levels that its workstream requires 
 | Integration | Several real packages in one process or host | `tests/integration/` | Every pull request when the runner allows it |
 | End to end | Controller, agent, and harness over real sockets | `tests/e2e/` and `tests/gates/` | Pull requests labeled `e2e`, nightly, and gates |
 | Realism | Generated traffic passes the eight realism checks | Module `fixtures/` and `realism/` | Module pull requests and nightly |
-| Performance | Throughput, rate, and latency against baselines | `bench/` | Nightly on a fixed host and on request |
+| Performance | Throughput, rate, and latency against baselines | `bench/` | Nightly on the owner host through the `nightly` job of `qa-bench.yml` once its self hosted runner is registered, and on request |
 
 ## Required levels by workstream
 
@@ -60,7 +60,7 @@ The targets that exist today are listed below.
 | `lint-ops` | `tools/plan/plan.py check`, `render --check`, and `lint` |
 | `lint-ctl` | `gofmt -l`, `go vet`, and `golangci-lint run` over the controller, skipping golangci-lint with a notice when it is missing |
 | `test-con` | the contract validator and its tests |
-| `test-ctl` | `go test -race ./...` over the controller, including the configuration store fixtures in `controller/internal/store/testdata/`, the registry tests, the agent manager tests with `controller/internal/fakeagent` as the fake for agent neighbors, the REST layer and capabilities contract tests, the binary end to end test `TestEndToEnd`, the route coverage test of `internal/wiring`, the metrics aggregation tests, the check that the generated code in `controller/internal/api/` matches the contract, and the compiler goldens in `controller/internal/compiler/testdata/` |
+| `test-ctl` | `go test -race ./...` over the controller, including the configuration store fixtures in `controller/internal/store/testdata/`, the registry tests, the agent manager tests with `controller/internal/fakeagent` as the fake for agent neighbors, the REST layer and capabilities contract tests, the binary end to end test `TestEndToEnd`, the metrics token tests `TestMetricsEndpointIsOpenByDefault` and `TestMetricsEndpointRequiresConfiguredToken`, the route coverage test of `internal/wiring`, the metrics aggregation tests, the check that the generated code in `controller/internal/api/` matches the contract, and the compiler goldens in `controller/internal/compiler/testdata/` |
 | `test-ops` | the plan and wiki tool tests and the Cargo workspace probe |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
 | `lint-qa` | gofmt, go vet, and golangci-lint on the Go golden file helper, and ruff and `mypy --strict` on the Python one, each skipped with a notice when its tool is missing |
@@ -68,11 +68,11 @@ The targets that exist today are listed below.
 | `lint-qa` | shellcheck on the harness scripts, and ruff and mypy on its Python helper when they are installed |
 | `test-qa` | the unit tests of the harness pcapng helper |
 | `e2e-qa` | the namespace harness self test, which needs root |
-| `test-agt` | `cargo test -p fps-agent`, the capability detection tests against fake system roots, the `agent.proto` mirror test, and the controller session tests of `tests/session.rs` against a fake controller |
+| `test-agt` | `cargo test -p fps-agent`, the capability detection tests against fake system roots, the `agent.proto` mirror test, and the controller session tests of `tests/session.rs` against a fake controller, the redial policy tests of `tests/redial.rs`, and the kernel check and exit code tests of `tests/exit_codes.rs`; `test-agt-redial` runs the redial tests alone |
 | `test-agt-controller` | the real `fps-controller` against the real agent over loopback with `engine/fps-agent/tests/controller_e2e.sh`, which needs Go, curl, tar, and python3 but no root; the `agt` workflow runs it |
 | `test-eng` | every crate under `engine/`, such as `fps-flow` with its Rust and Python loader parity fixtures, `fps-interp`, `fps-runtime`, `fps-sched`, `fps-stats`, `fps-hosts`, and `fps-backend-kernel`, see [Engine](Engine.md) |
 | `lint-rlm` | `ruff format --check`, `ruff check`, and `mypy --strict` over `realism/` |
-| `test-rlm` | the realism runner tests, including the ndpiReader, tshark, and Zeek tests when the tools are installed |
+| `test-rlm` | the realism runner tests, including the ndpiReader, tshark, and Zeek tests when the tools are installed; CI installs the tools with `realism/ci/install-tools.sh` and the one Zeek version pinned in `realism/ci/zeek.version` |
 | `lint-mod-http1`, `test-mod-http1` | the http1 module manifest, its native functions, and its golden transcripts |
 | `e2e-mod-http1` | the http1 fixture capture and score in the namespace harness, as root |
 | `lint-mod-dns`, `test-mod-dns` | the dns module manifest, its native functions, and its golden transcripts |
@@ -309,3 +309,5 @@ A test reads addresses from `netns.sh info` and sets `FPS_NETNS` to a name of it
 ## Gate suites
 
 Each gate suite lives under `tests/gates/gate<N>/` and has one entry point, `run.sh`, which writes `report.md` with measured values and a pass or fail verdict per criterion. A gate suite uses only public interfaces, which are the REST API, the agent binary, the harness, and the realism runner. The owner signs off a gate after reading its report.
+
+The Gate 1 suite of QA-04 runs with `make build-qa-gate1` and then `sudo make e2e-qa-gate1`, and it writes `summary.json` next to `report.md`. The `qa-gate1` workflow runs it, and [Gates](Gates.md) describes its design.
