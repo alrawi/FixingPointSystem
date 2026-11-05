@@ -37,7 +37,7 @@ pub mod session;
 pub mod sysroot;
 pub mod udp;
 
-pub use capabilities::{detect, HostCapabilities};
-pub use error::DetectError;
+pub use capabilities::{detect, require_kernel, HostCapabilities};
+pub use error::{DetectError, KernelError};
 pub use run::{run, Outcome, RunError, RunOptions};
 pub use sysroot::SystemRoot;

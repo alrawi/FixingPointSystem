@@ -25,3 +25,9 @@ test-agt-controller:
 	$(CARGO) build -p fps-agent
 	cd controller && GOWORK=off $(GO) build -o $(abspath $(AGT_CONTROLLER)) ./cmd/fps-controller
 	engine/fps-agent/tests/controller_e2e.sh $(AGT_CONTROLLER) $(AGT_TARGET_DIR)/debug/fps-agent
+
+# AGT-06 runs only the tests of the kernel requirement and the redial policy
+# of decision D12 items 3 and 11. test-agt already includes them, so this
+# target stays out of TEST_TARGETS and serves a quick local loop.
+test-agt-redial:
+	$(CARGO) test -p fps-agent --test redial --test exit_codes --test detect
