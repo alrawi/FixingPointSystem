@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -631,4 +632,37 @@ func TestNewRequiresStoreAndAgents(t *testing.T) {
 	if _, err := runs.New(runs.Config{}); err == nil {
 		t.Fatal("New without store and agents succeeded")
 	}
+}
+
+// contractID is the id pattern of the OpenAPI contract.
+var contractID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// TestDefaultRunIDsCarryRunPrefix is the regression test of bug #128. Run
+// ids used the cfg_ prefix of configuration ids.
+func TestDefaultRunIDsCarryRunPrefix(t *testing.T) {
+	seen := map[string]bool{}
+	for range 100 {
+		id, err := runs.RandomID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(id, runs.RunIDPrefix) || len(id) != len(runs.RunIDPrefix)+24 || !contractID.MatchString(id) {
+			t.Fatalf("RandomID returned %q, want run_ and 24 hex digits", id)
+		}
+		if seen[id] {
+			t.Fatalf("RandomID repeated %q", id)
+		}
+		seen[id] = true
+	}
+
+	h := newHarness(t, func(c *runs.Config) { c.NewID = nil })
+	a := h.agent(t, "agent-a", nil)
+	run := h.start(t, a)
+	if !strings.HasPrefix(run.ID, "run_") || strings.HasPrefix(run.ID, "cfg_") || !contractID.MatchString(run.ID) {
+		t.Fatalf("created run id %q, want the run_ prefix", run.ID)
+	}
+	if _, err := h.orch.Stop(run.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	h.wait(t, run.ID)
 }

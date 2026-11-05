@@ -1,0 +1,3 @@
+## [2026-11-03] ingest | bug-128 Run ids carry their own run_ prefix
+
+We fixed bug #128 and added a section [Run ids](Controller.md#run-ids) at the end of the [Controller](Controller.md) page. The run orchestrator now defaults `runs.Config.NewID` to the new `runs.RandomID`, which returns `run_` and 24 random hex digits in place of the `cfg_` ids of the configuration store. `TestDefaultRunIDsCarryRunPrefix` checks the prefix, the length, the contract id pattern, and a run created with the default generator. No test or script compares run ids with `cfg_`. The evidence is `make lint-ctl test-ctl` and `docs/handoff/bug-128.md` on the branch `bug/128`. The fix changes no contract and adds no dependency.
