@@ -1,10 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# Metric catalog, contract v0.1. Every metric that the agent records, the
+# Metric catalog, contract v0.2. Every metric that the agent records, the
 # controller derives, the API serves, or a test criterion names appears here
 # once. contracts/metrics/catalog.schema.json defines the format, and
 # tools/contracts/validate.py checks every metric reference against this file.
 catalog: fps-metrics
-version: 0.1.0
+version: 0.2.0
+
+# A reference to a histogram, in a test criterion or a report, appends one of
+# these statistic suffixes to the histogram name, for example
+# sessions.response_time.p99. The list is fixed by decision D12 item 15.
+histogram_statistics: [p50, p90, p99, p999, min, max, mean, count]
 
 labels:
   application:
@@ -19,10 +24,18 @@ labels:
     description: Action type of the flow program.
     values: [connect, accept, send, expect, delay, set, loop, branch, spawn, close, raw]
   side:
-    description: Side of the flow program that ran the action.
+    description: >-
+      Side of the session that recorded the value, or of the flow program that
+      ran the action. A total over both sides counts each session twice, so the
+      API views and test criteria report the client side unless a criterion
+      selects the server side.
     values: [client, server]
   reason:
-    description: Failure reason of a session.
+    description: >-
+      Failure reason of a session. datagram_rejected means a received UDP
+      datagram broke the size limit or stop rule of its expect, template_error
+      means a template failed to render, and extension_error means a module
+      function failed.
     values:
       - connect_timeout
       - connect_refused
@@ -33,6 +46,9 @@ labels:
       - tls_failure
       - aborted
       - internal
+      - datagram_rejected
+      - template_error
+      - extension_error
   classifier:
     description: Independent classifier of the realism pipeline.
     values: [ndpi, zeek]
@@ -52,125 +68,146 @@ metrics:
     type: gauge
     unit: percent
     level: application
+    view: application
     labels: [application]
     description: Achieved share of the application in the mix, by sessions or by bytes according to profile.basis.
   - name: mix.abs_error_pp
     type: gauge
     unit: percentage_points
     level: application
+    view: application
     labels: [application]
     description: Absolute difference between the achieved share and the configured weight of the application.
   - name: mix.max_abs_error_pp
     type: gauge
     unit: percentage_points
     level: application
+    view: application
     labels: []
     description: Largest mix.abs_error_pp over all applications of the run.
   - name: realism.conformance_ratio
     type: gauge
     unit: ratio
     level: application
+    view: realism
     labels: [application, classifier]
     description: Fraction of sampled sessions of the application that the classifier labels as the intended application.
   - name: realism.ks_statistic
     type: gauge
     unit: ratio
     level: application
+    view: realism
     labels: [application, property]
     description: Kolmogorov Smirnov statistic between the observed distribution and the target model.
   - name: realism.ks_p_value
     type: gauge
     unit: ratio
     level: application
+    view: realism
     labels: [application, property]
     description: p value of the Kolmogorov Smirnov test for the same comparison as realism.ks_statistic.
 
   # --- scenario level --------------------------------------------------------
-  # The application view of the API sums these metrics over the scenario label.
+  # The application view of the API also serves these metrics, summed over the
+  # scenario label. Flow action metrics belong to the scenario view.
   - name: sessions.attempted
     type: counter
     unit: sessions
     level: scenario
-    labels: [application, scenario]
+    view: scenario
+    labels: [application, scenario, side]
     description: Sessions that the engine started.
   - name: sessions.established
     type: counter
     unit: sessions
     level: scenario
-    labels: [application, scenario]
+    view: scenario
+    labels: [application, scenario, side]
     description: Sessions whose first connect or accept action completed.
   - name: sessions.succeeded
     type: counter
     unit: sessions
     level: scenario
-    labels: [application, scenario]
+    view: scenario
+    labels: [application, scenario, side]
     description: Sessions whose flow programs finished every action on both sides.
   - name: sessions.failed
     type: counter
     unit: sessions
     level: scenario
-    labels: [application, scenario, reason]
+    view: scenario
+    labels: [application, scenario, side, reason]
     description: Sessions that ended with a failed or timed out action, by failure reason.
   - name: sessions.failed_ratio
     type: gauge
     unit: ratio
     level: scenario
-    labels: [application, scenario]
+    view: scenario
+    labels: [application, scenario, side]
     formula: sessions.failed / sessions.attempted
     description: Fraction of attempted sessions that failed. Test criteria use it without labels for the whole run.
   - name: sessions.concurrent
     type: gauge
     unit: sessions
     level: scenario
-    labels: [application, scenario]
+    view: scenario
+    labels: [application, scenario, side]
     description: Sessions open at the sample instant.
   - name: sessions.rate
     type: gauge
     unit: sessions_per_second
     level: scenario
-    labels: [application, scenario]
+    view: scenario
+    labels: [application, scenario, side]
     description: Sessions attempted per second over the last sample interval.
   - name: sessions.response_time
     type: histogram
     unit: us
     level: scenario
-    labels: [application, scenario]
+    view: scenario
+    labels: [application, scenario, side]
     description: Time from the first send of a transaction to the end of its matching expect.
   - name: sessions.duration
     type: histogram
     unit: us
     level: scenario
-    labels: [application, scenario]
+    view: scenario
+    labels: [application, scenario, side]
     description: Time from session start to the end of its last action.
   - name: transactions.attempted
     type: counter
     unit: transactions
     level: scenario
-    labels: [application, scenario]
+    view: scenario
+    labels: [application, scenario, side]
     description: Transactions started, where a transaction is one send followed by its matching expect.
   - name: transactions.succeeded
     type: counter
     unit: transactions
     level: scenario
-    labels: [application, scenario]
+    view: scenario
+    labels: [application, scenario, side]
     description: Transactions whose expect finished before its timeout.
   - name: bytes.tx
     type: counter
     unit: bytes
     level: scenario
-    labels: [application, scenario]
-    description: Application payload bytes that the client side sent, excluding transport headers.
+    view: scenario
+    labels: [application, scenario, side]
+    description: Application payload bytes that the side sent, excluding transport headers.
   - name: bytes.rx
     type: counter
     unit: bytes
     level: scenario
-    labels: [application, scenario]
-    description: Application payload bytes that the client side received, excluding transport headers.
+    view: scenario
+    labels: [application, scenario, side]
+    description: Application payload bytes that the side received, excluding transport headers.
   - name: throughput.bps
     type: gauge
     unit: bits_per_second
     level: scenario
-    labels: [application, scenario]
+    view: scenario
+    labels: [application, scenario, side]
     description: Application payload throughput in both directions over the last sample interval.
 
   # --- flow action level -----------------------------------------------------
@@ -178,24 +215,28 @@ metrics:
     type: counter
     unit: events
     level: flow_action
+    view: scenario
     labels: [application, scenario, flow, side, action_index]
     description: Expect actions that did not finish within their timeout.
   - name: actions.pattern_mismatches
     type: counter
     unit: events
     level: flow_action
+    view: scenario
     labels: [application, scenario, flow, side, action_index]
     description: Expect actions that received data that cannot match the pattern.
   - name: actions.unexpected_resets
     type: counter
     unit: events
     level: flow_action
+    view: scenario
     labels: [application, scenario, flow, side, action_index]
     description: Resets from the peer while the action ran and the flow program did not expect a close.
   - name: actions.latency
     type: histogram
     unit: us
     level: flow_action
+    view: scenario
     labels: [application, scenario, flow, side, action_index, action_type]
     description: Time from the start to the end of one action.
 
@@ -204,86 +245,100 @@ metrics:
     type: counter
     unit: events
     level: transport
-    labels: [port]
+    view: tcp
+    labels: [port, side]
     description: TCP three way handshakes that completed.
   - name: tcp.handshake_failures
     type: counter
     unit: events
     level: transport
-    labels: [port]
+    view: tcp
+    labels: [port, side]
     description: TCP handshakes that timed out or met a reset.
   - name: tcp.retransmissions
     type: counter
     unit: packets
     level: transport
-    labels: [port]
+    view: tcp
+    labels: [port, side]
     description: TCP segments that the engine retransmitted.
   - name: tcp.resets.tx
     type: counter
     unit: packets
     level: transport
-    labels: [port]
+    view: tcp
+    labels: [port, side]
     description: TCP segments with RST that the engine sent.
   - name: tcp.resets.rx
     type: counter
     unit: packets
     level: transport
-    labels: [port]
+    view: tcp
+    labels: [port, side]
     description: TCP segments with RST that the engine received.
   - name: tcp.zero_window_events
     type: counter
     unit: events
     level: transport
-    labels: [port]
+    view: tcp
+    labels: [port, side]
     description: Times a peer advertised a zero receive window.
   - name: tcp.rtt
     type: histogram
     unit: us
     level: transport
-    labels: [port]
+    view: tcp
+    labels: [port, side]
     description: Smoothed round trip time samples of TCP sessions.
   - name: tls.handshakes
     type: counter
     unit: events
     level: transport
-    labels: [port]
+    view: tls
+    labels: [port, side]
     description: TLS handshakes that completed.
   - name: tls.handshake_failures
     type: counter
     unit: events
     level: transport
-    labels: [port]
+    view: tls
+    labels: [port, side]
     description: TLS handshakes that failed or timed out.
   - name: tls.alerts.tx
     type: counter
     unit: events
     level: transport
-    labels: [port, alert]
+    view: tls
+    labels: [port, side, alert]
     description: TLS alerts that the engine sent, by alert type.
   - name: tls.alerts.rx
     type: counter
     unit: events
     level: transport
-    labels: [port, alert]
+    view: tls
+    labels: [port, side, alert]
     description: TLS alerts that the engine received, by alert type.
   - name: tls.resumptions
     type: counter
     unit: events
     level: transport
-    labels: [port]
+    view: tls
+    labels: [port, side]
     description: TLS handshakes that resumed an earlier session.
   - name: tls.resumption_ratio
     type: gauge
     unit: ratio
     level: transport
-    labels: [port]
+    view: tls
+    labels: [port, side]
     formula: tls.resumptions / tls.handshakes
     description: Fraction of completed TLS handshakes that resumed an earlier session.
   - name: tls.handshake_time
     type: histogram
     unit: us
     level: transport
-    labels: [port]
+    view: tls
+    labels: [port, side]
     description: Time from ClientHello to the Finished message of a completed TLS handshake.
 
   # --- port and host level ---------------------------------------------------
@@ -291,59 +346,69 @@ metrics:
     type: counter
     unit: packets
     level: port_host
+    view: port
     labels: [port]
     description: Packets that the port sent.
   - name: port.packets.rx
     type: counter
     unit: packets
     level: port_host
+    view: port
     labels: [port]
     description: Packets that the port received.
   - name: port.bytes.tx
     type: counter
     unit: bytes
     level: port_host
+    view: port
     labels: [port]
     description: Bytes that the port sent, including all headers.
   - name: port.bytes.rx
     type: counter
     unit: bytes
     level: port_host
+    view: port
     labels: [port]
     description: Bytes that the port received, including all headers.
   - name: port.drops
     type: counter
     unit: packets
     level: port_host
+    view: port
     labels: [port]
     description: Packets that the backend dropped on the port, for example on a full ring.
   - name: port.throughput.tx_bps
     type: gauge
     unit: bits_per_second
     level: port_host
+    view: port
     labels: [port]
     description: Line rate that the port sent over the last sample interval.
   - name: port.throughput.rx_bps
     type: gauge
     unit: bits_per_second
     level: port_host
+    view: port
     labels: [port]
     description: Line rate that the port received over the last sample interval.
   - name: host.arp_failures
     type: counter
     unit: events
     level: port_host
+    view: port
     labels: [port, host_pool]
     description: ARP resolutions that did not receive a reply.
   - name: host.nd_failures
     type: counter
     unit: events
     level: port_host
+    view: port
     labels: [port, host_pool]
     description: IPv6 neighbor discovery resolutions that did not receive a reply.
   - name: host.active
     type: gauge
     unit: hosts
     level: port_host
+    view: port
     labels: [port, host_pool]
     description: Emulated hosts that hold at least one open session.
