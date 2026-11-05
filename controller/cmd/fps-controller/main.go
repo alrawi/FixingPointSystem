@@ -5,7 +5,7 @@
 // Usage:
 //
 //	fps-controller [-config file] [-listen host:port] [-grpc-listen host:port]
-//	               [-data-dir dir] [-log-level level]
+//	               [-data-dir dir] [-metrics-token-file file] [-log-level level]
 //	fps-controller -version
 //
 // Settings come from three layers, where a later layer wins. The layers are the
@@ -55,13 +55,14 @@ func main() {
 
 // options holds the parsed command line.
 type options struct {
-	configPath string
-	listen     string
-	grpcListen string
-	dataDir    string
-	logLevel   string
-	version    bool
-	set        map[string]bool
+	configPath       string
+	listen           string
+	grpcListen       string
+	dataDir          string
+	metricsTokenFile string
+	logLevel         string
+	version          bool
+	set              map[string]bool
 }
 
 // parseFlags parses args into options. The set map records which flags appeared,
@@ -74,6 +75,7 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.listen, "listen", app.DefaultListen, "TCP `address` of the HTTP server")
 	fs.StringVar(&o.grpcListen, "grpc-listen", app.DefaultGRPCListen, "TCP `address` of the agent gRPC service")
 	fs.StringVar(&o.dataDir, "data-dir", "", "`directory` of the module registry and the configuration store")
+	fs.StringVar(&o.metricsTokenFile, "metrics-token-file", "", "`file` that holds the bearer token for GET /metrics; empty leaves the endpoint open")
 	fs.StringVar(&o.logLevel, "log-level", app.DefaultLogLevel, "log `level`: debug, info, warn, or error")
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
@@ -105,6 +107,9 @@ func loadConfig(o options) (app.Config, error) {
 	}
 	if o.set["data-dir"] {
 		cfg.DataDir = o.dataDir
+	}
+	if o.set["metrics-token-file"] {
+		cfg.MetricsTokenFile = o.metricsTokenFile
 	}
 	if o.set["log-level"] {
 		cfg.LogLevel = o.logLevel
@@ -170,7 +175,7 @@ func serve(ctx context.Context, cfg app.Config, logger *slog.Logger) (err error)
 	defer func() { err = errors.Join(err, ctl.Close()) }()
 
 	a := app.New(cfg, logger)
-	if err := mountMetrics(a, ctl, logger); err != nil {
+	if err := mountMetrics(a, cfg, ctl, logger); err != nil {
 		return err
 	}
 	ctl.Mount(a)
@@ -200,9 +205,10 @@ func serve(ctx context.Context, cfg app.Config, logger *slog.Logger) (err error)
 // mountMetrics creates the metrics aggregator, feeds it every agent manager
 // event, routes the run metrics operations to it, builds run reports over its
 // merged metrics with the criteria evaluator of the controller, and serves
-// the Prometheus exposition at GET /metrics without a token, as scrapers
-// expect. Call it before ctl.Mount.
-func mountMetrics(a *app.App, ctl *wiring.Controller, logger *slog.Logger) error {
+// the Prometheus exposition at GET /metrics. The endpoint is open unless
+// metrics_token_file names a token, which scrapers then send as a bearer
+// token. Call it before ctl.Mount.
+func mountMetrics(a *app.App, cfg app.Config, ctl *wiring.Controller, logger *slog.Logger) error {
 	agg, err := metrics.New(metrics.Config{Logger: logger})
 	if err != nil {
 		return fmt.Errorf("create metrics aggregator: %w", err)
@@ -210,6 +216,15 @@ func mountMetrics(a *app.App, ctl *wiring.Controller, logger *slog.Logger) error
 	ctl.Observe(agg.Observe)
 	ctl.SetMetrics(metrics.NewAPI(agg, ctl.Runs))
 	ctl.SetReport(report.NewAPI(ctl.Evaluator, ctl.Runs, agg))
-	a.Handle("GET /metrics", metrics.NewPrometheus(agg))
+	token, err := cfg.LoadMetricsToken()
+	if err != nil {
+		return err
+	}
+	if token == "" {
+		logger.Info("metrics endpoint is open", "path", "/metrics")
+	} else {
+		logger.Info("metrics endpoint requires a bearer token", "path", "/metrics")
+	}
+	a.Handle("GET /metrics", app.RequireBearer(token, metrics.NewPrometheus(agg)))
 	return nil
 }

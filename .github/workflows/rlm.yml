@@ -3,8 +3,10 @@
 # Workstream workflow for RLM. It runs the same make targets that an agent runs
 # locally, installs nDPI, tshark, and Zeek so that the optional tests of the real
 # tools run, and scores a synthetic capture with the installed runner under
-# python -I. Zeek comes from the package repository of the Zeek project, because
-# Ubuntu does not ship it.
+# python -I. realism/ci/install-tools.sh installs the tools. It takes Zeek from
+# the package repository of the Zeek project, because Ubuntu does not ship it,
+# and pins the version in realism/ci/zeek.version for this workflow and for the
+# realism workflow alike.
 name: rlm
 
 on:
@@ -42,23 +44,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install nDPI, which the runner calls out of process
+      - name: Install nDPI, tshark, and the pinned Zeek, which the runner calls out of process
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q libndpi-bin
-          ndpiReader -h | head -1
-      - name: Install tshark and Zeek, which the parser error check calls out of process
-        run: |
-          echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
-          curl -fsSL https://download.opensuse.org/repositories/security:zeek/xUbuntu_24.04/Release.key \
-            | sudo gpg --dearmor -o /usr/share/keyrings/zeek.gpg
-          echo "deb [signed-by=/usr/share/keyrings/zeek.gpg] https://download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/ /" \
-            | sudo tee /etc/apt/sources.list.d/zeek.list
-          sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark zeek-core
+          realism/ci/install-tools.sh
           echo /opt/zeek/bin >> "$GITHUB_PATH"
-          tshark --version | head -1
-          /opt/zeek/bin/zeek --version
       - run: python -m pip install -r realism/requirements-dev.txt
       - run: make lint-rlm test-rlm PYTHON=python
       - name: Score a synthetic capture with the installed runner

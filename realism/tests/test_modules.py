@@ -234,7 +234,26 @@ def test_summary_rows() -> None:
         "| http1 | conformance | http1 | fail | 0 of 120 sessions conform, "
         'observed {"Unknown": 120} |',
         "| http1 | parser_errors | http1 | pass | 0 parser errors, 0 malformed packets |",
-        "| http1 | parser_errors | all | pass | ran tshark 4.2.2, missing zeek |",
+        "| http1 | parser_errors | all | pass | ran tshark 4.2.2, skipped zeek (not installed) |",
+    ]
+
+
+def test_summary_rows_list_every_skipped_parser_with_its_reason() -> None:
+    check = {
+        "check": "parser_errors",
+        "passed": True,
+        "parsers": [],
+        "missing_parsers": ["tshark", "zeek"],
+        "skipped_parsers": [
+            {"parser": "tshark", "reason": "not installed, no program at tshark"},
+            {"parser": "zeek", "reason": "not installed, no program at zeek"},
+        ],
+        "applications": [],
+    }
+    assert summary.rows("dns", {"checks": [check]}) == [
+        "| dns | parser_errors | all | pass | ran none, "
+        "skipped tshark (not installed, no program at tshark), "
+        "skipped zeek (not installed, no program at zeek) |"
     ]
 
 

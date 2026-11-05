@@ -20,7 +20,7 @@ from realism.capture import CaptureError
 from realism.classifier import DEFAULT_TIMEOUT_S, ClassifierError, NdpiClassifier
 from realism.labels import LabelsError
 from realism.modules import ModuleError, discover, matrix, select
-from realism.parsers import PARSER_NAMES, ParserError, resolve
+from realism.parsers import PARSER_NAMES, ParserError, not_found_reason, resolve
 from realism.report import score
 
 EXIT_PASS = 0
@@ -145,11 +145,9 @@ def main(argv: list[str] | None = None) -> int:
             timeout_s=args.timeout,
             required=args.parsers is not None,
         )
+        reasons = {name: not_found_reason(name, args.tshark, args.zeek) for name in missing}
         for name in missing:
-            print(
-                f"realism score: {name} is not installed, the parser check skips it",
-                file=sys.stderr,
-            )
+            print(f"realism score: skipped parser {name}: {reasons[name]}", file=sys.stderr)
         report = score(
             args.pcap,
             args.labels,
@@ -157,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
             threshold=args.threshold,
             parsers=None if args.parsers == () else parsers,
             missing_parsers=missing,
+            skip_reasons=reasons,
         )
     except (CaptureError, LabelsError, ClassifierError, ParserError) as exc:
         print(f"realism score failed: {exc}", file=sys.stderr)

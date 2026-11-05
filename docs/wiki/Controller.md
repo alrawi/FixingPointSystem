@@ -590,7 +590,7 @@ Bug #119 closed the hook that the Binary wiring section describes. The function 
 3. `ctl.SetMetrics(metrics.NewAPI(agg, ctl.Runs))` routes `GET /v1/runs/{id}/metrics` and `GET /v1/runs/{id}/metrics:stream` to the aggregator, with the run orchestrator as the `RunSource`. A run that the orchestrator knows answers 200 before its first snapshot, and the stream ends when the run ends.
 4. `a.Handle("GET /metrics", metrics.NewPrometheus(agg))` serves the Prometheus exposition outside `/v1`.
 
-`GET /metrics` needs no token, because Prometheus scrapers usually send none. The exposition holds run identifiers, application names, scenario names, and port names, so an operator who considers them sensitive keeps the listen address on a trusted network. The exported field `wiring.Controller.Runs` already gives the orchestrator, so the wiring package needed no new accessor.
+`GET /metrics` needs no token by default, because Prometheus scrapers usually send none, and CTL-19 added the optional setting `metrics_token_file`, which [Metrics endpoint token](#metrics-endpoint-token) describes. The exposition holds run identifiers, application names, scenario names, and port names, so an operator who considers them sensitive sets that token or keeps the listen address on a trusted network. The exported field `wiring.Controller.Runs` already gives the orchestrator, so the wiring package needed no new accessor.
 
 `TestEndToEnd` now runs one more step while the run is running. The fake agent sends a snapshot with `sessions.attempted` equal to 7 for the application `http1` and the scenario `web_get`. The test polls until `GET /v1/runs/{id}/metrics?view=application` returns the key `http1` with that count and `GET /metrics` contains the line `fps_sessions_attempted_total{run_id="<run id>",application="http1",scenario="web_get"} 7`.
 
@@ -604,3 +604,36 @@ Bug #124 joined the criteria evaluator and the report endpoint of CTL-09 to the 
 `GET /v1/runs/{id}/report` answers JSON by default and CSV with `format=csv`. The format `html` still answers 501 from `report.API`. `TestServerRoutesEveryOperation` now expects six pending operations, and `TestNewServesRunReports` and `TestSetReportRoutesReportOperation` cover the default handler and the hook.
 
 `TestEndToEnd` proves the path through the binary. The example configuration gains the criterion `tls.resumption_ratio >= 0.5`, whose gauge only the CTL-09 evaluator computes. The fake agent snapshot carries `sessions.attempted`, `sessions.succeeded`, `sessions.failed`, `tls.handshakes`, and `tls.resumptions` both with labels and without, because the orchestrator reads only the unlabeled run totals. After the stop the test reads both criteria as passed with the observed values 0 and 0.5 from `GET /v1/runs/{id}`, from the JSON report, and from the criterion rows of the CSV report, and it checks `sessions_attempted` 7 in the report summary.
+
+## Metrics endpoint token
+
+Decision D12 item 2 keeps `GET /metrics` open by default and lets an operator require a bearer token. CTL-19 added the setting.
+
+```yaml
+metrics_token_file: /etc/fps/metrics.token   # empty or absent keeps GET /metrics open
+```
+
+| Key or flag | Default | Meaning |
+|---|---|---|
+| `metrics_token_file`, `-metrics-token-file file` | none | File that holds the bearer token for `GET /metrics`. Without it the endpoint stays open |
+
+The setting names a file and not the secret itself, so the token never appears in the configuration, in a command line, or in a log record. The controller trims the white space around the content of the file, as it does for `token_file` of the API tokens. The token holds at least 16 bytes. A file that the controller cannot read, or a token that is too short, ends the process with exit code 2. The flag overrides the file key like every other flag. The token is independent of `tokens`, so an API token does not open the metrics endpoint and the metrics token does not open the API.
+
+With the setting, a request to `GET /metrics` must carry `Authorization: Bearer <token>`, where the scheme name ignores case. Any other request answers 401 with a `WWW-Authenticate: Bearer` challenge and never reaches the exposition. The check hashes the presented value and the configured token with SHA-256 and compares the digests with `crypto/subtle.ConstantTimeCompare`, so neither the content nor the length of the token leaks through timing. `/healthz` stays open in every case. At startup the controller logs `metrics endpoint is open` or `metrics endpoint requires a bearer token` with the path, and never the token.
+
+Prometheus sends the token with `authorization.credentials_file`:
+
+```yaml
+scrape_configs:
+  - job_name: fps-controller
+    authorization:
+      credentials_file: /etc/prometheus/fps-metrics.token
+    static_configs:
+      - targets: ["controller.lab:8443"]
+```
+
+`app.RequireBearer(token, next)` implements the check, and `mountMetrics` wraps `metrics.NewPrometheus` with it. Unit tests in `internal/app` cover an open endpoint, a required token, a wrong token, a prefix and an extension of the right token, other schemes, and the file loader. Tests in `cmd/fps-controller` start the controller in process and check the three cases over a real socket, check that the logs never hold the token, and check exit code 2 for an unreadable token file.
+
+## Run ids
+
+Bug #128 gave run ids their own prefix. The run orchestrator used `store.RandomID` as the default of `runs.Config.NewID`, so run ids started with `cfg_` and read like configuration ids in logs, reports, and the API. The package `runs` now has its own `runs.RandomID`, which returns `run_` and 24 random hex digits, and `runs.New` uses it when `NewID` is nil. The constant `runs.RunIDPrefix` names the prefix. Every id matches the contract pattern `^[A-Za-z0-9_-]{1,64}$`, and the OpenAPI document sets no prefix, so the change touches no contract. Clients treat run ids as opaque strings, and the end to end script `engine/fps-agent/tests/controller_e2e.sh` reads the id from the response and only prints it. `TestDefaultRunIDsCarryRunPrefix` checks the generator and a run that the orchestrator creates with the default generator.

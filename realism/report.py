@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,7 +22,7 @@ from realism.labels import load
 from realism.parsers import ParserRunner
 
 REPORT_FORMAT = "fps-realism-report"
-REPORT_VERSION = "0.2.0"
+REPORT_VERSION = "0.3.0"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "realism-report.schema.json"
 LABELS_SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "labels.schema.json"
 
@@ -72,13 +72,15 @@ def score(
     threshold: float | None = None,
     parsers: Sequence[ParserRunner] | None = None,
     missing_parsers: Sequence[str] = (),
+    skip_reasons: Mapping[str, str] | None = None,
 ) -> Report:
     """Score a capture against its labels and return the realism report.
 
     The threshold argument overrides the threshold of the labels file, which
     overrides the default of 0.99. With ``parsers``, even an empty sequence, the
     report also carries the parser error check, and ``missing_parsers`` names the
-    requested parsers that were not installed.
+    requested parsers that were not installed. The check lists each of them under
+    ``skipped_parsers`` with its reason from ``skip_reasons``.
     """
     labels = load(labels_path)
     summary = summarize(pcap)
@@ -89,7 +91,9 @@ def score(
     checks = [conformance.check(pcap, summary.sessions, labels, classifier, threshold).to_dict()]
     if parsers is not None:
         checks.append(
-            parser_errors.check(pcap, summary.sessions, labels, parsers, missing_parsers).to_dict()
+            parser_errors.check(
+                pcap, summary.sessions, labels, parsers, missing_parsers, skip_reasons
+            ).to_dict()
         )
     return Report(
         capture={

@@ -4,9 +4,9 @@
     python3 -m realism.ci.summary MODULE REPORT
 
 The script prints one row per check and application, and one row with the
-parsers that ran. When ``GITHUB_STEP_SUMMARY`` names a file, it appends the
-table with its header to that file, so the job summary of the workflow shows
-every module.
+parsers that ran and each parser that it skipped. When ``GITHUB_STEP_SUMMARY``
+names a file, it appends the table with its header to that file, so the job
+summary of the workflow shows every module.
 """
 
 from __future__ import annotations
@@ -22,6 +22,20 @@ HEADER = "| Module | Check | Application | Result | Detail |\n|---|---|---|---|-
 
 def _verdict(passed: object) -> str:
     return "pass" if passed is True else "fail"
+
+
+def skipped_text(check: dict[str, Any]) -> str:
+    """Return ``, skipped NAME (REASON)`` for each skipped parser, or an empty string.
+
+    A report of format 0.2.0 has only ``missing_parsers``, which names the parsers
+    without a reason.
+    """
+    skipped = check.get("skipped_parsers")
+    if skipped is None:
+        skipped = [
+            {"parser": name, "reason": "not installed"} for name in check.get("missing_parsers", [])
+        ]
+    return "".join(f", skipped {item['parser']} ({item['reason']})" for item in skipped)
 
 
 def rows(module: str, report: dict[str, Any]) -> list[str]:
@@ -49,8 +63,7 @@ def rows(module: str, report: dict[str, Any]) -> list[str]:
             )
         if kind == "parser_errors":
             ran = ", ".join(f"{p['parser']} {p['version']}" for p in check.get("parsers", []))
-            missing = ", ".join(check.get("missing_parsers", []))
-            detail = f"ran {ran or 'none'}" + (f", missing {missing}" if missing else "")
+            detail = f"ran {ran or 'none'}" + skipped_text(check)
             out.append(f"| {module} | {kind} | all | {_verdict(check['passed'])} | {detail} |")
     return out
 

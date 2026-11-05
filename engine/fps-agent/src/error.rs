@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Errors of capability detection.
+//! Errors of capability detection and of the startup kernel check.
 
 use std::path::PathBuf;
 
@@ -49,4 +49,24 @@ impl DetectError {
             value: value[..end].to_owned(),
         }
     }
+}
+
+/// Errors of the startup kernel check.
+#[derive(Debug, thiserror::Error)]
+pub enum KernelError {
+    /// The kernel is older than the first release with `IP_LOCAL_PORT_RANGE`.
+    #[error(
+        "kernel {release} is too old: the agent needs the IP_LOCAL_PORT_RANGE socket option, \
+         which requires Linux {}.{} or newer (decision D12 item 3)",
+        .required.0, .required.1
+    )]
+    TooOld {
+        /// The release string of the running kernel, for example `5.15.0-91-generic`.
+        release: String,
+        /// The least major and minor version that the agent accepts.
+        required: (u32, u32),
+    },
+    /// The kernel release could not be read.
+    #[error("read the kernel release for the IP_LOCAL_PORT_RANGE check")]
+    Detect(#[from] DetectError),
 }

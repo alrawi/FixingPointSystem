@@ -1,0 +1,59 @@
+openapi: 3.1.0
+info:
+  title: FixingPointSystem Controller Metrics Endpoint
+  version: 0.3.0
+  summary: Prometheus exposition of the controller, outside the versioned REST API.
+  description: >
+    The controller serves the Prometheus text exposition at GET /metrics on the
+    listen address of the REST API, outside the /v1 base path that
+    fps-api-v1.yaml documents, because scrapers expect the fixed path
+    /metrics. This document carries the version of fps-api-v1.yaml and changes
+    with it. Each metric name maps a name from contracts/metrics/catalog.yaml
+    to fps_ followed by the name with dots replaced by underscores, and adds
+    _total to counters. The endpoint is open by default (decision D12 item 2).
+    A setting in the controller configuration can require a bearer token, and
+    the endpoint then answers a request without that token with 401.
+  license:
+    name: GPL-3.0-only
+    identifier: GPL-3.0-only
+servers:
+  - url: https://{controller}
+    variables:
+      controller:
+        default: localhost:8443
+security:
+  - {}
+  - metricsToken: []
+tags:
+  - name: system
+paths:
+  /metrics:
+    get:
+      tags: [system]
+      operationId: getPrometheusMetrics
+      summary: Prometheus text exposition of the controller and the agents it drives.
+      responses:
+        "200":
+          description: Prometheus text exposition format 0.0.4.
+          content:
+            text/plain:
+              schema: { type: string }
+        "401":
+          description: >
+            The controller configuration requires a bearer token, and the
+            request carries no token or a token that differs from it.
+          headers:
+            WWW-Authenticate: { schema: { type: string }, description: The bearer challenge. }
+          content:
+            application/problem+json:
+              schema: { $ref: "fps-api-v1.yaml#/components/schemas/Problem" }
+        default: { $ref: "fps-api-v1.yaml#/components/responses/Problem" }
+components:
+  securitySchemes:
+    metricsToken:
+      type: http
+      scheme: bearer
+      description: >
+        The metrics token from the controller configuration. It is separate from
+        the scoped API tokens of fps-api-v1.yaml and applies only when the
+        configuration sets it.

@@ -196,7 +196,8 @@
       "description": "Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran and no parser reported an error.",
       "type": "object",
       "required": [
-        "check", "passed", "metrics", "parsers", "missing_parsers", "applications",
+        "check", "passed", "metrics", "parsers", "missing_parsers", "skipped_parsers",
+        "applications",
         "unlabelled_errors", "unattributed_errors", "errors", "errors_total"
       ],
       "additionalProperties": false,
@@ -222,9 +223,22 @@
           }
         },
         "missing_parsers": {
-          "description": "Parsers that the runner looked for and did not find.",
+          "description": "Names of the parsers that the runner looked for and did not find. Report format 0.2.0 introduced this field, and skipped_parsers carries the same parsers with their reasons.",
           "type": "array",
           "items": {"enum": ["tshark", "zeek"]}
+        },
+        "skipped_parsers": {
+          "description": "Every parser that the run skipped, which in auto mode is each parser that is not installed, with the reason. Empty when every requested parser ran.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["parser", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "parser": {"enum": ["tshark", "zeek"]},
+              "reason": {"type": "string", "minLength": 1}
+            }
+          }
         },
         "applications": {
           "type": "array",

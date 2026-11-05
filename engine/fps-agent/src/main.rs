@@ -10,6 +10,12 @@
 //!   counter snapshot per second as JSON lines. It exits with
 //!   [`EXIT_PASS`] when every criterion holds, [`EXIT_FAIL`] when one fails,
 //!   and [`EXIT_ERROR`] on any error.
+//! - `fps-agent connect --controller URI --agent-id ID --modules DIR
+//!   [--redial-limit SECONDS]` serves a controller. It exits with
+//!   [`EXIT_REDIAL`] when the dials fail for the redial limit.
+//!
+//! `run` and `connect` refuse to start on a kernel older than Linux 6.3,
+//! which lacks the `IP_LOCAL_PORT_RANGE` socket option.
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -21,11 +27,12 @@ use std::time::Duration;
 use fps_agent::assemble::Sides;
 use fps_agent::capabilities::{AfXdpSupport, HostCapabilities};
 use fps_agent::session::Config;
-use fps_agent::{detect, Outcome, RunOptions, SystemRoot};
+use fps_agent::session::SessionError;
+use fps_agent::{detect, require_kernel, Outcome, RunOptions, SystemRoot};
 
 const USAGE: &str = "usage: fps-agent capabilities [--root DIR]
        fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS]
-       fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--label KEY=VALUE]...";
+       fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--label KEY=VALUE]... [--redial-limit SECONDS]";
 
 /// The exit code of a run whose criteria hold.
 const EXIT_PASS: u8 = 0;
@@ -34,6 +41,8 @@ const EXIT_FAIL: u8 = 1;
 /// The exit code of a usage error, an invalid plan or module, or a failed
 /// worker.
 const EXIT_ERROR: u8 = 2;
+/// The exit code of an agent that gave up redialing the controller.
+const EXIT_REDIAL: u8 = 3;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -70,6 +79,10 @@ fn run(args: &[String]) -> ExitCode {
             return ExitCode::from(EXIT_ERROR);
         }
     };
+    if let Err(e) = require_kernel(&SystemRoot::host()) {
+        eprintln!("fps-agent: error: {}", chain(&e));
+        return ExitCode::from(EXIT_ERROR);
+    }
     let mut out = std::io::stdout().lock();
     let mut log = std::io::stderr();
     match fps_agent::run(&opts, &mut out, &mut log) {
@@ -98,6 +111,13 @@ fn connect(args: &[String]) -> ExitCode {
         .with_current_span(false)
         .init();
     let mut cfg = cfg;
+    // The check comes first, so a kernel without IP_LOCAL_PORT_RANGE never
+    // registers with the controller.
+    if let Err(e) = require_kernel(&root) {
+        eprintln!("fps-agent: error: {}", chain(&e));
+        return ExitCode::from(EXIT_ERROR);
+    }
+    cfg.jitter_seed = clock_seed();
     match detect(&root) {
         Ok(host) => {
             let mut caps = host.to_capabilities();
@@ -135,11 +155,24 @@ fn connect(args: &[String]) -> ExitCode {
     let result = rt.block_on(fps_agent::session::serve(cfg, shutdown()));
     match result {
         Ok(()) => ExitCode::SUCCESS,
+        Err(e @ SessionError::RedialLimit { .. }) => {
+            eprintln!("fps-agent: error: {}", chain(&e));
+            ExitCode::from(EXIT_REDIAL)
+        }
         Err(e) => {
             eprintln!("fps-agent: error: {}", chain(&e));
             ExitCode::from(EXIT_ERROR)
         }
     }
+}
+
+/// Returns the seed of the backoff jitter. The clock and the process id are
+/// read here, at the edge, so the library stays deterministic.
+fn clock_seed() -> u64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    nanos ^ (u64::from(std::process::id()) << 32)
 }
 
 /// Completes on SIGINT or SIGTERM.
@@ -162,6 +195,7 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
     let (mut controller, mut id, mut modules) = (None, None, None);
     let (mut root, mut sides) = (SystemRoot::host(), Sides::Both);
     let mut labels = std::collections::HashMap::new();
+    let mut redial_limit = Some(fps_agent::session::DEFAULT_REDIAL_LIMIT);
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         let value = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -172,6 +206,15 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
             "--root" => root = SystemRoot::new(value),
             "--side" => {
                 sides = Sides::parse(value).ok_or_else(|| format!("unknown side {value:?}"))?;
+            }
+            "--redial-limit" => {
+                let secs: f64 = value
+                    .parse()
+                    .ok()
+                    .filter(|s: &f64| s.is_finite() && *s >= 0.0)
+                    .ok_or_else(|| format!("invalid --redial-limit {value:?}"))?;
+                // Zero means no limit, so the agent redials forever.
+                redial_limit = (secs > 0.0).then(|| Duration::from_secs_f64(secs));
             }
             "--label" => {
                 let (k, v) = value
@@ -189,6 +232,7 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
     );
     cfg.sides = sides;
     cfg.capabilities.labels = labels;
+    cfg.redial_limit = redial_limit;
     Ok((cfg, root))
 }
 

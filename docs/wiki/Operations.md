@@ -48,3 +48,7 @@ python3 tools/swarm/project_sync.py     # sync every issue
 ```
 
 Agents in sandboxed sessions cannot reach the GraphQL API, so they never run it. The tests in `tools/swarm/test_project_sync.py` replay GraphQL responses from `tools/swarm/testdata/project_sync/` and never reach the network.
+
+## Benchmark runner
+
+The nightly benchmark of QA-08 runs on a self hosted runner on the owner's Linux server with the label `fps-bench`. The owner registers it with the steps in [`bench/README.md`, section Registering the owner host](https://github.com/alrawi/FixingPointSystem/blob/main/bench/README.md#registering-the-owner-host), and [Benchmarks](Benchmarks.md) explains the comparison.

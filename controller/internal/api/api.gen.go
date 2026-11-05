@@ -303,6 +303,23 @@ type ConfigRef struct {
 	Name      string     `json:"name"`
 }
 
+// CriterionResult Result of one criterion. A criterion that compared a value carries observed and passed. A criterion whose metric has no value carries neither, and a criterion that the controller cannot evaluate carries passed false without observed. The reason says which case applies.
+type CriterionResult struct {
+	// Metric Metric name from contracts/metrics/catalog.yaml.
+	Metric *string `json:"metric,omitempty"`
+
+	// Observed Value of the metric over the whole run, absent when the metric has no value.
+	Observed *float32 `json:"observed,omitempty"`
+	Op       *string  `json:"op,omitempty"`
+
+	// Passed Outcome of the comparison, absent when the metric has no value.
+	Passed *bool `json:"passed,omitempty"`
+
+	// Reason Why the criterion passed, failed, or has no result, in words for an operator.
+	Reason *string  `json:"reason,omitempty"`
+	Value  *float32 `json:"value,omitempty"`
+}
+
 // Finding defines model for Finding.
 type Finding struct {
 	Message string `json:"message"`
@@ -322,7 +339,7 @@ type MetricSample struct {
 	Ts  time.Time `json:"ts"`
 
 	// Values Values keyed by metric name from contracts/metrics/catalog.yaml.
-	Values map[string]float32 `json:"values"`
+	Values map[string]float64 `json:"values"`
 	View   MetricView         `json:"view"`
 }
 
@@ -371,23 +388,18 @@ type Run struct {
 	Id             string             `json:"id"`
 	ModuleVersions *map[string]string `json:"module_versions,omitempty"`
 	Phase          *string            `json:"phase,omitempty"`
-	Seed           *int               `json:"seed,omitempty"`
-	StartedAt      *time.Time         `json:"started_at,omitempty"`
-	State          RunState           `json:"state"`
+
+	// Reason Why the run failed or was aborted, in words for an operator, such as the criterion that failed, the agent that failed, or the stop request. Absent while the run is in any other state.
+	Reason    *string    `json:"reason,omitempty"`
+	Seed      *int       `json:"seed,omitempty"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	State     RunState   `json:"state"`
 
 	// Summary Whole run totals. Each property names its metric in contracts/metrics/catalog.yaml through x-fps-metric.
 	Summary *RunSummary `json:"summary,omitempty"`
-	Verdict *struct {
-		Criteria *[]struct {
-			// Metric Metric name from contracts/metrics/catalog.yaml.
-			Metric   *string  `json:"metric,omitempty"`
-			Observed *float32 `json:"observed,omitempty"`
-			Op       *string  `json:"op,omitempty"`
-			Passed   *bool    `json:"passed,omitempty"`
-			Value    *float32 `json:"value,omitempty"`
-		} `json:"criteria,omitempty"`
-		Passed *bool `json:"passed,omitempty"`
-	} `json:"verdict,omitempty"`
+
+	// Verdict Outcome of the pass and fail criteria of the test configuration.
+	Verdict *RunVerdict `json:"verdict,omitempty"`
 }
 
 // RunReport defines model for RunReport.
@@ -414,6 +426,15 @@ type RunSummary struct {
 	SessionsPerSecond  *float32 `json:"sessions_per_second,omitempty"`
 	SessionsSucceeded  *int     `json:"sessions_succeeded,omitempty"`
 	ThroughputBps      *float32 `json:"throughput_bps,omitempty"`
+}
+
+// RunVerdict Outcome of the pass and fail criteria of the test configuration.
+type RunVerdict struct {
+	// Criteria One result per criterion, in configuration order.
+	Criteria *[]CriterionResult `json:"criteria,omitempty"`
+
+	// Passed True when every criterion passed and an agent survived the run.
+	Passed *bool `json:"passed,omitempty"`
 }
 
 // ValidationReport defines model for ValidationReport.

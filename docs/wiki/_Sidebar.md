@@ -15,6 +15,7 @@
 **Engineering**
 - [Coding Standards](Coding-Standards.md)
 - [Testing](Testing.md)
+- [Gates](Gates.md)
 - [Controller](Controller.md)
 - [Engine](Engine.md)
 - [Transport](Transport.md)
