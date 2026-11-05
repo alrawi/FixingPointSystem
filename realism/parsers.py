@@ -478,6 +478,18 @@ def parse_zeek_logs(
     return findings
 
 
+def not_found_reason(name: str, tshark: str | None = None, zeek: str | None = None) -> str:
+    """Return the reason that the report gives for skipping a parser that is not installed."""
+    runner: TsharkRunner | ZeekRunner
+    if name == TSHARK:
+        runner = TsharkRunner(tshark)
+    elif name == ZEEK:
+        runner = ZeekRunner(zeek)
+    else:
+        raise ParserError(f"resolve parsers: unknown parser {name!r}")
+    return f"not installed, no program at {runner.program}"
+
+
 def resolve(
     names: Sequence[str],
     tshark: str | None = None,

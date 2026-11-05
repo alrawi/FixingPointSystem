@@ -6,7 +6,7 @@
 | Branch | `wp/RLM-11` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-7e41b9, lease until 2026-11-05T20:20:37Z |
 | Last verified commit | none |
 
@@ -20,20 +20,26 @@ Apply decision D12 items 5 and 23. CI installs one pinned Zeek version from the 
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. One pinned Zeek version file, read by `realism/ci/install-tools.sh`, which both workflows call
-- [ ] 2. `skipped_parsers` in the report, the schema, the CLI message, and the CI summary rows, with tests
-- [ ] 3. Realism wiki page and log entry
+- [x] 1. One pinned Zeek version file, read by `realism/ci/install-tools.sh`, which both workflows call
+- [x] 2. `skipped_parsers` in the report, the schema, the CLI message, and the CI summary rows, with tests
+- [x] 3. Realism wiki page and log entry
 - [ ] 4. Pull request and green CI
 
 ## Done and verified
+
+- Steps 1 to 3: `make lint-rlm test-rlm PYTHON=python3` passes with 140 passed and 9 skipped (the tools are not installed here). `plan.py check`, `render --check`, and `lint` pass. The pinned `zeek-core_9.0.1-0_amd64.deb` is the only Zeek package in `download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/amd64/`, read on 2026-11-05 through WebFetch.
 
 List each finished step with the command that verified it and the result.
 
 ## Remaining
 
+Open the pull request and wait for CI, which installs the pinned version for real.
+
 List what is still missing, including known gaps in finished steps.
 
 ## Next action
+
+Open the pull request and poll its checks.
 
 Write exactly one concrete step that the next agent can start immediately.
 
@@ -43,9 +49,15 @@ Write "none" or name each blocker with a link to its issue.
 
 ## Decisions taken in this package
 
+- The pin is the package version `9.0.1-0` in `realism/ci/zeek.version`, because apt needs the full package version.
+- `skipped_parsers` is additive. `missing_parsers` stays so that 0.2.0 readers keep working.
+- `--parsers none` adds no list, because it skips the whole check by request.
+
 Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
 
 ## Pitfalls
+
+The openSUSE repository `security:zeek` holds only the current Zeek release, so a new release breaks the pinned install until `zeek.version` is edited.
 
 Record anything that cost time and that a successor should avoid.
 
@@ -62,3 +74,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-05T19:50Z | claude-7e41b9 | claim | | Claimed #140 with 4 plan steps |
+| 2026-11-05T20:05Z | claude-7e41b9 | checkpoint | | Steps 1 to 3 done, opening the pull request |
