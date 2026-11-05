@@ -37,6 +37,7 @@ A new agent reads four pages in order before claiming work.
 |---|---|
 | [Coding Standards](Coding-Standards.md) | Rules and examples for Rust, Go, Python, TypeScript, shell, contracts, commits, and documentation |
 | [Testing](Testing.md) | Test levels, modular tests, module tests, regression tests, the namespace harness, and gate suites |
+| [Gates](Gates.md) | The gate acceptance suites, starting with the Gate 1 suite of QA-04, and how to run and read them |
 | [Controller](Controller.md) | The controller module, its flags, configuration file, logging, health endpoint, REST layer, test compiler, configuration store, module registry, agent manager, and checks |
 | [Engine](Engine.md) | Engine crates, the `SessionIo` seam, and the scenario and template compiler |
 | [Transport](Transport.md) | Transport backends, starting with the kernel TCP backend, its socket options, and its loopback tests |
@@ -62,4 +63,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phase 0 is complete, including spike S3. Phase 1 has 52 packages merged after eight batches, and only the Gate 1 suite QA-04 remains. The agent dials the controller with `fps-agent connect` and runs the plans it receives, the controller binary serves the API, the agent service, metrics, and run reports, and every module change runs the realism checks on a fresh capture. The coordinator updates this line after each batch.
+Phase 0 is complete. All Phase 1 critical path packages are merged, including the Gate 1 suite QA-04, whose CI run classified 1,340 HTTP/1.1 and 977 DNS sessions at 100% with no parser findings, so Gate 1 waits for owner sign off. Batch 9 merged AGT-06, CTL-19, RLM-11, QA-08, and the fix for bug #128. The Phase 1 follow ups CON-07, CON-08, and CON-09 wait for owner approval, CTL-18, CTL-20, ENG-14, and MOD-19 follow them, and QA-08 waits for the owner's benchmark runner. The 55 Phase 2 packages are seeded as issues. The coordinator updates this line after each batch.
