@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #138 |
 | Branch | `wp/AGT-06` |
-| Pull request | none yet |
-| Status | in progress |
+| Pull request | #151 |
+| Status | ready for review |
 | Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-d5d4e4, lease until 2026-11-05T20:20:39Z |
-| Last verified commit | none |
+| Last verified commit | 0243258 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -74,3 +74,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-05T19:50Z | claude-d5d4e4 | claim | none | Claimed issue #138, card 6666407169 |
 | 2026-11-05T19:10Z | claude-d5d4e4 | checkpoint | see branch | Kernel check, redial policy, flag, docs, tests all done locally |
+| 2026-11-05T19:30Z | claude-d5d4e4 | finish | see branch | PR #151, CI green on 0243258, ready for review |
