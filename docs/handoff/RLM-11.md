@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #140 |
 | Branch | `wp/RLM-11` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #150 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-7e41b9, lease until 2026-11-05T20:20:37Z |
-| Last verified commit | none |
+| Last verified commit | f274688 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -23,23 +23,23 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. One pinned Zeek version file, read by `realism/ci/install-tools.sh`, which both workflows call
 - [x] 2. `skipped_parsers` in the report, the schema, the CLI message, and the CI summary rows, with tests
 - [x] 3. Realism wiki page and log entry
-- [ ] 4. Pull request and green CI
+- [x] 4. Pull request and green CI
 
 ## Done and verified
 
-- Steps 1 to 3: `make lint-rlm test-rlm PYTHON=python3` passes with 140 passed and 9 skipped (the tools are not installed here). `plan.py check`, `render --check`, and `lint` pass. The pinned `zeek-core_9.0.1-0_amd64.deb` is the only Zeek package in `download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/amd64/`, read on 2026-11-05 through WebFetch.
+- CI on f274688: rlm, realism, mod-dns, mod-http1, ci, ops, ctl all green. The install step installed `zeek-core 9.0.1-0` and reported `zeek version 9.0.1`. Two realism jobs hung in the apt install step on the first attempt and passed after a rerun. Steps 1 to 3: `make lint-rlm test-rlm PYTHON=python3` passes with 140 passed and 9 skipped (the tools are not installed here). `plan.py check`, `render --check`, and `lint` pass. The pinned `zeek-core_9.0.1-0_amd64.deb` is the only Zeek package in `download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/amd64/`, read on 2026-11-05 through WebFetch.
 
 List each finished step with the command that verified it and the result.
 
 ## Remaining
 
-Open the pull request and wait for CI, which installs the pinned version for real.
+none, CI is green.
 
 List what is still missing, including known gaps in finished steps.
 
 ## Next action
 
-Open the pull request and poll its checks.
+Coordinator reviews and merges pull request #150.
 
 Write exactly one concrete step that the next agent can start immediately.
 
@@ -75,3 +75,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-05T19:50Z | claude-7e41b9 | claim | | Claimed #140 with 4 plan steps |
 | 2026-11-05T20:05Z | claude-7e41b9 | checkpoint | | Steps 1 to 3 done, opening the pull request |
+| 2026-11-05T19:30Z | claude-7e41b9 | finish | f274688 | CI green, ready for review |
