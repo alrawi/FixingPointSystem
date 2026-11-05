@@ -23,7 +23,7 @@
 //! | Port driver | `DRIVER=` in `sys/class/net/<name>/device/uevent` | the `device/driver` link, then empty |
 //! | Port NUMA node | `sys/class/net/<name>/device/numa_node` | none |
 
-use crate::error::DetectError;
+use crate::error::{DetectError, KernelError};
 use crate::proto::{Backend, Capabilities, PortInfo};
 use crate::sysroot::SystemRoot;
 
@@ -103,6 +103,43 @@ impl KernelVersion {
     pub fn at_least(&self, major: u32, minor: u32) -> bool {
         (self.major, self.minor) >= (major, minor)
     }
+}
+
+/// The first Linux release with the `IP_LOCAL_PORT_RANGE` socket option, which
+/// the agent needs to give each worker its own range of source ports.
+pub const MIN_KERNEL: (u32, u32) = (6, 3);
+
+impl KernelVersion {
+    /// Checks that this kernel offers `IP_LOCAL_PORT_RANGE`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelError::TooOld`] for a release before [`MIN_KERNEL`].
+    pub fn require_ip_local_port_range(&self) -> Result<(), KernelError> {
+        if self.at_least(MIN_KERNEL.0, MIN_KERNEL.1) {
+            Ok(())
+        } else {
+            Err(KernelError::TooOld {
+                release: self.release.clone(),
+                required: MIN_KERNEL,
+            })
+        }
+    }
+}
+
+/// Reads the kernel release under `root` and checks that it offers
+/// `IP_LOCAL_PORT_RANGE`. The agent calls it at startup, before it does any
+/// other work.
+///
+/// # Errors
+///
+/// Returns [`KernelError::TooOld`] for a kernel before Linux 6.3, and
+/// [`KernelError::Detect`] when `proc/sys/kernel/osrelease` is missing or
+/// malformed.
+pub fn require_kernel(root: &SystemRoot) -> Result<KernelVersion, KernelError> {
+    let kernel = detect_kernel(root)?;
+    kernel.require_ip_local_port_range()?;
+    Ok(kernel)
 }
 
 /// Whether the kernel offers AF_XDP sockets.

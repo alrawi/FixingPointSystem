@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -109,7 +110,7 @@ type Config struct {
 	Evaluator Evaluator
 	// Clock tells the time. It defaults to agents.SystemClock.
 	Clock agents.Clock
-	// NewID returns a fresh run id. It defaults to store.RandomID.
+	// NewID returns a fresh run id. It defaults to RandomID.
 	NewID func() (string, error)
 	// Seed returns the run seed for a configuration without timeline.seed.
 	// It defaults to a draw from crypto/rand, at the process edge.
@@ -266,7 +267,7 @@ func New(cfg Config) (*Orchestrator, error) {
 		cfg.Clock = agents.SystemClock{}
 	}
 	if cfg.NewID == nil {
-		cfg.NewID = store.RandomID
+		cfg.NewID = RandomID
 	}
 	if cfg.Seed == nil {
 		cfg.Seed = randomSeed
@@ -285,6 +286,20 @@ func New(cfg Config) (*Orchestrator, error) {
 		cfg: cfg, log: cfg.Logger, ctx: ctx, cancel: cancel,
 		runs: map[string]*run{}, byAgent: map[string]*run{},
 	}, nil
+}
+
+// RunIDPrefix starts every run id that RandomID returns, so run ids differ
+// from the cfg_ ids of configurations.
+const RunIDPrefix = "run_"
+
+// RandomID returns run_ and 24 random hex digits, which matches the contract
+// id pattern ^[A-Za-z0-9_-]{1,64}$.
+func RandomID() (string, error) {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("new run id: %w", err)
+	}
+	return RunIDPrefix + hex.EncodeToString(b[:]), nil
 }
 
 // randomSeed draws a run seed from crypto/rand.

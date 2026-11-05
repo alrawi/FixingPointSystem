@@ -633,3 +633,7 @@ scrape_configs:
 ```
 
 `app.RequireBearer(token, next)` implements the check, and `mountMetrics` wraps `metrics.NewPrometheus` with it. Unit tests in `internal/app` cover an open endpoint, a required token, a wrong token, a prefix and an extension of the right token, other schemes, and the file loader. Tests in `cmd/fps-controller` start the controller in process and check the three cases over a real socket, check that the logs never hold the token, and check exit code 2 for an unreadable token file.
+
+## Run ids
+
+Bug #128 gave run ids their own prefix. The run orchestrator used `store.RandomID` as the default of `runs.Config.NewID`, so run ids started with `cfg_` and read like configuration ids in logs, reports, and the API. The package `runs` now has its own `runs.RandomID`, which returns `run_` and 24 random hex digits, and `runs.New` uses it when `NewID` is nil. The constant `runs.RunIDPrefix` names the prefix. Every id matches the contract pattern `^[A-Za-z0-9_-]{1,64}$`, and the OpenAPI document sets no prefix, so the change touches no contract. Clients treat run ids as opaque strings, and the end to end script `engine/fps-agent/tests/controller_e2e.sh` reads the id from the response and only prints it. `TestDefaultRunIDsCarryRunPrefix` checks the generator and a run that the orchestrator creates with the default generator.

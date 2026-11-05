@@ -197,3 +197,55 @@ fn the_running_host_detects_without_error() {
         Err(e) => panic!("detect on the running host: {e}"),
     }
 }
+
+#[test]
+fn an_old_kernel_is_refused_with_an_error_that_names_the_port_range_option() {
+    // host-no-xdp reports 5.4.0-150-custom.
+    let err = match fps_agent::require_kernel(&root("host-no-xdp")) {
+        Ok(kernel) => panic!("kernel {} passed the check", kernel.release),
+        Err(e) => e,
+    };
+    let text = err.to_string();
+    assert!(
+        matches!(
+            &err,
+            fps_agent::KernelError::TooOld { release, required: (6, 3) }
+                if release == "5.4.0-150-custom"
+        ),
+        "{err:?}"
+    );
+    assert!(text.contains("IP_LOCAL_PORT_RANGE"), "{text}");
+    assert!(text.contains("Linux 6.3 or newer"), "{text}");
+    assert!(text.contains("5.4.0-150-custom"), "{text}");
+}
+
+#[test]
+fn kernels_from_6_3_on_pass_and_6_2_does_not() {
+    use fps_agent::capabilities::KernelVersion;
+    // virtio-guest reports 6.8.0-45-generic, two-numa reports 6.1.0-18-amd64.
+    assert!(fps_agent::require_kernel(&root("virtio-guest")).is_ok());
+    assert!(fps_agent::require_kernel(&root("two-numa")).is_err());
+    for (release, passes) in [
+        ("6.3.0", true),
+        ("6.18.44-fc-v236", true),
+        ("7.0.1", true),
+        ("6.2.16-generic", false),
+        ("5.15.0-91-generic", false),
+    ] {
+        let kernel = match KernelVersion::parse(release) {
+            Some(k) => k,
+            None => panic!("release {release} does not parse"),
+        };
+        assert_eq!(
+            kernel.require_ip_local_port_range().is_ok(),
+            passes,
+            "{release}"
+        );
+    }
+}
+
+#[test]
+fn a_missing_kernel_release_is_a_detect_error_not_a_pass() {
+    let err = fps_agent::require_kernel(&SystemRoot::new("/nonexistent-fps-root"));
+    assert!(matches!(err, Err(fps_agent::KernelError::Detect(_))));
+}
