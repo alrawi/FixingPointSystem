@@ -164,9 +164,9 @@ func TestRunStopsWhenContextEnds(t *testing.T) {
 	}
 }
 
-// startController runs the controller in process on loopback ports and returns
+// startInProcess runs the controller in process on loopback ports and returns
 // its HTTP address and the captured logs. The controller stops with the test.
-func startController(t *testing.T, extra ...string) (string, *lockedBuffer) {
+func startInProcess(t *testing.T, extra ...string) (string, *lockedBuffer) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	var stderr lockedBuffer
@@ -202,7 +202,7 @@ func getMetrics(t *testing.T, addr, authorization string) int {
 }
 
 func TestMetricsEndpointIsOpenByDefault(t *testing.T) {
-	addr, _ := startController(t)
+	addr, _ := startInProcess(t)
 	if got := getMetrics(t, addr, ""); got != http.StatusOK {
 		t.Fatalf("GET /metrics without a token = %d, want 200", got)
 	}
@@ -214,7 +214,7 @@ func TestMetricsEndpointRequiresConfiguredToken(t *testing.T) {
 	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	addr, logs := startController(t, "-metrics-token-file", tokenFile)
+	addr, logs := startInProcess(t, "-metrics-token-file", tokenFile)
 
 	tests := []struct {
 		name   string
