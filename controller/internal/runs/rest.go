@@ -175,23 +175,8 @@ func ToAPI(run Run) api.Run {
 		out.Summary = summary(run.Totals)
 	}
 	if v := run.Verdict; v != nil {
-		out.Verdict = &struct {
-			Criteria *[]struct {
-				Metric   *string  `json:"metric,omitempty"`
-				Observed *float32 `json:"observed,omitempty"`
-				Op       *string  `json:"op,omitempty"`
-				Passed   *bool    `json:"passed,omitempty"`
-				Value    *float32 `json:"value,omitempty"`
-			} `json:"criteria,omitempty"`
-			Passed *bool `json:"passed,omitempty"`
-		}{Passed: ptr(v.Passed)}
-		cs := make([]struct {
-			Metric   *string  `json:"metric,omitempty"`
-			Observed *float32 `json:"observed,omitempty"`
-			Op       *string  `json:"op,omitempty"`
-			Passed   *bool    `json:"passed,omitempty"`
-			Value    *float32 `json:"value,omitempty"`
-		}, len(v.Criteria))
+		out.Verdict = &api.RunVerdict{Passed: ptr(v.Passed)}
+		cs := make([]api.CriterionResult, len(v.Criteria))
 		for i, c := range v.Criteria {
 			cs[i].Metric, cs[i].Op, cs[i].Value = ptr(c.Metric), ptr(c.Op), ptr(float32(c.Value))
 			if c.Evaluated {
