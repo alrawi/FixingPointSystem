@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 #
 # QA benchmark baselines under bench/. This workflow runs only the unit and
-# component tests of the comparison tool. Real benchmarks need a quiet fixed
-# host and never run on shared runners. One workflow file per workstream area,
+# component tests of the comparison tool on hosted runners. Real benchmarks need
+# a quiet fixed host and never run on shared runners, so the nightly job runs on
+# the owner's self hosted runner with the label fps-bench (decision D12 item 6).
+# That job runs only on schedule and on workflow_dispatch from main, never for
+# a pull request, because a self hosted runner must not run code of a fork. See
+# bench/README.md for the runner setup. One workflow file per workstream area,
 # named after the area, so parallel packages never create the same file.
 name: qa-bench
 
@@ -20,12 +24,21 @@ on:
       - spikes/s1-engine/results/**
       - mk/qa-bench.mk
       - .github/workflows/qa-bench.yml
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Baseline file of this host under bench/baselines/
+        default: s1-engine-owner-host.json
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   test:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -37,3 +50,59 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -r bench/requirements.txt
       - run: make lint-qa-bench test-qa-bench PYTHON=python
+
+  # The nightly benchmark. The job guard keeps it off pull requests and forks,
+  # so no pull request job can wait for a runner that may be offline.
+  nightly:
+    if: >-
+      github.repository == 'alrawi/FixingPointSystem' &&
+      (github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: [self-hosted, linux, fps-bench]
+    timeout-minutes: 45
+    concurrency:
+      group: qa-bench-nightly
+      cancel-in-progress: false
+    env:
+      BENCH_BASELINE: bench/baselines/${{ inputs.baseline || 's1-engine-owner-host.json' }}
+      BENCH_LABEL: owner-host-nightly
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Clean earlier results
+        run: rm -rf "spikes/s1-engine/results/$BENCH_LABEL" target/bench
+      - name: Benchmark and compare with the baseline of this host
+        id: bench
+        run: |
+          mkdir -p target/bench
+          if [ -f "$BENCH_BASELINE" ]; then
+            make bench-s1 BENCH_COMPARE_ARGS=--require-same-host 2>&1 | tee target/bench/log.txt
+          else
+            # No baseline of this host exists yet. Record a candidate that a
+            # reviewed pull request can turn into the baseline, then stop with
+            # a warning instead of failing every night.
+            echo "::warning::$BENCH_BASELINE does not exist, so this run only records a candidate baseline. See bench/README.md, section Registering the owner host."
+            env -u CARGO_TARGET_DIR LABEL="$BENCH_LABEL" spikes/s1-engine/run-bench.sh 2>&1 | tee target/bench/log.txt
+            python3 bench/s1_adapter.py "spikes/s1-engine/results/$BENCH_LABEL" -o target/bench/s1-engine.json
+            echo "no baseline, candidate recorded" | tee -a target/bench/log.txt
+          fi
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## Nightly S1 benchmark on $(hostname)"
+            echo '```'
+            tail -n 80 target/bench/log.txt 2>/dev/null || echo "no log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s1-nightly-${{ github.run_id }}
+          path: |
+            target/bench/
+            spikes/s1-engine/results/${{ env.BENCH_LABEL }}/
+          if-no-files-found: warn
+          retention-days: 90
