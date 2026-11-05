@@ -36,6 +36,10 @@ scenarios:
   - scenarios/web_get.yaml
   - scenarios/web_browse.yaml
   - scenarios/web_page.yaml
+expected_bytes:
+  web_get: 17244
+  web_browse: 70279
+  web_page: 70279
 assets:
   - { name: html_body, generator: content.html }
 provenance:

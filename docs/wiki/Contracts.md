@@ -47,6 +47,25 @@ buf lint contracts/proto
 
 A CON package changes a contract and adds one entry file under `contracts/changes/`. The coordinator folds the entries into `contracts/CHANGELOG.md` when a version ships.
 
+## Test configuration and manifest additions
+
+CON-09 applied decision D12 items 7, 9, 10, 14, and 22 to the test configuration schema v0.2 and the module manifest schema v0.3. The entry `contracts/changes/CON-09.md` lists every change.
+
+| Field | Contract | Rule | Read by |
+|---|---|---|---|
+| `timeline.seed` | Test configuration | At least 1, and the controller chooses a random nonzero seed when the field is absent | CTL-18 |
+| `network.ports[].location` | Test configuration | `<agent>/<interface>` pins the port to one agent, and a bare `<interface>` or `*/<interface>` spreads it across agents | CTL-18 |
+| `criteria[].where` | Test configuration | Label names and values that select the series a criterion checks | CTL-20 |
+| `modules.<name>.settings` | Test configuration | Settings that hold for every scenario of the module | CTL-18, MOD-19 |
+| `settings` | Module manifest | JSON Schema with an object root that describes the module settings | CTL-18, MOD-19 |
+| `expected_bytes` | Module manifest | Estimated application payload bytes per session of each scenario with default parameters | CTL-21 |
+
+The controller compiler still rejects the keys `where` and `modules` and the spread location forms, because it decodes configurations with known fields only. The examples that use them therefore live under `contracts/examples/tests-pending/`, which neither the validator default nor the controller tests read. We check them with the command below, and CTL-18 and CTL-20 move them into `contracts/examples/tests/` once the compiler reads the new fields.
+
+```bash
+python3 tools/contracts/validate.py --tests contracts/examples/tests/*.yaml contracts/examples/tests-pending/*.yaml
+```
+
 ## Metric catalog views, reasons, and side label
 
 CON-08 applies decision D12 items 13, 15, 17, and 21 to the metric catalog, which moves to version 0.2.0.

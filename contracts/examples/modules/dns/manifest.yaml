@@ -12,6 +12,14 @@ parameters:
   type: object
   properties:
     server_port: { type: integer, default: 53 }
+settings:
+  type: object
+  additionalProperties: false
+  properties:
+    zone_file:
+      type: string
+      minLength: 1
+      description: Zone file in RFC 1035 master file format that the server answers from. Without it the server answers every query with the address that the scenario gives.
 functions:
   - name: query
     summary: Query message in RFC 1035 wire format with a transaction id from the session generator.
@@ -31,6 +39,9 @@ functions:
 scenarios:
   - scenarios/lookup.yaml
   - scenarios/resolve.yaml
+expected_bytes:
+  lookup: 84
+  resolve: 84
 provenance:
   source: specification
   notes: Messages follow RFC 1035. The lookup scenario sends one fixed query for www.example.test, and the resolve scenario builds its messages with the module functions.

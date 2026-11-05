@@ -7,7 +7,7 @@ metadata:
 topology: app_sim
 network:
   ports:
-    - { name: client0, location: lo }
+    - { name: client0, location: local/lo/extra }
     - { name: server0, location: local/lo }
   host_pools:
     - { name: clients, port: client0, role: client, ipv4: 16.0.0.0/24, count: 254 }

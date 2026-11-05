@@ -1,0 +1,28 @@
+# Uses decision D12 item 14. The controller compiler reads where after CTL-20.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: filtered_criteria
+  description: A web and DNS mix whose criteria hold the mix error and the failures of each application to separate limits.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/lo }
+    - { name: server0, location: local/lo }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 16.0.0.0/24, count: 254 }
+    - { name: servers, port: server0, role: server, ipv4: 48.0.0.0/24, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: http1/web_get, weight: 9 }
+    - { scenario: dns/lookup, weight: 1 }
+load:
+  objective: { type: sessions_per_second, value: 1000 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: 11 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "<", value: 0.01 }
+  - { metric: mix.abs_error_pp, op: "<=", value: 1, where: { application: http1 } }
+  - { metric: mix.abs_error_pp, op: "<=", value: 3, where: { application: dns } }
