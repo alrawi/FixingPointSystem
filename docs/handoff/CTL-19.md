@@ -10,7 +10,7 @@
 | Branch | `wp/CTL-19` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 3 plan steps) |
+| Progress | 90% (3 of 3 plan steps, CI pending) |
 | Current holder | claude-d5763a, lease until 2026-11-05T20:20:40Z |
 | Last verified commit | none |
 
@@ -24,21 +24,22 @@ Apply decision D12 item 2. `GET /metrics` stays open by default, and a configura
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Setting `metrics_token_file` and flag `-metrics-token-file`, loader, and constant time bearer middleware in `internal/app`
-- [ ] 2. Wire it in `cmd/fps-controller` and add tests (open, required, wrong token)
-- [ ] 3. Document in the Controller wiki page, log entry, and run the checks
+- [x] 1. Setting `metrics_token_file` and flag `-metrics-token-file`, loader, and constant time bearer middleware in `internal/app`
+- [x] 2. Wire it in `cmd/fps-controller` and add tests (open, required, wrong token)
+- [x] 3. Document in the Controller wiki page, log entry, and run the checks
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Steps 1 to 3 written. `gofmt -l controller` is clean, `plan.py check`, `render --check`, and `lint` pass.
+- The middleware logic passes its table test in a scratch module (stdlib only).
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+CI result of `make lint-ctl test-ctl`. The sandbox cannot reach proxy.golang.org, so the controller module could not build locally.
 
 ## Next action
 
-Step 1.
+Wait for CI, fix failures inside `controller/internal/app/` and `controller/cmd/`.
 
 ## Blockers and open questions
 
@@ -46,11 +47,13 @@ none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- The setting is `metrics_token_file` only, with the flag `-metrics-token-file`. A file keeps the secret out of config, flags, and logs. The repo has no environment variable convention, so there is none.
+- Constant time comparison over SHA-256 digests, which also hides the token length.
+- The metrics token is separate from `tokens`.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+No Go module access in the sandbox. Do not use GOPROXY=direct, the sandbox policy denies it.
 
 ## Verify the current state
 
