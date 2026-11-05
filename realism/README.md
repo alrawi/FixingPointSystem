@@ -22,7 +22,7 @@ python3 -m realism score --pcap run.pcapng --labels expected.yaml --output repor
 | `--tshark PATH` | tshark program; defaults to `FPS_TSHARK` and then to `tshark` on the search path |
 | `--zeek PATH` | Zeek program; defaults to `FPS_ZEEK`, then to `zeek` on the search path, and then to `/opt/zeek/bin/zeek` |
 
-The exit code is 0 when every check passes, 1 when a check fails, and 2 when the capture, the labels file, ndpiReader, or a parser cannot be read or run. With `auto`, a parser that is not installed is named in `missing_parsers` and on standard error, and the parser error check fails when no parser ran. Gate suites and CI pass an explicit list, so a missing tool stops the run.
+The exit code is 0 when every check passes, 1 when a check fails, and 2 when the capture, the labels file, ndpiReader, or a parser cannot be read or run. With `auto`, a parser that is not installed is skipped. The report lists every skipped parser with its reason in `skipped_parsers` (and by name in `missing_parsers`), the CI job summary shows it, and standard error names it. The parser error check fails when no parser ran. Gate suites and CI pass an explicit list, so a missing tool stops the run.
 
 Commands that read captures from outside the repository run with `python3 -I`, so files next to the capture cannot shadow imports. `python3 -m pip install ./realism` installs the package for that use, as the `rlm` workflow does.
 
