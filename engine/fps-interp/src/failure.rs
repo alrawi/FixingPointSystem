@@ -34,11 +34,21 @@ pub enum Reason {
     Aborted,
     /// Any other failure, such as a render error or an invalid parameter.
     Internal,
+    /// A received UDP datagram broke the size limit or the stop rule of its
+    /// `expect`. The catalog defines it, and [`FailureKind::reason`] does not
+    /// report it yet.
+    DatagramRejected,
+    /// A template failed to render. The catalog defines it, and
+    /// [`FailureKind::reason`] does not report it yet.
+    TemplateError,
+    /// A module function failed. The catalog defines it, and
+    /// [`FailureKind::reason`] does not report it yet.
+    ExtensionError,
 }
 
 impl Reason {
     /// Every reason in catalog order.
-    pub const ALL: [Reason; 9] = [
+    pub const ALL: [Reason; 12] = [
         Reason::ConnectTimeout,
         Reason::ConnectRefused,
         Reason::ExpectTimeout,
@@ -48,6 +58,9 @@ impl Reason {
         Reason::TlsFailure,
         Reason::Aborted,
         Reason::Internal,
+        Reason::DatagramRejected,
+        Reason::TemplateError,
+        Reason::ExtensionError,
     ];
 
     /// Returns the catalog value of the `reason` label.
@@ -62,6 +75,9 @@ impl Reason {
             Reason::TlsFailure => "tls_failure",
             Reason::Aborted => "aborted",
             Reason::Internal => "internal",
+            Reason::DatagramRejected => "datagram_rejected",
+            Reason::TemplateError => "template_error",
+            Reason::ExtensionError => "extension_error",
         }
     }
 }

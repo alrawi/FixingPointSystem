@@ -47,6 +47,19 @@ buf lint contracts/proto
 
 A CON package changes a contract and adds one entry file under `contracts/changes/`. The coordinator folds the entries into `contracts/CHANGELOG.md` when a version ships.
 
+## Metric catalog views, reasons, and side label
+
+CON-08 applies decision D12 items 13, 15, 17, and 21 to the metric catalog, which moves to version 0.2.0.
+
+| Change | Rule |
+|---|---|
+| `view` on every metric | One value of the OpenAPI `MetricView` enum, which the schema checks against the level |
+| `histogram_statistics` | The fixed suffix list `p50`, `p90`, `p99`, `p999`, `min`, `max`, `mean`, and `count` |
+| New reasons | `datagram_rejected`, `template_error`, and `extension_error` |
+| `side` label | `client` or `server` on every scenario level metric and every transport metric |
+
+A total over both sides counts each session twice, so the API views and test criteria report the client side unless a criterion selects the server side. The controller embeds a byte copy of the catalog in `controller/internal/metrics/catalog.yaml`, which must follow every catalog change.
+
 ## Failure reasons and the metrics endpoint
 
 CON-07 applied decision D12 items 19 and 20 to the controller API, which is now at version 0.3.0.

@@ -2,13 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/alrawi/FixingPointSystem/contracts/metrics/catalog.schema.json",
   "title": "FixingPointSystem metric catalog",
-  "description": "Contract v0.1. Names every counter, gauge, and histogram once, with its type, unit, level, and labels.",
+  "description": "Contract v0.1. Names every counter, gauge, and histogram once, with its type, unit, level, API view, and labels.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["catalog", "version", "labels", "metrics"],
+  "required": ["catalog", "version", "histogram_statistics", "labels", "metrics"],
   "properties": {
     "catalog": { "const": "fps-metrics" },
     "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "histogram_statistics": {
+      "description": "The fixed list of statistic suffixes that a reference to a histogram appends to its name, for example sessions.response_time.p99. No other suffix is valid, and no metric name may end in one of them after a histogram name.",
+      "const": ["p50", "p90", "p99", "p999", "min", "max", "mean", "count"]
+    },
     "labels": {
       "description": "Every label that a metric may carry. A metric may only use labels declared here.",
       "type": "object",
@@ -46,7 +50,7 @@
     "metric": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "type", "unit", "level", "labels", "description"],
+      "required": ["name", "type", "unit", "level", "view", "labels", "description"],
       "properties": {
         "name": { "$ref": "#/$defs/metric_name" },
         "type": {
@@ -62,6 +66,10 @@
         "level": {
           "description": "Counter level of the specification. The application and scenario row of the specification splits into two levels.",
           "enum": ["application", "scenario", "flow_action", "transport", "port_host"]
+        },
+        "view": {
+          "description": "The MetricView of contracts/openapi/fps-api-v1.yaml that serves the metric. The application view also serves the scenario view metrics summed over the scenario label.",
+          "enum": ["application", "scenario", "port", "tcp", "tls", "realism"]
         },
         "labels": {
           "type": "array",
@@ -83,6 +91,22 @@
         {
           "if": { "required": ["formula"] },
           "then": { "properties": { "type": { "const": "gauge" } } }
+        },
+        {
+          "if": { "properties": { "level": { "const": "application" } } },
+          "then": { "properties": { "view": { "enum": ["application", "realism"] } } }
+        },
+        {
+          "if": { "properties": { "level": { "enum": ["scenario", "flow_action"] } } },
+          "then": { "properties": { "view": { "const": "scenario" } } }
+        },
+        {
+          "if": { "properties": { "level": { "const": "transport" } } },
+          "then": { "properties": { "view": { "enum": ["tcp", "tls"] } } }
+        },
+        {
+          "if": { "properties": { "level": { "const": "port_host" } } },
+          "then": { "properties": { "view": { "const": "port" } } }
         }
       ]
     }
