@@ -87,6 +87,100 @@ impl Backoff {
     }
 }
 
+/// The default limit on redialing, five minutes of failed attempts
+/// (decision D12 item 11).
+pub const DEFAULT_REDIAL_LIMIT: Duration = Duration::from_secs(300);
+
+/// What the agent does after a session ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Redial {
+    /// Dial again after this wait, which already carries the jitter.
+    After(Duration),
+    /// The failed attempts lasted for the limit, so the agent gives up.
+    GiveUp {
+        /// How long the attempts have failed.
+        failing_for: Duration,
+    },
+}
+
+/// The redial policy of [`serve`]: an exponential [`Backoff`] with jitter that
+/// restarts at its initial wait after an abort, and a limit on the time of
+/// failed attempts.
+///
+/// A session that opened and ended without an abort clears the failure
+/// window. A session that failed to open, or that ended with `ABORTED`,
+/// starts the window when none runs and keeps it otherwise, so two agents of
+/// one identity that replace each other forever still reach the limit. The
+/// policy takes the time as an argument and draws its jitter from a seeded
+/// generator, so tests replay it exactly.
+#[derive(Debug, Clone)]
+pub struct RedialPolicy {
+    backoff: Backoff,
+    limit: Option<Duration>,
+    wait: Duration,
+    failing_since: Option<Instant>,
+    rng: u64,
+}
+
+impl RedialPolicy {
+    /// Returns a policy with `backoff`, an optional `limit` on failed
+    /// attempts, and a jitter stream that `seed` selects. A `limit` of `None`
+    /// redials forever.
+    pub fn new(backoff: Backoff, limit: Option<Duration>, seed: u64) -> Self {
+        Self {
+            wait: backoff.initial,
+            backoff,
+            limit,
+            failing_since: None,
+            rng: seed,
+        }
+    }
+
+    /// Records that a session ended at `now` and returns what the agent does
+    /// next. `opened` tells whether the session got past `Register` and the
+    /// stream setup, and `aborted` whether it ended with `ABORTED`.
+    pub fn session_ended(&mut self, now: Instant, opened: bool, aborted: bool) -> Redial {
+        if aborted {
+            // Another session of this identity replaced ours. The backoff
+            // restarts, and the failure window keeps running.
+            self.wait = self.backoff.initial;
+            self.failing_since.get_or_insert(now);
+        } else if opened {
+            self.wait = self.backoff.initial;
+            self.failing_since = None;
+        } else {
+            self.failing_since.get_or_insert(now);
+        }
+        let failing_for = self
+            .failing_since
+            .map_or(Duration::ZERO, |since| now.saturating_duration_since(since));
+        if self.limit.is_some_and(|limit| failing_for >= limit) {
+            return Redial::GiveUp { failing_for };
+        }
+        let wait = self.wait;
+        self.wait = self.backoff.next(self.wait);
+        Redial::After(self.jittered(wait))
+    }
+
+    /// Returns a duration drawn uniformly from the upper half of `wait`, so
+    /// agents that lost the controller together do not dial together.
+    fn jittered(&mut self, wait: Duration) -> Duration {
+        let draw = splitmix64(&mut self.rng);
+        // The top 53 bits give a fraction in [0, 1).
+        let fraction = (draw >> 11) as f64 / (1u64 << 53) as f64;
+        wait.mul_f64(0.5 + 0.5 * fraction)
+    }
+}
+
+/// SplitMix64, which turns any seed, zero included, into a good stream.
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
 /// The configuration of [`serve`].
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -102,6 +196,12 @@ pub struct Config {
     pub capabilities: pb::Capabilities,
     /// The backoff between dials.
     pub backoff: Backoff,
+    /// How long failed attempts may last before the agent gives up, or
+    /// `None` to redial forever.
+    pub redial_limit: Option<Duration>,
+    /// The seed of the backoff jitter. The binary takes it from the clock,
+    /// and tests fix it.
+    pub jitter_seed: u64,
     /// How long a run with server workers only keeps them after the load
     /// phases end.
     pub linger: Duration,
@@ -118,6 +218,8 @@ impl Config {
             sides: Sides::Both,
             capabilities: pb::Capabilities::default(),
             backoff: Backoff::default(),
+            redial_limit: Some(DEFAULT_REDIAL_LIMIT),
+            jitter_seed: 0,
             linger: Duration::from_secs(5),
         }
     }
@@ -134,6 +236,14 @@ pub enum SessionError {
         /// The cause.
         #[source]
         source: tonic::transport::Error,
+    },
+    /// The controller stayed unreachable for the redial limit.
+    #[error("gave up redialing the controller after {failing_for:?} of failed attempts, last error: {last}")]
+    RedialLimit {
+        /// How long the attempts failed, which is at least the limit.
+        failing_for: Duration,
+        /// Why the last session ended.
+        last: String,
     },
 }
 
@@ -975,8 +1085,16 @@ where
 }
 
 /// Dials the controller of `cfg` and serves its commands until `shutdown`
-/// completes. Every lost connection leads to a new dial after the backoff.
-/// On shutdown the agent aborts any run and waits for its workers.
+/// completes. Every lost connection leads to a new dial after the backoff of
+/// [`RedialPolicy`]. When the dials fail for `cfg.redial_limit`, the agent
+/// aborts any run, releases the plan, and returns
+/// [`SessionError::RedialLimit`]. On shutdown the agent aborts any run and
+/// waits for its workers.
+///
+/// # Errors
+///
+/// Fails when the controller address is invalid or when the redial limit
+/// passes.
 pub async fn serve<F>(cfg: Config, shutdown: F) -> Result<(), SessionError>
 where
     F: std::future::Future<Output = ()>,
@@ -1008,26 +1126,40 @@ where
     });
     let dog = tokio::spawn(watchdog(Arc::clone(&shared)));
     tokio::pin!(shutdown);
-    let mut wait = shared.cfg.backoff.initial;
+    let mut policy = RedialPolicy::new(
+        shared.cfg.backoff,
+        shared.cfg.redial_limit,
+        shared.cfg.jitter_seed,
+    );
     let mut number = 0u64;
+    let mut outcome = Ok(());
     loop {
         number += 1;
         let mut opened = false;
-        match session(&shared, &mut events, number, &mut shutdown, &mut opened).await {
+        let wait = match session(&shared, &mut events, number, &mut shutdown, &mut opened).await {
             Ok(()) => break,
             Err(lost) => {
                 let aborted = matches!(&lost, Lost::Status(s) if s.code() == tonic::Code::Aborted);
-                tracing::warn!(session = number, opened, error = %lost, backoff_ms = wait.as_millis() as u64, "session lost");
-                if opened && !aborted {
-                    wait = shared.cfg.backoff.initial;
+                match policy.session_ended(Instant::now(), opened, aborted) {
+                    Redial::After(wait) => {
+                        tracing::warn!(session = number, opened, aborted, error = %lost, backoff_ms = wait.as_millis() as u64, "session lost");
+                        wait
+                    }
+                    Redial::GiveUp { failing_for } => {
+                        tracing::error!(session = number, opened, aborted, error = %lost, failing_for_ms = failing_for.as_millis() as u64, "redial limit reached, the agent exits");
+                        outcome = Err(SessionError::RedialLimit {
+                            failing_for,
+                            last: lost.to_string(),
+                        });
+                        break;
+                    }
                 }
             }
-        }
+        };
         tokio::select! {
             () = shutdown.as_mut() => break,
             () = tokio::time::sleep(wait) => {}
         }
-        wait = shared.cfg.backoff.next(wait);
     }
     dog.abort();
     let driver = {
@@ -1042,5 +1174,5 @@ where
         let _ = tokio::task::spawn_blocking(move || d.thread.join()).await;
     }
     tracing::info!("agent stopped");
-    Ok(())
+    outcome
 }
