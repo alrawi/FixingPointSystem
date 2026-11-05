@@ -1,6 +1,6 @@
 # Agent
 
-This page describes the agent of the AGT workstream. The crate [`fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent) holds the agent binary. AGT-03 added capability detection, which [Implementation Plan](Implementation-Plan.md) describes, and AGT-01 adds the standalone mode, which runs a plan without a controller. AGT-02 added the client loop that dials the controller, which the section [Controller session](#controller-session) describes.
+This page describes the agent of the AGT workstream. The crate [`fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent) holds the agent binary. AGT-03 added capability detection, which [Implementation Plan](Implementation-Plan.md) describes, and AGT-01 adds the standalone mode, which runs a plan without a controller. AGT-02 added the client loop that dials the controller, which the section [Controller session](#controller-session) describes, and AGT-06 added the kernel requirement and the redial policy, which the sections [Kernel requirement](#kernel-requirement) and [Redial policy](#redial-policy) describe.
 
 ## Standalone mode
 
@@ -15,7 +15,7 @@ fps-agent run --plan contracts/examples/plans/http_dns_smoke.json \
 |---|---|
 | 0 | The run completed and every criterion holds |
 | 1 | The run completed and at least one criterion fails |
-| 2 | A usage error, an invalid plan, a module or scenario that fails its checks, a feature that the mode does not run, or a failed worker |
+| 2 | A usage error, an invalid plan, a module or scenario that fails its checks, a feature that the mode does not run, a failed worker, or a kernel before Linux 6.3 |
 
 The run takes eight steps.
 
@@ -74,7 +74,8 @@ AGT-02 added the agent side of the control protocol. The agent dials the control
 
 ```bash
 fps-agent connect --controller http://127.0.0.1:7443 --agent-id local \
-  --modules contracts/examples/modules [--root DIR] [--side both|client|server] [--label site=lab]
+  --modules contracts/examples/modules [--root DIR] [--side both|client|server] [--label site=lab] \
+  [--redial-limit SECONDS]
 ```
 
 The binary detects the host capabilities, adds the installed modules of `--modules` with their tree digests and the `--label` pairs, and calls `Register` with its state and plan. It then opens the `Session` stream with the token that `Register` returned, sends a heartbeat at the interval of the response and at once after every state change, and serves `prepare`, `start`, and `stop`. Logs are JSON lines on standard error from `tracing`. The controller speaks plain TCP until CTL-15 adds mutual TLS, so the agent dials `http://` addresses only.
@@ -103,7 +104,37 @@ The run driver thread reuses the run path of the standalone mode. `run::prepare`
 
 The driver sends one aggregate `CounterSnapshot` per `counter_interval`, numbered from 1 for each run. A snapshot that the agent takes while the connection is down waits in the agent and goes out on the next session, so the sequence continues across sessions and the controller drops duplicates. Command results belong to the session that received the command, and the agent drops them when that session ends.
 
-After a lost connection the agent dials again with exponential backoff from 200 ms up to 10 s and calls `Register` with its current state and plan, so the controller resumes the run. A session that opened resets the backoff, except one that ended with `ABORTED`, which means that another session of the same identity replaced it. A watchdog compares the time since the last message from the controller with the heartbeat timeout of `Register`. When the timeout passes, the agent aborts any run, releases the plan, moves to `IDLE`, ends the session, and dials again.
+After a lost connection the agent dials again with exponential backoff from 200 ms up to 10 s and calls `Register` with its current state and plan, so the controller resumes the run. The [Redial policy](#redial-policy) section describes the jitter, the reset after an abort, and the limit. A watchdog compares the time since the last message from the controller with the heartbeat timeout of `Register`. When the timeout passes, the agent aborts any run, releases the plan, moves to `IDLE`, ends the session, and dials again.
+
+### Kernel requirement
+
+The agent needs the socket option `IP_LOCAL_PORT_RANGE`, which Linux offers from release 6.3, so that every worker can take source ports from its own range. Decision D12 item 3 lets the agent refuse an older kernel. `fps-agent connect` and `fps-agent run` read `proc/sys/kernel/osrelease` under the same injectable `SystemRoot` as capability detection, before they detect anything else or dial. A release before 6.3 ends the process with exit code 2 and this message on stderr, with the release of the host in place of `5.4.0-150-custom`.
+
+```text
+fps-agent: error: kernel 5.4.0-150-custom is too old: the agent needs the IP_LOCAL_PORT_RANGE socket option, which requires Linux 6.3 or newer (decision D12 item 3)
+```
+
+An unreadable or malformed release is an error too, and the check never passes on a guess. The command `fps-agent capabilities` still reports any kernel, so an operator can inspect an old host. Distribution kernels that backport the option under an older version number are refused as well, because the check compares versions and does not probe the option.
+
+### Redial policy
+
+Decision D12 item 11 says that an agent keeps redialing after an abort, with a backoff that restarts at 200 ms with jitter and with a limit. The type `fps_agent::session::RedialPolicy` holds the rules, and `serve` applies it after every ended session.
+
+| Rule | Behavior |
+|---|---|
+| Backoff | The wait doubles from 200 ms up to 10 s |
+| Jitter | Every wait is drawn uniformly from the upper half of the step, so a 200 ms step waits 100 to 200 ms and agents that lost the controller together do not dial together. The generator is seeded from the clock at process start |
+| Reset | A session that opened and then ended, and every session that ended with `ABORTED`, send the backoff back to 200 ms. `ABORTED` means that another session of the same identity replaced this one |
+| Limit | Failed attempts may last for `--redial-limit SECONDS`, which defaults to 300. A session that opened and ended without an abort clears the window. A failed dial and an abort start the window when none runs and leave it running otherwise, so two agents of one identity that replace each other forever still reach the limit. The value 0 means no limit |
+| Exit | At the limit the agent aborts any run, releases the plan, logs `redial limit reached, the agent exits`, and exits with code 3 |
+
+| Exit code of `fps-agent connect` | Meaning |
+|---|---|
+| 0 | SIGINT or SIGTERM stopped the agent |
+| 2 | A usage error, an invalid controller address, a kernel before Linux 6.3, or a failed capability detection |
+| 3 | The agent gave up redialing the controller after the redial limit |
+
+A supervisor such as systemd can restart on code 3 and treat code 2 as a configuration fault.
 
 ### Session tests
 
@@ -111,6 +142,7 @@ After a lost connection the agent dials again with exponential backoff from 200 
 |---|---|---|
 | Unit | `src/convert.rs` | The example plan survives the round trip through the generated types, and unknown enum numbers, negative durations, and list parameters are errors |
 | Component | `tests/session.rs` | An in process fake controller drives prepare, start, and stop over loopback and receives numbered cumulative snapshots and a final snapshot, out of order calls fail with their codes, a bad plan leaves the state unchanged, a run continues across a reconnection and stops on its own, and a silent controller makes the agent release the plan |
+| Component | `tests/detect.rs`, `tests/redial.rs`, `tests/exit_codes.rs`, `make test-agt-redial` | A 5.4 kernel string gives an error that names `IP_LOCAL_PORT_RANGE`, and 6.3 and newer pass. The backoff doubles, restarts at 200 ms with jitter after an abort, and resets after a session that opened. Failed attempts end `serve` with `RedialLimit` at the limit, aborts alone reach the limit too, and the binary exits with 2 and 3 |
 | End to end | `tests/controller_e2e.sh FPS_CONTROLLER FPS_AGENT` | The real `fps-controller` enrolls the real agent, installs the example modules, and drives a loopback run over REST to `completed` with a passed verdict |
 
 A local run of the end to end script with debug builds completed its run with 148 succeeded `http1` sessions in three seconds at 40 sessions per second. The controller checks port locations against the agent capabilities, which leave out loopback, so the script names the first detected interface while the loopback pools carry the traffic.
@@ -119,5 +151,5 @@ A local run of the end to end script with debug builds completed its run with 14
 
 - `per_worker` snapshots are not implemented. The agent logs a warning and sends aggregate snapshots.
 - The agent does not bind ports during `prepare`. The workers bind their sockets when the run starts.
-- The backoff has no jitter.
+- The redial limit counts time and not attempts, and a dial that hangs for its five second connect timeout can overshoot it by that much.
 - Mutual TLS waits for CTL-15 on the controller side.

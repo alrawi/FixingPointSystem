@@ -31,14 +31,16 @@ test-qa-bench:
 # three minutes and needs a quiet host, so make test leaves it out. BENCH_LABEL
 # names the results directory, and BENCH_BASELINE picks another baseline file.
 # run-bench.sh expects its binary under target/ of the repository, so the
-# target drops CARGO_TARGET_DIR for the build.
+# target drops CARGO_TARGET_DIR for the build. BENCH_COMPARE_ARGS adds flags to
+# the comparison, for example --require-same-host on the nightly owner host.
 BENCH_LABEL ?= $(shell hostname)-$(shell date -u +%Y%m%d)
 BENCH_BASELINE ?= bench/baselines/s1-engine-phase0-container.json
 BENCH_OUT ?= target/bench
+BENCH_COMPARE_ARGS ?=
 bench-s1:
 	env -u CARGO_TARGET_DIR LABEL=$(BENCH_LABEL) spikes/s1-engine/run-bench.sh
 	mkdir -p $(BENCH_OUT)
 	$(PYTHON) bench/s1_adapter.py spikes/s1-engine/results/$(BENCH_LABEL) -o $(BENCH_OUT)/s1-engine.json
-	$(PYTHON) bench/compare.py $(BENCH_OUT)/s1-engine.json $(BENCH_BASELINE) --json $(BENCH_OUT)/s1-engine-report.json
+	$(PYTHON) bench/compare.py $(BENCH_OUT)/s1-engine.json $(BENCH_BASELINE) --json $(BENCH_OUT)/s1-engine-report.json $(BENCH_COMPARE_ARGS)
 
 .PHONY: lint-qa test-qa bench-s1

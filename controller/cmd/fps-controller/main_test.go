@@ -164,6 +164,123 @@ func TestRunStopsWhenContextEnds(t *testing.T) {
 	}
 }
 
+// startInProcess runs the controller in process on loopback ports and returns
+// its HTTP address and the captured logs. The controller stops with the test.
+func startInProcess(t *testing.T, extra ...string) (string, *lockedBuffer) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	var stderr lockedBuffer
+	done := make(chan int, 1)
+	args := append([]string{"-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:0"}, extra...)
+	go func() { done <- run(ctx, args, io.Discard, &stderr) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("controller did not stop")
+		}
+	})
+	return waitForListen(t, &stderr), &stderr
+}
+
+func getMetrics(t *testing.T, addr, authorization string) int {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+addr+"/metrics", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /metrics error = %v", err)
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestMetricsEndpointIsOpenByDefault(t *testing.T) {
+	addr, _ := startInProcess(t)
+	if got := getMetrics(t, addr, ""); got != http.StatusOK {
+		t.Fatalf("GET /metrics without a token = %d, want 200", got)
+	}
+}
+
+func TestMetricsEndpointRequiresConfiguredToken(t *testing.T) {
+	const token = "scrape-token-0123456789"
+	tokenFile := filepath.Join(t.TempDir(), "metrics.token")
+	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	addr, logs := startInProcess(t, "-metrics-token-file", tokenFile)
+
+	tests := []struct {
+		name   string
+		header string
+		want   int
+	}{
+		{"no token", "", http.StatusUnauthorized},
+		{"wrong token", "Bearer wrong-token-0123456789", http.StatusUnauthorized},
+		{"right token", "Bearer " + token, http.StatusOK},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := getMetrics(t, addr, tc.header); got != tc.want {
+				t.Fatalf("GET /metrics = %d, want %d", got, tc.want)
+			}
+		})
+	}
+	if strings.Contains(logs.String(), token) {
+		t.Errorf("the logs contain the metrics token:\n%s", logs.String())
+	}
+	// Health probes and the open API surface stay outside the token.
+	resp, err := http.Get("http://" + addr + app.HealthPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("healthz = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestRunRejectsUnreadableMetricsTokenFile(t *testing.T) {
+	var stderr bytes.Buffer
+	args := []string{"-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:0", "-metrics-token-file", filepath.Join(t.TempDir(), "absent")}
+	if got := run(context.Background(), args, io.Discard, &stderr); got != exitUsage {
+		t.Fatalf("run = %d, want %d; stderr:\n%s", got, exitUsage, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "metrics_token_file") {
+		t.Errorf("stderr = %q, want it to name metrics_token_file", stderr.String())
+	}
+}
+
+func TestLoadConfigLayersMetricsTokenFile(t *testing.T) {
+	path := writeConfig(t, "metrics_token_file: /from/file\n")
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{nil, ""},
+		{[]string{"-config", path}, "/from/file"},
+		{[]string{"-config", path, "-metrics-token-file", "/from/flag"}, "/from/flag"},
+	} {
+		o, err := parseFlags(tc.args, io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := loadConfig(o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.MetricsTokenFile != tc.want {
+			t.Errorf("args %v: MetricsTokenFile = %q, want %q", tc.args, cfg.MetricsTokenFile, tc.want)
+		}
+	}
+}
+
 // TestBinaryShutsDownOnSIGTERM builds the real binary, starts it, checks the
 // health endpoint, sends SIGTERM, and expects exit code 0 with JSON logs.
 func TestBinaryShutsDownOnSIGTERM(t *testing.T) {

@@ -114,6 +114,36 @@ def test_no_parser_fails_the_check_and_names_the_missing_ones(
     entry = _parser_entry(data)
     assert entry["passed"] is False
     assert entry["missing_parsers"] == ["tshark", "zeek"]
+    assert entry["skipped_parsers"] == [
+        {"parser": "tshark", "reason": "not installed"},
+        {"parser": "zeek", "reason": "not installed"},
+    ]
+
+
+def test_a_skip_reason_overrides_the_default(
+    tmp_path: Path, labels_file: Callable[..., Path]
+) -> None:
+    pcap = pcapgen.mixed_capture().write_pcap(tmp_path / "clean.pcap")
+    data = score(
+        pcap,
+        labels_file(),
+        CLASSIFIER,
+        parsers=[StubParser(name="tshark")],
+        missing_parsers=["zeek"],
+        skip_reasons={"zeek": "no program at /opt/zeek/bin/zeek"},
+    ).to_dict()
+    _validate(data)
+    assert _parser_entry(data)["skipped_parsers"] == [
+        {"parser": "zeek", "reason": "no program at /opt/zeek/bin/zeek"}
+    ]
+
+
+def test_every_parser_that_ran_leaves_the_skipped_list_empty(
+    tmp_path: Path, labels_file: Callable[..., Path]
+) -> None:
+    pcap = pcapgen.mixed_capture().write_pcap(tmp_path / "clean.pcap")
+    data = score(pcap, labels_file(), CLASSIFIER, parsers=[StubParser(name="tshark")]).to_dict()
+    assert _parser_entry(data)["skipped_parsers"] == []
 
 
 def test_without_parsers_the_report_keeps_only_conformance(
@@ -231,10 +261,47 @@ def test_cli_parser_selection(
     assert "zeek program" in capsys.readouterr().err
     assert main([*base, "--tshark", absent, "--zeek", absent]) == EXIT_FAIL
     captured = capsys.readouterr()
-    assert "tshark is not installed" in captured.err
-    assert _parser_entry(json.loads(captured.out))["missing_parsers"] == ["tshark", "zeek"]
+    assert "skipped parser tshark" in captured.err
+    entry = _parser_entry(json.loads(captured.out))
+    assert entry["missing_parsers"] == ["tshark", "zeek"]
+    assert [item["parser"] for item in entry["skipped_parsers"]] == ["tshark", "zeek"]
     assert main([*base, "--parsers", "none"]) == EXIT_PASS
     report = json.loads(capsys.readouterr().out)
     assert [c["check"] for c in report["checks"]] == ["conformance"]
     with pytest.raises(SystemExit):
         main([*base, "--parsers", "wireshark"])
+
+
+def test_auto_with_only_tshark_installed_shows_zeek_as_skipped(
+    tmp_path: Path,
+    labels_file: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Acceptance of RLM-11: the search path holds tshark and no Zeek."""
+    from realism import parsers
+    from realism.ci import summary
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "tshark").symlink_to(_fake_tshark(tmp_path, ""))
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.delenv("FPS_TSHARK", raising=False)
+    monkeypatch.delenv("FPS_ZEEK", raising=False)
+    monkeypatch.setattr(parsers, "ZEEK_PACKAGE_PATH", tmp_path / "opt" / "zeek")
+    pcap = pcapgen.mixed_capture(2, 2).write_pcap(tmp_path / "clean.pcap")
+    out = tmp_path / "report.json"
+    argv = ["score", "--pcap", str(pcap), "--labels", str(labels_file()), "--output", str(out)]
+    argv += ["--ndpi-reader", str(_fake_ndpi(tmp_path))]
+    assert main(argv) == EXIT_PASS
+    assert "skipped parser zeek" in capsys.readouterr().err
+    report = json.loads(out.read_text())
+    _validate(report)
+    entry = _parser_entry(report)
+    assert [p["parser"] for p in entry["parsers"]] == ["tshark"]
+    (skipped,) = entry["skipped_parsers"]
+    assert skipped["parser"] == "zeek"
+    assert skipped["reason"].startswith("not installed")
+    (row,) = [r for r in summary.rows("dns", report) if "| all |" in r]
+    assert "ran tshark 4.2.2" in row
+    assert "skipped zeek (not installed" in row

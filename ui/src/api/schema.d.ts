@@ -325,7 +325,7 @@ export interface components {
             errors?: components["schemas"]["Finding"][];
         };
         Finding: {
-            /** @enum {unknown} */
+            /** @enum {string} */
             severity: "error" | "warning" | "info";
             /** @description JSON Pointer into the submitted document. */
             path: string;
@@ -339,7 +339,7 @@ export interface components {
                 agents_available?: number;
             };
         };
-        /** @enum {unknown} */
+        /** @enum {string} */
         ModuleType: "app" | "transport" | "host" | "content" | "tunnel" | "strike" | "evasion" | "fuzzer";
         ModuleSummary: {
             name: string;
@@ -370,11 +370,11 @@ export interface components {
             id: string;
             /** @description Peer address of the open control session and absent while the agent is offline. */
             address?: string;
-            /** @enum {unknown} */
+            /** @enum {string} */
             state: "online" | "offline" | "reserved" | "busy";
             version?: string;
             cores?: number;
-            /** @enum {unknown} */
+            /** @enum {string} */
             backend?: "kernel" | "af_xdp" | "dpdk";
             ports?: {
                 name: string;
@@ -385,7 +385,7 @@ export interface components {
                 [key: string]: string;
             };
         };
-        /** @enum {unknown} */
+        /** @enum {string} */
         RunState: "pending" | "preparing" | "running" | "stopping" | "completed" | "failed" | "aborted";
         Run: {
             id: string;
@@ -393,6 +393,11 @@ export interface components {
             state: components["schemas"]["RunState"];
             /** @description True when an agent failed during the run. */
             degraded?: boolean;
+            /**
+             * @description Why the run failed or was aborted, in words for an operator, such as the criterion that failed, the agent that failed, or the stop request. Absent while the run is in any other state.
+             * @example criterion sessions.failed_ratio < 0.01 failed with 0.042
+             */
+            reason?: string;
             phase?: string;
             /** Format: date-time */
             created_at?: string;
@@ -406,17 +411,31 @@ export interface components {
                 [key: string]: string;
             };
             summary?: components["schemas"]["RunSummary"];
-            verdict?: {
-                passed?: boolean;
-                criteria?: {
-                    /** @description Metric name from contracts/metrics/catalog.yaml. */
-                    metric?: string;
-                    op?: string;
-                    value?: number;
-                    observed?: number;
-                    passed?: boolean;
-                }[];
-            };
+            verdict?: components["schemas"]["RunVerdict"];
+        };
+        /** @description Outcome of the pass and fail criteria of the test configuration. */
+        RunVerdict: {
+            /** @description True when every criterion passed and an agent survived the run. */
+            passed?: boolean;
+            /** @description One result per criterion, in configuration order. */
+            criteria?: components["schemas"]["CriterionResult"][];
+        };
+        /** @description Result of one criterion. A criterion that compared a value carries observed and passed. A criterion whose metric has no value carries neither, and a criterion that the controller cannot evaluate carries passed false without observed. The reason says which case applies. */
+        CriterionResult: {
+            /** @description Metric name from contracts/metrics/catalog.yaml. */
+            metric?: string;
+            op?: string;
+            value?: number;
+            /** @description Value of the metric over the whole run, absent when the metric has no value. */
+            observed?: number;
+            /** @description Outcome of the comparison, absent when the metric has no value. */
+            passed?: boolean;
+            /**
+             * @description Why the criterion passed, failed, or has no result, in words for an operator.
+             * @example observed 0.042 is not < 0.01
+             * @example metric sessions.response_time.p99 has no value
+             */
+            reason?: string;
         };
         /** @description Whole run totals. Each property names its metric in contracts/metrics/catalog.yaml through x-fps-metric. */
         RunSummary: {
@@ -429,7 +448,7 @@ export interface components {
             sessions_per_second?: number;
             concurrent_sessions?: number;
         };
-        /** @enum {unknown} */
+        /** @enum {string} */
         MetricView: "application" | "scenario" | "port" | "tcp" | "tls" | "realism";
         MetricSample: {
             /** Format: date-time */
@@ -458,7 +477,7 @@ export interface components {
         Capture: {
             id: string;
             port: string;
-            /** @enum {unknown} */
+            /** @enum {string} */
             state: "running" | "completed" | "failed";
             bytes?: number;
         };

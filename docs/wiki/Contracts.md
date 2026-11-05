@@ -59,3 +59,19 @@ CON-08 applies decision D12 items 13, 15, 17, and 21 to the metric catalog, whic
 | `side` label | `client` or `server` on every scenario level metric and every transport metric |
 
 A total over both sides counts each session twice, so the API views and test criteria report the client side unless a criterion selects the server side. The controller embeds a byte copy of the catalog in `controller/internal/metrics/catalog.yaml`, which must follow every catalog change.
+
+## Failure reasons and the metrics endpoint
+
+CON-07 applied decision D12 items 19 and 20 to the controller API, which is now at version 0.3.0.
+
+| Field or document | Meaning |
+|---|---|
+| `Run.reason` | Why a run failed or was aborted, absent in every other state |
+| `RunVerdict` | Whether the run passed, and one `CriterionResult` per criterion in configuration order |
+| `CriterionResult.observed` | The value of the metric over the whole run, absent when the metric has no value |
+| `CriterionResult.passed` | The outcome of the comparison, absent when the metric has no value and false when the criterion cannot be evaluated |
+| `CriterionResult.reason` | Why the criterion passed, failed, or has no result |
+| `MetricSample.values` | Metric values in double precision |
+| `openapi/fps-metrics.yaml` | `GET /metrics` on the controller root, open by default, with the optional bearer scheme `metricsToken` |
+
+Every enum of the API names `type: string`. The metrics endpoint has its own document, because every operation of `fps-api-v1.yaml` lies under `/v1` and names a token scope. CTL-20 fills the reasons, and CTL-19 adds the metrics token setting.

@@ -11,7 +11,7 @@ reports, so two parsers that see the same fault do not count it twice.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -53,6 +53,7 @@ class ParserErrorsResult:
 
     parsers: list[dict[str, str]]
     missing: list[str]
+    skipped: list[dict[str, str]]
     applications: list[ApplicationErrors]
     unlabelled: Counter[str]
     unattributed: Counter[str]
@@ -79,6 +80,7 @@ class ParserErrorsResult:
             "metrics": [],
             "parsers": self.parsers,
             "missing_parsers": self.missing,
+            "skipped_parsers": self.skipped,
             "applications": [app.to_dict(names) for app in self.applications],
             "unlabelled_errors": {p: self.unlabelled[p] for p in names},
             "unattributed_errors": {p: self.unattributed[p] for p in names},
@@ -97,8 +99,14 @@ def check(
     labels: Labels,
     parsers: Sequence[ParserRunner],
     missing: Sequence[str] = (),
+    skip_reasons: Mapping[str, str] | None = None,
 ) -> ParserErrorsResult:
-    """Run every parser on the capture and count its findings per application."""
+    """Run every parser on the capture and count its findings per application.
+
+    ``missing`` names the parsers that were requested and not installed, and the
+    result lists each as skipped with its reason from ``skip_reasons``.
+    """
+    reasons = skip_reasons or {}
     by_key: dict[SessionKey, Session] = {s.key: s for s in sessions}
     by_app: dict[str, ApplicationErrors] = {}
     for session in sessions:
@@ -131,6 +139,9 @@ def check(
     return ParserErrorsResult(
         parsers=ran,
         missing=list(missing),
+        skipped=[
+            {"parser": name, "reason": reasons.get(name, "not installed")} for name in missing
+        ],
         applications=sorted(by_app.values(), key=lambda app: app.application),
         unlabelled=unlabelled,
         unattributed=unattributed,

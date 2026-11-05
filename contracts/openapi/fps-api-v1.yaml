@@ -1,14 +1,15 @@
 openapi: 3.1.0
 info:
   title: FixingPointSystem Controller API
-  version: 0.2.0
+  version: 0.3.0
   summary: Contract v0.2 for the controller REST API.
   description: >
     The controller stores test configurations, installs modules, starts runs on
     agents, and serves metrics and reports. Long operations return HTTP 202 with
     a run identifier. Errors use RFC 9457 problem details. Names for ports,
     devices, flows, and metrics follow Open Traffic Generator vocabulary
-    (decision D5).
+    (decision D5). The Prometheus exposition at GET /metrics lies outside the
+    /v1 base path, and contracts/openapi/fps-metrics.yaml documents it.
   license:
     name: GPL-3.0-only
     identifier: GPL-3.0-only
@@ -272,7 +273,7 @@ paths:
       operationId: getRunReport
       x-required-scope: read
       parameters:
-        - { name: format, in: query, schema: { enum: [json, csv, html], default: json } }
+        - { name: format, in: query, schema: { type: string, enum: [json, csv, html], default: json } }
       responses:
         "200":
           description: Report.
@@ -449,7 +450,7 @@ components:
       type: object
       required: [severity, path, message]
       properties:
-        severity: { enum: [error, warning, info] }
+        severity: { type: string, enum: [error, warning, info] }
         path: { type: string, description: JSON Pointer into the submitted document. }
         message: { type: string }
     ValidationReport:
@@ -464,6 +465,7 @@ components:
             agents_required: { type: integer }
             agents_available: { type: integer }
     ModuleType:
+      type: string
       enum: [app, transport, host, content, tunnel, strike, evasion, fuzzer]
     ModuleSummary:
       type: object
@@ -491,7 +493,7 @@ components:
         api_version: { type: string, examples: ["0.1.0"] }
         backends:
           type: array
-          items: { enum: [kernel, af_xdp, dpdk] }
+          items: { type: string, enum: [kernel, af_xdp, dpdk] }
         agents: { type: array, items: { $ref: "#/components/schemas/Agent" } }
         modules: { type: array, items: { $ref: "#/components/schemas/ModuleSummary" } }
     Agent:
@@ -500,10 +502,10 @@ components:
       properties:
         id: { type: string, description: Agent identity from its client certificate. }
         address: { type: string, description: Peer address of the open control session and absent while the agent is offline. }
-        state: { enum: [online, offline, reserved, busy] }
+        state: { type: string, enum: [online, offline, reserved, busy] }
         version: { type: string }
         cores: { type: integer, minimum: 1 }
-        backend: { enum: [kernel, af_xdp, dpdk] }
+        backend: { type: string, enum: [kernel, af_xdp, dpdk] }
         ports:
           type: array
           items:
@@ -515,6 +517,7 @@ components:
               speed_mbps: { type: integer }
         labels: { type: object, additionalProperties: { type: string } }
     RunState:
+      type: string
       enum: [pending, preparing, running, stopping, completed, failed, aborted]
     Run:
       type: object
@@ -524,6 +527,13 @@ components:
         config_id: { type: string }
         state: { $ref: "#/components/schemas/RunState" }
         degraded: { type: boolean, description: True when an agent failed during the run. }
+        reason:
+          type: string
+          description: >
+            Why the run failed or was aborted, in words for an operator, such as
+            the criterion that failed, the agent that failed, or the stop
+            request. Absent while the run is in any other state.
+          examples: ["criterion sessions.failed_ratio < 0.01 failed with 0.042"]
         phase: { type: string }
         created_at: { type: string, format: date-time }
         started_at: { type: string, format: date-time }
@@ -532,20 +542,33 @@ components:
         engine_version: { type: string }
         module_versions: { type: object, additionalProperties: { type: string } }
         summary: { $ref: "#/components/schemas/RunSummary" }
-        verdict:
-          type: object
-          properties:
-            passed: { type: boolean }
-            criteria:
-              type: array
-              items:
-                type: object
-                properties:
-                  metric: { type: string, description: Metric name from contracts/metrics/catalog.yaml. }
-                  op: { type: string }
-                  value: { type: number }
-                  observed: { type: number }
-                  passed: { type: boolean }
+        verdict: { $ref: "#/components/schemas/RunVerdict" }
+    RunVerdict:
+      type: object
+      description: Outcome of the pass and fail criteria of the test configuration.
+      properties:
+        passed: { type: boolean, description: True when every criterion passed and an agent survived the run. }
+        criteria:
+          type: array
+          description: One result per criterion, in configuration order.
+          items: { $ref: "#/components/schemas/CriterionResult" }
+    CriterionResult:
+      type: object
+      description: >
+        Result of one criterion. A criterion that compared a value carries
+        observed and passed. A criterion whose metric has no value carries
+        neither, and a criterion that the controller cannot evaluate carries
+        passed false without observed. The reason says which case applies.
+      properties:
+        metric: { type: string, description: Metric name from contracts/metrics/catalog.yaml. }
+        op: { type: string }
+        value: { type: number }
+        observed: { type: number, description: "Value of the metric over the whole run, absent when the metric has no value." }
+        passed: { type: boolean, description: "Outcome of the comparison, absent when the metric has no value." }
+        reason:
+          type: string
+          description: Why the criterion passed, failed, or has no result, in words for an operator.
+          examples: ["observed 0.042 is not < 0.01", "metric sessions.response_time.p99 has no value"]
     RunSummary:
       type: object
       description: Whole run totals. Each property names its metric in contracts/metrics/catalog.yaml through x-fps-metric.
@@ -559,6 +582,7 @@ components:
         sessions_per_second: { type: number, x-fps-metric: sessions.rate }
         concurrent_sessions: { type: integer, x-fps-metric: sessions.concurrent }
     MetricView:
+      type: string
       enum: [application, scenario, port, tcp, tls, realism]
     MetricSample:
       type: object
@@ -567,7 +591,7 @@ components:
         ts: { type: string, format: date-time }
         view: { $ref: "#/components/schemas/MetricView" }
         key: { type: string, description: "Application, scenario, or port name that the sample describes." }
-        values: { type: object, additionalProperties: { type: number }, description: Values keyed by metric name from contracts/metrics/catalog.yaml. }
+        values: { type: object, additionalProperties: { type: number, format: double }, description: Values keyed by metric name from contracts/metrics/catalog.yaml. }
     MetricSeriesSet:
       type: object
       required: [view, samples]
@@ -595,5 +619,5 @@ components:
       properties:
         id: { type: string }
         port: { type: string }
-        state: { enum: [running, completed, failed] }
+        state: { type: string, enum: [running, completed, failed] }
         bytes: { type: integer }
