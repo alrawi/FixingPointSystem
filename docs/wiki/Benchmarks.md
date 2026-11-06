@@ -18,6 +18,8 @@ A metric regresses when the result is worse than the baseline by more than `max(
 
 The file `bench/baselines/s1-engine-phase0-container.json` comes from the phase 0 run of `spikes/s1-engine/run-bench.sh` on a 2 vCPU Firecracker microVM (Intel Xeon at 2.10 GHz, Linux 6.18.44, rustc 1.97.0) on 2026-11-02. The adapter `bench/s1_adapter.py` emits 43 metrics from it.
 
+The file `bench/baselines/s1-engine-owner-host.json` is the baseline of the nightly job. It comes from run 42231498234 of the `qa-bench` workflow on the owner host, an 8 vCPU Intel Core i7-8705G at 3.10 GHz with Linux 7.0.0-42 and rustc 1.99.1, on 2026-11-06, after the host was tuned as `bench/README.md` describes. On that host the interpreter keeps up with the hand written baseline for keepalive and connection rates (ratios 1.00 and 1.03), and reaches 0.52 of it for 1 MiB bodies, against 0.74 on the container.
+
 | Metric family | Direction | Tolerance |
 |---|---|---|
 | Session rate and L7 throughput per run | higher | 10% |
@@ -32,7 +34,7 @@ The three ratios are 0.959, 0.989, and 0.739, which match the 4.1%, 1.1%, and 26
 
 The `test` job of the `qa-bench` workflow runs only the unit and component tests of `bench/`, on Python 3.10 and 3.12 on hosted runners, when `bench/`, the S1 results, or its own files change. It runs no benchmark, because shared runners are too noisy for a 10% tolerance.
 
-The `nightly` job runs `make bench-s1 BENCH_COMPARE_ARGS=--require-same-host` every night at 02:17 UTC and on request, on a self hosted runner of the owner's Linux server with the labels `self-hosted`, `linux`, and `fps-bench` (decision D12 item 6). It compares the run with `bench/baselines/s1-engine-owner-host.json`, a baseline recorded on that same host, and uploads the log, the converted result, and the JSON report as the artifact `s1-nightly-<run id>`. While that baseline file does not exist, the job records a candidate and ends with a warning. A pull request then turns the candidate into the baseline.
+The `nightly` job runs `make bench-s1 BENCH_COMPARE_ARGS=--require-same-host` every night at 02:17 UTC and on request, on a self hosted runner of the owner's Linux server with the labels `self-hosted`, `linux`, and `fps-bench` (decision D12 item 6). It compares the run with `bench/baselines/s1-engine-owner-host.json`, a baseline recorded on that same host, and uploads the log, the converted result, and the JSON report as the artifact `s1-nightly-<run id>`. While that baseline file does not exist, the job records a candidate and ends with a warning. A pull request then turns the candidate into the baseline. The host must not track loopback connections, because the suite fills the conntrack table within seconds otherwise, and section Tuning the host of `bench/README.md` shows the setup.
 
 ### Owner steps for the runner
 

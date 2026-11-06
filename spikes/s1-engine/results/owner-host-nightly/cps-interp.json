@@ -1,0 +1,42 @@
+{
+  "scenario": "web_get",
+  "mode": "interp",
+  "concurrency": 64,
+  "runtime_threads": 8,
+  "duration_s": 15.005684177,
+  "sessions_ok": 858865,
+  "sessions_failed": 0,
+  "server_sessions_ok": 858865,
+  "server_sessions_failed": 0,
+  "failures": {},
+  "sessions_per_s": 57235.97737159013,
+  "steady_sessions_per_s": 57560.0,
+  "per_second": [
+    57721,
+    57938,
+    56917,
+    57521,
+    57560,
+    52844,
+    57527,
+    57502,
+    57601,
+    57682,
+    57627,
+    57658,
+    57505,
+    57627,
+    57571
+  ],
+  "l7_bits_per_s": 97072217.62221687,
+  "session_latency_us": {
+    "p50": 1101,
+    "p90": 1483,
+    "p99": 1834,
+    "max": 10951
+  },
+  "max_concurrent_sessions": 64,
+  "cpu_seconds": 116.65001,
+  "cpu_cores_busy": 7.77372151939567,
+  "sessions_per_cpu_second": 7362.7511905056845
+}
