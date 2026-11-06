@@ -10,8 +10,8 @@
 | Branch | `wp/MOD-03` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
-| Current holder | claude-2e55b9, lease until 2026-11-06T22:35:35Z |
+| Progress | 90% (5 of 6 plan steps, PR pending) |
+| Current holder | claude-264413, lease until 2026-11-06T23:01:12Z |
 | Last verified commit | none |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
@@ -24,24 +24,25 @@ Ship synthetic content generators for HTML, JSON APIs, multilingual text, email 
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Crate skeleton, catalog, argument binding, manifest, word lists
-- [ ] 2. HTML and JSON generators
-- [ ] 3. Text and email generators
-- [ ] 4. Binary file generators
-- [ ] 5. Tests: determinism, size, duplicate ratio over 10,000 bodies per generator, catalog equals manifest
+- [x] 1. Crate skeleton, catalog, argument binding, manifest, word lists
+- [x] 2. HTML and JSON generators
+- [x] 3. Text and email generators
+- [x] 4. Binary file generators
+- [x] 5. Tests: determinism, size, duplicate ratio over 10,000 bodies per generator, catalog equals manifest
 - [ ] 6. README provenance note, mk file, Modules page, log entry, PR
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Steps 1 to 5: `cargo test -p fps-module-content` passes (15 unit tests, 3 catalog tests, 18 generator tests, 45 s in debug, 8 s in release). `cargo clippy -p fps-module-content --all-targets -- -D warnings` and `cargo fmt` are clean. `make lint-mod-content` reports 0 errors.
+- Step 6 partly: README with the provenance section, `mk/mod-content.mk`, the Modules page section, and the log entry are written.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Open the pull request, wait for CI, and fix failures inside the paths of the package. The JPEG kind has no image scan, which the README states.
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Run `plan.py check`, `render --check`, and `lint`, push, and open the PR.
 
 ## Blockers and open questions
 
@@ -49,16 +50,21 @@ none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- Output reaches `size` and ends at most about 1 KiB above it, because a generator finishes its current element. Exact sizes would cut HTML and JSON open. The `bin` kind is exact.
+- A negative `seed` (default -1) draws from the session generator, and a seed of zero or more fixes the bytes. This gives determinism per seed and variety per session.
+- Formats avoid compression: stored deflate blocks, a GIF LZW stream with a clear code every 200 pixels, and JPEG comment segments.
+- No CI workflow was created, as the assignment says. The log entry describes the option.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+- At 512 bytes a PDF repeated 70% of its bodies, because one or two sentences carry little entropy, so the PDF content starts with a title line that has a random identifier.
+- The generic `fit` helper probes 33 units to estimate the bytes per unit. A probe of one unit overshot the GIF size by 9 KB.
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+make test-mod-content   # 4 test binaries pass
+make lint-mod-content   # contracts: 0 error(s), 0 warning(s)
 ```
 
 ## Session log
@@ -68,3 +74,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-06T22:05Z | claude-2e55b9 | claim | | Claimed #170 with 6 plan steps |
+| 2026-11-06T22:40Z | claude-264413 | takeover of the stopped worker | | Resumed from the claim commit, claimed with a new card, built steps 1 to 5 and the documents |

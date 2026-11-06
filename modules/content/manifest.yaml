@@ -1,0 +1,40 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: content
+version: 0.1.0
+type: content
+summary: Synthetic content generators for HTML pages, JSON API responses, multilingual text, email bodies, and binary files, with a size and a seed per call.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+functions:
+  - name: html
+    summary: HTML 5 page of at least size bytes, built from head, navigation, and section templates.
+    params:
+      - { name: size, type: int, default: 4096 }
+      - { name: seed, type: int, default: -1 }
+  - name: json
+    summary: JSON document of at least size bytes in the shape of a paged API response, with a data array of records.
+    params:
+      - { name: size, type: int, default: 2048 }
+      - { name: seed, type: int, default: -1 }
+  - name: text
+    summary: Plain prose of at least size bytes in paragraphs. lang takes en, de, fr, es, it, ru, or zh.
+    params:
+      - { name: lang, type: text, default: en }
+      - { name: size, type: int, default: 1024 }
+      - { name: seed, type: int, default: -1 }
+  - name: email
+    summary: Plain text email body of at least size bytes with a greeting, prose, a reference line, and a signature. lang takes en, de, fr, es, it, ru, or zh.
+    params:
+      - { name: lang, type: text, default: en }
+      - { name: size, type: int, default: 1024 }
+      - { name: seed, type: int, default: -1 }
+  - name: binary
+    summary: File of at least size bytes in the format that kind names. kind takes png, gif, jpeg, pdf, zip, gzip, or bin, and bin has exactly size bytes.
+    params:
+      - { name: kind, type: text, default: png }
+      - { name: size, type: int, default: 4096 }
+      - { name: seed, type: int, default: -1 }
+provenance:
+  source: synthetic
+  notes: Every generator builds its output from word lists and grammars that the crate holds. No generator reads a file or a network, and no output holds real personal data, real addresses, or third party text. Names come from invented syllables, addresses and links use the reserved .test domain, and every file format follows its specification without compression.
