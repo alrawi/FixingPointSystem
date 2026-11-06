@@ -1,0 +1,29 @@
+[package]
+name = "fps-wasm"
+description = "WebAssembly extension host of the FixingPointSystem engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+fps-flow = { path = "../fps-flow" }
+# FailureReason::ExtensionError, the label of every extension failure.
+fps-stats = { path = "../fps-stats" }
+rand = { version = "0.8", default-features = false }
+# Error enums for library code, as docs/wiki/Coding-Standards.md requires.
+thiserror = "2"
+# Apache-2.0 WITH LLVM-exception. The default features add a compilation
+# cache, parallel compilation, async support, the GC proposals, profiling,
+# coredumps, and the pooling allocator, none of which the host uses. The
+# component model, fuel metering, and the Cranelift compiler are enough.
+wasmtime = { version = "48", default-features = false, features = ["std", "runtime", "cranelift", "component-model"] }
+
+[dev-dependencies]
+rand_pcg = "0.3"
+# The test extension is core WAT text. The tests turn it into a component of the
+# extension world with the WIT file of the contract. Apache-2.0 WITH LLVM-exception.
+wat = "1"
+wit-component = "0.254"
+wit-parser = { version = "0.254", default-features = false, features = ["std"] }

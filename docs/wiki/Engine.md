@@ -16,6 +16,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched) | Load profile, session schedule, drain iterator, and injected clock | ENG-10 drives it from the worker runtime |
 | [`fps-hosts`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-hosts) | Host pool address mapping, slicing, and seeded host selection, see [Hosts](Hosts.md) | HST-02 adds kernel port setup |
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `SessionIo` over kernel TCP sockets, see [Transport](Transport.md) | TRN-02 adds UDP |
+| [`fps-wasm`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-wasm) | The WebAssembly extension host, with fuel and memory limits, see [The WebAssembly extension host](#the-webassembly-extension-host) | The interpreter and the runtime wire it into their module table |
 
 Every crate carries `#![forbid(unsafe_code)]` and the lint header, except `fps-backend-kernel`, which carries `#![deny(unsafe_code)]` with one allowed socket module that [Transport](Transport.md#unsafe-code) explains. The lint header comes from [Coding Standards](Coding-Standards.md#rust). A `clippy.toml` in each crate with tests lets unit tests call `unwrap`, `expect`, and `panic`, which library code may not. We run the tests of every engine crate with `make test-eng`, and the `rust` job of `ci.yml` runs them on every pull request.
 
@@ -418,3 +419,56 @@ A flow that depends through `after` on a spawned flow waits until that flow ran 
 | `fps-flow` unit tests | `parse_instance` compiles `spawn` and keeps `after` and `spawned`, `parse` still rejects them, and `raw` stays unsupported |
 
 The web_browse test uses plain HTTP for the page flow and test doubles of the `dns` functions, because the engine runs no transport modules yet and the specification example is illustrative.
+
+## The WebAssembly extension host
+
+ENG-11 added [`fps-wasm`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-wasm), which runs module extensions that target the `extension` world of `contracts/extension/fps-extension.wit` (decision D3). It uses wasmtime 48 with the component model, fuel metering, and the Cranelift compiler, and no compilation cache, parallel compilation, async support, or GC proposals. SIMD, relaxed SIMD, multiple memories, and 64 bit memories are off, so a component built with them fails to load. The wasmtime license is Apache-2.0 with the LLVM exception, which `deny.toml` allows.
+
+### Pieces
+
+| Item | Contents |
+|---|---|
+| `WasmEngine` | One wasmtime engine for the process, with fuel metering on |
+| `WasmExtension` | A compiled component with its linked engine calls and its function catalog. `load` reads the catalog once, and `open` starts one session |
+| `WasmSession` | The hooks of one session: `on_data`, `on_timer`, `render`, and `on_close`, with the session instance behind them |
+| `WasmFunctions` | The module table of one session. It implements `fps_flow::TemplateFn`, the trait that native extensions use, and forwards each call to the `render` hook of the named module |
+| `Host` | The `engine` interface as a Rust trait: `send`, `set_timer`, `cancel_timer`, `log`, `random_u64`, and `random_bytes`. The runtime implements it per session |
+| `Limits` | `fuel_per_call`, `max_memory_bytes`, and `max_table_elements`, with defaults of 20 million fuel, 16 MiB, and 10,000 elements |
+| `WasmFailure` | Out of fuel, out of memory, another trap, a hook error, a failed session, or an invalid component |
+
+The engine has no `Extension` or `ExtensionSession` trait yet, although the extension README names them, so `TemplateFn` is the seam that both kinds of extension share today and the other hooks are methods of `WasmSession`. A native extension follows the same method shapes, and a later package can lift them into a trait when the interpreter calls the hooks.
+
+### One instance per session
+
+The contract says the engine instantiates the component once per worker. We instantiate once per session instead, from a pre linked `InstancePre`, because a trap leaves a component instance unusable. With one instance per worker, a looping extension would fail every session on that worker. A session instance has its own store, its own fuel, and its own memory, so a failure ends that session and no other, and a memory limit is a per session limit. The cost is one instantiation per session, which compiles nothing.
+
+### Limits
+
+Every hook call, `on-open` and the catalog call included, starts with a fresh fuel budget of `fuel_per_call`, and a call that uses it up traps with `WasmFailure::OutOfFuel`. One fuel unit is about one WebAssembly instruction. `WasmSession::fuel_used_by_last_call` reports the use, so a caller can tune the limit.
+
+A store limiter holds the memory limit. Plain wasmtime limits make `memory.grow` return -1, and a guest can carry on after that, so ours turns a refused growth of memory or a table into a trap, which is `WasmFailure::OutOfMemory`. An instance may hold one memory, eight tables, and 32 core instances, so a component with a second memory fails to load. A module whose initial memory is above the limit fails at load with `OutOfMemory`. The host keeps a small reservation per memory and no guard region, so thousands of session instances do not exhaust the address space.
+
+### Failures and phases
+
+Every failure of an extension counts as `sessions.failed` with the reason `extension_error`, which `WasmFailure::reason` returns as `fps_stats::FailureReason::ExtensionError`. `WasmFailure::label` gives the finer label `extension_<kind>` of the extension README, where a hook error uses its own kind and a trap or a limit counts as `internal`. A failed session refuses every later hook with `WasmFailure::SessionFailed`, and `on_close` after a failure skips the guest and succeeds, because the instance cannot run any more. Through `TemplateFn` a failure becomes an `FnError`, and `WasmFunctions::take_failure` returns the `WasmFailure` behind the last one, because `FnErrorKind` has no case for a trap. The renderer can then record `extension_error` and not `internal`.
+
+The engine calls follow the table of the extension README. The hook that runs decides what is valid, and a call that is not valid returns `not-allowed`. The calls `random-u64` and `random-bytes` have no error case, so a call during `on-close` traps the guest, and `random-bytes` traps when it asks for more bytes than the memory limit.
+
+`WasmFunctions` ignores the `rng` argument of `TemplateFn::render`. An extension gets randomness only through the `random-*` calls, which the `Host` of its session serves, so the host should derive its generator from the run seed and the session id.
+
+### Tests
+
+The test extension is core WAT text in `tests/support/mod.rs`. The tests encode it as a component with `wit-component` and the WIT file of the contract, so its types match the contract by construction. Its hooks react to the first byte of the data, the function name, or the timer id.
+
+| Test | What it checks |
+|---|---|
+| `an_endless_loop_is_stopped_by_fuel_and_fails_only_its_session` | An `on_data` loop stops with `OutOfFuel` and reason `extension_error`, the session refuses later calls, a second session of the same extension and a session opened afterwards still work |
+| `an_endless_render_fails_the_template_call_and_counts_as_extension_error` | The same through `TemplateFn`, as an `Internal` `FnError` with the `WasmFailure` behind it |
+| `fuel_is_refilled_for_every_call` | Fifty calls each use less than the budget |
+| `growing_past_the_memory_limit_fails_the_session` and `memory_below_the_initial_size_of_the_module_is_refused` | A refused `memory.grow` is `OutOfMemory` and fails only its session, and a limit below the initial memory fails the load |
+| `engine_calls_follow_the_hook_rules` | `send` during `render` returns `not-allowed`, and `random-u64` during `on-close` traps |
+| `data_hooks_return_their_outcome`, `a_hook_error_fails_the_session`, `on_open_errors_are_reported` | Pass, consume, and replace outcomes, `send` from `on-data` and `on-timer`, and hook errors with their kind and label |
+| `template_calls_reach_the_render_hook`, `unknown_modules_and_functions_are_unsupported`, `random_numbers_come_from_the_session_host`, `a_failing_render_reports_the_hook_error` | Argument conversion of text and bytes, catalog checks before the call, host randomness, and error kinds |
+| `the_catalog_is_read_at_load`, `a_component_without_the_world_is_rejected` | The catalog with types and defaults, and an invalid or incomplete component |
+
+The conformance tests that decision record 0010 asks for need a native extension to run against, and none exists yet. The WebAssembly side is covered above.

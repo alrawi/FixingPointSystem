@@ -26,6 +26,7 @@ functions:
       - { name: path, type: text }
       - { name: host, type: text }
       - { name: accept, type: text, default: "*/*" }
+      - { name: headers, type: text, default: "" }
   - name: response
     summary: Status line, Content-Type and Content-Length headers, the empty line, and the body.
     params:
