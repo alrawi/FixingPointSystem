@@ -6,7 +6,7 @@
 | Branch | `wp/CTL-21` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 90% (4 of 4 plan steps, waiting for CI) |
 | Current holder | claude-953995, lease until 2026-11-06T23:01:51Z |
 | Last verified commit | none |
 
@@ -16,22 +16,23 @@ Apply decision D12 item 10 in the new package `controller/internal/runs/calibrat
 
 ## Plan
 
-- [ ] 1. Package with configuration, state, and the bounded update step.
-- [ ] 2. Convergence tests with 0.25x and 4x estimates and noisy measurements.
-- [ ] 3. Make targets in `mk/ctl.mk`.
-- [ ] 4. Controller wiki page, log entry, and pull request.
+- [x] 1. Package with configuration, state, and the bounded update step.
+- [x] 2. Convergence tests with 0.25x and 4x estimates and noisy measurements.
+- [x] 3. Make targets in `mk/ctl.mk`.
+- [x] 4. Controller wiki page, log entry, and pull request.
 
 ## Done and verified
 
-Nothing yet.
+- `cd controller && GOWORK=off go test -race -cover ./internal/runs/calibrate/` passes with 100 percent statement coverage, and `golangci-lint run ./internal/runs/calibrate/` reports 0 issues. The module proxy is unreachable, but the package uses only the standard library, so it builds and tests locally.
+- `make lint-ctl-calibrate test-ctl-calibrate`, `plan.py check`, `render --check`, and `lint` pass.
 
 ## Remaining
 
-Everything.
+CI result of the full controller workflow. The orchestrator wiring is out of scope and needs CON-05 UpdateRates.
 
 ## Next action
 
-Write `controller/internal/runs/calibrate/calibrate.go`.
+Open the pull request, poll CI, and fix failures inside the package paths.
 
 ## Blockers and open questions
 
@@ -39,11 +40,13 @@ none
 
 ## Decisions taken in this package
 
-none yet
+- The calibration estimates bytes per session from completed sessions and does not feed back the achieved throughput, so it has no feedback delay and cannot oscillate with agent ramp up.
+- One common Factor scales all compiled rates, because the compiler splits a single total rate over the mix by session weight.
+- Moves against the last direction need a 1.5x wider dead band, which stops jitter around a settled factor.
 
 ## Pitfalls
 
-none yet
+The shell tool refuses `source` and long heredocs in worktrees, so pass FPS_* variables inline and write files with the editor tools.
 
 ## Verify the current state
 
