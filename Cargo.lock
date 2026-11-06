@@ -890,6 +890,18 @@ name = "fps-module-template"
 version = "0.0.1"
 
 [[package]]
+name = "fps-module-tls"
+version = "0.0.1"
+dependencies = [
+ "fps-backend-kernel",
+ "fps-io",
+ "rcgen",
+ "rustls",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "fps-runtime"
 version = "0.0.1"
 dependencies = [
