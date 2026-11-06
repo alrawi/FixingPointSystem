@@ -15,6 +15,14 @@ parameters:
   properties:
     host: { type: string, minLength: 1, default: www.example.test, description: Name that the lookup scenarios query. }
     server_port: { type: integer, minimum: 1, maximum: 65535, default: 53, description: UDP and TCP port of the server side. }
+settings:
+  type: object
+  additionalProperties: false
+  properties:
+    zone_file:
+      type: string
+      minLength: 1
+      description: Zone file in RFC 1035 master file format that the server answers from, with the subset of syntax that the module README lists and an SOA record. A relative path resolves against the module directory. Without it the server answers from the zone that the module ships, zones/example.test.zone.
 functions:
   - name: query
     summary: Query message in RFC 1035 wire format with one question and a transaction id from the session generator, with the TCP length prefix when tcp is true.

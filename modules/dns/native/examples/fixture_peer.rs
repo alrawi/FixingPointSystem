@@ -24,7 +24,12 @@
 //!   --sessions N      sessions per scenario, default 10
 //!   --seed S          run seed, default 42
 //!   --port P          server port of every flow, default 53
-//!   --zone FILE       zone file that the server answers from, default the bundled zone
+//!   --settings JSON   module settings as `modules.dns.settings` holds them, for example
+//!                     '{"zone_file":"zones/example.test.zone"}'. A relative zone_file
+//!                     resolves against the module directory. Default: no settings, so
+//!                     the server answers from the bundled zone.
+//!   --zone FILE       shorthand for --settings with that zone_file, resolved against the
+//!                     current directory
 //! ```
 
 use std::future::Future;
@@ -43,7 +48,7 @@ use fps_interp::{
     session_rng, DatagramOpener, Limits, OpenKind, OpenRequest, Opener, Session, SessionCtx, Side,
 };
 use fps_io::DatagramIo;
-use fps_module_dns::{Dns, Name, Zone};
+use fps_module_dns::Dns;
 use tokio::io::ReadBuf;
 use tokio::net::UdpSocket;
 
@@ -213,7 +218,7 @@ struct Options {
     sessions: u64,
     seed: u64,
     port: u16,
-    zone: Option<PathBuf>,
+    settings: serde_json::Value,
 }
 
 fn parse_args() -> Result<Options, String> {
@@ -230,7 +235,7 @@ fn parse_args() -> Result<Options, String> {
         sessions: 10,
         seed: 42,
         port: 53,
-        zone: None,
+        settings: serde_json::json!({}),
     };
     let ip = |s: Option<String>| -> Result<IpAddr, String> {
         s.ok_or("missing address")?
@@ -251,7 +256,16 @@ fn parse_args() -> Result<Options, String> {
             "--port" => {
                 o.port = u16::try_from(num(args.next())?).map_err(|_| "port above 65535")?;
             }
-            "--zone" => o.zone = Some(args.next().ok_or("missing zone file")?.into()),
+            "--settings" => {
+                let text = args.next().ok_or("missing settings")?;
+                o.settings = serde_json::from_str(&text)
+                    .map_err(|e| format!("--settings is not valid JSON: {e}"))?;
+            }
+            "--zone" => {
+                let file: PathBuf = args.next().ok_or("missing zone file")?.into();
+                let file = std::path::absolute(&file).map_err(|e| e.to_string())?;
+                o.settings = serde_json::json!({ "zone_file": file });
+            }
             other => return Err(format!("unknown option {other}")),
         }
     }
@@ -277,13 +291,8 @@ fn load(port: u16) -> Result<Vec<(String, Scenario)>, String> {
 
 async fn run(o: Options) -> Result<(), String> {
     let scenarios = load(o.port)?;
-    let functions = match &o.zone {
-        None => Dns::bundled().map_err(|e| e.to_string())?,
-        Some(p) => {
-            let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
-            Dns::new(Zone::parse(&text, &Name::root()).map_err(|e| e.to_string())?)
-        }
-    };
+    let module_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let functions = Dns::from_settings(&o.settings, &module_dir).map_err(|e| e.to_string())?;
     let filler = Filler::new(o.seed);
     let mut streams = StreamOpener {
         server: o.server,

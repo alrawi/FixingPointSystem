@@ -11,6 +11,8 @@ publish.workspace = true
 fps-flow = { path = "../../../engine/fps-flow" }
 # RngCore appears in the signature of the TemplateFn trait.
 rand = { version = "0.8", default-features = false }
+# The settings of a test configuration arrive as a JSON value.
+serde_json = "1"
 thiserror = "2"
 
 [dev-dependencies]

@@ -10,7 +10,7 @@
 | Branch | `wp/MOD-19` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of N plan steps) |
+| Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-571e77, lease until 2026-11-06T17:29:13Z |
 | Last verified commit | none |
 
@@ -24,22 +24,22 @@ A test configuration names a zone file through `modules.dns.settings.zone_file` 
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Claim commit
-- [ ] 2. Manifest settings schema and the Settings type in the crate, with tests
-- [ ] 3. fixture_peer and capture.sh pass the setting, README and wiki page
+- [x] 1. Claim commit
+- [x] 2. Manifest settings schema and the Settings type in the crate, with tests
+- [x] 3. fixture_peer and capture.sh pass the setting, README and wiki page
 - [ ] 4. Checks, PR, CI
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Steps 2 and 3: `cargo test -p fps-module-dns` passes (40 unit tests, catalog, scenarios, 4 transcript tests), `cargo clippy -p fps-module-dns --all-targets -- -D warnings` and `cargo fmt --check` are clean, `make lint-mod-dns` reports 0 errors, `plan.py check`, `render --check`, and `lint` pass.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Open the PR and wait for CI. The namespace harness and realism job cannot run in this sandbox (no ip, tshark, ndpiReader), so the realism job on the PR is the evidence for that acceptance item. The setting does not reach an agent through the controller until `ModuleRef` gains a settings field.
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Open the pull request, then poll CI.
 
 ## Blockers and open questions
 
@@ -47,11 +47,14 @@ Write "none" or name each blocker with a link to its issue.
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- Settings load through `Dns::from_settings(&serde_json::Value, base_dir)` with the module directory as base, so the path in `dns_zone.yaml` (`zones/example.test.zone`) resolves.
+- A configured zone must hold an SOA record, because the SOA owner is the zone origin.
+- The default stays the bundled zone. The contract example manifest says the server answers with the scenario address without a zone, but the real module always served its shipped zone, and the task says to keep the default.
+- `fixture_peer --settings JSON` is the module level channel. `--zone FILE` stays as a shorthand. `capture.sh` passes `FPS_DNS_SETTINGS` or the default JSON to both peers.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+The sandbox tool refuses compound shell commands that mention git or run source; use plain separate commands. Adding serde_json changed the root Cargo.lock by one line.
 
 ## Verify the current state
 
