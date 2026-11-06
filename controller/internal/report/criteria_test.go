@@ -26,8 +26,8 @@ func newEvaluator(t *testing.T) *Evaluator {
 	return e
 }
 
-func crit(metric, op string, value float64) compiler.CriterionConfig {
-	return compiler.CriterionConfig{Metric: metric, Op: op, Value: value}
+func crit(metric, op string, value float64) runs.Criterion {
+	return runs.Criterion{CriterionConfig: compiler.CriterionConfig{Metric: metric, Op: op, Value: value}}
 }
 
 func TestOperatorsMatchTheSchema(t *testing.T) {
@@ -73,7 +73,7 @@ func TestEveryOperator(t *testing.T) {
 		{"=~", 10, Invalid}, {"", 10, Invalid},
 	}
 	for _, c := range cases {
-		ev := e.Evaluate([]compiler.CriterionConfig{crit("bytes.tx", c.op, c.value)}, totals)
+		ev := e.Evaluate([]runs.Criterion{crit("bytes.tx", c.op, c.value)}, totals)
 		res := ev.Results[0]
 		if res.Status != c.want {
 			t.Errorf("bytes.tx %s %v: status %s, want %s (%s)", c.op, c.value, res.Status, c.want, res.Reason)
@@ -95,7 +95,7 @@ func TestRatioComesFromMergedCounters(t *testing.T) {
 		"sessions.attempted": 1010, "sessions.failed": 10, "sessions.failed_ratio": 0.25,
 		"tls.handshakes": 200, "tls.resumptions": 50,
 	}
-	ev := e.Evaluate([]compiler.CriterionConfig{
+	ev := e.Evaluate([]runs.Criterion{
 		crit("sessions.failed_ratio", "<", 0.01),
 		crit("tls.resumption_ratio", "==", 0.25),
 	}, totals)
@@ -132,7 +132,7 @@ func TestEveryCatalogFormulaIsDerived(t *testing.T) {
 
 func TestUndefinedRatioIsMissing(t *testing.T) {
 	e := newEvaluator(t)
-	ev := e.Evaluate([]compiler.CriterionConfig{
+	ev := e.Evaluate([]runs.Criterion{
 		crit("sessions.failed_ratio", "==", 0),
 		crit("tls.resumption_ratio", ">", 0.1),
 		crit("mix.max_abs_error_pp", "<=", 2),
@@ -170,7 +170,7 @@ func TestMetricReferences(t *testing.T) {
 		{"nodot", Invalid, "metric nodot is not in the metric catalog"},
 	}
 	for _, c := range cases {
-		res := e.Evaluate([]compiler.CriterionConfig{crit(c.metric, ">=", 1)}, totals).Results[0]
+		res := e.Evaluate([]runs.Criterion{crit(c.metric, ">=", 1)}, totals).Results[0]
 		if res.Status != c.want || (c.reason != "" && res.Reason != c.reason) {
 			t.Errorf("%s: %s %q, want %s %q", c.metric, res.Status, res.Reason, c.want, c.reason)
 		}
@@ -179,7 +179,7 @@ func TestMetricReferences(t *testing.T) {
 
 func TestNaNIsMissing(t *testing.T) {
 	e := newEvaluator(t)
-	res := e.Evaluate([]compiler.CriterionConfig{crit("throughput.bps", "!=", 0)}, map[string]float64{"throughput.bps": math.NaN()}).Results[0]
+	res := e.Evaluate([]runs.Criterion{crit("throughput.bps", "!=", 0)}, map[string]float64{"throughput.bps": math.NaN()}).Results[0]
 	if res.Status != Missing {
 		t.Fatalf("status %s", res.Status)
 	}
@@ -202,7 +202,7 @@ metrics:
 func TestRunEvaluator(t *testing.T) {
 	e := newEvaluator(t)
 	eval := e.RunEvaluator()
-	criteria := []compiler.CriterionConfig{
+	criteria := []runs.Criterion{
 		crit("sessions.failed_ratio", "<", 0.01),
 		crit("mix.max_abs_error_pp", "<=", 2),
 		crit("bytes.tx", ">", 0),
@@ -221,7 +221,7 @@ func TestRunEvaluator(t *testing.T) {
 	if v := eval(runs.Outcome{Criteria: criteria, Totals: totals, Agents: 2, FailedAgents: 2}); v.Passed {
 		t.Error("a run in which every agent failed passed")
 	}
-	if v := eval(runs.Outcome{Criteria: []compiler.CriterionConfig{crit("bogus.metric", "<", 1)}, Totals: totals, Agents: 1}); v.Passed || !v.Criteria[0].Evaluated || v.Criteria[0].Passed {
+	if v := eval(runs.Outcome{Criteria: []runs.Criterion{crit("bogus.metric", "<", 1)}, Totals: totals, Agents: 1}); v.Passed || !v.Criteria[0].Invalid || v.Criteria[0].Passed {
 		t.Errorf("an invalid criterion did not fail the run: %+v", v)
 	}
 	if v := eval(runs.Outcome{Totals: totals}); !v.Passed {
@@ -238,9 +238,10 @@ func TestRunEvaluatorAgreesWithEvaluateTotals(t *testing.T) {
 	for _, op := range Operators {
 		for _, value := range []float64{0, 0.003, 0.01, 7, 9} {
 			for _, metric := range []string{"sessions.failed_ratio", "bytes.tx", "bytes.rx"} {
-				o := runs.Outcome{Criteria: []compiler.CriterionConfig{crit(metric, op, value)}, Totals: totals, Agents: 1}
+				o := runs.Outcome{Criteria: []runs.Criterion{crit(metric, op, value)}, Totals: totals, Agents: 1}
 				got, want := e.RunEvaluator()(o), runs.EvaluateTotals(o)
-				if got.Passed != want.Passed || got.Criteria[0] != want.Criteria[0] {
+				g, w := got.Criteria[0], want.Criteria[0]
+				if got.Passed != want.Passed || g.Evaluated != w.Evaluated || g.Observed != w.Observed || g.Passed != w.Passed {
 					t.Errorf("%s %s %v: got %+v, want %+v", metric, op, value, got, want)
 				}
 			}

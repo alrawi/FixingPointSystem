@@ -147,6 +147,16 @@ func TestRESTRunLifecycle(t *testing.T) {
 	if skipped := (*end.Verdict.Criteria)[1]; skipped.Observed != nil || skipped.Passed != nil {
 		t.Fatalf("unevaluated criterion %s", mustJSON(t, skipped))
 	}
+	// The run and its criteria say why they failed.
+	if want := "observed 0.3 < 0.1 does not hold"; crit.Reason == nil || *crit.Reason != want {
+		t.Fatalf("criterion reason %s, want %q", mustJSON(t, crit), want)
+	}
+	if skipped := (*end.Verdict.Criteria)[1]; skipped.Reason == nil || *skipped.Reason != "the run reported no value" {
+		t.Fatalf("unevaluated criterion reason %s", mustJSON(t, skipped))
+	}
+	if want := "criteria failed: sessions.failed_ratio: observed 0.3 < 0.1 does not hold"; end.Reason == nil || *end.Reason != want {
+		t.Fatalf("run reason %v, want %q", end.Reason, want)
+	}
 
 	if rec = rh.call(t, http.MethodPost, "/runs/{id}:stop", id, "", true); rec.Code != http.StatusConflict {
 		t.Fatalf("stop of an ended run: %d %s", rec.Code, rec.Body)

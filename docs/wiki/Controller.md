@@ -382,11 +382,33 @@ A graceful stop sends `STOP_MODE_RAMP_DOWN` with `Config.DrainTimeout` to every 
 
 ### Criteria
 
-When a run stops, the orchestrator sums the newest unlabeled counters of every agent and derives `sessions.failed_ratio`. The sessions that a failed agent attempted without success or failure count as failed, because the crash ended them. `Config.Evaluator` decides the verdict, and a failing verdict ends the run as failed and a passing one as completed. The default `EvaluateTotals` checks every criterion whose metric appears in the totals and skips the others, which leaves the full catalog to CTL-09.
+When a run stops, the orchestrator keeps the newest value of every counter of every agent with its labels and sums them over the agents into `Outcome.Series`. It also sums the unlabeled counters and gauges into `Outcome.Totals` and derives `sessions.failed_ratio`. CON-08 gives the scenario and transport metrics the `side` label, and a total over both sides counts every session twice, so `Totals` adds the labeled counters of the client side and leaves the server side out. A counter that an agent also reports without labels is a run total that repeats its labeled series, so the labeled series add up only for counters without such a total. The sessions that a failed agent attempted without success or failure count as failed, because the crash ended them. In `Series` they form a `sessions.failed` series of the reason `aborted` next to each `sessions.attempted` series. `Outcome.RunID` names the run, so an evaluator can read further metrics such as histograms.
+
+`Config.Evaluator` decides the verdict, and a failing verdict ends the run as failed and a passing one as completed. The default `EvaluateTotals` checks every criterion whose metric appears in the totals and skips the others, and it skips a criterion with a `where` filter because the totals carry no labels. The evaluator of the report package covers the full catalog.
+
+A criterion is a `runs.Criterion`, the `compiler.CriterionConfig` and its `Where` filter. The compiler has no `where` field yet, so `criteriaOf` leaves `Where` empty until it gains one (see the note in the log entry of CTL-20).
+
+### Reasons
+
+`Run.Reason` says in words why a run failed or was aborted, and `GET /v1/runs/{id}` serves it as `reason` in those two states and in no other. The orchestrator fills it at every end that is not a completion.
+
+| End | Reason |
+|---|---|
+| A criterion fails or is invalid | `criteria failed: ` and up to three failed criteria, each as the metric and its reason, then `; and N more` for the rest |
+| A failing verdict without a failed criterion, as when every agent failed | `every agent failed`, or `criteria failed` when an agent survived |
+| Every agent failed during the run | `every agent failed` |
+| A prepare or start command failed | `prepare: ` or `start: ` and the error |
+| A stop request | `stopped by request`, `stopped before preparing`, `stopped while preparing`, or `stopped while starting` |
+| The shutdown of the controller | `controller shutdown` |
+| A rejected state change | The error of the state machine |
+
+A run that ends as failed or aborted without a reason gets `failed` or `aborted`, so no failed run lacks one.
+
+Every criterion of the verdict carries `observed`, `passed`, and `reason` through `GET /v1/runs/{id}` and the report. A criterion that compared a value has `observed` and `passed`. One whose metric has no value has neither, and an invalid one has `passed` false and no `observed`. `runs.CriterionResult.Invalid` marks the last case. The reason of a criterion with a filter ends with the filter, for example `observed 0.01 < 0.005 does not hold for application=dns,side=client`.
 
 ### Tests of the orchestrator
 
-`state_test.go` checks all 49 pairs of states against the allowed table. The orchestrator tests use the real agent manager, fake agents, the real compiler, an in memory store, and a fake clock. `TestFailingAgentEndsRunByCriteria` lets one of two agents fail or crash under way and checks that a failure ratio of 0.5% completes the degraded run and a ratio of 30% fails it against the criterion of 10%. Other tests cover finishing agents, missed heartbeats, a graceful stop, forced stops while preparing, running, and ramping down, a prepare error, operator reservations, create errors, and `Close`. The REST tests validate every exchange against the OpenAPI document.
+`state_test.go` checks all 49 pairs of states against the allowed table. `reasons_test.go` checks the reason of every way that a run fails or aborts, the client side totals over labeled counters of both sides, the aborted failures of a crashed agent, and the criterion fields of `GET /v1/runs/{id}`. The orchestrator tests use the real agent manager, fake agents, the real compiler, an in memory store, and a fake clock. `TestFailingAgentEndsRunByCriteria` lets one of two agents fail or crash under way and checks that a failure ratio of 0.5% completes the degraded run and a ratio of 30% fails it against the criterion of 10%. Other tests cover finishing agents, missed heartbeats, a graceful stop, forced stops while preparing, running, and ramping down, a prepare error, operator reservations, create errors, and `Close`. The REST tests validate every exchange against the OpenAPI document.
 ## Capabilities endpoint
 
 `controller/internal/api/capabilities.go` serves `GET /v1/capabilities` with the read scope. The type `CapabilitiesAPI` embeds `api.Unimplemented`, so it answers every other operation with the 501 problem, and the binary composes it with the other handlers. The package imports neither `internal/registry` nor `internal/agents`, because `internal/agents` already imports `internal/api`. It reads two narrow interfaces that it defines itself, and the binary adapts the registry and the agent manager to them when it wires the controller, which follow up #102 tracks.
@@ -565,17 +587,27 @@ Each criterion gets one of four results with a reason in one sentence.
 
 Histogram criteria take one of the statistics of `metrics.Stats`, for example `sessions.response_time.p99`. A run in which every agent failed never passes, as in CTL-07.
 
+### Label filters and the side default
+
+A criterion may carry a `where` object of label names and string values, as `contracts/schemas/test-config.schema.json` allows (decision D12 item 14). The evaluator then counts only the series of the metric whose labels match every pair, for example `where: { application: dns }`. Every name must be a label of the metric in the catalog, so `where: { port: eth0 }` on `bytes.tx` is `invalid` with the reason `metric bytes.tx has no label port`. A filter that selects no series leaves the criterion `missing`, with the filter in the reason.
+
+CON-08 gives every scenario and transport metric the `side` label, which holds `client` or `server`, and a total over both sides counts each session twice. A criterion on a metric with the `side` label and a `where` that names no side therefore counts the client side only, and `where: { side: server }` selects the server side. Totals and the report summary follow the same rule. A series that carries no `side` label at all predates the label, and it counts for a criterion without a side but not for one with a side. The API metric views in `controller/internal/metrics` do not apply this default yet (see the log entry of CTL-20).
+
+The evaluator selects, then combines. Counters and additive gauges add over the selected series, ratio and percentage gauges average, and histograms merge before the statistic is read. A derived gauge divides the sums of its two components over the same selection, so `sessions.failed_ratio` with `where: { application: dns }` is the failed sessions of dns over its attempted sessions, and a ratio is never a mean of ratios. A missing dividend counts as zero, and a missing or zero divisor leaves the ratio undefined. The `Data` type carries either unlabeled `Totals`, which cannot answer a filter, or the labeled `Series` of the run. `Evaluate` serves totals and `EvaluateData` serves both.
+
 ### Evaluator for runs
 
-`Evaluator.RunEvaluator` returns a `runs.Evaluator` for `runs.Config.Evaluator`. It evaluates `runs.Outcome.Totals` and maps the results onto `runs.CriterionResult`, so a missing criterion is not evaluated and an invalid one is evaluated and fails. A test checks that it decides like `runs.EvaluateTotals` for every operator wherever both evaluate a criterion. `runs.Outcome` carries no run id, so the evaluator cannot read the aggregator when the run stops, and a histogram criterion is missing at that point. The report evaluates it.
+`Evaluator.RunEvaluator` returns a `runs.Evaluator` for `runs.Config.Evaluator`. It maps the results onto `runs.CriterionResult` with their reasons, so a missing criterion is not evaluated and an invalid one is `Invalid` and fails. A test checks that it decides like `runs.EvaluateTotals` for every operator wherever both evaluate a criterion.
+
+The evaluator decides the run state as the report decides the report. It reads the labeled series of the run from the source of `Evaluator.UseSeries` by `runs.Outcome.RunID`, merges the counters of `Outcome.Series` over them, and evaluates every criterion with its filter, the side default, and its histogram statistics. `NewAPI` sets that source when its totals source offers series, as `*metrics.Aggregator` does, so the call that the binary already makes, `report.NewAPI(ctl.Evaluator, ctl.Runs, agg)`, also connects the run evaluator. Without a source and without series the evaluator falls back to `Outcome.Totals`, which hold no histograms. This closes note 4 of the CTL-09 log entry.
 
 ### Report
 
-`Evaluator.Build` joins the run of the orchestrator and the totals of the aggregator. Counters of the run take precedence, because the orchestrator counts the open sessions of a failed agent as failed and sees the final snapshot of every agent. Gauges and histogram statistics come from the aggregator, and the derived gauges are computed from the result. A run that never reached its criteria, such as a running or aborted run, gets a report without a verdict.
+`Evaluator.BuildSeries` joins the run of the orchestrator and the labeled series of the aggregator, and `GetRunReport` uses it whenever the totals source offers series or the run holds series. `Evaluator.Build` joins the run and the totals of an aggregator without labels, as the tests of the handler do. In both, counters of the run take precedence, because the orchestrator counts the open sessions of a failed agent as failed and sees the final snapshot of every agent. Gauges and histogram statistics come from the aggregator, and the derived gauges are computed from the result. With series, the summary and the metric rows count the client side of the metrics that have a side. A run that never reached its criteria, such as a running or aborted run, gets a report without a verdict.
 
 | Format | Content |
 |---|---|
-| `json`, the default | The `RunReport` schema, with the summary filled from the run totals, every criterion in the verdict, `observed` and `passed` only for compared criteria, and an empty `realism` list |
+| `json`, the default | The `RunReport` schema, with the summary filled from the run totals, every criterion in the verdict with its `reason`, `observed` and `passed` only for compared criteria, `reason` of the run when it failed or aborted, and an empty `realism` list |
 | `csv` | One table with the columns `kind,name,op,threshold,value,result,detail`, with rows of kind `run` for the run fields, `criterion` for each criterion, and `metric` for each run total in catalog order |
 | `html` | 501 until a package adds it |
 
@@ -583,7 +615,7 @@ The CSV report writes numbers in plain decimal notation and prefixes text cells 
 
 ### Tests of the report
 
-`TestGoldenReports` serves a passing run, a run with failing criteria, and a degraded run through the generated router, validates every response against the contract, and compares the JSON and CSV bodies with the golden files in `controller/internal/report/testdata/`. In the degraded run one agent crashed with open sessions, and the report counts them as failed. Other tests cover every operator, every catalog formula, the four results, the error responses, and a report built from the real aggregator of CTL-08 with two agents.
+`TestGoldenReports` serves a passing run, a run with failing criteria, and a degraded run through the generated router, validates every response against the contract, and compares the JSON and CSV bodies with the golden files in `controller/internal/report/testdata/`. In the degraded run one agent crashed with open sessions, and the report counts them as failed. `TestGoldenLabeledReport` adds a failed run with a reason over a real aggregator that holds two applications on both sides. Its golden files `labeled.json` and `labeled.csv` cover filtered criteria (`application`, `side`), the client side default, a histogram criterion on each side, an invalid label, and a filter without a series. `TestClientSideIsTheDefault` checks the same numbers for a criterion without a side and one with `side=server`, and shows that the totals of the aggregator count each session twice. `TestRunEvaluatorDecidesHistogramsByRunID` checks that the run evaluator reads the aggregator by run id and gives the same results as the report. Other tests cover every operator, every catalog formula, the four results, the error responses, and a report built from the real aggregator of CTL-08 with two agents.
 ## Metrics in the binary
 
 Bug #119 closed the hook that the Binary wiring section describes. The function `mountMetrics` in `cmd/fps-controller/main.go` runs in `serve` before `ctl.Mount(a)` and makes four calls.
@@ -602,7 +634,7 @@ Bug #119 closed the hook that the Binary wiring section describes. The function 
 Bug #124 joined the criteria evaluator and the report endpoint of CTL-09 to the binary. The wiring adds two pieces.
 
 1. `wiring.New` creates `report.NewEvaluator(nil)` with the embedded metrics catalog before the run orchestrator, keeps it in the exported field `Controller.Evaluator`, and passes `Evaluator.RunEvaluator()` as `runs.Config.Evaluator`. Every stopped run therefore derives the catalog formulas, such as `tls.resumption_ratio`, from its totals and gives each criterion the result pass, fail, missing, or invalid. The simple evaluator `runs.EvaluateTotals` no longer runs in the binary.
-2. `wiring.Server` forwards `getRunReport` from `pending` to a `ReportHandler`. `wiring.New` sets `report.NewAPI(ev, ctl.Runs, nil)`, which builds reports from the run totals alone, and `Controller.SetReport` replaces it before `Mount`. The function `mountMetrics` in `cmd/fps-controller/main.go` calls `ctl.SetReport(report.NewAPI(ctl.Evaluator, ctl.Runs, agg))`, so the binary builds reports over the merged metrics of the aggregator.
+2. `wiring.Server` forwards `getRunReport` from `pending` to a `ReportHandler`. `wiring.New` sets `report.NewAPI(ev, ctl.Runs, nil)`, which builds reports from the run totals alone, and `Controller.SetReport` replaces it before `Mount`. The function `mountMetrics` in `cmd/fps-controller/main.go` calls `ctl.SetReport(report.NewAPI(ctl.Evaluator, ctl.Runs, agg))`, so the binary builds reports over the merged metrics of the aggregator. Since CTL-20 the same call also hands the aggregator to the run evaluator, which reads it by run id when a run stops.
 
 `GET /v1/runs/{id}/report` answers JSON by default and CSV with `format=csv`. The format `html` still answers 501 from `report.API`. `TestServerRoutesEveryOperation` now expects six pending operations, and `TestNewServesRunReports` and `TestSetReportRoutesReportOperation` cover the default handler and the hook.
 

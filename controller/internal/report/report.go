@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/api"
-	"github.com/alrawi/FixingPointSystem/controller/internal/compiler"
 	"github.com/alrawi/FixingPointSystem/controller/internal/metrics"
 	"github.com/alrawi/FixingPointSystem/controller/internal/runs"
 )
@@ -40,7 +39,8 @@ type Report struct {
 }
 
 // Build returns the report of run over the merged metrics of the
-// aggregator, which may be nil.
+// aggregator, which may be nil. The metrics carry no labels, so a criterion
+// with a where filter has no result. BuildSeries serves labeled metrics.
 //
 // The counters of run.Totals take precedence over the aggregator, because
 // the orchestrator counts the open sessions of a failed agent as failed and
@@ -60,15 +60,35 @@ func (e *Evaluator) Build(run runs.Run, merged map[string]float64) Report {
 		}
 	}
 	totals = e.Derive(totals)
+	return e.report(run, totals, Data{Totals: totals})
+}
+
+// BuildSeries returns the report of run over the merged series of the
+// aggregator, which may be nil, and the counters that the orchestrator holds
+// in run.Series. Each criterion selects among the series by its where filter.
+// A criterion without a side counts the client side only where its metric has
+// the side label, and so do the totals of the report, because a total over
+// both sides counts each session twice.
+//
+// The counters of the orchestrator take precedence, as in Build. Gauges that
+// only run.Totals holds join the series without labels.
+func (e *Evaluator) BuildSeries(run runs.Run, agg []*metrics.Series) Report {
+	series := e.mergeSeries(agg, run.Series, run.Totals)
+	return e.report(run, e.seriesTotals(series), Data{Series: series, Labeled: true})
+}
+
+// report evaluates the criteria of run over d and assembles the report with
+// totals as the metrics that it shows.
+func (e *Evaluator) report(run runs.Run, totals map[string]float64, d Data) Report {
 	rep := Report{Run: run, Totals: totals, cat: e.cat}
 	rep.Run.Totals = totals
 	rep.Run.Verdict = nil
 	if run.Verdict != nil {
-		criteria := make([]compiler.CriterionConfig, len(run.Verdict.Criteria))
+		criteria := make([]runs.Criterion, len(run.Verdict.Criteria))
 		for i, c := range run.Verdict.Criteria {
-			criteria[i] = c.CriterionConfig
+			criteria[i] = c.Criterion
 		}
-		ev := e.Evaluate(criteria, totals)
+		ev := e.EvaluateData(criteria, d)
 		alive := len(run.Agents) == 0 || len(run.FailedAgents) < len(run.Agents)
 		v := ToVerdict(ev, alive)
 		rep.Evaluation, rep.Passed, rep.Run.Verdict = &ev, v.Passed, &v
@@ -79,24 +99,10 @@ func (e *Evaluator) Build(run runs.Run, merged map[string]float64) Report {
 // API returns the RunReport schema of the REST contract. The criteria of the
 // verdict carry observed and passed only when they compared a value, so a
 // missing metric shows neither and an invalid criterion shows passed false.
+// Each criterion also carries its reason.
 func (r Report) API() api.RunReport {
 	out := api.RunReport{Run: runs.ToAPI(r.Run)}
 	out.Run.Summary = summary(r.Totals)
-	if r.Evaluation != nil && out.Run.Verdict != nil && out.Run.Verdict.Criteria != nil {
-		cs := *out.Run.Verdict.Criteria
-		for i, res := range r.Evaluation.Results {
-			if i >= len(cs) {
-				break
-			}
-			switch res.Status {
-			case Pass, Fail:
-			case Invalid:
-				cs[i].Observed, cs[i].Passed = nil, ptr(false)
-			case Missing:
-				cs[i].Observed, cs[i].Passed = nil, nil
-			}
-		}
-	}
 	out.Realism = make([]struct {
 		Observed float32 `json:"observed"`
 		Passed   bool    `json:"passed"`

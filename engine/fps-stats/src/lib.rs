@@ -36,11 +36,13 @@
 
 pub mod catalog;
 mod error;
+mod series;
 mod shard;
 mod snapshot;
 
 pub use catalog::{metric, MetricDef, MetricId, MetricKind, CATALOG};
 pub use error::StatsError;
+pub use series::{FailureReason, SessionCounters, Side, TransportCounters};
 pub use shard::{
     CounterId, GaugeId, HistogramId, SeriesKey, Shard, HISTOGRAM_HIGHEST, HISTOGRAM_SIGFIG,
 };

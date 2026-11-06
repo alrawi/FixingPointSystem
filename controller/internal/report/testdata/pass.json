@@ -31,6 +31,7 @@
           "observed": 0.00005,
           "op": "<",
           "passed": true,
+          "reason": "observed 0.00005 < 0.001 holds",
           "value": 0.001
         },
         {
@@ -38,6 +39,7 @@
           "observed": 41000,
           "op": "<=",
           "passed": true,
+          "reason": "observed 41000 <= 50000 holds",
           "value": 50000
         },
         {
@@ -45,11 +47,13 @@
           "observed": 1250000000,
           "op": ">=",
           "passed": true,
+          "reason": "observed 1250000000 >= 1000000000 holds",
           "value": 1000000000
         },
         {
           "metric": "mix.max_abs_error_pp",
           "op": "<=",
+          "reason": "the run reported no value",
           "value": 2
         }
       ],

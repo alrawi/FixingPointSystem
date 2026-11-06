@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The metric catalog of contract v0.1 as a static table.
+//! The metric catalog of contract v0.2 as a static table.
 //!
 //! The table mirrors `contracts/metrics/catalog.yaml`. The contract test
 //! `tests/catalog.rs` reads the YAML file and compares every name, type, unit,

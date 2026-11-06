@@ -117,6 +117,18 @@ Once per snapshot interval the worker calls `Shard::snapshot` and sends the cumu
 
 The component test `tests/concurrency.rs` runs eight worker threads that record 200000 events each and send snapshots to a collector thread while they run. It checks that the aggregate never decreases and that the final aggregate holds every increment and every histogram sample. The property test `tests/merge_props.rs` checks that any split of an event stream over up to eight shards merges to the same JSON as one shard, in either merge order.
 
+### Side label and failure reasons
+
+Catalog 0.2.0 (CON-08) gives every scenario level and transport metric the `side` label with the values `client` and `server`, and it adds the failure reasons `datagram_rejected`, `template_error`, and `extension_error`. ENG-14 follows it in `fps-stats` with three additions in `src/series.rs`.
+
+1. `Side` and `FailureReason` name the label values as types, each with `ALL` in catalog order and `as_str`. The contract test `tests/series.rs` compares both with `contracts/metrics/catalog.yaml`.
+2. `SessionCounters::register(shard, application, scenario, side)` registers `sessions.attempted`, `sessions.established`, `sessions.succeeded`, `bytes.tx`, `bytes.rx`, and one `sessions.failed` counter for each of the 12 reasons, all with the `side` label. Its methods `attempted`, `established`, `succeeded`, `failed(reason)`, and `add_bytes` record through the handles.
+3. `TransportCounters::register(shard, port, side)` registers the plain `tcp.*` and `tls.*` counters with the `side` label. The alert counters carry the extra `alert` label, so a caller registers them with `Shard::counter`.
+
+The counter sets cover counters only. A worker that records `sessions.concurrent` or `sessions.duration` passes the `side` label to `Shard::gauge` and `Shard::histogram` itself. A total over both sides counts each session twice, so a reader that sums `sessions.failed` without the `side` label gets double counts when both sides run in one plan. The unit tests in `tests/series.rs` record each new reason on both sides, and they check the merged snapshot and the proto3 JSON.
+
+The callers outside `fps-stats` still register the session series without `side`, and `FailureKind::reason` in `fps-interp` never returns the three new reasons yet. Both are follow ups of other packages, listed in the log entry of ENG-14.
+
 ## The session scheduler
 
 ENG-08 added the crate [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched), which turns one worker rate of a plan into session starts. A `Schedule` serves one mix entry on one worker, and its scheduled times are a pure function of the configuration, the run seed, and the stream, so a replay reproduces every start.

@@ -1,0 +1,92 @@
+{
+  "realism": [],
+  "run": {
+    "config_id": "cfg-enterprise",
+    "created_at": "2026-11-03T12:00:00Z",
+    "ended_at": "2026-11-03T12:01:02Z",
+    "engine_version": "0.1.0",
+    "id": "run-labeled",
+    "module_versions": {
+      "dns": "0.1.0",
+      "http1": "0.1.0"
+    },
+    "phase": "done",
+    "reason": "criteria failed: sessions.failed_ratio: observed 0.01 < 0.005 does not hold for application=dns,side=client; sessions.failed_ratio: observed 0.015 < 0.01 does not hold for side=server; sessions.response_time.p99: observed 1500 <= 1000 does not hold for application=dns,side=server; and 1 more",
+    "seed": 42,
+    "started_at": "2026-11-03T12:00:02Z",
+    "state": "failed",
+    "summary": {
+      "bytes_rx": 32000000,
+      "bytes_tx": 6000000,
+      "sessions_attempted": 4000,
+      "sessions_failed": 10,
+      "sessions_succeeded": 3990
+    },
+    "verdict": {
+      "criteria": [
+        {
+          "metric": "sessions.attempted",
+          "observed": 4000,
+          "op": "==",
+          "passed": true,
+          "reason": "observed 4000 == 4000 holds for side=client",
+          "value": 4000
+        },
+        {
+          "metric": "sessions.failed_ratio",
+          "observed": 0.01,
+          "op": "<",
+          "passed": false,
+          "reason": "observed 0.01 < 0.005 does not hold for application=dns,side=client",
+          "value": 0.005
+        },
+        {
+          "metric": "sessions.failed_ratio",
+          "observed": 0.015,
+          "op": "<",
+          "passed": false,
+          "reason": "observed 0.015 < 0.01 does not hold for side=server",
+          "value": 0.01
+        },
+        {
+          "metric": "sessions.failed_ratio",
+          "observed": 0,
+          "op": "<",
+          "passed": true,
+          "reason": "observed 0 < 0.01 holds for application=http1,side=client",
+          "value": 0.01
+        },
+        {
+          "metric": "sessions.response_time.p99",
+          "observed": 800,
+          "op": "<=",
+          "passed": true,
+          "reason": "observed 800 <= 1000 holds for side=client",
+          "value": 1000
+        },
+        {
+          "metric": "sessions.response_time.p99",
+          "observed": 1500,
+          "op": "<=",
+          "passed": false,
+          "reason": "observed 1500 <= 1000 does not hold for application=dns,side=server",
+          "value": 1000
+        },
+        {
+          "metric": "bytes.tx",
+          "op": "<",
+          "passed": false,
+          "reason": "metric bytes.tx has no label port",
+          "value": 1
+        },
+        {
+          "metric": "sessions.attempted",
+          "op": ">",
+          "reason": "the run reported no value for application=ftp,side=client",
+          "value": 0
+        }
+      ],
+      "passed": false
+    }
+  }
+}
