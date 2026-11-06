@@ -155,11 +155,16 @@ type Run struct {
 	// the ones that failed during the run.
 	Agents       []string
 	FailedAgents []string
-	// Reason explains a failed or aborted run.
+	// Reason says in words why the run failed or was aborted, such as the
+	// criteria that failed, the failure of every agent, or the stop request.
+	// It is set for every run that ends as failed or aborted, and empty in
+	// any other state.
 	Reason string
-	// Totals and Verdict are set when the run stopped and its criteria
-	// were evaluated.
+	// Totals, Series, and Verdict are set when the run stopped and its
+	// criteria were evaluated. Series holds the counters of the agents with
+	// their labels, which a report merges with the metrics aggregator.
 	Totals  map[string]float64
+	Series  []Series
 	Verdict *Verdict
 }
 
@@ -190,10 +195,12 @@ type runAgent struct {
 	prepared    bool
 	started     bool
 	// seq is the sequence of the newest snapshot, and counters holds the
-	// newest value of every unlabeled counter and gauge. Counters are
+	// newest value of every unlabeled counter and gauge. series holds the
+	// newest value of every counter by metric and labels. Counters are
 	// cumulative, so a final snapshot without counters loses nothing.
 	seq      uint64
 	counters map[string]float64
+	series   map[string]Series
 }
 
 // absorb takes the counters of snap when it is newer than every earlier
@@ -205,16 +212,20 @@ func (a *runAgent) absorb(snap *agentpb.CounterSnapshot) bool {
 	a.seq = snap.GetSequence()
 	if a.counters == nil {
 		a.counters = map[string]float64{}
+		a.series = map[string]Series{}
 	}
 	for _, c := range snap.GetCounters() {
-		if len(c.GetLabels()) > 0 {
-			continue
-		}
 		switch c.GetValue().(type) {
 		case *agentpb.CounterValue_Count:
-			a.counters[c.GetMetric()] = float64(c.GetCount())
+			s := Series{Metric: c.GetMetric(), Labels: maps.Clone(c.GetLabels()), Value: float64(c.GetCount())}
+			a.series[seriesKey(s.Metric, s.Labels)] = s
+			if len(c.GetLabels()) == 0 {
+				a.counters[c.GetMetric()] = s.Value
+			}
 		case *agentpb.CounterValue_Gauge:
-			a.counters[c.GetMetric()] = c.GetGauge()
+			if len(c.GetLabels()) == 0 {
+				a.counters[c.GetMetric()] = c.GetGauge()
+			}
 		}
 	}
 	return true
@@ -224,7 +235,7 @@ func (a *runAgent) absorb(snap *agentpb.CounterSnapshot) bool {
 // except the channels and the cancel function, which are set at creation.
 type run struct {
 	Run
-	criteria []compiler.CriterionConfig
+	criteria []Criterion
 	agents   map[string]*runAgent
 	stop     stopRequest
 
@@ -507,7 +518,7 @@ func (o *Orchestrator) newRun(id string, req StartRequest, cfg compiler.Config, 
 			ID: id, ConfigID: req.ConfigID, State: Pending,
 			Labels: maps.Clone(req.Labels), CreatedAt: o.cfg.Clock.Now().UTC(),
 		},
-		criteria:    slices.Clone(cfg.Criteria),
+		criteria:    criteriaOf(cfg.Criteria),
 		agents:      map[string]*runAgent{},
 		force:       force,
 		forceCancel: cancel,
@@ -545,6 +556,7 @@ func (r *run) copy() Run {
 	out.Agents = slices.Clone(r.Agents)
 	out.FailedAgents = slices.Clone(r.FailedAgents)
 	out.Totals = maps.Clone(r.Totals)
+	out.Series = slices.Clone(r.Series)
 	if r.Verdict != nil {
 		v := *r.Verdict
 		v.Criteria = slices.Clone(r.Verdict.Criteria)
@@ -809,27 +821,64 @@ func (o *Orchestrator) stopping(r *run) {
 	}
 	o.mu.Lock()
 	counters := map[string]map[string]float64{}
+	perAgent := map[string]map[string]Series{}
 	failed := map[string]bool{}
 	nFailed := 0
 	for id, a := range r.agents {
 		counters[id] = a.counters
+		perAgent[id] = a.series
 		if a.status == agentFailed {
 			failed[id] = true
 			nFailed++
 		}
 	}
-	out := Outcome{Criteria: slices.Clone(r.criteria), Totals: totals(counters, failed), Agents: len(r.agents), FailedAgents: nFailed}
+	series := sumSeries(perAgent, failed)
+	out := Outcome{
+		RunID: r.ID, Criteria: slices.Clone(r.criteria), Series: series, Totals: totals(counters, series, failed),
+		Agents: len(r.agents), FailedAgents: nFailed,
+	}
 	o.mu.Unlock()
 	v := o.cfg.Evaluator(out)
 	o.mu.Lock()
-	r.Totals = out.Totals
+	r.Totals, r.Series = out.Totals, out.Series
 	r.Verdict = &v
 	o.mu.Unlock()
 	if v.Passed {
 		o.finish(r, Completed, "")
 		return
 	}
-	o.finish(r, Failed, "criteria failed")
+	o.finish(r, Failed, failureReason(v, out))
+}
+
+// maxReasonCriteria bounds the criteria that a failure reason names.
+const maxReasonCriteria = 3
+
+// failureReason words why a stopped run failed. It names the criteria that
+// failed, each with its reason, which states the label filter. It falls back
+// to the failure of every agent when no criterion failed.
+func failureReason(v Verdict, o Outcome) string {
+	var items []string
+	for _, c := range v.Criteria {
+		failing := c.Invalid || (c.Evaluated && !c.Passed)
+		if !failing {
+			continue
+		}
+		item := c.Metric
+		if c.Reason != "" {
+			item += ": " + c.Reason
+		}
+		items = append(items, item)
+	}
+	switch {
+	case len(items) > maxReasonCriteria:
+		more := len(items) - maxReasonCriteria
+		return fmt.Sprintf("criteria failed: %s; and %d more", strings.Join(items[:maxReasonCriteria], "; "), more)
+	case len(items) > 0:
+		return "criteria failed: " + strings.Join(items, "; ")
+	case o.Agents > 0 && o.FailedAgents == o.Agents:
+		return "every agent failed"
+	}
+	return "criteria failed"
 }
 
 // abort sends an abort to every prepared agent of r that has not ended and
@@ -960,6 +1009,19 @@ func (o *Orchestrator) finish(r *run, to State, reason string) {
 		// The run must still end, so a rejected end state becomes failed.
 		o.log.Error("run transition rejected", "run_id", r.ID, "from", from, "to", to, "error", err)
 		next = Failed
+		if reason != "" {
+			reason = err.Error() + ": " + reason
+		} else {
+			reason = err.Error()
+		}
+	}
+	switch {
+	case next == Completed:
+		reason = ""
+	case reason == "" && next == Aborted:
+		reason = "aborted"
+	case reason == "":
+		reason = "failed"
 	}
 	r.State = next
 	r.Reason = reason

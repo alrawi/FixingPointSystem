@@ -219,8 +219,8 @@ func count(metric string, n uint64) *agentpb.CounterValue {
 	return &agentpb.CounterValue{Metric: metric, Value: &agentpb.CounterValue_Count{Count: n}}
 }
 
-func crit(metric, op string, value float64) []compiler.CriterionConfig {
-	return []compiler.CriterionConfig{{Metric: metric, Op: op, Value: value}}
+func crit(metric, op string, value float64) []runs.Criterion {
+	return []runs.Criterion{{CriterionConfig: compiler.CriterionConfig{Metric: metric, Op: op, Value: value}}}
 }
 
 // sessions sends one snapshot with session counters and waits until the

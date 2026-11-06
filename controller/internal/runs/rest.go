@@ -171,6 +171,9 @@ func ToAPI(run Run) api.Run {
 	if len(run.ModuleVersions) > 0 {
 		out.ModuleVersions = ptr(run.ModuleVersions)
 	}
+	if run.Reason != "" && (run.State == Failed || run.State == Aborted) {
+		out.Reason = ptr(run.Reason)
+	}
 	if run.Totals != nil {
 		out.Summary = summary(run.Totals)
 	}
@@ -179,8 +182,14 @@ func ToAPI(run Run) api.Run {
 		cs := make([]api.CriterionResult, len(v.Criteria))
 		for i, c := range v.Criteria {
 			cs[i].Metric, cs[i].Op, cs[i].Value = ptr(c.Metric), ptr(c.Op), ptr(float32(c.Value))
-			if c.Evaluated {
+			switch {
+			case c.Evaluated:
 				cs[i].Observed, cs[i].Passed = ptr(float32(c.Observed)), ptr(c.Passed)
+			case c.Invalid:
+				cs[i].Passed = ptr(false)
+			}
+			if c.Reason != "" {
+				cs[i].Reason = ptr(c.Reason)
 			}
 		}
 		out.Verdict.Criteria = &cs

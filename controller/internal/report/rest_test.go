@@ -24,7 +24,6 @@ import (
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents/agentpb"
 	"github.com/alrawi/FixingPointSystem/controller/internal/api"
 	"github.com/alrawi/FixingPointSystem/controller/internal/api/contract"
-	"github.com/alrawi/FixingPointSystem/controller/internal/compiler"
 	"github.com/alrawi/FixingPointSystem/controller/internal/metrics"
 	"github.com/alrawi/FixingPointSystem/controller/internal/runs"
 
@@ -65,10 +64,10 @@ func (f fakeTotals) Totals(id string) (map[string]float64, error) {
 
 // verdictOf returns a stored verdict with the criteria configuration, as the
 // orchestrator leaves it after the stop.
-func verdictOf(passed bool, cs ...compiler.CriterionConfig) *runs.Verdict {
+func verdictOf(passed bool, cs ...runs.Criterion) *runs.Verdict {
 	v := &runs.Verdict{Passed: passed}
 	for _, c := range cs {
-		v.Criteria = append(v.Criteria, runs.CriterionResult{CriterionConfig: c})
+		v.Criteria = append(v.Criteria, runs.CriterionResult{Criterion: c})
 	}
 	return v
 }
@@ -85,7 +84,7 @@ func baseRun(id string, state runs.State, agents ...string) runs.Run {
 
 // fixtures returns the three golden runs and their aggregator totals.
 func fixtures() (fakeRuns, fakeTotals) {
-	criteria := []compiler.CriterionConfig{
+	criteria := []runs.Criterion{
 		crit("sessions.failed_ratio", "<", 0.001),
 		crit("sessions.response_time.p99", "<=", 50000),
 		crit("throughput.bps", ">=", 1e9),
@@ -96,7 +95,9 @@ func fixtures() (fakeRuns, fakeTotals) {
 	passing.Verdict = verdictOf(true, criteria...)
 
 	failing := baseRun("run-fail", runs.Failed, "agent-a", "agent-b")
-	failing.Reason = "criteria failed"
+	failing.Reason = "criteria failed: sessions.failed_ratio: observed 0.005 < 0.001 does not hold; " +
+		"sessions.response_time.p99: observed 87000 <= 50000 does not hold; " +
+		"throughput.bps: observed 610000000 >= 1000000000 does not hold"
 	failing.Totals = map[string]float64{"sessions.attempted": 100000, "sessions.succeeded": 99500, "sessions.failed": 500, "sessions.failed_ratio": 0.005, "bytes.tx": 2e9, "bytes.rx": 1.7e10}
 	failing.Verdict = verdictOf(false, criteria...)
 
@@ -105,7 +106,7 @@ func fixtures() (fakeRuns, fakeTotals) {
 	degraded := baseRun("run-degraded", runs.Failed, "agent-a", "agent-b")
 	degraded.Degraded = true
 	degraded.FailedAgents = []string{"agent-b"}
-	degraded.Reason = "criteria failed"
+	degraded.Reason = "criteria failed: sessions.failed_ratio: observed 0.005333333333333333 < 0.001 does not hold"
 	degraded.Totals = map[string]float64{"sessions.attempted": 60000, "sessions.succeeded": 59680, "sessions.failed": 320, "sessions.failed_ratio": 320.0 / 60000, "bytes.tx": 1e9, "bytes.rx": 8e9}
 	degraded.Verdict = verdictOf(false, criteria[0], crit("sessions.failed_ratio", "<", 0.01), crit("sessions.response_time.p99", "<=", 50000))
 

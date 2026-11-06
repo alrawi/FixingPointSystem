@@ -48,8 +48,13 @@ type API struct {
 var _ api.ServerInterface = (*API)(nil)
 
 // NewAPI returns the report operation over the runs of rs and the metrics of
-// ts. A nil ts builds reports from the run totals alone.
+// ts. A nil ts builds reports from the run totals alone. When ts is also a
+// SeriesSource, as *metrics.Aggregator is, reports select labeled series, and
+// e reads the same source when a run stops, through UseSeries.
 func NewAPI(e *Evaluator, rs RunSource, ts TotalsSource) *API {
+	if ss, ok := ts.(SeriesSource); ok {
+		e.UseSeries(ss)
+	}
 	return &API{eval: e, runs: rs, totals: ts}
 }
 
@@ -88,7 +93,24 @@ func (a *API) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, pa
 			return
 		}
 	}
-	rep := a.eval.Build(run, merged)
+	var series []*metrics.Series
+	labeled := len(run.Series) > 0
+	if ss, ok := a.totals.(SeriesSource); ok {
+		series, err = ss.Series(id)
+		switch {
+		case err == nil:
+			labeled = true
+		case !errors.Is(err, metrics.ErrRunUnknown):
+			api.WriteProblem(w, r, api.Problemf(http.StatusInternalServerError, "report of run %s: %v", id, err))
+			return
+		}
+	}
+	var rep Report
+	if labeled {
+		rep = a.eval.BuildSeries(run, series)
+	} else {
+		rep = a.eval.Build(run, merged)
+	}
 	var body []byte
 	contentType := JSONContentType
 	if format == api.GetRunReportParamsFormatCsv {
