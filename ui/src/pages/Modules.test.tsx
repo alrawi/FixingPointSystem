@@ -176,7 +176,7 @@ describe("module detail", () => {
     const request = within(functions).getByRole("rowheader", { name: "request" }).closest("tr");
     expect(
       within(request as HTMLElement).getByRole("cell", { name: /^http1\.request/ }).textContent,
-    ).toBe('http1.request(method: text, path: text, host: text, accept: text = "*/*")');
+    ).toBe('http1.request(method: text, path: text, host: text, accept: text = "*/*", headers: text = "")');
     expect(within(functions).getAllByRole("row")).toHaveLength(3);
     await expectNoAxeViolations();
   });
