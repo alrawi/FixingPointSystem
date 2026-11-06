@@ -11,6 +11,7 @@
       "http1": "0.1.0"
     },
     "phase": "done",
+    "reason": "criteria failed: sessions.failed_ratio: observed 0.005 < 0.001 does not hold; sessions.response_time.p99: observed 87000 <= 50000 does not hold; throughput.bps: observed 610000000 >= 1000000000 does not hold",
     "seed": 42,
     "started_at": "2026-11-03T12:00:02Z",
     "state": "failed",
@@ -31,6 +32,7 @@
           "observed": 0.005,
           "op": "<",
           "passed": false,
+          "reason": "observed 0.005 < 0.001 does not hold",
           "value": 0.001
         },
         {
@@ -38,6 +40,7 @@
           "observed": 87000,
           "op": "<=",
           "passed": false,
+          "reason": "observed 87000 <= 50000 does not hold",
           "value": 50000
         },
         {
@@ -45,11 +48,13 @@
           "observed": 610000000,
           "op": ">=",
           "passed": false,
+          "reason": "observed 610000000 >= 1000000000 does not hold",
           "value": 1000000000
         },
         {
           "metric": "mix.max_abs_error_pp",
           "op": "<=",
+          "reason": "the run reported no value",
           "value": 2
         }
       ],

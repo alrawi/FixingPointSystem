@@ -9,9 +9,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
-	"github.com/alrawi/FixingPointSystem/controller/internal/compiler"
 	"github.com/alrawi/FixingPointSystem/controller/internal/metrics"
+	"github.com/alrawi/FixingPointSystem/controller/internal/runs"
 )
 
 // Status is the result of one criterion.
@@ -28,8 +29,8 @@ const (
 	// computed. Such a criterion does not decide the verdict.
 	Missing Status = "missing"
 	// Invalid means that the criterion names no catalog metric or statistic,
-	// or an unknown operator. Such a criterion fails the run, because the
-	// rule cannot hold.
+	// an unknown operator, or a label that its metric lacks. Such a
+	// criterion fails the run, because the rule cannot hold.
 	Invalid Status = "invalid"
 )
 
@@ -39,7 +40,7 @@ var Operators = []string{"<", "<=", ">", ">=", "==", "!="}
 
 // Result is the result of one criterion.
 type Result struct {
-	compiler.CriterionConfig
+	runs.Criterion
 	// Status is the result.
 	Status Status
 	// Observed is the value of the metric. It is meaningful when Status is
@@ -60,6 +61,30 @@ type Evaluation struct {
 	Results []Result
 }
 
+// SeriesSource returns the merged series of a run, with their labels.
+// *metrics.Aggregator satisfies it, and an error that matches
+// metrics.ErrRunUnknown means that it holds no metrics of the run.
+type SeriesSource interface {
+	Series(runID string) ([]*metrics.Series, error)
+}
+
+var _ SeriesSource = (*metrics.Aggregator)(nil)
+
+// Data holds the metrics of a run that criteria are evaluated over.
+//
+// With Labeled false, Totals holds the metrics aggregated over every label,
+// keyed by catalog name with histogram statistics under <metric>.<stat>, and
+// a criterion cannot select labels. With Labeled true, Series holds every
+// series of the run and each criterion selects among them by its where
+// filter. Without a side in the filter, a criterion on a metric that has the
+// side label counts the client side only, because a total over both sides
+// counts every session twice.
+type Data struct {
+	Totals  map[string]float64
+	Series  []*metrics.Series
+	Labeled bool
+}
+
 // Evaluator evaluates criteria with the metric names of a catalog.
 type Evaluator struct {
 	cat *metrics.Catalog
@@ -67,6 +92,9 @@ type Evaluator struct {
 	// order, so a formula over another derived gauge sees its new value.
 	formulas []derived
 	stats    map[string]bool
+
+	mu  sync.RWMutex
+	src SeriesSource
 }
 
 // derived is one derived gauge of the catalog.
@@ -100,6 +128,22 @@ func NewEvaluator(cat *metrics.Catalog) (*Evaluator, error) {
 		e.formulas = append(e.formulas, derived{name: m.Name, left: f[0], op: f[1][0], right: f[2]})
 	}
 	return e, nil
+}
+
+// UseSeries sets the source that RunEvaluator reads by run id when a run
+// stops, so that histogram statistics and labeled metrics decide the state
+// of the run as they decide its report. NewAPI calls it with the totals
+// source of the report when that source offers series. A nil src clears it.
+func (e *Evaluator) UseSeries(src SeriesSource) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.src = src
+}
+
+func (e *Evaluator) source() SeriesSource {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.src
 }
 
 // Catalog returns the metric catalog of e.
@@ -152,12 +196,21 @@ func apply(op byte, l, r float64) (float64, bool) {
 // Evaluate evaluates criteria over totals, which hold run metrics keyed by
 // catalog name with histogram statistics under <metric>.<stat>. It derives
 // the catalog formulas first, so a criterion on a ratio sees the ratio of the
-// merged counters and never a mean of per agent ratios.
-func (e *Evaluator) Evaluate(criteria []compiler.CriterionConfig, totals map[string]float64) Evaluation {
-	values := e.Derive(totals)
+// merged counters and never a mean of per agent ratios. Totals carry no
+// labels, so a criterion with a where filter has no result.
+func (e *Evaluator) Evaluate(criteria []runs.Criterion, totals map[string]float64) Evaluation {
+	return e.EvaluateData(criteria, Data{Totals: totals})
+}
+
+// EvaluateData evaluates criteria over d.
+func (e *Evaluator) EvaluateData(criteria []runs.Criterion, d Data) Evaluation {
+	var values map[string]float64
+	if !d.Labeled {
+		values = e.Derive(d.Totals)
+	}
 	ev := Evaluation{Passed: true, Results: make([]Result, 0, len(criteria))}
 	for _, c := range criteria {
-		res := e.one(c, values)
+		res := e.one(c, d, values)
 		if res.Status == Fail || res.Status == Invalid {
 			ev.Passed = false
 		}
@@ -166,54 +219,331 @@ func (e *Evaluator) Evaluate(criteria []compiler.CriterionConfig, totals map[str
 	return ev
 }
 
-// one evaluates one criterion over the derived values.
-func (e *Evaluator) one(c compiler.CriterionConfig, values map[string]float64) Result {
-	res := Result{CriterionConfig: c}
+// one evaluates one criterion. values holds the derived totals of unlabeled
+// data.
+func (e *Evaluator) one(c runs.Criterion, d Data, values map[string]float64) Result {
+	res := Result{Criterion: c}
 	if !slices.Contains(Operators, c.Op) {
 		res.Status, res.Reason = Invalid, fmt.Sprintf("unknown operator %q", c.Op)
 		return res
 	}
-	if reason := e.checkName(c.Metric); reason != "" {
+	m, stat, reason := e.resolve(c.Metric)
+	if reason == "" {
+		reason = checkWhere(m, c.Where)
+	}
+	if reason != "" {
 		res.Status, res.Reason = Invalid, reason
 		return res
 	}
-	obs, ok := values[c.Metric]
-	if !ok || math.IsNaN(obs) {
-		res.Status, res.Reason = Missing, e.missingReason(c.Metric, values)
+	var obs float64
+	var ok bool
+	suffix := ""
+	switch {
+	case d.Labeled:
+		obs, ok = e.seriesValue(d.Series, m, stat, c.Where)
+		if text := filterText(m, c.Where); text != "" {
+			suffix = " for " + text
+		}
+	case len(c.Where) > 0:
+		res.Status, res.Reason = Missing, "the run has no labeled metrics to select from"
+		return res
+	default:
+		obs, ok = values[c.Metric]
+	}
+	if !ok || math.IsNaN(obs) || math.IsInf(obs, 0) {
+		res.Status = Missing
+		if d.Labeled {
+			res.Reason = e.missingSeriesReason(d.Series, m, c.Where) + suffix
+		} else {
+			res.Reason = e.missingReason(c.Metric, values)
+		}
 		return res
 	}
 	res.Observed = obs
 	if compare(obs, c.Op, c.Value) {
 		res.Status = Pass
-		res.Reason = fmt.Sprintf("observed %s %s %s holds", formatNumber(obs), c.Op, formatNumber(c.Value))
+		res.Reason = fmt.Sprintf("observed %s %s %s holds%s", formatNumber(obs), c.Op, formatNumber(c.Value), suffix)
 	} else {
 		res.Status = Fail
-		res.Reason = fmt.Sprintf("observed %s %s %s does not hold", formatNumber(obs), c.Op, formatNumber(c.Value))
+		res.Reason = fmt.Sprintf("observed %s %s %s does not hold%s", formatNumber(obs), c.Op, formatNumber(c.Value), suffix)
 	}
 	return res
 }
 
-// checkName returns why name is no metric reference of the catalog, or "".
-// A histogram needs a statistic suffix, and only a histogram takes one.
-func (e *Evaluator) checkName(name string) string {
+// resolve returns the catalog metric that a criterion reference names, with
+// the histogram statistic when the reference has one, or why name is no
+// metric reference of the catalog. A histogram needs a statistic suffix, and
+// only a histogram takes one.
+func (e *Evaluator) resolve(name string) (m *metrics.Metric, stat, reason string) {
 	if m := e.cat.Lookup(name); m != nil {
 		if m.Kind == metrics.Histogram {
-			return fmt.Sprintf("histogram %s needs a statistic suffix such as .p99", name)
+			return nil, "", fmt.Sprintf("histogram %s needs a statistic suffix such as .p99", name)
 		}
-		return ""
+		return m, "", ""
 	}
-	base, stat, ok := cutLast(name)
-	if ok && e.stats[stat] {
+	base, st, ok := cutLast(name)
+	if ok && e.stats[st] {
 		m := e.cat.Lookup(base)
 		switch {
 		case m == nil:
 		case m.Kind == metrics.Histogram:
-			return ""
+			return m, st, ""
 		default:
-			return fmt.Sprintf("statistic %s applies only to histograms, and %s is a %s", stat, base, m.Kind)
+			return nil, "", fmt.Sprintf("statistic %s applies only to histograms, and %s is a %s", st, base, m.Kind)
 		}
 	}
-	return fmt.Sprintf("metric %s is not in the metric catalog", name)
+	return nil, "", fmt.Sprintf("metric %s is not in the metric catalog", name)
+}
+
+// checkWhere returns why where does not fit m, or "". Every name of the
+// filter must be a label of the metric.
+func checkWhere(m *metrics.Metric, where map[string]string) string {
+	for _, k := range slices.Sorted(maps.Keys(where)) {
+		if !m.HasLabel(k) {
+			return fmt.Sprintf("metric %s has no label %s", m.Name, k)
+		}
+	}
+	return ""
+}
+
+// defaultsToClient reports whether a criterion on m with the filter where
+// counts the client side only, because m has the side label and the filter
+// names no side.
+func defaultsToClient(m *metrics.Metric, where map[string]string) bool {
+	_, named := where[runs.LabelSide]
+	return m.HasLabel(runs.LabelSide) && !named
+}
+
+// filterText words the label filter that a criterion applies, with the side
+// default, as name=value pairs in name order, or "" for no filter.
+func filterText(m *metrics.Metric, where map[string]string) string {
+	f := maps.Clone(where)
+	if f == nil {
+		f = map[string]string{}
+	}
+	if defaultsToClient(m, where) {
+		f[runs.LabelSide] = runs.SideClient
+	}
+	pairs := make([]string, 0, len(f))
+	for _, k := range slices.Sorted(maps.Keys(f)) {
+		pairs = append(pairs, k+"="+f[k])
+	}
+	return strings.Join(pairs, ",")
+}
+
+// pick returns the series of m that a criterion counts. A series must carry
+// every label value of where. When m has the side label and where names no
+// side, a series that carries another side than the client is left out. A
+// series without any side label stays, because it predates the label. A
+// series without any label is a run total that repeats the labeled series of
+// its metric, so it counts only when the run has no labeled series of m.
+func pick(series []*metrics.Series, m *metrics.Metric, where map[string]string) []*metrics.Series {
+	client := defaultsToClient(m, where)
+	labeled := false
+	for _, s := range series {
+		if s.Metric.Name == m.Name && len(s.Labels) > 0 {
+			labeled = true
+			break
+		}
+	}
+	var out []*metrics.Series
+next:
+	for _, s := range series {
+		if s.Metric.Name != m.Name || (labeled && len(s.Labels) == 0) {
+			continue
+		}
+		for k, want := range where {
+			if got, ok := s.Label(k); !ok || got != want {
+				continue next
+			}
+		}
+		if got, ok := s.Label(runs.LabelSide); client && ok && got != runs.SideClient {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// additive reports whether gauge values add up, as the metrics aggregator
+// decides it. Ratios and percentages combine by their mean instead.
+func additive(m *metrics.Metric) bool {
+	switch m.Unit {
+	case "ratio", "percent", "percentage_points":
+		return false
+	}
+	return true
+}
+
+// formulaOf returns the formula of the derived gauge name, or nil.
+func (e *Evaluator) formulaOf(name string) *derived {
+	for i := range e.formulas {
+		if e.formulas[i].name == name {
+			return &e.formulas[i]
+		}
+	}
+	return nil
+}
+
+// seriesValue returns the value of metric m, or of its histogram statistic
+// stat, over the series that where selects. Counters and additive gauges add,
+// other gauges average, and histograms merge. A derived gauge divides the
+// sums of its components, never a mean of ratios. It reports false when the
+// selection holds no series or the value is undefined.
+func (e *Evaluator) seriesValue(series []*metrics.Series, m *metrics.Metric, stat string, where map[string]string) (float64, bool) {
+	if f := e.formulaOf(m.Name); f != nil {
+		lm, rm := e.cat.Lookup(f.left), e.cat.Lookup(f.right)
+		if lm == nil || rm == nil {
+			return 0, false
+		}
+		r, ok := e.seriesValue(series, rm, "", where)
+		if !ok {
+			return 0, false
+		}
+		l, _ := e.seriesValue(series, lm, "", where)
+		return apply(f.op, l, r)
+	}
+	sel := pick(series, m, where)
+	if len(sel) == 0 {
+		return 0, false
+	}
+	switch m.Kind {
+	case metrics.Counter:
+		var sum float64
+		for _, s := range sel {
+			sum += float64(s.Count)
+		}
+		return sum, true
+	case metrics.Gauge:
+		var sum float64
+		for _, s := range sel {
+			sum += s.Gauge
+		}
+		if !additive(m) {
+			sum /= float64(len(sel))
+		}
+		return sum, true
+	case metrics.Histogram:
+		hs := make([]metrics.Hist, len(sel))
+		for i, s := range sel {
+			hs[i] = s.Hist
+		}
+		h := metrics.Merge(hs...)
+		for _, st := range metrics.Stats {
+			if st.Name == stat {
+				return h.Value(st), true
+			}
+		}
+	}
+	return 0, false
+}
+
+// missingSeriesReason explains why metric m has no value over the series that
+// where selects.
+func (e *Evaluator) missingSeriesReason(series []*metrics.Series, m *metrics.Metric, where map[string]string) string {
+	if f := e.formulaOf(m.Name); f != nil {
+		if rm := e.cat.Lookup(f.right); rm != nil {
+			if r, ok := e.seriesValue(series, rm, "", where); ok && r == 0 && f.op == '/' {
+				return fmt.Sprintf("undefined because %s is 0", f.right)
+			}
+		}
+		return fmt.Sprintf("undefined because the run reported no %s", f.right)
+	}
+	return "the run reported no value"
+}
+
+// seriesTotals returns the run metrics of series as totals, keyed by catalog
+// name with histogram statistics under <metric>.<stat>. Every metric counts
+// the client side only where it has the side label, as a criterion without a
+// side does, so the totals count each session once.
+func (e *Evaluator) seriesTotals(series []*metrics.Series) map[string]float64 {
+	out := map[string]float64{}
+	put := func(name string, m *metrics.Metric, stat string) {
+		if v, ok := e.seriesValue(series, m, stat, nil); ok && !math.IsNaN(v) && !math.IsInf(v, 0) {
+			out[name] = v
+		}
+	}
+	for _, m := range e.cat.Metrics() {
+		if m.Kind != metrics.Histogram {
+			put(m.Name, m, "")
+			continue
+		}
+		for _, st := range metrics.Stats {
+			put(m.Name+"."+st.Name, m, st.Name)
+		}
+	}
+	return out
+}
+
+// seriesKey identifies a series by metric and labels.
+func seriesKey(metric string, labels map[string]string) string {
+	var b strings.Builder
+	b.WriteString(metric)
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		b.WriteByte(0)
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(labels[k])
+	}
+	return b.String()
+}
+
+// mergeSeries returns the series of the aggregator with the values that the
+// orchestrator holds. The counters of orch take precedence, because the
+// orchestrator counts the open sessions of a failed agent as failed and sees
+// the final snapshot of every agent. A gauge that only the orchestrator
+// reports, in gauges, joins as a series without labels. Histograms and every
+// other gauge come from the aggregator.
+func (e *Evaluator) mergeSeries(agg []*metrics.Series, orch []runs.Series, gauges map[string]float64) []*metrics.Series {
+	out := slices.Clone(agg)
+	index := make(map[string]int, len(out))
+	have := map[string]bool{}
+	for i, s := range out {
+		index[seriesKey(s.Metric.Name, s.LabelMap())] = i
+		have[s.Metric.Name] = true
+	}
+	for _, o := range orch {
+		m := e.cat.Lookup(o.Metric)
+		if m == nil || m.Kind != metrics.Counter || o.Value < 0 || o.Value >= 1<<63 {
+			continue
+		}
+		labels, ok := catalogLabels(m, o.Labels)
+		if !ok {
+			continue
+		}
+		count := uint64(o.Value)
+		key := seriesKey(o.Metric, o.Labels)
+		if i, found := index[key]; found {
+			c := *out[i]
+			c.Count = count
+			out[i] = &c
+			continue
+		}
+		index[key] = len(out)
+		have[m.Name] = true
+		out = append(out, &metrics.Series{Metric: m, Labels: labels, Count: count})
+	}
+	for _, name := range slices.Sorted(maps.Keys(gauges)) {
+		m := e.cat.Lookup(name)
+		if m == nil || m.Kind != metrics.Gauge || m.Formula != "" || have[name] {
+			continue
+		}
+		out = append(out, &metrics.Series{Metric: m, Gauge: gauges[name]})
+	}
+	return out
+}
+
+// catalogLabels returns the labels in name order, and false when the catalog
+// does not declare one of them for m.
+func catalogLabels(m *metrics.Metric, labels map[string]string) ([]metrics.Label, bool) {
+	out := make([]metrics.Label, 0, len(labels))
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		if !m.HasLabel(k) {
+			return nil, false
+		}
+		out = append(out, metrics.Label{Name: k, Value: labels[k]})
+	}
+	return out, true
 }
 
 // missingReason explains why a valid metric has no value.

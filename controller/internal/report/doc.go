@@ -10,8 +10,15 @@
 // operators of contracts/schemas/test-config.schema.json, and gives every
 // criterion one of four results. A criterion passes or fails by comparing the
 // observed value, is missing when the run has no value for the metric, and is
-// invalid when it names no catalog metric or operator. Failed and invalid
-// criteria fail the run, and missing ones do not decide it.
+// invalid when it names no catalog metric, operator, or label. Failed and
+// invalid criteria fail the run, and missing ones do not decide it. Every
+// result carries its reason.
+//
+// A criterion may select labeled series with its where filter. Without a side
+// in the filter, a criterion on a metric that has the side label counts the
+// client side only, because a total over both sides counts each session twice.
+// The same evaluator decides the state of a run when it stops and builds the
+// report, over the labeled series of the metrics aggregator.
 //
 // The package serves GET /v1/runs/{id}/report in JSON, which follows the
 // RunReport schema of the REST contract, and in CSV, one table with a row per

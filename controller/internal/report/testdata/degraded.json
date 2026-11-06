@@ -12,6 +12,7 @@
       "http1": "0.1.0"
     },
     "phase": "done",
+    "reason": "criteria failed: sessions.failed_ratio: observed 0.005333333333333333 < 0.001 does not hold",
     "seed": 42,
     "started_at": "2026-11-03T12:00:02Z",
     "state": "failed",
@@ -31,6 +32,7 @@
           "observed": 0.0053333333,
           "op": "<",
           "passed": false,
+          "reason": "observed 0.005333333333333333 < 0.001 does not hold",
           "value": 0.001
         },
         {
@@ -38,6 +40,7 @@
           "observed": 0.0053333333,
           "op": "<",
           "passed": true,
+          "reason": "observed 0.005333333333333333 < 0.01 holds",
           "value": 0.01
         },
         {
@@ -45,6 +48,7 @@
           "observed": 48000,
           "op": "<=",
           "passed": true,
+          "reason": "observed 48000 <= 50000 holds",
           "value": 50000
         }
       ],
