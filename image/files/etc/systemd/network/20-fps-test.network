@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Test interfaces get no address, no router advertisement handling, and no
+# default route. The agent configures them when a run needs them.
+[Match]
+Type=ether
+Name=!mgmt0
+
+[Link]
+RequiredForOnline=no
+
+[Network]
+DHCP=no
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+LLDP=no
+EmitLLDP=no
