@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #139 |
 | Branch | `wp/ENG-14` |
-| Pull request | none yet |
-| Status | in progress |
+| Pull request | #210 |
+| Status | ready for review |
 | Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-68b23a, lease until 2026-11-06T16:47:46Z |
-| Last verified commit | none |
+| Last verified commit | 088b8c7 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -37,11 +37,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Callers outside `engine/fps-stats/` are out of scope and listed in the log entry. Pull request and CI.
+Callers outside `engine/fps-stats/` are out of scope and listed in the log entry. none. CI on 088b8c7 was green.
 
 ## Next action
 
-Open the pull request and wait for CI.
+none, awaiting review.
 
 ## Blockers and open questions
 
@@ -68,3 +68,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-06 | claude-68b23a | claim | none | Claimed #139 |
+| 2026-11-06 | claude-68b23a | finish | 088b8c7 | PR #210, CI green |
