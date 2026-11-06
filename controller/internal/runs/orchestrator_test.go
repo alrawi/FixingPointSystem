@@ -28,8 +28,8 @@ metadata: { name: run_test }
 topology: app_sim
 network:
   ports:
-    - { name: client0, location: local/eth1 }
-    - { name: server0, location: local/eth1 }
+    - { name: client0, location: eth1 }
+    - { name: server0, location: eth1 }
   host_pools:
     - { name: clients, port: client0, role: client, ipv4: 16.0.0.0/24, count: 254 }
     - { name: servers, port: server0, role: server, ipv4: 48.0.0.0/24, count: 4 }

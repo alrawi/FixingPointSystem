@@ -45,14 +45,12 @@ type Criterion struct {
 	Where map[string]string
 }
 
-// criteriaOf converts the criteria of a test configuration.
-//
-// compiler.CriterionConfig has no where field yet, because the compiler
-// belongs to CTL-18. When it gains one, set Where here from the field of c.
+// criteriaOf converts the criteria of a test configuration and copies the
+// label filter of each.
 func criteriaOf(cs []compiler.CriterionConfig) []Criterion {
 	out := make([]Criterion, len(cs))
 	for i, c := range cs {
-		out[i] = Criterion{CriterionConfig: c}
+		out[i] = Criterion{CriterionConfig: c, Where: c.Where}
 	}
 	return out
 }

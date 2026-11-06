@@ -24,7 +24,7 @@ type Plan struct {
 	Seed            uint64           `json:"seed,omitempty,string"`
 	Topology        string           `json:"topology,omitempty"`
 	Backend         string           `json:"backend,omitempty"`
-	Modules         []ModuleRef      `json:"modules,omitempty"`
+	Modules         []PlanModule     `json:"modules,omitempty"`
 	Scenarios       []ScenarioSource `json:"scenarios,omitempty"`
 	Mix             []MixEntry       `json:"mix,omitempty"`
 	Ports           []PortBinding    `json:"ports,omitempty"`
@@ -41,6 +41,17 @@ type ModuleRef struct {
 	Name    string `json:"name,omitempty"`
 	Version string `json:"version,omitempty"`
 	Digest  string `json:"digest,omitempty"`
+}
+
+// PlanModule is a ModuleRef of the plan together with the settings of the
+// test for the module. The settings field is not part of
+// fps.agent.v1.ModuleRef yet, so the plan carries it ahead of the contract
+// and leaves it out when the test sets nothing for the module.
+type PlanModule struct {
+	Name     string         `json:"name,omitempty"`
+	Version  string         `json:"version,omitempty"`
+	Digest   string         `json:"digest,omitempty"`
+	Settings map[string]any `json:"settings,omitempty"`
 }
 
 // ScenarioSource carries one scenario file and the SHA-256 digest of its bytes.

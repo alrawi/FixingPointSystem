@@ -1,21 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // Package compiler compiles a test configuration and an agent inventory into
-// one plan per agent. Compile is a pure function. It reads no clock, draws no
-// random numbers, and does no I/O, so the same request always yields the same
-// plans.
+// one plan per agent. Compile reads no clock and does no I/O, and it draws a
+// random number only when neither the configuration nor the request names a
+// seed, so the same request with a seed always yields the same plans.
 //
-// The compiler normalizes the mix by sessions, splits every host pool and
-// every rate across the workers of all agents in proportion to their cores,
-// and derives the load phase fractions. Byte based mix correction arrives in
-// CTL-12.
+// The compiler normalizes the mix by sessions, splits every host pool across
+// the workers of the agents that run its port in proportion to their cores,
+// splits every rate across the workers that own hosts of the client pool of
+// its mix entry, and derives the load phase fractions. Byte based mix
+// correction arrives in CTL-12.
 package compiler
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/netip"
 	"regexp"
@@ -54,7 +59,8 @@ type Agent struct {
 	// Backend is kernel, af_xdp, or dpdk. Empty means kernel.
 	Backend string
 	// Interfaces lists the traffic interfaces of the agent. When it is not
-	// empty, every port interface of the test must appear in it.
+	// empty, a port that spreads across agents skips the agent unless the
+	// port interface appears in it, and a port pinned to the agent needs it.
 	Interfaces []string
 }
 
@@ -69,6 +75,9 @@ type Scenario struct {
 	// BytesPerSession estimates the bytes that one session moves in both
 	// directions. Only the throughput_bps objective needs it.
 	BytesPerSession float64
+	// SettingsSchema is the settings schema of the module manifest as JSON.
+	// Empty means that the module accepts no settings.
+	SettingsSchema json.RawMessage
 }
 
 // Request is the input of Compile.
@@ -78,8 +87,11 @@ type Request struct {
 	// EngineAPI is the engine contract version. Empty means DefaultEngineAPI.
 	EngineAPI string
 	// Seed is the run seed when the configuration sets no timeline.seed. The
-	// caller picks it at the process edge.
+	// caller may pick it at the process edge. When it is zero too, Compile
+	// draws a random nonzero seed from Rand.
 	Seed uint64
+	// Rand is the source of the random seed. Empty means crypto/rand.Reader.
+	Rand io.Reader
 	// Config is the test configuration.
 	Config Config
 	// Agents is the inventory of agents that run the test, in any order.
@@ -90,7 +102,7 @@ type Request struct {
 
 var (
 	namePattern     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,62}$`)
-	locationPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.:-]+$`)
+	locationPattern = regexp.MustCompile(`^(?:(?:[A-Za-z0-9_.-]+|\*)/)?[A-Za-z0-9_.:-]+$`)
 	scenarioPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(/[a-z][a-z0-9_]*)?$`)
 	macPattern      = regexp.MustCompile(`^([0-9a-f]{2}:){5}[0-9a-f]{2}$`)
 	metricPattern   = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
@@ -115,12 +127,19 @@ type worker struct {
 	id    uint32
 }
 
-// compiled holds the parts of the plans that every agent shares.
+// compiled holds the parts of the plans that every agent shares, and the
+// ports of each agent.
 type compiled struct {
 	modules   []ModuleRef
 	scenarios []ScenarioSource
 	mix       []MixEntry
-	ports     []PortBinding
+	ports     [][]PortBinding // by agent
+	portOn    map[string][]bool
+	// partial is true when some port runs on fewer than all agents. The mix
+	// then names its default pools, because an agent that lacks the first
+	// pool of a role would otherwise default to another pool.
+	partial   bool
+	settings  map[string]map[string]any
 	pools     []HostPoolSlice
 	externals []ExternalServer
 	phases    []LoadPhase
@@ -172,11 +191,19 @@ func compile(req Request) ([]Plan, error) {
 			workers = append(workers, worker{agent: a, id: i})
 		}
 	}
-	hosts, slices, err := splitPools(cfg.Network.HostPools, workers, len(agents))
+	onAgent := make([][]bool, len(cfg.Network.HostPools))
+	for i, hp := range cfg.Network.HostPools {
+		onAgent[i] = c.portOn[hp.Port]
+	}
+	hosts, slices, err := splitPools(cfg.Network.HostPools, workers, onAgent)
 	if err != nil {
 		return nil, err
 	}
-	rates, agentValue, err := splitRates(cfg.Load.Objective, c.mix, estimates, workers, cores)
+	eligible, err := eligibleWorkers(cfg, hosts)
+	if err != nil {
+		return nil, err
+	}
+	rates, agentValue, err := splitRates(cfg.Load.Objective, c.mix, estimates, workers, cores, eligible)
 	if err != nil {
 		return nil, err
 	}
@@ -185,9 +212,22 @@ func compile(req Request) ([]Plan, error) {
 	if engineAPI == "" {
 		engineAPI = DefaultEngineAPI
 	}
-	seed := req.Seed
-	if cfg.Timeline.Seed != nil {
-		seed = *cfg.Timeline.Seed
+	seed, err := chooseSeed(cfg, req)
+	if err != nil {
+		return nil, err
+	}
+	modules := make([]PlanModule, len(c.modules))
+	for i, m := range c.modules {
+		modules[i] = PlanModule{Name: m.Name, Version: m.Version, Digest: m.Digest, Settings: c.settings[m.Name]}
+	}
+	hasRate := make([][]bool, len(agents))
+	for a := range hasRate {
+		hasRate[a] = make([]bool, len(c.mix))
+	}
+	for i, el := range eligible {
+		for _, g := range el {
+			hasRate[workers[g].agent][i] = true
+		}
 	}
 	plans := make([]Plan, len(agents))
 	for a, ag := range agents {
@@ -204,10 +244,9 @@ func compile(req Request) ([]Plan, error) {
 			Seed:            seed,
 			Topology:        enumName("TOPOLOGY_", cfg.Topology),
 			Backend:         enumName("BACKEND_", backend),
-			Modules:         c.modules,
+			Modules:         modules,
 			Scenarios:       c.scenarios,
-			Mix:             c.mix,
-			Ports:           c.ports,
+			Ports:           c.ports[a],
 			ExternalServers: c.externals,
 			Load: &LoadPlan{
 				Objective:      enumName("LOAD_OBJECTIVE_", cfg.Load.Objective.Type),
@@ -217,7 +256,15 @@ func compile(req Request) ([]Plan, error) {
 			Warmup:   c.warmup,
 			Criteria: c.criteria,
 		}
+		for i, e := range c.mix {
+			if hasRate[a][i] || runsServers(cfg, e, a, onAgent) {
+				p.Mix = append(p.Mix, e)
+			}
+		}
 		for i, pool := range c.pools {
+			if !onAgent[i][a] {
+				continue
+			}
 			s := pool
 			s.Offset, s.Count = slices[i][a].offset, slices[i][a].count
 			p.HostPools = append(p.HostPools, s)
@@ -236,6 +283,94 @@ func compile(req Request) ([]Plan, error) {
 		plans[a] = p
 	}
 	return plans, nil
+}
+
+// runsServers reports whether agent a emulates hosts of the server pool of a
+// mix entry, so that its plan needs the entry to start the servers.
+func runsServers(cfg Config, e MixEntry, a int, onAgent [][]bool) bool {
+	if cfg.Topology == "client_sim" {
+		return false
+	}
+	name := e.ServerPool
+	if name == "" {
+		name = defaultPool(cfg.Network.HostPools, "server")
+	}
+	if name == "" {
+		return true
+	}
+	for i, hp := range cfg.Network.HostPools {
+		if hp.Name == name {
+			return onAgent[i][a]
+		}
+	}
+	return true
+}
+
+// chooseSeed returns the seed of the run. It takes the configuration first,
+// then the request, and draws a random nonzero seed when both are missing.
+func chooseSeed(cfg Config, req Request) (uint64, error) {
+	switch {
+	case cfg.Timeline.Seed != nil:
+		if *cfg.Timeline.Seed == 0 {
+			return 0, invalid("timeline.seed", "seed 0 is not allowed, the minimum is 1")
+		}
+		return *cfg.Timeline.Seed, nil
+	case req.Seed != 0:
+		return req.Seed, nil
+	}
+	src := req.Rand
+	if src == nil {
+		src = rand.Reader
+	}
+	var b [8]byte
+	if _, err := io.ReadFull(src, b[:]); err != nil {
+		return 0, fmt.Errorf("draw a random seed: %w", err)
+	}
+	// The remainder lies in 0 to MaxUint64-1, so adding one never gives zero.
+	return binary.BigEndian.Uint64(b[:])%math.MaxUint64 + 1, nil
+}
+
+// defaultPool is the first pool of a role, which a mix entry without a pool
+// name uses. It is empty when no pool has the role.
+func defaultPool(pools []HostPool, role string) string {
+	for _, hp := range pools {
+		if hp.Role == role {
+			return hp.Name
+		}
+	}
+	return ""
+}
+
+// eligibleWorkers lists, for each mix entry, the global indexes of the
+// workers that own hosts of the client pool of the entry. Only these workers
+// can start the sessions of the entry. A configuration without a client pool
+// leaves every worker eligible.
+func eligibleWorkers(cfg Config, hosts [][]HostRange) ([][]int, error) {
+	out := make([][]int, len(cfg.Profile.Mix))
+	for i, m := range cfg.Profile.Mix {
+		pool := m.ClientPool
+		if pool == "" {
+			pool = defaultPool(cfg.Network.HostPools, "client")
+		}
+		for g, ranges := range hosts {
+			if pool == "" || ownsHosts(ranges, pool) {
+				out[i] = append(out[i], g)
+			}
+		}
+		if len(out[i]) == 0 {
+			return nil, invalid(fmt.Sprintf("profile.mix[%d]", i), "no worker owns hosts of client pool %s", pool)
+		}
+	}
+	return out, nil
+}
+
+func ownsHosts(ranges []HostRange, pool string) bool {
+	for _, r := range ranges {
+		if r.Pool == pool && r.Count > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func invalid(path, format string, args ...any) error {
@@ -290,6 +425,8 @@ func (c *compiled) network(cfg Config, agents []Agent) (map[string]int, error) {
 		return nil, invalid("network.ports", "a test needs at least one port")
 	}
 	ports := make(map[string]bool, len(n.Ports))
+	c.ports = make([][]PortBinding, len(agents))
+	c.portOn = make(map[string][]bool, len(n.Ports))
 	for i, p := range n.Ports {
 		path := fmt.Sprintf("network.ports[%d]", i)
 		switch {
@@ -298,18 +435,24 @@ func (c *compiled) network(cfg Config, agents []Agent) (map[string]int, error) {
 		case ports[p.Name]:
 			return nil, invalid(path, "duplicate port %s", p.Name)
 		case !locationPattern.MatchString(p.Location):
-			return nil, invalid(path, "location %q is not <agent>/<interface>", p.Location)
+			return nil, invalid(path, "location %q is not <agent>/<interface>, */<interface>, or <interface>", p.Location)
 		case p.MTU != 0 && (p.MTU < 576 || p.MTU > 9216):
 			return nil, invalid(path, "mtu %d is outside 576 to 9216", p.MTU)
 		}
 		ports[p.Name] = true
 		iface := p.Location[strings.Index(p.Location, "/")+1:]
-		for _, ag := range agents {
-			if len(ag.Interfaces) > 0 && !contains(ag.Interfaces, iface) {
-				return nil, fmt.Errorf("%w: agent %s has no interface %s for port %s", ErrInvalidInventory, ag.ID, iface, p.Name)
-			}
+		on, err := portAgents(p.Name, strings.TrimSuffix(p.Location[:len(p.Location)-len(iface)], "/"), iface, agents)
+		if err != nil {
+			return nil, err
 		}
-		c.ports = append(c.ports, PortBinding{Name: p.Name, InterfaceName: iface, MTU: uint32(p.MTU)}) //nolint:gosec // G115: checked against 9216 above
+		c.portOn[p.Name] = on
+		for a, ok := range on {
+			if !ok {
+				c.partial = true
+				continue
+			}
+			c.ports[a] = append(c.ports[a], PortBinding{Name: p.Name, InterfaceName: iface, MTU: uint32(p.MTU)}) //nolint:gosec // G115: checked against 9216 above
+		}
 	}
 
 	if len(n.HostPools) == 0 {
@@ -350,6 +493,38 @@ func (c *compiled) network(cfg Config, agents []Agent) (map[string]int, error) {
 		return nil, invalid("network.external_servers", "client_sim needs external servers")
 	}
 	return index, nil
+}
+
+// portAgents returns the agents that run a port. The location <agent>/<interface>
+// pins the port to that one agent, which must be in the inventory and must
+// have the interface. A bare <interface> or */<interface> spreads the port
+// across every agent that has the interface, where an agent with an empty
+// interface list counts as having it.
+func portAgents(port, agent, iface string, agents []Agent) ([]bool, error) {
+	on := make([]bool, len(agents))
+	if agent != "" && agent != "*" {
+		for a, ag := range agents {
+			if ag.ID != agent {
+				continue
+			}
+			if len(ag.Interfaces) > 0 && !contains(ag.Interfaces, iface) {
+				return nil, fmt.Errorf("%w: agent %s has no interface %s for port %s", ErrInvalidInventory, ag.ID, iface, port)
+			}
+			on[a] = true
+			return on, nil
+		}
+		return nil, fmt.Errorf("%w: port %s is pinned to agent %s, which is not in the inventory", ErrInvalidInventory, port, agent)
+	}
+	found := false
+	for a, ag := range agents {
+		if len(ag.Interfaces) == 0 || contains(ag.Interfaces, iface) {
+			on[a], found = true, true
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("%w: no agent has interface %s for port %s", ErrInvalidInventory, iface, port)
+	}
+	return on, nil
 }
 
 func contains(list []string, s string) bool {
@@ -523,15 +698,29 @@ func (c *compiled) profile(cfg Config, pools map[string]int, catalog []Scenario)
 			id = fmt.Sprintf("%s_%d", sc.Name, n)
 		}
 		ids[id] = true
-		c.mix = append(c.mix, MixEntry{
+		entry := MixEntry{
 			ID:         id,
 			Scenario:   ref,
 			Weight:     m.Weight / total,
 			Params:     m.Params,
 			ClientPool: m.ClientPool,
 			ServerPool: m.ServerPool,
-		})
+		}
+		if c.partial {
+			if entry.ClientPool == "" {
+				entry.ClientPool = defaultPool(cfg.Network.HostPools, "client")
+			}
+			if entry.ServerPool == "" {
+				entry.ServerPool = defaultPool(cfg.Network.HostPools, "server")
+			}
+		}
+		c.mix = append(c.mix, entry)
 	}
+	settings, err := moduleSettings(cfg, catalog, modules)
+	if err != nil {
+		return nil, err
+	}
+	c.settings = settings
 	for _, name := range sortedKeys(modules) {
 		c.modules = append(c.modules, modules[name])
 	}

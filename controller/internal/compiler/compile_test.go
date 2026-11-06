@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"math"
 	"net/netip"
@@ -50,8 +52,9 @@ func exampleCatalog(t *testing.T) []Scenario {
 		}
 		dir := filepath.Join(root, d.Name())
 		var manifest struct {
-			Name    string `yaml:"name"`
-			Version string `yaml:"version"`
+			Name     string         `yaml:"name"`
+			Version  string         `yaml:"version"`
+			Settings map[string]any `yaml:"settings"`
 		}
 		data, err := os.ReadFile(filepath.Join(dir, "manifest.yaml")) //nolint:gosec // G304: fixed test path
 		if err != nil {
@@ -61,6 +64,12 @@ func exampleCatalog(t *testing.T) []Scenario {
 			t.Fatal(err)
 		}
 		mod := ModuleRef{Name: manifest.Name, Version: manifest.Version, Digest: treeDigest(t, dir)}
+		var schema json.RawMessage
+		if manifest.Settings != nil {
+			if schema, err = json.Marshal(manifest.Settings); err != nil {
+				t.Fatal(err)
+			}
+		}
 		files, err := filepath.Glob(filepath.Join(dir, "scenarios", "*.yaml"))
 		if err != nil {
 			t.Fatal(err)
@@ -71,7 +80,10 @@ func exampleCatalog(t *testing.T) []Scenario {
 				t.Fatal(err)
 			}
 			name := strings.TrimSuffix(filepath.Base(f), ".yaml")
-			out = append(out, Scenario{Module: mod, Name: name, Source: string(src), BytesPerSession: bytesPerSession[mod.Name+"/"+name]})
+			out = append(out, Scenario{
+				Module: mod, Name: name, Source: string(src),
+				BytesPerSession: bytesPerSession[mod.Name+"/"+name], SettingsSchema: schema,
+			})
 		}
 	}
 	return out
@@ -146,6 +158,21 @@ func goldenCases() []goldenCase {
 			name:   "enterprise_mix_10g",
 			config: filepath.Join(contracts, "examples", "tests", "enterprise_mix_10g.yaml"),
 			agents: []Agent{{ID: "agent-a", Cores: 8, Backend: "dpdk"}},
+		},
+		{
+			name:   "pinned_port",
+			config: filepath.Join("testdata", "pinned_port.yaml"),
+			agents: []Agent{{ID: "agent-a", Cores: 2}, {ID: "agent-b", Cores: 2}},
+		},
+		{
+			name:   "small_pool",
+			config: filepath.Join("testdata", "small_pool.yaml"),
+			agents: []Agent{{ID: "agent-a", Cores: 2}, {ID: "agent-b", Cores: 2}},
+		},
+		{
+			name:   "module_settings",
+			config: filepath.Join("testdata", "module_settings.yaml"),
+			agents: []Agent{{ID: "local", Cores: 1, Interfaces: []string{"lo"}}},
 		},
 	}
 }
@@ -286,6 +313,151 @@ func TestObjectiveSharesFollowCores(t *testing.T) {
 	}
 }
 
+// TestPinnedPortRunsOnOneAgent checks that a port named <agent>/<interface>
+// and its pools exist on that agent only, and that the flow of the pinned pool
+// keeps its whole rate on the agent that runs it.
+func TestPinnedPortRunsOnOneAgent(t *testing.T) {
+	c := goldenCases()[4]
+	plans := compileCase(t, c, c.agents)
+	a, b := plans[0], plans[1]
+	has := func(p Plan, port string) bool {
+		for _, pb := range p.Ports {
+			if pb.Name == port {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(a, "lab0") || has(b, "lab0") || !has(a, "users0") || !has(b, "users0") || !has(b, "web0") {
+		t.Fatalf("ports of agent-a %+v and agent-b %+v do not follow the locations", a.Ports, b.Ports)
+	}
+	for _, s := range b.HostPools {
+		if s.Name == "lab" {
+			t.Fatalf("agent-b emulates hosts of the pinned pool: %+v", s)
+		}
+	}
+	var pinned, spread float64
+	for _, p := range plans {
+		for _, w := range p.Workers {
+			for _, r := range w.Rates {
+				switch r.MixEntry {
+				case "web_get":
+					if p.AgentID != "agent-a" {
+						t.Errorf("%s worker %d has a rate for the flow of the pinned pool", p.AgentID, w.WorkerID)
+					}
+					pinned += *r.SessionsPerSecond
+				case "web_browse":
+					spread += *r.SessionsPerSecond
+				}
+			}
+		}
+	}
+	if pinned != 250 || spread != 750 {
+		t.Fatalf("rates sum to %v and %v, want 250 and 750", pinned, spread)
+	}
+	if got := a.Load.ObjectiveValue + b.Load.ObjectiveValue; got != 1000 {
+		t.Fatalf("objective shares sum to %v, want 1000", got)
+	}
+}
+
+// TestSmallPoolLeavesWorkersWithoutRates checks that a pool with fewer hosts
+// than workers leaves the last worker without hosts and without rates while
+// the objective stays whole.
+func TestSmallPoolLeavesWorkersWithoutRates(t *testing.T) {
+	c := goldenCases()[5]
+	plans := compileCase(t, c, c.agents)
+	var total uint32
+	for _, p := range plans {
+		for _, w := range p.Workers {
+			hosts := uint32(0)
+			for _, h := range w.Hosts {
+				if h.Pool == "clients" {
+					hosts += h.Count
+				}
+			}
+			if (hosts == 0) != (len(w.Rates) == 0) {
+				t.Errorf("%s worker %d has %d client hosts and %d rates", p.AgentID, w.WorkerID, hosts, len(w.Rates))
+			}
+			for _, r := range w.Rates {
+				total += *r.ConcurrentSessions
+			}
+		}
+	}
+	if total != 100 {
+		t.Fatalf("sessions sum to %d, want 100", total)
+	}
+}
+
+func TestModuleSettingsAreCarriedInThePlan(t *testing.T) {
+	c := goldenCases()[6]
+	plans := compileCase(t, c, c.agents)
+	for _, m := range plans[0].Modules {
+		want := m.Name == "dns"
+		if got := m.Settings["zone_file"] == "zones/example.test.zone"; got != want {
+			t.Errorf("module %s carries settings %v", m.Name, m.Settings)
+		}
+	}
+}
+
+func TestSeed(t *testing.T) {
+	seedless := func(t *testing.T) Request {
+		cfg := loadConfig(t, filepath.Join("testdata", "two_agents.yaml"))
+		cfg.Timeline.Seed = nil
+		return Request{RunID: "r", Config: cfg, Agents: []Agent{{ID: "a", Cores: 1}}, Scenarios: exampleCatalog(t)}
+	}
+	tests := []struct {
+		name string
+		rand []byte
+		want uint64
+	}{
+		{"low bytes", []byte{0, 0, 0, 0, 0, 0, 0, 5}, 6},
+		{"zero bytes", make([]byte, 8), 1},
+		{"largest value wraps to one", []byte{255, 255, 255, 255, 255, 255, 255, 255}, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := seedless(t)
+			req.Rand = bytes.NewReader(tt.rand)
+			plans, err := Compile(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plans[0].Seed != tt.want {
+				t.Fatalf("seed %d, want %d", plans[0].Seed, tt.want)
+			}
+		})
+	}
+	t.Run("default source", func(t *testing.T) {
+		plans, err := Compile(seedless(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plans[0].Seed == 0 {
+			t.Fatal("the random seed is zero")
+		}
+	})
+	t.Run("failing source", func(t *testing.T) {
+		req := seedless(t)
+		req.Rand = bytes.NewReader([]byte{1})
+		if _, err := Compile(req); !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("error %v, want an unexpected EOF", err)
+		}
+	})
+	t.Run("configuration wins over request", func(t *testing.T) {
+		req := seedless(t)
+		req.Seed = 99
+		seed := uint64(7)
+		req.Config.Timeline.Seed = &seed
+		plans, err := Compile(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plans[0].Seed != 7 {
+			t.Fatalf("seed %d, want 7", plans[0].Seed)
+		}
+	})
+}
+
 func TestSeedFallsBackToTheRequest(t *testing.T) {
 	cfg := loadConfig(t, filepath.Join("testdata", "two_agents.yaml"))
 	cfg.Timeline.Seed = nil
@@ -317,7 +489,33 @@ func TestCompileErrors(t *testing.T) {
 		{"duplicate agent", func(r *Request) { r.Agents = append(r.Agents, Agent{ID: "a", Cores: 1}) }, ErrInvalidInventory, "duplicate agent a"},
 		{"zero cores", func(r *Request) { r.Agents[0].Cores = 0 }, ErrInvalidInventory, "no cores"},
 		{"unknown backend", func(r *Request) { r.Agents[0].Backend = "netmap" }, ErrInvalidInventory, "unknown backend"},
-		{"missing interface", func(r *Request) { r.Agents[0].Interfaces = []string{"eth1"} }, ErrInvalidInventory, "no interface eth2"},
+		{"missing interface", func(r *Request) { r.Agents[0].Interfaces = []string{"eth1"} }, ErrInvalidInventory, "no agent has interface eth2"},
+		{"pinned to unknown agent", func(r *Request) { r.Config.Network.Ports[0].Location = "agent-z/eth1" }, ErrInvalidInventory, "pinned to agent agent-z"},
+		{"pinned agent lacks interface", func(r *Request) {
+			r.Config.Network.Ports[0].Location = "a/eth1"
+			r.Agents[0].Interfaces = []string{"eth2"}
+		}, ErrInvalidInventory, "agent a has no interface eth1"},
+		{"bad location", func(r *Request) { r.Config.Network.Ports[0].Location = "a/b/c" }, ErrInvalidConfig, "location"},
+		{"seed zero", func(r *Request) {
+			zero := uint64(0)
+			r.Config.Timeline.Seed = &zero
+		}, ErrInvalidConfig, "seed 0 is not allowed"},
+		{"settings of the wrong type", func(r *Request) {
+			r.Config.Modules = map[string]ModuleConfig{"dns": {Settings: map[string]any{"zone_file": 5}}}
+		}, ErrInvalidConfig, "modules.dns.settings"},
+		{"unknown setting", func(r *Request) {
+			r.Config.Modules = map[string]ModuleConfig{"dns": {Settings: map[string]any{"zone_file": "z", "extra": true}}}
+		}, ErrInvalidConfig, "modules.dns.settings"},
+		{"module without a settings schema", func(r *Request) {
+			r.Config.Modules = map[string]ModuleConfig{"http1": {Settings: map[string]any{"zone_file": "z"}}}
+		}, ErrInvalidConfig, "module http1 accepts no settings"},
+		{"settings of an unknown module", func(r *Request) {
+			r.Config.Modules = map[string]ModuleConfig{"nope": {Settings: map[string]any{"a": 1}}}
+		}, ErrUnknownModule, "modules.nope"},
+		{"settings of a module outside the mix", func(r *Request) {
+			r.Scenarios = append(r.Scenarios, Scenario{Module: ModuleRef{Name: "extra"}, Name: "idle", Source: "x"})
+			r.Config.Modules = map[string]ModuleConfig{"extra": {}}
+		}, ErrUnknownModule, "no scenario of the profile mix"},
 		{"unknown scenario", func(r *Request) { r.Config.Profile.Mix[0].Scenario = "http1/nothing" }, ErrUnknownScenario, "profile.mix[0].scenario"},
 		{"ambiguous scenario", func(r *Request) {
 			r.Scenarios = append(r.Scenarios, Scenario{Module: ModuleRef{Name: "web2"}, Name: "web_get", Source: "x"})
@@ -379,6 +577,21 @@ func TestParseConfigRejectsUnknownKeys(t *testing.T) {
 	}
 	if _, err := ParseConfig(nil); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("error %v for an empty document", err)
+	}
+}
+
+func TestParseConfigReadsCriterionWhere(t *testing.T) {
+	cfg, err := ParseConfig([]byte(`apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+criteria:
+  - { metric: sessions.failed, op: "<=", value: 0, where: { application: dns, side: server } }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := cfg.Criteria[0].Where
+	if len(w) != 2 || w["application"] != "dns" || w["side"] != "server" {
+		t.Fatalf("where = %v", w)
 	}
 }
 

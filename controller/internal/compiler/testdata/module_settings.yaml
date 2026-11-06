@@ -1,0 +1,28 @@
+# A module setting that the plan carries for the module. The dns module names
+# the zone file that its server answers from.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: module_settings
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/lo }
+    - { name: server0, location: local/lo }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 16.0.0.0/24, count: 254 }
+    - { name: servers, port: server0, role: server, ipv4: 48.0.0.0/24, count: 1 }
+modules:
+  dns:
+    settings:
+      zone_file: zones/example.test.zone
+profile:
+  basis: sessions
+  mix:
+    - { scenario: dns/resolve, weight: 1 }
+    - { scenario: http1/web_get, weight: 1 }
+load:
+  objective: { type: sessions_per_second, value: 500 }
+  phases:
+    - { name: steady, duration_s: 20, shape: hold }
+timeline: { seed: 3 }

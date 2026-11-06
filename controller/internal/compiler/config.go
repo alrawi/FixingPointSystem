@@ -24,6 +24,14 @@ type Config struct {
 	Load       Load              `yaml:"load" json:"load"`
 	Timeline   Timeline          `yaml:"timeline" json:"timeline"`
 	Criteria   []CriterionConfig `yaml:"criteria" json:"criteria"`
+	// Modules holds the settings of each module by module name.
+	Modules map[string]ModuleConfig `yaml:"modules" json:"modules"`
+}
+
+// ModuleConfig holds the settings that hold for every scenario of one module
+// in the test. The settings schema of the module manifest describes them.
+type ModuleConfig struct {
+	Settings map[string]any `yaml:"settings" json:"settings"`
 }
 
 // Metadata names the test.
@@ -40,7 +48,9 @@ type Network struct {
 	ExternalServers []ExternalConfig `yaml:"external_servers" json:"external_servers"`
 }
 
-// Port is one traffic port at <agent>/<interface>.
+// Port is one traffic port. Its location is <agent>/<interface>, which pins
+// the port to that agent, or <interface> or */<interface>, which spreads the
+// port across every agent that has the interface.
 type Port struct {
 	Name     string `yaml:"name" json:"name"`
 	Location string `yaml:"location" json:"location"`
@@ -102,7 +112,8 @@ type PhaseConfig struct {
 	Shape     string  `yaml:"shape" json:"shape"`
 }
 
-// Timeline holds the seed and the warm up period.
+// Timeline holds the seed and the warm up period. A missing seed makes the
+// compiler choose a random nonzero one, and the minimum is 1.
 type Timeline struct {
 	Seed    *uint64 `yaml:"seed" json:"seed"`
 	WarmupS float64 `yaml:"warmup_s" json:"warmup_s"`
@@ -113,6 +124,9 @@ type CriterionConfig struct {
 	Metric string  `yaml:"metric" json:"metric"`
 	Op     string  `yaml:"op" json:"op"`
 	Value  float64 `yaml:"value" json:"value"`
+	// Where is the label filter of the criterion, for example
+	// {application: dns}. The runs package applies it.
+	Where map[string]string `yaml:"where,omitempty" json:"where,omitempty"`
 }
 
 // ParseConfig decodes one YAML test configuration and rejects unknown keys.

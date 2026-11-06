@@ -1,0 +1,141 @@
+{
+  "planId": "run-0001/agent-a",
+  "runId": "run-0001",
+  "agentId": "agent-a",
+  "testName": "small_pool",
+  "engineApi": "0.2.0",
+  "seed": "5",
+  "topology": "TOPOLOGY_APP_SIM",
+  "backend": "BACKEND_KERNEL",
+  "modules": [
+    {
+      "name": "dns",
+      "version": "0.1.0",
+      "digest": "sha256:68e7a24ce6a1dc3ddc2c8258b98cc842fc07b9ab384237b98e4cb9709568454c"
+    },
+    {
+      "name": "http1",
+      "version": "0.1.0",
+      "digest": "sha256:2773351127bdfbd21d2364b8a808be398ac9eba4ccd7ef475d02287332ded88c"
+    }
+  ],
+  "scenarios": [
+    {
+      "ref": "dns/lookup",
+      "module": "dns",
+      "source": "scenario: lookup\ndescription: One A record query and response over UDP. The payloads encode www.example.test in RFC 1035 wire format.\nvars:\n  server_port: 53\nflows:\n  - id: query\n    module: dns\n    l4: udp\n    client:\n      - connect: { port: \"{{ vars.server_port }}\" }\n      - send: \"{{ hex('12340100000100000000000003777777076578616d706c6504746573740000010001') }}\"\n      - expect: { min_bytes: 12, timeout_ms: 2000 }\n      - close: fin\n    server:\n      - accept: { port: \"{{ vars.server_port }}\" }\n      - expect: { min_bytes: 12, timeout_ms: 2000 }\n      - send: \"{{ hex('12348180000100010000000003777777076578616d706c6504746573740000010001c00c000100010000012c0004c0000201') }}\"\n      - close: fin\n",
+      "digest": "sha256:082bd6140c4bb05a8cb32a5dd9e1f25669049aee72b214ab2b85a797a1b6cd91"
+    },
+    {
+      "ref": "http1/web_get",
+      "module": "http1",
+      "source": "scenario: web_get\ndescription: One TCP connection that issues keepalive GET requests for objects of a fixed size.\nvars:\n  host: www.example.test\n  path: /index.html\n  server_port: 8080\n  requests: 4\n  body_size: 4096\n  user_agent: \"Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1\"\nflows:\n  - id: page\n    module: http1\n    client:\n      - connect: { port: \"{{ vars.server_port }}\" }\n      - loop:\n          count: \"{{ vars.requests }}\"\n          do:\n            - send: \"GET {{ vars.path }} HTTP/1.1\\r\\nHost: {{ vars.host }}\\r\\nUser-Agent: {{ vars.user_agent }}\\r\\nAccept: */*\\r\\n\\r\\n\"\n            - expect: { pattern: \"\\r\\n\\r\\n\", timeout_ms: 5000 }\n            - expect: { bytes: \"{{ vars.body_size }}\", timeout_ms: 5000 }\n      - close: fin\n    server:\n      - accept: { port: \"{{ vars.server_port }}\" }\n      - loop:\n          count: \"{{ vars.requests }}\"\n          do:\n            - expect: { pattern: \"\\r\\n\\r\\n\", timeout_ms: 5000 }\n            - send: \"HTTP/1.1 200 OK\\r\\nServer: fps/0.1\\r\\nContent-Type: text/html\\r\\nContent-Length: {{ vars.body_size }}\\r\\n\\r\\n{{ fill(vars.body_size) }}\"\n      - close: fin\n",
+      "digest": "sha256:5ce7e5a6664c4f5f6e44d3f0253ba90714ba3a1d588c8f7b8785e4683cb7b29b"
+    }
+  ],
+  "mix": [
+    {
+      "id": "web_get",
+      "scenario": "http1/web_get",
+      "weight": 0.6666666666666666
+    },
+    {
+      "id": "lookup",
+      "scenario": "dns/lookup",
+      "weight": 0.3333333333333333
+    }
+  ],
+  "ports": [
+    {
+      "name": "client0",
+      "interfaceName": "eth1"
+    },
+    {
+      "name": "server0",
+      "interfaceName": "eth2"
+    }
+  ],
+  "hostPools": [
+    {
+      "name": "clients",
+      "port": "client0",
+      "role": "HOST_ROLE_CLIENT",
+      "ipv4Prefix": "16.0.0.0/24",
+      "poolCount": 3,
+      "count": 2,
+      "macBase": "02:00:00:00:00:00"
+    },
+    {
+      "name": "servers",
+      "port": "server0",
+      "role": "HOST_ROLE_SERVER",
+      "ipv4Prefix": "48.0.0.0/24",
+      "poolCount": 3,
+      "count": 2,
+      "macBase": "02:00:01:00:00:00"
+    }
+  ],
+  "workers": [
+    {
+      "hosts": [
+        {
+          "pool": "clients",
+          "count": 1
+        },
+        {
+          "pool": "servers",
+          "count": 1
+        }
+      ],
+      "rates": [
+        {
+          "mixEntry": "web_get",
+          "concurrentSessions": 23
+        },
+        {
+          "mixEntry": "lookup",
+          "concurrentSessions": 11
+        }
+      ]
+    },
+    {
+      "workerId": 1,
+      "core": 1,
+      "hosts": [
+        {
+          "pool": "clients",
+          "offset": 1,
+          "count": 1
+        },
+        {
+          "pool": "servers",
+          "offset": 1,
+          "count": 1
+        }
+      ],
+      "rates": [
+        {
+          "mixEntry": "web_get",
+          "concurrentSessions": 22
+        },
+        {
+          "mixEntry": "lookup",
+          "concurrentSessions": 11
+        }
+      ]
+    }
+  ],
+  "load": {
+    "objective": "LOAD_OBJECTIVE_CONCURRENT_SESSIONS",
+    "objectiveValue": 67,
+    "phases": [
+      {
+        "name": "steady",
+        "duration": "30s",
+        "shape": "PHASE_SHAPE_HOLD",
+        "startFraction": 1,
+        "endFraction": 1
+      }
+    ]
+  }
+}
