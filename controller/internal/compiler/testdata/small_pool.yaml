@@ -1,0 +1,25 @@
+# A client pool with three hosts for four workers on two agents. The last worker
+# gets no host, so it gets no rate, and the three other workers carry the
+# whole concurrency objective.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: small_pool
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: eth1 }
+    - { name: server0, location: eth2 }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 16.0.0.0/24, count: 3 }
+    - { name: servers, port: server0, role: server, ipv4: 48.0.0.0/24, count: 3 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: http1/web_get, weight: 2 }
+    - { scenario: dns/lookup, weight: 1 }
+load:
+  objective: { type: concurrent_sessions, value: 100 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: 5 }

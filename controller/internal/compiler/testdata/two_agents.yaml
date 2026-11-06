@@ -7,8 +7,8 @@ metadata:
 topology: app_sim
 network:
   ports:
-    - { name: client0, location: agent-a/eth1, mtu: 1500 }
-    - { name: server0, location: agent-a/eth2 }
+    - { name: client0, location: eth1, mtu: 1500 }
+    - { name: server0, location: eth2 }
   host_pools:
     - { name: clients, port: client0, role: client, ipv4: 10.0.0.0/22, count: 600, gateway: 10.0.0.1, vlan: 100 }
     - { name: servers, port: server0, role: server, ipv4: 172.16.0.0/24, count: 6, mac_base: "02:aa:00:00:00:00", os_profile: linux6 }

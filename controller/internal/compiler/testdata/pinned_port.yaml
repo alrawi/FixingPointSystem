@@ -1,0 +1,28 @@
+# One client pool on a port that is pinned to agent-a, one client pool on a
+# spread port, and a server pool on a bare interface. Agent-b gets neither the
+# pinned port nor its pool, and its workers get no rate for the flow that needs
+# the pinned pool, while the total rate stays as configured.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: pinned_port
+topology: app_sim
+network:
+  ports:
+    - { name: lab0, location: agent-a/eth1 }
+    - { name: users0, location: "*/eth1" }
+    - { name: web0, location: eth2 }
+  host_pools:
+    - { name: lab, port: lab0, role: client, ipv4: 10.20.0.0/24, count: 40 }
+    - { name: users, port: users0, role: client, ipv4: 10.10.0.0/16, count: 400 }
+    - { name: web, port: web0, role: server, ipv4: 172.16.0.0/24, count: 10 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: http1/web_get, weight: 1, client_pool: lab, server_pool: web }
+    - { scenario: http1/web_browse, weight: 3, client_pool: users, server_pool: web }
+load:
+  objective: { type: sessions_per_second, value: 1000 }
+  phases:
+    - { name: steady, duration_s: 60, shape: hold }
+timeline: { seed: 1 }
