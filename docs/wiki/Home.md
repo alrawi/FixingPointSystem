@@ -40,7 +40,7 @@ A new agent reads four pages in order before claiming work.
 | [Gates](Gates.md) | The gate acceptance suites, starting with the Gate 1 suite of QA-04, and how to run and read them |
 | [Controller](Controller.md) | The controller module, its flags, configuration file, logging, health endpoint, REST layer, test compiler, configuration store, module registry, agent manager, and checks |
 | [Engine](Engine.md) | Engine crates, the `SessionIo` seam, and the scenario and template compiler |
-| [Transport](Transport.md) | Transport backends, starting with the kernel TCP backend, its socket options, and its loopback tests |
+| [Transport](Transport.md) | Transport backends, starting with the kernel TCP backend, its socket options, and its loopback tests, and the TLS module of TRN-04 |
 | [Hosts](Hosts.md) | Host pool address mapping, slicing by agent and worker, and seeded host selection |
 | [Contracts](Contracts.md) | Contract files and versions, the agent initiated control protocol, and the contract checks |
 | [Agent](Agent.md) | The agent binary, its standalone `run` mode, plan loading, and module digests |
@@ -63,4 +63,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phases 0 and 1 are complete, and the owner signed off Gate 1 on 2026-11-05. Batch 10 merged CON-07, CON-08, CON-09, CTL-18, CTL-20, ENG-14, and MOD-19, and QA-08 runs the S1 benchmark every night on the owner host against its own baseline. Phase 2 is open: its 55 packages are seeded as issues, and five integration follow ups (CON-11, AGT-07, ENG-15, CTL-22, CTL-23) wire the Phase 1 contract changes end to end. The coordinator updates this line after each batch.
+Phases 0 and 1 are complete, and the owner signed off Gate 1 on 2026-11-05. Phase 2 batch 11 merged the contract changes CON-05 (agent control protocol 0.2.0) and CON-10 (scenario contract v0.3 with profiles and distributions), the TLS module TRN-04, the content generators MOD-03, the WebAssembly extension host ENG-11, and the throughput calibration loop CTL-21. The qcow2 image IMG-01 waits for its build and boot test on the owner host. QA-08 runs the S1 benchmark every night on the owner host. The coordinator updates this line after each batch.

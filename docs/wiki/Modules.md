@@ -11,6 +11,7 @@ The table lists the modules that exist today.
 | Module | Native crate | Scenarios | Fixture |
 |---|---|---|---|
 | [`http1`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/http1) | `fps-module-http1` with `http1.request` and `http1.response` | `single_fetch`, `keepalive_browse`, `upload`, `upload_chunked`, `http10_fetch`, `http10_keepalive` | 120 sessions, nDPI ratio 1.0 for HTTP |
+| [`dns`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/dns) | `fps-module-dns` with the DNS client and server, and the `zone_file` setting of MOD-19 | `lookup_a`, `lookup_aaaa`, `lookup_cname`, `lookup_mx`, `lookup_txt`, `nxdomain`, `tcp_fallback` | Committed capture scored by nDPI and tshark |
 | [`content`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/content) | `fps-module-content` with `content.html`, `content.json`, `content.text`, `content.email`, and `content.binary` | none, other modules call its functions | none, the module speaks no protocol |
 
 ## The http1 module
