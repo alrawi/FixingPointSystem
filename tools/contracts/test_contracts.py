@@ -623,3 +623,61 @@ def test_openapi_summary_property_needs_metric():
     report = v.Report()
     v.check_openapi_metrics(doc, v.OPENAPI, report, v.default_catalog())
     assert any("goodput_bps" in f.path for f in report.errors)
+
+
+# --- behavior profiles and distributions (scenario contract v0.3) -----------
+
+@pytest.fixture()
+def web_profile() -> dict:
+    return v.load_yaml(EXAMPLES / "modules/http1/scenarios-pending/web_profile.yaml")
+
+
+def test_web_profile_example_is_valid_and_checked(web_profile, http_manifest):
+    assert not check_scenario(web_profile, http_manifest).findings
+
+
+def test_pending_scenarios_are_checked_by_the_default_run():
+    assert not v.run([EXAMPLES / "modules"], [], None).errors
+
+
+def test_undefined_profile_fails(web_profile, http_manifest):
+    web_profile["profiles"] = {"firefox": {"Accept-Language": "en"}}
+    assert any("undefined profile 'chrome'" in m for m in messages(check_scenario(web_profile, http_manifest)))
+
+
+def test_profile_values_take_no_line_breaks(web_profile):
+    report = v.Report()
+    web_profile["profiles"]["chrome"]["Accept-Language"] = "en\r\nX: y"
+    assert not v.schema_errors(v.load_schema("scenario.schema.json"), web_profile, report, Path("s.yaml"))
+
+
+@pytest.mark.parametrize("text, fragment", [
+    ("{{ dist.pareto(1.2, 4096) }}", None),
+    ("{{ dist.pareto(1, 4096, cap=65536) }}", None),
+    ("{{ dist.exponential(mean=20) }}", None),
+    ("{{ dist.uniform(10, 20) }}", None),
+    ("{{ dist.zipf(1.2) }}", "unknown distribution 'zipf'"),
+    ("{{ dist.pareto(1.2) }}", "misses required parameter 'scale'"),
+    ("{{ dist.pareto(0, 4096) }}", "'alpha' of 'dist.pareto' must be positive"),
+    ("{{ dist.uniform(20, 10) }}", "low greater than high"),
+    ("{{ dist.uniform(-1, 10) }}", "'low' of 'dist.uniform' must not be negative"),
+    ("{{ dist.pareto('a', 4096) }}", "takes float, got text"),
+    ("{{ dist.pareto }}", "call it with parentheses"),
+    ("{{ profiles }}", "must have the form profiles.<name>"),
+])
+def test_dist_calls(text, fragment):
+    issues = [i.message for i in v.check_template(text, v.TemplateScope(profiles={"chrome"}))]
+    if fragment is None:
+        assert issues == []
+    else:
+        assert any(fragment in m for m in issues)
+
+
+def test_dist_result_is_int():
+    scope = v.TemplateScope()
+    assert v.check_template("{{ fill(dist.pareto(1.2, 4096)) }}", scope) == []
+    assert v.check_template("{{ dist.pareto(dist.uniform(1, 2), 4096) }}", scope) == []
+
+
+def test_dist_and_profiles_are_reserved_module_names():
+    assert {"dist", "profiles"} <= v.RESERVED_ROOTS

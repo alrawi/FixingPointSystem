@@ -672,3 +672,37 @@ scrape_configs:
 ## Run ids
 
 Bug #128 gave run ids their own prefix. The run orchestrator used `store.RandomID` as the default of `runs.Config.NewID`, so run ids started with `cfg_` and read like configuration ids in logs, reports, and the API. The package `runs` now has its own `runs.RandomID`, which returns `run_` and 24 random hex digits, and `runs.New` uses it when `NewID` is nil. The constant `runs.RunIDPrefix` names the prefix. Every id matches the contract pattern `^[A-Za-z0-9_-]{1,64}$`, and the OpenAPI document sets no prefix, so the change touches no contract. Clients treat run ids as opaque strings, and the end to end script `engine/fps-agent/tests/controller_e2e.sh` reads the id from the response and only prints it. `TestDefaultRunIDsCarryRunPrefix` checks the generator and a run that the orchestrator creates with the default generator.
+
+## Throughput rate calibration
+
+The package `internal/runs/calibrate/` (CTL-21) applies decision D12 item 10. The compiler turns a `throughput_bps` objective into session rates with the `expected_bytes` estimate of the module manifest, so a session rate is `objective / (8 * mean bytes per session)` (see `splitRates` in `internal/compiler/`). When the estimate is wrong, the run misses the objective by the same ratio. The calibration measures the real bytes per session during the run and returns a `Factor` that scales every compiled session rate. The package uses only the standard library, reads no clock, and uses no random source, and the orchestrator does not call it yet.
+
+### Interface
+
+| Item | Meaning |
+|---|---|
+| `calibrate.New(Config)` | Validates the configuration and returns a `State` with a factor of one, which leaves the compiled rates unchanged |
+| `State.Update([]Sample)` | Folds one measurement window into the state and returns the next state and a `Result`. The receiver stays unchanged, so the same inputs always give the same outputs |
+| `Config` | `ObjectiveBps`, and one `Entry` per mix entry with its `ID`, session `Weight`, and the compiler's `ExpectedBytes`. The tuning fields `MaxStep`, `DeadBand`, `MinSessions`, `Forget`, and `MaxFactor` take the defaults below when zero |
+| `Sample` | For one mix entry and one window: `Bytes` that the completed sessions moved in both directions, and the number of `Sessions` |
+| `Result` | `Factor`, `Changed`, the unbounded `Target`, the implied total `SessionsPerSecond`, and the bytes per session estimate of each entry |
+
+### Method
+
+The calibration estimates a property of the traffic, the bytes per session, and not the achieved throughput. It therefore has no feedback delay, and the ramp up of the agents cannot make it oscillate. Each update decays the pooled byte and session sums of every entry by `Forget` and adds the window. An entry whose pooled session count reaches `MinSessions` replaces its manifest estimate with pooled bytes divided by pooled sessions. The target factor is the ratio of the compiled to the measured weighted mean bytes per session. Three bounds then limit the move to the target.
+
+| Bound | Default | Effect |
+|---|---|---|
+| `MaxStep` | 0.5 | One update changes the factor by at most a factor of 1.5, up or down, so a 4x wrong estimate needs four updates and never overshoots without noise |
+| `DeadBand` | 0.015 | The factor holds while the target stays within 1.5 percent. A move against the direction of the previous move needs 2.25 percent, which stops zigzag around a settled factor |
+| `MaxFactor` | 64 | The factor stays within 1/64 and 64 |
+| `MinSessions` | 20 | A window with few sessions does not replace the manifest estimate |
+| `Forget` | 0.97 | The effective window is about 33 updates, which damps noise and still follows a slow change of the mix |
+
+### What the orchestrator must do
+
+The orchestrator calls `calibrate.New` when a run with a `throughput_bps` objective starts, with the entries and `ExpectedBytes` values that it passed to the compiler. The compiler already normalizes weights, and the package normalizes again. After each measurement window, for example every 5 to 10 seconds while the run is in its steady phase, it builds one `Sample` per mix entry from the metric deltas of that window and calls `Update`. We suggest the client side counters of the scenario view, which are `bytes.tx` plus `bytes.rx` and `sessions.succeeded`, so that each payload byte counts once. When `Result.Changed` is true, it multiplies every `SessionsPerSecond` of the compiled worker rates of that entry by `Result.Factor` and sends the new rates to the agents. That message is `UpdateRates` of CON-05, which is in progress, and the agent handler is AGT-05. Concurrency objectives and `sessions_per_second` objectives need no calibration.
+
+### Tests
+
+`calibrate_test.go` simulates the closed loop with noisy sessions (a standard deviation of 40 percent per session and 5 percent per window) for estimates of 0.25, 0.5, 1, 2, and 4 times the true bytes per session, over 40 seeds each. Every run stays within 5 percent of the objective from update 25 on, every step stays within the bound, settled steps stay within 5 percent, and direction reversals stay few. A noise free run moves monotonically, a step test checks the exact 1.5x sequence, and further tests cover mixes of entries with unnormalized weights, the factor bound, the dead band, the minimum session count, immutability of the state, and every validation error.
