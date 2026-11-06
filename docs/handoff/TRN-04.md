@@ -10,7 +10,7 @@
 | Branch | `wp/TRN-04` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 50% (3 of 6 plan steps) |
+| Progress | 95% (6 of 6 plan steps, pull request next) |
 | Current holder | claude-t04b01, lease until 2026-11-06T23:01:05Z, renewed at each checkpoint |
 | Last verified commit | none |
 
@@ -27,21 +27,23 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Crate skeleton, authority, client and server profiles, resumption
 - [x] 2. Async session wrapper over SessionIo, handshake reports, key log
 - [x] 3. Unit and loopback tests for versions, ALPN, SNI, groups, ciphers, resumption
-- [ ] 4. Handshake rate benchmark against the S2 results
-- [ ] 5. Capture and key log test with tshark check
-- [ ] 6. README, wiki page, log entry, checks, pull request
+- [x] 4. Handshake rate benchmark against the S2 results
+- [x] 5. Capture and key log test with tshark check
+- [x] 6. README, wiki page, log entry, checks, pull request
 
 ## Done and verified
+
+Steps 4 to 6: `modules/tls/bench/run_s2.sh` style run, three alternating rounds with the S2 spike: lowest median ratio 0.922 over 30 figures, all within 5% of phase 0. Raw files in `modules/tls/results/phase2-sandbox/`. Wiki section, README, and log entry written; `plan.py check`, `render --check`, `lint`, `cargo fmt --check`, and clippy pass.
 
 Steps 1 to 3. `cargo test -p fps-module-tls --offline` passes 7 unit tests, 14 session tests (versions, ClientHello order of ciphers, groups, ALPN, SNI, resumption on 1.2 and 1.3, alert names, key log lines, one byte reads, abort, kernel TCP), and 2 capture tests. The Python capture test decrypts a TLS 1.3 sample capture with the exported keys and fails with a corrupted key log. `cargo clippy -p fps-module-tls --all-targets -- -D warnings` is clean.
 
 ## Remaining
 
-Steps 4 to 6: run the handshake benchmark against the S2 spike, document the numbers, README, wiki page, log entry, checks, pull request. The tshark test skips here because tshark is missing.
+Open the pull request and wait for CI. The tshark test skips in the rust job because tshark is not installed there, see the shared page notes of the log entry for the workflow that completes it.
 
 ## Next action
 
-Build `cargo build --release -p fps-spike-tls -p fps-module-tls --example handshake_bench` with CARGO_BUILD_JOBS=1 and run both binaries alternately with `--duration 3`.
+Open the pull request against main with the acceptance evidence, then poll CI.
 
 ## Blockers and open questions
 
@@ -55,7 +57,7 @@ Write "none" or name each blocker with a link to its issue.
 
 ## Pitfalls
 
-The test `large_transfers_survive_one_byte_reads_and_back_pressure` found the ticket deadlock above. Do not use pkill in this sandbox, the classifier denies it.
+The test `large_transfers_survive_one_byte_reads_and_back_pressure` found the ticket deadlock above. Do not use pkill in this sandbox, the classifier denies it. `cargo build --example X -p other` builds examples only, so build the spike binary in its own command.
 
 ## Verify the current state
 

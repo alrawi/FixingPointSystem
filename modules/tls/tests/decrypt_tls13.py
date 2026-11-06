@@ -12,7 +12,6 @@ Usage: decrypt_tls13.py CAPTURE.pcap KEYS.log
 Exit status 0 means at least one record decrypted, 1 means none did.
 """
 
-import hashlib
 import hmac
 import struct
 import sys
@@ -30,7 +29,8 @@ SUITES = {
 
 def read_streams(path):
     """Return the TCP payload of the client and the server, in capture order."""
-    data = open(path, "rb").read()
+    with open(path, "rb") as f:
+        data = f.read()
     if data[:4] != b"\xd4\xc3\xb2\xa1":
         raise SystemExit("not a little endian classic pcap")
     pos, streams = 24, {True: b"", False: b""}
@@ -62,12 +62,16 @@ def expand_label(hash_name, secret, label, length):
 
 
 def keys_for(hash_name, key_len, secret):
-    return expand_label(hash_name, secret, b"key", key_len), expand_label(hash_name, secret, b"iv", 12)
+    return expand_label(hash_name, secret, b"key", key_len), expand_label(
+        hash_name, secret, b"iv", 12
+    )
 
 
 def read_keylog(path, client_random):
     secrets = {}
-    for line in open(path):
+    with open(path) as f:
+        lines = f.readlines()
+    for line in lines:
         parts = line.split()
         if len(parts) == 3 and parts[1] == client_random.hex():
             secrets[parts[0]] = bytes.fromhex(parts[2])
@@ -76,7 +80,9 @@ def read_keylog(path, client_random):
 
 def decrypt_direction(stream, suite, handshake_secret, traffic_secret):
     hash_name, key_len, aead = SUITES[suite]
-    stages = [keys_for(hash_name, key_len, s) for s in (handshake_secret, traffic_secret)]
+    stages = [
+        keys_for(hash_name, key_len, s) for s in (handshake_secret, traffic_secret)
+    ]
     stage, seq, out = 0, 0, []
     for header, body in records(stream):
         if header[0] != 23:
@@ -108,7 +114,12 @@ def main():
     sid_len = server[43]
     suite = struct.unpack_from(">H", server, 44 + sid_len)[0]
     secrets = read_keylog(keylog, client_random)
-    needed = ("CLIENT_HANDSHAKE_TRAFFIC_SECRET", "CLIENT_TRAFFIC_SECRET_0", "SERVER_HANDSHAKE_TRAFFIC_SECRET", "SERVER_TRAFFIC_SECRET_0")
+    needed = (
+        "CLIENT_HANDSHAKE_TRAFFIC_SECRET",
+        "CLIENT_TRAFFIC_SECRET_0",
+        "SERVER_HANDSHAKE_TRAFFIC_SECRET",
+        "SERVER_TRAFFIC_SECRET_0",
+    )
     if not all(n in secrets for n in needed):
         print("the key log lacks the secrets of this ClientHello", file=sys.stderr)
         return 1

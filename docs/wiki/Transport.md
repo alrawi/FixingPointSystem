@@ -1,6 +1,6 @@
 # Transport
 
-This page describes the transport backends of the TRN workstream, which implement the `SessionIo` and `DatagramIo` seams of [Engine](Engine.md) over real networks. TRN-01 created the first backend, the kernel TCP backend in `engine/fps-backend-kernel`. Later TRN packages add kernel UDP, operating system profiles, TLS, and the AF_XDP and DPDK backends that the [Implementation Plan](Implementation-Plan.md#target-repository-layout) lists.
+This page describes the transport backends of the TRN workstream, which implement the `SessionIo` and `DatagramIo` seams of [Engine](Engine.md) over real networks. TRN-01 created the first backend, the kernel TCP backend in `engine/fps-backend-kernel`. Later TRN packages add kernel UDP, operating system profiles, TLS, and the AF_XDP and DPDK backends that the [Implementation Plan](Implementation-Plan.md#target-repository-layout) lists. TRN-04 added the TLS wrapper, see [TLS module](#tls-module).
 
 ## Crates
 
@@ -8,7 +8,8 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 
 | Crate | Contents | Next package |
 |---|---|---|
-| [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `Connector`, `KernelListener`, and `KernelStream`, which implement `SessionIo` over kernel TCP sockets, the operating system profiles of TRN-03, and `KernelDatagram`, `KernelDatagramListener`, and the two datagram openers of TRN-02, see [Kernel UDP backend](#kernel-udp-backend) | TRN-04 adds TLS |
+| [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `Connector`, `KernelListener`, and `KernelStream`, which implement `SessionIo` over kernel TCP sockets, the operating system profiles of TRN-03, and `KernelDatagram`, `KernelDatagramListener`, and the two datagram openers of TRN-02, see [Kernel UDP backend](#kernel-udp-backend) | TRN-04 added TLS, see below |
+| [`fps-module-tls`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/tls) | `TlsConnector`, `TlsAcceptor`, and `TlsSession`, which wrap any `SessionIo` in TLS 1.2 or 1.3, the client and server profiles, `RunAuthority`, and `NssKeyLog`, see [TLS module](#tls-module) | TRN-05 adds browser fingerprint profiles |
 
 The `test-eng` target and the `rust` job of `ci.yml` run the tests of every crate under `engine/`, so the backend needs no make file or workflow of its own.
 
@@ -222,3 +223,93 @@ The file `tests/udp_loopback.rs` holds them, and the unit tests cover the queue 
 | `MSG_TRUNC` and the stray handling work only on Linux | Other systems return only the copied bytes, which the crate does not target |
 | The listener holds at most 1,024 datagrams of new peers and each session at most 64 | Datagrams beyond them are dropped, as a full kernel queue drops them |
 | A server session socket replies from the listener address | A listener on the unspecified address would reply from the address of the route, so we bind specific pool addresses |
+
+## TLS module
+
+TRN-04 added the crate `fps-module-tls` in `modules/tls/native`. It wraps a `SessionIo` in TLS with rustls 0.23 and the ring crypto provider, the same provider and features as spike S2. A wrapped session is again a `SessionIo`, so a flow program runs over it unchanged, and `abort` resets the transport below the session. The workspace glob `modules/*/native` picks the crate up, and `cargo test --workspace` in the `rust` job of `ci.yml` runs its tests. The README at [`modules/tls/README.md`](https://github.com/alrawi/FixingPointSystem/blob/main/modules/tls/README.md) lists the layout and the commands.
+
+### Profiles
+
+A `ClientProfile` fixes what the ClientHello carries, and a `ServerProfile` fixes what the server accepts. Every field has a default, so `ClientProfile::default()` offers TLS 1.3 and 1.2 with the provider defaults.
+
+| Field | Client | Server | Effect |
+|---|---|---|---|
+| `versions` | yes | yes | TLS 1.2, 1.3, or both |
+| `send_sni` | yes | | The `server_name` extension. Rustls sends none for an IP address, whatever the flag says |
+| `alpn` | yes | yes | Protocol ids in preference order. A server with a non empty list that shares none with a client that offers ids fails with `no_application_protocol` |
+| `groups` | yes | yes | Key exchange groups in order, from `x25519`, `secp256r1`, and `secp384r1`. The ClientHello lists them in this order and the first one supplies the key share |
+| `cipher_suites` | yes | yes | The nine suites of the ring provider in order. Suites of a version that is not enabled drop out |
+| `use_server_cipher_order` | | yes | The server picks by its own order and not the client's |
+| `resumption` | `Disabled` or `InMemory` | `Disabled`, `Tickets`, or `SessionCache` | See below |
+| `key_log` | yes | yes | Receives the secrets of every handshake |
+
+`CipherSuite`, `Group`, and `TlsVersion` implement `FromStr`, so a module can parse names from its settings. The test `client_hello_follows_the_profile` records the first bytes of a handshake, parses the ClientHello, and checks the order of suites, groups, ALPN ids, versions, the key share group, and the SNI against the profile. TRN-05 builds the browser profiles on these fields, and the limits below name what a browser order needs beyond them.
+
+### Certificates
+
+`RunAuthority::generate` makes an ECDSA P-256 authority with a fresh key, and `issue(names, LeafKey)` signs a server certificate for DNS names with the key type `EcdsaP256`, `EcdsaP384`, `Ed25519`, or `RsaPem`. The ring provider cannot generate RSA keys, so `RsaPem` takes a PKCS#8 PEM key that the caller made, for example with `openssl genpkey`, as spike S2 does. The chain holds the leaf and the authority. `root_store` returns a store that trusts only the authority of the run, so a client verifies the server as a browser would, and a client of another run fails with `unknown_ca`. Key generation draws from the system random source, which no run seed controls, so certificates differ between runs by design.
+
+### Sessions and reports
+
+`TlsConnector::connect(io, server_name)` and `TlsAcceptor::accept(io)` run the handshake and return the session. Each session carries a `HandshakeReport` with the side, version, IANA cipher suite name, negotiated group, ALPN id, SNI, whether the handshake resumed, and its duration on the Tokio clock. These values feed `tls.handshakes`, `tls.resumptions`, and `tls.handshake_time`, and the `side` of the report holds the values of the catalog's `side` label.
+
+A failure is a `TlsError::Handshake` that names the side and peer, keeps the rustls error behind `source`, and carries the alerts as the lower snake case names of the `alert` label: `alert_received` for `tls.alerts.rx` and `alert_sent` for `tls.alerts.tx`. `failure_reason` returns `tls_failure`. Rustls sends some alerts encrypted, so `alert_sent` comes from the plaintext record when there is one and from the error otherwise, and it covers `unknown_ca`, `bad_certificate`, `certificate_expired`, `handshake_failure`, `no_application_protocol`, and `bad_record_mac`. The module does not depend on `fps-stats`. The interpreter or runtime that owns the counters calls `TransportCounters::tls_handshake`, `tls_resumption`, and `tls_handshake_failure` from the report and the error.
+
+The session wrapper is written directly over `rustls::Connection`, so the module needs no `tokio-rustls`. Four behaviors follow from it.
+
+1. The wrapper flushes pending records before it waits for more ciphertext, so a key update or an alert never waits behind a read.
+2. The last handshake flight goes out in full, except the two session tickets of a TLS 1.3 server, which go out as far as the transport takes them. The next read, write, flush, or shutdown sends the rest. Waiting for them deadlocks two peers over a transport whose buffer is smaller than the tickets, and the test `large_transfers_survive_one_byte_reads_and_back_pressure` found this with a 37 byte pipe.
+3. A TLS 1.3 client stores its tickets when it reads them, which is with its next read after the handshake. A client that closes right after the handshake therefore does not resume next time.
+4. A transport that ends without `close_notify` reads as end of stream, because many servers close that way. `shutdown` sends `close_notify` and then shuts the transport down.
+
+### Resumption
+
+A connector owns its resumption store, so every session of one connector to the same server name can resume, and a run shares one connector per client profile. The test `resumption_follows_the_profiles_on_both_versions` shows the first handshake of a series as full and the later ones as resumed, with server tickets and with a server session cache on both versions, and shows no resumption when the client store or the server policy is off. A new connector starts with an empty store.
+
+### Key log
+
+`NssKeyLog` implements the rustls `KeyLog` trait and writes one line per secret in the NSS format `LABEL <client random> <secret>`, in memory or appended to a file with one write per line. `NssKeyLog::from_env` reads `SSLKEYLOGFILE` for the edge of a process. TLS 1.3 handshakes write `CLIENT_HANDSHAKE_TRAFFIC_SECRET`, `SERVER_HANDSHAKE_TRAFFIC_SECRET`, `CLIENT_TRAFFIC_SECRET_0`, `SERVER_TRAFFIC_SECRET_0`, and `EXPORTER_SECRET`, and TLS 1.2 handshakes write `CLIENT_RANDOM`. The test `key_log_lines_match_the_handshake` checks that every line names the ClientHello random of the recorded handshake. A key log file holds the keys of every session it saw, so treat it like a private key and keep it out of commits.
+
+### Capture and decryption tests
+
+`modules/tls/tests/capture.rs` runs one HTTP exchange over TLS 1.3 and one over TLS 1.2 on in memory sessions with a recording wrapper, writes the bytes as a classic pcap of one TCP connection to port 443 with a three way handshake, and writes the key log next to it in the target temp directory of cargo. Two tests then check the keys.
+
+| Test | Needs | Check |
+|---|---|---|
+| `tshark_decrypts_captures_with_exported_keys` | `tshark` 3.0 or newer | `tshark -r <pcap> -o tls.keylog_file:<keys> -Y http.request -T fields -e http.request.uri` prints `/fps-tls-sample`, the response filter prints `200`, and the same command without the key log prints nothing |
+| `python_decrypts_a_tls13_capture_with_exported_keys` | `python3` with `cryptography` | `tests/decrypt_tls13.py` takes the ClientHello random from the capture, looks up its secrets in the key log, derives the record keys as RFC 8446 section 7.3 describes, and decrypts both directions. A key log with one flipped digit per secret decrypts nothing |
+
+The Python test passed in the sandbox of this package, so the key log format and the capture bytes work with an implementation that shares no code with rustls. The tshark test could not run there because tshark is not installed, and it skips itself where tshark is missing. A job that has tshark runs it with `FPS_REQUIRE_CAPTURE_TOOLS=1 cargo test -p fps-module-tls --test capture`, which turns a missing tool into a failure. The `realism` workflow already installs tshark through `realism/ci/install-tools.sh`, so that command as a step there, or in a job that runs `apt-get install tshark`, completes the check. Both files live outside the paths of TRN-04.
+
+### Handshake rates
+
+The benchmark `handshake_bench` repeats the method of spike S2. A client and a server run in memory on one thread, the calls of each side are timed separately, the server presents a leaf and authority chain, the client verifies it, TLS 1.3 handshakes include the delivery of the tickets, and every profile of S2 runs. The only difference from the spike is that the rustls configurations come from the module's profiles. We ran the spike and the module in alternation, three rounds of 3 seconds per profile, on the same machine, so that drift of the shared sandbox hits both sides. The table lists handshakes per second on one core for both sides together, as the median of the three rounds. The phase 0 column holds the figures of `spikes/s2-tls/RESULTS.md`, which came from another build on the same machine type.
+
+| TLS | Leaf key | Group | Mode | Phase 0 | Spike now | Module | Module / spike |
+|---|---|---|---|---|---|---|---|
+| 1.3 | ECDSA P-256 | X25519 | Full | 2,390 | 2,762 | 2,861 | 1.036 |
+| 1.3 | ECDSA P-256 | X25519 | Resumed | 4,404 | 4,606 | 4,865 | 1.056 |
+| 1.2 | ECDSA P-256 | X25519 | Full | 2,976 | 3,055 | 3,192 | 1.045 |
+| 1.2 | ECDSA P-256 | X25519 | Resumed | 33,459 | 33,464 | 33,449 | 1.000 |
+| 1.3 | ECDSA P-256 | secp256r1 | Full | 2,761 | 2,622 | 2,630 | 1.003 |
+| 1.3 | RSA 2048 | X25519 | Full | 1,080 | 1,078 | 1,086 | 1.007 |
+| 1.3 | RSA 2048 | X25519 | Resumed | 4,407 | 4,804 | 4,812 | 1.002 |
+| 1.3 | RSA 2048 | secp256r1 | Full | 1,078 | 1,100 | 1,053 | 0.958 |
+| 1.2 | RSA 2048 | X25519 | Full | 997 | 1,158 | 1,079 | 0.932 |
+| 1.2 | RSA 2048 | X25519 | Resumed | 30,078 | 32,212 | 31,553 | 0.980 |
+
+Over all 30 client, server, and both sides figures, the lowest median ratio to the spike is 0.922, for the client side of TLS 1.2 with RSA, and 24 of the 30 ratios are 0.98 or higher. Against the phase 0 figures every one of the 30 medians lies at 0.95 or higher, and the lowest is TLS 1.3 with ECDSA and secp256r1. The acceptance limit of 0.90 therefore holds in this sandbox, but the sandbox is noisy. It has two shared vCPUs, other builds ran beside the benchmark, and the spike alone varies by 6% between its own rounds, for example from 5,020 to 5,707 client handshakes per second for TLS 1.2 with RSA. The ratio of the medians is the figure to trust and not a single run, and the sandbox cannot show a loss smaller than that noise. The owner host can repeat the comparison with `modules/tls/bench/run_s2.sh`, which builds both binaries, alternates them, and exits with status 1 when a median ratio falls below 0.90. The raw files of this run are in `modules/tls/results/phase2-sandbox/`.
+
+The async wrapper costs more than the profile code. `handshake_bench --mode session` runs the full `TlsConnector` and `TlsAcceptor` over an in memory `SessionIo` pair on a current thread runtime, with one byte from the server after each handshake so that TLS 1.3 clients read their tickets, and reports the rate of both sides together. One run in the sandbox gave 2,715 for TLS 1.3 full with ECDSA (5% below the in memory method), 2,713 for TLS 1.2 full with ECDSA (15% below), 4,691 for TLS 1.3 resumed (4% below), and 28,703 for TLS 1.2 resumed with ECDSA (14% below). The difference covers the allocation of the pipe and the buffers, the task switches of the runtime, and the application byte. A single run is noisy, so treat these as an upper bound of the wrapper cost. The wrapper matters most for resumed TLS 1.2 handshakes, which cost about 30 microseconds, while a full handshake costs 300 to 900 microseconds and a kernel TCP session adds more than the wrapper does.
+
+### Limits
+
+| Limit | Reason |
+|---|---|
+| No client certificates, no 0-RTT, and no custom certificate verifier | The first version verifies the server against the run authority and offers no mutual TLS. A package that needs them extends the profiles |
+| No post quantum groups, AES-CCM, or CBC suites | The ring provider does not implement them |
+| The ClientHello extension order is rustls's | Rustls fixes the extension order and adds no GREASE, so a profile that must match a browser fingerprint needs more than the fields here, which TRN-05 investigates |
+| A TLS 1.3 server flushes its tickets lazily | See the session behaviors above |
+| A transport that ends without `close_notify` reads as a clean end | Truncation is not an error, which suits servers that close this way |
+| `alert_sent` is known only for plaintext alerts and for errors that imply one | Rustls sends the other alerts encrypted and does not report them |
+| Certificate and key generation use the system random source | No run seed controls them |

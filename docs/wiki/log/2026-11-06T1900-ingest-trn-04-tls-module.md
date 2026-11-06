@@ -1,0 +1,14 @@
+## [2026-11-06] ingest | TRN-04 TLS transport module
+
+The crate `fps-module-tls` in `modules/tls/native` wraps any `SessionIo` in TLS 1.2 or 1.3 with rustls and the ring provider, the combination of spike S2. It has client and server profiles for versions, SNI, ALPN, key exchange groups, and cipher suite order, a `RunAuthority` that issues server certificates per run, resumption through a connector that owns its ticket store, handshake reports for the `tls.*` metrics and the `side` label, error values that carry the `alert` label names, and an `NssKeyLog` for the SSLKEYLOGFILE format. The session wrapper is written over `rustls::Connection`, so the crate needs no `tokio-rustls`, and it adds only `thiserror` to the dependencies of the spike, which the workspace already uses.
+
+The benchmark `handshake_bench` repeats the method of spike S2. Three alternating rounds with the spike on the same sandbox gave a lowest median ratio of 0.922 over 30 figures, and every figure lies within 5% of the phase 0 results. The sandbox varies by 6% on its own, so the owner host can repeat the comparison with `modules/tls/bench/run_s2.sh`. A capture test writes a pcap with its key log for TLS 1.2 and 1.3. A Python script decrypts the TLS 1.3 capture with the exported keys and fails on a corrupted key log, and the tshark test checks the same capture where tshark is installed. We described the module, its measurements, and its limits in [Transport](../Transport.md#tls-module).
+
+### Shared page notes
+
+- [Testing](../Testing.md): the `test-eng` row names the crates under `engine/`, and the crate `fps-module-tls` runs in `cargo test --workspace` of the `rust` job only. A row for `modules/tls` could list the commands of its README, including `FPS_REQUIRE_CAPTURE_TOOLS=1 cargo test -p fps-module-tls --test capture`.
+- `.github/workflows/`: the tshark test of `tests/capture.rs` skips itself in the `rust` job, which has no tshark. A new workflow `mod-tls.yml` that copies the install step of `mod-dns.yml` (`apt-get install -y tshark`, with the `wireshark-common` debconf line) and runs `FPS_REQUIRE_CAPTURE_TOOLS=1 cargo test -p fps-module-tls --test capture` on changes to `modules/tls/**` and `engine/**` completes acceptance item 2 in CI. Both ends are outside the paths of TRN-04.
+- `mk/`: no make target runs `modules/tls/bench/run_s2.sh` or the capture test. A `mk/mod-tls.mk` could register `test-mod-tls` for the cargo tests and `bench-tls` for the script.
+- [Home](../Home.md): the Transport row could mention TLS next to the kernel backend.
+- The root `Cargo.lock` gained the entry of `fps-module-tls`, with dependencies that the workspace already locks.
+- [Implementation Plan](../Implementation-Plan.md) and TRN-05: the ClientHello extension order is fixed by rustls and it sends no GREASE, so a JA4 match to browsers may need more than the profile fields, as the limits table of the Transport page notes.
