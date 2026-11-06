@@ -218,7 +218,7 @@ VALUE_TYPES = ("int", "float", "boolean", "text", "bytes", "any")
 
 # Template roots that are not module names. A module may not take one of
 # these names, because a template could not tell the two apart.
-RESERVED_ROOTS = {"vars", "session", "last", "true", "false"}
+RESERVED_ROOTS = {"vars", "session", "last", "true", "false", "profiles", "dist"}
 
 # Calls may nest at most this deep, counting the outermost call as 1.
 MAX_CALL_DEPTH = 8
@@ -248,6 +248,25 @@ CORE_FUNCTIONS: dict[str, FunctionSig] = {
     "hex": FunctionSig("hex", (Param("s", "text"),), "bytes"),
     "rand_int": FunctionSig("rand_int", (Param("a", "int"), Param("b", "int")), "int"),
 }
+
+# Distribution functions of scenario contract v0.3 (decision D12 item 18). They
+# need no manifest: the engine draws from the seeded generator and rounds to an
+# integer, then clamps the result to cap, which defaults to DIST_DEFAULT_CAP.
+DIST_DEFAULT_CAP = 2**31 - 1
+
+DIST_FUNCTIONS: dict[str, FunctionSig] = {
+    "pareto": FunctionSig("pareto", (Param("alpha", "float"), Param("scale", "float"),
+                                     Param("cap", "int", False)), "int"),
+    "lognormal": FunctionSig("lognormal", (Param("mu", "float"), Param("sigma", "float"),
+                                           Param("cap", "int", False)), "int"),
+    "exponential": FunctionSig("exponential", (Param("mean", "float"), Param("cap", "int", False)), "int"),
+    "uniform": FunctionSig("uniform", (Param("low", "float"), Param("high", "float")), "int"),
+}
+
+# Parameters that a literal argument must keep positive, and the ones that must
+# not be negative.
+DIST_POSITIVE = {"alpha", "scale", "sigma", "mean", "cap"}
+DIST_NON_NEGATIVE = {"low", "high"}
 
 # Upper bound of the UDP payload over IPv4, and the default datagram limit of
 # an expect on a UDP flow.
@@ -302,6 +321,7 @@ class TemplateScope:
     modules: dict[str, dict[str, FunctionSig] | None] | None = None
     module_name: str | None = None
     last: bool = True
+    profiles: set[str] = field(default_factory=set)
 
 
 def _tokenize(text: str) -> list[tuple[str, str]]:
@@ -435,6 +455,15 @@ def _check_reference(ref: Ref, scope: TemplateScope, issues: list[TemplateIssue]
             issues.append(TemplateIssue("error", f"unknown session field in '{text}'"))
             return "any"
         return SESSION_FIELDS[parts[1]]
+    if root == "profiles":
+        if len(parts) != 2:
+            issues.append(TemplateIssue("error", f"'{text}' must have the form profiles.<name>"))
+        elif parts[1] not in scope.profiles:
+            issues.append(TemplateIssue("error", f"undefined profile '{parts[1]}'"))
+        return "text"
+    if root == "dist":
+        issues.append(TemplateIssue("error", f"'{text}' names a distribution function; call it with parentheses"))
+        return "any"
     if root == "last":
         if len(parts) != 1:
             issues.append(TemplateIssue("error", f"'last' has no fields, got '{text}'"))
@@ -454,6 +483,12 @@ def _resolve_call(call: Call, scope: TemplateScope, issues: list[TemplateIssue])
         sig = CORE_FUNCTIONS.get(call.name)
         if sig is None:
             issues.append(TemplateIssue("error", f"unknown function '{call.name}'"))
+        return sig
+    if call.module == "dist":
+        sig = DIST_FUNCTIONS.get(call.name)
+        if sig is None:
+            issues.append(TemplateIssue(
+                "error", f"unknown distribution '{call.name}', expected one of {', '.join(sorted(DIST_FUNCTIONS))}"))
         return sig
     if scope.modules is None:
         return None
@@ -504,11 +539,26 @@ def _check_call(call: Call, scope: TemplateScope, issues: list[TemplateIssue]) -
         if not compatible(param.type, typ):
             issues.append(TemplateIssue(
                 "error", f"parameter '{param.name}' of '{call.qualified}' takes {param.type}, got {typ}"))
+    if call.module == "dist":
+        _check_dist_literals(call, bound, issues)
     if call.qualified == "hex" and "s" in bound:
         node = bound["s"][1]
         if isinstance(node, Lit) and node.type == "text" and not HEX_RE.fullmatch(node.value):
             issues.append(TemplateIssue("error", "hex() needs an even number of hexadecimal digits"))
     return sig.result
+
+
+def _check_dist_literals(call: Call, bound: dict[str, tuple[str, Any]], issues: list[TemplateIssue]) -> None:
+    """Range rules for the literal arguments of a distribution function."""
+    lits = {name: node.value for name, (_, node) in bound.items()
+            if isinstance(node, Lit) and node.type in ("int", "float")}
+    for name, value in lits.items():
+        if name in DIST_POSITIVE and value <= 0:
+            issues.append(TemplateIssue("error", f"parameter '{name}' of '{call.qualified}' must be positive"))
+        if name in DIST_NON_NEGATIVE and value < 0:
+            issues.append(TemplateIssue("error", f"parameter '{name}' of '{call.qualified}' must not be negative"))
+    if "low" in lits and "high" in lits and lits["low"] > lits["high"]:
+        issues.append(TemplateIssue("error", "uniform() has low greater than high"))
 
 
 def _check_node(node: Any, scope: TemplateScope, issues: list[TemplateIssue]) -> str:
@@ -655,6 +705,7 @@ def check_scenario(doc: dict, file: Path, report: Report, module: dict | None = 
     module_type = (module or {}).get("type")
     allowed_modules = {module_name} | {r.get("module") for r in (module or {}).get("requires", [])}
 
+    profile_names = set((doc.get("profiles") or {}).keys())
     callable_modules: dict[str, dict[str, FunctionSig] | None] | None = None
     if module is not None:
         known = dict(manifests or {})
@@ -703,7 +754,8 @@ def check_scenario(doc: dict, file: Path, report: Report, module: dict | None = 
                                  f"'{kind}' is reserved for module types {sorted(RESERVED_ACTION_TYPES[kind])}")
                 if kind == "expect" and isinstance(body, dict):
                     _check_expect(body, udp, path, file, report)
-            scope = TemplateScope(vars=var_types, modules=callable_modules, module_name=module_name)
+            scope = TemplateScope(vars=var_types, modules=callable_modules, module_name=module_name,
+                                  profiles=profile_names)
             _check_side_templates(flow.get(side, []), ["flows", i, side], scope, False, file, report)
 
     for i, flow in enumerate(flows):
@@ -810,6 +862,13 @@ def check_module_dir(mod_dir: Path, report: Report, index: ModuleIndex) -> None:
                              f"file '{item[attr]}' does not exist")
 
     scenario_schema = load_schema("scenario.schema.json")
+    # Scenarios in scenarios-pending/ use syntax that the engine does not
+    # compile yet. They are checked but not indexed, and the manifest does not
+    # list them.
+    for spath in sorted((mod_dir / "scenarios-pending").glob("*.yaml")):
+        doc = load_yaml(spath)
+        if schema_errors(scenario_schema, doc, report, spath):
+            index.pending.append((name, spath, doc))
     for i, rel in enumerate(manifest.get("scenarios", [])):
         spath = mod_dir / rel
         if not spath.exists():
