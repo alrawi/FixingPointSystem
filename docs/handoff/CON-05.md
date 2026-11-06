@@ -11,8 +11,8 @@
 | Pull request | #0 |
 | Status | in progress |
 | Progress | 75% (3 of 4 plan steps) |
-| Current holder | claude-con05a1, lease until 2026-11-06T22:36:24Z |
-| Last verified commit | none |
+| Current holder | claude-c05b7e, lease until 2026-11-06T23:01:06Z |
+| Last verified commit | f43f2c5 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -38,11 +38,11 @@ List each finished step with the command that verified it and the result.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+The generated Go code (`agentpb`) and the Rust mirrors lie outside this package and the proto job does not verify them, so the Go and Rust CI jobs may fail until the CTL and AGT packages regenerate them. See the log entry.
 
 ## Next action
 
-Open the pull request and wait for CI.
+Wait for CI on the pull request.
 
 ## Blockers and open questions
 
@@ -75,3 +75,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-06T22:07Z | claude-con05a1 | claim | | Claimed #154 |
 | 2026-11-06T22:20Z | claude-con05a1 | checkpoint | | Proto, change note, wiki done |
+| 2026-11-06T22:35Z | claude-c05b7e | takeover | f43f2c5 | Resumed from the stopped worker; reviewed its commits, rechecked buf format, lint, breaking, tests |
