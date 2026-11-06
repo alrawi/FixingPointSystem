@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #156 |
 | Branch | `wp/ENG-11` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (4 of 4 plan steps, pull request pending) |
+| Pull request | #226 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-e11a7c, lease until 2026-11-06T22:35:15Z |
-| Last verified commit | none |
+| Last verified commit | 7272a00 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -31,11 +31,11 @@ Host module extensions that implement the extension world (`contracts/extension/
 
 ## Remaining
 
-Pull request, CI, and review.
+Review.
 
 ## Next action
 
-Open the pull request and wait for CI.
+Review and merge PR #226.
 
 ## Blockers and open questions
 
