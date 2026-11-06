@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #170 |
 | Branch | `wp/MOD-03` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (5 of 6 plan steps, PR pending) |
+| Pull request | #225 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-264413, lease until 2026-11-06T23:01:12Z |
-| Last verified commit | none |
+| Last verified commit | 6f81a20 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -29,7 +29,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 3. Text and email generators
 - [x] 4. Binary file generators
 - [x] 5. Tests: determinism, size, duplicate ratio over 10,000 bodies per generator, catalog equals manifest
-- [ ] 6. README provenance note, mk file, Modules page, log entry, PR
+- [x] 6. README provenance note, mk file, Modules page, log entry, PR
 
 ## Done and verified
 
@@ -38,11 +38,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Open the pull request, wait for CI, and fix failures inside the paths of the package. The JPEG kind has no image scan, which the README states.
+Nothing. The controller job `test` failed once on an unrelated Go test and passed on rerun. The JPEG kind has no image scan, which the README states.
 
 ## Next action
 
-Run `plan.py check`, `render --check`, and `lint`, push, and open the PR.
+Review PR #225.
 
 ## Blockers and open questions
 
@@ -75,3 +75,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-06T22:05Z | claude-2e55b9 | claim | | Claimed #170 with 6 plan steps |
 | 2026-11-06T22:40Z | claude-264413 | takeover of the stopped worker | | Resumed from the claim commit, claimed with a new card, built steps 1 to 5 and the documents |
+| 2026-11-06T23:10Z | claude-264413 | finish | 6f81a20 | PR #225 opened, CI green on all jobs |
