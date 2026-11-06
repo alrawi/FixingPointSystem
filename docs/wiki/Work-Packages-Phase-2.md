@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 55 work packages. Packages marked critical path gate the phase.
+This page lists 60 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -66,6 +66,11 @@ flowchart LR
   UI_05["UI-05<br/>Reports and run comparison"]
   UI_06["UI-06<br/>Agents and ports view"]
   QA_05["QA-05<br/>Gate 2 acceptance suite"]
+  CON_11["CON-11<br/>Module settings in the agent protocol"]
+  AGT_07["AGT-07<br/>Module settings, side label, and client default in the agent"]
+  ENG_15["ENG-15<br/>New failure reasons and side label in the interpreter and runtime"]
+  CTL_22["CTL-22<br/>Module settings and port locations end to end in the controller"]
+  CTL_23["CTL-23<br/>Client side default in metric views, run seeds, and test stability"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -117,6 +122,8 @@ flowchart LR
   RLM_10 --> QA_05
   CTL_12 --> QA_05
   IMG_04 --> QA_05
+  CTL_22 --> CON_11
+  CON_11 --> AGT_07
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -180,6 +187,11 @@ flowchart LR
 | [UI-05](#ui-05-reports-and-run-comparison) | Reports and run comparison | M | UI-04 |  |
 | [UI-06](#ui-06-agents-and-ports-view) | Agents and ports view | S | UI-01 |  |
 | [QA-05](#qa-05-gate-2-acceptance-suite) | Gate 2 acceptance suite | M | MOD-04, MOD-06, MOD-07, MOD-08, MOD-09, MOD-10, MOD-11, MOD-13, MOD-14, MOD-15, MOD-16, MOD-17, MOD-18, RLM-03, RLM-04, RLM-05, RLM-06, RLM-07, RLM-08, RLM-09, RLM-10, CTL-12, IMG-04 | yes |
+| [CON-11](#con-11-module-settings-in-the-agent-protocol) | Module settings in the agent protocol | S | CON-09, CTL-22 |  |
+| [AGT-07](#agt-07-module-settings-side-label-and-client-default-in-the-agent) | Module settings, side label, and client default in the agent | M | CON-11, ENG-14, MOD-19 |  |
+| [ENG-15](#eng-15-new-failure-reasons-and-side-label-in-the-interpreter-and-runtime) | New failure reasons and side label in the interpreter and runtime | M | ENG-14 |  |
+| [CTL-22](#ctl-22-module-settings-and-port-locations-end-to-end-in-the-controller) | Module settings and port locations end to end in the controller | M | CTL-18 |  |
+| [CTL-23](#ctl-23-client-side-default-in-metric-views-run-seeds-and-test-stability) | Client side default in metric views, run seeds, and test stability | S | CTL-20 |  |
 
 ## CON Contracts
 
@@ -218,6 +230,27 @@ Deliverables.
 Acceptance.
 
 - [ ] buf breaking reports no breaking change against v0.1, and the owner approves.
+
+### CON-11 Module settings in the agent protocol
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CON-09, CTL-22
+- **Paths.** `contracts/proto/fps/agent/v1/`, `contracts/changes/`, `contracts/examples/tests/`, `contracts/examples/tests-pending/`
+
+The compiler carries module settings in modules[].settings of a plan (CTL-18), but fps.agent.v1.ModuleRef has no settings field, and both the agent's plan parser and the controller's protojson reject unknown fields. A test with module settings therefore fails at dispatch.
+
+Deliverables.
+
+- ModuleRef.settings as a google.protobuf.Struct, additive.
+- Regenerated Go and Rust bindings.
+- An entry in contracts/changes/CON-11.md.
+- port_locations.yaml, dns_zone.yaml, and filtered_criteria.yaml move from tests-pending to tests, now that CTL-18, CTL-20, and CTL-22 compile them.
+
+Acceptance.
+
+- [ ] The proto checks pass and a plan with module settings round trips through both bindings.
+- [ ] The contract checks compile every file in contracts/examples/tests/.
 
 ## OPS Repository and swarm tooling
 
@@ -312,6 +345,25 @@ Acceptance.
 
 - [ ] A test changes the rate twice and measures the new rates within 5%.
 
+### ENG-15 New failure reasons and side label in the interpreter and runtime
+
+Phase 2 · size M · workstream ENG
+
+- **Depends on.** ENG-14
+- **Paths.** `engine/fps-interp/`, `engine/fps-runtime/`, `engine/fps-stats/`
+
+ENG-14 added the counters, but no engine code reports them yet.
+
+Deliverables.
+
+- FailureKind::reason returns datagram_rejected for the two datagram variants, and template_error or extension_error for a render failure by its cause.
+- fps-runtime registers its session series through SessionCounters with the side label instead of its own loop over Reason::ALL.
+- sessions.concurrent and sessions.duration carry the side label.
+
+Acceptance.
+
+- [ ] Unit tests show each of the three reasons reported by the interpreter and both sides in a runtime snapshot.
+
 ## TRN Transport backends
 
 ### TRN-04 TLS transport module
@@ -386,6 +438,26 @@ Deliverables.
 Acceptance.
 
 - [ ] A fake controller test changes rates and downloads a capture.
+
+### AGT-07 Module settings, side label, and client default in the agent
+
+Phase 2 · size M · workstream AGT
+
+- **Depends on.** CON-11, ENG-14, MOD-19
+- **Paths.** `engine/fps-agent/`
+
+Apply module settings that arrive in a plan, and report session statistics with the side label that CON-08 defines and ENG-14 implements in fps-stats.
+
+Deliverables.
+
+- The agent passes ModuleRef.settings to the module, resolving relative paths against the module directory, so the dns zone_file setting of MOD-19 works through the controller.
+- The UDP session path registers its session series through fps_stats::SessionCounters with the side label.
+- The criteria of the agent in src/criteria.rs count the client side unless a criterion names a side.
+
+Acceptance.
+
+- [ ] A controller e2e run of contracts/examples/tests/dns_zone.yaml answers from the configured zone.
+- [ ] Tests show both sides in a snapshot and the client default in agent criteria.
 
 ## CTL Controller
 
@@ -490,6 +562,44 @@ Deliverables.
 Acceptance.
 
 - [ ] An agent without a valid certificate cannot register.
+
+### CTL-22 Module settings and port locations end to end in the controller
+
+Phase 2 · size M · workstream CTL
+
+- **Depends on.** CTL-18
+- **Paths.** `controller/internal/wiring/`, `controller/internal/store/`
+
+Close the controller gaps that CTL-18 reported outside its paths.
+
+Deliverables.
+
+- The catalog adapter in internal/wiring fills Scenario.SettingsSchema from the manifest settings key.
+- internal/store/validate.go parses locations as the compiler does, so a bare interface and */interface pass, and its compiler path pattern covers modules.
+
+Acceptance.
+
+- [ ] The pending example tests compile through the store and the API, and an installed dns module reports its settings schema.
+
+### CTL-23 Client side default in metric views, run seeds, and test stability
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CTL-20
+- **Paths.** `controller/internal/metrics/`, `controller/internal/runs/`, `controller/internal/agents/`, `.github/workflows/controller.yml`
+
+Finish the side default of CON-08 outside criteria, and fix findings of the CTL-20 and MOD-19 runs.
+
+Deliverables.
+
+- API metric views report the client side unless the request selects a side.
+- The run record takes its seed from the compiled plans, so it is never 0.
+- TestEveryFailedRunHasAReason/forced_stop and TestCrashMarksOfflineAndFailsPendingCommand no longer fail intermittently.
+- The controller workflow runs on changes to contracts/metrics/**.
+
+Acceptance.
+
+- [ ] Tests cover the view default and the seed, and the two tests pass 50 times in a row with -count=50 -race.
 
 ## CLI Python SDK and command line client
 
