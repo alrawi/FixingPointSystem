@@ -4,8 +4,8 @@
 |---|---|
 | Issue | #135 |
 | Branch | `wp/CTL-18` |
-| Pull request | none yet |
-| Status | in progress |
+| Pull request | #211 |
+| Status | blocked |
 | Progress | 90% (4 of 4 plan steps, waiting for CI) |
 | Current holder | claude-dd3be7, lease until 2026-11-06T16:50:37Z |
 | Last verified commit | none |
@@ -36,7 +36,7 @@ Open the pull request, poll CI, and fix failures inside `controller/internal/com
 
 ## Blockers and open questions
 
-none
+CI on 3d62333 fails only in `controller/internal/runs` (CTL-20 paths). The run test fixture `orchestrator_test.go` lines 31 and 32 name the ports `local/eth1`, which now pins both ports to an agent `local` that the fake agents do not use, so every run start fails with `port client0 is pinned to agent local, which is not in the inventory`. The fix is to change both locations to the bare `eth1`, which spreads as before. That file is outside the CTL-18 paths, so the coordinator or CTL-20 must make the change. Every other package passes, including `internal/compiler`, `internal/store`, `internal/wiring`, and `cmd/fps-controller`, and the contracts, proto, rust, and netns jobs.
 
 ## Decisions taken in this package
 
@@ -61,4 +61,5 @@ make lint-ctl test-ctl
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-06T15:20Z | claude-dd3be7 | claim | 7cdcf49 | Claimed #135 |
-| 2026-11-06T15:50Z | claude-dd3be7 | checkpoint | see branch | Implementation, goldens, wiki, log entry |
+| 2026-11-06T15:50Z | claude-dd3be7 | checkpoint | 3d62333 | Implementation, goldens, wiki, log entry; PR #211 opened |
+| 2026-11-06T16:05Z | claude-dd3be7 | block | see branch | CI fails in runs tests that pin to agent local |
