@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #153 |
 | Branch | `wp/CTL-21` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (4 of 4 plan steps, waiting for CI) |
+| Pull request | #223 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-953995, lease until 2026-11-06T23:01:51Z |
-| Last verified commit | none |
+| Last verified commit | bdc8b85 |
 
 ## Goal
 
@@ -28,11 +28,11 @@ Apply decision D12 item 10 in the new package `controller/internal/runs/calibrat
 
 ## Remaining
 
-CI result of the full controller workflow. The orchestrator wiring is out of scope and needs CON-05 UpdateRates.
+CI is green on bdc8b85. The orchestrator wiring is out of scope and needs CON-05 UpdateRates.
 
 ## Next action
 
-Open the pull request, poll CI, and fix failures inside the package paths.
+Review PR #223.
 
 ## Blockers and open questions
 
