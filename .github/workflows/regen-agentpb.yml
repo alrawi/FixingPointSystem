@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Coordinator helper. Regenerates the Go bindings of the agent control protocol
+# (controller/internal/agents/agentpb) for a branch and prints the result as a
+# patch in the job log, between the markers FPS-PATCH-BEGIN and FPS-PATCH-END
+# (gzip, then base64). It never pushes: the coordinator applies the patch and
+# pushes it, so the usual pull request checks run on the commit. Agents whose
+# sandbox cannot download Go modules use this to update the bindings after a
+# change to contracts/proto/.
+name: regen-agentpb
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch to regenerate, for example wp/CON-05
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+
+jobs:
+  regen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: controller/go.mod
+          cache-dependency-path: controller/go.sum
+      - name: Generate
+        working-directory: controller
+        run: go generate ./internal/agents/agentpb
+      - name: Print patch
+        run: |
+          git diff --stat
+          echo "FPS-PATCH-BEGIN"
+          git diff --binary | gzip -9 | base64 -w 0
+          echo
+          echo "FPS-PATCH-END"
