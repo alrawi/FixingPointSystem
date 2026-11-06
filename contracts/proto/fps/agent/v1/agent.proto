@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Agent control protocol, contract version 0.1.0.
+// Agent control protocol, contract version 0.2.0.
 //
 // The controller compiles a test configuration into one Plan per agent. Each
 // agent dials the controller, so an agent behind NAT or in a cloud needs no
@@ -12,6 +12,12 @@
 // form of a Plan is the proto3 JSON mapping of the Plan message, which the
 // standalone agent mode reads from a file. See contracts/README.md for the
 // state machines, the error codes, and the digest rules.
+//
+// Version 0.2.0 adds the UpdateRates, StartCapture, and StopCapture commands
+// and the signature fields of ModuleRef. It only adds fields and messages, so
+// an agent of version 0.1.0 and a controller of version 0.2.0 still register
+// and run plans. The controller sends the new commands only to an agent whose
+// Capabilities.engine_api is 0.2.0 or later.
 
 syntax = "proto3";
 
@@ -258,6 +264,12 @@ message SessionResponse {
     StartCommand start = 4;
     // stop ends a run or releases an unstarted plan.
     StopCommand stop = 5;
+    // update_rates changes the steady state targets of a running plan.
+    UpdateRatesCommand update_rates = 6;
+    // start_capture starts a packet capture on a running plan.
+    StartCaptureCommand start_capture = 7;
+    // stop_capture ends one packet capture.
+    StopCaptureCommand stop_capture = 8;
   }
 }
 
@@ -327,6 +339,79 @@ message StopCommand {
   google.protobuf.Duration drain_timeout = 3;
 }
 
+// UpdateRatesCommand changes the steady state targets of a running plan, so
+// the controller can correct the mix while the load phases run. It is valid
+// only in AGENT_STATE_RUNNING and otherwise fails with
+// ERROR_CODE_FAILED_PRECONDITION. A command that names an unknown mix entry,
+// names an entry twice, gives a target of the wrong kind for the load
+// objective, or gives a target below zero fails with
+// ERROR_CODE_INVALID_ARGUMENT, and then the agent applies none of its
+// updates. A plan_id that does not name the loaded plan fails with
+// ERROR_CODE_NOT_FOUND. A mix entry that the command does not name keeps its
+// target.
+message UpdateRatesCommand {
+  // plan_id names the running plan.
+  string plan_id = 1;
+  // rates lists the new targets, one per mix entry to change.
+  repeated RateUpdate rates = 2;
+}
+
+// RateUpdate is the new steady state target of one mix entry on one agent.
+// The target replaces the sum of the WorkerRate values of the entry over all
+// workers, and the agent divides it among its workers in proportion to their
+// current WorkerRate values. The load phases keep scaling the new target as
+// they scaled the old one.
+message RateUpdate {
+  // mix_entry names a MixEntry of the plan.
+  string mix_entry = 1;
+  // target is the rate or the concurrency, as the load objective requires.
+  oneof target {
+    // sessions_per_second is the session open rate of the whole agent.
+    double sessions_per_second = 2;
+    // concurrent_sessions is the number of sessions kept open on the whole agent.
+    uint32 concurrent_sessions = 3;
+  }
+}
+
+// StartCaptureCommand starts a packet capture of one capture identifier. It is
+// valid only in AGENT_STATE_RUNNING and otherwise fails with
+// ERROR_CODE_FAILED_PRECONDITION, as does a capture_id that is already in use
+// in the plan. An unknown port, an empty capture_id, or a filter that the
+// agent cannot compile fails with ERROR_CODE_INVALID_ARGUMENT. An agent
+// without capture support fails with ERROR_CODE_UNIMPLEMENTED. A capture ends
+// at StopCaptureCommand, at one of its limits, or when the run ends.
+message StartCaptureCommand {
+  // plan_id names the running plan.
+  string plan_id = 1;
+  // capture_id names the capture within the plan. The controller chooses it.
+  string capture_id = 2;
+  // port is the name of a PortBinding of the plan, or is empty to capture on
+  // every port of the plan.
+  string port = 3;
+  // filter is a Berkeley Packet Filter expression in pcap-filter syntax, or is
+  // empty to capture every packet.
+  string filter = 4;
+  // snap_length is the number of bytes to keep of each packet, or zero to keep
+  // whole packets.
+  uint32 snap_length = 5;
+  // max_bytes ends the capture after this many captured bytes, or is zero for
+  // no byte limit.
+  uint64 max_bytes = 6;
+  // max_duration ends the capture after this time, or is absent for no time
+  // limit.
+  google.protobuf.Duration max_duration = 7;
+}
+
+// StopCaptureCommand ends one capture. A capture that already ended at a limit
+// or at the end of the run still answers with its result, so the command is
+// idempotent. An unknown capture_id fails with ERROR_CODE_NOT_FOUND.
+message StopCaptureCommand {
+  // plan_id names the plan.
+  string plan_id = 1;
+  // capture_id names the capture to stop.
+  string capture_id = 2;
+}
+
 // CommandResult answers one command. Exactly one of error and result is set.
 message CommandResult {
   // command_id echoes SessionResponse.command_id.
@@ -342,7 +427,42 @@ message CommandResult {
     StartResult start = 4;
     // stop answers a StopCommand.
     StopResult stop = 5;
+    // update_rates answers an UpdateRatesCommand.
+    UpdateRatesResult update_rates = 6;
+    // start_capture answers a StartCaptureCommand.
+    StartCaptureResult start_capture = 7;
+    // stop_capture answers a StopCaptureCommand.
+    StopCaptureResult stop_capture = 8;
   }
+}
+
+// UpdateRatesResult confirms that the agent applied every rate update.
+message UpdateRatesResult {
+  // applied_at is the agent clock time at which the new targets took effect.
+  google.protobuf.Timestamp applied_at = 1;
+}
+
+// StartCaptureResult confirms that the capture runs.
+message StartCaptureResult {
+  // capture_id echoes the capture identifier.
+  string capture_id = 1;
+  // started_at is the agent clock time at which the capture began.
+  google.protobuf.Timestamp started_at = 2;
+}
+
+// StopCaptureResult reports the end of one capture.
+message StopCaptureResult {
+  // capture_id echoes the capture identifier.
+  string capture_id = 1;
+  // packets is the number of packets in the capture file.
+  uint64 packets = 2;
+  // bytes is the size of the capture file in bytes.
+  uint64 bytes = 3;
+  // dropped is the number of packets that the capture missed.
+  uint64 dropped = 4;
+  // digest is sha256:<64 lowercase hex> over the bytes of the capture file,
+  // which is in the pcapng format.
+  string digest = 5;
 }
 
 // CommandError reports why a command failed.
@@ -488,6 +608,17 @@ message ModuleRef {
   // contracts/README.md defines it. The agent refuses a module whose digest
   // differs.
   string digest = 3;
+  // signature is the Ed25519 signature, 64 bytes, over the UTF-8 bytes of the
+  // digest field. It is empty for a module without a signature. The agent
+  // verifies it against the registry key that signature_key_id names, and
+  // refuses an unsigned or wrongly signed module outside developer mode.
+  // The signature is not part of the module tree, so it does not change the
+  // digest.
+  bytes signature = 4;
+  // signature_key_id names the registry key that made the signature, and is
+  // empty when signature is empty.
+  string signature_key_id = 5;
+  // Field number 6 is kept free for ModuleRef.settings, which CON-11 adds.
 }
 
 // ScenarioSource carries one scenario file.

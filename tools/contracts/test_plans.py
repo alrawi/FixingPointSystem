@@ -157,7 +157,7 @@ def test_app_sim_needs_both_roles(plan: dict, tmp_path: Path) -> None:
     assert any("app_sim needs" in m for m in errors_for(doc, tmp_path))
 
 
-# Agent control protocol 0.1.0 as CON-06 revised it. Agents dial the controller, so the
+# Agent control protocol 0.2.0 on the CON-06 shape. Agents dial the controller, so the
 # controller serves the only service and the agent serves none.
 
 GRPC_CODES = {
@@ -202,18 +202,51 @@ def test_agent_messages_cover_heartbeats_results_and_counters() -> None:
     }
 
 
-def test_controller_messages_cover_prepare_start_and_stop() -> None:
+def test_controller_messages_cover_the_commands() -> None:
     assert _oneof("SessionResponse", "body") == {
         "heartbeat_ack": "HeartbeatAck",
         "prepare": "PrepareCommand",
         "start": "StartCommand",
         "stop": "StopCommand",
+        "update_rates": "UpdateRatesCommand",
+        "start_capture": "StartCaptureCommand",
+        "stop_capture": "StopCaptureCommand",
     }
     assert _oneof("CommandResult", "result") == {
         "prepare": "PrepareResult",
         "start": "StartResult",
         "stop": "StopResult",
+        "update_rates": "UpdateRatesResult",
+        "start_capture": "StartCaptureResult",
+        "stop_capture": "StopCaptureResult",
     }
+
+
+def _numbers(message: str) -> dict[str, int]:
+    desc = cp.proto_pool().FindMessageTypeByName(f"fps.agent.v1.{message}")
+    return {f.name: f.number for f in desc.fields}
+
+
+def test_version_0_1_field_numbers_are_unchanged() -> None:
+    """Version 0.2.0 only adds fields, so every 0.1.0 number keeps its meaning."""
+    assert _numbers("ModuleRef") == {
+        "name": 1,
+        "version": 2,
+        "digest": 3,
+        "signature": 4,
+        "signature_key_id": 5,
+    }
+    assert {k: v for k, v in _numbers("SessionResponse").items() if v <= 5} == {
+        "command_id": 1,
+        "heartbeat_ack": 2,
+        "prepare": 3,
+        "start": 4,
+        "stop": 5,
+    }
+
+
+def test_module_ref_leaves_field_6_for_settings() -> None:
+    assert 6 not in _numbers("ModuleRef").values()
 
 
 def test_error_codes_equal_grpc_status_codes() -> None:

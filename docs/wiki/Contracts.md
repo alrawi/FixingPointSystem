@@ -7,7 +7,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 | File | Contract |
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.2.0 |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.1.0, unreleased |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.0, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.2 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.1.0 |
@@ -19,7 +19,7 @@ Agents dial the controller, which the owner decided on 2026-11-02 and CON-06 app
 
 1. The agent calls `Register` with its certificate identity, its capabilities, its state, and any loaded plan. The controller returns a session token and the heartbeat interval and timeout.
 2. The agent opens the bidirectional `Session` stream and sends `open` with the token.
-3. The controller sends `prepare`, `start`, and `stop` commands, and acknowledges each heartbeat.
+3. The controller sends `prepare`, `start`, and `stop` commands, and acknowledges each heartbeat. Version 0.2.0 adds the commands `update_rates`, `start_capture`, and `stop_capture`, which the controller sends only to an agent whose `engine_api` is 0.2.0 or later.
 4. The agent answers every command with one `result`, sends a heartbeat per interval and after every state change, and sends counter snapshots during the run.
 
 A failed command carries an `ErrorCode` whose numbers equal the gRPC status codes. When the agent hears nothing from the controller within the heartbeat timeout, it aborts the run. When it reconnects within the timeout, it registers again with its state and the run continues.
@@ -30,6 +30,19 @@ A failed command carries an `ErrorCode` whose numbers equal the gRPC status code
 | Controller | CTL-06 | The `ControllerService` server, enrollment, and heartbeat timeouts |
 | Controller | CTL-07 | Commands to prepare, start, and stop runs |
 | Standalone mode | AGT-01 | A `Plan` file in the canonical JSON mapping, with no service |
+
+## Version 0.2.0 additions
+
+CON-05 adds three commands and the signature fields of module references. Every change is additive, and `buf breaking` reports nothing against 0.1.0. The entry `contracts/changes/CON-05.md` states the compatibility in full.
+
+| Addition | Rule | Read by |
+|---|---|---|
+| `UpdateRatesCommand` | Gives the new steady state target of the whole agent for each named mix entry. The agent splits it over its workers in proportion to their current rates, applies all updates or none, and accepts the command in the running state only | AGT-05, CTL-12 |
+| `StartCaptureCommand` and `StopCaptureCommand` | A controller chosen `capture_id` names the capture. The start command takes an optional port, a pcap-filter expression, a snap length, and byte and time limits, and the stop command is idempotent | AGT-05 |
+| `StopCaptureResult` | Packets, bytes, dropped packets, and a `sha256:` digest of the pcapng file. The protocol does not yet say how the controller fetches the file | AGT-05 |
+| `ModuleRef.signature` and `ModuleRef.signature_key_id` | An Ed25519 signature over the UTF-8 bytes of the digest, and the name of the registry key that made it. Both are empty for an unsigned module | CTL-11, AGT-04 |
+
+`ModuleRef` field number 6 stays free for the `settings` field of CON-11. The new commands use the existing error codes, so the error code list is unchanged.
 
 ## Checks
 
