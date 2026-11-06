@@ -956,8 +956,12 @@ dependencies = [
  "fps-flow",
  "fps-stats",
  "rand 0.8.8",
+ "rand_pcg",
  "thiserror",
  "wasmtime",
+ "wat",
+ "wit-component",
+ "wit-parser",
 ]
 
 [[package]]
@@ -2822,7 +2826,6 @@ dependencies = [
  "wasmtime-internal-jit-icache-coherence",
  "wasmtime-internal-unwinder",
  "wasmtime-internal-versioned-export-macros",
- "wat",
  "windows-sys 0.61.2",
 ]
 
@@ -2884,7 +2887,6 @@ version = "48.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8838d7debfc98a69342d260a990ea6f64adf498184915fccfdbd6718bb40a9b"
 dependencies = [
- "anyhow",
  "hashbrown 0.17.1",
  "libm",
  "serde",
