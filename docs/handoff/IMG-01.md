@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #197 |
 | Branch | `wp/IMG-01` |
-| Pull request | none |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #224 |
+| Status | waiting for host test |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-0dabfe, lease until 2026-11-06T23:01:10Z |
 | Last verified commit | none |
 
