@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #137 |
 | Branch | `wp/CTL-20` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Pull request | #212 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-95e128, lease until 2026-11-06T16:49:52Z |
-| Last verified commit | none, CI has not run |
+| Last verified commit | 952392f, CI green |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Apply decision D12 items 14 and 19 and close note 4 of the CTL-09 log entry: fil
 - [x] 2. `report`: label aware criteria evaluation with the client side default
 - [x] 3. `report`: run evaluator that reads the aggregator by run id
 - [x] 4. Tests and golden reports
-- [ ] 5. Docs, log entry, lint, and CI
+- [x] 5. Docs, log entry, lint, and CI
 
 ## Done and verified
 
@@ -34,12 +34,12 @@ The sandbox cannot download Go modules, so CI is the build and test loop. Checks
 
 ## Remaining
 
-1. Open the pull request, wait for CI, and fix what it reports. The golden files were written by hand, so a mismatch in `labeled.json`, `labeled.csv`, or the reason lines of `fail`, `degraded`, and `pass` is the likeliest failure. The golden helper prints the diff, and `UPDATE_GOLDEN=1` rewrites a file.
+1. Review. CI is green on 952392f, including the hand written goldens.
 2. The compiler change that lets `where` parse from YAML belongs to CTL-18 (see Blockers).
 
 ## Next action
 
-Open the pull request against `main` and poll its check runs.
+Review pull request #212.
 
 ## Blockers and open questions
 
@@ -73,3 +73,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-06T16:20Z | claude-95e128 | claim | none | Fresh claim from origin/main |
 | 2026-11-06T15:50Z | claude-95e128 | checkpoint | see the branch | Code, tests, goldens, docs, and log entry written |
+| 2026-11-06T17:00Z | claude-95e128 | finish | 952392f | PR #212 opened, CI green, ready for review |
