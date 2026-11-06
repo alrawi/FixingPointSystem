@@ -580,6 +580,21 @@ func TestParseConfigRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
+func TestParseConfigReadsCriterionWhere(t *testing.T) {
+	cfg, err := ParseConfig([]byte(`apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+criteria:
+  - { metric: sessions.failed, op: "<=", value: 0, where: { application: dns, side: server } }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := cfg.Criteria[0].Where
+	if len(w) != 2 || w["application"] != "dns" || w["side"] != "server" {
+		t.Fatalf("where = %v", w)
+	}
+}
+
 func TestEvenSplit(t *testing.T) {
 	tests := []struct {
 		n     uint64

@@ -124,6 +124,9 @@ type CriterionConfig struct {
 	Metric string  `yaml:"metric" json:"metric"`
 	Op     string  `yaml:"op" json:"op"`
 	Value  float64 `yaml:"value" json:"value"`
+	// Where is the label filter of the criterion, for example
+	// {application: dns}. The runs package applies it.
+	Where map[string]string `yaml:"where,omitempty" json:"where,omitempty"`
 }
 
 // ParseConfig decodes one YAML test configuration and rejects unknown keys.
