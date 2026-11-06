@@ -11,6 +11,7 @@ The table lists the modules that exist today.
 | Module | Native crate | Scenarios | Fixture |
 |---|---|---|---|
 | [`http1`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/http1) | `fps-module-http1` with `http1.request` and `http1.response` | `single_fetch`, `keepalive_browse`, `upload`, `upload_chunked`, `http10_fetch`, `http10_keepalive` | 120 sessions, nDPI ratio 1.0 for HTTP |
+| [`content`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/content) | `fps-module-content` with `content.html`, `content.json`, `content.text`, `content.email`, and `content.binary` | none, other modules call its functions | none, the module speaks no protocol |
 
 ## The http1 module
 
@@ -26,6 +27,16 @@ We test the module at four levels.
 4. `fixtures/capture.sh` records 120 sessions in the QA-01 harness over the kernel TCP backend, and the realism runner scores the capture. nDPI 4.2.0 classifies every session as HTTP, and tshark reports no parser errors.
 
 The example `fixture_peer` drives the interpreter over kernel sockets without the agent. Both sides walk the scenarios in manifest order and run the sessions one after another, so the n-th accepted connection belongs to the n-th client session and both sides draw from the same session generators. The workflow `mod-http1` scores the committed fixture and records and scores a fresh capture as root on every change.
+
+## The content module
+
+MOD-03 added the `content` module under [`modules/content`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/content). It generates message bodies for the protocol modules that follow, such as `smtp`, `imap`, `pop3`, and `ftp`, and for the bodies of `http1`. Its native crate `fps-module-content` implements five template functions. `content.html` renders a page from head, navigation, and section templates, and `content.json` renders a paged API response with a growing `data` array. `content.text` renders prose in English, German, French, Spanish, Italian, Russian, or Chinese, and `content.email` renders a plain text body with a greeting, a reference line, and a signature. `content.binary` renders a PNG, GIF, JPEG, PDF, ZIP, or GZIP file, or raw bytes, with correct lengths, offsets, and checksums and without a compression library.
+
+Every function takes a `size` in bytes and a `seed`. The output reaches the size and ends at most about 1 KiB above it, because a generator finishes the element that it writes. A seed of zero or more fixes the bytes. The default seed of -1 draws from the session generator, so a replay with the same run seed and session id reproduces the bytes, and every session still gets other content.
+
+Every generator is synthetic. The crate builds its output from word lists and sentence grammars that we wrote for it, bundles no third party text, reads no file, and opens no connection. Names come from invented syllables, and addresses and links lie under the reserved `.test` domain. The module README carries the provenance note, and the manifest states `source: synthetic`.
+
+The acceptance of MOD-03 is a duplicate payload ratio of at most 1% across 10,000 generated bodies. The test generates 10,000 bodies for each generator type, with the seed unset, with the seeds 0 to 9999, and at 512 bytes, and it fails when more than 1% repeat an earlier body. A generator type is `html`, `json`, `text` and `email` in each language, and `binary` of each kind. `make lint-mod-content test-mod-content` runs the checks. The module has no scenarios and no fixture capture, so the realism job does not score it.
 
 ## Known gaps
 
