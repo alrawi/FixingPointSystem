@@ -14,6 +14,7 @@
 //! | `string` | `String` |
 //! | `uint32` | `u32` |
 //! | `uint64` | `u64` |
+//! | `bytes` | `Vec<u8>` |
 //! | `repeated T` | `Vec<T>` |
 //! | `map<string, string>` | `BTreeMap<String, String>`, so output order is stable |
 //! | `enum Backend` | [`Backend`], with the proto numbers as discriminants |
@@ -97,4 +98,8 @@ pub struct ModuleRef {
     pub version: String,
     /// Field 3, `sha256:` followed by 64 lowercase hex digits.
     pub digest: String,
+    /// Field 4, the Ed25519 signature over the digest, or empty.
+    pub signature: Vec<u8>,
+    /// Field 5, the registry key name of the signature, or empty.
+    pub signature_key_id: String,
 }
