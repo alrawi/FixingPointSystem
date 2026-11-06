@@ -1,0 +1,26 @@
+scenario: web_profile
+description: The page fetch of the specification example in scenario contract v0.3 syntax. A behavior profile supplies the browser headers, and distributions draw the think time and the body size. The engine does not compile profiles and dist yet, so the manifest does not list this file.
+vars:
+  host: www.example.test
+  server_port: 8080
+profiles:
+  chrome:
+    User-Agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+    Accept-Language: en-US,en;q=0.9
+    Accept-Encoding: gzip, deflate
+    Upgrade-Insecure-Requests: 1
+flows:
+  - id: page
+    module: http1
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ http1.request('GET', '/', host=vars.host, accept='text/html', headers=profiles.chrome) }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - delay: { dist: lognormal, mu: 0.5, sigma: 1.0 }
+      - delay: { ms: "{{ dist.lognormal(3.0, 0.8) }}" }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "{{ http1.response(200, body=fill(dist.pareto(1.2, 4096, cap=1048576))) }}"
+      - close: fin

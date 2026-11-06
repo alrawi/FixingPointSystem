@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/alrawi/FixingPointSystem/contracts/schemas/scenario.schema.json",
   "title": "FixingPointSystem scenario (flow programs)",
-  "description": "Scenario contract v0.2. A scenario groups flow programs with ordering and shared variables. Each flow program lists actions per side.",
+  "description": "Scenario contract v0.3. A scenario groups flow programs with ordering and shared variables, and may declare behavior profiles. Each flow program lists actions per side.",
   "type": "object",
   "additionalProperties": false,
   "required": ["scenario", "flows"],
@@ -15,6 +15,12 @@
       "propertyNames": { "$ref": "#/$defs/identifier" },
       "additionalProperties": { "type": ["string", "number", "boolean"] }
     },
+    "profiles": {
+      "description": "Behavior profiles, such as the header set of a browser. Templates read a profile as profiles.<name>, which renders each entry as a line 'Key: value' that ends with CRLF, in the order given here.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": { "$ref": "#/$defs/profile" }
+    },
     "flows": {
       "type": "array",
       "minItems": 1,
@@ -23,8 +29,20 @@
   },
   "$defs": {
     "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$" },
+    "profile": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$" },
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string", "pattern": "^[^\\r\\n]*$" },
+          { "type": "number" },
+          { "type": "boolean" }
+        ]
+      }
+    },
     "template": {
-      "description": "A string that may contain {{ expression }} placeholders, including module calls with keyword arguments and the reference last. See contracts/README.md for the v0.2 grammar.",
+      "description": "A string that may contain {{ expression }} placeholders, including module calls with keyword arguments, the distribution functions dist.<name>(...), the reference last, and the references profiles.<name>. See contracts/README.md for the grammar.",
       "type": "string"
     },
     "count": {

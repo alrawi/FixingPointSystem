@@ -21,3 +21,15 @@ lint-ctl:
 TEST_TARGETS += test-ctl
 test-ctl:
 	cd controller && $(GO) test -race ./...
+
+# CTL-21 throughput rate calibration. The package uses only the standard
+# library, and the targets above cover it too, so these two give a fast loop for
+# the package alone.
+.PHONY: lint-ctl-calibrate test-ctl-calibrate
+lint-ctl-calibrate:
+	@out="$$(cd controller && gofmt -l internal/runs/calibrate)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+	cd controller && $(GO) vet ./internal/runs/calibrate/
+
+test-ctl-calibrate:
+	cd controller && $(GO) test -race -cover ./internal/runs/calibrate/
