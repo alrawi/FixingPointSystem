@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #159 |
 | Branch | `wp/TRN-04` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 95% (6 of 6 plan steps, pull request next) |
+| Pull request | #227 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-t04b01, lease until 2026-11-06T23:01:05Z, renewed at each checkpoint |
-| Last verified commit | none |
+| Last verified commit | 178a1d6, CI green on PR #227 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -39,11 +39,11 @@ Steps 1 to 3. `cargo test -p fps-module-tls --offline` passes 7 unit tests, 14 s
 
 ## Remaining
 
-Open the pull request and wait for CI. The tshark test skips in the rust job because tshark is not installed there, see the shared page notes of the log entry for the workflow that completes it.
+Coordinator review. The tshark test skips in the rust job because tshark is not installed there, see the shared page notes of the log entry for the workflow that completes it.
 
 ## Next action
 
-Open the pull request against main with the acceptance evidence, then poll CI.
+Review and merge PR #227, then add the tshark workflow named in the log entry.
 
 ## Blockers and open questions
 
@@ -73,3 +73,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-06T22:25Z | claude-t04a1f | claim | | Claimed #159 with 6 steps |
 | 2026-11-06T23:00Z | claude-t04b01 | takeover | | Claimed #159 again after the stopped worker, branch had only the claim commit |
+| 2026-11-06T22:30Z | claude-t04b01 | finish | 178a1d6 | PR #227 opened, all 19 check runs green, handed to review |
