@@ -6,12 +6,12 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API (OpenAPI 3.1) |
 | `schemas/module-manifest.schema.json` | Module manifest, including the template function catalog |
-| `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.2) |
+| `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.3) |
 | `schemas/test-config.schema.json` | Test configuration |
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
 | `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels |
 | `metrics/catalog.schema.json` | Format of the metric catalog |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.1.0 between the controller and agents (gRPC, proto3). Agents dial the controller. |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.0 between the controller and agents (gRPC, proto3). Agents dial the controller. |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |
 | `examples/` | Example modules, tests, and agent plans that every validator run checks |
 
@@ -77,9 +77,9 @@ A template is a string with zero or more `{{ expression }}` placeholders. The en
 ```
 template   := { text | "{{" expression "}}" }
 expression := literal | reference | call
-reference  := "last" | "vars" "." ident | "session" "." ident
+reference  := "last" | "vars" "." ident | "session" "." ident | "profiles" "." ident
 call       := name "(" [ arguments ] ")"
-name       := ident | module "." ident
+name       := ident | module "." ident | "dist" "." ident
 arguments  := positional { "," positional } { "," keyword } | keyword { "," keyword }
 positional := expression
 keyword    := ident "=" expression
@@ -96,7 +96,7 @@ The grammar has five further rules.
 2. Positional arguments come before keyword arguments, and a keyword names each parameter at most once. A trailing comma is a syntax error.
 3. Arguments may be calls, so `http1.response(200, body=fill(vars.size))` is valid. Calls nest at most 8 levels deep.
 4. A function name with a module prefix calls a template function of that module. The module must be the module that ships the scenario or a module in its `requires` list. Core functions have no prefix.
-5. The module names `vars`, `session`, `last`, `true`, and `false` are reserved, because a template could not tell them apart from references and literals.
+5. The module names `vars`, `session`, `last`, `profiles`, `dist`, `true`, and `false` are reserved, because a template could not tell them apart from references and literals.
 
 | Name | Type | Value |
 |---|---|---|
@@ -104,6 +104,8 @@ The grammar has five further rules.
 | `session.id` | int | Session sequence number within the run |
 | `session.flow` | text | Flow id |
 | `last` | bytes | The bytes that the previous `expect` of the same side consumed |
+| `profiles.<name>` | text | The entries of a profile of the scenario, each rendered as `Name: value` and CRLF in declaration order (scenario contract v0.3) |
+| `dist.<name>(...)` | int | A draw from `pareto`, `lognormal`, `exponential`, or `uniform` with the run's seeded generator, limited by `cap` (scenario contract v0.3) |
 | `fill(n)` | text | n printable bytes from a seeded generator |
 | `hex(s)` | bytes | Bytes decoded from the hexadecimal string s |
 | `rand_int(a, b)` | int | Uniform integer in [a, b] from the seeded generator |

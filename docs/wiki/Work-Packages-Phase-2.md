@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 60 work packages. Packages marked critical path gate the phase.
+This page lists 63 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -71,6 +71,9 @@ flowchart LR
   ENG_15["ENG-15<br/>New failure reasons and side label in the interpreter and runtime"]
   CTL_22["CTL-22<br/>Module settings and port locations end to end in the controller"]
   CTL_23["CTL-23<br/>Client side default in metric views, run seeds, and test stability"]
+  ENG_16["ENG-16<br/>Profiles and distributions in the template engine"]
+  ENG_17["ENG-17<br/>Load WebAssembly extensions into sessions"]
+  CTL_24["CTL-24<br/>Throughput calibration in the run loop"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -124,6 +127,12 @@ flowchart LR
   IMG_04 --> QA_05
   CTL_22 --> CON_11
   CON_11 --> AGT_07
+  CON_10 --> ENG_16
+  ENG_11 --> ENG_17
+  ENG_15 --> ENG_17
+  CTL_21 --> CTL_24
+  CON_05 --> CTL_24
+  AGT_05 --> CTL_24
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -192,6 +201,9 @@ flowchart LR
 | [ENG-15](#eng-15-new-failure-reasons-and-side-label-in-the-interpreter-and-runtime) | New failure reasons and side label in the interpreter and runtime | M | ENG-14 |  |
 | [CTL-22](#ctl-22-module-settings-and-port-locations-end-to-end-in-the-controller) | Module settings and port locations end to end in the controller | M | CTL-18 |  |
 | [CTL-23](#ctl-23-client-side-default-in-metric-views-run-seeds-and-test-stability) | Client side default in metric views, run seeds, and test stability | S | CTL-20 |  |
+| [ENG-16](#eng-16-profiles-and-distributions-in-the-template-engine) | Profiles and distributions in the template engine | M | CON-10 |  |
+| [ENG-17](#eng-17-load-webassembly-extensions-into-sessions) | Load WebAssembly extensions into sessions | M | ENG-11, ENG-15 |  |
+| [CTL-24](#ctl-24-throughput-calibration-in-the-run-loop) | Throughput calibration in the run loop | M | CTL-21, CON-05, AGT-05 |  |
 
 ## CON Contracts
 
@@ -363,6 +375,42 @@ Deliverables.
 Acceptance.
 
 - [ ] Unit tests show each of the three reasons reported by the interpreter and both sides in a runtime snapshot.
+
+### ENG-16 Profiles and distributions in the template engine
+
+Phase 2 · size M · workstream ENG
+
+- **Depends on.** CON-10
+- **Paths.** `engine/fps-flow/`
+
+CON-10 added the profiles root and the dist functions to the scenario contract, but the Rust template parser rejects both, so the specification example stays in scenarios-pending.
+
+Deliverables.
+
+- The parser and evaluator of fps-flow accept profiles.<name> (text, entries rendered as Name, colon, value, CRLF in declaration order) and dist.pareto, dist.lognormal, dist.exponential, and dist.uniform drawn from the session generator, with the argument rules of contracts/changes/CON-10.md.
+
+Acceptance.
+
+- [ ] Unit tests cover each function, the cap, seeded repeatability, and the profile rendering, and contracts/examples/modules/http1/scenarios-pending/web_profile.yaml parses.
+
+### ENG-17 Load WebAssembly extensions into sessions
+
+Phase 2 · size M · workstream ENG
+
+- **Depends on.** ENG-11, ENG-15
+- **Paths.** `engine/fps-runtime/`, `engine/fps-interp/`, `engine/fps-wasm/`
+
+ENG-11 built the WebAssembly host, but nothing loads extension.wasm from a module manifest or implements the engine Host trait for a runtime session.
+
+Deliverables.
+
+- The runtime compiles a module's extension.wasm once and instantiates it per session through fps-wasm.
+- A Host implementation per session whose random calls derive from the run seed and the session id.
+- FailureKind::reason returns extension_error when a render failure carries a WasmFailure.
+
+Acceptance.
+
+- [ ] A runtime test runs a scenario whose module ships a WAT-built extension, and a looping extension fails only its own session with extension_error.
 
 ## TRN Transport backends
 
@@ -600,6 +648,23 @@ Deliverables.
 Acceptance.
 
 - [ ] Tests cover the view default and the seed, and the two tests pass 50 times in a row with -count=50 -race.
+
+### CTL-24 Throughput calibration in the run loop
+
+Phase 2 · size M · workstream CTL
+
+- **Depends on.** CTL-21, CON-05, AGT-05
+- **Paths.** `controller/internal/runs/`
+
+CTL-21 built the pure calibration loop in runs/calibrate, but no orchestrator code calls it or sends the corrected rates to agents.
+
+Deliverables.
+
+- For a throughput objective, the orchestrator builds a calibrate.State from the compiled mix and expected_bytes, feeds it client side bytes and completed sessions per mix entry every measurement window, and sends UpdateRates to agents whose engine_api is 0.2.0 or later when the factor changes.
+
+Acceptance.
+
+- [ ] An e2e test with a fake agent whose sessions carry four times the expected bytes reaches the throughput objective within 5 percent.
 
 ## CLI Python SDK and command line client
 

@@ -2325,3 +2325,52 @@ work_packages:
       - The controller workflow runs on changes to contracts/metrics/**.
     acceptance:
       - Tests cover the view default and the seed, and the two tests pass 50 times in a row with -count=50 -race.
+
+  # Follow-ups found in Phase 2 batch 11 (CON-05, CON-10, CTL-21, ENG-11).
+
+  - id: ENG-16
+    title: Profiles and distributions in the template engine
+    phase: 2
+    workstream: ENG
+    size: M
+    depends_on: [CON-10]
+    paths: [engine/fps-flow/]
+    summary: >-
+      CON-10 added the profiles root and the dist functions to the scenario contract, but the
+      Rust template parser rejects both, so the specification example stays in scenarios-pending.
+    deliverables:
+      - The parser and evaluator of fps-flow accept profiles.<name> (text, entries rendered as Name, colon, value, CRLF in declaration order) and dist.pareto, dist.lognormal, dist.exponential, and dist.uniform drawn from the session generator, with the argument rules of contracts/changes/CON-10.md.
+    acceptance:
+      - Unit tests cover each function, the cap, seeded repeatability, and the profile rendering, and contracts/examples/modules/http1/scenarios-pending/web_profile.yaml parses.
+
+  - id: ENG-17
+    title: Load WebAssembly extensions into sessions
+    phase: 2
+    workstream: ENG
+    size: M
+    depends_on: [ENG-11, ENG-15]
+    paths: [engine/fps-runtime/, engine/fps-interp/, engine/fps-wasm/]
+    summary: >-
+      ENG-11 built the WebAssembly host, but nothing loads extension.wasm from a module manifest
+      or implements the engine Host trait for a runtime session.
+    deliverables:
+      - The runtime compiles a module's extension.wasm once and instantiates it per session through fps-wasm.
+      - A Host implementation per session whose random calls derive from the run seed and the session id.
+      - FailureKind::reason returns extension_error when a render failure carries a WasmFailure.
+    acceptance:
+      - A runtime test runs a scenario whose module ships a WAT-built extension, and a looping extension fails only its own session with extension_error.
+
+  - id: CTL-24
+    title: Throughput calibration in the run loop
+    phase: 2
+    workstream: CTL
+    size: M
+    depends_on: [CTL-21, CON-05, AGT-05]
+    paths: [controller/internal/runs/]
+    summary: >-
+      CTL-21 built the pure calibration loop in runs/calibrate, but no orchestrator code calls it
+      or sends the corrected rates to agents.
+    deliverables:
+      - For a throughput objective, the orchestrator builds a calibrate.State from the compiled mix and expected_bytes, feeds it client side bytes and completed sessions per mix entry every measurement window, and sends UpdateRates to agents whose engine_api is 0.2.0 or later when the factor changes.
+    acceptance:
+      - An e2e test with a fake agent whose sessions carry four times the expected bytes reaches the throughput objective within 5 percent.

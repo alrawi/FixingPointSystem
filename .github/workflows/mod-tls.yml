@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Workflow of the TLS module under modules/tls/. The rust job of ci.yml runs its
+# Rust tests, where the tshark half of tests/capture.rs skips itself. This job
+# installs tshark and the Python cryptography package and runs the capture test
+# with FPS_REQUIRE_CAPTURE_TOOLS=1, so tshark must decrypt the sample capture
+# with the exported NSS key log (TRN-04 acceptance).
+name: mod-tls
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - modules/tls/**
+      - engine/**
+      - Cargo.lock
+      - .github/workflows/mod-tls.yml
+  pull_request:
+    paths:
+      - modules/tls/**
+      - engine/**
+      - Cargo.lock
+      - .github/workflows/mod-tls.yml
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install tshark and Python cryptography
+        run: |
+          echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends tshark python3-cryptography
+      - name: Decrypt the sample capture with the exported keys
+        env:
+          FPS_REQUIRE_CAPTURE_TOOLS: "1"
+        run: cargo test -p fps-module-tls --test capture -- --nocapture
