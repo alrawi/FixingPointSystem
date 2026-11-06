@@ -63,4 +63,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phase 0 is complete. All Phase 1 critical path packages are merged, including the Gate 1 suite QA-04, whose CI run classified 1,340 HTTP/1.1 and 977 DNS sessions at 100% with no parser findings, so Gate 1 waits for owner sign off. Batch 9 merged AGT-06, CTL-19, RLM-11, QA-08, and the fix for bug #128. The Phase 1 follow ups CON-07, CON-08, and CON-09 wait for owner approval, CTL-18, CTL-20, ENG-14, and MOD-19 follow them, and QA-08 waits for the owner's benchmark runner. The 55 Phase 2 packages are seeded as issues. The coordinator updates this line after each batch.
+Phases 0 and 1 are complete, and the owner signed off Gate 1 on 2026-11-05. Batch 10 merged CON-07, CON-08, CON-09, CTL-18, CTL-20, ENG-14, and MOD-19, and QA-08 runs the S1 benchmark every night on the owner host against its own baseline. Phase 2 is open: its 55 packages are seeded as issues, and five integration follow ups (CON-11, AGT-07, ENG-15, CTL-22, CTL-23) wire the Phase 1 contract changes end to end. The coordinator updates this line after each batch.

@@ -2235,3 +2235,93 @@ work_packages:
       - A gate script and report for tier T1, multi agent runs, image formats, and the UI suite.
     acceptance:
       - The suite passes on the reference KVM host and records every measured value.
+
+  # Phase 1 integration follow-ups found while building CTL-18, CTL-20, ENG-14, and MOD-19.
+
+  - id: CON-11
+    title: Module settings in the agent protocol
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [CON-09, CTL-22]
+    paths: [contracts/proto/fps/agent/v1/, contracts/changes/, contracts/examples/tests/, contracts/examples/tests-pending/]
+    summary: >-
+      The compiler carries module settings in modules[].settings of a plan (CTL-18), but
+      fps.agent.v1.ModuleRef has no settings field, and both the agent's plan parser and the
+      controller's protojson reject unknown fields. A test with module settings therefore
+      fails at dispatch.
+    deliverables:
+      - ModuleRef.settings as a google.protobuf.Struct, additive.
+      - Regenerated Go and Rust bindings.
+      - An entry in contracts/changes/CON-11.md.
+      - port_locations.yaml, dns_zone.yaml, and filtered_criteria.yaml move from tests-pending to tests, now that CTL-18, CTL-20, and CTL-22 compile them.
+    acceptance:
+      - The proto checks pass and a plan with module settings round trips through both bindings.
+      - The contract checks compile every file in contracts/examples/tests/.
+
+  - id: AGT-07
+    title: Module settings, side label, and client default in the agent
+    phase: 2
+    workstream: AGT
+    size: M
+    depends_on: [CON-11, ENG-14, MOD-19]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Apply module settings that arrive in a plan, and report session statistics with the
+      side label that CON-08 defines and ENG-14 implements in fps-stats.
+    deliverables:
+      - The agent passes ModuleRef.settings to the module, resolving relative paths against the module directory, so the dns zone_file setting of MOD-19 works through the controller.
+      - The UDP session path registers its session series through fps_stats::SessionCounters with the side label.
+      - The criteria of the agent in src/criteria.rs count the client side unless a criterion names a side.
+    acceptance:
+      - A controller e2e run of contracts/examples/tests/dns_zone.yaml answers from the configured zone.
+      - Tests show both sides in a snapshot and the client default in agent criteria.
+
+  - id: ENG-15
+    title: New failure reasons and side label in the interpreter and runtime
+    phase: 2
+    workstream: ENG
+    size: M
+    depends_on: [ENG-14]
+    paths: [engine/fps-interp/, engine/fps-runtime/, engine/fps-stats/]
+    summary: >-
+      ENG-14 added the counters, but no engine code reports them yet.
+    deliverables:
+      - FailureKind::reason returns datagram_rejected for the two datagram variants, and template_error or extension_error for a render failure by its cause.
+      - fps-runtime registers its session series through SessionCounters with the side label instead of its own loop over Reason::ALL.
+      - sessions.concurrent and sessions.duration carry the side label.
+    acceptance:
+      - Unit tests show each of the three reasons reported by the interpreter and both sides in a runtime snapshot.
+
+  - id: CTL-22
+    title: Module settings and port locations end to end in the controller
+    phase: 2
+    workstream: CTL
+    size: M
+    depends_on: [CTL-18]
+    paths: [controller/internal/wiring/, controller/internal/store/]
+    summary: >-
+      Close the controller gaps that CTL-18 reported outside its paths.
+    deliverables:
+      - The catalog adapter in internal/wiring fills Scenario.SettingsSchema from the manifest settings key.
+      - internal/store/validate.go parses locations as the compiler does, so a bare interface and */interface pass, and its compiler path pattern covers modules.
+    acceptance:
+      - The pending example tests compile through the store and the API, and an installed dns module reports its settings schema.
+
+  - id: CTL-23
+    title: Client side default in metric views, run seeds, and test stability
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CTL-20]
+    paths: [controller/internal/metrics/, controller/internal/runs/, controller/internal/agents/, .github/workflows/controller.yml]
+    summary: >-
+      Finish the side default of CON-08 outside criteria, and fix findings of the CTL-20 and
+      MOD-19 runs.
+    deliverables:
+      - API metric views report the client side unless the request selects a side.
+      - The run record takes its seed from the compiled plans, so it is never 0.
+      - TestEveryFailedRunHasAReason/forced_stop and TestCrashMarksOfflineAndFailsPendingCommand no longer fail intermittently.
+      - The controller workflow runs on changes to contracts/metrics/**.
+    acceptance:
+      - Tests cover the view default and the seed, and the two tests pass 50 times in a row with -count=50 -race.
