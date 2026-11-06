@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #142 |
 | Branch | `wp/MOD-19` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #213 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-571e77, lease until 2026-11-06T17:29:13Z |
-| Last verified commit | none |
+| Last verified commit | ef3a774 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -27,7 +27,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Claim commit
 - [x] 2. Manifest settings schema and the Settings type in the crate, with tests
 - [x] 3. fixture_peer and capture.sh pass the setting, README and wiki page
-- [ ] 4. Checks, PR, CI
+- [x] 4. Checks, PR, CI
 
 ## Done and verified
 
@@ -35,11 +35,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Open the PR and wait for CI. The namespace harness and realism job cannot run in this sandbox (no ip, tshark, ndpiReader), so the realism job on the PR is the evidence for that acceptance item. The setting does not reach an agent through the controller until `ModuleRef` gains a settings field.
+Nothing. CI on ef3a774 is green, including the `module (dns)` job, which records and scores a fresh capture with the configured zone. The `ctl` test job failed twice on unrelated Go tests (`TestEveryFailedRunHasAReason/forced_stop`, then `TestCrashMarksOfflineAndFailsPendingCommand`) and passed on the rerun, so those controller tests look flaky. The setting does not reach an agent through the controller until `ModuleRef` gains a settings field.
 
 ## Next action
 
-Open the pull request, then poll CI.
+Review the pull request.
 
 ## Blockers and open questions
 
@@ -69,3 +69,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-06T16:00Z | claude-571e77 | claim | | Claimed, branch from origin/main 3243a04 |
+| 2026-11-06T16:35Z | claude-571e77 | finish | ef3a774 | PR #213, CI green after rerunning flaky ctl tests |
