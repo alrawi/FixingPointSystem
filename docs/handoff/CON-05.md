@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #154 |
 | Branch | `wp/CON-05` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #221 |
+| Status | blocked |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-c05b7e, lease until 2026-11-06T23:01:06Z |
 | Last verified commit | f43f2c5 |
 
@@ -46,7 +46,7 @@ Wait for CI on the pull request.
 
 ## Blockers and open questions
 
-Write "none" or name each blocker with a link to its issue.
+CI on PR #221 at 582093f: proto, contracts, licenses pass. The Go `test` job (exit 2) and the `rust` job (exit 101) fail, as predicted, because generated Go code and the Rust mirrors lie outside this package. The coordinator decides whether this PR regenerates them or a CTL and AGT package does. Go cannot build here.
 
 ## Decisions taken in this package
 
@@ -76,3 +76,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | 2026-11-06T22:07Z | claude-con05a1 | claim | | Claimed #154 |
 | 2026-11-06T22:20Z | claude-con05a1 | checkpoint | | Proto, change note, wiki done |
 | 2026-11-06T22:35Z | claude-c05b7e | takeover | f43f2c5 | Resumed from the stopped worker; reviewed its commits, rechecked buf format, lint, breaking, tests |
+| 2026-11-06T22:42Z | claude-c05b7e | block | 582093f | PR 221 opened; Go and Rust CI fail on out of package generated code and mirrors |
