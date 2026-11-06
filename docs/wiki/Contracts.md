@@ -8,7 +8,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.2.0 |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.1.0, unreleased |
-| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.2 |
+| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.3 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.1.0 |
 | `examples/` | Example modules, tests, and plans that every validator run checks |
@@ -94,3 +94,15 @@ CON-07 applied decision D12 items 19 and 20 to the controller API, which is now 
 | `openapi/fps-metrics.yaml` | `GET /metrics` on the controller root, open by default, with the optional bearer scheme `metricsToken` |
 
 Every enum of the API names `type: string`. The metrics endpoint has its own document, because every operation of `fps-api-v1.yaml` lies under `/v1` and names a token scope. CTL-20 fills the reasons, and CTL-19 adds the metrics token setting.
+
+## Behavior profiles and distributions
+
+CON-10 applied decision D12 item 18 and moved the scenario contract to v0.3. The entry `contracts/changes/CON-10.md` lists every change and states the compatibility. The change is additive, and the only incompatibility is that module names `profiles` and `dist` are now reserved.
+
+| Feature | Rule |
+|---|---|
+| `profiles` | Optional top level object of named header sets. `profiles.<name>` has type `text` and renders each entry as `Name: value` and CRLF. A value holds no CR or LF |
+| `dist.pareto`, `dist.lognormal`, `dist.exponential`, `dist.uniform` | Draws from the seeded generator that return an `int`, rounded and limited to an optional `cap` that defaults to 2,147,483,647 |
+| `http1.request` | New optional parameter `headers` of type `text` |
+
+The specification example lives at `contracts/examples/modules/http1/scenarios-pending/web_profile.yaml`. The validator checks it, and the engine and the controller do not compile `profiles` or `dist` yet, so the manifest does not list it. `contracts/README.md` still shows the v0.2 grammar until the coordinator folds the text that the change entry carries.

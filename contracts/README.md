@@ -6,7 +6,7 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API (OpenAPI 3.1) |
 | `schemas/module-manifest.schema.json` | Module manifest, including the template function catalog |
-| `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.3) |
+| `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.2) |
 | `schemas/test-config.schema.json` | Test configuration |
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
 | `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels |
@@ -77,9 +77,9 @@ A template is a string with zero or more `{{ expression }}` placeholders. The en
 ```
 template   := { text | "{{" expression "}}" }
 expression := literal | reference | call
-reference  := "last" | "vars" "." ident | "session" "." ident | "profiles" "." ident
+reference  := "last" | "vars" "." ident | "session" "." ident
 call       := name "(" [ arguments ] ")"
-name       := ident | module "." ident | "dist" "." ident
+name       := ident | module "." ident
 arguments  := positional { "," positional } { "," keyword } | keyword { "," keyword }
 positional := expression
 keyword    := ident "=" expression
@@ -96,39 +96,18 @@ The grammar has five further rules.
 2. Positional arguments come before keyword arguments, and a keyword names each parameter at most once. A trailing comma is a syntax error.
 3. Arguments may be calls, so `http1.response(200, body=fill(vars.size))` is valid. Calls nest at most 8 levels deep.
 4. A function name with a module prefix calls a template function of that module. The module must be the module that ships the scenario or a module in its `requires` list. Core functions have no prefix.
-5. The module names `vars`, `session`, `last`, `true`, `false`, `profiles`, and `dist` are reserved, because a template could not tell them apart from references and literals.
+5. The module names `vars`, `session`, `last`, `true`, and `false` are reserved, because a template could not tell them apart from references and literals.
 
 | Name | Type | Value |
 |---|---|---|
 | `vars.<name>` | type of the variable | Scenario variable, after test parameter overrides |
 | `session.id` | int | Session sequence number within the run |
 | `session.flow` | text | Flow id |
-| `profiles.<name>` | text | The behavior profile `<name>` that the scenario declares, rendered as header lines |
-| `dist.<name>(...)` | int | A draw from a distribution, see Behavior profiles and distributions |
 | `last` | bytes | The bytes that the previous `expect` of the same side consumed |
 | `fill(n)` | text | n printable bytes from a seeded generator |
 | `hex(s)` | bytes | Bytes decoded from the hexadecimal string s |
 | `rand_int(a, b)` | int | Uniform integer in [a, b] from the seeded generator |
 | `<module>.<name>(...)` | bytes | The bytes that the module's `render` hook returns |
-
-### Behavior profiles and distributions
-
-Scenario contract v0.3 applies decision D12 item 18. Both features are additive, and every v0.2 scenario keeps its meaning.
-
-A scenario declares behavior profiles under the top level key `profiles`. Each profile is an object that maps a name to a string, number, or boolean, such as the header set of a browser. Profile names follow the identifier pattern, entry names follow `[A-Za-z0-9][A-Za-z0-9_-]*`, and a string value holds no CR or LF. A template reads a profile as `profiles.<name>`. The reference has type `text` and renders each entry, in declaration order, as `Name: value` followed by CRLF. A module function receives it as an ordinary text argument, for example `http1.request('GET', '/', host=vars.host, headers=profiles.chrome)`. The validator reports a profile name that the scenario does not declare.
-
-The `dist` functions draw from the run's seeded generator, so one seed repeats a run. Each call returns an `int`, which is the draw rounded to the nearest integer and then limited to `cap`.
-
-| Call | Draw |
-|---|---|
-| `dist.pareto(alpha, scale, cap)` | Pareto with shape `alpha` and minimum `scale`, both above 0 |
-| `dist.lognormal(mu, sigma, cap)` | `exp(N(mu, sigma))` with `sigma` above 0 |
-| `dist.exponential(mean, cap)` | Exponential with `mean` above 0 |
-| `dist.uniform(low, high)` | Uniform on `[low, high]` with `0 <= low <= high` |
-
-The parameters take `float`, so an `int` argument binds too, and `cap` takes an `int` that defaults to 2,147,483,647. A heavy tailed draw therefore cannot overflow a size or a count. The result suits any `int` parameter and any count, so `delay: { ms: "{{ dist.lognormal(3.0, 0.8) }}" }` and `fill(dist.pareto(1.2, 4096))` are valid. The `dist` functions need no module manifest. The validator checks the function name, the argument types, the required parameters, and the range of literal arguments. The `delay` action keeps its object forms with `dist` fields.
-
-`examples/modules/http1/scenarios-pending/web_profile.yaml` is the specification example in this syntax. The directory `scenarios-pending/` holds scenarios that use syntax the engine does not compile yet. The validator checks every file there, the manifest does not list it, and the engine tests do not read it. The specification example also calls `content.html(size=...)`, which this version does not define, so the pending example builds the body with `fill`.
 
 ### Module calls
 
