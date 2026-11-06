@@ -14,6 +14,12 @@
 # OUTPUT_DIR defaults to modules/dns/fixtures, where the capture lands as
 # dns.pcapng and the realism report as dns.report.json. The script exits
 # with the code of the realism runner, so a capture that fails a check fails.
+#
+# Both peers get the module settings that a test configuration would set under
+# modules.dns.settings, so the server answers from a configured zone. The
+# default names the shipped zone, which relative to the module directory is
+# zones/example.test.zone. FPS_DNS_SETTINGS replaces the JSON, for example
+# FPS_DNS_SETTINGS='{"zone_file":"/path/to/other.zone"}'.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -21,6 +27,8 @@ root=$(cd "$here/../../.." && pwd)
 out=${1:-$here}
 sessions=${FPS_FIXTURE_SESSIONS:-20}
 port=53
+default_settings='{"zone_file":"zones/example.test.zone"}'
+settings=${FPS_DNS_SETTINGS:-$default_settings}
 
 if [[ $(id -u) -ne 0 ]]; then
   echo "capture.sh: needs root" >&2
@@ -47,7 +55,8 @@ server_addr=$("$harness" info | sed -n 's/^SERVER_ADDR=//p')
 client_addr=$("$harness" info | sed -n 's/^CLIENT_ADDR=//p')
 
 "$harness" capture start "$out/dns.pcapng" client
-"$harness" exec server "$peer" server --listen "$server_addr" --port "$port" --sessions "$sessions" &
+"$harness" exec server "$peer" server --listen "$server_addr" --port "$port" --sessions "$sessions" \
+  --settings "$settings" &
 server_pid=$!
 # The server binds its UDP socket and TCP listener together, so the TCP
 # listener shows that both are ready.
@@ -58,7 +67,7 @@ for _ in $(seq 100); do
   sleep 0.1
 done
 "$harness" exec client "$peer" client --connect "$server_addr" --source "$client_addr" \
-  --port "$port" --sessions "$sessions"
+  --port "$port" --sessions "$sessions" --settings "$settings"
 wait "$server_pid"
 "$harness" capture stop
 

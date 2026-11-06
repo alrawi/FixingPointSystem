@@ -241,11 +241,17 @@ fn ctx<'a>(
 /// Runs every flow of `s` in order, the n-th flow with session id
 /// `first_id + n`, with the bundled zone on the server side.
 pub async fn run(s: &Scenario, seed: u64, first_id: u64) -> Vec<FlowRun> {
+    run_with(s, seed, first_id, &Dns::bundled().unwrap()).await
+}
+
+/// Like [`run`], with the functions that `dns` holds, so a test can serve a
+/// zone that the module settings configured.
+pub async fn run_with(s: &Scenario, seed: u64, first_id: u64, dns: &Dns) -> Vec<FlowRun> {
     let filler = Filler::new(seed);
     let mut out = Vec::new();
     for (n, flow) in s.flows.iter().enumerate() {
         let id = first_id + n as u64;
-        let mut client_fns = Dns::bundled().unwrap();
+        let mut client_fns = dns.clone();
         let mut server_fns = client_fns.clone();
         let mut client = Session::new(ctx(
             s,

@@ -23,6 +23,7 @@
 
 mod args;
 pub mod catalog;
+pub mod settings;
 pub mod wire;
 pub mod zone;
 
@@ -33,6 +34,7 @@ use fps_flow::{FnCall, FnError, FnErrorKind, TemplateFn};
 use rand::RngCore;
 
 pub use catalog::{DefaultValue, FunctionSpec, ParamSpec, FUNCTIONS};
+pub use settings::{Settings, SettingsError};
 pub use wire::{Message, Name, RData, Rcode, Record, RecordType};
 pub use zone::{Lookup, Zone, ZoneError};
 

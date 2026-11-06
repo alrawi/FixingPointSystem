@@ -1,6 +1,6 @@
 # dns module
 
-The `dns` module generates DNS lookups between a stub resolver client and an authoritative server. Its native crate `fps-module-dns` implements the template functions `dns.query`, `dns.answer_ip`, `dns.response`, and `dns.tcp_length` in Rust under decision D10, so scenarios render every message without a WebAssembly runtime. The server answers from the zone file `zones/example.test.zone`. Every name lies under the reserved `.test` domain, and every address lies in the documentation ranges 192.0.2.0/24 and 2001:db8::/32.
+The `dns` module generates DNS lookups between a stub resolver client and an authoritative server. Its native crate `fps-module-dns` implements the template functions `dns.query`, `dns.answer_ip`, `dns.response`, and `dns.tcp_length` in Rust under decision D10, so scenarios render every message without a WebAssembly runtime. The server answers from the zone file `zones/example.test.zone` unless the setting `zone_file` names another. Every name lies under the reserved `.test` domain, and every address lies in the documentation ranges 192.0.2.0/24 and 2001:db8::/32.
 
 ## Layout
 
@@ -8,10 +8,10 @@ The module follows the layout of the Modules section of the [Coding Standards](.
 
 | Path | Contents |
 |---|---|
-| `manifest.yaml` | Identity, parameter schema, the function catalog, scenarios, the fixture, and provenance |
+| `manifest.yaml` | Identity, parameter and settings schemas, the function catalog, scenarios, the fixture, and provenance |
 | `scenarios/*.yaml` | Seven flow programs, listed below |
 | `zones/example.test.zone` | The synthetic zone that the server answers from |
-| `native/` | The crate `fps-module-dns` with the RFC 1035 codec, the zone file parser, the `TemplateFn` implementation `Dns`, and the catalog `FUNCTIONS` |
+| `native/` | The crate `fps-module-dns` with the RFC 1035 codec, the zone file parser, the module settings, the `TemplateFn` implementation `Dns`, and the catalog `FUNCTIONS` |
 | `native/examples/fixture_peer.rs` | Runs one side of every scenario over kernel sockets for the fixture capture |
 | `tests/` | Catalog, interpreter, and golden transcript tests, with transcripts in `tests/testdata/` |
 | `fixtures/` | The synthetic capture `dns.pcapng`, its labels `expected.yaml`, its realism report, and `capture.sh`, which records it |
@@ -31,7 +31,19 @@ The server answers as an authoritative server of its zone. It follows CNAME chai
 
 ## Zone files
 
-`Zone::parse` reads the subset of the master file format of RFC 1035 section 5 that synthetic zones need. It knows `$ORIGIN` and `$TTL`, the owner `@`, relative and absolute names, a blank owner that repeats the previous one, TTL and class in either order, comments, quoted strings, and parentheses that continue a record over several lines. Records take the types A, AAAA, CNAME, MX, TXT, NS, and SOA in class IN. Errors name the line. `Dns::bundled()` serves the shipped zone, and `Dns::new(zone)` serves any other, which `fixture_peer --zone FILE` uses.
+`Zone::parse` reads the subset of the master file format of RFC 1035 section 5 that synthetic zones need. It knows `$ORIGIN` and `$TTL`, the owner `@`, relative and absolute names, a blank owner that repeats the previous one, TTL and class in either order, comments, quoted strings, and parentheses that continue a record over several lines. Records take the types A, AAAA, CNAME, MX, TXT, NS, and SOA in class IN. Errors name the line. `Dns::bundled()` serves the shipped zone, and `Dns::new(zone)` serves any other.
+
+The parser rejects what it does not know instead of skipping it. That covers the directives `$INCLUDE` and `$GENERATE`, the types and classes outside the list above, a record without a TTL when no `$TTL` is set, an address that does not parse, a second SOA record, and a CNAME next to other data at one name. A zone file that the `zone_file` setting names must also hold exactly one SOA record, because its owner is the zone origin and the server refuses names outside it.
+
+## Settings
+
+A test configuration sets the module settings once under `modules.dns.settings` (decision D12 item 22), and the manifest describes them with a JSON Schema.
+
+| Setting | Type | Default | Meaning |
+|---|---|---|---|
+| `zone_file` | non empty string | none | Zone file that the server answers from, in the subset of master file syntax above. A relative path resolves against the module directory, so `zones/example.test.zone` names the shipped zone. Without the setting, the server answers from the shipped zone, as before. |
+
+`Dns::from_settings(&value, base)` reads the settings value that the plan carries, with the module directory as `base`. It rejects a value that is not an object, any key other than `zone_file`, a `zone_file` that is not a non empty string, a file that cannot be read, a malformed zone, and a zone without an SOA record. Each error names the file, and a parse error also names the line, as in `zone file zones/x.zone: zone line 3: ...`. The test configuration `contracts/examples/tests-pending/dns_zone.yaml` shows the setting in use. The controller compiler validates and carries the settings, but the agent protocol has no field for them yet, so a plan does not deliver them to an agent until a contract change adds one.
 
 ## Scenarios
 
@@ -63,6 +75,6 @@ The unit tests cover the codec against the contract example bytes, compression, 
 
 ## Fixture and realism
 
-`fixtures/capture.sh` brings up the QA-01 harness under its own name prefix, runs the server side of every scenario in the server namespace and the client side in the client namespace through `fixture_peer`, records the router's client arm, and scores the capture with the realism runner. TCP flows run over the kernel TCP backend. UDP flows run over Tokio UDP sockets until the kernel UDP backend of TRN-02 merges. The client opens one socket per session from an ephemeral port, and the server binds port 53 once. It runs 20 sessions per scenario, so the capture holds 160 sessions, 140 over UDP and 20 over TCP, in about 75 KB.
+`fixtures/capture.sh` brings up the QA-01 harness under its own name prefix, runs the server side of every scenario in the server namespace and the client side in the client namespace through `fixture_peer`, records the router's client arm, and scores the capture with the realism runner. TCP flows run over the kernel TCP backend. UDP flows run over Tokio UDP sockets until the kernel UDP backend of TRN-02 merges. The client opens one socket per session from an ephemeral port, and the server binds port 53 once. It runs 20 sessions per scenario, so the capture holds 160 sessions, 140 over UDP and 20 over TCP, in about 75 KB. Both peers receive the module settings with `--settings`, so the server answers from a configured zone. `capture.sh` passes `{"zone_file":"zones/example.test.zone"}` by default, and the environment variable `FPS_DNS_SETTINGS` replaces that JSON. `fixture_peer --zone FILE` is a shorthand that resolves FILE against the current directory.
 
 The committed capture scores as follows. nDPI 4.2.0 classifies 160 of 160 sessions as DNS from payload alone, so the conformance ratio is 1.0 against the threshold 0.99, and tshark 4.2.2 reports no parser errors and no malformed packets. Zeek was not installed when we recorded it, so the report covers tshark only. The `mod-dns` workflow scores the committed capture and also records and scores a fresh one on every change.
