@@ -49,6 +49,7 @@ A self hosted runner executes the job's code on the owner's machine with the rig
 | Quiet | Nothing else heavy during 02:00 to 03:00 UTC, because the run takes about three minutes and tolerates 10% noise |
 | Stable | The same CPU model and vCPU count as when the baseline was recorded, which `--require-same-host` enforces, and a fixed CPU governor such as `performance` |
 | Limits | A hard limit of 65536 open files or more, because the script raises the soft limit to the hard limit for 4000 connections |
+| Conntrack | No connection tracking on loopback when the `nf_conntrack` module is loaded, for example by Tailscale, Docker, or a firewall. The suite opens about 50,000 loopback connections a second, and conntrack keeps each closed one for 120 seconds, so the table fills and the kernel logs `nf_conntrack: table full, dropping packet`. Every scenario after the first then fails with `connect_timedout`. See [Tuning the host](#tuning-the-host) |
 
 ### Install and register the runner
 
@@ -84,6 +85,27 @@ The comparison needs a baseline recorded on this same host. The S1 baseline of t
 3. From the next night the job runs `make bench-s1 BENCH_COMPARE_ARGS=--require-same-host` against that file and uploads `target/bench/` with the text log, the converted result, and `s1-engine-report.json`. A regression fails the job and the run summary shows the table.
 
 To use another baseline file for a manual run, enter its file name under `bench/baselines/` in the Run workflow form.
+
+### Tuning the host
+
+Two settings keep the numbers clean, and a oneshot systemd unit applies both at every boot.
+
+1. Exempt loopback from connection tracking in a table of its own, so rules that other software manages stay untouched. Put this in `/etc/fps-bench-tune.nft`:
+
+   ```
+   table inet fps_notrack
+   delete table inet fps_notrack
+   table inet fps_notrack {
+     chain prerouting { type filter hook prerouting priority raw; policy accept; iif "lo" notrack }
+     chain output { type filter hook output priority raw; policy accept; oif "lo" notrack }
+   }
+   ```
+
+2. Set the CPU governor to `performance` on every CPU.
+
+3. A unit `fps-bench-tune.service` with `Type=oneshot`, `RemainAfterExit=yes`, and `WantedBy=multi-user.target` runs `nft -f /etc/fps-bench-tune.nft` and writes `performance` to every `scaling_governor`. Check with `sudo nft list table inet fps_notrack` and `cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor`.
+
+Never enable a stock `nftables.service` for this, because its default configuration starts with `flush ruleset` and would remove the rules of Tailscale or Docker.
 
 ## The fps-bench/v1 format
 
@@ -138,6 +160,7 @@ Run files named `<run>-r<N>` are repetitions, and the adapter reports their mean
 | File | Suite | Host | Source |
 |---|---|---|---|
 | `baselines/s1-engine-phase0-container.json` | `s1-engine` | 2 vCPU Firecracker microVM, Intel Xeon at 2.10 GHz, Linux 6.18.44 | `spikes/s1-engine/results/phase0-container/` of 2026-11-02 |
+| `baselines/s1-engine-owner-host.json` | `s1-engine` | Owner host `owner-host`, 8 vCPU Intel Core i7-8705G at 3.10 GHz, Linux 7.0.0-42, rustc 1.99.1, `performance` governor, loopback not tracked | `spikes/s1-engine/results/owner-host-nightly/` of run 42231498234 on 2026-11-06 |
 | `baselines/fps-interp-bulk-container.json` | `fps-interp-bulk` | 2 vCPU Firecracker microVM, Intel Xeon at 2.30 GHz, Linux 6.18.44 | `FPS_BENCH_OUT=<file> cargo bench -p fps-interp --bench bulk` of 2026-11-03 |
 
 A test checks that the S1 baseline equals the adapter output of its committed raw files, so a hand edit of a number fails CI.
