@@ -127,6 +127,7 @@ fn connect(args: &[String]) -> ExitCode {
                     name: m.name,
                     version: m.version,
                     digest: m.digest,
+                    ..Default::default()
                 })
                 .collect();
             caps.labels = std::mem::take(&mut cfg.capabilities.labels)

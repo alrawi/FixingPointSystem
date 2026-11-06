@@ -431,6 +431,14 @@ impl Shared {
             Some(Body::Prepare(cmd)) => self.prepare(reply, cmd),
             Some(Body::Start(cmd)) => self.start(reply, &cmd),
             Some(Body::Stop(cmd)) => self.stop(reply, &cmd),
+            // Contract 0.2.0 commands that a later package implements.
+            Some(Body::UpdateRates(_) | Body::StartCapture(_) | Body::StopCapture(_)) => {
+                Some(error(
+                    reply,
+                    ErrorCode::Unimplemented,
+                    "this agent does not implement the command yet".into(),
+                ))
+            }
         }
     }
 

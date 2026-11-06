@@ -390,6 +390,8 @@ pub fn plan_to_pb(p: &Plan) -> pb::Plan {
                 name: m.name.clone(),
                 version: m.version.clone(),
                 digest: m.digest.clone(),
+                // The plan mirror has no signature yet, which AGT-04 adds.
+                ..Default::default()
             })
             .collect(),
         scenarios: p
@@ -662,6 +664,8 @@ pub fn capabilities_to_pb(c: &proto::Capabilities) -> pb::Capabilities {
                 name: m.name.clone(),
                 version: m.version.clone(),
                 digest: m.digest.clone(),
+                signature: m.signature.clone(),
+                signature_key_id: m.signature_key_id.clone(),
             })
             .collect(),
         labels: c

@@ -6,7 +6,7 @@
 //! [`HostCapabilities::to_capabilities`] then fills the proto mirror
 //! [`Capabilities`]. Some facts, namely the NUMA nodes, the kernel version,
 //! and the AF_XDP evidence, have no field in the `Capabilities` message of
-//! contract version 0.1.0, so they stay on [`HostCapabilities`] until the
+//! contract version 0.2.0, so they stay on [`HostCapabilities`] until the
 //! contract adds them. AF_XDP support reaches the message as
 //! [`Backend::AfXdp`] in `backends`.
 //!
@@ -28,7 +28,7 @@ use crate::proto::{Backend, Capabilities, PortInfo};
 use crate::sysroot::SystemRoot;
 
 /// The contract version of `agent.proto` that this crate implements.
-pub const ENGINE_API: &str = "0.1.0";
+pub const ENGINE_API: &str = "0.2.0";
 
 /// The agent build version.
 pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
