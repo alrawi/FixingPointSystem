@@ -274,8 +274,7 @@ def ready_ids() -> list[str]:
     """Catalog ids of open work packages labeled status:ready or status:stale."""
     ids: list[str] = []
     for label in ("status:ready", "status:stale"):
-        pages = gh("--paginate", "--slurp",
-                   f"repos/{REPO}/issues?state=open&labels=type:wp,{label}&per_page=100")
+        pages = gh_pages(f"repos/{REPO}/issues?state=open&labels=type:wp,{label}&per_page=100")
         for page in pages or []:
             for issue in page:
                 names = {lab["name"] for lab in issue["labels"]}
@@ -316,9 +315,27 @@ def gh(*args: str, payload: dict | None = None) -> object:
     return json.loads(res.stdout) if res.stdout.strip() else None
 
 
+def gh_pages(path: str) -> list[list[dict]]:
+    """All pages of a list endpoint, fetched with an explicit page number.
+
+    Automatic pagination in gh follows the Link header, whose next URL uses
+    the numeric repositories/{id} form. Some proxies refuse that form, so we
+    ask for page=N on the repos/{owner}/{repo} path until a page comes back
+    short.
+    """
+    pages: list[list[dict]] = []
+    sep = "&" if "?" in path else "?"
+    for n in range(1, 1000):
+        page = gh(f"{path}{sep}page={n}") or []
+        pages.append(page)
+        if len(page) < 100:
+            break
+    return pages
+
+
 def existing_issues() -> dict[str, dict]:
     found: dict[str, dict] = {}
-    pages = gh("--paginate", "--slurp", f"repos/{REPO}/issues?state=all&labels=type:wp&per_page=100")
+    pages = gh_pages(f"repos/{REPO}/issues?state=all&labels=type:wp&per_page=100")
     for page in pages or []:
         for issue in page:
             m = re.match(r"^\[([A-Z]{2,3}-\d{2})\]", issue["title"])
