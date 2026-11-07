@@ -97,6 +97,7 @@ fn walk<'y>(actions: &'y [Yaml], path: &mut Vec<Step>, f: &mut dyn FnMut(&[Step]
 
 struct Ctx<'a> {
     vars: HashMap<String, ValueType>,
+    profiles: HashSet<String>,
     modules: Option<&'a ModuleContext>,
     warnings: &'a mut Vec<Warning>,
 }
@@ -201,8 +202,19 @@ pub(crate) fn check_document(
         .filter_map(|(id, f)| id.map(|id| (id, f)))
         .collect();
 
+    let profiles = doc
+        .get("profiles")
+        .and_then(Yaml::as_mapping)
+        .map(|m| {
+            m.keys()
+                .filter_map(Yaml::as_str)
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
     let mut ctx = Ctx {
         vars,
+        profiles,
         modules,
         warnings,
     };
@@ -476,6 +488,7 @@ fn check_templates(
             let scope = CheckScope {
                 vars: &ctx.vars,
                 modules: ctx.modules,
+                profiles: &ctx.profiles,
                 last: seen,
             };
             t.check(scope, &mut found)
