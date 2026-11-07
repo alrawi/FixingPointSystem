@@ -9,14 +9,15 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | Crate | Contents | Next package |
 |---|---|---|
 | [`fps-io`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-io) | The `SessionIo` trait, the in memory duplex `fps_io::memory::duplex`, and the `DatagramIo` seam with the in memory `datagram_pair`, see [UDP datagram sessions](#udp-datagram-sessions) | Kernel UDP since TRN-02 |
-| [`fps-flow`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-flow) | The scenario model, the loader, the program compiler, the template compiler of contract v0.2, and the `TemplateFn` dispatch trait | ENG-02 adds the semantic checks |
+| [`fps-flow`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-flow) | The scenario model, the loader, the program compiler, the template compiler of contract v0.3, and the `TemplateFn` dispatch trait | ENG-02 adds the semantic checks |
 | [`fps-interp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-interp) | The session interpreter, the `Opener` seam, `session_rng`, delay sampling, and failure reasons, see [The flow program interpreter](#the-flow-program-interpreter) | UDP sessions since ENG-06 and vectored fill writes since ENG-05, see [Vectored writes for fill bodies](#vectored-writes-for-fill-bodies). ENG-07 adds multi flow instances |
 | [`fps-stats`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-stats) | The catalog table, per worker shards, HDR histograms, the snapshot merge, and the proto3 JSON mapping of `CounterSnapshot`, plus the typed `SessionCounters` and `TransportCounters` sets with the `side` label and the failure reasons of ENG-14 | ENG-10 publishes one snapshot per second from the worker runtime |
 | [`fps-runtime`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-runtime) | Worker threads, optional core pinning, the Tokio clock of the scheduler, statistics snapshots, stop and abort | AGT-01 builds a `RuntimeConfig` from the agent plan |
-| [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched) | Load profile, session schedule, drain iterator, and injected clock | ENG-10 drives it from the worker runtime |
+| [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched) | Load profile, session schedule, drain iterator, and injected clock | ENG-10 drives it from the worker runtime, and AGT-05 routes `UpdateRates` to `RateControl` |
 | [`fps-hosts`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-hosts) | Host pool address mapping, slicing, and seeded host selection, see [Hosts](Hosts.md) | HST-02 adds kernel port setup |
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `SessionIo` over kernel TCP sockets, see [Transport](Transport.md) | TRN-02 adds UDP |
 | [`fps-wasm`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-wasm) | The WebAssembly extension host, with fuel and memory limits, see [The WebAssembly extension host](#the-webassembly-extension-host) | The interpreter and the runtime wire it into their module table |
+| [`fps-capture`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-capture) | The seeded session sampler, the tap wrappers, frame synthesis, and the bounded pcapng ring with TLS key logs, see [Session sampling and capture](#session-sampling-and-capture) | AGT-05 serves `StartCapture` and `StopCapture` with it |
 
 Every crate carries `#![forbid(unsafe_code)]` and the lint header, except `fps-backend-kernel`, which carries `#![deny(unsafe_code)]` with one allowed socket module that [Transport](Transport.md#unsafe-code) explains. The lint header comes from [Coding Standards](Coding-Standards.md#rust). A `clippy.toml` in each crate with tests lets unit tests call `unwrap`, `expect`, and `panic`, which library code may not. We run the tests of every engine crate with `make test-eng`, and the `rust` job of `ci.yml` runs them on every pull request.
 
@@ -46,7 +47,7 @@ Tests use `fps_io::memory::duplex(capacity)`, which returns two connected `Memor
 
 ## Templates
 
-ENG-03 replaced the v0.1 template parser with a compiler for the full v0.2 grammar of `contracts/README.md`. The tokenizer and the recursive descent parser in `template/parse.rs` follow `tools/contracts/validate.py` rule for rule, so the engine and the validator accept the same templates. The compiler covers literals of all four kinds, the references `vars.<name>`, `session.id`, `session.flow`, and `last`, the core functions `fill`, `hex`, and `rand_int` with positional and keyword arguments, and module calls with keyword arguments and nested calls up to 8 levels.
+ENG-03 replaced the v0.1 template parser with a compiler for the full v0.2 grammar of `contracts/README.md`, and ENG-16 extended it to v0.3, see [Profiles and distributions](#profiles-and-distributions). The tokenizer and the recursive descent parser in `template/parse.rs` follow `tools/contracts/validate.py` rule for rule, so the engine and the validator accept the same templates. The compiler covers literals of all four kinds, the references `vars.<name>`, `session.id`, `session.flow`, and `last`, the core functions `fill`, `hex`, and `rand_int` with positional and keyword arguments, and module calls with keyword arguments and nested calls up to 8 levels.
 
 A compiled template is a list of segments. A segment is either literal bytes or an expression slot. The compiler binds the arguments of core functions to their parameters and checks their static types with the rules of the contract section on types, so `fill('x')` fails at load time. Module calls keep their positional and keyword arguments in call order, because the extension binds them against its own catalog.
 
@@ -58,6 +59,25 @@ We fold in two passes, and neither pass changes the rendered bytes or the order 
 2. `Scenario::fold_constants` runs once per run after `Scenario::override_vars`. It substitutes every scenario variable that no `set` action binds and folds again. In the example `web_get` the whole client request becomes one literal of 132 bytes.
 
 `fill`, `rand_int`, `last`, the session fields, and module calls never fold, because they differ between sessions or draw from the session generator.
+
+### Profiles and distributions
+
+ENG-16 added the two roots of scenario contract v0.3 (CON-10) to the parser, the checker, and the renderer.
+
+`profiles.<name>` has type `text`. The loader reads the top level `profiles` object of the scenario into `fps_flow::Profiles` and folds each reference into the text that it renders, so a compiled scenario carries no profile lookup and the interpreter needs no change. The text holds each entry as `Name: value` and CRLF in declaration order, with a number or boolean in its `Display` form. `Template::fold_profiles` does the substitution, `Scenario::parse` calls it for every template of every flow after the flows compile, and a template that `Template::compile` built on its own and that nobody folded fails to render with `UndefinedProfile`. The loader rejects a profile without entries, an entry name outside `[A-Za-z0-9][A-Za-z0-9_-]*`, a nested value, and a string with CR or LF, as the schema does, and the check reports a reference to a profile that the scenario does not declare.
+
+`dist.pareto(alpha, scale, cap)`, `dist.lognormal(mu, sigma, cap)`, `dist.exponential(mean, cap)`, and `dist.uniform(low, high)` return an `int`. The code lives in `template/dist.rs` and uses no distribution crate.
+
+| Function | Draw | Generator words |
+|---|---|---|
+| `pareto` | `scale * u^(-1/alpha)` with `u` in (0, 1], the inverse transform | 1 |
+| `lognormal` | `exp(mu + sigma * z)`, where `z` comes from the Box-Muller transform and the second normal is discarded | 2 |
+| `exponential` | `-mean * ln(u)` | 1 |
+| `uniform` | `low + (high - low) * r` with `r` in [0, 1) | 1 |
+
+The draw is rounded to the nearest integer and limited to `cap`, which defaults to 2,147,483,647 (`DEFAULT_CAP`). `uniform` has no `cap`, and its draw never leaves `[low, high]` before rounding. An infinite draw, which a tiny `alpha` can cause, lands on the cap. Every call consumes the same number of generator words whatever its arguments, so a seeded run repeats and two runs that differ only in the arguments stay in step. The parameters take `float` and bind an `int` too, and a variable of type `text` that parses as a number binds as well, as `fill` already accepts a numeric string.
+
+The ranges of the contract hold at two points. A literal argument is checked when the template compiles (`DistParameter`, `UniformRange`), so the loader rejects `dist.exponential(0)`. An argument that a variable or a call computes is checked on each render, and the session fails with the same errors. `alpha`, `scale`, `sigma`, `mean`, and `cap` must be positive, `low` and `high` must not be negative, `low` must not exceed `high`, and `mu` must be finite. The existing object form `delay: { dist: lognormal, ... }` stays as it was, and `delay: { ms: "{{ dist.lognormal(3.0, 0.8) }}" }` is the template form.
 
 ### Module function dispatch
 
@@ -91,6 +111,8 @@ The renderer passes the session generator, so module output is reproducible from
 |---|---|
 | `tests/grammar.rs` | Every grammar rule of contract v0.2, with the dump or the error and the bytes that one session renders with seed 42, against `tests/testdata/grammar.seed42.txt` |
 | `tests/contract_examples.rs` | Every example scenario compiles, and its dump before and after folding matches `tests/testdata/examples/<module>.<scenario>.dump` |
+| `tests/profiles.rs` | `web_profile.yaml` loads and checks, a loaded scenario renders its profile and draws capped delays, and the loader rejects undeclared profiles, bad `dist` calls, and malformed profiles |
+| `src/template/tests_dist.rs` | Each `dist` function (sample mean or median over 200,000 draws within 3%, minimum and bounds), the cap and the default cap, seeded repeatability, fixed generator words per call, argument binding and range errors at compile and render time, profile rendering order and CRLF, and the dump |
 | `tests/templates.rs` | Property tests that rendering is deterministic for a fixed seed and session id, module calls included, and that folding preserves the rendering |
 
 We rewrite the golden files with `UPDATE_GOLDEN=1 cargo test -p fps-flow` and review every changed file before a commit.
@@ -123,18 +145,18 @@ The component test `tests/concurrency.rs` runs eight worker threads that record 
 Catalog 0.2.0 (CON-08) gives every scenario level and transport metric the `side` label with the values `client` and `server`, and it adds the failure reasons `datagram_rejected`, `template_error`, and `extension_error`. ENG-14 follows it in `fps-stats` with three additions in `src/series.rs`.
 
 1. `Side` and `FailureReason` name the label values as types, each with `ALL` in catalog order and `as_str`. The contract test `tests/series.rs` compares both with `contracts/metrics/catalog.yaml`.
-2. `SessionCounters::register(shard, application, scenario, side)` registers `sessions.attempted`, `sessions.established`, `sessions.succeeded`, `bytes.tx`, `bytes.rx`, and one `sessions.failed` counter for each of the 12 reasons, all with the `side` label. Its methods `attempted`, `established`, `succeeded`, `failed(reason)`, and `add_bytes` record through the handles.
+2. `SessionCounters::register(shard, application, scenario, side)` registers `sessions.attempted`, `sessions.established`, `sessions.succeeded`, `bytes.tx`, `bytes.rx`, one `sessions.failed` counter for each of the 12 reasons, the `sessions.concurrent` gauge, and the `sessions.duration` histogram, all with the `side` label. Its methods `attempted`, `established`, `succeeded`, `failed(reason)`, and `add_bytes` record through the handles. ENG-15 added `started`, which counts an attempt and raises the gauge, and `ended(duration_us)`, which lowers the gauge and records the duration.
 3. `TransportCounters::register(shard, port, side)` registers the plain `tcp.*` and `tls.*` counters with the `side` label. The alert counters carry the extra `alert` label, so a caller registers them with `Shard::counter`.
 
-The counter sets cover counters only. A worker that records `sessions.concurrent` or `sessions.duration` passes the `side` label to `Shard::gauge` and `Shard::histogram` itself. A total over both sides counts each session twice, so a reader that sums `sessions.failed` without the `side` label gets double counts when both sides run in one plan. The unit tests in `tests/series.rs` record each new reason on both sides, and they check the merged snapshot and the proto3 JSON.
+The `TransportCounters` set covers counters only. A total over both sides counts each session twice, so a reader that sums `sessions.failed` without the `side` label gets double counts when both sides run in one plan. The unit tests in `tests/series.rs` record each new reason on both sides, and they check the merged snapshot and the proto3 JSON.
 
-The callers outside `fps-stats` still register the session series without `side`, and `FailureKind::reason` in `fps-interp` never returns the three new reasons yet. Both are follow ups of other packages, listed in the log entry of ENG-14.
+ENG-15 closed two of the follow ups of ENG-14. `FailureKind::reason` in `fps-interp` now returns the three new reasons, and `fps-runtime` registers its series through `SessionCounters`. The UDP path of `fps-agent` still has its own registration without `side`, which AGT-07 changes.
 
 ## The session scheduler
 
 ENG-08 added the crate [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched), which turns one worker rate of a plan into session starts. A `Schedule` serves one mix entry on one worker, and its scheduled times are a pure function of the configuration, the run seed, and the stream, so a replay reproduces every start.
 
-The crate has four parts, which are listed below.
+The crate has six parts, which are listed below.
 
 | Item | Contents |
 |---|---|
@@ -142,6 +164,8 @@ The crate has four parts, which are listed below.
 | `Schedule` | Session starts for a `SessionsPerSecond` or a `ConcurrentSessions` objective, with a concurrency cap |
 | `Drain` | The iterator that `Schedule::drain(&clock, open)` returns for one clock reading |
 | `Clock` and `ManualClock` | The injected clock, which reports the time since the run start |
+| `RateHandle` | A thread safe handle on the target of one schedule, which a control thread sets while the worker runs (ENG-13) |
+| `RateControl` | The registry that maps a scenario id to the handles of its workers, with all or nothing updates (ENG-13) |
 
 A worker calls `drain` with its clock and its open session count, starts every session that the drain yields, and sleeps until `next_due` returns a time. When `next_due` returns `None`, only a closing session can release the next start. The crate never reads the wall clock, so the runtime of ENG-10 backs the clock with its timer and tests use `ManualClock`.
 
@@ -154,6 +178,25 @@ At the concurrency cap the default policy `CapPolicy::Defer` holds an arrival un
 ### Concurrency objectives
 
 A concurrency objective starts a session whenever the open sessions fall below the target, which is the floor of the steady target times the current fraction, bounded by the cap. Such a start carries the drain time as its scheduled time. `next_due` returns the first time at which the target exceeds the open sessions, or `None` while the target is met.
+
+### Run time rate adjustment
+
+ENG-13 lets the agent change the rate of a running schedule without restarting a worker. `Schedule::rate_handle()` returns a `RateHandle`, a clone of one atomic cell that holds the target as the bits of an `f64`. Any thread may call `set`, and the worker loads the cell at every `drain`, which is its scheduling tick. The worker takes no lock, and a single atomic word cannot tear. A handle keeps the kind of its objective, so a rate handle refuses a concurrency target and the reverse with `KindMismatch`, and `set` refuses a rate that is negative or not finite with `InvalidRate`.
+
+The change applies at the first tick that sees it, and `next_due` returns a time that is not after the clock while a change waits, so a worker that re reads it ticks at once. A worker that sleeps with no due time, which happens while the schedule is paused or at the cap, has to wake by itself to see a change, and ENG-10 and AGT-05 should bound that sleep to a tick of about 100 ms.
+
+The arrival process stays correct across a change because the schedule keeps the operational time of the pending arrival and changes only the map from operational time to time. An arrival at operational time `op` lies where the integral of the profile reaches `mass_base + (op - op_base) / rate`. A change at time `t` sets `op_base` to the expected count at `t` under the old rate and `mass_base` to the integral at `t`, so the expected count is continuous. The next start keeps its place in the count and moves to where the new rate reaches it. Constant arrivals therefore keep every gap between the old and the new spacing, which leaves no burst that catches up and no gap, and Poisson arrivals stay a Poisson process with the new intensity.
+
+Four behaviours are defined.
+
+| Case | Behaviour |
+|---|---|
+| Rate 0 | The schedule pauses. It yields no start, `is_finished` stays false, and `next_due` is `None`. The expected count stands still, so a resume does not owe the paused time. A concurrency target of 0 starts nothing and leaves the open sessions to the worker |
+| Arrival already due | An arrival that was due before the tick under the old rate goes out first, and the new rate applies from the first tick at which none is due. Under `CapPolicy::Defer` at the cap, a change therefore waits until the deferred arrivals have started |
+| Rate raised near the end | The profile ends at a fixed time. A raised rate can bring an arrival inside the profile that the old rate left beyond it, and a lowered rate can push one out |
+| Unknown scenario id | `RateControl::update` and `scale` return `UnknownScenario` and change nothing |
+
+`RateControl` is the registry for the agent. The AGT-05 handler of `UpdateRates` registers the handle of every worker rate under its mix entry name and calls `update`. `update` takes the new target of the whole agent per scenario, as CON-05 defines it, and divides it among the workers in proportion to their current targets, or equally when all are 0. A concurrency total divides into whole sessions that add up to the total. `update` is applied completely or not at all, because it checks every id, kind, and value before it stores anything, and it rejects an id that it names twice. A scenario that it does not name keeps its targets. The workers apply their shares on their own ticks, so one update can take effect on slightly different ticks on different workers. `scale` takes one factor per scenario, as the calibration of CTL-21 produces them, and sets every handle to its registered target times the factor. The factor applies to the registered target and not to the current one, so a repeated factor changes nothing and a factor of 1 restores the compiled rate.
 
 ### Phase shapes
 
@@ -172,6 +215,7 @@ The tests of the crate cover the four levels that the ENG workstream requires ex
 3. Phase boundary tests count the starts of ramp up, steady, and ramp down, step ramps up and down, and the concurrency targets at each phase.
 4. Property tests check the inverse of the integral, ordering, bounds, reproducibility, and the constant arrival count over generated profiles.
 5. Contract tests parse every shape name of `test-config.schema.json` and schedule the phases of `examples/plans/http_dns_smoke.json`.
+6. `tests/rate.rs` covers the rate adjustment on a simulated clock without a sleep. A change takes effect at the next tick. Two changes realize the new rates within 5% for Poisson arrivals, over windows of 400 seconds, and within 1% for constant arrivals. Constant arrivals keep every gap between the old and the new spacing, a KS test accepts the rescaled Poisson gaps across two changes, and a property test checks the count and the gaps over generated rates. Pause and resume, a raised rate near the end, the concurrency target, an unknown id, an invalid update, and the proportional split have their own tests. Four threads that call `set` while a worker drains, and four threads that call `update` while a reader checks the registry, prove the thread safety.
 
 ## The scenario loader
 
@@ -208,7 +252,8 @@ The loader rejects a scenario for each rule below. The rules on templates use th
 | `max_datagram` on TCP, or a UDP expect that cannot fit one datagram | `MaxDatagramOnTcp`, `DatagramLimit` |
 | `last` where no `expect` always ran earlier on the same side | `LastWithoutExpect` |
 | A call names a foreign module or a function that the manifest lacks | `ForeignModule`, `UnknownModuleFunction` |
-| An undefined variable, or a call with a wrong arity, parameter, or argument type | `Template` with the matching `TemplateError` |
+| An undefined variable or profile, or a call with a wrong arity, parameter, or argument type, or a `dist` literal out of range | `Template` with the matching `TemplateError` |
+| A profile with no entry, a bad entry name, a nested value, or a line break in a string | `Invalid` |
 
 The rule on `last` follows the Python validator. A loop body counts only when its count is a positive integer literal, and a branch counts only when every arm runs an `expect`. `Template::check` holds the typed template rules and reads the catalogs through `CheckScope`, and `manifest.rs` reads the `functions` catalog of a manifest.
 
@@ -251,13 +296,16 @@ Every failure is a `Failure` with the flow id, the side, the catalog action inde
 | `connect_refused` | The opener reported `ConnectionRefused` |
 | `expect_timeout` | An `expect` did not finish within its `timeout_ms`, or the peer did not close within the drain timeout of `close: fin` |
 | `pattern_mismatch` | `expect pattern` buffered more unmatched bytes than the pattern buffer limit |
+| `datagram_rejected` | A received UDP datagram is longer than the datagram limit (`FailureKind::DatagramTooLarge`) or breaks the stop rule of its `expect` (`FailureKind::DatagramMismatch`) |
 | `unexpected_reset` | A read or write met `ConnectionReset` or `ConnectionAborted` outside the drain of `close: fin` |
 | `peer_closed` | An `expect` read end of stream, or a write met `BrokenPipe` |
 | `tls_failure` | The transport reported `InvalidData`, which is how `tokio-rustls` reports TLS errors |
 | `aborted` | The `stop` future completed |
-| `internal` | A template failed to render, a rendered count, port, or delay was out of range, or the transport reported another error |
+| `template_error` | A template failed to render for a cause of its own, such as `fill()` with a negative size or an undefined variable |
+| `extension_error` | A module function failed during a render, whatever its `FnErrorKind` and whether it is native or runs in the WebAssembly host of `fps-wasm`, which returns its failures to the renderer as `FnError` |
+| `internal` | A rendered count, port, or delay was out of range, or the transport reported another error |
 
-A failed module call fails with reason `internal`, and `Failure::extension_label` returns the label `extension_<kind>` that `contracts/extension/README.md` names. The contract test `tests/catalog.rs` reads `contracts/metrics/catalog.yaml` and checks that `Reason::ALL` equals the reason values in catalog order.
+`FailureKind::reason` reads the cause of `FailureKind::Render`. A `TemplateError::Function` means `extension_error`, and every other `TemplateError` means `template_error`. A failed module call also keeps its kind, and `Failure::extension_label` returns the label `extension_<kind>` that `contracts/extension/README.md` names. The contract test `tests/catalog.rs` reads `contracts/metrics/catalog.yaml` and checks that `Reason::ALL` equals the reason values in catalog order.
 
 ### Tests
 
@@ -266,7 +314,7 @@ The tests run client and server programs against each other over the in memory d
 | Test | What it checks |
 |---|---|
 | `tests/sessions.rs` | Programs that complete, with byte counters, the opener requests, patterns split over one byte reads, the three stop rules and `last`, bytes past an `expect bytes` count, loops, branches, `set`, the five delay distributions on the paused clock, module functions, and the three close modes |
-| `tests/failures.rs` | One test for each of the nine reasons and a second trigger for `connect_timeout`, `expect_timeout`, `peer_closed`, and `internal`, each checking the reason, action index, and action type of both sides |
+| `tests/failures.rs` | One test for each of the twelve reasons except the datagram one, and a second trigger for `connect_timeout`, `expect_timeout`, `peer_closed`, and `internal`, each checking the reason, action index, and action type of both sides |
 | `tests/catalog.rs` | The reasons, sides, and action types against the metric catalog |
 | unit tests | `session_rng` streams and bug #90, delay sample means and supports, and the action index mapping |
 
@@ -293,7 +341,7 @@ A client session dials the rendered `connect` host when the program sets one, wh
 
 ### Statistics
 
-Every worker registers its session series once and records `sessions.attempted`, `sessions.established`, `sessions.succeeded`, `sessions.failed` by reason, `bytes.tx`, `bytes.rx`, `sessions.concurrent`, and `sessions.duration`, with the `application` label from the flow module and the `scenario` label from the scenario name. Once per snapshot interval, one second by default, and once more when it ends, the worker sends a cumulative `WorkerSnapshot` over a channel. The `Collector` keeps the newest snapshot of every worker and merges them per side, because the session metrics of the catalog carry no `side` label and the two sides of one session must not add up. `RuntimeHandle::collect` reads the snapshots that arrived so far, and `RuntimeHandle::join` returns a `RunReport` with the collector and the exit of every worker.
+Every worker registers its session series once and records `sessions.attempted`, `sessions.established`, `sessions.succeeded`, `sessions.failed` by reason, `bytes.tx`, `bytes.rx`, `sessions.concurrent`, and `sessions.duration`, with the `application` label from the flow module, the `scenario` label from the scenario name, and the `side` label of the worker. A worker registers them through `fps_stats::SessionCounters`, which `metrics.rs` calls with the worker side and the interpreter reason mapped to `fps_stats::FailureReason`, so the runtime has no loop over the reasons of its own. Once per snapshot interval, one second by default, and once more when it ends, the worker sends a cumulative `WorkerSnapshot` over a channel. The `Collector` keeps the newest snapshot of every worker and merges them per side, so the two sides of one session never add up, although every series now also carries its `side` label. `RuntimeHandle::collect` reads the snapshots that arrived so far, and `RuntimeHandle::join` returns a `RunReport` with the collector and the exit of every worker.
 
 ### Stop and abort
 
@@ -305,7 +353,7 @@ The tests run over loopback addresses with the kernel backend and are listed bel
 
 | Test | What it checks |
 |---|---|
-| `tests/loopback.rs` web_get | Two client workers drive the http1 `web_get` example at 50 sessions per second for two seconds against two server workers. Both sides report 200 attempted and 200 succeeded sessions, client `bytes.tx` equals server `bytes.rx` and the reverse, and every worker sent one snapshot per second and a final one |
+| `tests/loopback.rs` web_get | Two client workers drive the http1 `web_get` example at 50 sessions per second for two seconds against two server workers. Both sides report 200 attempted and 200 succeeded sessions, every session series of each side carries its `side` label with 200 duration samples, client `bytes.tx` equals server `bytes.rx` and the reverse, and every worker sent one snapshot per second and a final one |
 | `tests/loopback.rs` ramp down | A stop during a run lets every open `web_get` session finish, and the run ends within the ramp down time plus one second |
 | `tests/loopback.rs` stop and abort | Sessions that wait 20 seconds for an answer are aborted at the end of a 700 ms ramp down, the run ends within the ramp down time plus one second, and an abort ends the server workers within one second |
 | `tests/loopback.rs` setup | Pinning to an allowed core, a bind failure that fails the start, and the configuration checks |
@@ -336,7 +384,7 @@ The crate [`fps-io`](https://github.com/alrawi/FixingPointSystem/tree/main/engin
 The TCP and UDP paths share one loop over the compiled ops, so `delay`, `set`, `loop`, `branch`, and the generator behave the same. Only three actions differ.
 
 1. `send` renders the template and writes it as one datagram. A rendering above 65,507 bytes fails the session with reason `internal` before anything is sent.
-2. `expect` reads exactly one datagram within its `timeout_ms` and consumes all of it. `bytes: N` requires exactly N bytes, `min_bytes: N` at least N bytes, and `pattern` the pattern somewhere in the datagram. A datagram that breaks the rule fails with reason `pattern_mismatch` and `FailureKind::DatagramMismatch`, and the interpreter never joins two datagrams or keeps part of one for the next `expect`. The whole datagram becomes `last` when a template of the side refers to it.
+2. `expect` reads exactly one datagram within its `timeout_ms` and consumes all of it. `bytes: N` requires exactly N bytes, `min_bytes: N` at least N bytes, and `pattern` the pattern somewhere in the datagram. A datagram that breaks the rule fails with reason `datagram_rejected` and `FailureKind::DatagramMismatch`, and an oversized one with `FailureKind::DatagramTooLarge`, and the interpreter never joins two datagrams or keeps part of one for the next `expect`. The whole datagram becomes `last` when a template of the side refers to it.
 3. `close` releases the socket in every mode, because UDP has no close handshake.
 
 `Session::set_max_datagram` sets the datagram limit of `expect`, clamped to the range from 1 to 65,507 bytes with 65,507 as the default. A longer datagram fails with reason `pattern_mismatch` and `FailureKind::DatagramTooLarge`, and it still counts in `bytes_rx`. The datagram lands in the 64 KiB scratch buffer of the session and is copied into `last` only when a template needs it. A connected socket reports ICMP port unreachable as `ConnectionRefused`, which fails the session with reason `connect_refused`. When the `stop` future completes first, the session closes the socket and fails with reason `aborted`.
@@ -472,3 +520,62 @@ The test extension is core WAT text in `tests/support/mod.rs`. The tests encode 
 | `the_catalog_is_read_at_load`, `a_component_without_the_world_is_rejected` | The catalog with types and defaults, and an invalid or incomplete component |
 
 The conformance tests that decision record 0010 asks for need a native extension to run against, and none exists yet. The WebAssembly side is covered above.
+
+## Session sampling and capture
+
+ENG-12 added `fps-capture`, which mirrors a seeded sample of sessions into a bounded ring of pcapng files, and exports the TLS key log of each sampled session next to its packets. The agent control protocol of [CON-05](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/changes/CON-05.md) names the commands that AGT-05 serves with this crate, which are `StartCapture` and `StopCapture`.
+
+### Sampling
+
+A `Capture` takes a `SamplePolicy`, which is `Off`, `Rate(fraction)`, or `EveryNth(n)`, and the run seed. `Rate` hashes the seed and the session id with SplitMix64 and compares the result with a threshold, so the sample is a binomial draw that a replay reproduces, and no state is shared between workers. A rate of 0.01 over 10,000 sessions gives 100 sessions on average with a standard deviation of 10, and the acceptance band of 70 to 130 sits at three standard deviations. The unit test `one_percent_of_ten_thousand_lands_in_the_acceptance_band` runs 50 seeds through that band, and the component test counts the SYN frames of the written files. `EveryNth` is exact, with an offset that the seed chooses.
+
+### Cost when sampling is off
+
+`Capture::start` returns `Capture::disabled()` for a policy that never samples. That capture owns no thread, no directory, and no channel. Its `begin` call returns `None` after one branch, with no allocation, lock, or clock read, and `tap` then returns the `Plain` variant of `Tapped`, which forwards every call after one `match`. An enabled capture costs a session that the sampler skips one hash and one compare.
+
+### What the capture records
+
+The engine sees session bytes and no packets, so the capture does not use an AF_PACKET ring. `Tapped` wraps a `SessionIo` and `TappedDatagram` wraps a `DatagramIo`. They record the bytes that pass through, the close of the write side, the end of stream, and the reset, with a time from an injected `CaptureClock`. Wrap the transport below TLS, so the capture holds the encrypted bytes that a packet capture would hold. A sampled session copies its bytes into a recorder that is private to the session, and the recorder goes to a writer thread when the last handle drops. The writer thread synthesizes the frames and writes the file, so the worker pays for one copy. The queue holds 256 finished sessions by default, and a session that finds it full is dropped and counted in `sessions_dropped_queue`.
+
+The synthesis is a pure function of the events, the seed, and the session id.
+
+| Layer | What the capture builds |
+|---|---|
+| Ethernet | Locally administered addresses that derive from the IP addresses |
+| IP | IPv4 with the DF bit and a header checksum, or IPv6, from the endpoints of the session, which must share a family |
+| TCP | A three way handshake with an MSS option, sequence numbers from the seed and session id, segments of at most MTU minus 40 or 60 bytes with PSH on the last, FIN with ACK in both directions, or RST when a side aborts, and a close of both sides when the session ends without one |
+| UDP | One frame per datagram, an empty datagram included, with the checksum that IPv6 requires, and no fragmentation |
+
+A session records at most `max_session_bytes` of payload, 1 MiB by default. A stream keeps its prefix and still closes, a datagram is kept whole or not at all, and the session counts in `sessions_truncated`.
+
+### The ring
+
+`RingConfig` names the directory, a file prefix, `file_bytes`, and `max_files`. The writer appends whole sessions to the newest file `<prefix>-<index>.pcapng` and opens the next file when a session would pass `file_bytes`. When the file count passes `max_files`, the oldest file goes with its key log. A session never spans two files, so each file decrypts alone, and a session that cannot fit into a file of its own counts in `sessions_dropped_oversize`. A new run adopts the files with the same prefix and continues the numbering, so the bound holds across restarts. Each file is a pcapng section with one Ethernet interface and nanosecond timestamps, and the writer flushes after every session, so a reader that opens a file during the run sees whole blocks.
+
+The key log of a session comes from the caller. Give each sampled TLS session its own in memory `NssKeyLog` of the TLS module, and pass its contents to `SessionHandle::add_key_lines` when the handshake is done. `KeyLogMode` chooses where the lines go. `Embedded` writes a decryption secrets block of type `TLSK` ahead of the packets of its session, `Sidecar` writes `<file>.keys` in the NSS format, and `Both`, the default, writes both, so Wireshark decrypts the file alone and other tools read the log. A key log file and a capture with embedded secrets are as sensitive as a private key.
+
+### Tests
+
+The tests read the files back with a pcapng block reader and a packet parser in `tests/common/`, which share no code with the writer. The parser checks every block length, every IP and transport checksum, and every length field, and the reassembly fails on a gap or an overlap.
+
+| Test | What it checks |
+|---|---|
+| `ring_rotates_and_every_retained_file_parses` | Thirty sessions rotate a ring of three 24 KiB files, each file stays within the limit, every retained session reassembles to its bytes with a handshake and two FINs, and the key log sidecars match the embedded blocks and no stray file remains |
+| `one_percent_of_ten_thousand_sessions_captures_between_70_and_130` | The acceptance criterion, counted in the files |
+| `every_nth_sampling_is_exact`, `unsampled_sessions_are_not_recorded` | Exact counts and no recording of a session that the sampler skipped |
+| `sampling_off_starts_nothing_and_wraps_nothing` | No directory, no thread, `Plain` wrapping, and zero counters |
+| `ipv6_udp_and_abort_frames_parse` | IPv6 TCP with a server side reset, IPv4 UDP up to 65,507 bytes with an empty datagram, and IPv6 UDP |
+| `long_sessions_are_truncated_at_the_limit`, `a_full_queue_drops_sessions_and_counts_them` | The prefix rule and the drop counters |
+| `key_log_modes_place_the_keys` | Where each mode puts the lines |
+| `the_same_seed_and_clock_give_identical_files` | Repeatable bytes |
+| `tshark_parses_the_synthesized_streams` | tshark reads HTTP over IPv4 and IPv6 and DNS over UDP in both families, finds two TCP conversations, and reports no checksum, malformed, retransmission, loss, or reordering finding |
+| `tshark_decrypts_with_embedded_secrets`, `tshark_decrypts_with_the_sidecar_key_log` | TLS 1.2 and 1.3 sessions of the TLS module decrypt from the embedded blocks alone and from the sidecar alone |
+| `the_ring_holds_the_nss_lines_of_every_tls_session` | The key lines in the ring and an encrypted stream, without any tool |
+
+The tshark tests skip themselves when tshark is missing and fail instead when `FPS_REQUIRE_CAPTURE_TOOLS` is `1`, as the TLS capture test does.
+
+### Open points
+
+1. The runtime does not call the crate yet. AGT-05 builds the `Capture` from a `StartCapture` command and hands a clone to each worker, and ENG-10 sessions wrap their transport with `tap`. A capture that starts in the middle of a run needs a cell that workers read for the current `Capture`, which AGT-05 can add.
+2. The capture filters by sampled session, so the pcap-filter expression and the snap length of `StartCaptureCommand` have no counterpart here, and the AF_PACKET ring that the package text mentions is not built. Synthesized frames hold what the sessions sent, and not the real headers, options, retransmissions, or ICMP of the wire.
+3. `StopCaptureResult` carries a `sha256:` digest of one file, and the ring holds several, so AGT-05 must decide which file or archive the digest names.

@@ -19,7 +19,7 @@ use crate::error::{invalid, missing, unsupported};
 pub use crate::error::{LoadError, Warning};
 use crate::location::Side;
 use crate::manifest::ModuleContext;
-use crate::template::{Template, Value, Vars};
+use crate::template::{Profiles, Template, TemplateError, Value, Vars};
 
 /// Timeout of an `expect` that names none.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_millis(10_000);
@@ -285,10 +285,7 @@ impl Scenario {
         for (i, flow) in self.flows.iter_mut().enumerate() {
             let id = flow.id.clone();
             let at = |e: LoadError, side| e.in_side(side).in_flow(Some(i), Some(&id));
-            fold_program(&mut flow.client, &constants).map_err(|e| at(e, Side::Client))?;
-            if let Some(server) = &mut flow.server {
-                fold_program(server, &constants).map_err(|e| at(e, Side::Server))?;
-            }
+            fold_flow(flow, &|t| t.fold_vars(&constants), at)?;
         }
         Ok(())
     }
@@ -318,12 +315,28 @@ impl Scenario {
     }
 }
 
-fn fold_template(t: &mut Template, constants: &Vars) -> Result<(), LoadError> {
-    *t = t.fold_vars(constants)?;
+/// Rewrites every template of a flow with `f`, naming the side of a failure.
+fn fold_flow(
+    flow: &mut Flow,
+    f: &Fold<'_>,
+    at: impl Fn(LoadError, Side) -> LoadError,
+) -> Result<(), LoadError> {
+    fold_program(&mut flow.client, f).map_err(|e| at(e, Side::Client))?;
+    if let Some(server) = &mut flow.server {
+        fold_program(server, f).map_err(|e| at(e, Side::Server))?;
+    }
     Ok(())
 }
 
-fn fold_program(p: &mut Program, constants: &Vars) -> Result<(), LoadError> {
+/// A rewrite of one template.
+type Fold<'a> = dyn Fn(&Template) -> Result<Template, TemplateError> + 'a;
+
+fn fold_template(t: &mut Template, f: &Fold<'_>) -> Result<(), LoadError> {
+    *t = f(t)?;
+    Ok(())
+}
+
+fn fold_program(p: &mut Program, constants: &Fold<'_>) -> Result<(), LoadError> {
     fold_template(&mut p.port, constants)?;
     if let Some(host) = &mut p.host {
         fold_template(host, constants)?;
@@ -448,6 +461,48 @@ impl Mode {
     }
 }
 
+/// Reads the `profiles` root. The compiler folds each reference into the
+/// text that it renders, so a compiled scenario carries no profile lookup.
+fn read_profiles(doc: &Yaml) -> Result<Profiles, LoadError> {
+    let mut profiles = Profiles::new();
+    let Some(Yaml::Mapping(m)) = doc.get("profiles") else {
+        return Ok(profiles);
+    };
+    for (name, entries) in m {
+        let name = name
+            .as_str()
+            .ok_or_else(|| invalid("profile names must be strings"))?;
+        let entries = entries
+            .as_mapping()
+            .filter(|e| !e.is_empty())
+            .ok_or_else(|| invalid(format!("profile '{name}' needs at least one entry")))?;
+        let mut list = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            let key = key
+                .as_str()
+                .filter(|k| valid_entry_name(k))
+                .ok_or_else(|| invalid(format!("bad entry name in profile '{name}'")))?;
+            let value = Value::from_yaml(value)
+                .map_err(|e| LoadError::from(e).at_field(&format!("profiles.{name}.{key}")))?;
+            if matches!(&value, Value::Str(s) if s.contains(['\r', '\n'])) {
+                return Err(invalid(format!(
+                    "entry '{key}' of profile '{name}' holds a line break"
+                )));
+            }
+            list.push((key.to_string(), value));
+        }
+        profiles.insert(name, list);
+    }
+    Ok(profiles)
+}
+
+/// The entry name pattern `[A-Za-z0-9][A-Za-z0-9_-]*` of the schema.
+fn valid_entry_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 /// Checks and compiles scenario text. In [`Mode::Check`] the compiler
 /// accepts the contract features that this engine does not run yet and
 /// leaves them out of the programs, so only the verdict counts.
@@ -495,7 +550,15 @@ fn build(
         after.insert(flow.id.clone(), deps);
         flows.push(flow);
     }
-    let flows = topo_order(flows, &after)?;
+    let mut flows = topo_order(flows, &after)?;
+    let profiles = read_profiles(&doc)?;
+    if !profiles.is_empty() {
+        for (i, flow) in flows.iter_mut().enumerate() {
+            let id = flow.id.clone();
+            let at = |e: LoadError, side| e.in_side(side).in_flow(Some(i), Some(&id));
+            fold_flow(flow, &|t| t.fold_profiles(&profiles), at)?;
+        }
+    }
     Ok(Scenario {
         name: name.to_string(),
         vars,

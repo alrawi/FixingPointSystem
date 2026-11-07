@@ -77,6 +77,13 @@ fn write_expr(out: &mut String, indent: usize, prefix: &str, e: &Expr) {
             write_expr(out, child, "a = ", a);
             write_expr(out, child, "b = ", b);
         }
+        Expr::Profile(n) => line(out, indent, format_args!("{prefix}profiles.{n}")),
+        Expr::Dist(d, args) => {
+            line(out, indent, format_args!("{prefix}{}", d.qualified()));
+            for (param, arg) in d.params().iter().zip(args) {
+                write_expr(out, child, &format!("{} = ", param.name), arg);
+            }
+        }
         Expr::Call(c) => {
             line(
                 out,

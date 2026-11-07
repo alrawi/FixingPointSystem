@@ -159,3 +159,48 @@ fn registering_twice_reuses_the_series() {
     let labels = [("application", "a"), ("scenario", "s"), ("side", "client")];
     assert_eq!(count(&snap, metric::SESSIONS_SUCCEEDED, &labels), 2);
 }
+
+#[test]
+fn concurrent_and_duration_carry_the_side_label() {
+    let mut shard = Shard::new(0);
+    let client = SessionCounters::register(&mut shard, "dns", "lookup", Side::Client).unwrap();
+    let server = SessionCounters::register(&mut shard, "dns", "lookup", Side::Server).unwrap();
+    client.started(&mut shard);
+    client.started(&mut shard);
+    server.started(&mut shard);
+    client.ended(&mut shard, 1_500);
+    server.ended(&mut shard, 2_500);
+
+    let snap = Snapshot::merge_all([&shard.snapshot()]).unwrap();
+    let key = |m, side| {
+        SeriesKey::new(
+            m,
+            &[
+                ("application", "dns"),
+                ("scenario", "lookup"),
+                ("side", side),
+            ],
+        )
+        .unwrap()
+    };
+    let client_labels = [
+        ("application", "dns"),
+        ("scenario", "lookup"),
+        ("side", "client"),
+    ];
+    assert_eq!(count(&snap, metric::SESSIONS_ATTEMPTED, &client_labels), 2);
+    match snap.get(&key(metric::SESSIONS_CONCURRENT, "client")) {
+        Some(fps_stats::SeriesValue::Gauge(v)) => assert_eq!(*v, 1.0),
+        other => panic!("client gauge: {other:?}"),
+    }
+    match snap.get(&key(metric::SESSIONS_CONCURRENT, "server")) {
+        Some(fps_stats::SeriesValue::Gauge(v)) => assert_eq!(*v, 0.0),
+        other => panic!("server gauge: {other:?}"),
+    }
+    for side in ["client", "server"] {
+        match snap.get(&key(metric::SESSIONS_DURATION, side)) {
+            Some(fps_stats::SeriesValue::Histogram(h)) => assert_eq!(h.len(), 1, "{side}"),
+            other => panic!("{side} histogram: {other:?}"),
+        }
+    }
+}

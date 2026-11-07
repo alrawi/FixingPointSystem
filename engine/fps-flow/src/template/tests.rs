@@ -43,7 +43,11 @@ impl TemplateFn for Echo {
     }
 }
 
-fn render_with(t: &Template, vars: &Vars, overlay: &Vars) -> Result<Vec<u8>, TemplateError> {
+pub(super) fn render_with(
+    t: &Template,
+    vars: &Vars,
+    overlay: &Vars,
+) -> Result<Vec<u8>, TemplateError> {
     let filler = Filler::new(1);
     let mut rng = Pcg64Mcg::new(9);
     let mut echo = Echo;

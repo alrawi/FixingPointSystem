@@ -23,9 +23,9 @@ pub struct WorkerSnapshot {
 
 /// Keeps the newest snapshot of every worker.
 ///
-/// The metric catalog has no `side` label on session metrics, so the
-/// collector merges client and server workers separately and never adds the
-/// two sides of one session together.
+/// Every session series carries the `side` label of catalog 0.2.0, and the
+/// collector still merges client and server workers separately, so a total
+/// never adds the two sides of one session together.
 #[derive(Debug, Default)]
 pub struct Collector {
     latest: BTreeMap<u32, WorkerSnapshot>,

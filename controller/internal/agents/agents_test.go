@@ -133,6 +133,18 @@ func waitDone(t *testing.T, a *fakeagent.Agent) {
 
 // waitState waits until the inventory shows agent id in state want, because
 // the manager learns of a closed stream on its own goroutine.
+// waitEvents polls until the observer received n events of kind for agent id.
+func waitEvents(t *testing.T, h *harness, kind agents.EventKind, id string, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for len(h.events.of(kind, id)) < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("agent %s received %d events of kind %v, want %d", id, len(h.events.of(kind, id)), kind, n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func waitState(t *testing.T, h *harness, id string, want agents.State) agents.Agent {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -492,6 +504,9 @@ func TestCrashMarksOfflineAndFailsPendingCommand(t *testing.T) {
 		t.Fatalf("Prepare during a crash returned %v, want ErrSessionLost", err)
 	}
 	waitState(t, h, "agent-a", agents.StateOffline)
+	// The manager marks the agent offline first and then delivers the event,
+	// outside its lock, so the state does not tell that the event arrived.
+	waitEvents(t, h, agents.EventOffline, "agent-a", 1)
 	off := h.events.of(agents.EventOffline, "agent-a")
 	if len(off) != 1 || off[0].Reason != agents.ReasonStreamClosed {
 		t.Fatalf("offline events %v, want one stream closed", off)
