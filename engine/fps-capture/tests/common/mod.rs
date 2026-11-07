@@ -163,9 +163,7 @@ fn sum16(parts: &[&[u8]]) -> u16 {
 /// Parses an Ethernet frame with IPv4 or IPv6 and TCP or UDP, and checks the
 /// IPv4 header checksum, the transport checksum, and every length field.
 pub fn parse_frame(ts: u64, f: &[u8]) -> Packet {
-    let (src, dst, proto, l4): (IpAddr, IpAddr, u8, &[u8]);
-    let pseudo: Vec<u8>;
-    match [f[12], f[13]] {
+    let (src, dst, proto, l4, pseudo): (IpAddr, IpAddr, u8, &[u8], Vec<u8>) = match [f[12], f[13]] {
         [0x08, 0x00] => {
             assert_eq!(f[14], 0x45);
             assert_eq!(sum16(&[&f[14..34]]), 0, "IPv4 header checksum");
@@ -173,14 +171,15 @@ pub fn parse_frame(ts: u64, f: &[u8]) -> Packet {
             assert_eq!(14 + total, f.len(), "IPv4 total length");
             let s: [u8; 4] = f[26..30].try_into().unwrap();
             let d: [u8; 4] = f[30..34].try_into().unwrap();
-            (src, dst, proto, l4) = (s.into(), d.into(), f[23], &f[34..]);
-            pseudo = [
+            let (proto, l4) = (f[23], &f[34..]);
+            let pseudo = [
                 &s[..],
                 &d[..],
                 &[0, proto],
                 &(l4.len() as u16).to_be_bytes(),
             ]
             .concat();
+            (s.into(), d.into(), proto, l4, pseudo)
         }
         [0x86, 0xdd] => {
             assert_eq!(f[14] >> 4, 6);
@@ -188,17 +187,18 @@ pub fn parse_frame(ts: u64, f: &[u8]) -> Packet {
             assert_eq!(54 + plen, f.len(), "IPv6 payload length");
             let s: [u8; 16] = f[22..38].try_into().unwrap();
             let d: [u8; 16] = f[38..54].try_into().unwrap();
-            (src, dst, proto, l4) = (s.into(), d.into(), f[20], &f[54..]);
-            pseudo = [
+            let (proto, l4) = (f[20], &f[54..]);
+            let pseudo = [
                 &s[..],
                 &d[..],
                 &(l4.len() as u32).to_be_bytes(),
                 &[0, 0, 0, proto],
             ]
             .concat();
+            (s.into(), d.into(), proto, l4, pseudo)
         }
         other => panic!("unexpected ethertype {other:?}"),
-    }
+    };
     assert_eq!(sum16(&[&pseudo, l4]), 0, "transport checksum");
     let (sport, dport) = (
         u16::from_be_bytes([l4[0], l4[1]]),
