@@ -300,7 +300,7 @@ flows:
 }
 
 #[tokio::test]
-async fn internal_when_a_module_function_fails() {
+async fn extension_error_when_a_module_function_fails() {
     let text = r#"
 scenario: ext
 flows:
@@ -316,11 +316,36 @@ flows:
       - accept: { port: 1 }
 "#;
     let pair = run_pair(text, Opts::default()).await;
-    assert_failure(&pair.client, Reason::Internal, 2, "send");
+    assert_failure(&pair.client, Reason::ExtensionError, 2, "send");
     assert_eq!(
         pair.client.unwrap_err().extension_label().as_deref(),
         Some("extension_unsupported")
     );
+}
+
+#[tokio::test]
+async fn template_error_when_a_template_fails_to_render() {
+    let text = r#"
+scenario: tpl
+vars: { size: -1 }
+flows:
+  - id: t
+    module: m
+    client:
+      - connect: { port: 1 }
+      - send: "{{ fill(vars.size) }}"
+    server:
+      - accept: { port: 1 }
+"#;
+    let pair = run_pair(text, Opts::default()).await;
+    assert_failure(&pair.client, Reason::TemplateError, 1, "send");
+    let f = pair.client.unwrap_err();
+    assert!(
+        matches!(*f.kind, FailureKind::Render { .. }),
+        "{:?}",
+        f.kind
+    );
+    assert!(f.extension_label().is_none());
 }
 
 #[tokio::test]

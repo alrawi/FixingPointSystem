@@ -178,6 +178,39 @@ fn web_get_at_a_fixed_rate_reports_matching_counters() {
     assert_eq!(count(&s, metric::SESSIONS_ATTEMPTED), 200);
     assert_eq!(count(&s, metric::SESSIONS_SUCCEEDED), 200);
     assert_eq!(count(&s, metric::SESSIONS_FAILED), 0);
+    // Every session series carries the side label of its worker, including
+    // the concurrent gauge and the duration histogram.
+    for (snapshot, side) in [(&c, "client"), (&s, "server")] {
+        for m in [
+            metric::SESSIONS_ATTEMPTED,
+            metric::SESSIONS_FAILED,
+            metric::SESSIONS_CONCURRENT,
+            metric::SESSIONS_DURATION,
+            metric::BYTES_TX,
+        ] {
+            let series: Vec<_> = snapshot.iter().filter(|(k, _)| k.metric() == m).collect();
+            assert!(!series.is_empty(), "{side}: no series for {m:?}");
+            for (k, _) in series {
+                assert!(
+                    k.labels().iter().any(|(l, v)| *l == "side" && v == side),
+                    "{side}: {:?}",
+                    k.labels()
+                );
+            }
+        }
+    }
+    let duration_samples = |snapshot: &Snapshot| {
+        snapshot
+            .iter()
+            .filter(|(k, _)| k.metric() == metric::SESSIONS_DURATION)
+            .map(|(_, v)| match v {
+                fps_stats::SeriesValue::Histogram(h) => h.len(),
+                other => panic!("duration is not a histogram: {other:?}"),
+            })
+            .sum::<u64>()
+    };
+    assert_eq!(duration_samples(&c), 200);
+    assert_eq!(duration_samples(&s), 200);
     // Four requests and four responses with 4096 byte bodies per session.
     assert_eq!(count(&c, metric::BYTES_TX), count(&s, metric::BYTES_RX));
     assert_eq!(count(&c, metric::BYTES_RX), count(&s, metric::BYTES_TX));

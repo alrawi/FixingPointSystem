@@ -12,7 +12,7 @@
 
 use crate::catalog::metric;
 use crate::error::StatsError;
-use crate::shard::{CounterId, Shard};
+use crate::shard::{CounterId, GaugeId, HistogramId, Shard};
 
 /// The side of a session, which is a value of the `side` label.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -123,6 +123,8 @@ pub struct SessionCounters {
     failed: Vec<CounterId>,
     bytes_tx: CounterId,
     bytes_rx: CounterId,
+    concurrent: GaugeId,
+    duration: HistogramId,
 }
 
 impl SessionCounters {
@@ -156,6 +158,8 @@ impl SessionCounters {
             failed,
             bytes_tx: shard.counter(metric::BYTES_TX, &labels)?,
             bytes_rx: shard.counter(metric::BYTES_RX, &labels)?,
+            concurrent: shard.gauge(metric::SESSIONS_CONCURRENT, &labels)?,
+            duration: shard.histogram(metric::SESSIONS_DURATION, &labels)?,
         })
     }
 
@@ -168,6 +172,21 @@ impl SessionCounters {
     #[inline]
     pub fn attempted(&self, shard: &mut Shard) {
         shard.inc(self.attempted);
+    }
+
+    /// Counts a started session and raises `sessions.concurrent` by one.
+    #[inline]
+    pub fn started(&self, shard: &mut Shard) {
+        shard.inc(self.attempted);
+        shard.adjust(self.concurrent, 1.0);
+    }
+
+    /// Lowers `sessions.concurrent` by one and records the duration of the
+    /// session that ended, in microseconds, in `sessions.duration`.
+    #[inline]
+    pub fn ended(&self, shard: &mut Shard, duration_us: u64) {
+        shard.adjust(self.concurrent, -1.0);
+        shard.record(self.duration, duration_us);
     }
 
     /// Counts a session that reached the established state.
