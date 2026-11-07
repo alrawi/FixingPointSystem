@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -100,11 +101,18 @@ func exampleCatalog(t *testing.T) fakeCatalog {
 			t.Fatal(err)
 		}
 		var man struct {
-			Name    string `yaml:"name"`
-			Version string `yaml:"version"`
+			Name     string `yaml:"name"`
+			Version  string `yaml:"version"`
+			Settings any    `yaml:"settings"`
 		}
 		if err := yaml.Unmarshal(data, &man); err != nil {
 			t.Fatal(err)
+		}
+		var schema json.RawMessage
+		if man.Settings != nil {
+			if schema, err = json.Marshal(man.Settings); err != nil {
+				t.Fatal(err)
+			}
 		}
 		files, err := filepath.Glob(filepath.Join(filepath.Dir(m), "scenarios", "*.yaml"))
 		if err != nil {
@@ -116,6 +124,7 @@ func exampleCatalog(t *testing.T) fakeCatalog {
 				Name:            strings.TrimSuffix(filepath.Base(f), ".yaml"),
 				Source:          "name: " + man.Name,
 				BytesPerSession: 4096,
+				SettingsSchema:  schema,
 			})
 		}
 	}
