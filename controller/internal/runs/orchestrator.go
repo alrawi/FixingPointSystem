@@ -17,7 +17,6 @@ package runs
 import (
 	"context"
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -112,8 +111,10 @@ type Config struct {
 	Clock agents.Clock
 	// NewID returns a fresh run id. It defaults to RandomID.
 	NewID func() (string, error)
-	// Seed returns the run seed for a configuration without timeline.seed.
-	// It defaults to a draw from crypto/rand, at the process edge.
+	// Seed returns the seed that the compiler uses for a configuration
+	// without timeline.seed. It defaults to nil, and then the compiler draws
+	// a random nonzero seed. The run records the seed of its compiled plans
+	// in either case.
 	Seed func() uint64
 	// CommandTimeout bounds every prepare, start, and stop command.
 	CommandTimeout time.Duration
@@ -280,9 +281,6 @@ func New(cfg Config) (*Orchestrator, error) {
 	if cfg.NewID == nil {
 		cfg.NewID = RandomID
 	}
-	if cfg.Seed == nil {
-		cfg.Seed = randomSeed
-	}
 	if cfg.CommandTimeout <= 0 {
 		cfg.CommandTimeout = DefaultCommandTimeout
 	}
@@ -311,13 +309,6 @@ func RandomID() (string, error) {
 		return "", fmt.Errorf("new run id: %w", err)
 	}
 	return RunIDPrefix + hex.EncodeToString(b[:]), nil
-}
-
-// randomSeed draws a run seed from crypto/rand.
-func randomSeed() uint64 {
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return binary.LittleEndian.Uint64(b[:])
 }
 
 // Close aborts every run that has not ended and waits for them.
@@ -495,12 +486,17 @@ func (o *Orchestrator) compile(ctx context.Context, id string, cfg compiler.Conf
 			return nil, fmt.Errorf("scenario catalog: %w", err)
 		}
 	}
-	plans, err := o.cfg.Compiler.Compile(compiler.Request{RunID: id, Seed: o.cfg.Seed(), Config: cfg, Agents: inv, Scenarios: scenarios})
+	plans, err := o.cfg.Compiler.Compile(compiler.Request{RunID: id, Seed: o.requestSeed(), Config: cfg, Agents: inv, Scenarios: scenarios})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 	byAgent := map[string]bool{}
 	for _, p := range plans {
+		// Every plan of a run carries the seed of the run, and the run
+		// record takes it from the plans, so it is never 0.
+		if p.Seed == 0 {
+			return nil, fmt.Errorf("compiler returned plan %s without a seed", p.PlanID)
+		}
 		byAgent[p.AgentID] = true
 	}
 	for _, r := range rs {
@@ -509,6 +505,15 @@ func (o *Orchestrator) compile(ctx context.Context, id string, cfg compiler.Conf
 		}
 	}
 	return plans, nil
+}
+
+// requestSeed returns the seed that the configuration of the orchestrator
+// offers to the compiler, which is 0 when the compiler is to draw one.
+func (o *Orchestrator) requestSeed() uint64 {
+	if o.cfg.Seed == nil {
+		return 0
+	}
+	return o.cfg.Seed()
 }
 
 func (o *Orchestrator) newRun(id string, req StartRequest, cfg compiler.Config, rs []reserved, plans []compiler.Plan) *run {
@@ -751,6 +756,9 @@ func (o *Orchestrator) drive(r *run) {
 		o.fail(r, "start: "+err.Error())
 		return
 	}
+	// From here on, a forced stop ends the run with the reason "stopped by
+	// request", and before it, with a reason that names the phase.
+	o.log.Info("run started on every agent", "run_id", r.ID)
 	for {
 		stop, active, failed := o.progress(r)
 		switch {

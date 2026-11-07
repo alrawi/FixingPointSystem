@@ -16,6 +16,7 @@ on:
       - contracts/openapi/**
       - contracts/proto/**
       - contracts/examples/**
+      - contracts/metrics/**
       - Cargo.toml
       - Cargo.lock
       - Makefile
@@ -28,6 +29,7 @@ on:
       - contracts/openapi/**
       - contracts/proto/**
       - contracts/examples/**
+      - contracts/metrics/**
       - Cargo.toml
       - Cargo.lock
       - Makefile

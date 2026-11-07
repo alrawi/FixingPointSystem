@@ -54,10 +54,16 @@ type Config struct {
 	StreamInterval time.Duration
 }
 
+// sideView names one view of one side in a point.
+type sideView struct {
+	view api.MetricView
+	side string
+}
+
 // point is the state of the views at the end of one second.
 type point struct {
 	ts    time.Time
-	views map[api.MetricView][]Sample
+	views map[sideView][]Sample
 }
 
 // runMetrics is the metric state of one run.
@@ -236,9 +242,11 @@ func (a *Aggregator) finalize(r *runMetrics) {
 	}
 	p := &r.points[len(r.points)-1]
 	merged := a.mergedLocked(r)
-	p.views = make(map[api.MetricView][]Sample, len(Views))
+	p.views = make(map[sideView][]Sample, 2*len(Views))
 	for _, v := range Views {
-		p.views[v] = computeView(a.cfg.Catalog, merged, v, p.ts)
+		for _, side := range []string{SideClient, SideServer} {
+			p.views[sideView{v, side}] = computeView(a.cfg.Catalog, merged, v, side, p.ts)
+		}
 	}
 	r.dirty = false
 }
@@ -301,6 +309,9 @@ type Window struct {
 	// Step keeps the newest point of every step, counted from From or from
 	// the first point. Zero or one second keeps every point.
 	Step time.Duration
+	// Side selects the side of the samples, client or server. Empty means
+	// the client side.
+	Side string
 }
 
 // Samples returns the samples of view v of a run over the window, in time
@@ -313,6 +324,10 @@ func (a *Aggregator) Samples(runID string, v api.MetricView, w Window) ([]Sample
 		return nil, fmt.Errorf("samples of run %s: %w", runID, ErrRunUnknown)
 	}
 	a.finalize(r)
+	side := w.Side
+	if side == "" {
+		side = SideClient
+	}
 	var base time.Time
 	if !w.From.IsZero() {
 		base = w.From
@@ -341,13 +356,22 @@ func (a *Aggregator) Samples(runID string, v api.MetricView, w Window) ([]Sample
 	}
 	out := []Sample{}
 	for _, p := range picked {
-		out = append(out, p.views[v]...)
+		out = append(out, p.views[sideView{v, side}]...)
 	}
 	return out, nil
 }
 
-// Latest returns the current samples of view v of a run.
+// Latest returns the current samples of view v of a run for the client side.
 func (a *Aggregator) Latest(runID string, v api.MetricView) ([]Sample, error) {
+	return a.LatestSide(runID, v, SideClient)
+}
+
+// LatestSide returns the current samples of view v of a run for a side, where
+// the empty side stands for the client side.
+func (a *Aggregator) LatestSide(runID string, v api.MetricView, side string) ([]Sample, error) {
+	if side == "" {
+		side = SideClient
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	r := a.runs[runID]
@@ -358,7 +382,7 @@ func (a *Aggregator) Latest(runID string, v api.MetricView) ([]Sample, error) {
 	if len(r.points) == 0 {
 		return nil, nil
 	}
-	return r.points[len(r.points)-1].views[v], nil
+	return r.points[len(r.points)-1].views[sideView{v, side}], nil
 }
 
 // Dropped returns the number of snapshot entries of a run that the
