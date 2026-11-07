@@ -1,0 +1,10 @@
+## [2026-11-07] ingest | ENG-16 profiles and distributions in the template engine
+
+The template compiler of `fps-flow` now follows scenario contract v0.3. It accepts `profiles.<name>`, which renders as `Name: value` and CRLF for each entry in declaration order, and the four functions `dist.pareto`, `dist.lognormal`, `dist.exponential`, and `dist.uniform`, which draw an integer from the session generator and limit it to `cap` (default 2,147,483,647). The draws use inverse transform sampling and Box-Muller, so `fps-flow` gained no dependency. The loader reads the scenario's `profiles` object and folds each reference into text, so `fps-interp` and the runtime needed no change. A literal argument out of range fails at load time, and a computed one fails the render. `contracts/examples/modules/http1/scenarios-pending/web_profile.yaml` loads and checks. We described the design in [Engine](../Engine.md#profiles-and-distributions).
+
+### Shared page notes
+
+- [Testing](../Testing.md): the Rust tests of `fps-flow` gained `tests/profiles.rs` and `src/template/tests_dist.rs`. The statistical tests draw 200,000 samples per function with fixed seeds and compare means and medians within 3%, so they are deterministic and take about 3 seconds in a debug build.
+- Contracts: nothing in `contracts/` changed. The example `web_profile.yaml` stays in `scenarios-pending/`, because the controller compiler of CTL does not know `profiles` and `dist` yet. `tests/contract_examples.rs` reads only `scenarios/`, so `tests/profiles.rs` loads the pending file by path. When the controller learns the syntax, a CON package can move the file to `scenarios/`, list it in the manifest, and add its golden dump.
+- Controller: the controller compiler, which Go code in `controller/` implements, still rejects `profiles` and `dist`. No work package covers it yet, so the coordinator may want a CTL follow-up that teaches it the two roots before a plan can carry such a scenario.
+- Implementation Plan: the follow-up ENG-16 of batch 11 is done.

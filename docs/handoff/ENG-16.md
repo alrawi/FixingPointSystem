@@ -10,7 +10,7 @@
 | Branch | `wp/ENG-16` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 90% (4 of 4 plan steps, CI pending) |
 | Current holder | claude-eng16a, lease until 2026-11-07T18:51:39Z |
 | Last verified commit | none |
 
@@ -24,22 +24,23 @@ fps-flow's template parser and evaluator accept `profiles.<name>` and `dist.pare
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Parser, checker, evaluator for dist and profiles
-- [ ] 2. Loader folds scenario profiles into templates
-- [ ] 3. Unit and example tests
-- [ ] 4. Engine wiki page, log entry, PR, CI
+- [x] 1. Parser, checker, evaluator for dist and profiles
+- [x] 2. Loader folds scenario profiles into templates
+- [x] 3. Unit and example tests
+- [x] 4. Engine wiki page, log entry, PR (CI pending)
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Steps 1 to 3: `cargo test -p fps-flow --offline` passes (56 unit, 6 profiles, grammar, templates, contract examples), `cargo clippy -p fps-flow --all-targets -- -D warnings` and `cargo fmt -p fps-flow --check` are clean, `cargo check -p fps-interp` builds, `pytest engine/fps-flow/tests` passes.
+- Step 4: `plan.py check`, `render --check`, and `lint` pass.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+CI result on the pull request, then `fps_swarm.py review`.
 
 ## Next action
 
-Implement step 1 in engine/fps-flow/src/template/.
+Wait for CI on the PR, then run `fps_swarm.py review 230 --pr <PR>`.
 
 ## Blockers and open questions
 
@@ -47,11 +48,14 @@ none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- The loader folds `profiles.<name>` into text at compile time (`Template::fold_profiles`), so `RenderCtx` and `fps-interp` stay unchanged.
+- `dist.uniform` has no cap parameter, so its draw is not limited to the default cap.
+- Every `dist` call draws a fixed number of generator words (lognormal 2, the others 1).
+- `CheckScope` gained a `profiles` field. It is only built inside `fps-flow`.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+The template grammar has no exponent notation, so write `1000000000000`, not `1e12`.
 
 ## Verify the current state
 
@@ -66,3 +70,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-07T18:41Z | claude-eng16a | claim | - | claimed #230, branch wp/ENG-16 from main |
+| 2026-11-07T19:10Z | claude-eng16a | checkpoint | - | implementation, tests, wiki; PR next |

@@ -9,7 +9,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | Crate | Contents | Next package |
 |---|---|---|
 | [`fps-io`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-io) | The `SessionIo` trait, the in memory duplex `fps_io::memory::duplex`, and the `DatagramIo` seam with the in memory `datagram_pair`, see [UDP datagram sessions](#udp-datagram-sessions) | Kernel UDP since TRN-02 |
-| [`fps-flow`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-flow) | The scenario model, the loader, the program compiler, the template compiler of contract v0.2, and the `TemplateFn` dispatch trait | ENG-02 adds the semantic checks |
+| [`fps-flow`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-flow) | The scenario model, the loader, the program compiler, the template compiler of contract v0.3, and the `TemplateFn` dispatch trait | ENG-02 adds the semantic checks |
 | [`fps-interp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-interp) | The session interpreter, the `Opener` seam, `session_rng`, delay sampling, and failure reasons, see [The flow program interpreter](#the-flow-program-interpreter) | UDP sessions since ENG-06 and vectored fill writes since ENG-05, see [Vectored writes for fill bodies](#vectored-writes-for-fill-bodies). ENG-07 adds multi flow instances |
 | [`fps-stats`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-stats) | The catalog table, per worker shards, HDR histograms, the snapshot merge, and the proto3 JSON mapping of `CounterSnapshot`, plus the typed `SessionCounters` and `TransportCounters` sets with the `side` label and the failure reasons of ENG-14 | ENG-10 publishes one snapshot per second from the worker runtime |
 | [`fps-runtime`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-runtime) | Worker threads, optional core pinning, the Tokio clock of the scheduler, statistics snapshots, stop and abort | AGT-01 builds a `RuntimeConfig` from the agent plan |
@@ -46,7 +46,7 @@ Tests use `fps_io::memory::duplex(capacity)`, which returns two connected `Memor
 
 ## Templates
 
-ENG-03 replaced the v0.1 template parser with a compiler for the full v0.2 grammar of `contracts/README.md`. The tokenizer and the recursive descent parser in `template/parse.rs` follow `tools/contracts/validate.py` rule for rule, so the engine and the validator accept the same templates. The compiler covers literals of all four kinds, the references `vars.<name>`, `session.id`, `session.flow`, and `last`, the core functions `fill`, `hex`, and `rand_int` with positional and keyword arguments, and module calls with keyword arguments and nested calls up to 8 levels.
+ENG-03 replaced the v0.1 template parser with a compiler for the full v0.2 grammar of `contracts/README.md`, and ENG-16 extended it to v0.3, see [Profiles and distributions](#profiles-and-distributions). The tokenizer and the recursive descent parser in `template/parse.rs` follow `tools/contracts/validate.py` rule for rule, so the engine and the validator accept the same templates. The compiler covers literals of all four kinds, the references `vars.<name>`, `session.id`, `session.flow`, and `last`, the core functions `fill`, `hex`, and `rand_int` with positional and keyword arguments, and module calls with keyword arguments and nested calls up to 8 levels.
 
 A compiled template is a list of segments. A segment is either literal bytes or an expression slot. The compiler binds the arguments of core functions to their parameters and checks their static types with the rules of the contract section on types, so `fill('x')` fails at load time. Module calls keep their positional and keyword arguments in call order, because the extension binds them against its own catalog.
 
@@ -58,6 +58,25 @@ We fold in two passes, and neither pass changes the rendered bytes or the order 
 2. `Scenario::fold_constants` runs once per run after `Scenario::override_vars`. It substitutes every scenario variable that no `set` action binds and folds again. In the example `web_get` the whole client request becomes one literal of 132 bytes.
 
 `fill`, `rand_int`, `last`, the session fields, and module calls never fold, because they differ between sessions or draw from the session generator.
+
+### Profiles and distributions
+
+ENG-16 added the two roots of scenario contract v0.3 (CON-10) to the parser, the checker, and the renderer.
+
+`profiles.<name>` has type `text`. The loader reads the top level `profiles` object of the scenario into `fps_flow::Profiles` and folds each reference into the text that it renders, so a compiled scenario carries no profile lookup and the interpreter needs no change. The text holds each entry as `Name: value` and CRLF in declaration order, with a number or boolean in its `Display` form. `Template::fold_profiles` does the substitution, `Scenario::parse` calls it for every template of every flow after the flows compile, and a template that `Template::compile` built on its own and that nobody folded fails to render with `UndefinedProfile`. The loader rejects a profile without entries, an entry name outside `[A-Za-z0-9][A-Za-z0-9_-]*`, a nested value, and a string with CR or LF, as the schema does, and the check reports a reference to a profile that the scenario does not declare.
+
+`dist.pareto(alpha, scale, cap)`, `dist.lognormal(mu, sigma, cap)`, `dist.exponential(mean, cap)`, and `dist.uniform(low, high)` return an `int`. The code lives in `template/dist.rs` and uses no distribution crate.
+
+| Function | Draw | Generator words |
+|---|---|---|
+| `pareto` | `scale * u^(-1/alpha)` with `u` in (0, 1], the inverse transform | 1 |
+| `lognormal` | `exp(mu + sigma * z)`, where `z` comes from the Box-Muller transform and the second normal is discarded | 2 |
+| `exponential` | `-mean * ln(u)` | 1 |
+| `uniform` | `low + (high - low) * r` with `r` in [0, 1) | 1 |
+
+The draw is rounded to the nearest integer and limited to `cap`, which defaults to 2,147,483,647 (`DEFAULT_CAP`). `uniform` has no `cap`, and its draw never leaves `[low, high]` before rounding. An infinite draw, which a tiny `alpha` can cause, lands on the cap. Every call consumes the same number of generator words whatever its arguments, so a seeded run repeats and two runs that differ only in the arguments stay in step. The parameters take `float` and bind an `int` too, and a variable of type `text` that parses as a number binds as well, as `fill` already accepts a numeric string.
+
+The ranges of the contract hold at two points. A literal argument is checked when the template compiles (`DistParameter`, `UniformRange`), so the loader rejects `dist.exponential(0)`. An argument that a variable or a call computes is checked on each render, and the session fails with the same errors. `alpha`, `scale`, `sigma`, `mean`, and `cap` must be positive, `low` and `high` must not be negative, `low` must not exceed `high`, and `mu` must be finite. The existing object form `delay: { dist: lognormal, ... }` stays as it was, and `delay: { ms: "{{ dist.lognormal(3.0, 0.8) }}" }` is the template form.
 
 ### Module function dispatch
 
@@ -91,6 +110,8 @@ The renderer passes the session generator, so module output is reproducible from
 |---|---|
 | `tests/grammar.rs` | Every grammar rule of contract v0.2, with the dump or the error and the bytes that one session renders with seed 42, against `tests/testdata/grammar.seed42.txt` |
 | `tests/contract_examples.rs` | Every example scenario compiles, and its dump before and after folding matches `tests/testdata/examples/<module>.<scenario>.dump` |
+| `tests/profiles.rs` | `web_profile.yaml` loads and checks, a loaded scenario renders its profile and draws capped delays, and the loader rejects undeclared profiles, bad `dist` calls, and malformed profiles |
+| `src/template/tests_dist.rs` | Each `dist` function (sample mean or median over 200,000 draws within 3%, minimum and bounds), the cap and the default cap, seeded repeatability, fixed generator words per call, argument binding and range errors at compile and render time, profile rendering order and CRLF, and the dump |
 | `tests/templates.rs` | Property tests that rendering is deterministic for a fixed seed and session id, module calls included, and that folding preserves the rendering |
 
 We rewrite the golden files with `UPDATE_GOLDEN=1 cargo test -p fps-flow` and review every changed file before a commit.
@@ -208,7 +229,8 @@ The loader rejects a scenario for each rule below. The rules on templates use th
 | `max_datagram` on TCP, or a UDP expect that cannot fit one datagram | `MaxDatagramOnTcp`, `DatagramLimit` |
 | `last` where no `expect` always ran earlier on the same side | `LastWithoutExpect` |
 | A call names a foreign module or a function that the manifest lacks | `ForeignModule`, `UnknownModuleFunction` |
-| An undefined variable, or a call with a wrong arity, parameter, or argument type | `Template` with the matching `TemplateError` |
+| An undefined variable or profile, or a call with a wrong arity, parameter, or argument type, or a `dist` literal out of range | `Template` with the matching `TemplateError` |
+| A profile with no entry, a bad entry name, a nested value, or a line break in a string | `Invalid` |
 
 The rule on `last` follows the Python validator. A loop body counts only when its count is a positive integer literal, and a branch counts only when every arm runs an `expect`. `Template::check` holds the typed template rules and reads the catalogs through `CheckScope`, and `manifest.rs` reads the `functions` catalog of a manifest.
 
