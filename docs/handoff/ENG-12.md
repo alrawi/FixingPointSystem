@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #157 |
 | Branch | `wp/ENG-12` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 83% (5 of 6 plan steps) |
+| Pull request | #236 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-eng12a, lease until 2026-11-07T18:52:38Z |
-| Last verified commit | none |
+| Last verified commit | ee89a45 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -29,7 +29,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 3. Session tap and recorder
 - [x] 4. Ring with rotation and key logs
 - [x] 5. Tests, tshark check
-- [ ] 6. Wiki, log entry, PR and CI
+- [x] 6. Wiki, log entry, PR and CI
 
 ## Done and verified
 
@@ -37,11 +37,11 @@ Steps 1 to 5. `cargo test -p fps-capture` passes 17 unit, 14 component, and 1 do
 
 ## Remaining
 
-Open the pull request and wait for CI. Known gaps are in the last section of the Engine page, which are the runtime wiring, the missing AF_PACKET ring and pcap filter, and the digest of a multi file ring.
+Nothing for this package. Known gaps are in the last section of the Engine page, which are the runtime wiring, the missing AF_PACKET ring and pcap filter, and the digest of a multi file ring.
 
 ## Next action
 
-Open the pull request, wait for CI, then set ready for review.
+None. The coordinator reviews PR #236.
 
 ## Blockers and open questions
 
@@ -73,3 +73,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-07T17:23:00Z | claude-eng12a | claim | none | Claimed #157 |
 | 2026-11-07T18:00:00Z | claude-eng12a | checkpoint | see PR | Crate, tests, wiki, log entry |
+| 2026-11-07T18:30:00Z | claude-eng12a | finish | ee89a45 | CI green on PR #236, ready for review |
