@@ -203,14 +203,14 @@ The validate operation runs five checks on the stored document and returns every
 1. **Schema.** The same check as on create. When it fails, the report stops here.
 2. **Cross references.** Duplicate port, pool, and phase names, pools on unknown ports, mix pools that do not exist or have the wrong role, an `app_sim` test without a client pool and a server pool, and a `client_sim` test without external servers.
 3. **Scenarios.** Each mix entry must resolve through the interface `store.ModuleCatalog`, which returns `[]compiler.Scenario`. A `<module>/<scenario>` reference must exist, and a bare name must be unique.
-4. **Capacity.** Every agent that a port location names must appear in the interface `store.AgentInventory`, which returns the available agents as `[]compiler.Agent`, and an agent that lists interfaces must have the port interface. The report gives `agents_required` and `agents_available`.
-5. **Dry run.** When both interfaces are present and no error came up, the validator compiles the test with `compiler.Compile` and turns a compiler error into a finding at the path that the error names.
+4. **Capacity.** The validator splits a port location as the compiler does. `<agent>/<interface>` pins the port, so the agent must be in the interface `store.AgentInventory`, which returns the available agents as `[]compiler.Agent`, and an agent that lists interfaces must have the port interface. A bare `<interface>` or `*/<interface>` spreads the port, and it needs at least one available agent with the interface, where an agent with an empty interface list counts as having it. A bare `eth1` is an interface and never an agent name. The report gives `agents_required`, which is the number of distinct pinned agents or one when only spread ports exist, and `agents_available`, which is the number of available agents that a port can use.
+5. **Dry run.** When both interfaces are present and no error came up, the validator compiles the test with `compiler.Compile` and turns a compiler error into a finding at the path that the error names. The dry run takes the agents that the ports can use as its inventory. The path pattern covers `modules`, so a settings error becomes a finding at `/modules/<name>/settings`.
 
 A nil catalog or inventory skips its check and adds an info finding, so the operation works before CTL-04 and CTL-06 land. A failing catalog or inventory answers 500. Server errors are logged with `log/slog` and never reach the client.
 
 ### Tests of the store
 
-Every example under `contracts/examples/tests/` stores as YAML and as JSON, reads back unchanged, and validates without findings against fakes of the catalog and the inventory. Each fixture in `internal/store/testdata/invalid/` breaks the schema and names the expected pointer on its first line, as in `# want: /network/ports/0/location`, and the create test expects a 422 problem with an error at that pointer. Each fixture in `internal/store/testdata/unresolved/` passes the schema and must fail validation at its pointer. Coverage of the package is 93.5%.
+The three examples in `contracts/examples/tests-pending/` validate without findings against the fakes, and a bad `zone_file` gives an error at `/modules/dns/settings`. Every example under `contracts/examples/tests/` stores as YAML and as JSON, reads back unchanged, and validates without findings against fakes of the catalog and the inventory. Each fixture in `internal/store/testdata/invalid/` breaks the schema and names the expected pointer on its first line, as in `# want: /network/ports/0/location`, and the create test expects a 422 problem with an error at that pointer. Each fixture in `internal/store/testdata/unresolved/` passes the schema and must fail validation at its pointer. Coverage of the package is 93.5%.
 
 ### Dependencies of the store
 
@@ -526,7 +526,7 @@ Two adapter types connect the registry and the agent manager to the interfaces t
 
 | Adapter | Implements | Source |
 |---|---|---|
-| `wiring.Catalog` | `store.ModuleCatalog` and `runs.Catalog` with `Scenarios` | The scenario files of the latest installed version of each module, with the module name, version, and tree digest. Configurations name a module without a version, so older versions stay out of the catalog |
+| `wiring.Catalog` | `store.ModuleCatalog` and `runs.Catalog` with `Scenarios` | The scenario files of the latest installed version of each module, with the module name, version, tree digest, and the `settings` key of the manifest as `SettingsSchema`, which stays empty for a manifest without it. Configurations name a module without a version, so older versions stay out of the catalog |
 | `wiring.Catalog` | `api.ModuleLister` with `ModuleSummaries` | Every installed version from `Registry.List` |
 | `wiring.Inventory` | `store.AgentInventory` with `AvailableAgents` | Agents that are online or reserved, with cores, the first known backend, and the port names, as the orchestrator compiles them |
 | `wiring.Inventory` | `api.AgentInventory` with `AgentCapabilities` | Every agent through `agents.ToAPI`, with every backend of its latest registration |
@@ -552,7 +552,7 @@ The metrics package of CTL-08 joins the binary in three calls in `serve` of `cmd
 
 ### Tests of the wiring
 
-`TestServerRoutesEveryOperation` walks every operation of the OpenAPI contract with an admin token and checks that exactly the six pending operations answer 501, each with a detail that names it, so every other operation reaches the package that implements it. Other tests in `internal/wiring` cover the token scopes, the metrics hook, the catalog with two versions of `http1`, the inventory filters, and a gRPC round trip with a fake agent and the observer.
+`TestServerRoutesEveryOperation` walks every operation of the OpenAPI contract with an admin token and checks that exactly the six pending operations answer 501, each with a detail that names it, so every other operation reaches the package that implements it. `TestPendingExamplesValidateThroughTheAPI` stores the three examples of `contracts/examples/tests-pending/` through the REST API, registers fake agents `agent-a` with `eth1` and `eth2` and `local` with `lo`, installs the example modules, and expects every validation to pass the dry run, and `TestCatalogReportsSettingsSchema` expects the `dns` scenarios to carry the settings schema with `zone_file`. Other tests in `internal/wiring` cover the token scopes, the metrics hook, the catalog with two versions of `http1`, the inventory filters, and a gRPC round trip with a fake agent and the observer.
 
 `TestEndToEnd` in `cmd/fps-controller` builds the binary and starts it with a temporary configuration that holds an admin token, a run token in a token file, a read token, and a data directory. It runs eleven steps.
 

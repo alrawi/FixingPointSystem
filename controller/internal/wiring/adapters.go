@@ -4,6 +4,7 @@ package wiring
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -53,6 +54,10 @@ func (c Catalog) Scenarios(ctx context.Context) ([]compiler.Scenario, error) {
 			return nil, fmt.Errorf("scenario catalog: module %s %s: manifest names %d scenario files and the index %d scenarios",
 				e.Name, e.Version, len(m.Scenarios), len(e.Scenarios))
 		}
+		schema, err := settingsSchema(m)
+		if err != nil {
+			return nil, fmt.Errorf("scenario catalog: module %s %s: %w", e.Name, e.Version, err)
+		}
 		tree := os.DirFS(c.Registry.Dir(e.Name, e.Version))
 		for i, rel := range m.Scenarios {
 			// fs.ReadFile rejects a path that leaves the module tree.
@@ -61,13 +66,29 @@ func (c Catalog) Scenarios(ctx context.Context) ([]compiler.Scenario, error) {
 				return nil, fmt.Errorf("scenario catalog: module %s %s: read scenario %s: %w", e.Name, e.Version, rel, err)
 			}
 			out = append(out, compiler.Scenario{
-				Module: compiler.ModuleRef{Name: e.Name, Version: e.Version, Digest: e.Digest},
-				Name:   e.Scenarios[i],
-				Source: string(src),
+				Module:         compiler.ModuleRef{Name: e.Name, Version: e.Version, Digest: e.Digest},
+				Name:           e.Scenarios[i],
+				Source:         string(src),
+				SettingsSchema: schema,
 			})
 		}
 	}
 	return out, nil
+}
+
+// settingsSchema returns the settings key of the manifest as JSON, or nil
+// for a module without one, which accepts no settings.
+func settingsSchema(m registry.Manifest) (json.RawMessage, error) {
+	var doc struct {
+		Settings json.RawMessage `json:"settings"`
+	}
+	if err := json.Unmarshal(m.Raw, &doc); err != nil {
+		return nil, fmt.Errorf("read settings of the manifest: %w", err)
+	}
+	if len(doc.Settings) == 0 || string(doc.Settings) == "null" {
+		return nil, nil
+	}
+	return doc.Settings, nil
 }
 
 // ModuleSummaries implements api.ModuleLister over every installed module

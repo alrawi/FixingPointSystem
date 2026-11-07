@@ -77,7 +77,7 @@ func (v *Validator) Validate(ctx context.Context, doc []byte) (api.ValidationRep
 	capacity := &capacityReport{}
 	if v.agents == nil {
 		findings = append(findings, infoFinding("/network/ports", "agent inventory unavailable, capacity not checked"))
-		capacity.required = len(requiredAgents(cfg))
+		capacity.required = requiredAgents(cfg)
 	} else {
 		inv, err := v.agents.AvailableAgents(ctx)
 		if err != nil {
@@ -226,49 +226,86 @@ func scenarioRefs(cfg compiler.Config, catalog []compiler.Scenario) []api.Findin
 	return out
 }
 
-// requiredAgents returns the distinct agent names of the port locations in
-// order of first use.
-func requiredAgents(cfg compiler.Config) []string {
-	var names []string
-	seen := map[string]bool{}
-	for _, p := range cfg.Network.Ports {
-		name, _, _ := strings.Cut(p.Location, "/")
-		if !seen[name] {
-			seen[name] = true
-			names = append(names, name)
-		}
+// splitLocation splits a port location the way the compiler does. The agent
+// is empty for a bare <interface> and "*" for */<interface>, and both spread
+// the port across every agent that has the interface. <agent>/<interface>
+// pins the port to that agent. The location has passed the schema pattern, so
+// it holds at most one slash.
+func splitLocation(location string) (agent, iface string) {
+	iface = location[strings.Index(location, "/")+1:]
+	agent = strings.TrimSuffix(location[:len(location)-len(iface)], "/")
+	if agent == "*" {
+		agent = ""
 	}
-	return names
+	return agent, iface
 }
 
-// checkCapacity matches the agents that the ports name with the inventory.
-// It returns the matching agents, which the compiler dry run uses, the
-// findings, and the capacity counts.
+// requiredAgents returns how many agents the ports need at least: the
+// distinct agents that pinned ports name, or one when only spread ports
+// exist.
+func requiredAgents(cfg compiler.Config) int {
+	pinned := map[string]bool{}
+	for _, p := range cfg.Network.Ports {
+		if agent, _ := splitLocation(p.Location); agent != "" {
+			pinned[agent] = true
+		}
+	}
+	if len(pinned) == 0 && len(cfg.Network.Ports) > 0 {
+		return 1
+	}
+	return len(pinned)
+}
+
+// hasInterface mirrors the compiler, where an agent with an empty interface
+// list counts as having every interface.
+func hasInterface(ag compiler.Agent, iface string) bool {
+	return len(ag.Interfaces) == 0 || contains(ag.Interfaces, iface)
+}
+
+// checkCapacity matches the ports with the inventory. A pinned port needs its
+// agent to be available and to have the interface, and a spread port needs at
+// least one available agent with the interface. It returns the agents that
+// the ports can use, in inventory order, which the compiler dry run takes as
+// its inventory, the findings, and the capacity counts.
 func checkCapacity(cfg compiler.Config, inv []compiler.Agent) ([]compiler.Agent, []api.Finding, *capacityReport) {
 	byID := make(map[string]compiler.Agent, len(inv))
 	for _, ag := range inv {
 		byID[ag.ID] = ag
 	}
-	required := requiredAgents(cfg)
-	var used []compiler.Agent
-	for _, name := range required {
-		if ag, ok := byID[name]; ok {
-			used = append(used, ag)
-		}
-	}
+	usable := map[string]bool{}
 	var out []api.Finding
 	for i, p := range cfg.Network.Ports {
 		at := fmt.Sprintf("/network/ports/%d/location", i)
-		name, iface, _ := strings.Cut(p.Location, "/")
+		name, iface := splitLocation(p.Location)
+		if name == "" {
+			found := false
+			for _, ag := range inv {
+				if hasInterface(ag, iface) {
+					usable[ag.ID], found = true, true
+				}
+			}
+			if !found {
+				out = append(out, errorFinding(at, fmt.Sprintf("no available agent has interface %s", iface)))
+			}
+			continue
+		}
 		ag, ok := byID[name]
 		switch {
 		case !ok:
 			out = append(out, errorFinding(at, fmt.Sprintf("agent %s is not available", name)))
-		case len(ag.Interfaces) > 0 && !contains(ag.Interfaces, iface):
+		case !hasInterface(ag, iface):
 			out = append(out, errorFinding(at, fmt.Sprintf("agent %s has no interface %s", name, iface)))
+		default:
+			usable[name] = true
 		}
 	}
-	return used, out, &capacityReport{required: len(required), available: len(used), known: true}
+	var used []compiler.Agent
+	for _, ag := range inv {
+		if usable[ag.ID] {
+			used = append(used, ag)
+		}
+	}
+	return used, out, &capacityReport{required: requiredAgents(cfg), available: len(used), known: true}
 }
 
 func contains(list []string, s string) bool {
@@ -281,8 +318,8 @@ func contains(list []string, s string) bool {
 }
 
 // compilerPathRE finds the dotted path that a compiler error names, such as
-// network.host_pools[1].count.
-var compilerPathRE = regexp.MustCompile(`\b((?:apiVersion|kind|metadata|topology|network|profile|load|timeline|criteria)(?:\.[a-z_]+|\[\d+\])*): `)
+// network.host_pools[1].count or modules.http1.settings.
+var compilerPathRE = regexp.MustCompile(`\b((?:apiVersion|kind|metadata|topology|network|modules|profile|load|timeline|criteria)(?:\.[A-Za-z0-9_-]+|\[\d+\])*): `)
 
 // compilerPath turns the path in a compiler error into a JSON Pointer, or the
 // root pointer when the error names none.
