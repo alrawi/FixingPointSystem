@@ -4,7 +4,7 @@
 //! [`program`] checks a scenario file with the semantic rules of
 //! `tools/contracts/validate.py` and compiles it into flat programs, one per
 //! flow side, and [`template`] compiles and renders the template grammar of
-//! contract v0.2. Module template functions dispatch through the
+//! contract v0.3. Module template functions dispatch through the
 //! [`TemplateFn`] trait in [`function`], and [`manifest`] reads the function
 //! catalogs that module calls are checked against. Loader errors carry a
 //! typed [`Location`]. The interpreter in `fps-interp` runs the programs.
@@ -30,4 +30,4 @@ pub use function::{ArgValue, CallArgs, FnCall, FnError, FnErrorKind, TemplateFn,
 pub use location::{Location, Side, Step};
 pub use manifest::{Manifest, ManifestError, ModuleContext, ModuleSet};
 pub use program::{LoadError, Scenario, Warning};
-pub use template::{Template, TemplateError, Value, Vars};
+pub use template::{Profiles, Template, TemplateError, Value, Vars};
