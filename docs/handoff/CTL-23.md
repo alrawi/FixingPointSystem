@@ -9,8 +9,8 @@
 | Issue | #219 |
 | Branch | `wp/CTL-23` |
 | Pull request | none yet |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-c23a91, lease until 2026-11-07T19:14:28Z |
 | Last verified commit | none |
 
@@ -27,7 +27,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Side default in metrics views with tests
 - [x] 2. Seed from plans, race fixes for the two tests
 - [x] 3. Workflow trigger, wiki page, log entry, temporary stress step
-- [ ] 4. CI green, remove stress step, review
+- [x] 4. CI green, remove stress step, review
 
 ## Done and verified
 
@@ -39,7 +39,7 @@ List what is still missing, including known gaps in finished steps.
 
 ## Next action
 
-Read the CI result of the stress step, remove it from controller.yml, push, and run review.
+Coordinator reviews PR #238.
 
 ## Blockers and open questions
 
@@ -66,3 +66,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-07 | claude-c23a91 | claim | | claimed after lease release |
+| 2026-11-07 | claude-c23a91 | finish | cee2cd2 | stress step (-race -count=50, both tests) and ctl job green; step removed |

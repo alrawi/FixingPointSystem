@@ -65,8 +65,3 @@ jobs:
           working-directory: controller
       - name: go test -race
         run: make -C .. test-ctl
-      # TEMPORARY CTL-23 stress step, removed before review.
-      - name: stress CTL-23
-        run: |
-          go test -race -count=50 -run 'TestEveryFailedRunHasAReason' ./internal/runs/
-          go test -race -count=50 -run 'TestCrashMarksOfflineAndFailsPendingCommand' ./internal/agents/
