@@ -17,14 +17,14 @@ The agent needs Linux 6.3 or newer (decision D12 item 3). Ubuntu 24.04 ships Lin
 
 ## Prerequisites
 
-Use an Ubuntu 24.04 host with KVM. The build host must not have a newer C library than Ubuntu 24.04 (glibc 2.39), because the agent links the host library. `build.sh` checks this.
+Any x86_64 Linux host with KVM works. Ubuntu 24.04 and 26.04 are the tested or expected hosts, and the package names below are those of Ubuntu. The host's C library does not matter, because `build.sh` builds the agent as a static binary for `x86_64-unknown-linux-musl` and the controller with `CGO_ENABLED=0`, and checks with `file` that both are statically linked. The image itself is Ubuntu 24.04. The Rust musl target needs `rustup`, because distro `cargo` cannot add it. `shellcheck` is optional and only `make lint-img` uses it.
 
 1. Install the packages.
 
    ```bash
    sudo apt-get update
    sudo apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils xorriso \
-     curl openssh-client openssl python3 build-essential git gnupg
+     curl openssh-client openssl python3 build-essential git gnupg file musl-tools
    ```
 
 2. Install Packer 1.9 or newer from the HashiCorp repository, unless `packer version` already works.
@@ -36,20 +36,24 @@ Use an Ubuntu 24.04 host with KVM. The build host must not have a newer C librar
    packer version
    ```
 
-3. Install Rust, unless `cargo --version` already works.
+3. Install Rust with rustup, not with the distro cargo package, and add the musl target. `build.sh` needs `rustup target list --installed` to show `x86_64-unknown-linux-musl`, and `musl-gcc` (from `musl-tools`, installed in step 1) for dependencies that compile C code.
 
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
    . "$HOME/.cargo/env"
-   cargo --version
+   rustup target add x86_64-unknown-linux-musl
+   rustup target list --installed
    ```
 
-4. Give your user access to KVM, then log out and in again (or run the next commands under `sg kvm -c '...'`).
+4. Give your user access to KVM.
 
    ```bash
    sudo usermod -aG kvm "$USER"
-   test -w /dev/kvm && echo "kvm ok"
    ```
+
+   Then log out and back in, and check with `id` that the output lists `kvm`, and with `test -w /dev/kvm && echo "kvm ok"`. If `usermod` is not on the path of `sudo`, use `sudo gpasswd -a "$USER" kvm` instead. To skip the log out for one shell, run the commands under `sg kvm -c '...'`.
+
+5. Optional: install ShellCheck (`sudo apt-get install -y shellcheck`) for `make lint-img`. Without it that target skips the ShellCheck run.
 
 Go needs no installation. `build.sh` uses your `go` when it is at least the version of `controller/go.mod`, and otherwise downloads a pinned Go toolchain (default 1.24.7, checksum checked against the go.dev download index) into `image/.cache/go`.
 
@@ -62,7 +66,7 @@ git fetch origin wp/IMG-01 && git checkout wp/IMG-01
 image/build.sh
 ```
 
-The script runs seven steps and prints a heading `== ...` for each: check the prerequisites, find or install Go, build the controller, build the agent, stage the modules, run Packer (`packer init`, `packer validate`, `packer build`), and check the result with `qemu-img check`. The first run downloads the Ubuntu cloud image (about 600 MB), the Packer QEMU plugin, the Rust dependencies, and the Go modules, and it compiles the agent, so expect 10 to 25 minutes. A rerun reuses the caches in `image/.cache`.
+The script runs seven steps and prints a heading `== ...` for each: check the prerequisites (including the musl target), find or install Go, build the controller, build the agent, stage the modules, run Packer (`packer init`, `packer validate`, `packer build`), and check the result with `qemu-img check`. The first run downloads the Ubuntu cloud image (about 600 MB), the Packer QEMU plugin, the Rust dependencies, and the Go modules, and it compiles the agent, so expect 10 to 25 minutes. A rerun reuses the caches in `image/.cache`.
 
 On success the last lines are
 
@@ -129,14 +133,18 @@ Without a seed the VM has no login, because the image ships no password. The fir
 | `seed-example/` | Example NoCloud seed for a VM |
 | `tests/` | The static checks, the namespace test, and the checks that run inside the VM |
 
-Run the checks that need no KVM with `make lint-img test-img`, and the namespace test with `sudo make e2e-img`.
+Run the checks that need no KVM with `make lint-img test-img`, and the namespace test with `sudo make e2e-img`. `nft -c` needs root on many hosts, so `make test-img` prints a NOTE and skips that one check without root. Run `sudo make test-img` to include it.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | `packer init` cannot download the plugin | The host needs outbound HTTPS to github.com |
-| `FAIL /dev/kvm is not writable` | Add your user to the `kvm` group and log in again |
+| `FAIL /dev/kvm is not writable` | Run `sudo usermod -aG kvm "$USER"` (or `sudo gpasswd -a "$USER" kvm`), log out and back in, and check with `id` |
+| `FAIL the Rust target x86_64-unknown-linux-musl is not installed` | `rustup target add x86_64-unknown-linux-musl` |
+| `FAIL musl-gcc is missing` | `sudo apt install musl-tools` |
+| `FAIL rustup is missing` | Install rustup (Prerequisites, step 3). Distro cargo cannot add the musl target |
 | Packer waits for ssh until the timeout | Run with `FPS_PACKER_LOG=1` and set `headless = false` in `fps.pkr.hcl` locally to watch the console |
 | `qemu-system-x86_64: Could not set up host forwarding rule` | Another process uses the port. Set `FPS_TEST_API_PORT` or `FPS_TEST_SSH_PORT` |
-| The agent fails in the build with a `GLIBC_2.xx not found` error | Build on Ubuntu 24.04 |
+| `make lint-img` prints `shellcheck is not installed, skipped` | Optional: `sudo apt-get install -y shellcheck` |
+| `nft -c` is skipped in `make test-img` | It needs root. Run `sudo make test-img` |

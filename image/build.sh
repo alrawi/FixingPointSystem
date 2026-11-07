@@ -5,7 +5,8 @@
 #
 #   image/build.sh
 #
-# The script builds the controller (Go) and the agent (cargo, release profile),
+# The script builds the controller (Go, CGO off) and the agent (cargo, release profile,
+# x86_64-unknown-linux-musl), both static,
 # stages the modules, and runs `packer init` and `packer build` on image/fps.pkr.hcl.
 # The result is image/output/fps-base.qcow2. Run it from any directory. It needs
 # the tools of image/README.md, Prerequisites, and it downloads a pinned Go toolchain into
@@ -36,7 +37,7 @@ need() {
 }
 
 step "Check the prerequisites"
-for cmd in packer qemu-system-x86_64 qemu-img cargo curl tar python3 openssl sha256sum; do
+for cmd in packer qemu-system-x86_64 qemu-img cargo file curl tar python3 openssl sha256sum; do
 	need "$cmd"
 done
 if ! command -v xorriso >/dev/null && ! command -v mkisofs >/dev/null && ! command -v genisoimage >/dev/null; then
@@ -52,12 +53,17 @@ if [[ "$accel" == kvm && ! -w /dev/kvm ]]; then
 		die "/dev/kvm is not writable by this user. Add yourself to the kvm group, or set FPS_ALLOW_TCG=1."
 	fi
 fi
-# The agent links the C library of the build host. The image is Ubuntu 24.04 (glibc 2.39),
-# so a newer host library would give an agent that cannot start in the image.
-glibc="$(ldd --version | head -n 1 | grep -Eo '[0-9]+\.[0-9]+$' || true)"
-if [[ -n "$glibc" && "$(printf '2.39\n%s\n' "$glibc" | sort -V | tail -n 1)" != "2.39" ]]; then
-	die "the build host has glibc $glibc, newer than 2.39 of Ubuntu 24.04. Build on Ubuntu 24.04 or older."
+# Both binaries are static, so the build host's C library does not matter. The agent
+# targets musl, which needs the rust-std component for that target and, when a
+# dependency compiles C code, musl-gcc.
+musl_target=x86_64-unknown-linux-musl
+command -v rustup >/dev/null 2>&1 ||
+	die "rustup is missing. Distro cargo cannot add the musl target. Install rustup (image/README.md, Prerequisites)."
+if ! rustup target list --installed 2>/dev/null | grep -qx "$musl_target"; then
+	die "the Rust target $musl_target is not installed. Run: rustup target add $musl_target"
 fi
+command -v musl-gcc >/dev/null 2>&1 ||
+	die "musl-gcc is missing, which a dependency may need to compile C code. Run: sudo apt install musl-tools"
 
 step "Find or install Go"
 need_go="$(awk '/^go /{print $2; exit}' "$root/controller/go.mod")"
@@ -101,15 +107,20 @@ mkdir -p "$build/modules" "$out"
 	GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 		"$go_bin" build -trimpath -ldflags '-s -w' -o "$build/fps-controller" ./cmd/fps-controller
 )
+file "$build/fps-controller" | grep -q 'statically linked' ||
+	die "the controller is not statically linked: $(file "$build/fps-controller")"
 "$build/fps-controller" -version
 
 step "Build the agent"
+agent_target_dir="${CARGO_TARGET_DIR:-$cache/cargo-target}"
 (
 	cd "$root"
-	CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$cache/cargo-target}" cargo build --release --locked -p fps-agent
-	cp "${CARGO_TARGET_DIR:-$cache/cargo-target}/release/fps-agent" "$build/fps-agent"
+	CARGO_TARGET_DIR="$agent_target_dir" cargo build --release --locked --target "$musl_target" -p fps-agent
+	cp "$agent_target_dir/$musl_target/release/fps-agent" "$build/fps-agent"
 )
 strip "$build/fps-agent" 2>/dev/null || true
+file "$build/fps-agent" | grep -Eq 'statically linked|static-pie linked' ||
+	die "the agent is not statically linked: $(file "$build/fps-agent")"
 "$build/fps-agent" capabilities >/dev/null || echo "NOTE fps-agent capabilities failed on this host. The image check still runs it in the VM."
 
 step "Stage the modules"

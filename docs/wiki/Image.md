@@ -4,7 +4,7 @@ This page describes the appliance image of the IMG workstream. IMG-01 builds the
 
 ## Build
 
-`image/build.sh` builds the controller with Go, builds the agent with `cargo build --release`, stages the modules `http1` and `dns`, and runs Packer on `image/fps.pkr.hcl`. The Packer QEMU builder boots the official Ubuntu 24.04 LTS cloud image (`disk_image = true`) with a throwaway ssh user from a NoCloud seed that Packer renders. Three steps follow inside the VM.
+`image/build.sh` builds the controller with Go (`CGO_ENABLED=0`) and the agent with `cargo build --release --target x86_64-unknown-linux-musl`, so that both are static and the host's C library does not matter, stages the modules `http1` and `dns`, and runs Packer on `image/fps.pkr.hcl`. The Packer QEMU builder boots the official Ubuntu 24.04 LTS cloud image (`disk_image = true`) with a throwaway ssh user from a NoCloud seed that Packer renders. Three steps follow inside the VM.
 
 1. `scripts/provision.sh` checks that the kernel is Linux 6.3 or newer, installs `nftables`, `iproute2`, and the guest agent, installs the binaries and the tree of `image/files/`, enables the services, and smoke tests both binaries.
 2. `scripts/cleanup.sh` installs the key only ssh policy, clears package caches, ssh host keys, the machine id, and cloud-init state, and trims free space.

@@ -10,8 +10,8 @@
 | Branch | `wp/IMG-01` |
 | Pull request | #224 |
 | Status | waiting for host test |
-| Progress | 90% (3 of 4 plan steps) |
-| Current holder | claude-0dabfe, lease until 2026-11-06T23:01:10Z |
+| Progress | 95% (host test rerun pending) |
+| Current holder | claude-c81634, lease until 2026-11-07T18:51:49Z |
 | Last verified commit | none |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
@@ -35,6 +35,8 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
+The owner host test failed before the build on the glibc check. That check is gone: the agent now builds for x86_64-unknown-linux-musl and the controller with CGO off, and build.sh verifies both with `file`. The musl build itself was NOT run locally (static.rust-lang.org is blocked here, so the rust-std musl component cannot be installed). All agent dependencies are pure Rust, so it is expected to build.
+
 The host build and boot test (`image/build.sh`, `image/boot-test.sh`). Packer HCL was written without `packer validate`.
 
 ## Next action
@@ -51,7 +53,7 @@ The controller binds `${FPS_MGMT_ADDR}` from DHCP of `mgmt0` (a unit orders it a
 
 ## Pitfalls
 
-The sandbox blocks packer and go.dev downloads, so the Go toolchain checksum comes from the go.dev index at build time and is not hard coded. The agent links the host glibc, so build on Ubuntu 24.04.
+The sandbox blocks packer and go.dev downloads, so the Go toolchain checksum comes from the go.dev index at build time and is not hard coded. Both binaries are static (agent for musl, controller with CGO off), so any x86_64 Linux host builds. The musl target needs rustup.
 
 ## Verify the current state
 
@@ -68,3 +70,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-06T22:00Z | claude-0dabfe | claim, implement, open PR | see branch | Waiting for host test |
+| 2026-11-07T17:40Z | claude-c81634 | takeover, fix | see branch | Static musl agent, static controller, glibc check removed, README rewritten |

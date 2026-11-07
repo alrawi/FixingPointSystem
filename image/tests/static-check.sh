@@ -66,7 +66,7 @@ else
 	fail "sysctl keeps net.ipv4.ip_forward at 0"
 fi
 
-# 6. The rules parse. nft -c needs no privileges for a syntax check on most hosts.
+# 6. The rules parse. nft -c needs root on many hosts, and the check is skipped when it fails.
 if command -v nft >/dev/null 2>&1; then
 	if nft -c -f "$img/files/etc/fps/isolation.nft" 2>/dev/null; then
 		pass "nft -c accepts isolation.nft"
