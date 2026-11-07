@@ -340,7 +340,11 @@ flows:
     let pair = run_pair(text, Opts::default()).await;
     assert_failure(&pair.client, Reason::TemplateError, 1, "send");
     let f = pair.client.unwrap_err();
-    assert!(matches!(*f.kind, FailureKind::Render { .. }), "{:?}", f.kind);
+    assert!(
+        matches!(*f.kind, FailureKind::Render { .. }),
+        "{:?}",
+        f.kind
+    );
     assert!(f.extension_label().is_none());
 }
 

@@ -20,11 +20,13 @@ Report the new failure reasons (`datagram_rejected`, `template_error`, `extensio
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. `FailureKind::reason` and its tests in `engine/fps-interp/`.
-- [ ] 2. `SessionCounters` gains concurrent and duration; `fps-runtime` uses it; snapshot tests for both sides.
+- [x] 1. `FailureKind::reason` and its tests in `engine/fps-interp/`.
+- [x] 2. `SessionCounters` gains concurrent and duration; `fps-runtime` uses it; snapshot tests for both sides.
 - [ ] 3. Engine wiki page, log entry, checks, pull request.
 
 ## Done and verified
+
+- Steps 1 and 2: `cargo test -p fps-interp -p fps-stats -p fps-runtime` passes, and `cargo clippy --all-targets -D warnings` on the three crates is clean.
 
 List each finished step with the command that verified it and the result.
 

@@ -80,7 +80,7 @@ impl Worker {
         let id = start.config.id;
         let f = flow.get()?;
         let mut shard = Shard::new(id);
-        let metrics = SessionMetrics::register(&mut shard, &f.module, &flow.scenario.name)
+        let metrics = SessionMetrics::register(&mut shard, &f.module, &flow.scenario.name, side)
             .map_err(|source| RuntimeError::Stats { worker: id, source })?;
         Ok(Self {
             id,
