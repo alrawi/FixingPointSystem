@@ -6,6 +6,7 @@
 //! implementation in `tools/contracts/validate.py`, so the engine and the
 //! validator accept the same templates.
 
+use super::dist::{Dist, DEFAULT_CAP};
 use super::{Const, Expr, ModuleCall, TemplateError};
 use crate::function::ValueType;
 
@@ -13,7 +14,9 @@ use crate::function::ValueType;
 pub const MAX_CALL_DEPTH: usize = 8;
 
 /// Roots that a module may not take as its name.
-const RESERVED_ROOTS: [&str; 5] = ["vars", "session", "last", "true", "false"];
+const RESERVED_ROOTS: [&str; 7] = [
+    "vars", "session", "last", "profiles", "dist", "true", "false",
+];
 
 /// Parameters of the core functions, in positional order.
 const FILL: &[(&str, ValueType)] = &[("n", ValueType::Int)];
@@ -283,6 +286,7 @@ fn lower(node: Node) -> Result<Expr, TemplateError> {
                 ["vars", name] => Ok(Expr::Var((*name).to_string())),
                 ["session", "id"] => Ok(Expr::SessionId),
                 ["session", "flow"] => Ok(Expr::SessionFlow),
+                ["profiles", name] => Ok(Expr::Profile((*name).to_string())),
                 _ => Err(TemplateError::UnknownReference(parts.join("."))),
             }
         }
@@ -298,7 +302,7 @@ fn lower(node: Node) -> Result<Expr, TemplateError> {
                 "rand_int" => RAND_INT,
                 _ => return Err(TemplateError::UnknownFunction(name)),
             };
-            let mut args = bind_core(&name, params, positional, keywords)?.into_iter();
+            let mut args = bind_core(&name, params, &[], positional, keywords)?.into_iter();
             let mut next = || Box::new(args.next().unwrap_or(Expr::Const(Const::Int(0))));
             Ok(match name.as_str() {
                 "fill" => Expr::Fill(next()),
@@ -312,6 +316,9 @@ fn lower(node: Node) -> Result<Expr, TemplateError> {
             positional,
             keywords,
         } => {
+            if module == "dist" {
+                return lower_dist(&name, positional, keywords);
+            }
             if RESERVED_ROOTS.contains(&module.as_str()) {
                 return Err(TemplateError::ReservedModule(module));
             }
@@ -340,11 +347,48 @@ fn lower(node: Node) -> Result<Expr, TemplateError> {
     }
 }
 
+/// Binds a `dist` call and checks the range of its literal arguments.
+fn lower_dist(
+    name: &str,
+    positional: Vec<Node>,
+    keywords: Vec<(String, Node)>,
+) -> Result<Expr, TemplateError> {
+    let dist = Dist::by_name(name)
+        .ok_or_else(|| TemplateError::UnknownFunction(format!("dist.{name}")))?;
+    let params: Vec<(&str, ValueType)> = dist.params().iter().map(|p| (p.name, p.ty)).collect();
+    let defaults = if dist.has_cap() {
+        vec![Expr::Const(Const::Int(DEFAULT_CAP))]
+    } else {
+        vec![]
+    };
+    let args = bind_core(&dist.qualified(), &params, &defaults, positional, keywords)?;
+    for (arg, param) in args.iter().zip(dist.params()) {
+        match arg {
+            Expr::Const(Const::Int(i)) => dist.check_param(param.name, *i as f64)?,
+            Expr::Const(Const::Float(f)) => dist.check_param(param.name, *f)?,
+            _ => {}
+        }
+    }
+    if let [Expr::Const(low), Expr::Const(high)] = args.as_slice() {
+        let num = |c: &Const| match c {
+            Const::Int(i) => Some(*i as f64),
+            Const::Float(f) => Some(*f),
+            _ => None,
+        };
+        if dist == Dist::Uniform && num(low) > num(high) {
+            return Err(TemplateError::UniformRange);
+        }
+    }
+    Ok(Expr::Dist(dist, args))
+}
+
 /// Binds the arguments of a core function to its parameters in declaration
-/// order and checks their static types.
+/// order and checks their static types. The last `defaults.len()` parameters
+/// are optional and take the defaults when a call omits them.
 fn bind_core(
     name: &str,
     params: &[(&str, ValueType)],
+    defaults: &[Expr],
     positional: Vec<Node>,
     keywords: Vec<(String, Node)>,
 ) -> Result<Vec<Expr>, TemplateError> {
@@ -376,11 +420,15 @@ fn bind_core(
         *slot = Some(lower(node)?);
     }
     let mut out = Vec::with_capacity(params.len());
-    for (slot, (param, ty)) in slots.into_iter().zip(params) {
-        let expr = slot.ok_or_else(|| TemplateError::MissingParameter {
-            function: name.to_string(),
-            param: (*param).to_string(),
-        })?;
+    let required = params.len() - defaults.len();
+    for (i, (slot, (param, ty))) in slots.into_iter().zip(params).enumerate() {
+        let default = i.checked_sub(required).and_then(|d| defaults.get(d));
+        let expr =
+            slot.or_else(|| default.cloned())
+                .ok_or_else(|| TemplateError::MissingParameter {
+                    function: name.to_string(),
+                    param: (*param).to_string(),
+                })?;
         let got = expr.value_type();
         if !ty.accepts(got) {
             return Err(TemplateError::ArgumentType {

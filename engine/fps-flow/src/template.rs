@@ -12,8 +12,10 @@
 //! one allocation. Module calls go through the [`TemplateFn`] seam.
 
 mod check;
+mod dist;
 mod dump;
 mod parse;
+mod profile;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -25,8 +27,12 @@ use serde_yaml::Value as Yaml;
 
 use crate::function::{ArgValue, CallArgs, FnCall, FnErrorKind, NamedArg, TemplateFn, ValueType};
 
+use dist::Dist;
+
 pub use check::{CheckError, CheckScope, CheckWarning};
+pub use dist::DEFAULT_CAP;
 pub use parse::MAX_CALL_DEPTH;
+pub use profile::Profiles;
 
 /// Errors that template compilation or rendering reports.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -126,6 +132,26 @@ pub enum TemplateError {
         /// Upper bound.
         hi: i64,
     },
+    /// A reference names a profile that the scenario does not declare, or the
+    /// template renders without the profiles of its scenario.
+    #[error("undefined profile '{0}'")]
+    UndefinedProfile(String),
+    /// A value that must be a number is not one.
+    #[error("'{0}' is not a number")]
+    NotNumber(String),
+    /// An argument of a `dist` function is outside its range.
+    #[error("parameter '{param}' of '{function}' {rule}")]
+    DistParameter {
+        /// Qualified function name.
+        function: String,
+        /// Parameter name.
+        param: String,
+        /// The rule that the value breaks.
+        rule: &'static str,
+    },
+    /// `dist.uniform` received a lower bound above its upper bound.
+    #[error("uniform() has low greater than high")]
+    UniformRange,
     /// A YAML value has a type that a variable or count cannot take.
     #[error("unsupported value {0}")]
     UnsupportedValue(String),
@@ -380,7 +406,19 @@ enum Expr {
     Fill(Box<Expr>),
     Hex(Box<Expr>),
     RandInt(Box<Expr>, Box<Expr>),
+    /// A profile of the scenario. The loader folds it into text.
+    Profile(String),
+    /// A `dist` call with every parameter bound in declaration order,
+    /// `cap` included.
+    Dist(Dist, Vec<Expr>),
     Call(Box<ModuleCall>),
+}
+
+/// What [`Expr::fold`] may substitute.
+#[derive(Clone, Copy, Default)]
+struct Fold<'a> {
+    vars: Option<&'a Vars>,
+    profiles: Option<&'a Profiles>,
 }
 
 impl Expr {
@@ -389,21 +427,32 @@ impl Expr {
         match self {
             Expr::Const(c) => c.value_type(),
             Expr::Var(_) => ValueType::Any,
-            Expr::SessionId | Expr::RandInt(..) => ValueType::Int,
-            Expr::SessionFlow | Expr::Fill(_) => ValueType::Text,
+            Expr::SessionId | Expr::RandInt(..) | Expr::Dist(..) => ValueType::Int,
+            Expr::SessionFlow | Expr::Fill(_) | Expr::Profile(_) => ValueType::Text,
             Expr::Last | Expr::Hex(_) | Expr::Call(_) => ValueType::Bytes,
         }
     }
 
-    /// Folds the parts that need no session. `constants` holds the variables
-    /// that may be substituted.
-    fn fold(self, constants: Option<&Vars>) -> Result<Expr, TemplateError> {
-        let fold_box = |e: Box<Expr>| e.fold(constants).map(Box::new);
+    /// Folds the parts that need no session. `with` holds the variables and
+    /// profiles that may be substituted.
+    fn fold(self, with: Fold<'_>) -> Result<Expr, TemplateError> {
+        let constants = with.vars;
+        let fold_box = |e: Box<Expr>| e.fold(with).map(Box::new);
         Ok(match self {
             Expr::Var(name) => match constants.and_then(|c| c.get(&name)) {
                 Some(v) => Expr::Const(Const::from_value(v)),
                 None => Expr::Var(name),
             },
+            Expr::Profile(name) => match with.profiles.and_then(|p| p.render(&name)) {
+                Some(text) => Expr::Const(Const::Text(text)),
+                None => Expr::Profile(name),
+            },
+            Expr::Dist(d, args) => Expr::Dist(
+                d,
+                args.into_iter()
+                    .map(|e| e.fold(with))
+                    .collect::<Result<_, _>>()?,
+            ),
             Expr::Hex(s) => match *fold_box(s)? {
                 Expr::Const(Const::Text(s)) => Expr::Const(Const::Bytes(decode_hex(&s)?)),
                 other => Expr::Hex(Box::new(other)),
@@ -422,11 +471,11 @@ impl Expr {
                     function,
                     positional: positional
                         .into_iter()
-                        .map(|e| e.fold(constants))
+                        .map(|e| e.fold(with))
                         .collect::<Result<_, _>>()?,
                     named: named
                         .into_iter()
-                        .map(|(k, e)| e.fold(constants).map(|e| (k, e)))
+                        .map(|(k, e)| e.fold(with).map(|e| (k, e)))
                         .collect::<Result<_, _>>()?,
                 }))
             }
@@ -442,12 +491,22 @@ impl Expr {
                 a.visit(f);
                 b.visit(f);
             }
+            Expr::Dist(_, args) => {
+                for e in args {
+                    e.visit(f);
+                }
+            }
             Expr::Call(c) => {
                 for e in c.positional.iter().chain(c.named.iter().map(|(_, e)| e)) {
                     e.visit(f);
                 }
             }
-            Expr::Const(_) | Expr::Var(_) | Expr::SessionId | Expr::SessionFlow | Expr::Last => {}
+            Expr::Const(_)
+            | Expr::Var(_)
+            | Expr::Profile(_)
+            | Expr::SessionId
+            | Expr::SessionFlow
+            | Expr::Last => {}
         }
     }
 
@@ -461,6 +520,8 @@ impl Expr {
             Expr::Fill(_) => "fill()".into(),
             Expr::Hex(_) => "hex()".into(),
             Expr::RandInt(..) => "rand_int()".into(),
+            Expr::Profile(n) => format!("profiles.{n}"),
+            Expr::Dist(d, _) => format!("{}()", d.qualified()),
             Expr::Call(c) => format!("{}.{}()", c.module, c.function),
             Expr::Const(c) => {
                 let mut out = Vec::new();
@@ -563,7 +624,7 @@ impl Template {
             if expr.is_empty() {
                 return Err(TemplateError::EmptyPlaceholder);
             }
-            t.push_expr(parse::parse_expression(expr)?.fold(None)?);
+            t.push_expr(parse::parse_expression(expr)?.fold(Fold::default())?);
             rest = tail.get(2..).unwrap_or_default();
         }
         if rest.contains("}}") {
@@ -593,11 +654,31 @@ impl Template {
     /// those differ between sessions. The result renders the same bytes as
     /// the original for every session and draws the same random numbers.
     pub fn fold_vars(&self, constants: &Vars) -> Result<Self, TemplateError> {
+        self.folded(Fold {
+            vars: Some(constants),
+            profiles: None,
+        })
+    }
+
+    /// Returns a copy in which every reference to a profile that `profiles`
+    /// declares is replaced by its rendered text. References to other
+    /// profiles stay and fail when rendered.
+    ///
+    /// The loader calls this once per scenario, so a compiled scenario needs
+    /// no profile lookup while it runs.
+    pub fn fold_profiles(&self, profiles: &Profiles) -> Result<Self, TemplateError> {
+        self.folded(Fold {
+            vars: None,
+            profiles: Some(profiles),
+        })
+    }
+
+    fn folded(&self, with: Fold<'_>) -> Result<Self, TemplateError> {
         let mut t = Template { segs: Vec::new() };
         for seg in &self.segs {
             match seg {
                 Seg::Lit(b) => t.push_lit(b),
-                Seg::Expr(e) => t.push_expr(e.clone().fold(Some(constants))?),
+                Seg::Expr(e) => t.push_expr(e.clone().fold(with)?),
             }
         }
         Ok(t)
@@ -841,12 +922,49 @@ fn eval<'v, 'a: 'v, R: RngCore>(
             }
             Val::Int(ctx.rng.gen_range(lo..=hi))
         }
+        Expr::Profile(name) => return Err(TemplateError::UndefinedProfile(name.clone())),
+        Expr::Dist(d, args) => Val::Int(draw_dist(*d, args, ctx)?),
         Expr::Call(c) => {
             let mut buf = Vec::new();
             call_module(c, ctx, &mut buf)?;
             Val::Bytes(Cow::Owned(buf))
         }
     })
+}
+
+/// Evaluates the arguments of a `dist` call in order, checks their ranges,
+/// and draws from the session generator.
+fn draw_dist<R: RngCore>(
+    d: Dist,
+    args: &[Expr],
+    ctx: &mut RenderCtx<'_, R>,
+) -> Result<i64, TemplateError> {
+    let mut nums = Vec::with_capacity(args.len());
+    let mut cap = DEFAULT_CAP;
+    for (e, param) in args.iter().zip(d.params()) {
+        if param.name == "cap" {
+            cap = eval_int(e, ctx)?;
+            d.check_param("cap", cap as f64)?;
+        } else {
+            let v = eval_float(e, ctx)?;
+            d.check_param(param.name, v)?;
+            nums.push(v);
+        }
+    }
+    d.draw(&nums, cap, &mut *ctx.rng)
+}
+
+fn eval_float<R: RngCore>(e: &Expr, ctx: &mut RenderCtx<'_, R>) -> Result<f64, TemplateError> {
+    let v = eval(e, ctx)?;
+    match v {
+        // Integers below 2^53 convert exactly, and larger ones only lose
+        // precision, which a distribution parameter tolerates.
+        Val::Int(i) => Some(i as f64),
+        Val::Float(f) => Some(f),
+        Val::Text(s) => s.trim().parse().ok(),
+        Val::Bool(_) | Val::Bytes(_) => None,
+    }
+    .ok_or_else(|| TemplateError::NotNumber(e.label()))
 }
 
 fn eval_int<R: RngCore>(e: &Expr, ctx: &mut RenderCtx<'_, R>) -> Result<i64, TemplateError> {
@@ -920,3 +1038,5 @@ pub fn decode_hex(s: &str) -> Result<Vec<u8>, TemplateError> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_dist;

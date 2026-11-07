@@ -7,7 +7,7 @@
 //! calls against the manifest function catalogs. The rules and their order
 //! follow `_check_node` in `tools/contracts/validate.py`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{Expr, ModuleCall, Template, TemplateError};
 use crate::function::ValueType;
@@ -21,6 +21,8 @@ pub struct CheckScope<'a> {
     pub vars: &'a HashMap<String, ValueType>,
     /// The callable modules, or `None` to leave module calls unchecked.
     pub modules: Option<&'a ModuleContext>,
+    /// The names of the profiles that the scenario declares.
+    pub profiles: &'a HashSet<String>,
     /// True when an `expect` earlier on the same side always runs first.
     pub last: bool,
 }
@@ -112,6 +114,19 @@ impl Checker<'_, '_> {
                 .ok_or_else(|| TemplateError::UndefinedVariable(name.clone()))?,
             Expr::SessionId => ValueType::Int,
             Expr::SessionFlow => ValueType::Text,
+            Expr::Profile(name) => {
+                if !self.scope.profiles.contains(name) {
+                    return Err(TemplateError::UndefinedProfile(name.clone()).into());
+                }
+                ValueType::Text
+            }
+            Expr::Dist(d, args) => {
+                for (arg, param) in args.iter().zip(d.params()) {
+                    let t = self.node(arg)?;
+                    arg_type(&d.qualified(), param.name, param.ty, t)?;
+                }
+                ValueType::Int
+            }
             Expr::Last => {
                 if !self.scope.last {
                     return Err(CheckError::LastWithoutExpect);
@@ -263,6 +278,7 @@ mod tests {
             ("bound".to_string(), ValueType::Any),
         ]
         .into();
+        let profiles: HashSet<String> = ["chrome".to_string()].into();
         let ctx = ctx();
         let mut warnings = Vec::new();
         let t = Template::compile(src).expect("compile");
@@ -270,6 +286,7 @@ mod tests {
             CheckScope {
                 vars: &vars,
                 modules: Some(&ctx),
+                profiles: &profiles,
                 last,
             },
             &mut warnings,
