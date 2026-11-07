@@ -13,7 +13,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | [`fps-interp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-interp) | The session interpreter, the `Opener` seam, `session_rng`, delay sampling, and failure reasons, see [The flow program interpreter](#the-flow-program-interpreter) | UDP sessions since ENG-06 and vectored fill writes since ENG-05, see [Vectored writes for fill bodies](#vectored-writes-for-fill-bodies). ENG-07 adds multi flow instances |
 | [`fps-stats`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-stats) | The catalog table, per worker shards, HDR histograms, the snapshot merge, and the proto3 JSON mapping of `CounterSnapshot`, plus the typed `SessionCounters` and `TransportCounters` sets with the `side` label and the failure reasons of ENG-14 | ENG-10 publishes one snapshot per second from the worker runtime |
 | [`fps-runtime`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-runtime) | Worker threads, optional core pinning, the Tokio clock of the scheduler, statistics snapshots, stop and abort | AGT-01 builds a `RuntimeConfig` from the agent plan |
-| [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched) | Load profile, session schedule, drain iterator, and injected clock | ENG-10 drives it from the worker runtime |
+| [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched) | Load profile, session schedule, drain iterator, and injected clock | ENG-10 drives it from the worker runtime, and AGT-05 routes `UpdateRates` to `RateControl` |
 | [`fps-hosts`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-hosts) | Host pool address mapping, slicing, and seeded host selection, see [Hosts](Hosts.md) | HST-02 adds kernel port setup |
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `SessionIo` over kernel TCP sockets, see [Transport](Transport.md) | TRN-02 adds UDP |
 | [`fps-wasm`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-wasm) | The WebAssembly extension host, with fuel and memory limits, see [The WebAssembly extension host](#the-webassembly-extension-host) | The interpreter and the runtime wire it into their module table |
@@ -155,7 +155,7 @@ ENG-15 closed two of the follow ups of ENG-14. `FailureKind::reason` in `fps-int
 
 ENG-08 added the crate [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched), which turns one worker rate of a plan into session starts. A `Schedule` serves one mix entry on one worker, and its scheduled times are a pure function of the configuration, the run seed, and the stream, so a replay reproduces every start.
 
-The crate has four parts, which are listed below.
+The crate has six parts, which are listed below.
 
 | Item | Contents |
 |---|---|
@@ -163,6 +163,8 @@ The crate has four parts, which are listed below.
 | `Schedule` | Session starts for a `SessionsPerSecond` or a `ConcurrentSessions` objective, with a concurrency cap |
 | `Drain` | The iterator that `Schedule::drain(&clock, open)` returns for one clock reading |
 | `Clock` and `ManualClock` | The injected clock, which reports the time since the run start |
+| `RateHandle` | A thread safe handle on the target of one schedule, which a control thread sets while the worker runs (ENG-13) |
+| `RateControl` | The registry that maps a scenario id to the handles of its workers, with all or nothing updates (ENG-13) |
 
 A worker calls `drain` with its clock and its open session count, starts every session that the drain yields, and sleeps until `next_due` returns a time. When `next_due` returns `None`, only a closing session can release the next start. The crate never reads the wall clock, so the runtime of ENG-10 backs the clock with its timer and tests use `ManualClock`.
 
@@ -175,6 +177,25 @@ At the concurrency cap the default policy `CapPolicy::Defer` holds an arrival un
 ### Concurrency objectives
 
 A concurrency objective starts a session whenever the open sessions fall below the target, which is the floor of the steady target times the current fraction, bounded by the cap. Such a start carries the drain time as its scheduled time. `next_due` returns the first time at which the target exceeds the open sessions, or `None` while the target is met.
+
+### Run time rate adjustment
+
+ENG-13 lets the agent change the rate of a running schedule without restarting a worker. `Schedule::rate_handle()` returns a `RateHandle`, a clone of one atomic cell that holds the target as the bits of an `f64`. Any thread may call `set`, and the worker loads the cell at every `drain`, which is its scheduling tick. The worker takes no lock, and a single atomic word cannot tear. A handle keeps the kind of its objective, so a rate handle refuses a concurrency target and the reverse with `KindMismatch`, and `set` refuses a rate that is negative or not finite with `InvalidRate`.
+
+The change applies at the first tick that sees it, and `next_due` returns a time that is not after the clock while a change waits, so a worker that re reads it ticks at once. A worker that sleeps with no due time, which happens while the schedule is paused or at the cap, has to wake by itself to see a change, and ENG-10 and AGT-05 should bound that sleep to a tick of about 100 ms.
+
+The arrival process stays correct across a change because the schedule keeps the operational time of the pending arrival and changes only the map from operational time to time. An arrival at operational time `op` lies where the integral of the profile reaches `mass_base + (op - op_base) / rate`. A change at time `t` sets `op_base` to the expected count at `t` under the old rate and `mass_base` to the integral at `t`, so the expected count is continuous. The next start keeps its place in the count and moves to where the new rate reaches it. Constant arrivals therefore keep every gap between the old and the new spacing, which leaves no burst that catches up and no gap, and Poisson arrivals stay a Poisson process with the new intensity.
+
+Four behaviours are defined.
+
+| Case | Behaviour |
+|---|---|
+| Rate 0 | The schedule pauses. It yields no start, `is_finished` stays false, and `next_due` is `None`. The expected count stands still, so a resume does not owe the paused time. A concurrency target of 0 starts nothing and leaves the open sessions to the worker |
+| Arrival already due | An arrival that was due before the tick under the old rate goes out first, and the new rate applies from the first tick at which none is due. Under `CapPolicy::Defer` at the cap, a change therefore waits until the deferred arrivals have started |
+| Rate raised near the end | The profile ends at a fixed time. A raised rate can bring an arrival inside the profile that the old rate left beyond it, and a lowered rate can push one out |
+| Unknown scenario id | `RateControl::update` and `scale` return `UnknownScenario` and change nothing |
+
+`RateControl` is the registry for the agent. The AGT-05 handler of `UpdateRates` registers the handle of every worker rate under its mix entry name and calls `update`. `update` takes the new target of the whole agent per scenario, as CON-05 defines it, and divides it among the workers in proportion to their current targets, or equally when all are 0. A concurrency total divides into whole sessions that add up to the total. `update` is applied completely or not at all, because it checks every id, kind, and value before it stores anything, and it rejects an id that it names twice. A scenario that it does not name keeps its targets. The workers apply their shares on their own ticks, so one update can take effect on slightly different ticks on different workers. `scale` takes one factor per scenario, as the calibration of CTL-21 produces them, and sets every handle to its registered target times the factor. The factor applies to the registered target and not to the current one, so a repeated factor changes nothing and a factor of 1 restores the compiled rate.
 
 ### Phase shapes
 
@@ -193,6 +214,7 @@ The tests of the crate cover the four levels that the ENG workstream requires ex
 3. Phase boundary tests count the starts of ramp up, steady, and ramp down, step ramps up and down, and the concurrency targets at each phase.
 4. Property tests check the inverse of the integral, ordering, bounds, reproducibility, and the constant arrival count over generated profiles.
 5. Contract tests parse every shape name of `test-config.schema.json` and schedule the phases of `examples/plans/http_dns_smoke.json`.
+6. `tests/rate.rs` covers the rate adjustment on a simulated clock without a sleep. A change takes effect at the next tick. Two changes realize the new rates within 5% for Poisson arrivals, over windows of 400 seconds, and within 1% for constant arrivals. Constant arrivals keep every gap between the old and the new spacing, a KS test accepts the rescaled Poisson gaps across two changes, and a property test checks the count and the gaps over generated rates. Pause and resume, a raised rate near the end, the concurrency target, an unknown id, an invalid update, and the proportional split have their own tests. Four threads that call `set` while a worker drains, and four threads that call `update` while a reader checks the registry, prove the thread safety.
 
 ## The scenario loader
 
