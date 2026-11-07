@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[Unit]
+Description=FixingPointSystem management interface naming
+Documentation=https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md
+DefaultDependencies=no
+After=systemd-udevd.service systemd-udev-trigger.service
+Before=systemd-networkd.service network-pre.target
+Wants=network-pre.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/fps/fps-mgmt-net
+
+[Install]
+WantedBy=sysinit.target

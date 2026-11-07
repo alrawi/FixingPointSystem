@@ -1,0 +1,25 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Waits for the IPv4 address of mgmt0 and writes it to /run/fps/mgmt.env as
+# FPS_MGMT_ADDR, so the controller and the agent bind and dial the management
+# interface and no other one.
+set -euo pipefail
+
+readonly WAIT_SECONDS=120
+
+addr=""
+for ((i = 0; i < WAIT_SECONDS; i++)); do
+	addr="$(ip -4 -o addr show dev mgmt0 scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n 1 || true)"
+	[[ -n "$addr" ]] && break
+	sleep 1
+done
+if [[ -z "$addr" ]]; then
+	echo "fps-mgmt-addr: mgmt0 has no IPv4 address after ${WAIT_SECONDS}s" >&2
+	exit 1
+fi
+
+install -d -m 0755 /run/fps
+printf 'FPS_MGMT_ADDR=%s\n' "$addr" >/run/fps/mgmt.env.tmp
+mv /run/fps/mgmt.env.tmp /run/fps/mgmt.env
+echo "fps-mgmt-addr: management address $addr"

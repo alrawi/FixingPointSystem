@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[Unit]
+Description=FixingPointSystem management address
+Documentation=https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md
+After=systemd-networkd.service fps-mgmt-net.service
+Requires=fps-mgmt-net.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/fps/fps-mgmt-addr
+TimeoutStartSec=150
+
+[Install]
+WantedBy=multi-user.target
