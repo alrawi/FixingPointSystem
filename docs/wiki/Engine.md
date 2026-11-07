@@ -17,6 +17,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | [`fps-hosts`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-hosts) | Host pool address mapping, slicing, and seeded host selection, see [Hosts](Hosts.md) | HST-02 adds kernel port setup |
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `SessionIo` over kernel TCP sockets, see [Transport](Transport.md) | TRN-02 adds UDP |
 | [`fps-wasm`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-wasm) | The WebAssembly extension host, with fuel and memory limits, see [The WebAssembly extension host](#the-webassembly-extension-host) | The interpreter and the runtime wire it into their module table |
+| [`fps-capture`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-capture) | The seeded session sampler, the tap wrappers, frame synthesis, and the bounded pcapng ring with TLS key logs, see [Session sampling and capture](#session-sampling-and-capture) | AGT-05 serves `StartCapture` and `StopCapture` with it |
 
 Every crate carries `#![forbid(unsafe_code)]` and the lint header, except `fps-backend-kernel`, which carries `#![deny(unsafe_code)]` with one allowed socket module that [Transport](Transport.md#unsafe-code) explains. The lint header comes from [Coding Standards](Coding-Standards.md#rust). A `clippy.toml` in each crate with tests lets unit tests call `unwrap`, `expect`, and `panic`, which library code may not. We run the tests of every engine crate with `make test-eng`, and the `rust` job of `ci.yml` runs them on every pull request.
 
@@ -472,3 +473,62 @@ The test extension is core WAT text in `tests/support/mod.rs`. The tests encode 
 | `the_catalog_is_read_at_load`, `a_component_without_the_world_is_rejected` | The catalog with types and defaults, and an invalid or incomplete component |
 
 The conformance tests that decision record 0010 asks for need a native extension to run against, and none exists yet. The WebAssembly side is covered above.
+
+## Session sampling and capture
+
+ENG-12 added `fps-capture`, which mirrors a seeded sample of sessions into a bounded ring of pcapng files, and exports the TLS key log of each sampled session next to its packets. The agent control protocol of [CON-05](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/changes/CON-05.md) names the commands that AGT-05 serves with this crate, which are `StartCapture` and `StopCapture`.
+
+### Sampling
+
+A `Capture` takes a `SamplePolicy`, which is `Off`, `Rate(fraction)`, or `EveryNth(n)`, and the run seed. `Rate` hashes the seed and the session id with SplitMix64 and compares the result with a threshold, so the sample is a binomial draw that a replay reproduces, and no state is shared between workers. A rate of 0.01 over 10,000 sessions gives 100 sessions on average with a standard deviation of 10, and the acceptance band of 70 to 130 sits at three standard deviations. The unit test `one_percent_of_ten_thousand_lands_in_the_acceptance_band` runs 50 seeds through that band, and the component test counts the SYN frames of the written files. `EveryNth` is exact, with an offset that the seed chooses.
+
+### Cost when sampling is off
+
+`Capture::start` returns `Capture::disabled()` for a policy that never samples. That capture owns no thread, no directory, and no channel. Its `begin` call returns `None` after one branch, with no allocation, lock, or clock read, and `tap` then returns the `Plain` variant of `Tapped`, which forwards every call after one `match`. An enabled capture costs a session that the sampler skips one hash and one compare.
+
+### What the capture records
+
+The engine sees session bytes and no packets, so the capture does not use an AF_PACKET ring. `Tapped` wraps a `SessionIo` and `TappedDatagram` wraps a `DatagramIo`. They record the bytes that pass through, the close of the write side, the end of stream, and the reset, with a time from an injected `CaptureClock`. Wrap the transport below TLS, so the capture holds the encrypted bytes that a packet capture would hold. A sampled session copies its bytes into a recorder that is private to the session, and the recorder goes to a writer thread when the last handle drops. The writer thread synthesizes the frames and writes the file, so the worker pays for one copy. The queue holds 256 finished sessions by default, and a session that finds it full is dropped and counted in `sessions_dropped_queue`.
+
+The synthesis is a pure function of the events, the seed, and the session id.
+
+| Layer | What the capture builds |
+|---|---|
+| Ethernet | Locally administered addresses that derive from the IP addresses |
+| IP | IPv4 with the DF bit and a header checksum, or IPv6, from the endpoints of the session, which must share a family |
+| TCP | A three way handshake with an MSS option, sequence numbers from the seed and session id, segments of at most MTU minus 40 or 60 bytes with PSH on the last, FIN with ACK in both directions, or RST when a side aborts, and a close of both sides when the session ends without one |
+| UDP | One frame per datagram, an empty datagram included, with the checksum that IPv6 requires, and no fragmentation |
+
+A session records at most `max_session_bytes` of payload, 1 MiB by default. A stream keeps its prefix and still closes, a datagram is kept whole or not at all, and the session counts in `sessions_truncated`.
+
+### The ring
+
+`RingConfig` names the directory, a file prefix, `file_bytes`, and `max_files`. The writer appends whole sessions to the newest file `<prefix>-<index>.pcapng` and opens the next file when a session would pass `file_bytes`. When the file count passes `max_files`, the oldest file goes with its key log. A session never spans two files, so each file decrypts alone, and a session that cannot fit into a file of its own counts in `sessions_dropped_oversize`. A new run adopts the files with the same prefix and continues the numbering, so the bound holds across restarts. Each file is a pcapng section with one Ethernet interface and nanosecond timestamps, and the writer flushes after every session, so a reader that opens a file during the run sees whole blocks.
+
+The key log of a session comes from the caller. Give each sampled TLS session its own in memory `NssKeyLog` of the TLS module, and pass its contents to `SessionHandle::add_key_lines` when the handshake is done. `KeyLogMode` chooses where the lines go. `Embedded` writes a decryption secrets block of type `TLSK` ahead of the packets of its session, `Sidecar` writes `<file>.keys` in the NSS format, and `Both`, the default, writes both, so Wireshark decrypts the file alone and other tools read the log. A key log file and a capture with embedded secrets are as sensitive as a private key.
+
+### Tests
+
+The tests read the files back with a pcapng block reader and a packet parser in `tests/common/`, which share no code with the writer. The parser checks every block length, every IP and transport checksum, and every length field, and the reassembly fails on a gap or an overlap.
+
+| Test | What it checks |
+|---|---|
+| `ring_rotates_and_every_retained_file_parses` | Thirty sessions rotate a ring of three 24 KiB files, each file stays within the limit, every retained session reassembles to its bytes with a handshake and two FINs, and the key log sidecars match the embedded blocks and no stray file remains |
+| `one_percent_of_ten_thousand_sessions_captures_between_70_and_130` | The acceptance criterion, counted in the files |
+| `every_nth_sampling_is_exact`, `unsampled_sessions_are_not_recorded` | Exact counts and no recording of a session that the sampler skipped |
+| `sampling_off_starts_nothing_and_wraps_nothing` | No directory, no thread, `Plain` wrapping, and zero counters |
+| `ipv6_udp_and_abort_frames_parse` | IPv6 TCP with a server side reset, IPv4 UDP up to 65,507 bytes with an empty datagram, and IPv6 UDP |
+| `long_sessions_are_truncated_at_the_limit`, `a_full_queue_drops_sessions_and_counts_them` | The prefix rule and the drop counters |
+| `key_log_modes_place_the_keys` | Where each mode puts the lines |
+| `the_same_seed_and_clock_give_identical_files` | Repeatable bytes |
+| `tshark_parses_the_synthesized_streams` | tshark reads HTTP over IPv4 and IPv6 and DNS over UDP in both families, finds two TCP conversations, and reports no checksum, malformed, retransmission, loss, or reordering finding |
+| `tshark_decrypts_with_embedded_secrets`, `tshark_decrypts_with_the_sidecar_key_log` | TLS 1.2 and 1.3 sessions of the TLS module decrypt from the embedded blocks alone and from the sidecar alone |
+| `the_ring_holds_the_nss_lines_of_every_tls_session` | The key lines in the ring and an encrypted stream, without any tool |
+
+The tshark tests skip themselves when tshark is missing and fail instead when `FPS_REQUIRE_CAPTURE_TOOLS` is `1`, as the TLS capture test does.
+
+### Open points
+
+1. The runtime does not call the crate yet. AGT-05 builds the `Capture` from a `StartCapture` command and hands a clone to each worker, and ENG-10 sessions wrap their transport with `tap`. A capture that starts in the middle of a run needs a cell that workers read for the current `Capture`, which AGT-05 can add.
+2. The capture filters by sampled session, so the pcap-filter expression and the snap length of `StartCaptureCommand` have no counterpart here, and the AF_PACKET ring that the package text mentions is not built. Synthesized frames hold what the sessions sent, and not the real headers, options, retransmissions, or ICMP of the wire.
+3. `StopCaptureResult` carries a `sha256:` digest of one file, and the ring holds several, so AGT-05 must decide which file or archive the digest names.

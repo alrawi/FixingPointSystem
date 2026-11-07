@@ -788,6 +788,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fps-capture"
+version = "0.0.1"
+dependencies = [
+ "fps-io",
+ "fps-module-tls",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "fps-flow"
 version = "0.0.1"
 dependencies = [

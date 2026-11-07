@@ -10,7 +10,7 @@
 | Branch | `wp/ENG-12` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 83% (5 of 6 plan steps) |
 | Current holder | claude-eng12a, lease until 2026-11-07T18:52:38Z |
 | Last verified commit | none |
 
@@ -24,24 +24,24 @@ Mirror a configurable, seeded sample of sessions into a bounded pcapng ring with
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Sampler and pcapng writer
-- [ ] 2. Frame synthesis (Ethernet, IPv4, IPv6, TCP, UDP)
-- [ ] 3. Session tap and recorder
-- [ ] 4. Ring with rotation and key logs
-- [ ] 5. Tests, tshark check
+- [x] 1. Sampler and pcapng writer
+- [x] 2. Frame synthesis (Ethernet, IPv4, IPv6, TCP, UDP)
+- [x] 3. Session tap and recorder
+- [x] 4. Ring with rotation and key logs
+- [x] 5. Tests, tshark check
 - [ ] 6. Wiki, log entry, PR and CI
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+Steps 1 to 5. `cargo test -p fps-capture` passes 17 unit, 14 component, and 1 doc test. With tshark 4.2.2 installed, `FPS_REQUIRE_CAPTURE_TOOLS=1 cargo test -p fps-capture --test capture` passes all 14, including the tshark parse and the TLS 1.2 and 1.3 decryption from embedded and sidecar keys. `cargo clippy -p fps-capture --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `plan.py check`, `render --check`, and `lint` pass.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Open the pull request and wait for CI. Known gaps are in the last section of the Engine page, which are the runtime wiring, the missing AF_PACKET ring and pcap filter, and the digest of a multi file ring.
 
 ## Next action
 
-Create the crate and write the sampler.
+Open the pull request, wait for CI, then set ready for review.
 
 ## Blockers and open questions
 
@@ -49,7 +49,10 @@ Write "none" or name each blocker with a link to its issue.
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- Frames are synthesized from socket level bytes through tap wrappers, with no AF_PACKET ring, as the coordinator instructed. This keeps the crate free of unsafe code.
+- The sampler is a stateless hash of seed and session id, so workers share nothing.
+- Frame synthesis and file writing run on a writer thread, so a sampled session costs its worker one copy.
+- Key logs are per session, and the default mode writes both an embedded decryption secrets block and a sidecar file.
 
 ## Pitfalls
 
@@ -58,7 +61,8 @@ Record anything that cost time and that a successor should avoid.
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+cargo test -p fps-capture   # tshark tests skip without tshark
+FPS_REQUIRE_CAPTURE_TOOLS=1 cargo test -p fps-capture --test capture
 ```
 
 ## Session log
@@ -68,3 +72,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-07T17:23:00Z | claude-eng12a | claim | none | Claimed #157 |
+| 2026-11-07T18:00:00Z | claude-eng12a | checkpoint | see PR | Crate, tests, wiki, log entry |
