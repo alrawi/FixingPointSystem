@@ -18,6 +18,7 @@ use rand_pcg::Pcg64Mcg;
 
 use crate::clock::Clock;
 use crate::profile::LoadProfile;
+use crate::rate::RateHandle;
 use crate::SchedError;
 
 /// Slack for the floor of the concurrency target, so that a fraction that
@@ -138,8 +139,20 @@ pub struct Schedule {
     drawn: u64,
     /// Operational time of the last Poisson arrival.
     op_time: f64,
-    /// Scheduled time in seconds of the next rate arrival, if one remains.
+    /// Scheduled time in seconds of the next rate arrival, if one remains. It
+    /// is `None` when the arrival lies beyond the profile and while the rate is 0.
     pending: Option<f64>,
+    /// The operational time of the next rate arrival.
+    pending_op: f64,
+    /// The operational time and the profile mass at the last rate change. An
+    /// arrival at operational time `op` lies where the mass reaches
+    /// `mass_base + (op - op_base) / rate`, so the expected count stays
+    /// continuous across a change.
+    op_base: f64,
+    mass_base: f64,
+    handle: RateHandle,
+    /// The bits of the target that the schedule applied last.
+    applied: u64,
     skipped: u64,
 }
 
@@ -157,6 +170,8 @@ impl Schedule {
             return Err(SchedError::ZeroCap);
         }
         let rng = Pcg64Mcg::new(generator_state(cfg.seed, cfg.stream));
+        let handle = RateHandle::new(cfg.objective);
+        let applied = handle.bits();
         let mut sched = Self {
             cfg,
             rng,
@@ -164,13 +179,50 @@ impl Schedule {
             drawn: 0,
             op_time: 0.0,
             pending: None,
+            pending_op: 0.0,
+            op_base: 0.0,
+            mass_base: 0.0,
+            handle,
+            applied,
             skipped: 0,
         };
         sched.advance();
         Ok(sched)
     }
 
-    /// Returns the configuration.
+    /// Returns a handle that changes the target of this schedule while it runs.
+    ///
+    /// The handle is `Send + Sync` and cheap to clone, so a control thread can
+    /// keep a clone while the worker owns the schedule. The schedule loads the
+    /// handle at every [`Schedule::drain`] and applies a new target at that
+    /// tick, with these rules.
+    ///
+    /// - The arrival process stays continuous. The expected count of arrivals
+    ///   at the tick is the same before and after the change, and every later
+    ///   arrival follows the new rate. The change causes no burst that catches
+    ///   up and no gap. A Poisson process stays Poisson, because only the map
+    ///   from operational time to time changes.
+    /// - Arrivals that were already due at the tick under the old rate are
+    ///   released first, and the new rate applies from the first tick at which
+    ///   none is due. Under [`CapPolicy::Defer`] at the cap this means that a
+    ///   change waits until the deferred arrivals have started.
+    /// - A rate of 0 pauses the schedule. It yields no start and does not
+    ///   finish. The expected count stands still, so the resume with a positive
+    ///   rate does not owe the paused time. A concurrency target of 0 yields no
+    ///   start and leaves open sessions to the worker.
+    /// - The profile ends at a fixed time whatever the rate, and the schedule
+    ///   finishes when no arrival remains before that time.
+    /// - [`Schedule::next_due`] returns a time that is not after the clock while
+    ///   a change waits, so a worker that re-reads it ticks at once. A worker
+    ///   that sleeps with no due time, which is the case while the schedule is
+    ///   paused or at the cap, must wake on its own to see a change, for
+    ///   example every 100 ms.
+    pub fn rate_handle(&self) -> RateHandle {
+        self.handle.clone()
+    }
+
+    /// Returns the configuration. Its objective holds the target that the
+    /// schedule applied last, which may be a rate of 0 after a pause.
     pub fn config(&self) -> &ScheduleConfig {
         &self.cfg
     }
@@ -189,7 +241,9 @@ impl Schedule {
     /// Returns true when the schedule will release no further session.
     pub fn is_finished(&self, clock: &impl Clock) -> bool {
         match self.cfg.objective {
-            Objective::SessionsPerSecond(_) => self.pending.is_none(),
+            Objective::SessionsPerSecond(rate) => {
+                self.pending.is_none() && rate > 0.0 && !self.change_waits()
+            }
             Objective::ConcurrentSessions(_) => {
                 clock.elapsed().as_secs_f64() >= self.cfg.profile.total_secs()
             }
@@ -201,6 +255,7 @@ impl Schedule {
     /// and counts every start it yields as open.
     pub fn drain<'a>(&'a mut self, clock: &impl Clock, open: u32) -> Drain<'a> {
         let now = clock.elapsed();
+        self.apply_change(now);
         Drain {
             sched: self,
             now,
@@ -220,10 +275,18 @@ impl Schedule {
                 if at_cap && self.cfg.cap_policy == CapPolicy::Defer {
                     return None;
                 }
-                self.pending.map(|t| self.to_duration(t))
+                let due = self.pending.map(|t| self.to_duration(t));
+                if self.change_waits() {
+                    let now = clock.elapsed();
+                    return Some(due.map_or(now, |d| d.min(now)));
+                }
+                due
             }
             Objective::ConcurrentSessions(n) => {
-                if at_cap {
+                if self.change_waits() {
+                    return Some(clock.elapsed());
+                }
+                if at_cap || n == 0 {
                     return None;
                 }
                 let level = (f64::from(open) + 1.0 - TARGET_EPS / 2.0) / f64::from(n);
@@ -238,10 +301,10 @@ impl Schedule {
 
     /// Draws the next rate arrival into `pending`.
     fn advance(&mut self) {
-        let Objective::SessionsPerSecond(rate) = self.cfg.objective else {
+        if !matches!(self.cfg.objective, Objective::SessionsPerSecond(_)) {
             return;
-        };
-        let op = match self.cfg.arrival {
+        }
+        self.pending_op = match self.cfg.arrival {
             Arrival::Constant => self.drawn as f64 + 0.5,
             Arrival::Poisson => {
                 let u: f64 = self.rng.gen();
@@ -251,7 +314,61 @@ impl Schedule {
             }
         };
         self.drawn += 1;
-        self.pending = self.cfg.profile.time_at_mass(op / rate);
+        self.pending = self.pending_time();
+    }
+
+    /// Maps the operational time of the pending arrival to a time in seconds
+    /// under the current rate, or `None` beyond the profile and at rate 0.
+    fn pending_time(&self) -> Option<f64> {
+        let Objective::SessionsPerSecond(rate) = self.cfg.objective else {
+            return None;
+        };
+        if rate <= 0.0 {
+            return None;
+        }
+        let mass = self.mass_base + (self.pending_op - self.op_base) / rate;
+        self.cfg.profile.time_at_mass(mass)
+    }
+
+    /// Returns true when the handle holds a target that the schedule has not
+    /// applied yet.
+    fn change_waits(&self) -> bool {
+        self.handle.bits() != self.applied
+    }
+
+    /// Applies a new target from the handle at the clock reading `now`.
+    ///
+    /// A rate schedule rebases its operational time at `now`. The expected
+    /// count there is `op_base + (mass_at(now) - mass_base) * rate`, and the
+    /// pending arrival keeps its operational time, so it moves to where the new
+    /// rate reaches it. An arrival that is already due keeps its time, and the
+    /// change waits for the tick at which none is due.
+    fn apply_change(&mut self, now: Duration) {
+        let bits = self.handle.bits();
+        if bits == self.applied {
+            return;
+        }
+        let new = f64::from_bits(bits);
+        match self.cfg.objective {
+            Objective::SessionsPerSecond(old) => {
+                if self.pending.is_some_and(|t| self.to_duration(t) <= now) {
+                    return;
+                }
+                let mass_now = self
+                    .cfg
+                    .profile
+                    .mass_at(now.as_secs_f64())
+                    .max(self.mass_base);
+                self.op_base += (mass_now - self.mass_base) * old;
+                self.mass_base = mass_now;
+                self.cfg.objective = Objective::SessionsPerSecond(new);
+                self.pending = self.pending_time();
+            }
+            Objective::ConcurrentSessions(_) => {
+                self.cfg.objective = Objective::ConcurrentSessions(new as u32);
+            }
+        }
+        self.applied = bits;
     }
 
     /// Converts seconds from the run start into a duration within the profile.
@@ -286,6 +403,7 @@ impl Iterator for Drain<'_> {
 
     fn next(&mut self) -> Option<SessionStart> {
         let s = &mut *self.sched;
+        s.apply_change(self.now);
         let max = s.cfg.max_concurrent;
         let at_cap = |open: u32| max.is_some_and(|cap| open >= cap);
         match s.cfg.objective {
