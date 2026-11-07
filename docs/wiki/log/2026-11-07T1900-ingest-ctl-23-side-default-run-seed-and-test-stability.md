@@ -1,0 +1,8 @@
+## [2026-11-07] ingest | CTL-23 side default in metric views, run seeds, and test stability
+
+The API metric views of `controller/internal/metrics` now report the client side unless a caller selects the server side with `Window.Side` or `Aggregator.LatestSide`, which finishes the side default of CON-08 outside the criteria. The run record takes its seed from the compiled plans: the orchestrator no longer draws a seed of its own, leaves it to the compiler when `Config.Seed` is nil, and rejects a plan without a seed, so a run never records seed 0. Two intermittent tests had races in their assumptions, not in the product. `TestCrashMarksOfflineAndFailsPendingCommand` read the offline event as soon as the state was offline, but the manager marks the state first and delivers the event after it released its lock. `TestEveryFailedRunHasAReason/forced_stop` stopped a run when the agent already ran the plan but the orchestrator still waited for the answer to the start command, which gives the reason `stopped while starting` and not `stopped by request`. The test now waits for the log line `run started on every agent`. The workflow `ctl` also runs on changes to `contracts/metrics/**`. The [Controller](../Controller.md) page describes the views, the stop reasons, and the new tests.
+
+### Shared page notes
+
+- [Testing](../Testing.md): a test that waits for an agent state must not read the events of that state without waiting for them, because the manager delivers events after it updates the state.
+- The REST contract (`GetRunMetricsParams`) has no `side` parameter, so the API cannot select the server side. A contract change package would add it, and the aggregator already supports it.

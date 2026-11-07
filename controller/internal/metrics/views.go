@@ -26,6 +26,26 @@ func ValidView(v api.MetricView) bool {
 	return false
 }
 
+// Sides of a session. The catalog gives scenario, flow action, port, host, and
+// transport metrics the side label, and a view over both sides would count
+// every session twice, so a view reports the client side unless the request
+// selects the server side.
+const (
+	SideClient = "client"
+	SideServer = "server"
+)
+
+// ValidSide reports whether side selects a side of a view. The empty side
+// stands for the default, the client side.
+func ValidSide(side string) bool { return side == "" || side == SideClient || side == SideServer }
+
+// ofSide reports whether series s belongs to the viewed side. A series
+// without a side label, such as a mix or realism gauge, belongs to every side.
+func ofSide(s *Series, side string) bool {
+	got, ok := s.Label("side")
+	return !ok || got == side
+}
+
 // member reports whether metric m belongs to view v.
 //
 //   - application holds the scenario and flow action metrics summed over every
@@ -88,13 +108,17 @@ type SeriesSet struct {
 
 // computeView renders the merged series of a run as the samples of view v at
 // time ts, with the RunKey sample first and the other keys in order of
-// first appearance, which follows catalog order.
-func computeView(c *Catalog, merged []*Series, v api.MetricView, ts time.Time) []Sample {
+// first appearance, which follows catalog order. Only the series of side count,
+// and the empty side stands for the client side.
+func computeView(c *Catalog, merged []*Series, v api.MetricView, side string, ts time.Time) []Sample {
+	if side == "" {
+		side = SideClient
+	}
 	g := newGrouping()
 	g.order = append(g.order, RunKey)
 	g.groups[RunKey] = &group{key: RunKey, series: map[string]*Series{}}
 	for _, s := range merged {
-		if !member(v, s.Metric) || s.Metric.formula != nil {
+		if !member(v, s.Metric) || s.Metric.formula != nil || !ofSide(s, side) {
 			continue
 		}
 		g.add(RunKey, s, nil)

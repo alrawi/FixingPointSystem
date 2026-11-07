@@ -3,7 +3,10 @@
 package runs_test
 
 import (
+	"context"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents/agentpb"
@@ -111,6 +114,25 @@ func TestLabeledCountersReportTheClientSide(t *testing.T) {
 	}
 }
 
+// messageHandler is a slog.Handler that closes seen when it logs message.
+type messageHandler struct {
+	message string
+	seen    chan struct{}
+	once    sync.Once
+}
+
+func (*messageHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (m *messageHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Message == m.message {
+		m.once.Do(func() { close(m.seen) })
+	}
+	return nil
+}
+
+func (m *messageHandler) WithAttrs([]slog.Attr) slog.Handler { return m }
+func (m *messageHandler) WithGroup(string) slog.Handler      { return m }
+
 // TestEveryFailedRunHasAReason checks the reason of each way a run fails or
 // aborts.
 func TestEveryFailedRunHasAReason(t *testing.T) {
@@ -125,9 +147,20 @@ func TestEveryFailedRunHasAReason(t *testing.T) {
 		}
 	})
 	t.Run("forced stop", func(t *testing.T) {
-		h := newHarness(t, nil)
+		// The agent runs the plan before the orchestrator has seen the answer
+		// to its start command, and a forced stop in between aborts the run
+		// as "stopped while starting". Wait for the orchestrator itself.
+		started := make(chan struct{})
+		h := newHarness(t, func(c *runs.Config) {
+			c.Logger = slog.New(&messageHandler{message: "run started on every agent", seen: started})
+		})
 		a := h.agent(t, "agent-a", nil)
 		run := h.start(t, a)
+		select {
+		case <-started:
+		case <-testContext(t).Done():
+			t.Fatal("the orchestrator did not finish starting the agents")
+		}
 		if _, err := h.orch.Stop(run.ID, true); err != nil {
 			t.Fatal(err)
 		}

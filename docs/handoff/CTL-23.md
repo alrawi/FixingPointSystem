@@ -10,7 +10,7 @@
 | Branch | `wp/CTL-23` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-c23a91, lease until 2026-11-07T19:14:28Z |
 | Last verified commit | none |
 
@@ -18,14 +18,16 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Goal
 
-State the outcome in two or three sentences, copied or condensed from the issue.
+Client side default in metric views, the run seed from the compiled plans, two flaky tests fixed at their cause, and the workflow trigger for contracts/metrics/**.
 
 ## Plan
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. First step
-- [ ] 2. Second step
+- [x] 1. Side default in metrics views with tests
+- [x] 2. Seed from plans, race fixes for the two tests
+- [x] 3. Workflow trigger, wiki page, log entry, temporary stress step
+- [ ] 4. CI green, remove stress step, review
 
 ## Done and verified
 
@@ -37,7 +39,7 @@ List what is still missing, including known gaps in finished steps.
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Read the CI result of the stress step, remove it from controller.yml, push, and run review.
 
 ## Blockers and open questions
 
