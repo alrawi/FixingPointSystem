@@ -123,12 +123,12 @@ The component test `tests/concurrency.rs` runs eight worker threads that record 
 Catalog 0.2.0 (CON-08) gives every scenario level and transport metric the `side` label with the values `client` and `server`, and it adds the failure reasons `datagram_rejected`, `template_error`, and `extension_error`. ENG-14 follows it in `fps-stats` with three additions in `src/series.rs`.
 
 1. `Side` and `FailureReason` name the label values as types, each with `ALL` in catalog order and `as_str`. The contract test `tests/series.rs` compares both with `contracts/metrics/catalog.yaml`.
-2. `SessionCounters::register(shard, application, scenario, side)` registers `sessions.attempted`, `sessions.established`, `sessions.succeeded`, `bytes.tx`, `bytes.rx`, and one `sessions.failed` counter for each of the 12 reasons, all with the `side` label. Its methods `attempted`, `established`, `succeeded`, `failed(reason)`, and `add_bytes` record through the handles.
+2. `SessionCounters::register(shard, application, scenario, side)` registers `sessions.attempted`, `sessions.established`, `sessions.succeeded`, `bytes.tx`, `bytes.rx`, one `sessions.failed` counter for each of the 12 reasons, the `sessions.concurrent` gauge, and the `sessions.duration` histogram, all with the `side` label. Its methods `attempted`, `established`, `succeeded`, `failed(reason)`, and `add_bytes` record through the handles. ENG-15 added `started`, which counts an attempt and raises the gauge, and `ended(duration_us)`, which lowers the gauge and records the duration.
 3. `TransportCounters::register(shard, port, side)` registers the plain `tcp.*` and `tls.*` counters with the `side` label. The alert counters carry the extra `alert` label, so a caller registers them with `Shard::counter`.
 
-The counter sets cover counters only. A worker that records `sessions.concurrent` or `sessions.duration` passes the `side` label to `Shard::gauge` and `Shard::histogram` itself. A total over both sides counts each session twice, so a reader that sums `sessions.failed` without the `side` label gets double counts when both sides run in one plan. The unit tests in `tests/series.rs` record each new reason on both sides, and they check the merged snapshot and the proto3 JSON.
+The `TransportCounters` set covers counters only. A total over both sides counts each session twice, so a reader that sums `sessions.failed` without the `side` label gets double counts when both sides run in one plan. The unit tests in `tests/series.rs` record each new reason on both sides, and they check the merged snapshot and the proto3 JSON.
 
-The callers outside `fps-stats` still register the session series without `side`, and `FailureKind::reason` in `fps-interp` never returns the three new reasons yet. Both are follow ups of other packages, listed in the log entry of ENG-14.
+ENG-15 closed two of the follow ups of ENG-14. `FailureKind::reason` in `fps-interp` now returns the three new reasons, and `fps-runtime` registers its series through `SessionCounters`. The UDP path of `fps-agent` still has its own registration without `side`, which AGT-07 changes.
 
 ## The session scheduler
 
@@ -251,13 +251,16 @@ Every failure is a `Failure` with the flow id, the side, the catalog action inde
 | `connect_refused` | The opener reported `ConnectionRefused` |
 | `expect_timeout` | An `expect` did not finish within its `timeout_ms`, or the peer did not close within the drain timeout of `close: fin` |
 | `pattern_mismatch` | `expect pattern` buffered more unmatched bytes than the pattern buffer limit |
+| `datagram_rejected` | A received UDP datagram is longer than the datagram limit (`FailureKind::DatagramTooLarge`) or breaks the stop rule of its `expect` (`FailureKind::DatagramMismatch`) |
 | `unexpected_reset` | A read or write met `ConnectionReset` or `ConnectionAborted` outside the drain of `close: fin` |
 | `peer_closed` | An `expect` read end of stream, or a write met `BrokenPipe` |
 | `tls_failure` | The transport reported `InvalidData`, which is how `tokio-rustls` reports TLS errors |
 | `aborted` | The `stop` future completed |
-| `internal` | A template failed to render, a rendered count, port, or delay was out of range, or the transport reported another error |
+| `template_error` | A template failed to render for a cause of its own, such as `fill()` with a negative size or an undefined variable |
+| `extension_error` | A module function failed during a render, whatever its `FnErrorKind` and whether it is native or runs in the WebAssembly host of `fps-wasm`, which returns its failures to the renderer as `FnError` |
+| `internal` | A rendered count, port, or delay was out of range, or the transport reported another error |
 
-A failed module call fails with reason `internal`, and `Failure::extension_label` returns the label `extension_<kind>` that `contracts/extension/README.md` names. The contract test `tests/catalog.rs` reads `contracts/metrics/catalog.yaml` and checks that `Reason::ALL` equals the reason values in catalog order.
+`FailureKind::reason` reads the cause of `FailureKind::Render`. A `TemplateError::Function` means `extension_error`, and every other `TemplateError` means `template_error`. A failed module call also keeps its kind, and `Failure::extension_label` returns the label `extension_<kind>` that `contracts/extension/README.md` names. The contract test `tests/catalog.rs` reads `contracts/metrics/catalog.yaml` and checks that `Reason::ALL` equals the reason values in catalog order.
 
 ### Tests
 
@@ -266,7 +269,7 @@ The tests run client and server programs against each other over the in memory d
 | Test | What it checks |
 |---|---|
 | `tests/sessions.rs` | Programs that complete, with byte counters, the opener requests, patterns split over one byte reads, the three stop rules and `last`, bytes past an `expect bytes` count, loops, branches, `set`, the five delay distributions on the paused clock, module functions, and the three close modes |
-| `tests/failures.rs` | One test for each of the nine reasons and a second trigger for `connect_timeout`, `expect_timeout`, `peer_closed`, and `internal`, each checking the reason, action index, and action type of both sides |
+| `tests/failures.rs` | One test for each of the twelve reasons except the datagram one, and a second trigger for `connect_timeout`, `expect_timeout`, `peer_closed`, and `internal`, each checking the reason, action index, and action type of both sides |
 | `tests/catalog.rs` | The reasons, sides, and action types against the metric catalog |
 | unit tests | `session_rng` streams and bug #90, delay sample means and supports, and the action index mapping |
 
@@ -293,7 +296,7 @@ A client session dials the rendered `connect` host when the program sets one, wh
 
 ### Statistics
 
-Every worker registers its session series once and records `sessions.attempted`, `sessions.established`, `sessions.succeeded`, `sessions.failed` by reason, `bytes.tx`, `bytes.rx`, `sessions.concurrent`, and `sessions.duration`, with the `application` label from the flow module and the `scenario` label from the scenario name. Once per snapshot interval, one second by default, and once more when it ends, the worker sends a cumulative `WorkerSnapshot` over a channel. The `Collector` keeps the newest snapshot of every worker and merges them per side, because the session metrics of the catalog carry no `side` label and the two sides of one session must not add up. `RuntimeHandle::collect` reads the snapshots that arrived so far, and `RuntimeHandle::join` returns a `RunReport` with the collector and the exit of every worker.
+Every worker registers its session series once and records `sessions.attempted`, `sessions.established`, `sessions.succeeded`, `sessions.failed` by reason, `bytes.tx`, `bytes.rx`, `sessions.concurrent`, and `sessions.duration`, with the `application` label from the flow module, the `scenario` label from the scenario name, and the `side` label of the worker. A worker registers them through `fps_stats::SessionCounters`, which `metrics.rs` calls with the worker side and the interpreter reason mapped to `fps_stats::FailureReason`, so the runtime has no loop over the reasons of its own. Once per snapshot interval, one second by default, and once more when it ends, the worker sends a cumulative `WorkerSnapshot` over a channel. The `Collector` keeps the newest snapshot of every worker and merges them per side, so the two sides of one session never add up, although every series now also carries its `side` label. `RuntimeHandle::collect` reads the snapshots that arrived so far, and `RuntimeHandle::join` returns a `RunReport` with the collector and the exit of every worker.
 
 ### Stop and abort
 
@@ -305,7 +308,7 @@ The tests run over loopback addresses with the kernel backend and are listed bel
 
 | Test | What it checks |
 |---|---|
-| `tests/loopback.rs` web_get | Two client workers drive the http1 `web_get` example at 50 sessions per second for two seconds against two server workers. Both sides report 200 attempted and 200 succeeded sessions, client `bytes.tx` equals server `bytes.rx` and the reverse, and every worker sent one snapshot per second and a final one |
+| `tests/loopback.rs` web_get | Two client workers drive the http1 `web_get` example at 50 sessions per second for two seconds against two server workers. Both sides report 200 attempted and 200 succeeded sessions, every session series of each side carries its `side` label with 200 duration samples, client `bytes.tx` equals server `bytes.rx` and the reverse, and every worker sent one snapshot per second and a final one |
 | `tests/loopback.rs` ramp down | A stop during a run lets every open `web_get` session finish, and the run ends within the ramp down time plus one second |
 | `tests/loopback.rs` stop and abort | Sessions that wait 20 seconds for an answer are aborted at the end of a 700 ms ramp down, the run ends within the ramp down time plus one second, and an abort ends the server workers within one second |
 | `tests/loopback.rs` setup | Pinning to an allowed core, a bind failure that fails the start, and the configuration checks |
@@ -336,7 +339,7 @@ The crate [`fps-io`](https://github.com/alrawi/FixingPointSystem/tree/main/engin
 The TCP and UDP paths share one loop over the compiled ops, so `delay`, `set`, `loop`, `branch`, and the generator behave the same. Only three actions differ.
 
 1. `send` renders the template and writes it as one datagram. A rendering above 65,507 bytes fails the session with reason `internal` before anything is sent.
-2. `expect` reads exactly one datagram within its `timeout_ms` and consumes all of it. `bytes: N` requires exactly N bytes, `min_bytes: N` at least N bytes, and `pattern` the pattern somewhere in the datagram. A datagram that breaks the rule fails with reason `pattern_mismatch` and `FailureKind::DatagramMismatch`, and the interpreter never joins two datagrams or keeps part of one for the next `expect`. The whole datagram becomes `last` when a template of the side refers to it.
+2. `expect` reads exactly one datagram within its `timeout_ms` and consumes all of it. `bytes: N` requires exactly N bytes, `min_bytes: N` at least N bytes, and `pattern` the pattern somewhere in the datagram. A datagram that breaks the rule fails with reason `datagram_rejected` and `FailureKind::DatagramMismatch`, and an oversized one with `FailureKind::DatagramTooLarge`, and the interpreter never joins two datagrams or keeps part of one for the next `expect`. The whole datagram becomes `last` when a template of the side refers to it.
 3. `close` releases the socket in every mode, because UDP has no close handshake.
 
 `Session::set_max_datagram` sets the datagram limit of `expect`, clamped to the range from 1 to 65,507 bytes with 65,507 as the default. A longer datagram fails with reason `pattern_mismatch` and `FailureKind::DatagramTooLarge`, and it still counts in `bytes_rx`. The datagram lands in the 64 KiB scratch buffer of the session and is copied into `last` only when a template needs it. A connected socket reports ICMP port unreachable as `ConnectionRefused`, which fails the session with reason `connect_refused`. When the `stop` future completes first, the session closes the socket and fails with reason `aborted`.

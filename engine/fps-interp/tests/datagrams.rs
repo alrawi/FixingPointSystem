@@ -276,7 +276,7 @@ flows:
 async fn a_datagram_of_the_wrong_size_fails_bytes_without_a_remainder() {
     // A TCP expect would consume 4 bytes and leave 1, a UDP expect fails.
     let pair = run_udp(&exchange("q", "12345", "bytes: 4"), Opts::default()).await;
-    assert_failure(&pair.client, Reason::PatternMismatch, 2, "expect");
+    assert_failure(&pair.client, Reason::DatagramRejected, 2, "expect");
     let f = pair.client.unwrap_err();
     assert!(
         matches!(*f.kind, FailureKind::DatagramMismatch { size: 5, ref rule } if rule == "bytes 4"),
@@ -289,7 +289,7 @@ async fn a_datagram_of_the_wrong_size_fails_bytes_without_a_remainder() {
 #[tokio::test]
 async fn min_bytes_and_pattern_check_the_one_datagram() {
     let pair = run_udp(&exchange("q", "short", "min_bytes: 6"), Opts::default()).await;
-    assert_failure(&pair.client, Reason::PatternMismatch, 2, "expect");
+    assert_failure(&pair.client, Reason::DatagramRejected, 2, "expect");
     let pair = run_udp(&exchange("q", "short", "min_bytes: 5"), Opts::default()).await;
     pair.client.unwrap();
     let pair = run_udp(
@@ -297,7 +297,7 @@ async fn min_bytes_and_pattern_check_the_one_datagram() {
         Opts::default(),
     )
     .await;
-    assert_failure(&pair.client, Reason::PatternMismatch, 2, "expect");
+    assert_failure(&pair.client, Reason::DatagramRejected, 2, "expect");
     let pair = run_udp(&exchange("q", "is OK.", "pattern: \"OK\""), Opts::default()).await;
     pair.client.unwrap();
 }
@@ -322,7 +322,7 @@ flows:
       - send: "def"
 "#;
     let pair = run_udp(text, Opts::default()).await;
-    assert_failure(&pair.client, Reason::PatternMismatch, 2, "expect");
+    assert_failure(&pair.client, Reason::DatagramRejected, 2, "expect");
     pair.server.unwrap();
 }
 
@@ -341,7 +341,7 @@ async fn a_datagram_above_max_datagram_fails_the_session() {
         ..Opts::default()
     };
     let pair = run_udp(&exchange("q", answer, "min_bytes: 1"), above).await;
-    assert_failure(&pair.client, Reason::PatternMismatch, 2, "expect");
+    assert_failure(&pair.client, Reason::DatagramRejected, 2, "expect");
     let f = pair.client.unwrap_err();
     assert!(
         matches!(

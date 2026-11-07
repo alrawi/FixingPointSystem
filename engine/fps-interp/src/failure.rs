@@ -32,17 +32,20 @@ pub enum Reason {
     TlsFailure,
     /// The engine stopped the session, for example because the run stopped.
     Aborted,
-    /// Any other failure, such as a render error or an invalid parameter.
+    /// Any other failure, such as an invalid parameter or a transport error.
     Internal,
     /// A received UDP datagram broke the size limit or the stop rule of its
-    /// `expect`. The catalog defines it, and [`FailureKind::reason`] does not
-    /// report it yet.
+    /// `expect`. [`FailureKind::reason`] reports it for
+    /// [`FailureKind::DatagramTooLarge`] and [`FailureKind::DatagramMismatch`].
     DatagramRejected,
-    /// A template failed to render. The catalog defines it, and
-    /// [`FailureKind::reason`] does not report it yet.
+    /// A template failed to render for a reason of its own, such as an
+    /// undefined variable or a bad argument. [`FailureKind::reason`] reports
+    /// it for [`FailureKind::Render`] unless a module function failed.
     TemplateError,
-    /// A module function failed. The catalog defines it, and
-    /// [`FailureKind::reason`] does not report it yet.
+    /// A module function failed, which includes the failures of the
+    /// WebAssembly host that `fps-wasm` reports as [`fps_flow::FnError`].
+    /// [`FailureKind::reason`] reports it for [`FailureKind::Render`] with
+    /// [`TemplateError::Function`].
     ExtensionError,
 }
 
@@ -173,7 +176,8 @@ pub enum FailureKind {
     /// The engine stopped the session.
     #[error("session aborted by the engine")]
     Aborted,
-    /// A template failed to render.
+    /// A template failed to render. The cause separates the reasons
+    /// `template_error` and `extension_error`.
     #[error("render failed")]
     Render {
         /// The template error.
@@ -201,16 +205,19 @@ impl FailureKind {
             FailureKind::ExpectTimeout { .. } | FailureKind::DrainTimeout { .. } => {
                 Reason::ExpectTimeout
             }
-            FailureKind::PatternOverflow { .. }
-            | FailureKind::DatagramTooLarge { .. }
-            | FailureKind::DatagramMismatch { .. } => Reason::PatternMismatch,
+            FailureKind::PatternOverflow { .. } => Reason::PatternMismatch,
+            FailureKind::DatagramTooLarge { .. } | FailureKind::DatagramMismatch { .. } => {
+                Reason::DatagramRejected
+            }
             FailureKind::Reset { .. } => Reason::UnexpectedReset,
             FailureKind::PeerClosed { .. } | FailureKind::BrokenPipe { .. } => Reason::PeerClosed,
             FailureKind::Tls { .. } => Reason::TlsFailure,
             FailureKind::Aborted => Reason::Aborted,
-            FailureKind::Render { .. } | FailureKind::Invalid(_) | FailureKind::Io { .. } => {
-                Reason::Internal
-            }
+            FailureKind::Render {
+                source: TemplateError::Function { .. },
+            } => Reason::ExtensionError,
+            FailureKind::Render { .. } => Reason::TemplateError,
+            FailureKind::Invalid(_) | FailureKind::Io { .. } => Reason::Internal,
         }
     }
 
@@ -286,7 +293,50 @@ impl Failure {
 
 #[cfg(test)]
 mod tests {
+    use fps_flow::FnErrorKind;
+
     use super::*;
+
+    #[test]
+    fn datagram_failures_report_datagram_rejected() {
+        let too_large = FailureKind::DatagramTooLarge { size: 9, limit: 4 };
+        let mismatch = FailureKind::DatagramMismatch {
+            size: 5,
+            rule: "bytes 4".into(),
+        };
+        assert_eq!(too_large.reason(), Reason::DatagramRejected);
+        assert_eq!(mismatch.reason(), Reason::DatagramRejected);
+        let overflow = FailureKind::PatternOverflow {
+            buffered: 9,
+            limit: 4,
+        };
+        assert_eq!(overflow.reason(), Reason::PatternMismatch);
+    }
+
+    #[test]
+    fn render_failures_report_their_cause() {
+        let template = FailureKind::Render {
+            source: TemplateError::UndefinedVariable("x".into()),
+        };
+        assert_eq!(template.reason(), Reason::TemplateError);
+        for kind in [
+            FnErrorKind::InvalidArgument,
+            FnErrorKind::Protocol,
+            FnErrorKind::Unsupported,
+            FnErrorKind::Internal,
+        ] {
+            let function = FailureKind::Render {
+                source: TemplateError::Function {
+                    module: "dns".into(),
+                    function: "query".into(),
+                    kind,
+                    message: "boom".into(),
+                },
+            };
+            assert_eq!(function.reason(), Reason::ExtensionError, "{kind}");
+        }
+        assert_eq!(FailureKind::Invalid("x".into()).reason(), Reason::Internal);
+    }
 
     /// Clippy's `result_large_err` rejects error types above 128 bytes, and
     /// older local toolchains do not run that lint, so we pin the size here.
