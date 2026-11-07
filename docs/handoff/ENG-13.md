@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #158 |
 | Branch | `wp/ENG-13` |
-| Pull request | #0 |
+| Pull request | #235 |
 | Status | in progress |
 | Progress | 90% (4 of 4 plan steps) |
 | Current holder | claude-7a2195, lease until 2026-11-07T18:53:08Z |
-| Last verified commit | none |
+| Last verified commit | 32d0f6d |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
