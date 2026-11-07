@@ -9,10 +9,10 @@
 | Issue | #158 |
 | Branch | `wp/ENG-13` |
 | Pull request | #235 |
-| Status | in progress |
-| Progress | 90% (4 of 4 plan steps) |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-7a2195, lease until 2026-11-07T18:53:08Z |
-| Last verified commit | 32d0f6d |
+| Last verified commit | 53c3040 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -32,15 +32,15 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 ## Done and verified
 
 - Steps 1 to 3: `cargo test -p fps-sched --offline` passes (20 tests in `tests/rate.rs`, 16 in the older files). `cargo clippy -p fps-sched --all-targets -- -D warnings` and `cargo fmt -p fps-sched -- --check` pass. `cargo check -p fps-runtime -p fps-agent` passes, so the additive `SchedError` variants and the `Schedule` fields break no consumer.
-- Step 4: the Engine wiki page and the log entry are written. The repository checks and the pull request follow.
+- Step 4: the Engine wiki page and the log entry are written. The repository checks pass and pull request #235 is open.
 
 ## Remaining
 
-Open the pull request, wait for CI, and set the handoff to ready for review.
+Nothing. CI is green on 53c3040 (all jobs, including `rust`).
 
 ## Next action
 
-Run `fps_swarm.py review 158 --pr <PR>` once CI is green.
+The coordinator reviews pull request #235.
 
 ## Blockers and open questions
 
@@ -71,3 +71,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-07 | claude-7a2195 | claim | none | Card 6710609923 |
+| 2026-11-07 | claude-7a2195 | finish | 53c3040 | PR #235, CI green, ready for review |
