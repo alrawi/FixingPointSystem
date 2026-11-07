@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 63 work packages. Packages marked critical path gate the phase.
+This page lists 66 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -74,6 +74,9 @@ flowchart LR
   ENG_16["ENG-16<br/>Profiles and distributions in the template engine"]
   ENG_17["ENG-17<br/>Load WebAssembly extensions into sessions"]
   CTL_24["CTL-24<br/>Throughput calibration in the run loop"]
+  ENG_18["ENG-18<br/>Rate handles and paused worker wake in the runtime"]
+  CTL_25["CTL-25<br/>Scenario contract v0.3 in the controller"]
+  CON_12["CON-12<br/>Side selection in the run metrics API"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -81,6 +84,7 @@ flowchart LR
   CON_05 --> AGT_05
   ENG_12 --> AGT_05
   ENG_13 --> AGT_05
+  ENG_18 --> AGT_05
   CON_05 --> CTL_12
   AGT_05 --> CTL_12
   AGT_05 --> CTL_14
@@ -133,6 +137,10 @@ flowchart LR
   CTL_21 --> CTL_24
   CON_05 --> CTL_24
   AGT_05 --> CTL_24
+  ENG_13 --> ENG_18
+  CON_10 --> CTL_25
+  ENG_16 --> CTL_25
+  CTL_23 --> CON_12
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -151,7 +159,7 @@ flowchart LR
 | [TRN-04](#trn-04-tls-transport-module) | TLS transport module | M | ENG-04, TRN-01 | yes |
 | [TRN-05](#trn-05-tls-client-fingerprint-profiles) | TLS client fingerprint profiles | M | TRN-04, RLM-04 |  |
 | [AGT-04](#agt-04-signed-module-verification) | Signed module verification | S | AGT-02, CTL-11, CON-05 |  |
-| [AGT-05](#agt-05-capture-and-rate-update-handlers) | Capture and rate update handlers | S | AGT-02, CON-05, ENG-12, ENG-13 |  |
+| [AGT-05](#agt-05-capture-and-rate-update-handlers) | Capture and rate update handlers | S | AGT-02, CON-05, ENG-12, ENG-13, ENG-18 |  |
 | [CTL-11](#ctl-11-module-signing-and-signed-index) | Module signing and signed index | M | CTL-04 |  |
 | [CTL-12](#ctl-12-byte-weighted-mix-control) | Byte weighted mix control | M | CTL-08, CON-05, AGT-05 |  |
 | [CTL-13](#ctl-13-html-report) | HTML report | S | CTL-09 |  |
@@ -204,6 +212,9 @@ flowchart LR
 | [ENG-16](#eng-16-profiles-and-distributions-in-the-template-engine) | Profiles and distributions in the template engine | M | CON-10 |  |
 | [ENG-17](#eng-17-load-webassembly-extensions-into-sessions) | Load WebAssembly extensions into sessions | M | ENG-11, ENG-15 |  |
 | [CTL-24](#ctl-24-throughput-calibration-in-the-run-loop) | Throughput calibration in the run loop | M | CTL-21, CON-05, AGT-05 |  |
+| [ENG-18](#eng-18-rate-handles-and-paused-worker-wake-in-the-runtime) | Rate handles and paused worker wake in the runtime | S | ENG-13 |  |
+| [CTL-25](#ctl-25-scenario-contract-v03-in-the-controller) | Scenario contract v0.3 in the controller | S | CON-10, ENG-16 |  |
+| [CON-12](#con-12-side-selection-in-the-run-metrics-api) | Side selection in the run metrics API | S | CTL-23 |  |
 
 ## CON Contracts
 
@@ -263,6 +274,23 @@ Acceptance.
 
 - [ ] The proto checks pass and a plan with module settings round trips through both bindings.
 - [ ] The contract checks compile every file in contracts/examples/tests/.
+
+### CON-12 Side selection in the run metrics API
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CTL-23
+- **Paths.** `contracts/openapi/`, `contracts/changes/`
+
+CTL-23 made metric views default to the client side and the aggregator can serve the server side, but GET /v1/runs/{id}/metrics has no parameter to ask for it.
+
+Deliverables.
+
+- An optional side query parameter (client or server, default client) on the run metrics endpoint, additive, with a change note.
+
+Acceptance.
+
+- [ ] The contract checks pass, and the change note states that omitting the parameter keeps today's answer.
 
 ## OPS Repository and swarm tooling
 
@@ -412,6 +440,24 @@ Acceptance.
 
 - [ ] A runtime test runs a scenario whose module ships a WAT-built extension, and a looping extension fails only its own session with extension_error.
 
+### ENG-18 Rate handles and paused worker wake in the runtime
+
+Phase 2 · size S · workstream ENG
+
+- **Depends on.** ENG-13
+- **Paths.** `engine/fps-runtime/`
+
+ENG-13 made scheduler rates changeable at run time, but the runtime does not expose its workers' RateHandle values, and a client worker that sleeps while next_due is None (paused or at the cap) never sees a new rate.
+
+Deliverables.
+
+- The runtime returns a fps_sched::RateControl that maps each mix entry name to the rate handles of its workers, for AGT-05 to drive with UpdateRates.
+- A client worker with nothing due wakes at least every 100 ms to read its handle.
+
+Acceptance.
+
+- [ ] A runtime test pauses a scenario with rate 0, resumes it, and changes its rate twice through RateControl, and the realized rates follow within the ENG-13 tolerances.
+
 ## TRN Transport backends
 
 ### TRN-04 TLS transport module
@@ -474,7 +520,7 @@ Acceptance.
 
 Phase 2 · size S · workstream AGT
 
-- **Depends on.** AGT-02, CON-05, ENG-12, ENG-13
+- **Depends on.** AGT-02, CON-05, ENG-12, ENG-13, ENG-18
 - **Paths.** `engine/fps-agent/`
 
 Implement the v0.2 protocol calls for rate updates and captures in the agent.
@@ -665,6 +711,23 @@ Deliverables.
 Acceptance.
 
 - [ ] An e2e test with a fake agent whose sessions carry four times the expected bytes reaches the throughput objective within 5 percent.
+
+### CTL-25 Scenario contract v0.3 in the controller
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CON-10, ENG-16
+- **Paths.** `controller/internal/registry/`
+
+CON-10 added profiles and dist to the scenario contract and ENG-16 taught the engine, but the controller's module registry still validates scenarios against v0.2.
+
+Deliverables.
+
+- The registry validates scenarios with the v0.3 schema, so a module whose scenario declares profiles and calls dist installs.
+
+Acceptance.
+
+- [ ] A registry test installs a module carrying contracts/examples/modules/http1/scenarios-pending/web_profile.yaml, and a scenario with an undeclared profile is still rejected.
 
 ## CLI Python SDK and command line client
 
