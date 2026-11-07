@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #218 |
 | Branch | `wp/CTL-22` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #237 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-b67d88, lease see the status card on #218 |
-| Last verified commit | none |
+| Last verified commit | 92c8a82 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,19 +21,19 @@ Close the controller gaps that CTL-18 reported outside its paths. The catalog ad
 - [x] 1. Fill `SettingsSchema` in `internal/wiring/adapters.go`.
 - [x] 2. Parse locations in `internal/store/validate.go` as the compiler does and add `modules` to `compilerPathRE`.
 - [x] 3. Tests in both packages that read `contracts/examples/tests-pending/`, and the Controller page.
-- [ ] 4. Push, wait for CI, fix failures, open the pull request.
+- [x] 4. Push, wait for CI, fix failures, open the pull request.
 
 ## Done and verified
 
-Steps 1 to 3 are written. Go modules cannot be downloaded in this sandbox, so only `gofmt -l` ran locally. CI is the build and test loop.
+Plan checks and gofmt ran locally. CI on 92c8a82 passed, including the ctl test job.
 
 ## Remaining
 
-CI result and the pull request.
+Nothing.
 
 ## Next action
 
-Push the branch, open the pull request, and poll the check runs.
+Coordinator review of pull request 237.
 
 ## Blockers and open questions
 
