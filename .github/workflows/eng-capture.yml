@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Capture tests of engine/fps-capture with tshark. The rust job of ci.yml runs
+# them too, but there the tshark checks skip themselves. This job installs
+# tshark and runs them with FPS_REQUIRE_CAPTURE_TOOLS=1, so tshark must parse
+# the synthesized streams and decrypt TLS sessions from the embedded secrets
+# and from the sidecar key log (ENG-12 acceptance).
+name: eng-capture
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - engine/**
+      - modules/tls/**
+      - Cargo.lock
+      - .github/workflows/eng-capture.yml
+  pull_request:
+    paths:
+      - engine/**
+      - modules/tls/**
+      - Cargo.lock
+      - .github/workflows/eng-capture.yml
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install tshark
+        run: |
+          echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends tshark
+      - name: Parse and decrypt the capture ring with tshark
+        env:
+          FPS_REQUIRE_CAPTURE_TOOLS: "1"
+        run: cargo test -p fps-capture --test capture -- --nocapture

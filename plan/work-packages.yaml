@@ -1442,7 +1442,7 @@ work_packages:
     phase: 2
     workstream: AGT
     size: S
-    depends_on: [AGT-02, CON-05, ENG-12, ENG-13]
+    depends_on: [AGT-02, CON-05, ENG-12, ENG-13, ENG-18]
     paths: [engine/fps-agent/]
     summary: >-
       Implement the v0.2 protocol calls for rate updates and captures in the agent.
@@ -2374,3 +2374,52 @@ work_packages:
       - For a throughput objective, the orchestrator builds a calibrate.State from the compiled mix and expected_bytes, feeds it client side bytes and completed sessions per mix entry every measurement window, and sends UpdateRates to agents whose engine_api is 0.2.0 or later when the factor changes.
     acceptance:
       - An e2e test with a fake agent whose sessions carry four times the expected bytes reaches the throughput objective within 5 percent.
+
+  # Follow-ups found in Phase 2 batch 12 (ENG-12, ENG-13, ENG-16, CTL-23).
+
+  - id: ENG-18
+    title: Rate handles and paused worker wake in the runtime
+    phase: 2
+    workstream: ENG
+    size: S
+    depends_on: [ENG-13]
+    paths: [engine/fps-runtime/]
+    summary: >-
+      ENG-13 made scheduler rates changeable at run time, but the runtime does not expose its
+      workers' RateHandle values, and a client worker that sleeps while next_due is None (paused
+      or at the cap) never sees a new rate.
+    deliverables:
+      - The runtime returns a fps_sched::RateControl that maps each mix entry name to the rate handles of its workers, for AGT-05 to drive with UpdateRates.
+      - A client worker with nothing due wakes at least every 100 ms to read its handle.
+    acceptance:
+      - A runtime test pauses a scenario with rate 0, resumes it, and changes its rate twice through RateControl, and the realized rates follow within the ENG-13 tolerances.
+
+  - id: CTL-25
+    title: Scenario contract v0.3 in the controller
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CON-10, ENG-16]
+    paths: [controller/internal/registry/]
+    summary: >-
+      CON-10 added profiles and dist to the scenario contract and ENG-16 taught the engine, but
+      the controller's module registry still validates scenarios against v0.2.
+    deliverables:
+      - The registry validates scenarios with the v0.3 schema, so a module whose scenario declares profiles and calls dist installs.
+    acceptance:
+      - A registry test installs a module carrying contracts/examples/modules/http1/scenarios-pending/web_profile.yaml, and a scenario with an undeclared profile is still rejected.
+
+  - id: CON-12
+    title: Side selection in the run metrics API
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [CTL-23]
+    paths: [contracts/openapi/, contracts/changes/]
+    summary: >-
+      CTL-23 made metric views default to the client side and the aggregator can serve the server
+      side, but GET /v1/runs/{id}/metrics has no parameter to ask for it.
+    deliverables:
+      - An optional side query parameter (client or server, default client) on the run metrics endpoint, additive, with a change note.
+    acceptance:
+      - The contract checks pass, and the change note states that omitting the parameter keeps today's answer.

@@ -63,6 +63,7 @@ The targets that exist today are listed below.
 | `test-ctl` | `go test -race ./...` over the controller, including the configuration store fixtures in `controller/internal/store/testdata/`, the registry tests, the agent manager tests with `controller/internal/fakeagent` as the fake for agent neighbors, the REST layer and capabilities contract tests, the binary end to end test `TestEndToEnd`, the metrics token tests `TestMetricsEndpointIsOpenByDefault` and `TestMetricsEndpointRequiresConfiguredToken`, the report goldens with criterion results including `TestGoldenLabeledReport`, `TestClientSideIsTheDefault`, `TestRunEvaluatorDecidesHistogramsByRunID`, the run reason tests of `runs/reasons_test.go`, the compiler goldens `pinned_port`, `small_pool`, and `module_settings`, the route coverage test of `internal/wiring`, the metrics aggregation tests, the check that the generated code in `controller/internal/api/` matches the contract, and the compiler goldens in `controller/internal/compiler/testdata/` |
 | `test-ops` | the plan and wiki tool tests and the Cargo workspace probe |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
+| `test-capture` (workflow `eng-capture`) | `FPS_REQUIRE_CAPTURE_TOOLS=1 cargo test -p fps-capture --test capture`: tshark parses the synthesized pcapng streams and decrypts TLS sessions from the embedded secrets and from the sidecar key log |
 | `test-mod-content` | `cargo test -p fps-module-content`, including the duplicate ratio over 10,000 bodies per generator type |
 | `lint-qa` | gofmt, go vet, and golangci-lint on the Go golden file helper, and ruff and `mypy --strict` on the Python one, each skipped with a notice when its tool is missing |
 | `test-qa` | the match, mismatch, and update tests of the three [golden file helpers](#golden-files) |
@@ -312,3 +313,5 @@ A test reads addresses from `netns.sh info` and sets `FPS_NETNS` to a name of it
 Each gate suite lives under `tests/gates/gate<N>/` and has one entry point, `run.sh`, which writes `report.md` with measured values and a pass or fail verdict per criterion. A gate suite uses only public interfaces, which are the REST API, the agent binary, the harness, and the realism runner. The owner signs off a gate after reading its report.
 
 The Gate 1 suite of QA-04 runs with `make build-qa-gate1` and then `sudo make e2e-qa-gate1`, and it writes `summary.json` next to `report.md`. The `qa-gate1` workflow runs it, and [Gates](Gates.md) describes its design.
+
+A test that waits for an agent state must also wait for the events of that state, because the agent manager delivers events after it updates the state (CTL-23).
