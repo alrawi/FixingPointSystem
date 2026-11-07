@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #230 |
 | Branch | `wp/ENG-16` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (4 of 4 plan steps, CI pending) |
+| Pull request | #234 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-eng16a, lease until 2026-11-07T18:51:39Z |
-| Last verified commit | none |
+| Last verified commit | f3fc321, CI green |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -36,11 +36,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-CI result on the pull request, then `fps_swarm.py review`.
+Nothing. CI is green.
 
 ## Next action
 
-Wait for CI on the PR, then run `fps_swarm.py review 230 --pr <PR>`.
+Coordinator reviews and merges PR #234.
 
 ## Blockers and open questions
 
@@ -71,3 +71,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-07T18:41Z | claude-eng16a | claim | - | claimed #230, branch wp/ENG-16 from main |
 | 2026-11-07T19:10Z | claude-eng16a | checkpoint | - | implementation, tests, wiki; PR next |
+| 2026-11-07T19:20Z | claude-eng16a | review | f3fc321 | CI green, handed to review |
