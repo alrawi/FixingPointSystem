@@ -19,6 +19,7 @@ The module has two packages after CTL-01.
 | `internal/runs/` | The run state machine, the orchestrator, and the run operations of /v1/runs (CTL-07) |
 | `internal/metrics/` | Snapshot aggregation, the metrics views and stream, and Prometheus exposition (CTL-08) |
 | `internal/report/` | Criteria evaluation and the JSON and CSV run reports (CTL-09) |
+| `internal/report/html/` | The self contained HTML run report with inline SVG charts (CTL-13) |
 | `internal/wiring/` | Builds the controller from its packages, the registry and agent adapters, and the combined REST server (CTL-17) |
 
 Later packages add their own directories under `internal/`, as the [Implementation Plan](Implementation-Plan.md) assigns them. The `app.App` type owns every dependency, and the module has no package level mutable state. A later package mounts its handlers with `App.Handle` before `App.Run` starts, for example CTL-02 for the `/v1` API.
@@ -609,7 +610,7 @@ The evaluator decides the run state as the report decides the report. It reads t
 |---|---|
 | `json`, the default | The `RunReport` schema, with the summary filled from the run totals, every criterion in the verdict with its `reason`, `observed` and `passed` only for compared criteria, `reason` of the run when it failed or aborted, and an empty `realism` list |
 | `csv` | One table with the columns `kind,name,op,threshold,value,result,detail`, with rows of kind `run` for the run fields, `criterion` for each criterion, and `metric` for each run total in catalog order |
-| `html` | 501 until a package adds it |
+| `html` | 501 until the handler calls `internal/report/html` (see [HTML report](#html-report)) |
 
 The CSV report writes numbers in plain decimal notation and prefixes text cells that start with `=`, `+`, `-`, or `@` with an apostrophe, so spreadsheets do not run them as formulas.
 
@@ -639,6 +640,28 @@ Bug #124 joined the criteria evaluator and the report endpoint of CTL-09 to the 
 `GET /v1/runs/{id}/report` answers JSON by default and CSV with `format=csv`. The format `html` still answers 501 from `report.API`. `TestServerRoutesEveryOperation` now expects six pending operations, and `TestNewServesRunReports` and `TestSetReportRoutesReportOperation` cover the default handler and the hook.
 
 `TestEndToEnd` proves the path through the binary. The example configuration gains the criterion `tls.resumption_ratio >= 0.5`, whose gauge only the CTL-09 evaluator computes. The fake agent snapshot carries `sessions.attempted`, `sessions.succeeded`, `sessions.failed`, `tls.handshakes`, and `tls.resumptions` both with labels and without, because the orchestrator reads only the unlabeled run totals. After the stop the test reads both criteria as passed with the observed values 0 and 0.5 from `GET /v1/runs/{id}`, from the JSON report, and from the criterion rows of the CSV report, and it checks `sessions_attempted` 7 in the report summary.
+
+## HTML report
+
+CTL-13 adds `controller/internal/report/html`, which renders the report of CTL-09 as one self contained HTML page. It uses only the standard library, `html/template` and `embed`.
+
+### Page
+
+The page holds, in this order, a header with the verdict and the state, the reason of the run, the summary (run id, configuration, state, duration, objective, times, seed, engine and module versions, agents, and the run totals), the criteria table, the realism table, and the charts. The criteria table shows each criterion with its rule, its label filter, its observed value, its result as the word `PASS`, `FAIL`, `MISSING`, or `INVALID`, and its reason, so the result never depends on color alone. A criterion that compared no value shows a dash. Every string of the report passes through `html/template`, so markup in a criterion reason, a module name, or an agent id shows as text.
+
+The charts are inline SVG that `chart.go` draws: one line chart per per second series with grid lines, value ticks in three significant digits (`610M`), a time axis in seconds from the first sample, and a line of minimum, maximum, last value, and sample count under each chart. A series that no sample holds gets no chart. The page draws the whole run values `sessions.concurrent`, `sessions.rate`, `throughput.bps`, `sessions.failed_ratio`, and `sessions.response_time.p99` from the samples with the key `*`. The style sheet is inline, and the colors are variables that `prefers-color-scheme: dark` redefines, so the page follows the system theme. A print style turns the page light, lets tables break across pages, and keeps a chart on one page. The page has no script, font, image, or link to another host.
+
+### Interface
+
+`html.FromReport(report.Report, html.Options)` builds a `html.Page`, a plain model of strings and numbers, and `html.Render(Page)` returns the document. `Options` carries what the report model does not hold: the `Objective` text (the run record does not keep the load objective, so the caller reads it from the test configuration and may use `html.FormatObjective`), the `Samples` of `metrics.Aggregator.Samples(id, api.MetricViewApplication, metrics.Window{})`, and the `Realism` rows, which stay empty until a package produces them. `html.ContentType` is the media type of the page.
+
+### Serving
+
+The package does not touch the REST API. `GET /v1/runs/{id}/report?format=html` already exists in `contracts/openapi/fps-api-v1.yaml` and answers 501 from `report.API.GetRunReport`. The follow up replaces that branch: it builds the report as for JSON, reads the samples from the aggregator (the `API` needs a `SamplesSource` next to its `TotalsSource`), calls `FromReport` and `Render`, and writes the body with `html.ContentType`. Because the page carries no external request, the handler may add `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` without breaking it.
+
+### Tests
+
+`TestGoldenPages` renders the report goldens `pass`, `fail`, `degraded`, and `labeled` of `controller/internal/report/testdata/` and compares the pages with `controller/internal/report/html/testdata/<name>.html`. The goldens carry a deterministic ramp as the per second series, because the JSON goldens hold no samples. `go test ./internal/report/html/ -update` rewrites them. `TestNoExternalRequests` parses each page and fails on any `src`, `href`, `srcset`, `action`, or similar attribute with an `http`, `https`, or protocol relative URL, on any `<script>` element, on a `<link rel=stylesheet>`, on `<img>`, `<iframe>`, and similar elements, and on `@import` or `url()` in the style, and `TestViolationsFindsExternalReferences` shows that the check catches each case. `TestEscapesReportStrings` puts markup in a criterion reason, and `TestEscapesEveryField` and `TestNoExternalRequestsWithHostileStrings` put a script, an image, and a link in every text field of the page. `TestFromReport`, `TestFromReportVerdicts`, and `TestChartsFromSamples` cover the conversion, and further tests cover the chart geometry, the number format, and an empty page. The targets `make lint-ctl-report-html test-ctl-report-html` run the package alone, and `lint-ctl` and `test-ctl` cover it too.
 
 ## Metrics endpoint token
 
