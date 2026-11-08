@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #167 |
 | Branch | `wp/CTL-15` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #247 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-c15a7e, lease until 2026-11-08T22:22:13Z |
-| Last verified commit | none |
+| Last verified commit | 3765120 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Add the package `controller/internal/pki/` with a controller CA, single use enro
 - [x] 2. TLS configs and the HTTP enrollment handler
 - [x] 3. Tests over real TLS on loopback
 - [x] 4. `mk/ctl.mk` targets, Controller wiki page, log entry
-- [ ] 5. Pull request, CI, review
+- [x] 5. Pull request, CI, review
 
 ## Done and verified
 
@@ -30,11 +30,11 @@ Add the package `controller/internal/pki/` with a controller CA, single use enro
 
 ## Remaining
 
-Step 5 (pull request and CI).
+Nothing.
 
 ## Next action
 
-Open the pull request, wait for CI.
+Review pull request #247.
 
 ## Blockers and open questions
 
@@ -61,3 +61,4 @@ make test-ctl-pki lint-ctl-pki
 | Time (UTC) | Agent | Entry |
 |---|---|---|
 | 2026-11-08 | claude-c15a7e | Claimed the package, wrote the package and its tests |
+| 2026-11-08 | claude-c15a7e | Opened #247, fixed gosec findings of the newer CI linter, CI green at 3765120 |
