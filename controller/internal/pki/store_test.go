@@ -75,7 +75,7 @@ func TestOpenRefusesAnUntrustworthyDirectory(t *testing.T) {
 	t.Run("certificate and key of different CAs", func(t *testing.T) {
 		dir, other := fresh(), fresh()
 		data, _ := os.ReadFile(filepath.Clean(filepath.Join(other, CACertFile)))
-		if err := os.WriteFile(filepath.Join(dir, CACertFile), data, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Clean(filepath.Join(dir, CACertFile)), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := Open(Config{Dir: dir}); err == nil || !strings.Contains(err.Error(), "does not match") {
@@ -84,7 +84,7 @@ func TestOpenRefusesAnUntrustworthyDirectory(t *testing.T) {
 	})
 	t.Run("damaged state", func(t *testing.T) {
 		dir := fresh()
-		if err := os.WriteFile(filepath.Join(dir, StateFile), []byte("{"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Clean(filepath.Join(dir, StateFile)), []byte("{"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := Open(Config{Dir: dir}); err == nil {

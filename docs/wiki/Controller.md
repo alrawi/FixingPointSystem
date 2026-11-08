@@ -751,7 +751,7 @@ The authority keeps an allow list of the serial numbers that it issued, with the
 
 ### The TLS configuration
 
-`ServerTLSConfig(names...)` returns the `tls.Config` for the gRPC server. It requires TLS 1.3 and offers `h2`. It sets `ClientAuth` to `RequireAndVerifyClientCert` with the CA as the only client root, so the standard library verifies the chain, the validity, and the client authentication usage. A `VerifyPeerCertificate` hook then calls `Authorize`, which checks the allow list and that the serial belongs to the identity in the subject. The configuration reads the time from the authority's clock. A client without a certificate, with a certificate of another CA, with an expired certificate, or with a revoked identity never completes the handshake.
+`ServerTLSConfig(names...)` returns the `tls.Config` for the gRPC server. It requires TLS 1.3 and offers `h2`. It sets `ClientAuth` to `RequireAndVerifyClientCert` with the CA as the only client root, so the standard library verifies the chain, the validity, and the client authentication usage. A `VerifyConnection` hook then calls `Authorize`, which checks the allow list and that the serial belongs to the identity in the subject. Session tickets are off, so every connection runs the full handshake and a revocation holds at the next dial. The configuration reads the time from the authority's clock. A client without a certificate, with a certificate of another CA, with an expired certificate, or with a revoked identity never completes the handshake.
 
 `EnrollTLSConfig(names...)` serves the second listener of `Handler`. It does not require a client certificate, because an agent that enrolls has none, and it verifies a certificate that the client does present, which `POST /renew` relies on.
 

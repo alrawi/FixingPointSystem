@@ -61,14 +61,19 @@ func (a *Authority) serverConfig(auth tls.ClientAuthType, protos, names []string
 		NextProtos:     protos,
 		Time:           a.now,
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return a.serverCertificate(names) },
-		VerifyPeerCertificate: func(_ [][]byte, chains [][]*x509.Certificate) error {
-			if len(chains) == 0 {
+		// Session tickets stay off, so every connection runs the full
+		// handshake and a revocation takes effect at the next dial.
+		SessionTicketsDisabled: true,
+		// VerifyConnection also runs on a resumed session, where
+		// VerifyPeerCertificate would not.
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.VerifiedChains) == 0 || len(cs.VerifiedChains[0]) == 0 {
 				if auth == tls.RequireAndVerifyClientCert {
 					return ErrCertificateInvalid
 				}
 				return nil
 			}
-			return a.Authorize(chains[0][0])
+			return a.Authorize(cs.VerifiedChains[0][0])
 		},
 	}, nil
 }
