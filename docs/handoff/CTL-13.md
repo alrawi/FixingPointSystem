@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #165 |
 | Branch | `wp/CTL-13` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #244 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-c13a7e, lease until 2026-11-08T22:22:32Z |
-| Last verified commit | none |
+| Last verified commit | 8da7354 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Render the run report of CTL-09 as one self contained HTML page with a summary, 
 - [x] 1. Page model, template, and SVG charts (standard library only)
 - [x] 2. FromReport converter over `report.Report` and the aggregator samples
 - [x] 3. Golden, no external request, escaping, and chart tests; `mk/ctl.mk` targets
-- [ ] 4. Controller wiki page, log entry, pull request, CI
+- [x] 4. Controller wiki page, log entry, pull request, CI
 
 ## Done and verified
 
@@ -29,7 +29,7 @@ Package files, goldens, wiki section, log entry, and Make targets are written. T
 
 ## Remaining
 
-Open the PR and wait for CI.
+Nothing. CI is green on 8da7354 (Go tests and lint included).
 
 ## Next action
 
