@@ -24,8 +24,10 @@ func TestValidateEveryExample(t *testing.T) {
 		if !rep.Valid || len(rep.Findings) != 0 {
 			t.Errorf("%s: report %+v, want valid without findings", ex.name, rep)
 		}
-		if rep.Capacity == nil || *rep.Capacity.AgentsRequired != 1 || *rep.Capacity.AgentsAvailable != 1 {
-			t.Errorf("%s: capacity %+v, want 1 of 1", ex.name, rep.Capacity)
+		// The spare agent has no interface list, so it counts as having every
+		// interface and port_locations sees two available agents.
+		if rep.Capacity == nil || *rep.Capacity.AgentsRequired != 1 || *rep.Capacity.AgentsAvailable < 1 {
+			t.Errorf("%s: capacity %+v, want 1 required and at least 1 available", ex.name, rep.Capacity)
 		}
 	}
 }
@@ -58,7 +60,7 @@ func TestValidateReportsSchemaFindings(t *testing.T) {
 
 func TestValidateWithoutDependencies(t *testing.T) {
 	v := NewValidator(newSchema(t), nil, nil)
-	doc := mustCanonical(t, examples(t)[0].data)
+	doc := mustCanonical(t, exampleNamed(t, "enterprise_mix_10g").data)
 	rep, err := v.Validate(context.Background(), doc)
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +75,7 @@ func TestValidateWithoutDependencies(t *testing.T) {
 }
 
 func TestValidateDependencyErrors(t *testing.T) {
-	doc := mustCanonical(t, examples(t)[0].data)
+	doc := mustCanonical(t, exampleNamed(t, "enterprise_mix_10g").data)
 	boom := errors.New("boom")
 	for _, v := range []*Validator{
 		NewValidator(newSchema(t), fakeCatalog{err: boom}, exampleInventory()),

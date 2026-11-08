@@ -45,3 +45,27 @@ lint-ctl-pki:
 
 test-ctl-pki:
 	cd controller && $(GO) test -race -cover ./internal/pki/
+
+# CTL-13 HTML report. The package renders with html/template and draws its charts
+# as inline SVG, so these two give a fast loop for the package alone. Run
+# `cd controller && go test ./internal/report/html/ -update` after a change of
+# the template, then review the diff of the golden pages in testdata/.
+.PHONY: lint-ctl-report-html test-ctl-report-html
+lint-ctl-report-html:
+	@out="$$(cd controller && gofmt -l internal/report/html)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+	cd controller && $(GO) vet ./internal/report/html/
+
+test-ctl-report-html:
+	cd controller && $(GO) test -race -cover ./internal/report/html/
+
+# CTL-25 scenario contract v0.3 in the module registry. The targets above cover
+# the package too, so these two give a fast loop for it alone.
+.PHONY: lint-ctl-registry test-ctl-registry
+lint-ctl-registry:
+	@out="$$(cd controller && gofmt -l internal/registry)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+	cd controller && $(GO) vet ./internal/registry/
+
+test-ctl-registry:
+	cd controller && $(GO) test -race -cover ./internal/registry/

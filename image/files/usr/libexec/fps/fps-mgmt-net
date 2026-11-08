@@ -1,0 +1,71 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Names the management interface mgmt0 before systemd-networkd starts.
+#
+# The management interface is the Ethernet device that /etc/fps/image.env names
+# through FPS_MGMT_MAC. Without a setting it is the Ethernet device with the
+# lowest PCI address, which on QEMU, Proxmox, and OpenStack is the first NIC of
+# the VM. Every other Ethernet device is a test interface, and the networkd file
+# 20-fps-test.network leaves it without any address.
+set -euo pipefail
+
+readonly NAME=mgmt0
+readonly WAIT_SECONDS=60
+
+FPS_MGMT_MAC=""
+if [[ -r /etc/fps/image.env ]]; then
+	# shellcheck source=/dev/null
+	. /etc/fps/image.env
+fi
+want_mac="${FPS_MGMT_MAC,,}"
+
+# Prints the interface names of all candidate devices, one per line, in PCI order.
+candidates() {
+	local dev name
+	for dev in /sys/class/net/*; do
+		name="${dev##*/}"
+		[[ -e "$dev/device" ]] || continue # virtual devices have no bus device
+		[[ "$(cat "$dev/type")" == 1 ]] || continue # Ethernet only
+		[[ -d "$dev/wireless" ]] && continue
+		printf '%s %s\n' "$(readlink -f "$dev/device")" "$name"
+	done | LC_ALL=C sort | cut -d' ' -f2
+}
+
+pick() {
+	local name
+	if [[ -n "$want_mac" ]]; then
+		for name in $(candidates); do
+			if [[ "$(cat "/sys/class/net/$name/address")" == "$want_mac" ]]; then
+				echo "$name"
+				return 0
+			fi
+		done
+		return 1
+	fi
+	name="$(candidates | head -n 1)"
+	[[ -n "$name" ]] || return 1
+	echo "$name"
+}
+
+if [[ -e "/sys/class/net/$NAME" ]]; then
+	echo "fps-mgmt-net: $NAME exists already"
+	exit 0
+fi
+
+chosen=""
+for ((i = 0; i < WAIT_SECONDS; i++)); do
+	if chosen="$(pick)"; then
+		break
+	fi
+	sleep 1
+done
+if [[ -z "$chosen" ]]; then
+	echo "fps-mgmt-net: no management interface found (FPS_MGMT_MAC='${want_mac}')" >&2
+	exit 1
+fi
+
+# A link must be down to take a new name. networkd has not started yet.
+ip link set dev "$chosen" down
+ip link set dev "$chosen" name "$NAME"
+echo "fps-mgmt-net: $chosen is now $NAME ($(cat "/sys/class/net/$NAME/address"))"

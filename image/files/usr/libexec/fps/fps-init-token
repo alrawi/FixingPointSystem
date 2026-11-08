@@ -1,0 +1,19 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Creates the admin API token on the first start when no file exists. A cloud-init
+# user-data file may write /etc/fps/admin.token earlier, and this script then
+# leaves it alone. The file belongs to root and the group fps, so the controller
+# can read it and nobody else can.
+set -euo pipefail
+
+readonly TOKEN=/etc/fps/admin.token
+
+if [[ ! -s "$TOKEN" ]]; then
+	umask 027
+	# 32 random bytes, URL safe, far above the 16 byte minimum of the controller.
+	head -c 32 /dev/urandom | base64 -w0 | tr '+/' '-_' | tr -d '=' >"$TOKEN"
+	echo "fps-init-token: created $TOKEN"
+fi
+chown root:fps "$TOKEN"
+chmod 0640 "$TOKEN"

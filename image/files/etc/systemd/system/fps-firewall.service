@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[Unit]
+Description=FixingPointSystem management isolation (nftables)
+Documentation=https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md
+DefaultDependencies=no
+After=systemd-sysctl.service
+Before=network-pre.target systemd-networkd.service
+Wants=network-pre.target
+ConditionPathExists=/etc/fps/isolation.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/fps/isolation.nft
+ExecStop=-/usr/sbin/nft delete table inet fps_isolation
+
+[Install]
+WantedBy=sysinit.target

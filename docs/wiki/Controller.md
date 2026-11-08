@@ -19,6 +19,7 @@ The module has two packages after CTL-01.
 | `internal/runs/` | The run state machine, the orchestrator, and the run operations of /v1/runs (CTL-07) |
 | `internal/metrics/` | Snapshot aggregation, the metrics views and stream, and Prometheus exposition (CTL-08) |
 | `internal/report/` | Criteria evaluation and the JSON and CSV run reports (CTL-09) |
+| `internal/report/html/` | The self contained HTML run report with inline SVG charts (CTL-13) |
 | `internal/wiring/` | Builds the controller from its packages, the registry and agent adapters, and the combined REST server (CTL-17) |
 | `internal/pki/` | The controller CA, enrollment tokens, agent certificates, rotation, revocation, and the mutual TLS configuration (CTL-15) |
 
@@ -74,6 +75,7 @@ The controller has its own make targets and CI workflow.
 |---|---|
 | `make lint-ctl` | `gofmt -l`, `go vet ./...`, and `golangci-lint run`, which it skips with a notice when the binary is missing |
 | `make test-ctl` | `go test -race ./...` in `controller/` |
+| `make lint-ctl-registry`, `make test-ctl-registry` | The same checks for `internal/registry` alone (CTL-25) |
 
 The workflow [`.github/workflows/controller.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/.github/workflows/controller.yml) runs the same checks, with golangci-lint v2.12.2 through `golangci/golangci-lint-action` pinned by commit. [`controller/.golangci.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/controller/.golangci.yml) enables errcheck, errorlint, gosec, govet, ineffassign, revive, staticcheck, and unused, and checks formatting with gofmt and goimports. Its one exclusion allows gosec G204 in test files, because the integration test builds the binary and starts it.
 
@@ -241,8 +243,9 @@ The package `internal/registry` keeps the installed modules in one local directo
 2. **Schema.** The manifest validates against `contracts/schemas/module-manifest.schema.json`. The package embeds a copy of the schema, a test fails when the copy differs from the contract, and `go generate ./internal/registry` refreshes it. JSON Schema patterns follow ECMA-262 and the `relpath` pattern uses lookahead, so the validator runs patterns with `regexp2` in ECMAScript mode.
 3. **License.** The `license` field is an SPDX expression that must allow distribution with GPL-3.0 code. Every AND operand must be compatible, and at least one operand of each OR. Every license and exception must be on the allow list, so `MIT OR LicenseRef-acme` fails as unknown. Matching ignores case for identifiers but not for the operators, and the deprecated `+` suffix and bare `GPL-3.0` forms are unknown.
 4. **Semantic rules.** Function names are unique, a manifest with `functions` and an `extension` lists the `render` hook, and the module name is not one of the names that rule 5 of the template grammar reserves.
-5. **Files.** Every scenario, asset path, extension component, and fixture capture that the manifest names exists as a regular file. Each scenario file has a `scenario` field whose name is an identifier and unique within the module. Full scenario validation belongs to the configuration validator.
-6. **Digest.** The registry computes the module tree digest of plan rule 1 in `contracts/README.md` and records it in the index. A test checks that the example `http1` and `dns` modules get the digests of `contracts/examples/plans/http_dns_smoke.json`.
+5. **Files.** Every scenario, asset path, extension component, and fixture capture that the manifest names exists as a regular file. Each scenario file has a `scenario` field whose name is an identifier and unique within the module.
+6. **Scenarios.** CTL-25 added the contract checks of scenario contract v0.3 (`scenario.go`). Each scenario file that the manifest lists, and each `scenarios-pending/*.yaml` file, validates against `contracts/schemas/scenario.schema.json`. The package embeds a copy of this schema too, `TestEmbeddedScenarioSchemaMatchesContract` fails when the copy differs, and `go generate ./internal/registry` refreshes both copies. A small parser for the template grammar then checks every placeholder in the template fields of the actions (`send`, and `host`, `port`, `bytes`, `min_bytes`, `count`, `ms`, and `set` values, also inside `loop` and `branch` bodies) for the two roots that v0.3 added. A `profiles.<name>` reference must name a profile that the scenario declares, and a bare `profiles` or a reference with more fields fails. A `dist.<name>(...)` call must name `pareto`, `lognormal`, `exponential`, or `uniform` and follow the rules of CON-10: the argument count and keyword names, the required parameters, `float` parameters that also take an `int`, `cap` as an `int`, literal `alpha`, `scale`, `sigma`, `mean`, and `cap` above 0, literal `low` and `high` at least 0, and `low` not above `high`. A syntax error or unbalanced braces fails as well. The registry does not check module function calls or the other references, because the contract validator and the compiler own them, and it does not index the pending scenarios. A finding has the path `file:<path>#<JSON Pointer>`, for example `file:scenarios/web_page.yaml#/flows/0/client/1/send`. Tests install the example `web_profile.yaml` listed and pending, and reject an undeclared profile and each distribution rule.
+7. **Digest.** The registry computes the module tree digest of plan rule 1 in `contracts/README.md` and records it in the index. A test checks that the example `http1` and `dns` modules get the digests of `contracts/examples/plans/http_dns_smoke.json`.
 
 The tree then moves into place and the index is rewritten through a temporary file and a rename. A module version is immutable, so installing a name and version that the registry holds fails with `ErrModuleExists`.
 
@@ -610,7 +613,7 @@ The evaluator decides the run state as the report decides the report. It reads t
 |---|---|
 | `json`, the default | The `RunReport` schema, with the summary filled from the run totals, every criterion in the verdict with its `reason`, `observed` and `passed` only for compared criteria, `reason` of the run when it failed or aborted, and an empty `realism` list |
 | `csv` | One table with the columns `kind,name,op,threshold,value,result,detail`, with rows of kind `run` for the run fields, `criterion` for each criterion, and `metric` for each run total in catalog order |
-| `html` | 501 until a package adds it |
+| `html` | 501 until the handler calls `internal/report/html` (see [HTML report](#html-report)) |
 
 The CSV report writes numbers in plain decimal notation and prefixes text cells that start with `=`, `+`, `-`, or `@` with an apostrophe, so spreadsheets do not run them as formulas.
 
@@ -640,6 +643,28 @@ Bug #124 joined the criteria evaluator and the report endpoint of CTL-09 to the 
 `GET /v1/runs/{id}/report` answers JSON by default and CSV with `format=csv`. The format `html` still answers 501 from `report.API`. `TestServerRoutesEveryOperation` now expects six pending operations, and `TestNewServesRunReports` and `TestSetReportRoutesReportOperation` cover the default handler and the hook.
 
 `TestEndToEnd` proves the path through the binary. The example configuration gains the criterion `tls.resumption_ratio >= 0.5`, whose gauge only the CTL-09 evaluator computes. The fake agent snapshot carries `sessions.attempted`, `sessions.succeeded`, `sessions.failed`, `tls.handshakes`, and `tls.resumptions` both with labels and without, because the orchestrator reads only the unlabeled run totals. After the stop the test reads both criteria as passed with the observed values 0 and 0.5 from `GET /v1/runs/{id}`, from the JSON report, and from the criterion rows of the CSV report, and it checks `sessions_attempted` 7 in the report summary.
+
+## HTML report
+
+CTL-13 adds `controller/internal/report/html`, which renders the report of CTL-09 as one self contained HTML page. It uses only the standard library, `html/template` and `embed`.
+
+### Page
+
+The page holds, in this order, a header with the verdict and the state, the reason of the run, the summary (run id, configuration, state, duration, objective, times, seed, engine and module versions, agents, and the run totals), the criteria table, the realism table, and the charts. The criteria table shows each criterion with its rule, its label filter, its observed value, its result as the word `PASS`, `FAIL`, `MISSING`, or `INVALID`, and its reason, so the result never depends on color alone. A criterion that compared no value shows a dash. Every string of the report passes through `html/template`, so markup in a criterion reason, a module name, or an agent id shows as text.
+
+The charts are inline SVG that `chart.go` draws: one line chart per per second series with grid lines, value ticks in three significant digits (`610M`), a time axis in seconds from the first sample, and a line of minimum, maximum, last value, and sample count under each chart. A series that no sample holds gets no chart. The page draws the whole run values `sessions.concurrent`, `sessions.rate`, `throughput.bps`, `sessions.failed_ratio`, and `sessions.response_time.p99` from the samples with the key `*`. The style sheet is inline, and the colors are variables that `prefers-color-scheme: dark` redefines, so the page follows the system theme. A print style turns the page light, lets tables break across pages, and keeps a chart on one page. The page has no script, font, image, or link to another host.
+
+### Interface
+
+`html.FromReport(report.Report, html.Options)` builds a `html.Page`, a plain model of strings and numbers, and `html.Render(Page)` returns the document. `Options` carries what the report model does not hold: the `Objective` text (the run record does not keep the load objective, so the caller reads it from the test configuration and may use `html.FormatObjective`), the `Samples` of `metrics.Aggregator.Samples(id, api.MetricViewApplication, metrics.Window{})`, and the `Realism` rows, which stay empty until a package produces them. `html.ContentType` is the media type of the page.
+
+### Serving
+
+The package does not touch the REST API. `GET /v1/runs/{id}/report?format=html` already exists in `contracts/openapi/fps-api-v1.yaml` and answers 501 from `report.API.GetRunReport`. The follow up replaces that branch: it builds the report as for JSON, reads the samples from the aggregator (the `API` needs a `SamplesSource` next to its `TotalsSource`), calls `FromReport` and `Render`, and writes the body with `html.ContentType`. Because the page carries no external request, the handler may add `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` without breaking it.
+
+### Tests
+
+`TestGoldenPages` renders the report goldens `pass`, `fail`, `degraded`, and `labeled` of `controller/internal/report/testdata/` and compares the pages with `controller/internal/report/html/testdata/<name>.html`. The goldens carry a deterministic ramp as the per second series, because the JSON goldens hold no samples. `go test ./internal/report/html/ -update` rewrites them. `TestNoExternalRequests` parses each page and fails on any `src`, `href`, `srcset`, `action`, or similar attribute with an `http`, `https`, or protocol relative URL, on any `<script>` element, on a `<link rel=stylesheet>`, on `<img>`, `<iframe>`, and similar elements, and on `@import` or `url()` in the style, and `TestViolationsFindsExternalReferences` shows that the check catches each case. `TestEscapesReportStrings` puts markup in a criterion reason, and `TestEscapesEveryField` and `TestNoExternalRequestsWithHostileStrings` put a script, an image, and a link in every text field of the page. `TestFromReport`, `TestFromReportVerdicts`, and `TestChartsFromSamples` cover the conversion, and further tests cover the chart geometry, the number format, and an empty page. The targets `make lint-ctl-report-html test-ctl-report-html` run the package alone, and `lint-ctl` and `test-ctl` cover it too.
 
 ## Metrics endpoint token
 

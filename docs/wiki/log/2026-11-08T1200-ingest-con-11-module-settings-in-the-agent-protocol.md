@@ -1,0 +1,9 @@
+## [2026-11-08] ingest | CON-11 module settings in the agent protocol
+
+`ModuleRef.settings` (field 6, `google.protobuf.Struct`) carries the module settings of a test to the agent, and the protocol moves from 0.2.0 to 0.2.1. We chose a patch number because the controller admits agents by major and minor (`DefaultEngineAPIs` lists `0.1` and `0.2`), so 0.3.0 would have refused every agent. The Rust agent mirrors the field in `proto.rs`, `plan.rs`, and `convert.rs`, accepts `modules[].settings` in a plan file, and reports `engine_api` 0.2.1. A unit test round trips a plan with nested settings through the generated types. `port_locations.yaml`, `dns_zone.yaml`, and `filtered_criteria.yaml` moved from `contracts/examples/tests-pending/` to `contracts/examples/tests/`, and the Go tests that read the old directory now read the new one. We documented the change in [Contracts](../Contracts.md#module-settings-in-the-agent-protocol).
+
+### Shared page notes
+
+- [Controller](../Controller.md): the sentence about the tests under `contracts/examples/tests-pending/` now applies to `contracts/examples/tests/`. `TestPendingExamplesValidateThroughTheAPI` is renamed `TestSettingsExamplesValidateThroughTheAPI` and `TestValidatePendingExamples` is renamed `TestValidateSettingsExamples`.
+- [Agent](../Agent.md) and the dns module README: the agent carries `modules[].settings` and reports `engine_api` 0.2.1, and AGT-07 applies the settings. The README sentence that the protocol has no field for them is out of date.
+- Implementation Plan and Work Packages: `ENGINE_API` and `DefaultEngineAPI` in the controller (`controller/internal/api/capabilities.go`, `compiler/compile.go`) stay at 0.2.0, which still admits 0.2.1 agents. A later package may raise them to 0.2.1 so the controller sends settings only to agents at 0.2.1 or later.

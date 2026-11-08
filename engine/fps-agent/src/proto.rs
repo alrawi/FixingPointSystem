@@ -16,6 +16,7 @@
 //! | `uint64` | `u64` |
 //! | `bytes` | `Vec<u8>` |
 //! | `repeated T` | `Vec<T>` |
+//! | `google.protobuf.Struct` | `serde_json::Map<String, serde_json::Value>` |
 //! | `map<string, string>` | `BTreeMap<String, String>`, so output order is stable |
 //! | `enum Backend` | [`Backend`], with the proto numbers as discriminants |
 
@@ -102,4 +103,7 @@ pub struct ModuleRef {
     pub signature: Vec<u8>,
     /// Field 5, the registry key name of the signature, or empty.
     pub signature_key_id: String,
+    /// Field 6, the module settings of a plan. A capability report leaves
+    /// them empty.
+    pub settings: serde_json::Map<String, serde_json::Value>,
 }

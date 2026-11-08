@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{.Title}}</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #1b1f24;
+  --muted: #5a6472;
+  --panel: #f4f6f8;
+  --line: #d3d9e0;
+  --pass: #11703a;
+  --pass-bg: #e3f4ea;
+  --fail: #b42318;
+  --fail-bg: #fdeaea;
+  --warn: #8a5a00;
+  --warn-bg: #fdf3da;
+  --c0: #1f5fbf;
+  --c1: #b4540a;
+  --c2: #11703a;
+  --c3: #7a3db0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171b;
+    --fg: #e6e9ed;
+    --muted: #9aa5b3;
+    --panel: #1d2228;
+    --line: #353d47;
+    --pass: #6fd49a;
+    --pass-bg: #12301f;
+    --fail: #ff8a80;
+    --fail-bg: #3a1815;
+    --warn: #f0c060;
+    --warn-bg: #33270b;
+    --c0: #6ea8fe;
+    --c1: #f2a05a;
+    --c2: #6fd49a;
+    --c3: #c79bf0;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 24px 16px 48px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 960px; margin: 0 auto; }
+h1 { font-size: 1.5rem; margin: 0 0 4px; overflow-wrap: anywhere; }
+h2 { font-size: 1.1rem; margin: 32px 0 10px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.sub { color: var(--muted); margin: 0 0 16px; }
+code, .num { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+.verdict { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; border: 1px solid currentColor; }
+.verdict.pass, .st.pass { color: var(--pass); background: var(--pass-bg); }
+.verdict.fail, .st.fail, .st.invalid { color: var(--fail); background: var(--fail-bg); }
+.verdict.none, .st.missing { color: var(--warn); background: var(--warn-bg); }
+.st { display: inline-block; padding: 0 8px; border-radius: 4px; font-weight: 600; font-size: 0.85em; border: 1px solid currentColor; }
+.note { padding: 10px 12px; border-radius: 6px; margin: 12px 0; border: 1px solid var(--line); background: var(--panel); overflow-wrap: anywhere; }
+.note.bad { border-color: var(--fail); background: var(--fail-bg); }
+.note.warn { border-color: var(--warn); background: var(--warn-bg); }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+dl.facts dt { color: var(--muted); }
+dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px 32px; }
+.wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; vertical-align: top; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; font-size: 0.85em; white-space: nowrap; }
+td.r, th.r { text-align: right; }
+td.rule { white-space: nowrap; }
+td.reason { overflow-wrap: anywhere; min-width: 14em; }
+.where { color: var(--muted); font-size: 0.85em; display: block; }
+.empty { color: var(--muted); font-style: italic; }
+figure.chartbox { margin: 0 0 20px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); break-inside: avoid; }
+figcaption { font-weight: 600; margin-bottom: 4px; }
+figcaption .unit { color: var(--muted); font-weight: 400; }
+figure .stats { color: var(--muted); font-size: 0.85em; margin: 4px 0 0; }
+svg.chart { display: block; width: 100%; height: auto; }
+svg.chart .grid { stroke: var(--line); stroke-width: 1; }
+svg.chart .axis { stroke: var(--muted); stroke-width: 1; }
+svg.chart .tick { fill: var(--muted); font: 11px system-ui, sans-serif; }
+svg.chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+svg.chart .l0 { stroke: var(--c0); fill: var(--c0); }
+svg.chart .l1 { stroke: var(--c1); fill: var(--c1); }
+svg.chart .l2 { stroke: var(--c2); fill: var(--c2); }
+svg.chart .l3 { stroke: var(--c3); fill: var(--c3); }
+svg.chart .line { fill: none; }
+.legend { list-style: none; display: flex; gap: 14px; padding: 0; margin: 4px 0 0; flex-wrap: wrap; font-size: 0.85em; }
+.legend i { display: inline-block; width: 18px; height: 3px; margin-right: 6px; vertical-align: middle; }
+.legend .l0 { background: var(--c0); } .legend .l1 { background: var(--c1); }
+.legend .l2 { background: var(--c2); } .legend .l3 { background: var(--c3); }
+footer { margin-top: 40px; color: var(--muted); font-size: 0.85em; }
+@media print {
+  :root { --bg: #fff; --fg: #000; --muted: #444; --panel: #fff; --line: #999;
+    --pass: #0a5a2c; --pass-bg: #fff; --fail: #8f1a10; --fail-bg: #fff; --warn: #6b4600; --warn-bg: #fff;
+    --c0: #1f5fbf; --c1: #b4540a; --c2: #11703a; --c3: #7a3db0; }
+  body { padding: 0; font-size: 11pt; }
+  main { max-width: none; }
+  .wrap { overflow: visible; }
+  tr, figure.chartbox { break-inside: avoid; }
+  h2 { break-after: avoid; }
+}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>{{.Title}}</h1>
+  <p class="sub">
+    <span class="verdict {{.VerdictClass}}">Verdict: {{.Verdict}}</span>
+    State <code>{{.State}}</code>{{if .Degraded}}, degraded{{end}}{{if .Phase}}, phase <code>{{.Phase}}</code>{{end}}
+  </p>
+</header>
+
+{{if .Reason}}<div class="note bad" role="note"><strong>Reason.</strong> {{.Reason}}</div>{{end}}
+{{if .FailedAgents}}<div class="note warn" role="note"><strong>Failed agents.</strong> {{range $i, $a := .FailedAgents}}{{if $i}}, {{end}}<code>{{$a}}</code>{{end}}</div>{{end}}
+
+<section aria-labelledby="summary">
+<h2 id="summary">Summary</h2>
+<div class="cols">
+<dl class="facts">
+  <dt>Run</dt><dd><code>{{.RunID}}</code></dd>
+  <dt>Configuration</dt><dd>{{if .ConfigID}}<code>{{.ConfigID}}</code>{{else}}<span class="empty">none</span>{{end}}</dd>
+  <dt>State</dt><dd>{{.State}}</dd>
+  <dt>Duration</dt><dd>{{if .Duration}}{{.Duration}}{{else}}<span class="empty">not available</span>{{end}}</dd>
+  <dt>Objective</dt><dd>{{if .Objective}}{{.Objective}}{{else}}<span class="empty">not recorded</span>{{end}}</dd>
+  <dt>Created</dt><dd class="num">{{if .Created}}{{.Created}}{{else}}-{{end}}</dd>
+  <dt>Started</dt><dd class="num">{{if .Started}}{{.Started}}{{else}}-{{end}}</dd>
+  <dt>Ended</dt><dd class="num">{{if .Ended}}{{.Ended}}{{else}}-{{end}}</dd>
+  <dt>Seed</dt><dd class="num">{{.Seed}}</dd>
+  <dt>Engine</dt><dd>{{if .Engine}}{{.Engine}}{{else}}-{{end}}</dd>
+  <dt>Agents</dt><dd>{{if .Agents}}{{range $i, $a := .Agents}}{{if $i}}, {{end}}<code>{{$a}}</code>{{end}}{{else}}-{{end}}</dd>
+  {{range .Modules}}<dt>Module {{.Name}}</dt><dd>{{.Value}}</dd>
+  {{end}}
+</dl>
+<div>
+{{if .Summary}}
+<dl class="facts">
+  {{range .Summary}}<dt>{{.Name}}</dt><dd class="num">{{.Value}}</dd>
+  {{end}}
+</dl>
+{{else}}<p class="empty">The run has no totals.</p>{{end}}
+</div>
+</div>
+</section>
+
+<section aria-labelledby="criteria">
+<h2 id="criteria">Criteria</h2>
+{{if .Criteria}}
+<div class="wrap">
+<table>
+  <thead><tr><th>Metric</th><th>Rule</th><th class="r">Observed</th><th>Result</th><th>Reason</th></tr></thead>
+  <tbody>
+  {{range .Criteria}}<tr>
+    <td><code>{{.Metric}}</code>{{if .Where}}<span class="where">where {{.Where}}</span>{{end}}</td>
+    <td class="num rule">{{.Op}} {{.Threshold}}</td>
+    <td class="r num">{{if .Observed}}{{.Observed}}{{else}}-{{end}}</td>
+    <td><span class="st {{.Status}}">{{.StatusLabel}}</span></td>
+    <td class="reason">{{.Reason}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}<p class="empty">The run has no criteria results{{if eq .Verdict "not evaluated"}}, because it never reached its criteria{{end}}.</p>{{end}}
+</section>
+
+<section aria-labelledby="realism">
+<h2 id="realism">Realism</h2>
+{{if .Realism}}
+<div class="wrap">
+<table>
+  <thead><tr><th>Property</th><th>Target</th><th class="r">Observed</th><th>Result</th></tr></thead>
+  <tbody>
+  {{range .Realism}}<tr>
+    <td>{{.Property}}</td>
+    <td class="num">{{.Target}}</td>
+    <td class="r num">{{.Observed}}</td>
+    <td>{{if .Passed}}<span class="st pass">PASS</span>{{else}}<span class="st fail">FAIL</span>{{end}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}<p class="empty">The run reported no realism results.</p>{{end}}
+</section>
+
+<section aria-labelledby="charts">
+<h2 id="charts">Charts</h2>
+{{range .ChartViews}}
+<figure class="chartbox">
+  <figcaption>{{.Title}}{{if .Unit}} <span class="unit">({{.Unit}})</span>{{end}}</figcaption>
+  {{.SVG}}
+  {{if gt (len .Legend) 1}}<ul class="legend">{{range .Legend}}<li><i class="{{.Class}}"></i>{{.Name}}</li>{{end}}</ul>{{end}}
+  <p class="stats">{{.Stats}}</p>
+</figure>
+{{else}}<p class="empty">The run has no per second samples.</p>{{end}}
+</section>
+
+<footer>Self contained report: no script, no font, and no request to any other host.</footer>
+</main>
+</body>
+</html>

@@ -290,6 +290,7 @@ pub fn installed(dir: &Path) -> Vec<ModuleRef> {
             version: manifest_version(&path).unwrap_or_default(),
             name: manifest.name,
             digest,
+            settings: serde_json::Map::new(),
         });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
