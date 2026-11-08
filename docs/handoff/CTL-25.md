@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #241 |
 | Branch | `wp/CTL-25` |
-| Pull request | not yet opened |
-| Status | in progress |
-| Progress | 80% (2 of 3 plan steps) |
+| Pull request | #243 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-c25a7e |
-| Last verified commit | none |
+| Last verified commit | 572a97a (CI green: ci, ctl, agt, ops, qa-gate1) |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -25,8 +25,8 @@ The controller's module registry validates scenarios with the v0.3 schema, so a 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
 - [x] 1. Embedded v0.3 schema copy, `scenario.go` checks, registry integration, tests, make targets, wiki
-- [ ] 2. CI green on the PR
-- [ ] 3. Review handoff
+- [x] 2. CI green on the PR
+- [x] 3. Review handoff
 
 ## Done and verified
 
@@ -67,3 +67,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-08T21:55Z | claude-c25a7e | claim | - | claimed #241 |
 | 2026-11-08T22:15Z | claude-c25a7e | checkpoint | - | code, tests, wiki written |
+| 2026-11-08T22:40Z | claude-c25a7e | finish | 572a97a | PR #243, CI green, ready for review |
