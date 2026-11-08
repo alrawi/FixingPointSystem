@@ -101,7 +101,7 @@ echo "Go: $go_bin ($("$go_bin" env GOVERSION))"
 
 step "Build the controller"
 rm -rf "$build"
-mkdir -p "$build/modules" "$out"
+mkdir -p "$build/modules"
 (
 	cd "$root/controller"
 	GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
@@ -148,6 +148,9 @@ vars=(
 [[ -n "${FPS_BASE_IMAGE_CHECKSUM:-}" ]] && vars+=(-var "base_image_checksum=$FPS_BASE_IMAGE_CHECKSUM")
 
 packer init "$img/fps.pkr.hcl"
+# Packer creates the output directory itself, and packer validate (which has no
+# -force) rejects one that already exists, for example from an earlier build.
+rm -rf "$out"
 packer validate "${vars[@]}" "$img/fps.pkr.hcl"
 packer build -force "${vars[@]}" "$img/fps.pkr.hcl"
 
