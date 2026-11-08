@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[Unit]
+Description=FixingPointSystem controller
+Documentation=https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md
+# cloud-init.service runs first, so user-data may write /etc/fps/admin.token.
+After=fps-mgmt-addr.service fps-firewall.service cloud-init.service
+Requires=fps-mgmt-addr.service
+Wants=fps-firewall.service
+
+[Service]
+Type=simple
+User=fps
+Group=fps
+# FPS_MGMT_ADDR names the address of mgmt0, so the controller listens on the
+# management interface and on no other one.
+EnvironmentFile=/run/fps/mgmt.env
+# The plus sign runs the token step as root.
+ExecStartPre=+/usr/libexec/fps/fps-init-token
+ExecStart=/usr/bin/fps-controller -config /etc/fps/controller.yaml -listen ${FPS_MGMT_ADDR}:8443 -grpc-listen ${FPS_MGMT_ADDR}:8444
+StateDirectory=fps
+StateDirectoryMode=0750
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

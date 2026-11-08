@@ -1,0 +1,14 @@
+#cloud-config
+# Example NoCloud user-data for the FixingPointSystem appliance. Replace the key
+# with your own public key, then build the seed disk with
+#   cloud-localds seed.img user-data meta-data
+# and attach seed.img to the VM as a second disk.
+ssh_authorized_keys:
+  - ssh-ed25519 AAAA...replace-with-your-public-key you@example
+# Optional: choose the admin API token. Without this block the controller makes a
+# random one on its first start, and `sudo cat /etc/fps/admin.token` shows it.
+# write_files:
+#   - path: /etc/fps/admin.token
+#     owner: root:fps
+#     permissions: "0640"
+#     content: change-me-to-a-long-random-token

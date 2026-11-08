@@ -1,0 +1,4 @@
+# Build products, caches, and boot test scratch files stay out of the repository.
+/.cache/
+/build/
+/output/

@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# The management interface asks for an address with DHCP. For a static address,
+# put a drop-in file in /etc/systemd/network/10-fps-mgmt.network.d/ that sets
+# DHCP=no and adds Address= and Gateway= lines.
+[Match]
+Name=mgmt0
+
+[Network]
+DHCP=ipv4
+LinkLocalAddressing=ipv6
+
+[DHCPv4]
+UseDNS=yes
+UseRoutes=yes

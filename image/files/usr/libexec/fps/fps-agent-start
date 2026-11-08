@@ -1,0 +1,28 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Starts the agent against the controller on the management interface. The
+# settings come from /etc/fps/agent.env, and the management address comes from
+# /run/fps/mgmt.env, which fps-mgmt-addr.service writes.
+set -euo pipefail
+
+FPS_AGENT_ID=local
+FPS_CONTROLLER_URI=""
+FPS_AGENT_LABELS="role=all-in-one"
+FPS_AGENT_EXTRA_ARGS=""
+# shellcheck source=/dev/null
+. /etc/fps/agent.env
+# shellcheck source=/dev/null
+. /run/fps/mgmt.env
+
+uri="${FPS_CONTROLLER_URI:-http://${FPS_MGMT_ADDR}:8444}"
+
+args=(connect --controller "$uri" --agent-id "$FPS_AGENT_ID" --modules /usr/share/fps/modules)
+for label in $FPS_AGENT_LABELS; do
+	args+=(--label "$label")
+done
+# The extra arguments are a word list on purpose, for example "--redial-limit 0".
+# shellcheck disable=SC2206
+args+=($FPS_AGENT_EXTRA_ARGS)
+
+exec /usr/bin/fps-agent "${args[@]}"

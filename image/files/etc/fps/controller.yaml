@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Controller settings of the appliance. The unit passes the listen addresses on
+# the command line, because they are the address of mgmt0, which DHCP assigns:
+#   -listen ${FPS_MGMT_ADDR}:8443 -grpc-listen ${FPS_MGMT_ADDR}:8444
+log_level: info
+data_dir: /var/lib/fps
+# The agent on this VM registers itself. Set this to false and enroll agents with
+# POST /v1/agents when other machines may reach the management network.
+agent_auto_enroll: true
+tokens:
+  # /etc/fps/admin.token comes from cloud-init user-data, or the controller
+  # creates it on the first start. Read it with: sudo cat /etc/fps/admin.token
+  - { name: admin, scope: admin, token_file: /etc/fps/admin.token }
