@@ -10,7 +10,7 @@ use std::time::Duration;
 use fps_backend_kernel::{Connector, KernelListener};
 use fps_flow::template::Filler;
 use fps_interp::{session_rng, Session, SessionCtx, Side};
-use fps_sched::Schedule;
+use fps_sched::{RateHandle, Schedule};
 use fps_stats::Shard;
 use tokio::sync::{watch, Notify};
 use tokio::task::LocalSet;
@@ -32,7 +32,28 @@ pub(crate) struct WorkerStart {
     pub(crate) snapshot_interval: Duration,
     pub(crate) control: watch::Receiver<Control>,
     pub(crate) snapshots: Sender<WorkerSnapshot>,
-    pub(crate) ready: Sender<(u32, Result<Vec<SocketAddr>, RuntimeError>)>,
+    pub(crate) ready: Sender<(u32, Result<Ready, RuntimeError>)>,
+}
+
+/// What a worker reports when it is ready.
+pub(crate) struct Ready {
+    /// The bound listen addresses of a server worker.
+    pub(crate) addrs: Vec<SocketAddr>,
+    /// The mix entry name and the rate handle of a client worker.
+    pub(crate) rate: Option<(String, RateHandle)>,
+}
+
+/// The longest time that a client worker sleeps before it reads its rate
+/// handle again. A worker with nothing due, because its rate is 0 or its
+/// sessions sit at the cap, would otherwise never see a new target, and a
+/// worker that waits for a distant start would keep the old spacing.
+pub(crate) const RATE_POLL: Duration = Duration::from_millis(100);
+
+/// Returns when a client worker wakes next: at the due time of its schedule,
+/// but at most [`RATE_POLL`] after `now`.
+pub(crate) fn next_wake(due: Option<Instant>, now: Instant) -> Instant {
+    let poll = now + RATE_POLL;
+    due.map_or(poll, |d| d.min(poll))
 }
 
 /// The body of one worker thread.
@@ -165,13 +186,17 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
     let id = start.config.id;
     let role = start.config.role.clone();
     let prepared = match &role {
-        Role::Client(c) => Worker::new(&start, Side::Client, &c.flow).map(|w| (w, Vec::new())),
+        Role::Client(c) => Worker::new(&start, Side::Client, &c.flow).and_then(|w| {
+            let sched = Schedule::new(c.schedule.clone())
+                .map_err(|source| RuntimeError::Schedule { worker: id, source })?;
+            Ok((w, Vec::new(), Some(sched)))
+        }),
         Role::Server(s) => Worker::new(&start, Side::Server, &s.flow).and_then(|w| {
             let listeners = bind(id, s)?;
-            Ok((w, listeners))
+            Ok((w, listeners, None))
         }),
     };
-    let (worker, listeners) = match prepared {
+    let (worker, listeners, sched) = match prepared {
         Ok(p) => p,
         Err(e) => {
             let _ = start.ready.send((id, Err(clone_err(&e))));
@@ -179,7 +204,17 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
         }
     };
     let addrs = listeners.iter().map(KernelListener::local_addr).collect();
-    let _ = start.ready.send((id, Ok(addrs)));
+    let rate = match (&role, &sched) {
+        (Role::Client(c), Some(sched)) => Some((
+            c.flow
+                .entry
+                .clone()
+                .unwrap_or_else(|| c.flow.scenario.name.clone()),
+            sched.rate_handle(),
+        )),
+        _ => None,
+    };
+    let _ = start.ready.send((id, Ok(Ready { addrs, rate })));
     let worker = Rc::new(worker);
     let mut control = start.control;
     let mut tick = interval_at(
@@ -188,7 +223,10 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
     );
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let stop = match role {
-        Role::Client(c) => client_loop(&worker, *c, &mut control, &mut tick).await?,
+        Role::Client(c) => match sched {
+            Some(sched) => client_loop(&worker, *c, sched, &mut control, &mut tick).await,
+            None => Control::Run,
+        },
         Role::Server(_) => server_loop(&worker, listeners, &mut control, &mut tick).await,
     };
     // Open sessions finish within the ramp down time and are reset after it.
@@ -239,14 +277,10 @@ fn bind(worker: u32, s: &ServerConfig) -> Result<Vec<KernelListener>, RuntimeErr
 async fn client_loop(
     worker: &Rc<Worker>,
     c: ClientConfig,
+    mut sched: Schedule,
     control: &mut watch::Receiver<Control>,
     tick: &mut tokio::time::Interval,
-) -> Result<Control, RuntimeError> {
-    let wid = worker.id;
-    let mut sched = Schedule::new(c.schedule.clone()).map_err(|source| RuntimeError::Schedule {
-        worker: wid,
-        source,
-    })?;
+) -> Control {
     let ctx = Rc::new(ClientCtx {
         connector: Connector::new(c.connect.clone()),
         config: c,
@@ -255,7 +289,7 @@ async fn client_loop(
     loop {
         let state = *control.borrow_and_update();
         if state != Control::Run {
-            return Ok(state);
+            return state;
         }
         let mut open = worker.open.get();
         for start in sched.drain(&clock, open) {
@@ -279,19 +313,22 @@ async fn client_loop(
             });
         }
         if sched.is_finished(&clock) && worker.open.get() == 0 {
-            return Ok(Control::Run);
+            return Control::Run;
         }
         let due = sched
             .next_due(&clock, worker.open.get())
             .map(|d| clock.instant_at(d));
+        // Wake at least every RATE_POLL to read the rate handle, which also
+        // ends the wait of a paused schedule, whose next_due is None.
+        let wake = next_wake(due, Instant::now());
         tokio::select! {
             biased;
             r = control.changed() => {
                 if r.is_err() {
-                    return Ok(Control::Abort);
+                    return Control::Abort;
                 }
             }
-            () = sleep_until(due.unwrap_or_else(Instant::now)), if due.is_some() => {}
+            () = sleep_until(wake) => {}
             () = worker.closed.notified() => {}
             _ = tick.tick() => worker.send_snapshot(false),
         }
@@ -377,4 +414,21 @@ fn error_chain(e: &dyn std::error::Error) -> String {
         cur = c.source();
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wait_never_exceeds_the_poll_interval() {
+        let now = Instant::now();
+        assert_eq!(next_wake(None, now), now + RATE_POLL);
+        let far = now + Duration::from_secs(5);
+        assert_eq!(next_wake(Some(far), now), now + RATE_POLL);
+        let near = now + Duration::from_millis(7);
+        assert_eq!(next_wake(Some(near), now), near);
+        // An overdue start wakes at once.
+        assert_eq!(next_wake(Some(now), now), now);
+    }
 }
