@@ -38,6 +38,8 @@ A new agent reads four pages in order before claiming work.
 | [Coding Standards](Coding-Standards.md) | Rules and examples for Rust, Go, Python, TypeScript, shell, contracts, commits, and documentation |
 | [Testing](Testing.md) | Test levels, modular tests, module tests, regression tests, the namespace harness, and gate suites |
 | [Gates](Gates.md) | The gate acceptance suites, starting with the Gate 1 suite of QA-04, and how to run and read them |
+| [Image](Image.md) | The qcow2 base image of IMG-01: how to build it with Packer, boot test it under KVM, and its management interface isolation |
+| [SDK](SDK.md) | The Python SDK of CLI-01: the generated client, its currency check, and the start, wait, and report helpers |
 | [Controller](Controller.md) | The controller module, its flags, configuration file, logging, health endpoint, REST layer, test compiler, configuration store, module registry, agent manager, and checks |
 | [Engine](Engine.md) | Engine crates, the `SessionIo` seam, and the scenario and template compiler |
 | [Transport](Transport.md) | Transport backends, starting with the kernel TCP backend, its socket options, and its loopback tests, and the TLS module of TRN-04 |
@@ -63,4 +65,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phases 0 and 1 are complete, and the owner signed off Gate 1 on 2026-11-05. Phase 2 batch 11 merged CON-05, CON-10, TRN-04, MOD-03, ENG-11, and CTL-21. Batch 12 merged session capture ENG-12, run time rate changes ENG-13, the new failure reasons and side label in the interpreter and runtime ENG-15, profiles and distributions in the template engine ENG-16, module settings and port locations in the controller store CTL-22, and the client side default in metric views CTL-23, which also fixed two intermittent controller tests. The qcow2 image IMG-01 waits for its build and boot test on the owner host. The coordinator updates this line after each batch.
+Phases 0 and 1 are complete, and the owner signed off Gate 1 on 2026-11-05. Phase 2 batches 11 and 12 delivered TLS, content generators, the WebAssembly host, session capture, run time rate changes, profiles and distributions, and the protocol and scenario contract changes CON-05 and CON-10. Batch 13 merged the qcow2 image IMG-01 after it built and passed all 26 boot checks on the owner host, runtime rate handles ENG-18, scenario validation in the registry CTL-25, the HTML report renderer CTL-13, the Python SDK CLI-01, the controller PKI for mutual TLS CTL-15, and module settings in the agent protocol CON-11. The coordinator updates this line after each batch.
