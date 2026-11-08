@@ -1,16 +1,12 @@
 # Handoff CLI-01 Python SDK
 
-<!-- Copy this file to docs/handoff/<ID>.md when you claim a work package.
-     Update it at every checkpoint. A successor reads only this file, the
-     issue, and the branch, so write for an agent that knows nothing else. -->
-
 | Field | Value |
 |---|---|
 | Issue | #168 |
 | Branch | `wp/CLI-01` |
-| Pull request | #0 |
+| Pull request | not opened yet |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-c1a0e1, lease until 2026-11-08T22:22:01Z |
 | Last verified commit | none |
 
@@ -18,48 +14,57 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Goal
 
-State the outcome in two or three sentences, copied or condensed from the issue.
+Generate a Python client from the OpenAPI contract and add helpers for start, wait, and report, with a currency check and tests against a stub server built from the OpenAPI examples. The package has no runtime dependency.
 
 ## Plan
 
-Each step takes at most 30 minutes of work and ends in a state that tests can check.
-
-- [ ] 1. First step
-- [ ] 2. Second step
+- [x] 1. Generator `sdk/python/scripts/generate_client.py` and the committed `_generated.py`
+- [x] 2. `Client` transport, bearer token, errors, and run helpers
+- [x] 3. Stub server and tests (client and currency check)
+- [x] 4. README, `docs/wiki/SDK.md`, log entry
+- [ ] 5. Open the pull request, wait for CI, request review
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- `cd sdk/python && python3 -m pytest -q`: 30 passed.
+- `ruff format --check`, `ruff check`, and `mypy --config-file pyproject.toml fixingpoint scripts tests`: clean.
+- `python3 scripts/generate_client.py --check`: exit 0.
+- `plan.py check`, `render --check`, and `lint`: ok.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+The pull request and CI. No workflow covers `sdk/python/`, so CI runs nothing for it until the coordinator adds `.github/workflows/cli-sdk.yml` and `mk/cli.mk` (described in the log entry).
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Open the pull request and set the status to ready for review.
 
 ## Blockers and open questions
 
-Write "none" or name each blocker with a link to its issue.
+none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- The generator needs PyYAML and the client does not, so the SDK stays dependency free at runtime.
+- The generated file is excluded from ruff and mypy errors, because the generator controls its style.
+- The OpenAPI document has no per operation examples, so the stub builds bodies from the response schemas and uses the documented `examples` properties.
+- `wait_for_run` returns a failed run by default and raises `RunFailedError` on request, so callers can read the reason either way.
+- The client refuses redirects so the bearer token cannot leak to another host.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+The worktree guard refuses heredocs and `source` in shell commands, so write files with the editor tools.
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+cd sdk/python && python3 -m pytest -q    # 30 passed
+python3 scripts/generate_client.py --check
 ```
 
 ## Session log
 
-Append one row per session start, checkpoint, release, block, takeover, and finish. Never edit earlier rows.
-
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
+| 2026-11-08T22:07Z | claude-c1a0e1 | claim | none | claimed #168 |
+| 2026-11-08T22:25Z | claude-c1a0e1 | checkpoint | none | code, tests, docs written |

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Tools for the generator, the tests, and the linters of the SDK. The SDK itself needs
+# only the standard library.
+pytest>=8.0              # MIT
+PyYAML>=6.0              # MIT
+ruff==0.17.3             # MIT
+mypy==2.4.1              # MIT
+types-PyYAML             # Apache-2.0
