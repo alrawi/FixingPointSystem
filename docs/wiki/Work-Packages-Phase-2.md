@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 66 work packages. Packages marked critical path gate the phase.
+This page lists 69 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -77,6 +77,9 @@ flowchart LR
   ENG_18["ENG-18<br/>Rate handles and paused worker wake in the runtime"]
   CTL_25["CTL-25<br/>Scenario contract v0.3 in the controller"]
   CON_12["CON-12<br/>Side selection in the run metrics API"]
+  CTL_26["CTL-26<br/>Serve the HTML report"]
+  CTL_27["CTL-27<br/>Mutual TLS in the controller"]
+  AGT_08["AGT-08<br/>Mutual TLS and enrollment in the agent"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -141,6 +144,9 @@ flowchart LR
   CON_10 --> CTL_25
   ENG_16 --> CTL_25
   CTL_23 --> CON_12
+  CTL_13 --> CTL_26
+  CTL_15 --> CTL_27
+  CTL_27 --> AGT_08
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -215,6 +221,9 @@ flowchart LR
 | [ENG-18](#eng-18-rate-handles-and-paused-worker-wake-in-the-runtime) | Rate handles and paused worker wake in the runtime | S | ENG-13 |  |
 | [CTL-25](#ctl-25-scenario-contract-v03-in-the-controller) | Scenario contract v0.3 in the controller | S | CON-10, ENG-16 |  |
 | [CON-12](#con-12-side-selection-in-the-run-metrics-api) | Side selection in the run metrics API | S | CTL-23 |  |
+| [CTL-26](#ctl-26-serve-the-html-report) | Serve the HTML report | S | CTL-13 |  |
+| [CTL-27](#ctl-27-mutual-tls-in-the-controller) | Mutual TLS in the controller | M | CTL-15 |  |
+| [AGT-08](#agt-08-mutual-tls-and-enrollment-in-the-agent) | Mutual TLS and enrollment in the agent | M | CTL-27 |  |
 
 ## CON Contracts
 
@@ -553,6 +562,23 @@ Acceptance.
 - [ ] A controller e2e run of contracts/examples/tests/dns_zone.yaml answers from the configured zone.
 - [ ] Tests show both sides in a snapshot and the client default in agent criteria.
 
+### AGT-08 Mutual TLS and enrollment in the agent
+
+Phase 2 · size M · workstream AGT
+
+- **Depends on.** CTL-27
+- **Paths.** `engine/fps-agent/`
+
+The agent must dial the controller over mutual TLS, enroll with a one time token, and renew its certificate.
+
+Deliverables.
+
+- A TLS channel that trusts the controller CA and presents the agent certificate; enrollment with a P-256 key and a token read from a file or the environment, never argv; renewal before expiry while idle; flags for the CA file, token source, enrollment address, and key directory.
+
+Acceptance.
+
+- [ ] The controller e2e test enrolls an agent with a token and runs a plan over mutual TLS, and a handshake failure ends the agent with a clear error.
+
 ## CTL Controller
 
 ### CTL-21 Throughput rate calibration
@@ -728,6 +754,42 @@ Deliverables.
 Acceptance.
 
 - [ ] A registry test installs a module carrying contracts/examples/modules/http1/scenarios-pending/web_profile.yaml, and a scenario with an undeclared profile is still rejected.
+
+### CTL-26 Serve the HTML report
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CTL-13
+- **Paths.** `controller/internal/report/`
+
+CTL-13 renders the HTML report, but GET /v1/runs/{id}/report?format=html still answers 501.
+
+Deliverables.
+
+- The report handler builds the report as for JSON, adds the run's per second samples and its objective, renders it with report/html, and answers with the HTML content type and a Content-Security-Policy of default-src 'none' with inline styles allowed.
+
+Acceptance.
+
+- [ ] An API test fetches the HTML report of a finished run, and the page passes the no external requests check of CTL-13.
+
+### CTL-27 Mutual TLS in the controller
+
+Phase 2 · size M · workstream CTL
+
+- **Depends on.** CTL-15
+- **Paths.** `controller/internal/wiring/`, `controller/internal/agents/`, `controller/cmd/`
+
+CTL-15 built the controller PKI, but the agent gRPC listener is still plain and nothing serves enrollment.
+
+Deliverables.
+
+- The controller opens the authority from its data directory, serves agent gRPC with ServerTLSConfig, and serves the enrollment and renewal handler on a second listener.
+- Revoking an agent identity ends its open session, and the agent manager refuses a session whose certificate expired.
+- A way for operators to mint enrollment tokens and revoke identities, without a second writer of the PKI state.
+
+Acceptance.
+
+- [ ] The controller e2e test runs with mutual TLS, and an agent without a valid certificate cannot register.
 
 ## CLI Python SDK and command line client
 

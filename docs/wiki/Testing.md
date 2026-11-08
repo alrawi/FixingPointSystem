@@ -64,6 +64,7 @@ The targets that exist today are listed below.
 | `test-ops` | the plan and wiki tool tests and the Cargo workspace probe |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
 | `test-capture` (workflow `eng-capture`) | `FPS_REQUIRE_CAPTURE_TOOLS=1 cargo test -p fps-capture --test capture`: tshark parses the synthesized pcapng streams and decrypts TLS sessions from the embedded secrets and from the sidecar key log |
+| workflow `cli-sdk` | `cd sdk/python && python -m pytest -q` against a stub server built from the OpenAPI document, `python scripts/generate_client.py --check` for the currency check, plus ruff and `mypy --strict`, on Python 3.10 and 3.12 |
 | `test-mod-content` | `cargo test -p fps-module-content`, including the duplicate ratio over 10,000 bodies per generator type |
 | `lint-qa` | gofmt, go vet, and golangci-lint on the Go golden file helper, and ruff and `mypy --strict` on the Python one, each skipped with a notice when its tool is missing |
 | `test-qa` | the match, mismatch, and update tests of the three [golden file helpers](#golden-files) |

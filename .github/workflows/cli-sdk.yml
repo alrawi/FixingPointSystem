@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Workflow of the Python SDK under sdk/python/ (CLI-01): lint, type check, the
+# tests against the stub server, and the currency check that fails when the
+# generated client drifts from the OpenAPI contract.
+name: cli-sdk
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - sdk/python/**
+      - contracts/openapi/**
+      - .github/workflows/cli-sdk.yml
+  pull_request:
+    paths:
+      - sdk/python/**
+      - contracts/openapi/**
+      - .github/workflows/cli-sdk.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        python: ["3.10", "3.12"]
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install development tools
+        run: pip install -r requirements-dev.txt
+      - name: Currency check
+        run: python scripts/generate_client.py --check
+      - name: Lint and type check
+        if: matrix.python == '3.12'
+        run: |
+          ruff format --check .
+          ruff check .
+          mypy --strict fixingpoint
+      - name: Tests
+        run: python -m pytest -q

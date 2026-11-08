@@ -2423,3 +2423,49 @@ work_packages:
       - An optional side query parameter (client or server, default client) on the run metrics endpoint, additive, with a change note.
     acceptance:
       - The contract checks pass, and the change note states that omitting the parameter keeps today's answer.
+
+  # Follow-ups found in Phase 2 batch 13 (CTL-13, CTL-15).
+
+  - id: CTL-26
+    title: Serve the HTML report
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CTL-13]
+    paths: [controller/internal/report/]
+    summary: >-
+      CTL-13 renders the HTML report, but GET /v1/runs/{id}/report?format=html still answers 501.
+    deliverables:
+      - The report handler builds the report as for JSON, adds the run's per second samples and its objective, renders it with report/html, and answers with the HTML content type and a Content-Security-Policy of default-src 'none' with inline styles allowed.
+    acceptance:
+      - An API test fetches the HTML report of a finished run, and the page passes the no external requests check of CTL-13.
+
+  - id: CTL-27
+    title: Mutual TLS in the controller
+    phase: 2
+    workstream: CTL
+    size: M
+    depends_on: [CTL-15]
+    paths: [controller/internal/wiring/, controller/internal/agents/, controller/cmd/]
+    summary: >-
+      CTL-15 built the controller PKI, but the agent gRPC listener is still plain and nothing serves enrollment.
+    deliverables:
+      - The controller opens the authority from its data directory, serves agent gRPC with ServerTLSConfig, and serves the enrollment and renewal handler on a second listener.
+      - Revoking an agent identity ends its open session, and the agent manager refuses a session whose certificate expired.
+      - A way for operators to mint enrollment tokens and revoke identities, without a second writer of the PKI state.
+    acceptance:
+      - The controller e2e test runs with mutual TLS, and an agent without a valid certificate cannot register.
+
+  - id: AGT-08
+    title: Mutual TLS and enrollment in the agent
+    phase: 2
+    workstream: AGT
+    size: M
+    depends_on: [CTL-27]
+    paths: [engine/fps-agent/]
+    summary: >-
+      The agent must dial the controller over mutual TLS, enroll with a one time token, and renew its certificate.
+    deliverables:
+      - A TLS channel that trusts the controller CA and presents the agent certificate; enrollment with a P-256 key and a token read from a file or the environment, never argv; renewal before expiry while idle; flags for the CA file, token source, enrollment address, and key directory.
+    acceptance:
+      - The controller e2e test enrolls an agent with a token and runs a plan over mutual TLS, and a handshake failure ends the agent with a clear error.
