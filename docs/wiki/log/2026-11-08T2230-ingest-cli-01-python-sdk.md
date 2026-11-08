@@ -1,0 +1,13 @@
+## [2026-11-08] ingest | CLI-01 Python SDK
+
+The new package `sdk/python/` provides `fixingpoint`, a Python 3.10 client of the controller API with no runtime dependency. A committed generator, `sdk/python/scripts/generate_client.py`, turns `contracts/openapi/fps-api-v1.yaml` into `fixingpoint/_generated.py`, which holds TypedDicts and one method per operation, and `--check` fails when the committed file drifts from the contract. `Client` adds bearer token support, problem detail errors, and the helpers `start_run` (from a config id or document), `wait_for_run` (timeout, exponential backoff, failure reason), `get_report` (JSON, CSV, HTML), and `run_and_report`. The 30 tests run against a standard library stub server that answers each operation with the examples of the OpenAPI document. We described the design in [SDK](SDK.md).
+
+### Shared page notes
+
+- Home and sidebar: link the new page [SDK](SDK.md) once the batch merges.
+- Testing: add the SDK row, `cd sdk/python && python3 -m pytest -q` for the tests and `python3 scripts/generate_client.py --check` for the currency check, which needs PyYAML from `sdk/python/requirements-dev.txt`.
+- Coding Standards: the SDK follows the Python section (ruff, `mypy --strict`, pytest). The generated file is excluded from ruff and from mypy errors.
+- Makefile area: no `mk/cli.mk` exists, and the package may not add shared files, so `make lint test` does not run the SDK yet. Suggested file, which CLI-02 can extend for the Go client: `LINT_TARGETS += lint-cli-sdk`, `lint-cli-sdk: ruff format --check`, `ruff check`, and `mypy --config-file sdk/python/pyproject.toml sdk/python/fixingpoint sdk/python/scripts sdk/python/tests`, all with `cd sdk/python`; `TEST_TARGETS += test-cli-sdk` with `cd sdk/python && $(PYTHON) -m pytest -q`.
+- CI: no workflow covers `sdk/python/`. A new `.github/workflows/cli-sdk.yml` is needed: triggers on `sdk/python/**`, `contracts/openapi/**`, and `.github/**`; one job on `ubuntu-24.04` with `actions/setup-python@v5` at 3.12, `pip install -r sdk/python/requirements-dev.txt`, then the commands above. Add a matrix entry for Python 3.10 for the tests only, because the SDK promises 3.10 and the repository CI uses 3.12 everywhere else.
+- Contracts: the OpenAPI document has no per operation response examples, only `examples` on a few properties. The stub therefore builds bodies from the schemas. A CON package could add `examples` to the responses of `getRun`, `getRunReport`, and `startRun`, and the stub would use them without change. The SDK does not generate the SSE stream `streamRunMetrics`, which a follow-up may add with a small iterator helper.
+- Implementation Plan: CLI-01 is done once merged.
