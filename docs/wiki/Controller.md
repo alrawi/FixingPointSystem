@@ -19,7 +19,9 @@ The module has two packages after CTL-01.
 | `internal/runs/` | The run state machine, the orchestrator, and the run operations of /v1/runs (CTL-07) |
 | `internal/metrics/` | Snapshot aggregation, the metrics views and stream, and Prometheus exposition (CTL-08) |
 | `internal/report/` | Criteria evaluation and the JSON and CSV run reports (CTL-09) |
+| `internal/report/html/` | The self contained HTML run report with inline SVG charts (CTL-13) |
 | `internal/wiring/` | Builds the controller from its packages, the registry and agent adapters, and the combined REST server (CTL-17) |
+| `internal/pki/` | The controller CA, enrollment tokens, agent certificates, rotation, revocation, and the mutual TLS configuration (CTL-15) |
 
 Later packages add their own directories under `internal/`, as the [Implementation Plan](Implementation-Plan.md) assigns them. The `app.App` type owns every dependency, and the module has no package level mutable state. A later package mounts its handlers with `App.Handle` before `App.Run` starts, for example CTL-02 for the `/v1` API.
 
@@ -507,7 +509,7 @@ tokens:
 
 A token holds at least 16 bytes. A `token_file` holds the token alone, and the controller trims the white space around it. Names must be unique, and two entries must not hold the same token. A token that breaks a rule, or a token file that the controller cannot read, ends the process with exit code 2. Without tokens every `/v1` operation answers 401, and the controller logs a warning at startup.
 
-The gRPC service speaks plain TCP and trusts the `agent_id` of each request, because mutual TLS arrives with CTL-15. The controller logs a warning that agent identities are not verified. We therefore bind `grpc_listen` to a loopback or a lab network until then.
+The gRPC service speaks plain TCP and trusts the `agent_id` of each request, because mutual TLS arrives with CTL-15. The controller logs a warning that agent identities are not verified. We therefore bind `grpc_listen` to a loopback or a lab network until then. CTL-15 added the package that provides the certificates, and the [Mutual TLS](#mutual-tls) section lists the wiring that still has to follow.
 
 ### Components
 
@@ -611,7 +613,7 @@ The evaluator decides the run state as the report decides the report. It reads t
 |---|---|
 | `json`, the default | The `RunReport` schema, with the summary filled from the run totals, every criterion in the verdict with its `reason`, `observed` and `passed` only for compared criteria, `reason` of the run when it failed or aborted, and an empty `realism` list |
 | `csv` | One table with the columns `kind,name,op,threshold,value,result,detail`, with rows of kind `run` for the run fields, `criterion` for each criterion, and `metric` for each run total in catalog order |
-| `html` | 501 until a package adds it |
+| `html` | 501 until the handler calls `internal/report/html` (see [HTML report](#html-report)) |
 
 The CSV report writes numbers in plain decimal notation and prefixes text cells that start with `=`, `+`, `-`, or `@` with an apostrophe, so spreadsheets do not run them as formulas.
 
@@ -641,6 +643,28 @@ Bug #124 joined the criteria evaluator and the report endpoint of CTL-09 to the 
 `GET /v1/runs/{id}/report` answers JSON by default and CSV with `format=csv`. The format `html` still answers 501 from `report.API`. `TestServerRoutesEveryOperation` now expects six pending operations, and `TestNewServesRunReports` and `TestSetReportRoutesReportOperation` cover the default handler and the hook.
 
 `TestEndToEnd` proves the path through the binary. The example configuration gains the criterion `tls.resumption_ratio >= 0.5`, whose gauge only the CTL-09 evaluator computes. The fake agent snapshot carries `sessions.attempted`, `sessions.succeeded`, `sessions.failed`, `tls.handshakes`, and `tls.resumptions` both with labels and without, because the orchestrator reads only the unlabeled run totals. After the stop the test reads both criteria as passed with the observed values 0 and 0.5 from `GET /v1/runs/{id}`, from the JSON report, and from the criterion rows of the CSV report, and it checks `sessions_attempted` 7 in the report summary.
+
+## HTML report
+
+CTL-13 adds `controller/internal/report/html`, which renders the report of CTL-09 as one self contained HTML page. It uses only the standard library, `html/template` and `embed`.
+
+### Page
+
+The page holds, in this order, a header with the verdict and the state, the reason of the run, the summary (run id, configuration, state, duration, objective, times, seed, engine and module versions, agents, and the run totals), the criteria table, the realism table, and the charts. The criteria table shows each criterion with its rule, its label filter, its observed value, its result as the word `PASS`, `FAIL`, `MISSING`, or `INVALID`, and its reason, so the result never depends on color alone. A criterion that compared no value shows a dash. Every string of the report passes through `html/template`, so markup in a criterion reason, a module name, or an agent id shows as text.
+
+The charts are inline SVG that `chart.go` draws: one line chart per per second series with grid lines, value ticks in three significant digits (`610M`), a time axis in seconds from the first sample, and a line of minimum, maximum, last value, and sample count under each chart. A series that no sample holds gets no chart. The page draws the whole run values `sessions.concurrent`, `sessions.rate`, `throughput.bps`, `sessions.failed_ratio`, and `sessions.response_time.p99` from the samples with the key `*`. The style sheet is inline, and the colors are variables that `prefers-color-scheme: dark` redefines, so the page follows the system theme. A print style turns the page light, lets tables break across pages, and keeps a chart on one page. The page has no script, font, image, or link to another host.
+
+### Interface
+
+`html.FromReport(report.Report, html.Options)` builds a `html.Page`, a plain model of strings and numbers, and `html.Render(Page)` returns the document. `Options` carries what the report model does not hold: the `Objective` text (the run record does not keep the load objective, so the caller reads it from the test configuration and may use `html.FormatObjective`), the `Samples` of `metrics.Aggregator.Samples(id, api.MetricViewApplication, metrics.Window{})`, and the `Realism` rows, which stay empty until a package produces them. `html.ContentType` is the media type of the page.
+
+### Serving
+
+The package does not touch the REST API. `GET /v1/runs/{id}/report?format=html` already exists in `contracts/openapi/fps-api-v1.yaml` and answers 501 from `report.API.GetRunReport`. The follow up replaces that branch: it builds the report as for JSON, reads the samples from the aggregator (the `API` needs a `SamplesSource` next to its `TotalsSource`), calls `FromReport` and `Render`, and writes the body with `html.ContentType`. Because the page carries no external request, the handler may add `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` without breaking it.
+
+### Tests
+
+`TestGoldenPages` renders the report goldens `pass`, `fail`, `degraded`, and `labeled` of `controller/internal/report/testdata/` and compares the pages with `controller/internal/report/html/testdata/<name>.html`. The goldens carry a deterministic ramp as the per second series, because the JSON goldens hold no samples. `go test ./internal/report/html/ -update` rewrites them. `TestNoExternalRequests` parses each page and fails on any `src`, `href`, `srcset`, `action`, or similar attribute with an `http`, `https`, or protocol relative URL, on any `<script>` element, on a `<link rel=stylesheet>`, on `<img>`, `<iframe>`, and similar elements, and on `@import` or `url()` in the style, and `TestViolationsFindsExternalReferences` shows that the check catches each case. `TestEscapesReportStrings` puts markup in a criterion reason, and `TestEscapesEveryField` and `TestNoExternalRequestsWithHostileStrings` put a script, an image, and a link in every text field of the page. `TestFromReport`, `TestFromReportVerdicts`, and `TestChartsFromSamples` cover the conversion, and further tests cover the chart geometry, the number format, and an empty page. The targets `make lint-ctl-report-html test-ctl-report-html` run the package alone, and `lint-ctl` and `test-ctl` cover it too.
 
 ## Metrics endpoint token
 
@@ -708,3 +732,85 @@ The orchestrator calls `calibrate.New` when a run with a `throughput_bps` object
 ### Tests
 
 `calibrate_test.go` simulates the closed loop with noisy sessions (a standard deviation of 40 percent per session and 5 percent per window) for estimates of 0.25, 0.5, 1, 2, and 4 times the true bytes per session, over 40 seeds each. Every run stays within 5 percent of the objective from update 25 on, every step stays within the bound, settled steps stay within 5 percent, and direction reversals stay few. A noise free run moves monotonically, a step test checks the exact 1.5x sequence, and further tests cover mixes of entries with unnormalized weights, the factor bound, the dead band, the minimum session count, immutability of the state, and every validation error.
+
+## Mutual TLS
+
+CTL-15 added the package `internal/pki`. It gives the control channel between the controller and its agents mutual TLS, and it uses only the standard library (`crypto/x509`, `crypto/tls`, `crypto/ecdsa`). The package is not wired into the gRPC server or the agent yet, so the binary still speaks plain TCP. [What the wiring must change](#what-the-wiring-must-change) lists the rest.
+
+```go
+pa, err := pki.Open(pki.Config{Dir: "/var/lib/fps/pki", OnRevoke: endSession}) // CA on first start
+tok, expires, _ := pa.NewToken("agent-a", time.Hour)       // the operator hands tok to the agent once
+tlsCfg, _ := pa.ServerTLSConfig("ctl.lab.example", "10.0.0.5")
+grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(tlsCfg)))
+enrollCfg, _ := pa.EnrollTLSConfig("ctl.lab.example", "10.0.0.5")
+// serve pa.Handler() behind enrollCfg on a second listener
+pa.Revoke("agent-a")                                       // ends the identity at once
+```
+
+### The CA
+
+`Open` generates the CA on the first start and loads it afterwards. The directory holds three files. `ca.key` has mode 0600 and the directory has mode 0700, `ca.crt` is public, and `state.json` has mode 0600 and holds the enrollment state. The CA is an ECDSA P-256 key with a 10 year certificate that may sign only end entity certificates (`MaxPathLen` 0). `Open` refuses to start when `ca.key` is readable by group or others, when only one of the two files exists, when the certificate does not match the key, when the CA expired, or when `state.json` is damaged, because each case means that the trust anchor is not what the controller wrote. An empty `Dir` keeps everything in memory for tests. `CAFingerprint` returns the SHA-256 digest of the CA certificate, which an operator can pin on the agent. The controller must be the only writer of the directory.
+
+The controller server certificate comes from the same CA. The authority creates it in memory for the host names and addresses that agents dial, which become its subject alternative names, lets it live for 30 days, and replaces it when a third of its life remains.
+
+### Enrollment tokens
+
+`NewToken(agentID, ttl)` creates a token of the form `id.secret` for one agent identity. The identity must match the Id pattern of the REST contract. The lifetime defaults to one hour and has the cap of seven days. The state keeps only the SHA-256 digest of the secret, so the returned string is the only copy. A check looks up the record by id and compares the two digests with `crypto/subtle.ConstantTimeCompare`, and an unknown id costs the same work as a wrong secret. A token works once. The exchange marks it used before it issues the certificate, under one lock, so 16 concurrent exchanges of one token yield one certificate, and a failed write of the state undoes the mark.
+
+| Failure | Error |
+|---|---|
+| Unknown id, wrong secret, or malformed token | `ErrInvalidToken`, which never says which |
+| A valid token that was used before | `ErrTokenUsed` |
+| A valid token past its expiry | `ErrTokenExpired` |
+| A CSR that the CA cannot use | `ErrInvalidCSR`, and the token stays unused |
+
+The HTTP handler answers all token and certificate failures with the same 401 body, so a caller learns nothing from the difference.
+
+### Certificates, rotation, and revocation
+
+`Enroll(token, csrDER)` issues a client certificate for the identity that the token names. The CSR must carry an ECDSA key on P-256 or P-384 with a valid signature, and its subject must be empty or name the same identity. The CA copies nothing from the CSR except the public key, so an agent cannot ask for another name, a DNS name, or a CA certificate. The certificate has the subject common name `agentID`, the client authentication usage only, and a lifetime of 24 hours by default (`Config.ClientLifetime`). The identity comes from the common name, which is also what `agents.PeerCertIdentity` reads, so the agent manager needs no change to take the identity from the certificate.
+
+`Renew(cert, csrDER)` issues a new certificate for the identity of a certificate that the agent presented on a TLS connection. It verifies the presented certificate against the CA again, so it works on its own. An expired, foreign, or revoked certificate fails, and the agent then enrolls again with a new token. `RenewAt` gives the time to renew, which is when a third of the lifetime remains, and the response of the handler carries it as `renew_at`. A new key per renewal is the agent's choice. The old certificate stays valid until it expires, so an agent that lost the reply can try again.
+
+The authority keeps an allow list of the serial numbers that it issued, with their identity and expiry. `Revoke(agentID)` deletes the certificates and the unused tokens of the identity, and it calls `Config.OnRevoke` so that the caller can close the open session, because a TLS handshake is the only place where the certificate is checked. A certificate that the CA signed but that the allow list does not hold fails closed. This covers a lost state file and replaces a revocation list. The agent can enroll again only with a token that `NewToken` creates after the revocation. The allow list drops expired entries on every write, so it stays small.
+
+### The TLS configuration
+
+`ServerTLSConfig(names...)` returns the `tls.Config` for the gRPC server. It requires TLS 1.3 and offers `h2`. It sets `ClientAuth` to `RequireAndVerifyClientCert` with the CA as the only client root, so the standard library verifies the chain, the validity, and the client authentication usage. A `VerifyConnection` hook then calls `Authorize`, which checks the allow list and that the serial belongs to the identity in the subject. Session tickets are off, so every connection runs the full handshake and a revocation holds at the next dial. The configuration reads the time from the authority's clock. A client without a certificate, with a certificate of another CA, with an expired certificate, or with a revoked identity never completes the handshake.
+
+`EnrollTLSConfig(names...)` serves the second listener of `Handler`. It does not require a client certificate, because an agent that enrolls has none, and it verifies a certificate that the client does present, which `POST /renew` relies on.
+
+| Endpoint | Body | Answer |
+|---|---|---|
+| `POST /enroll` | `{"token", "csr_pem"}`, no client certificate | 200 with `agent_id`, `certificate_pem`, `ca_pem`, `not_before`, `not_after`, `renew_at`. 401 for any token failure, 400 for a bad body or CSR |
+| `POST /renew` | `{"csr_pem"}`, presents the current certificate | The same answer. 401 without a valid certificate, 400 for a bad CSR or another identity |
+
+`ClientTLSConfig`, `KeyPair`, and `NewCSR` serve Go clients and tests.
+
+### What the wiring must change
+
+The controller wiring (`internal/app`, `internal/wiring`, and `cmd/fps-controller`, outside CTL-15) has to do six things.
+
+1. Open the authority in `wiring.New` from a directory such as `data_dir/pki`, with new settings for the directory, the names for the server certificate, and the address of the enrollment listener.
+2. Build the gRPC server with `grpc.Creds(credentials.NewTLS(pa.ServerTLSConfig(names...)))` in place of plain TCP, serve `pa.Handler()` behind `pa.EnrollTLSConfig(names...)` on the second listener, and keep `agents.Config.Identity` at `PeerCertIdentity`, which is already the default. `ClaimedIdentity` and the startup warning then go away. `Register` already answers `UNAUTHENTICATED` when the identity differs from `agent_id`.
+3. Give the agent manager a method that ends the session of one agent and pass it as `Config.OnRevoke`. The manager should also end or refuse a session whose certificate expired, once the agent is idle, because Go checks the certificate at the handshake only.
+4. Give operators a way to create tokens and revoke identities. The OpenAPI contract has no operation for it, so this needs a contract change (for example an optional `enrollment_token` in the answer of `POST /v1/agents` and a revoke operation) or a subcommand of the binary. A subcommand must not write `state.json` while the controller runs, because the controller is the single writer.
+5. Decide what `agent_auto_enroll` means with certificates. We suggest that it only lets an identity with a valid certificate skip `POST /v1/agents`, and that it never replaces a certificate.
+6. Update the note in the image that says the controller and gRPC are plain until TLS lands, and have the image provisioning write the enrollment token for the agent the way it writes the REST token today.
+
+The Rust agent (`engine/fps-agent`, AGT) has to do the following.
+
+1. Build the tonic channel with TLS. This needs the tonic `tls` feature with a rustls provider. The channel trusts the CA from a file or a pinned fingerprint, presents the client certificate and key, uses the `https://` scheme, and sets the server name to a name in the controller certificate. The check for `http://` addresses can stay for local tests.
+2. Enroll when it has no certificate. It generates an ECDSA P-256 key, writes it with mode 0600, builds a CSR with the common name set to its `--agent-id`, and sends the token and the CSR to the enrollment endpoint over TLS that trusts the CA. The token comes from a file or an environment variable, never from the command line, and the agent deletes it after the exchange. New flags are needed for the CA file, the token source, the enrollment address, and the directory that holds the key and the certificate.
+3. Renew. From `renew_at` on, and before the certificate expires, it calls `POST /renew` with its current certificate and a fresh CSR, writes the new files atomically, and uses them for the next dial. It should redial only while no plan runs, because D12 item 12 drops the plan on a lost session. When the certificate is expired or revoked it logs the reason and enrolls again only if a new token exists.
+4. Treat `UNAUTHENTICATED` and a handshake failure as permanent, because redialing cannot fix them, and follow the redial limit of D12 item 11.
+
+#### Is a contract change needed
+
+Not for this package, and the first wiring can go ahead without one, because the enrollment endpoint is an HTTPS API that `pki` serves and that no proto file describes. The endpoint adds a new HTTP client to the agent (for example `hyper-util` or `reqwest` with rustls), which is the cost of this choice. The alternative is an `Enroll` and a `Renew` RPC in `fps.agent.v1`. The agent then reuses its tonic stubs and needs no HTTP client, and one listener can serve everything with `VerifyClientCertIfGiven`, since `PeerCertIdentity` already refuses a call without a certificate. That choice is a CON change with a regeneration of `agentpb` and the Rust stubs, and the owner approves contracts, so we did not make it. We recommend the RPC when the owner wants a single listener and one client stack, and the HTTP endpoint otherwise. The REST operations for tokens and revocation need a contract change in both cases, unless a subcommand serves them.
+
+### Tests
+
+The tests open real TLS connections on the loopback interface. `TestMutualTLSAdmitsOnlyValidCertificates` starts a TLS server with `ServerTLSConfig`, shows that a freshly enrolled certificate is accepted and that the server reads the agent identity from the certificate subject, and shows that these clients are rejected: no client certificate, a certificate of another CA, a certificate that the CA signed without a record, a revoked identity, and an expired certificate. The clock of the authority is settable, so the expiry test moves it past `NotAfter`. `TestTokens` covers reuse, expiry at the exact instant, wrong and unknown and malformed tokens, a CSR for another identity, an RSA key, the lifetime limits, and 16 concurrent exchanges of one token. `TestRotation` renews a certificate directly and checks that an expired, foreign, or revoked certificate cannot renew. `TestHandlerEnrollAndRenewOverTLS` drives both endpoints over TLS. Further tests check the file modes of the CA, the refusal of a loose key, a half CA, a mismatched pair, a damaged state, and an expired CA, that the state never holds a token secret, and that used tokens and revocations survive a restart.
+
+`make test-ctl-pki lint-ctl-pki` runs the package alone, and `make lint-ctl test-ctl` covers it with the rest of the module.

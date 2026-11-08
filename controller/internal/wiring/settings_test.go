@@ -22,9 +22,14 @@ import (
 	"github.com/alrawi/FixingPointSystem/controller/internal/registry"
 )
 
-// pendingDir holds the examples that wait for CON-11 to move them, relative
-// to this package directory.
-const pendingDir = "../../../contracts/examples/tests-pending"
+// testsDir holds the example test configurations, relative to this package
+// directory.
+const testsDir = "../../../contracts/examples/tests"
+
+// settingsExamples names the examples that use pinned and spread port
+// locations, module settings, and criterion filters, which CON-11 moved out of
+// tests-pending.
+var settingsExamples = []string{"dns_zone", "filtered_criteria", "port_locations"}
 
 func TestCatalogReportsSettingsSchema(t *testing.T) {
 	ctx := context.Background()
@@ -81,10 +86,10 @@ func startAgent(ctx context.Context, t *testing.T, addr, id string, ifaces ...st
 	t.Cleanup(ag.Close)
 }
 
-// TestPendingExamplesValidateThroughTheAPI stores each pending example through
-// the REST API and validates it against the installed example modules and
+// TestSettingsExamplesValidateThroughTheAPI stores each of settingsExamples
+// through the REST API and validates it against the installed example modules and
 // two registered agents, which runs the compiler dry run.
-func TestPendingExamplesValidateThroughTheAPI(t *testing.T) {
+func TestSettingsExamplesValidateThroughTheAPI(t *testing.T) {
 	cfg := testConfig(t, t.TempDir())
 	cfg.AgentAutoEnroll = true
 	c := newController(t, cfg)
@@ -106,12 +111,8 @@ func TestPendingExamplesValidateThroughTheAPI(t *testing.T) {
 	startAgent(ctx, t, ln.Addr().String(), "agent-a", "eth1", "eth2")
 	startAgent(ctx, t, ln.Addr().String(), "local", "lo")
 
-	paths, err := filepath.Glob(filepath.Join(pendingDir, "*.yaml"))
-	if err != nil || len(paths) != 3 {
-		t.Fatalf("pending examples = %v, %v, want 3 files", paths, err)
-	}
-	for _, p := range paths {
-		name := strings.TrimSuffix(filepath.Base(p), ".yaml")
+	for _, name := range settingsExamples {
+		p := filepath.Join(testsDir, name+".yaml")
 		body, err := os.ReadFile(p) //nolint:gosec // G304: fixed test directory
 		if err != nil {
 			t.Fatal(err)
