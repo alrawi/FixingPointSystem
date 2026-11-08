@@ -10,7 +10,7 @@
 | Branch | `wp/ENG-18` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-9bcc05, lease until 2026-11-08T22:22:24Z |
 | Last verified commit | none |
 
@@ -24,22 +24,22 @@ The runtime returns a `fps_sched::RateControl` that maps each mix entry name to 
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Expose handles: workers build their schedule before ready and report the handle; the runtime registers them.
-- [ ] 2. Bounded wake in the client loop.
-- [ ] 3. Runtime test: pause, resume, two rate changes.
+- [x] 1. Expose handles: workers build their schedule before ready and report the handle; the runtime registers them.
+- [x] 2. Bounded wake in the client loop.
+- [x] 3. Runtime test: pause, resume, two rate changes.
 - [ ] 4. Wiki, log entry, checks, PR.
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+`cargo test -p fps-runtime` green (unit, loopback incl. 2 new tests, properties); `cargo clippy -p fps-runtime --all-targets -- -D warnings` and `cargo fmt --check` clean; `cargo check -p fps-agent --all-targets` builds. The paused wake test fails with RATE_POLL set to 10 s.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Step 4: PR and CI. Gap: UDP workers of fps-agent register no handles.
 
 ## Next action
 
-Step 1.
+Open the PR and wait for CI.
 
 ## Blockers and open questions
 
@@ -47,7 +47,7 @@ Write "none" or name each blocker with a link to its issue.
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+`FlowRef::entry` (optional) names the mix entry, because ClientConfig is built by literal in fps-agent, which this package may not touch. The poll caps every client sleep, not only the None case, so a low rate raised while a distant start is pending also reacts within 100 ms. The Schedule is built before ready so the handle is registered before start returns.
 
 ## Pitfalls
 

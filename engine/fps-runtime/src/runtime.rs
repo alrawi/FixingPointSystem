@@ -4,10 +4,12 @@
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use fps_interp::Side;
+use fps_sched::RateControl;
 use fps_stats::Snapshot;
 use tokio::sync::watch;
 
@@ -62,6 +64,7 @@ impl Runtime {
             snapshots: snap_rx,
             collector: Collector::new(),
             listen: BTreeMap::new(),
+            rates: Arc::new(RateControl::new()),
         };
         let mut failure = None;
         for w in config.workers.iter().cloned() {
@@ -89,8 +92,13 @@ impl Runtime {
         handle.threads = threads;
         for _ in 0..handle.threads.len() {
             match ready_rx.recv() {
-                Ok((id, Ok(addrs))) => {
-                    handle.listen.insert(id, addrs);
+                Ok((id, Ok(ready))) => {
+                    handle.listen.insert(id, ready.addrs);
+                    if let Some((entry, rate)) = ready.rate {
+                        if let Err(source) = handle.rates.register(&entry, rate) {
+                            failure.get_or_insert(RuntimeError::Schedule { worker: id, source });
+                        }
+                    }
                 }
                 Ok((_, Err(e))) => {
                     failure.get_or_insert(e);
@@ -123,6 +131,7 @@ pub struct RuntimeHandle {
     snapshots: Receiver<WorkerSnapshot>,
     collector: Collector,
     listen: BTreeMap<u32, Vec<SocketAddr>>,
+    rates: Arc<RateControl>,
 }
 
 impl RuntimeHandle {
@@ -130,6 +139,19 @@ impl RuntimeHandle {
     /// order and in the order of each worker's configuration.
     pub fn listen_addrs(&self) -> Vec<SocketAddr> {
         self.listen.values().flatten().copied().collect()
+    }
+
+    /// Returns the registry of the rate handles of the client workers, by mix
+    /// entry name, for the agent to drive with `UpdateRates`.
+    ///
+    /// Every client worker registered its handle before [`Runtime::start`]
+    /// returned, under [`crate::FlowRef::entry`] or the scenario name. The registry
+    /// outlives the handle, so a clone of the [`Arc`] stays valid after
+    /// [`RuntimeHandle::join`], when it changes nothing. A worker reads its
+    /// handle at least every 100 ms, also when its rate is 0 or its sessions
+    /// sit at the cap, so a change takes effect within that time.
+    pub fn rate_control(&self) -> Arc<RateControl> {
+        Arc::clone(&self.rates)
     }
 
     /// Stops new sessions and lets open sessions finish within `ramp_down`,
