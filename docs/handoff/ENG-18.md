@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #240 |
 | Branch | `wp/ENG-18` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #246 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-9bcc05, lease until 2026-11-08T22:22:24Z |
 | Last verified commit | none |
 
@@ -27,7 +27,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Expose handles: workers build their schedule before ready and report the handle; the runtime registers them.
 - [x] 2. Bounded wake in the client loop.
 - [x] 3. Runtime test: pause, resume, two rate changes.
-- [ ] 4. Wiki, log entry, checks, PR.
+- [x] 4. Wiki, log entry, checks, PR.
 
 ## Done and verified
 
@@ -35,11 +35,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Step 4: PR and CI. Gap: UDP workers of fps-agent register no handles.
+PR #246 opened, CI green. Gap: UDP workers of fps-agent register no handles.
 
 ## Next action
 
-Open the PR and wait for CI.
+None; the coordinator reviews and merges.
 
 ## Blockers and open questions
 
@@ -66,3 +66,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-08 | claude-9bcc05 | claim | - | claimed #240 |
+| 2026-11-08 | claude-9bcc05 | finish | 9601558 | PR #246, CI green, ready for review |
