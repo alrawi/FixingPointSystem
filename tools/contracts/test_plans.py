@@ -157,7 +157,7 @@ def test_app_sim_needs_both_roles(plan: dict, tmp_path: Path) -> None:
     assert any("app_sim needs" in m for m in errors_for(doc, tmp_path))
 
 
-# Agent control protocol 0.2.0 on the CON-06 shape. Agents dial the controller, so the
+# Agent control protocol 0.2.1 on the CON-06 shape. Agents dial the controller, so the
 # controller serves the only service and the agent serves none.
 
 GRPC_CODES = {
@@ -228,8 +228,8 @@ def _numbers(message: str) -> dict[str, int]:
 
 
 def test_version_0_1_field_numbers_are_unchanged() -> None:
-    """Version 0.2.0 only adds fields, so every 0.1.0 number keeps its meaning."""
-    assert _numbers("ModuleRef") == {
+    """Versions 0.2.0 and 0.2.1 only add fields, so every 0.1.0 number keeps its meaning."""
+    assert {k: v for k, v in _numbers("ModuleRef").items() if v <= 5} == {
         "name": 1,
         "version": 2,
         "digest": 3,
@@ -245,8 +245,18 @@ def test_version_0_1_field_numbers_are_unchanged() -> None:
     }
 
 
-def test_module_ref_leaves_field_6_for_settings() -> None:
-    assert 6 not in _numbers("ModuleRef").values()
+def test_module_ref_carries_settings_as_field_6() -> None:
+    desc = cp.proto_pool().FindMessageTypeByName("fps.agent.v1.ModuleRef")
+    field = desc.fields_by_name["settings"]
+    assert field.number == 6
+    assert field.message_type.full_name == "google.protobuf.Struct"
+
+
+def test_plan_with_module_settings_parses_and_round_trips(plan: dict, tmp_path: Path) -> None:
+    settings = {"zone_file": "zones/example.zone", "ttl": 300, "names": ["a", "b"]}
+    plan["modules"][0]["settings"] = settings
+    assert errors_for(plan, tmp_path) == []
+    assert cp.canonical(cp.parse_plan(json.dumps(plan))) == plan
 
 
 def test_error_codes_equal_grpc_status_codes() -> None:

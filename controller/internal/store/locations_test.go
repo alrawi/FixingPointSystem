@@ -5,7 +5,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -107,22 +106,13 @@ func TestRequiredAgents(t *testing.T) {
 	}
 }
 
-// pendingExamples reads contracts/examples/tests-pending/, where the examples
-// wait for CON-11 to move them.
-func pendingExamples(t *testing.T) []fixture {
-	t.Helper()
-	return readFixtures(t, filepath.Join(contracts, "examples", "tests-pending"))
-}
-
-// TestValidatePendingExamples validates the pending examples with the example
-// modules, so bare and */ locations and module settings pass the store.
-func TestValidatePendingExamples(t *testing.T) {
+// TestValidateSettingsExamples validates the examples that CON-11 moved out of
+// tests-pending with the example modules, so bare and */ locations and module
+// settings pass the store.
+func TestValidateSettingsExamples(t *testing.T) {
 	v := NewValidator(newSchema(t), exampleCatalog(t), exampleInventory())
-	exs := pendingExamples(t)
-	if len(exs) != 3 {
-		t.Fatalf("found %d pending examples, want 3", len(exs))
-	}
-	for _, ex := range exs {
+	for _, name := range []string{"dns_zone", "filtered_criteria", "port_locations"} {
+		ex := exampleNamed(t, name)
 		rep, err := v.Validate(context.Background(), mustCanonical(t, ex.data))
 		if err != nil {
 			t.Fatalf("%s: %v", ex.name, err)
@@ -135,21 +125,15 @@ func TestValidatePendingExamples(t *testing.T) {
 
 func TestValidateModuleSettingsPath(t *testing.T) {
 	v := NewValidator(newSchema(t), exampleCatalog(t), exampleInventory())
-	for _, ex := range pendingExamples(t) {
-		if ex.name != "dns_zone" {
-			continue
-		}
-		data := strings.Replace(string(ex.data), "zone_file: zones/example.test.zone", "zone_file: 5", 1)
-		rep, err := v.Validate(context.Background(), mustCanonical(t, []byte(data)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if rep.Valid || !hasFinding(rep.Findings, api.FindingSeverityError, "/modules/dns/settings") {
-			t.Errorf("report %+v, want an error at /modules/dns/settings", rep)
-		}
-		return
+	ex := exampleNamed(t, "dns_zone")
+	data := strings.Replace(string(ex.data), "zone_file: zones/example.test.zone", "zone_file: 5", 1)
+	rep, err := v.Validate(context.Background(), mustCanonical(t, []byte(data)))
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatal("pending example dns_zone is missing")
+	if rep.Valid || !hasFinding(rep.Findings, api.FindingSeverityError, "/modules/dns/settings") {
+		t.Errorf("report %+v, want an error at /modules/dns/settings", rep)
+	}
 }
 
 func TestCompilerPathCoversModules(t *testing.T) {

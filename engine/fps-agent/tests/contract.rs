@@ -111,6 +111,7 @@ fn module_ref_mirrors_the_proto_message() {
         digest: _,
         signature: _,
         signature_key_id: _,
+        settings: _,
     } = ModuleRef::default();
     let rust = table(&[
         ("name", 1),
@@ -118,6 +119,7 @@ fn module_ref_mirrors_the_proto_message() {
         ("digest", 3),
         ("signature", 4),
         ("signature_key_id", 5),
+        ("settings", 6),
     ]);
     assert_eq!(message_fields(&proto_text(), "ModuleRef"), rust);
 }

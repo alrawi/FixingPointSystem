@@ -7,7 +7,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 | File | Contract |
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.2.0 |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.0, unreleased |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.1, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.3 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.1.0 |
@@ -42,7 +42,7 @@ CON-05 adds three commands and the signature fields of module references. Every 
 | `StopCaptureResult` | Packets, bytes, dropped packets, and a `sha256:` digest of the pcapng file. The protocol does not yet say how the controller fetches the file | AGT-05 |
 | `ModuleRef.signature` and `ModuleRef.signature_key_id` | An Ed25519 signature over the UTF-8 bytes of the digest, and the name of the registry key that made it. Both are empty for an unsigned module | CTL-11, AGT-04 |
 
-`ModuleRef` field number 6 stays free for the `settings` field of CON-11. The new commands use the existing error codes, so the error code list is unchanged.
+CON-11 adds `ModuleRef.settings` (field 6) in version 0.2.1, described under [Module settings in the agent protocol](#module-settings-in-the-agent-protocol). The new commands use the existing error codes, so the error code list is unchanged.
 
 ## Checks
 
@@ -73,11 +73,17 @@ CON-09 applied decision D12 items 7, 9, 10, 14, and 22 to the test configuration
 | `settings` | Module manifest | JSON Schema with an object root that describes the module settings | CTL-18, MOD-19 |
 | `expected_bytes` | Module manifest | Estimated application payload bytes per session of each scenario with default parameters | CTL-21 |
 
-The examples that use `where`, `modules`, and the new location forms live under `contracts/examples/tests-pending/`, which neither the validator default nor the controller tests read. We check them with the command below. CTL-18 and CTL-20 taught the compiler these fields, but the store validation and the catalog adapter (CTL-22) and the `ModuleRef.settings` field of the agent protocol (CON-11) are still missing, so CON-11 moves them into `contracts/examples/tests/`. Until then a test with module settings compiles but fails at dispatch.
+The examples that use `where`, `modules`, and the new location forms, `port_locations.yaml`, `dns_zone.yaml`, and `filtered_criteria.yaml`, moved from `contracts/examples/tests-pending/` to `contracts/examples/tests/` with CON-11, so the validator default and the controller tests read them. CTL-18, CTL-20, and CTL-22 taught the compiler, the store validation, and the catalog adapter their fields.
 
 ```bash
-python3 tools/contracts/validate.py --tests contracts/examples/tests/*.yaml contracts/examples/tests-pending/*.yaml
+python3 tools/contracts/validate.py
 ```
+
+## Module settings in the agent protocol
+
+CON-11 adds `ModuleRef.settings` (field 6, `google.protobuf.Struct`) and moves the protocol from 0.2.0 to 0.2.1. The field carries `modules.<name>.settings` of the test configuration, which the compiler has already validated against the settings schema of the module manifest. In a plan file it appears as `modules[].settings`, an object, and it is left out when the test sets nothing. It is not part of the module tree, so no digest changes.
+
+The change takes a patch number because it adds one field and no command. The controller admits agents by the major and minor part of `engine_api`, so 0.3.0 would have locked out every agent until `DefaultEngineAPIs` changed. An agent of 0.2.0 skips the field and would run without the settings, so the controller sends a plan with module settings only to an agent that reports 0.2.1 or later. The Rust agent carries the settings through its plan parser and its conversions to and from the generated types. AGT-07 applies them. The entry `contracts/changes/CON-11.md` lists the compatibility checks.
 
 ## Metric catalog views, reasons, and side label
 

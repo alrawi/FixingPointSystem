@@ -221,7 +221,7 @@ func (f fixedRepo) Create(context.Context, Record) error        { return nil }
 func (f fixedRepo) Get(context.Context, string) (Record, error) { return f.rec, nil }
 
 func TestServerErrorsHideTheirCause(t *testing.T) {
-	smoke := examples(t)[0]
+	smoke := exampleNamed(t, "enterprise_mix_10g")
 	cause := errors.New("disk on fire")
 	for _, tc := range []struct {
 		name   string
@@ -261,7 +261,7 @@ func TestDefaultsAndRandomID(t *testing.T) {
 		t.Errorf("RandomID = %q, %q", a, b)
 	}
 	srv := testServer(t, h)
-	resp, data := do(t, srv, http.MethodPost, "/v1/configs", runToken, "application/yaml", examples(t)[0].data)
+	resp, data := do(t, srv, http.MethodPost, "/v1/configs", runToken, "application/yaml", exampleNamed(t, "enterprise_mix_10g").data)
 	if resp.StatusCode != http.StatusCreated {
 		t.Errorf("status %d, body %s", resp.StatusCode, data)
 	}

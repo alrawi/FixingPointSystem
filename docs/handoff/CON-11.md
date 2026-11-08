@@ -6,7 +6,7 @@
 | Branch | `wp/CON-11` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-c11a7e, lease until 2026-11-08T22:21:48Z |
 | Last verified commit | none |
 
@@ -16,9 +16,9 @@ Add `ModuleRef.settings` (field 6, `google.protobuf.Struct`) to the agent protoc
 
 ## Plan
 
-- [ ] 1. Proto field, version bump, change entry
-- [ ] 2. Rust mirror, conversion, plan parsing, round trip test
-- [ ] 3. Move examples, fix readers, wiki
+- [x] 1. Proto field, version bump, change entry
+- [x] 2. Rust mirror, conversion, plan parsing, round trip test
+- [x] 3. Move examples, fix readers, wiki
 - [ ] 4. PR and CI
 
 ## Done and verified

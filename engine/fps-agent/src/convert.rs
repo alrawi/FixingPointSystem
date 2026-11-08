@@ -44,6 +44,13 @@ pub enum ConvertError {
         /// The parameter.
         name: String,
     },
+    /// A module `settings` value has no JSON form, for example a number
+    /// that is not finite.
+    #[error("module {module}: settings are not a JSON object")]
+    Settings {
+        /// The module.
+        module: String,
+    },
     /// The snapshot JSON did not have the expected shape.
     #[error("snapshot: {0}")]
     Snapshot(String),
@@ -293,12 +300,20 @@ pub fn plan_from_pb(p: &pb::Plan) -> Result<Plan, PlanError> {
         modules: p
             .modules
             .iter()
-            .map(|m| plan::ModuleRef {
-                name: m.name.clone(),
-                version: m.version.clone(),
-                digest: m.digest.clone(),
+            .map(|m| {
+                Ok(plan::ModuleRef {
+                    name: m.name.clone(),
+                    version: m.version.clone(),
+                    digest: m.digest.clone(),
+                    settings: m
+                        .settings
+                        .as_ref()
+                        .map(|s| struct_to_json(&m.name, s))
+                        .transpose()?
+                        .unwrap_or_default(),
+                })
             })
-            .collect(),
+            .collect::<Result<Vec<_>, ConvertError>>()?,
         scenarios: p
             .scenarios
             .iter()
@@ -359,6 +374,73 @@ fn pb_param(v: &Json) -> prost_types::Value {
     prost_types::Value { kind: Some(kind) }
 }
 
+/// Converts module settings to a `google.protobuf.Struct`. Empty settings
+/// become an unset field, which the canonical JSON form omits.
+fn json_to_struct(m: &serde_json::Map<String, Json>) -> Option<prost_types::Struct> {
+    (!m.is_empty()).then(|| prost_types::Struct {
+        fields: m
+            .iter()
+            .map(|(k, v)| (k.clone(), json_to_value(v)))
+            .collect(),
+    })
+}
+
+fn json_to_value(v: &Json) -> prost_types::Value {
+    use prost_types::value::Kind;
+    let kind = match v {
+        Json::Null => Kind::NullValue(0),
+        Json::Bool(b) => Kind::BoolValue(*b),
+        Json::Number(n) => Kind::NumberValue(n.as_f64().unwrap_or_default()),
+        Json::String(s) => Kind::StringValue(s.clone()),
+        Json::Array(a) => Kind::ListValue(prost_types::ListValue {
+            values: a.iter().map(json_to_value).collect(),
+        }),
+        Json::Object(o) => Kind::StructValue(prost_types::Struct {
+            fields: o
+                .iter()
+                .map(|(k, v)| (k.clone(), json_to_value(v)))
+                .collect(),
+        }),
+    };
+    prost_types::Value { kind: Some(kind) }
+}
+
+/// Converts the `settings` of a `ModuleRef` back to a JSON object. An
+/// integral number becomes a JSON integer, as a plan file writes it.
+fn struct_to_json(
+    module: &str,
+    s: &prost_types::Struct,
+) -> Result<serde_json::Map<String, Json>, ConvertError> {
+    s.fields
+        .iter()
+        .map(|(k, v)| Ok((k.clone(), value_to_json(module, v)?)))
+        .collect()
+}
+
+fn value_to_json(module: &str, v: &prost_types::Value) -> Result<Json, ConvertError> {
+    use prost_types::value::Kind;
+    let bad = || ConvertError::Settings {
+        module: module.to_owned(),
+    };
+    Ok(match &v.kind {
+        None | Some(Kind::NullValue(_)) => Json::Null,
+        Some(Kind::BoolValue(b)) => Json::Bool(*b),
+        Some(Kind::StringValue(s)) => Json::String(s.clone()),
+        #[allow(clippy::cast_possible_truncation)]
+        Some(Kind::NumberValue(n)) if n.fract() == 0.0 && n.abs() < 9.0e15 => Json::from(*n as i64),
+        Some(Kind::NumberValue(n)) => serde_json::Number::from_f64(*n)
+            .map(Json::Number)
+            .ok_or_else(bad)?,
+        Some(Kind::ListValue(l)) => Json::Array(
+            l.values
+                .iter()
+                .map(|x| value_to_json(module, x))
+                .collect::<Result<_, _>>()?,
+        ),
+        Some(Kind::StructValue(s)) => Json::Object(struct_to_json(module, s)?),
+    })
+}
+
 /// Builds the generated `Plan` from a plan of the standalone mode, the
 /// inverse of [`plan_from_pb`]. Tests and tools use it to send a plan file
 /// in a `prepare` command.
@@ -390,6 +472,7 @@ pub fn plan_to_pb(p: &Plan) -> pb::Plan {
                 name: m.name.clone(),
                 version: m.version.clone(),
                 digest: m.digest.clone(),
+                settings: json_to_struct(&m.settings),
                 // The plan mirror has no signature yet, which AGT-04 adds.
                 ..Default::default()
             })
@@ -666,6 +749,7 @@ pub fn capabilities_to_pb(c: &proto::Capabilities) -> pb::Capabilities {
                 digest: m.digest.clone(),
                 signature: m.signature.clone(),
                 signature_key_id: m.signature_key_id.clone(),
+                settings: json_to_struct(&m.settings),
             })
             .collect(),
         labels: c
@@ -736,6 +820,31 @@ mod tests {
             .join("../../contracts/examples/plans/http_dns_smoke.json");
         let plan = Plan::load(&path).unwrap();
         let back = plan_from_pb(&plan_to_pb(&plan)).unwrap();
+        assert_eq!(format!("{back:?}"), format!("{plan:?}"));
+    }
+
+    #[test]
+    fn module_settings_round_trip_from_a_plan_file() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../contracts/examples/plans/http_dns_smoke.json");
+        let mut json: Json = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let settings = serde_json::json!({
+            "zone_file": "zones/example.zone",
+            "ttl": 300,
+            "ratio": 0.5,
+            "on": true,
+            "names": ["a", "b"],
+            "nested": { "k": null }
+        });
+        json["modules"][0]["settings"] = settings.clone();
+        let plan = Plan::parse(&json.to_string()).unwrap();
+        assert_eq!(Json::Object(plan.modules[0].settings.clone()), settings);
+        assert!(plan.modules[1].settings.is_empty());
+        let wire = plan_to_pb(&plan);
+        assert!(wire.modules[0].settings.is_some());
+        assert!(wire.modules[1].settings.is_none());
+        let back = plan_from_pb(&wire).unwrap();
+        assert_eq!(Json::Object(back.modules[0].settings.clone()), settings);
         assert_eq!(format!("{back:?}"), format!("{plan:?}"));
     }
 

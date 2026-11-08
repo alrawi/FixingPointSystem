@@ -58,7 +58,7 @@ func TestValidateReportsSchemaFindings(t *testing.T) {
 
 func TestValidateWithoutDependencies(t *testing.T) {
 	v := NewValidator(newSchema(t), nil, nil)
-	doc := mustCanonical(t, examples(t)[0].data)
+	doc := mustCanonical(t, exampleNamed(t, "enterprise_mix_10g").data)
 	rep, err := v.Validate(context.Background(), doc)
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestValidateWithoutDependencies(t *testing.T) {
 }
 
 func TestValidateDependencyErrors(t *testing.T) {
-	doc := mustCanonical(t, examples(t)[0].data)
+	doc := mustCanonical(t, exampleNamed(t, "enterprise_mix_10g").data)
 	boom := errors.New("boom")
 	for _, v := range []*Validator{
 		NewValidator(newSchema(t), fakeCatalog{err: boom}, exampleInventory()),

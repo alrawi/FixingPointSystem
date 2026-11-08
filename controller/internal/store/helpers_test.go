@@ -40,6 +40,18 @@ func examples(t *testing.T) []fixture {
 	return fs
 }
 
+// exampleNamed returns the configuration contracts/examples/tests/<name>.yaml.
+func exampleNamed(t *testing.T, name string) fixture {
+	t.Helper()
+	for _, f := range examples(t) {
+		if f.name == name {
+			return f
+		}
+	}
+	t.Fatalf("example %s is missing", name)
+	return fixture{}
+}
+
 func readFixtures(t *testing.T, dir string) []fixture {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
