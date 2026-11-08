@@ -46,3 +46,14 @@ lint-ctl-report-html:
 
 test-ctl-report-html:
 	cd controller && $(GO) test -race -cover ./internal/report/html/
+
+# CTL-25 scenario contract v0.3 in the module registry. The targets above cover
+# the package too, so these two give a fast loop for it alone.
+.PHONY: lint-ctl-registry test-ctl-registry
+lint-ctl-registry:
+	@out="$$(cd controller && gofmt -l internal/registry)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+	cd controller && $(GO) vet ./internal/registry/
+
+test-ctl-registry:
+	cd controller && $(GO) test -race -cover ./internal/registry/

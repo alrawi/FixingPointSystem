@@ -373,6 +373,25 @@ func checkTree(dir string) (Entry, error) {
 		}
 		seen[name] = p
 		names = append(names, name)
+		found, err := checkScenarioFile(root.FS(), p)
+		if err != nil {
+			verr.Findings = append(verr.Findings, Finding{Path: "file:" + p, Message: "read scenario: " + err.Error()})
+		}
+		verr.Findings = append(verr.Findings, found...)
+	}
+	// Scenarios that use syntax the engine does not compile yet sit in
+	// scenarios-pending. The manifest does not list them and the index does
+	// not carry them, but they follow the same contract.
+	pending, err := fs.Glob(root.FS(), pendingDir+"/*.yaml")
+	if err != nil {
+		return Entry{}, fmt.Errorf("list %s: %w", pendingDir, err)
+	}
+	for _, p := range pending {
+		found, err := checkScenarioFile(root.FS(), p)
+		if err != nil {
+			verr.Findings = append(verr.Findings, Finding{Path: "file:" + p, Message: "read scenario: " + err.Error()})
+		}
+		verr.Findings = append(verr.Findings, found...)
 	}
 	if len(verr.Findings) > 0 {
 		return Entry{}, verr

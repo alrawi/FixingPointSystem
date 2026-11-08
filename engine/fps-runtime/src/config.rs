@@ -35,6 +35,11 @@ pub struct FlowRef {
     pub functions: FunctionFactory,
     /// The interpreter limits of each session.
     pub limits: Limits,
+    /// The name of the mix entry that the flow serves, under which the
+    /// runtime registers the rate handles of its client workers in
+    /// [`crate::RuntimeHandle::rate_control`]. `None` uses the scenario name.
+    /// Set it when two mix entries run the same scenario.
+    pub entry: Option<String>,
 }
 
 impl FlowRef {
@@ -46,6 +51,7 @@ impl FlowRef {
             flow,
             functions: Arc::new(|| Box::new(NoFunctions)),
             limits: Limits::default(),
+            entry: None,
         }
     }
 
@@ -67,6 +73,7 @@ impl fmt::Debug for FlowRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FlowRef")
             .field("scenario", &self.scenario.name)
+            .field("entry", &self.entry)
             .field("flow", &self.flow)
             .field("limits", &self.limits)
             .finish_non_exhaustive()

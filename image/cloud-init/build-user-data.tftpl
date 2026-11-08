@@ -1,0 +1,11 @@
+#cloud-config
+# Seed of the build VM only. Packer renders ${password} from a random value that
+# build.sh makes for each build, and cleanup.sh removes the packer user at the
+# end, so the finished image holds no build credential.
+users:
+  - name: packer
+    plain_text_passwd: ${password}
+    lock_passwd: false
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+ssh_pwauth: true

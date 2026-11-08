@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[Unit]
+Description=FixingPointSystem agent
+Documentation=https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md
+After=fps-controller.service fps-mgmt-addr.service
+Requires=fps-mgmt-addr.service
+Wants=fps-controller.service
+
+[Service]
+Type=simple
+# The agent moves test interfaces into network namespaces and binds pool
+# addresses, so it runs as root. IMG-02 narrows this when the role selector lands.
+ExecStart=/usr/libexec/fps/fps-agent-start
+Restart=always
+RestartSec=5
+# Exit code 2 is a usage error or a kernel before Linux 6.3, which a restart
+# cannot fix.
+RestartPreventExitStatus=2
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

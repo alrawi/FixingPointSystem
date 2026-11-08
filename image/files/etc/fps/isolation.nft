@@ -1,0 +1,44 @@
+#!/usr/sbin/nft -f
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Management isolation of the FixingPointSystem appliance (IMG-01).
+#
+# The management interface is mgmt0. Every other Ethernet interface is a test
+# interface that carries generated traffic and may face a device under test. The
+# rules keep the two sides apart in two ways.
+#
+#  1. The forward hook drops every packet that enters or leaves mgmt0, so the
+#     appliance never routes between the management network and a test network,
+#     even when something turns IP forwarding on. The sysctl file
+#     99-fps-isolation.conf also keeps forwarding off.
+#  2. The input hook drops connections to the management services from every
+#     interface except mgmt0 and the loopback. Linux answers for any local
+#     address on any interface (the weak host model), so binding the controller
+#     to the management address alone does not stop a test interface from
+#     reaching it.
+#
+# The file is idempotent: the add and delete pair below removes an older copy of
+# the table, so `nft -f` reloads it at any time. Both hooks run before the
+# default priority of 0, so rules of other tools cannot accept the packets first.
+
+add table inet fps_isolation
+delete table inet fps_isolation
+
+table inet fps_isolation {
+	# Management services: sshd, the REST API, and the agent gRPC service.
+	set mgmt_tcp_ports {
+		type inet_service
+		elements = { 22, 8443, 8444 }
+	}
+
+	chain forward {
+		type filter hook forward priority -100; policy accept;
+		iifname "mgmt0" counter drop comment "no routing out of the management interface"
+		oifname "mgmt0" counter drop comment "no routing into the management interface"
+	}
+
+	chain input {
+		type filter hook input priority -100; policy accept;
+		iifname != { "mgmt0", "lo" } tcp dport @mgmt_tcp_ports counter drop comment "management services only on mgmt0"
+	}
+}
