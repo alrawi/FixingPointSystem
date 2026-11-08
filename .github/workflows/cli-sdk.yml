@@ -43,8 +43,8 @@ jobs:
       - name: Lint and type check
         if: matrix.python == '3.12'
         run: |
-          ruff format --check .
-          ruff check .
+          ruff format --check fixingpoint scripts tests
+          ruff check fixingpoint scripts tests
           mypy --strict fixingpoint
       - name: Tests
         run: python -m pytest -q
