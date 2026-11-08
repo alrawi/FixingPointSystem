@@ -110,6 +110,10 @@ pub struct ModuleRef {
     pub version: String,
     /// `sha256:<hex>` over the module tree.
     pub digest: String,
+    /// The module settings of the test, a JSON object that conforms to the
+    /// settings schema of the module manifest. The agent carries them and
+    /// applies none yet.
+    pub settings: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Mirrors `fps.agent.v1.ScenarioSource`.
