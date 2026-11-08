@@ -65,7 +65,7 @@ type goldenReport struct {
 // goldens hold no samples.
 func pageOfGolden(t *testing.T, name string) Page {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "testdata", name+".json"))
+	raw, err := os.ReadFile(filepath.Join("..", "testdata", name+".json")) //nolint:gosec // fixed test data path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,14 +132,14 @@ func TestGoldenPages(t *testing.T) {
 			}
 			path := filepath.Join("testdata", name+".html")
 			if *update {
-				if err := os.MkdirAll("testdata", 0o755); err != nil {
+				if err := os.MkdirAll("testdata", 0o750); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(path, got, 0o644); err != nil {
+				if err := os.WriteFile(path, got, 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			want, err := os.ReadFile(path)
+			want, err := os.ReadFile(path) //nolint:gosec // fixed test data path
 			if err != nil {
 				t.Fatalf("%v (run the test with -update to write it)", err)
 			}
