@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alrawi/FixingPointSystem/contracts/schemas/scenario.schema.json",
+  "title": "FixingPointSystem scenario (flow programs)",
+  "description": "Scenario contract v0.3. A scenario groups flow programs with ordering and shared variables, and may declare behavior profiles. Each flow program lists actions per side.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scenario", "flows"],
+  "properties": {
+    "scenario": { "$ref": "#/$defs/identifier" },
+    "description": { "type": "string" },
+    "vars": {
+      "description": "Scenario variables. Templates read them as vars.<name>.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": { "type": ["string", "number", "boolean"] }
+    },
+    "profiles": {
+      "description": "Behavior profiles, such as the header set of a browser. Templates read a profile as profiles.<name>, which renders each entry as a line 'Key: value' that ends with CRLF, in the order given here.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": { "$ref": "#/$defs/profile" }
+    },
+    "flows": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/flow" }
+    }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$" },
+    "profile": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$" },
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string", "pattern": "^[^\\r\\n]*$" },
+          { "type": "number" },
+          { "type": "boolean" }
+        ]
+      }
+    },
+    "template": {
+      "description": "A string that may contain {{ expression }} placeholders, including module calls with keyword arguments, the distribution functions dist.<name>(...), the reference last, and the references profiles.<name>. See contracts/README.md for the grammar.",
+      "type": "string"
+    },
+    "count": {
+      "description": "A non negative integer, or a template that evaluates to one.",
+      "oneOf": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "string", "pattern": "^\\s*\\{\\{.+\\}\\}\\s*$" }
+      ]
+    },
+    "port": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1, "maximum": 65535 },
+        { "type": "string", "pattern": "^\\s*\\{\\{.+\\}\\}\\s*$" }
+      ]
+    },
+    "flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "module", "client"],
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "module": { "$ref": "#/$defs/identifier" },
+        "l4": { "enum": ["tcp", "udp"], "default": "tcp" },
+        "after": {
+          "description": "Flow ids that must complete before this flow starts.",
+          "oneOf": [
+            { "$ref": "#/$defs/identifier" },
+            { "type": "array", "items": { "$ref": "#/$defs/identifier" }, "minItems": 1, "uniqueItems": true }
+          ]
+        },
+        "spawned": {
+          "description": "True when the flow starts only through a spawn action.",
+          "type": "boolean",
+          "default": false
+        },
+        "transport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["module"],
+          "properties": {
+            "module": { "$ref": "#/$defs/identifier" },
+            "profile": { "type": "string" }
+          }
+        },
+        "client": { "$ref": "#/$defs/actions" },
+        "server": { "$ref": "#/$defs/actions" }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/action" }
+    },
+    "action": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "connect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["port"],
+          "properties": {
+            "host": { "$ref": "#/$defs/template" },
+            "port": { "$ref": "#/$defs/port" }
+          }
+        },
+        "accept": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["port"],
+          "properties": { "port": { "$ref": "#/$defs/port" } }
+        },
+        "send": { "$ref": "#/$defs/template" },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pattern": { "type": "string", "minLength": 1 },
+            "bytes": { "$ref": "#/$defs/count" },
+            "min_bytes": { "$ref": "#/$defs/count" },
+            "timeout_ms": { "type": "integer", "minimum": 1 },
+            "max_datagram": {
+              "description": "UDP flows only. Largest datagram in bytes that this expect accepts. A longer datagram fails the session.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65507,
+              "default": 65507
+            }
+          },
+          "oneOf": [
+            { "required": ["pattern"] },
+            { "required": ["bytes"] },
+            { "required": ["min_bytes"] }
+          ]
+        },
+        "delay": { "$ref": "#/$defs/delay" },
+        "set": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": { "$ref": "#/$defs/template" }
+        },
+        "loop": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["count", "do"],
+          "properties": {
+            "count": { "$ref": "#/$defs/count" },
+            "do": { "$ref": "#/$defs/actions" }
+          }
+        },
+        "branch": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["p", "do"],
+            "properties": {
+              "p": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+              "do": { "$ref": "#/$defs/actions" }
+            }
+          }
+        },
+        "spawn": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["flow"],
+          "properties": { "flow": { "$ref": "#/$defs/identifier" } }
+        },
+        "close": { "enum": ["fin", "rst", "half"] },
+        "raw": {
+          "description": "Reserved for strike and fuzzer modules. Writes bytes without template validation.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hex"],
+          "properties": { "hex": { "type": "string", "pattern": "^([0-9a-fA-F]{2})+$" } }
+        }
+      },
+      "additionalProperties": false
+    },
+    "delay": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ms"],
+          "properties": { "ms": { "$ref": "#/$defs/count" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "mean_ms"],
+          "properties": {
+            "dist": { "const": "exponential" },
+            "mean_ms": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "min_ms", "max_ms"],
+          "properties": {
+            "dist": { "const": "uniform" },
+            "min_ms": { "type": "number", "minimum": 0 },
+            "max_ms": { "type": "number", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "mu", "sigma"],
+          "properties": {
+            "dist": { "const": "lognormal" },
+            "mu": { "type": "number" },
+            "sigma": { "type": "number", "exclusiveMinimum": 0 },
+            "unit": { "enum": ["s", "ms"], "default": "s" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "alpha", "scale_ms"],
+          "properties": {
+            "dist": { "const": "pareto" },
+            "alpha": { "type": "number", "exclusiveMinimum": 0 },
+            "scale_ms": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        }
+      ]
+    }
+  }
+}
