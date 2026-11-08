@@ -95,7 +95,10 @@ func startServer(t *testing.T, cfg *tls.Config) *server {
 			}
 			go func() {
 				defer func() { _ = c.Close() }()
-				tc := c.(*tls.Conn)
+				tc, ok := c.(*tls.Conn)
+				if !ok {
+					return
+				}
 				_ = tc.SetDeadline(time.Now().Add(5 * time.Second))
 				if err := tc.Handshake(); err != nil {
 					return

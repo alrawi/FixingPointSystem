@@ -228,7 +228,7 @@ func (a *Authority) Authorize(c *x509.Certificate) error {
 		KeyUsages:   []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCertificateInvalid, err)
+		return fmt.Errorf("%w: %w", ErrCertificateInvalid, err)
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -314,10 +314,10 @@ func (a *Authority) issueLocked(agentID string, pub crypto.PublicKey) (*Issued, 
 func checkCSR(der []byte, agentID string) (crypto.PublicKey, error) {
 	csr, err := x509.ParseCertificateRequest(der)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidCSR, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidCSR, err)
 	}
 	if err := csr.CheckSignature(); err != nil {
-		return nil, fmt.Errorf("%w: signature: %v", ErrInvalidCSR, err)
+		return nil, fmt.Errorf("%w: signature: %w", ErrInvalidCSR, err)
 	}
 	pub, ok := csr.PublicKey.(*ecdsa.PublicKey)
 	if !ok || (pub.Curve != elliptic.P256() && pub.Curve != elliptic.P384()) {

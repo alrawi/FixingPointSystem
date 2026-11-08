@@ -206,10 +206,10 @@ func (a *Authority) loadOrCreateCA() error {
 		}
 		// The key goes first, so a crash never leaves a certificate without
 		// its key, which the next start would refuse as half a CA.
-		if err := writeNew(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		if err := writeNew(a.cfg.Dir, CAKeyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
 			return err
 		}
-		return writeNew(certPath, a.caPEM, 0o644)
+		return writeNew(a.cfg.Dir, CACertFile, a.caPEM, 0o644)
 	case certErr != nil || keyErr != nil:
 		return fmt.Errorf("pki: %s holds only one of %s and %s; restore both or remove both", a.cfg.Dir, CACertFile, CAKeyFile)
 	}
@@ -220,11 +220,11 @@ func (a *Authority) loadOrCreateCA() error {
 	if info.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("pki: %s has mode %04o; it must not be accessible by group or others (chmod 600)", keyPath, info.Mode().Perm())
 	}
-	keyPEM, err := os.ReadFile(keyPath)
+	keyPEM, err := os.ReadFile(filepath.Clean(keyPath))
 	if err != nil {
 		return err
 	}
-	certPEM, err := os.ReadFile(certPath)
+	certPEM, err := os.ReadFile(filepath.Clean(certPath))
 	if err != nil {
 		return err
 	}
@@ -262,11 +262,22 @@ func (a *Authority) loadOrCreateCA() error {
 	return nil
 }
 
-// writeNew creates path with the given mode and fails when it exists.
-func writeNew(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+// writeNew creates the file name in dir with the given mode and fails when it exists.
+func writeNew(dir, name string, data []byte, mode os.FileMode) error {
+	path := filepath.Join(dir, name)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("pki: open %s: %w", dir, err)
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return fmt.Errorf("pki: create %s: %w", path, err)
+	}
+	// The process umask may have cleared bits, so state the mode again.
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("pki: chmod %s: %w", path, err)
 	}
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
@@ -275,8 +286,7 @@ func writeNew(path string, data []byte, mode os.FileMode) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("pki: write %s: %w", path, err)
 	}
-	// The process umask may have cleared bits, so state the mode again.
-	return os.Chmod(path, mode)
+	return nil
 }
 
 func newSerial() (*big.Int, error) {

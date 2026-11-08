@@ -10,7 +10,6 @@ import (
 	"errors"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -59,7 +58,7 @@ func TestOpenRefusesAnUntrustworthyDirectory(t *testing.T) {
 	}
 	t.Run("key readable by others", func(t *testing.T) {
 		dir := fresh()
-		if err := os.Chmod(filepath.Join(dir, CAKeyFile), 0o640); err != nil {
+		if err := os.Chmod(filepath.Join(dir, CAKeyFile), 0o640); err != nil { //nolint:gosec // G302: the test makes the key readable on purpose
 			t.Fatal(err)
 		}
 		if _, err := Open(Config{Dir: dir}); err == nil || !strings.Contains(err.Error(), "chmod 600") {
@@ -75,8 +74,8 @@ func TestOpenRefusesAnUntrustworthyDirectory(t *testing.T) {
 	})
 	t.Run("certificate and key of different CAs", func(t *testing.T) {
 		dir, other := fresh(), fresh()
-		data, _ := os.ReadFile(filepath.Join(other, CACertFile))
-		if err := os.WriteFile(filepath.Join(dir, CACertFile), data, 0o644); err != nil {
+		data, _ := os.ReadFile(filepath.Clean(filepath.Join(other, CACertFile)))
+		if err := os.WriteFile(filepath.Join(dir, CACertFile), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := Open(Config{Dir: dir}); err == nil || !strings.Contains(err.Error(), "does not match") {
@@ -119,7 +118,7 @@ func TestStatePersistsAndNeverHoldsTheTokenSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(dir, StateFile))
+	raw, err := os.ReadFile(filepath.Clean(filepath.Join(dir, StateFile)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +160,7 @@ func enrollServer(t *testing.T, a *Authority) string {
 	srv := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 5 * time.Second, ErrorLog: log.New(io.Discard, "", 0)}
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
-	return "https://" + ln.Addr().(*net.TCPAddr).String()
+	return "https://" + ln.Addr().String()
 }
 
 func httpClient(cfg *tls.Config) *http.Client {

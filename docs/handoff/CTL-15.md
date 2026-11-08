@@ -6,7 +6,7 @@
 | Branch | `wp/CTL-15` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 60% (3 of 5 plan steps) |
+| Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-c15a7e, lease until 2026-11-08T22:22:13Z |
 | Last verified commit | none |
 
@@ -21,7 +21,7 @@ Add the package `controller/internal/pki/` with a controller CA, single use enro
 - [x] 1. CA, state file, tokens, issuing, renewal, revocation
 - [x] 2. TLS configs and the HTTP enrollment handler
 - [x] 3. Tests over real TLS on loopback
-- [ ] 4. `mk/ctl.mk` targets, Controller wiki page, log entry
+- [x] 4. `mk/ctl.mk` targets, Controller wiki page, log entry
 - [ ] 5. Pull request, CI, review
 
 ## Done and verified
@@ -30,11 +30,11 @@ Add the package `controller/internal/pki/` with a controller CA, single use enro
 
 ## Remaining
 
-Steps 4 and 5.
+Step 5 (pull request and CI).
 
 ## Next action
 
-Write the Controller wiki section and the log entry, then open the pull request.
+Open the pull request, wait for CI.
 
 ## Blockers and open questions
 
