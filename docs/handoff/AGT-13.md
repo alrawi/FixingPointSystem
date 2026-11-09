@@ -23,15 +23,18 @@ The agent dispatches the native functions of every first party module crate (htt
 
 ## Done and verified
 
-Nothing yet.
+- Registry, dependencies, required-module registration: `cargo test -p fps-agent` passes (61 lib tests, `tests/first_party.rs`, all other agent tests). `cargo clippy -p fps-agent --all-targets -- -D warnings` and `cargo fmt --check` are clean.
+- `tests/first_party.rs` negative control: with `content` out of the registry the run fails every session.
+- `controller_e2e.sh` smtp run added; `bash -n` passes. It needs the Go controller, so CI is its first run.
+- `docs/wiki/Agent.md` and the log entry updated; `plan.py check`, `render --check` pass.
 
 ## Remaining
 
-Everything. FTP scenarios need spawned data flows, which `fps-runtime` does not run (the agent refuses scenarios with more than one flow), so FTP gets its functions but its scenarios need runtime work, reported in the PR.
+CI result, then review. FTP scenarios need spawned data flows, which `fps-runtime` does not run (the agent refuses scenarios with more than one flow), so FTP has its functions registered and its scenarios need runtime work, reported in the PR.
 
 ## Next action
 
-Write the registry.
+Poll the CI of the PR and fix failures inside `engine/fps-agent/`.
 
 ## Blockers and open questions
 
@@ -39,11 +42,12 @@ none
 
 ## Decisions taken in this package
 
-none yet
+- The plan lists only the modules of the mix scenarios, so `content` is absent from an smtp plan. The agent registers required modules that the plan omits (no settings), checking the catalog against the installed manifest when there is one. Reason: otherwise every content call of a mail scenario fails in the agent.
+- `for_modules` takes the extension module names (AGT-11 note) instead of `load` filtering notes afterwards.
 
 ## Pitfalls
 
-none yet
+- The worktree guard refuses long heredocs and `export` in one command; write files with the editor tools.
 
 ## Verify the current state
 

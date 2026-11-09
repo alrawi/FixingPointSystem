@@ -22,6 +22,11 @@
 # the agent applied the setting, and the same test without the setting, which
 # the shipped zone cannot answer, fails its criteria.
 #
+# A third test (AGT-13) runs the smtp/relay scenario of the first party smtp
+# module. Its client calls the template functions of smtp and of the content
+# module (the message body and the attachment), so the run passes only when
+# the agent dispatches the native functions of both crates.
+#
 # The tail of the script checks the handshake failures. An agent that trusts
 # another CA ends with exit code 2 and a TLS error before it spends its
 # token. After `fps-controller revoke`, the running agent ends with exit code
@@ -138,12 +143,18 @@ start_agent() {
 # The agent loads its modules from $modules. http1 is the example module. dns
 # is the first party module, because its native functions read the zone_file
 # setting, with the native crate and the tests left out, plus a zone file for
-# the name www.e2e.test that the shipped zone lacks. The agent and the
-# controller see the same trees, so their digests agree.
+# the name www.e2e.test that the shipped zone lacks. smtp and content are
+# first party modules too (AGT-13), installed the same way, because the smtp
+# scenarios call the functions of both. The agent and the controller see the
+# same trees, so their digests agree.
 mkdir -p "$modules"
 cp -r "$examples/modules/http1" "$modules/http1"
 cp -r "$here/../../../modules/dns" "$modules/dns"
 rm -r "$modules/dns/native" "$modules/dns/tests"
+cp -r "$here/../../../modules/content" "$modules/content"
+rm -r "$modules/content/native" "$modules/content/tests"
+cp -r "$here/../../../modules/smtp" "$modules/smtp"
+rm -r "$modules/smtp/native" "$modules/smtp/tests" "$modules/smtp/fixtures"
 cat >"$modules/dns/zones/e2e.test.zone" <<'EOF'
 $ORIGIN e2e.test.
 $TTL 60
@@ -166,7 +177,8 @@ done
 [[ ! -e $work/token ]] || fail "the agent kept its enrollment token file"
 [[ $(stat -c %a "$work/agent-pki/agent.key") == 600 ]] || fail "the agent key is not mode 0600"
 
-for name in http1 dns; do
+# content goes before smtp, which requires it.
+for name in http1 dns content smtp; do
   (cd "$modules/$name" && tar -czf "$work/$name.tar.gz" -- *)
   call POST /v1/modules "$admin" -H 'Content-Type: application/gzip' --data-binary "@$work/$name.tar.gz" >/dev/null
 done
@@ -312,6 +324,41 @@ run_test "$work/dns_default.yaml" failed
 grep -q "\"run_id\":\"$run\".*criteria failed" "$work/controller.log" || fail "the dns run $run without the setting did not fail its criteria"
 [[ $(succeeded_of dns) == 0 ]] || fail "the dns run $run without the setting counted succeeded sessions: $metrics"
 echo "controller_e2e: run $run without zone_file ended failed on its criteria, as the shipped zone lacks www.e2e.test"
+
+# The smtp relay of AGT-13: an EHLO exchange and one MIME message with a base64
+# attachment, which the content module generates.
+cat >"$work/smtp_relay.yaml" <<EOF
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: smtp_relay
+  description: SMTP relay sessions of the first party smtp module.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/$iface }
+    - { name: server0, location: local/$iface }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 127.95.0.0/24, count: 16 }
+    - { name: servers, port: server0, role: server, ipv4: 127.96.0.0/24, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: smtp/relay, weight: 1, params: { server_port: 18682 } }
+load:
+  objective: { type: sessions_per_second, value: 20 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: 5 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "==", value: 0 }
+  - { metric: sessions.succeeded, op: ">", value: 0 }
+EOF
+run_test "$work/smtp_relay.yaml"
+[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the smtp run $run did not pass: $summary"
+smtp_succeeded=$(succeeded_of smtp)
+[[ $smtp_succeeded -gt 0 ]] || fail "the smtp run $run counted no succeeded sessions: $metrics"
+echo "controller_e2e: run $run relayed mail through the first party smtp and content modules with $smtp_succeeded succeeded sessions, verdict passed"
 
 # A CA that is not the controller CA. The agent checks the enrollment endpoint
 # against it, so the handshake fails before the token leaves the agent.

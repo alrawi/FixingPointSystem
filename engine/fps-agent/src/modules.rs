@@ -13,7 +13,7 @@
 //! types, and required parameters, because the manifest is the catalog that
 //! the loader checks calls against.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -288,12 +288,10 @@ pub fn load(plan: &Plan, dir: &Path, policy: &ModulePolicy) -> Result<LoadedModu
         ));
     }
     let mut notes = Vec::new();
-    let functions = NativeFunctions::for_modules(&set, &plan.modules, dir, &mut notes)?;
+    // The extension serves the calls of a module without native functions, so
+    // the registry adds no note that its calls fail.
+    let functions = NativeFunctions::for_modules(&set, &plan.modules, dir, &extended, &mut notes)?;
     for name in &extended {
-        // The extension serves the calls of the module, so the note that the
-        // module has no native functions would mislead.
-        let missing = no_native_functions(name);
-        notes.retain(|n| *n != missing);
         notes.push(format!("module {name} runs its WebAssembly extension"));
     }
     notes.sort();
@@ -491,114 +489,229 @@ pub fn with_params(
     Ok(s)
 }
 
+/// A native module as the registry holds it: its template functions and the
+/// means to copy them, because every session gets its own value.
+trait NativeModule: TemplateFn + std::fmt::Debug + Send + Sync {
+    fn duplicate(&self) -> Box<dyn NativeModule>;
+}
+
+impl<T: TemplateFn + Clone + std::fmt::Debug + Send + Sync + 'static> NativeModule for T {
+    fn duplicate(&self) -> Box<dyn NativeModule> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn NativeModule> {
+    fn clone(&self) -> Self {
+        self.duplicate()
+    }
+}
+
+/// What a constructor of the registry gets.
+struct BuildCtx<'a> {
+    /// The directory of the installed modules, `<dir>/<module>` being the
+    /// module tree.
+    dir: &'a Path,
+    /// The non empty settings of the plan entry, if any.
+    given: Option<&'a serde_json::Map<String, Json>>,
+}
+
+/// Why a constructor failed.
+enum BuildError {
+    /// The settings are invalid. The plan is refused.
+    Settings(String),
+    /// The module cannot get native functions in this run. The module stays
+    /// without them and the run notes it.
+    Unavailable(String),
+}
+
+/// One first party module of the agent.
+struct Registration {
+    /// The module name, which `MODULE_NAME` of its crate defines.
+    name: &'static str,
+    /// The function catalog of the crate, to compare with the manifest.
+    catalog: fn() -> Vec<NativeSig>,
+    /// Builds the native functions from the plan settings.
+    build: fn(&BuildCtx<'_>) -> Result<Box<dyn NativeModule>, BuildError>,
+}
+
+/// Lists the catalog of a crate whose `FUNCTIONS` use the `FunctionSpec`
+/// shape that every first party module shares.
+macro_rules! catalog_of {
+    ($krate:ident) => {
+        $krate::FUNCTIONS
+            .iter()
+            .map(|f| {
+                (
+                    f.name,
+                    f.params
+                        .iter()
+                        .map(|p| (p.name, p.ty, p.default.is_none()))
+                        .collect(),
+                )
+            })
+            .collect()
+    };
+}
+
+/// Registers a module whose native functions are a unit value that takes no
+/// settings. A plan that gives settings to such a module is refused.
+macro_rules! stateless {
+    ($krate:ident, $ty:ident) => {
+        Registration {
+            name: $krate::MODULE_NAME,
+            catalog: || catalog_of!($krate),
+            build: |ctx| {
+                if ctx.given.is_some() {
+                    return Err(BuildError::Settings(
+                        "the plan gives settings, but its native functions take none".to_owned(),
+                    ));
+                }
+                Ok(Box::new($krate::$ty))
+            },
+        }
+    };
+}
+
+/// The first party modules of the agent. A new module adds one line here and
+/// one dependency in `Cargo.toml`. A module that reads settings gets a
+/// constructor like [`build_dns`] instead of `stateless!`.
+static REGISTRY: &[Registration] = &[
+    stateless!(fps_module_http1, Http1),
+    Registration {
+        name: fps_module_dns::MODULE_NAME,
+        catalog: || catalog_of!(fps_module_dns),
+        build: build_dns,
+    },
+    stateless!(fps_module_content, Content),
+    stateless!(fps_module_smtp, Smtp),
+    stateless!(fps_module_imap, Imap),
+    stateless!(fps_module_pop3, Pop3),
+    stateless!(fps_module_ftp, Ftp),
+];
+
+fn build_dns(ctx: &BuildCtx<'_>) -> Result<Box<dyn NativeModule>, BuildError> {
+    match dns_functions(ctx.dir, ctx.given) {
+        Ok(d) => Ok(Box::new(d)),
+        Err(DnsLoad::Settings(reason)) => Err(BuildError::Settings(reason)),
+        Err(DnsLoad::Bundled(e)) => Err(BuildError::Unavailable(format!(
+            "module dns has no native functions: bundled zone: {e}"
+        ))),
+    }
+}
+
 /// The native template functions of one session, by module.
 #[derive(Clone, Debug, Default)]
 pub struct NativeFunctions {
-    http1: Option<fps_module_http1::Http1>,
-    dns: Option<fps_module_dns::Dns>,
+    modules: BTreeMap<&'static str, Box<dyn NativeModule>>,
 }
 
 impl NativeFunctions {
-    /// Registers the native functions of every module in `set` whose
-    /// manifest catalog equals the catalog of its crate, configured with the
-    /// settings of the matching entry of `refs`. A relative path setting
-    /// resolves against the directory of the module under `dir` and may not
-    /// leave it. Each module that stays without native functions adds a
-    /// note.
+    /// Registers the native functions of every module in `set` that the
+    /// registry knows and whose manifest catalog equals the catalog of its
+    /// crate, configured with the settings of the matching entry of `refs`.
+    /// A relative path setting resolves against the directory of the module
+    /// under `dir` and may not leave it. Each module that stays without
+    /// native functions adds a note, except a module named in `extended`,
+    /// whose calls its WebAssembly extension serves.
     ///
     /// Settings that the agent cannot apply are an error, because a run that
     /// ignores them would measure another test than the one configured. That
-    /// covers a module without native functions and a module whose native
-    /// functions take no settings.
+    /// covers a module without native functions, extension or not, and a
+    /// module whose native functions take no settings.
     pub fn for_modules(
         set: &ModuleSet,
         refs: &[ModuleRef],
         dir: &Path,
+        extended: &[String],
         notes: &mut Vec<String>,
     ) -> Result<Self, ModuleError> {
         let mut out = Self::default();
         let settings = |name: &str| refs.iter().find(|m| m.name == name).map(|m| &m.settings);
         for (name, manifest) in &set.manifests {
             let given = settings(name).filter(|s| !s.is_empty());
-            match name.as_str() {
-                fps_module_http1::MODULE_NAME => {
-                    let native: Vec<NativeSig> = fps_module_http1::FUNCTIONS
-                        .iter()
-                        .map(|f| {
-                            (
-                                f.name,
-                                f.params
-                                    .iter()
-                                    .map(|p| (p.name, p.ty, p.default.is_none()))
-                                    .collect(),
-                            )
-                        })
-                        .collect();
-                    match catalog_diff(&manifest.functions, &native) {
-                        None => {
-                            refuse_settings(name, given, "its native functions take none")?;
-                            out.http1 = Some(fps_module_http1::Http1);
-                        }
-                        Some(d) => {
-                            refuse_settings(name, given, "it has no native functions here")?;
-                            notes.push(no_native(name, &d));
-                        }
-                    }
+            let Some(entry) = REGISTRY.iter().find(|r| r.name == name.as_str()) else {
+                refuse_settings(name, given, "it has no native functions here")?;
+                if !manifest.functions.is_empty() && !extended.contains(name) {
+                    notes.push(no_native_functions(name));
                 }
-                fps_module_dns::MODULE_NAME => {
-                    let native: Vec<NativeSig> = fps_module_dns::FUNCTIONS
-                        .iter()
-                        .map(|f| {
-                            (
-                                f.name,
-                                f.params
-                                    .iter()
-                                    .map(|p| (p.name, p.ty, p.default.is_none()))
-                                    .collect(),
-                            )
-                        })
-                        .collect();
-                    match catalog_diff(&manifest.functions, &native) {
-                        None => match dns_functions(dir, given) {
-                            Ok(d) => out.dns = Some(d),
-                            Err(DnsLoad::Settings(reason)) => {
-                                return Err(ModuleError::Settings {
-                                    module: name.clone(),
-                                    reason,
-                                })
-                            }
-                            Err(DnsLoad::Bundled(e)) => notes.push(format!(
-                                "module dns has no native functions: bundled zone: {e}"
-                            )),
-                        },
-                        Some(d) => {
-                            refuse_settings(name, given, "it has no native functions here")?;
-                            notes.push(no_native(name, &d));
-                        }
-                    }
+                continue;
+            };
+            if let Some(d) = catalog_diff(&manifest.functions, &(entry.catalog)()) {
+                refuse_settings(name, given, "it has no native functions here")?;
+                notes.push(no_native(name, &d));
+                continue;
+            }
+            match (entry.build)(&BuildCtx { dir, given }) {
+                Ok(m) => {
+                    out.modules.insert(entry.name, m);
                 }
-                _ => {
-                    refuse_settings(name, given, "it has no native functions here")?;
-                    if !manifest.functions.is_empty() {
-                        notes.push(no_native_functions(name));
-                    }
+                Err(BuildError::Settings(reason)) => {
+                    return Err(ModuleError::Settings {
+                        module: name.clone(),
+                        reason,
+                    })
                 }
+                Err(BuildError::Unavailable(note)) => notes.push(note),
             }
         }
+        out.add_required(set, dir, notes);
         notes.sort();
         Ok(out)
     }
 
-    /// Returns the modules that have native functions.
+    /// Registers the native functions of the modules that a plan module
+    /// requires and the plan does not list.
+    ///
+    /// The plan names the modules of its scenarios only, so a plan with an
+    /// smtp scenario lists smtp but not content, whose functions the scenario
+    /// calls through `requires`. The registry knows such a module by name,
+    /// and the plan gives it no settings, so the agent registers it with
+    /// none. When its manifest is installed under `dir`, the catalog must
+    /// equal the catalog of the crate, as for a listed module, or the module
+    /// stays without native functions and the run notes it.
+    fn add_required(&mut self, set: &ModuleSet, dir: &Path, notes: &mut Vec<String>) {
+        let mut wanted: Vec<(&str, &str)> = set
+            .manifests
+            .values()
+            .flat_map(|m| m.requires.iter().map(|r| (r.as_str(), m.name.as_str())))
+            .filter(|(r, _)| !set.manifests.contains_key(*r))
+            .collect();
+        wanted.sort_unstable();
+        wanted.dedup_by_key(|(r, _)| *r);
+        for (name, by) in wanted {
+            let Some(entry) = REGISTRY.iter().find(|r| r.name == name) else {
+                continue;
+            };
+            if let Ok(manifest) = Manifest::load(&dir.join(name).join("manifest.yaml")) {
+                if let Some(d) = catalog_diff(&manifest.functions, &(entry.catalog)()) {
+                    notes.push(no_native(name, &d));
+                    continue;
+                }
+            }
+            if let Ok(m) = (entry.build)(&BuildCtx { dir, given: None }) {
+                self.modules.insert(entry.name, m);
+                notes.push(format!(
+                    "module {name}, which {by} requires, runs the native functions of this agent"
+                ));
+            }
+        }
+    }
+
+    /// Returns the modules that have native functions, in the order of the
+    /// registry.
     pub fn modules(&self) -> Vec<&'static str> {
-        let mut v = Vec::new();
-        if self.http1.is_some() {
-            v.push(fps_module_http1::MODULE_NAME);
-        }
-        if self.dns.is_some() {
-            v.push(fps_module_dns::MODULE_NAME);
-        }
-        v
+        REGISTRY
+            .iter()
+            .map(|r| r.name)
+            .filter(|n| self.modules.contains_key(n))
+            .collect()
+    }
+
+    /// Returns the names of every module that the registry knows, in its
+    /// order.
+    pub fn registered() -> Vec<&'static str> {
+        REGISTRY.iter().map(|r| r.name).collect()
     }
 
     /// Returns a factory that gives every session its own value.
@@ -615,10 +728,9 @@ impl TemplateFn for NativeFunctions {
         rng: &mut dyn RngCore,
         out: &mut Vec<u8>,
     ) -> Result<(), FnError> {
-        match (call.module, &mut self.http1, &mut self.dns) {
-            (fps_module_http1::MODULE_NAME, Some(h), _) => h.render(call, rng, out),
-            (fps_module_dns::MODULE_NAME, _, Some(d)) => d.render(call, rng, out),
-            _ => NoFunctions.render(call, rng, out),
+        match self.modules.get_mut(call.module) {
+            Some(m) => m.render(call, rng, out),
+            None => NoFunctions.render(call, rng, out),
         }
     }
 }
@@ -761,21 +873,157 @@ mod tests {
     fn first_party_manifests_get_their_native_functions() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
         let mut set = ModuleSet::default();
-        for m in ["http1", "dns"] {
+        for m in NativeFunctions::registered() {
             set.insert(Manifest::load(&root.join(m).join("manifest.yaml")).unwrap());
         }
         let mut notes = Vec::new();
-        let f = NativeFunctions::for_modules(&set, &[], &root, &mut notes).unwrap();
-        assert_eq!(f.modules(), ["http1", "dns"], "{notes:?}");
+        let f = NativeFunctions::for_modules(&set, &[], &root, &[], &mut notes).unwrap();
+        assert_eq!(f.modules(), NativeFunctions::registered(), "{notes:?}");
         assert!(notes.is_empty(), "{notes:?}");
 
         // The example manifests list other catalogs, so they get none.
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/examples/modules");
         let mut set = ModuleSet::default();
         set.insert(Manifest::load(&root.join("dns/manifest.yaml")).unwrap());
-        let f = NativeFunctions::for_modules(&set, &[], &root, &mut notes).unwrap();
+        let f = NativeFunctions::for_modules(&set, &[], &root, &[], &mut notes).unwrap();
         assert!(f.modules().is_empty());
         assert_eq!(notes.len(), 1, "{notes:?}");
+    }
+
+    #[test]
+    fn the_registry_covers_every_first_party_module() {
+        assert_eq!(
+            NativeFunctions::registered(),
+            ["http1", "dns", "content", "smtp", "imap", "pop3", "ftp"]
+        );
+    }
+
+    /// Every function of every first party manifest reaches the crate of its
+    /// module. A call without arguments may fail on its arguments, but never
+    /// with the error of a module that nobody provides.
+    #[test]
+    fn each_first_party_function_resolves() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
+        let mut set = ModuleSet::default();
+        for m in NativeFunctions::registered() {
+            set.insert(Manifest::load(&root.join(m).join("manifest.yaml")).unwrap());
+        }
+        let mut f = NativeFunctions::for_modules(&set, &[], &root, &[], &mut Vec::new()).unwrap();
+        let mut rng = rand_pcg::Pcg64Mcg::new(1);
+        let mut resolved = 0;
+        for (module, manifest) in &set.manifests {
+            assert!(
+                !manifest.functions.is_empty(),
+                "{module} lists no functions"
+            );
+            for name in manifest.functions.keys() {
+                let call = FnCall {
+                    module,
+                    function: name,
+                    args: fps_flow::CallArgs {
+                        positional: &[],
+                        named: &[],
+                    },
+                };
+                if let Err(e) = f.render(&call, &mut rng, &mut Vec::new()) {
+                    assert!(
+                        !e.to_string().contains("no module provides"),
+                        "{module}.{name} does not resolve: {e}"
+                    );
+                }
+                resolved += 1;
+            }
+        }
+        assert!(resolved >= 7, "{resolved}");
+        // A module that the registry does not know still fails every call.
+        let call = FnCall {
+            module: "unknown",
+            function: "x",
+            args: fps_flow::CallArgs {
+                positional: &[],
+                named: &[],
+            },
+        };
+        let e = f.render(&call, &mut rng, &mut Vec::new()).unwrap_err();
+        assert!(e.to_string().contains("no module provides"), "{e}");
+    }
+
+    #[test]
+    fn stateless_modules_refuse_settings_and_extension_modules_add_no_note() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
+        let mut set = ModuleSet::default();
+        for m in ["smtp", "content"] {
+            set.insert(Manifest::load(&root.join(m).join("manifest.yaml")).unwrap());
+        }
+        for m in ["smtp", "content"] {
+            let refs = [with_settings(m, serde_json::json!({"x": 1}))];
+            let e =
+                NativeFunctions::for_modules(&set, &refs, &root, &[], &mut Vec::new()).unwrap_err();
+            assert!(
+                e.to_string()
+                    .starts_with(&format!("module {m}: settings: the plan gives settings")),
+                "{e}"
+            );
+        }
+        // A module outside the registry gets a note, unless its extension
+        // serves it. Settings stay refused in both cases.
+        let examples =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/examples/modules");
+        let mut other = ModuleSet::default();
+        other.insert(Manifest::load(&examples.join("http1/manifest.yaml")).unwrap());
+        let mut other_name = Manifest::load(&examples.join("http1/manifest.yaml")).unwrap();
+        other_name.name = "community".to_owned();
+        let mut set = ModuleSet::default();
+        set.insert(other_name);
+        let mut notes = Vec::new();
+        NativeFunctions::for_modules(&set, &[], &root, &[], &mut notes).unwrap();
+        assert_eq!(notes, [no_native_functions("community")]);
+        let mut notes = Vec::new();
+        let ext = ["community".to_owned()];
+        NativeFunctions::for_modules(&set, &[], &root, &ext, &mut notes).unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        let refs = [with_settings("community", serde_json::json!({"x": 1}))];
+        let e =
+            NativeFunctions::for_modules(&set, &refs, &root, &ext, &mut Vec::new()).unwrap_err();
+        assert!(e.to_string().contains("no native functions"), "{e}");
+    }
+
+    #[test]
+    fn a_required_module_that_the_plan_omits_gets_its_native_functions() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
+        let mut set = ModuleSet::default();
+        for m in ["smtp", "imap", "pop3", "ftp"] {
+            set.insert(Manifest::load(&root.join(m).join("manifest.yaml")).unwrap());
+        }
+        let mut notes = Vec::new();
+        let f = NativeFunctions::for_modules(&set, &[], &root, &[], &mut notes).unwrap();
+        assert_eq!(f.modules(), ["content", "smtp", "imap", "pop3", "ftp"]);
+        // One note, although four modules require content.
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].starts_with("module content, which "), "{notes:?}");
+
+        // A directory without the content manifest still gets the module,
+        // and one whose manifest differs from the crate does not.
+        let dir = std::env::temp_dir().join(format!("fps-agent-required-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("content")).unwrap();
+        let f = NativeFunctions::for_modules(&set, &[], &dir, &[], &mut Vec::new()).unwrap();
+        assert!(f.modules().contains(&"content"));
+        fs::write(
+            dir.join("content/manifest.yaml"),
+            "name: content\ntype: app\nfunctions:\n  - { name: other, params: [] }\n",
+        )
+        .unwrap();
+        let mut notes = Vec::new();
+        let f = NativeFunctions::for_modules(&set, &[], &dir, &[], &mut notes).unwrap();
+        assert!(!f.modules().contains(&"content"), "{notes:?}");
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("module content has no native")),
+            "{notes:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -785,7 +1033,7 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
         let mut set = ModuleSet::default();
         set.insert(Manifest::load(&root.join("http1/manifest.yaml")).unwrap());
-        let mut f = NativeFunctions::for_modules(&set, &[], &root, &mut Vec::new()).unwrap();
+        let mut f = NativeFunctions::for_modules(&set, &[], &root, &[], &mut Vec::new()).unwrap();
         let named = [NamedArg {
             name: "status",
             value: ArgValue::Int(204),
@@ -907,16 +1155,18 @@ mod tests {
             "dns",
             serde_json::json!({"zone_file": "zones/corp.zone"}),
         )];
-        let mut f = NativeFunctions::for_modules(&set, &refs, &dir, &mut Vec::new()).unwrap();
+        let mut f = NativeFunctions::for_modules(&set, &refs, &dir, &[], &mut Vec::new()).unwrap();
         assert_eq!(lookup(&mut f, "www.corp.test"), "192.0.2.99");
         // The shipped zone answers www.example.test, so the setting replaced it.
         assert_ne!(lookup(&mut f, "www.example.test"), "192.0.2.1");
 
-        let mut bundled = NativeFunctions::for_modules(&set, &[], &dir, &mut Vec::new()).unwrap();
+        let mut bundled =
+            NativeFunctions::for_modules(&set, &[], &dir, &[], &mut Vec::new()).unwrap();
         assert_eq!(lookup(&mut bundled, "www.example.test"), "192.0.2.1");
         // Empty settings behave like none.
         let empty = [with_settings("dns", serde_json::json!({}))];
-        let mut same = NativeFunctions::for_modules(&set, &empty, &dir, &mut Vec::new()).unwrap();
+        let mut same =
+            NativeFunctions::for_modules(&set, &empty, &dir, &[], &mut Vec::new()).unwrap();
         assert_eq!(lookup(&mut same, "www.example.test"), "192.0.2.1");
         // An absolute path inside the module directory is fine.
         let inside = dir.join("dns/zones/corp.zone");
@@ -924,7 +1174,7 @@ mod tests {
             "dns",
             serde_json::json!({"zone_file": inside.to_str().unwrap()}),
         )];
-        let mut f = NativeFunctions::for_modules(&set, &abs, &dir, &mut Vec::new()).unwrap();
+        let mut f = NativeFunctions::for_modules(&set, &abs, &dir, &[], &mut Vec::new()).unwrap();
         assert_eq!(lookup(&mut f, "www.corp.test"), "192.0.2.99");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -945,7 +1195,8 @@ mod tests {
                 "dns",
                 serde_json::json!({ "zone_file": path }),
             )];
-            let e = NativeFunctions::for_modules(&set, &refs, &dir, &mut Vec::new()).unwrap_err();
+            let e =
+                NativeFunctions::for_modules(&set, &refs, &dir, &[], &mut Vec::new()).unwrap_err();
             let text = e.to_string();
             assert!(matches!(e, ModuleError::Settings { .. }), "{path}: {text}");
             assert!(
@@ -967,7 +1218,7 @@ mod tests {
             "dns",
             serde_json::json!({"zone_file": "zones/link.zone"}),
         )];
-        let e = NativeFunctions::for_modules(&set, &refs, &dir, &mut Vec::new()).unwrap_err();
+        let e = NativeFunctions::for_modules(&set, &refs, &dir, &[], &mut Vec::new()).unwrap_err();
         assert!(
             e.to_string().contains("outside the module directory"),
             "{e}"
@@ -1002,7 +1253,8 @@ mod tests {
             ("http1", serde_json::json!({"x": 1}), "settings, but"),
         ] {
             let refs = [with_settings(module, settings.clone())];
-            let e = NativeFunctions::for_modules(&set, &refs, &dir, &mut Vec::new()).unwrap_err();
+            let e =
+                NativeFunctions::for_modules(&set, &refs, &dir, &[], &mut Vec::new()).unwrap_err();
             let text = e.to_string();
             assert!(
                 text.starts_with(&format!("module {module}: settings: ")),
@@ -1019,7 +1271,8 @@ mod tests {
             "dns",
             serde_json::json!({"zone_file": "zones/example.test.zone"}),
         )];
-        let e = NativeFunctions::for_modules(&example, &refs, &dir, &mut Vec::new()).unwrap_err();
+        let e =
+            NativeFunctions::for_modules(&example, &refs, &dir, &[], &mut Vec::new()).unwrap_err();
         assert!(e.to_string().contains("no native functions"), "{e}");
         let _ = fs::remove_dir_all(&dir);
     }
