@@ -92,11 +92,12 @@ type Controller struct {
 	// PKI is the certificate authority. It is nil with InsecurePlainGRPC.
 	PKI *pki.Authority
 
-	cfg     app.Config
-	logger  *slog.Logger
-	auth    api.Authenticator
-	grpc    *grpc.Server
-	tempDir string
+	cfg      app.Config
+	logger   *slog.Logger
+	auth     api.Authenticator
+	grpc     *grpc.Server
+	tempDir  string
+	captures *captures.Service
 
 	grpcTLS   *tls.Config
 	enrollTLS *tls.Config
@@ -199,8 +200,10 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("create config handler: %w", err)
 	}
-	caps, err := captures.New(captures.Config{Agents: c.Agents, Runs: c.Runs, Dir: c.captureDir(), Logger: logger})
-	if err != nil {
+	if c.captures, err = captures.New(captures.Config{
+		Agents: c.Agents, Runs: c.Runs, Dir: c.captureDir(), Logger: logger,
+		Retention: time.Duration(cfg.CaptureRetention), Clock: clock,
+	}); err != nil {
 		return nil, fmt.Errorf("create captures service: %w", err)
 	}
 	c.API = NewServer(Handlers{
@@ -210,7 +213,7 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 		Modules:      registry.NewAPI(c.Registry, logger),
 		Runs:         runs.NewAPI(c.Runs),
 		Report:       c.htmlReport(report.NewAPI(c.Evaluator, c.Runs, nil)),
-		Captures:     captures.NewAPI(caps),
+		Captures:     captures.NewAPI(c.captures),
 	})
 	return c, nil
 }
@@ -404,6 +407,9 @@ func (c *Controller) Run(ctx context.Context, ln net.Listener) error {
 // Close aborts the open runs, ends every agent session, releases the store,
 // and removes the temporary registry. It is safe to call more than once.
 func (c *Controller) Close() error {
+	if c.captures != nil {
+		c.captures.Close()
+	}
 	if c.Runs != nil {
 		c.Runs.Close()
 	}

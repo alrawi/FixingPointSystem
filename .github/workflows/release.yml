@@ -1,0 +1,391 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Release workflow of OPS-05. A tag v* builds the versioned artifacts, writes
+# SHA256SUMS and the release notes, and publishes a GitHub release. A manual run
+# (workflow_dispatch) does the same build and keeps everything as workflow
+# artifacts, and it creates no release unless it runs on a tag with dry_run off.
+#
+# Security rules, which docs/wiki/Operations.md repeats:
+#   - Every job runs on a GitHub hosted runner. This public repository never
+#     lets a workflow reach the self hosted fps-bench runner.
+#   - The workflow has no pull_request trigger, and the default token is read only.
+#     Only the publish job holds contents: write, and it runs no code of the
+#     repository. It downloads the finished bundle and calls gh.
+#   - Tag names, branch names, and pull request titles are untrusted text. They
+#     reach scripts only through env, never through ${{ }} inside run.
+#
+# The appliance image is not built here, because the Packer build needs KVM on the
+# owner host. Operations.md describes how the owner attaches it to the release.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and checksum only. Keep the files as workflow artifacts and create no release."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GOWORK: "off"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  meta:
+    name: Resolve the version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - id: v
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          publish=false
+          prerelease=false
+          if [ "$REF_TYPE" = tag ]; then
+            if ! printf '%s' "$REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+              echo "::error::the tag is not of the form vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-suffix"
+              exit 1
+            fi
+            version="${REF_NAME#v}"
+            case "$version" in *-*) prerelease=true ;; esac
+            # A push of a tag always publishes. A manual run on a tag publishes
+            # only when dry_run is switched off.
+            if [ "$EVENT" = push ] || [ "$DRY_RUN" = false ]; then
+              publish=true
+            fi
+          else
+            version="0.0.0-dryrun.${SHA:0:7}"
+          fi
+          {
+            echo "version=$version"
+            echo "publish=$publish"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "version $version, publish $publish, prerelease $prerelease"
+
+  agent:
+    name: Agent (x86_64 static musl)
+    needs: meta
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install musl-gcc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+      - name: Build
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl -p fps-agent
+      - name: Stage and check
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          bin=target/x86_64-unknown-linux-musl/release/fps-agent
+          strip "$bin"
+          file "$bin"
+          file "$bin" | grep -Eq 'statically linked|static-pie linked'
+          "$bin" capabilities > /dev/null
+          cp "$bin" "dist/fps-agent-${VERSION}-linux-x86_64"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent
+          path: dist/
+          if-no-files-found: error
+
+  controller:
+    name: Controller (linux amd64, CGO off)
+    needs: meta
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: controller/go.mod
+          cache-dependency-path: controller/go.sum
+      - name: Build
+        working-directory: controller
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The controller reports the module version that the Go toolchain stamps
+          # into the binary and has no variable for -ldflags -X to set. The version
+          # is in the file name and in SHA256SUMS instead.
+          mkdir -p ../dist
+          go build -trimpath -ldflags '-s -w' -o "../dist/fps-controller-${VERSION}-linux-amd64" ./cmd/fps-controller
+      - name: Check
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          bin="dist/fps-controller-${VERSION}-linux-amd64"
+          file "$bin"
+          file "$bin" | grep -q 'statically linked'
+          "$bin" -version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: controller
+          path: dist/
+          if-no-files-found: error
+
+  modules:
+    name: Module archives
+    needs: meta
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive every module that has a manifest
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          epoch="$(git log -1 --format=%ct)"
+          count=0
+          for dir in modules/*/; do
+            name="$(basename "$dir")"
+            case "$name" in _*) continue ;; esac
+            if [ ! -f "$dir/manifest.yaml" ]; then
+              echo "::notice::modules/$name has no manifest.yaml and is not archived"
+              continue
+            fi
+            ver="$(awk '/^version:/{print $2; exit}' "$dir/manifest.yaml" | tr -d "\"'")"
+            if ! printf '%s' "$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+              echo "::error::modules/$name/manifest.yaml has no valid version"
+              exit 1
+            fi
+            # One archive per module with the module tree under <name>/, without
+            # build output. The order, owner, and time are fixed, so the same
+            # commit gives the same archive.
+            tar --sort=name --owner=0 --group=0 --numeric-owner \
+              --mtime="@${epoch}" --exclude=target --exclude=__pycache__ \
+              -cf - -C modules "$name" | gzip -n -9 > "dist/fps-module-${name}-${ver}.tar.gz"
+            count=$((count + 1))
+          done
+          [ "$count" -gt 0 ]
+          ls -l dist
+          # CTL-11 owns signing in controller/internal/registry/signing/. The
+          # registry signs these archives when it publishes an index, so this job
+          # makes none of its own signatures.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modules
+          path: dist/
+          if-no-files-found: error
+
+  python:
+    name: Python package (sdist and wheel)
+    needs: meta
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        working-directory: sdk/python
+        run: |
+          set -euo pipefail
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          python -m pip install build
+          python -m build --sdist --wheel --outdir ../../dist
+      - name: Compare the package version with the release version
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          whl="$(find dist -name '*.whl' | head -n 1)"
+          pkg="$(basename "$whl" | sed -E 's#^fixingpoint-([^-]+)-.*#\1#')"
+          if [ "$pkg" != "$VERSION" ]; then
+            echo "::warning::the Python package version is $pkg and the release version is $VERSION. Change sdk/python/pyproject.toml when the two should match."
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python
+          path: dist/
+          if-no-files-found: error
+
+  bundle:
+    name: Checksums and release notes
+    needs: [meta, agent, controller, modules, python]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+          merge-multiple: true
+      - name: SHA256SUMS
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp parts/* release/
+          cd release
+          sha256sum -- * | sort -k2 > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          cat SHA256SUMS
+      - name: Release notes
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # The previous release tag is the newest v* tag that is not this one.
+          prev=""
+          if [ "$REF_TYPE" = tag ]; then
+            prev="$(git tag --list 'v*' --sort=-version:refname | grep -vxF -- "$REF_NAME" | head -n 1 || true)"
+          else
+            prev="$(git tag --list 'v*' --sort=-version:refname | head -n 1 || true)"
+          fi
+          PREV_TAG="$prev" HEAD_REF=HEAD python3 -I - <<'PY' > release/RELEASE_NOTES.md
+          import os, re, subprocess
+
+          version = os.environ["VERSION"]
+          prev = os.environ["PREV_TAG"]
+          head = os.environ["HEAD_REF"]
+
+          def git(*args):
+              return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+          prev_date = ""
+          if prev:
+              prev_date = git("log", "-1", "--format=%cs", prev).strip()
+
+          # Contract changelog: the Unreleased section and every dated section
+          # that is newer than the previous release tag (all of them for the
+          # first release).
+          text = open("contracts/CHANGELOG.md", encoding="utf-8").read()
+          sections = re.split(r"(?m)^(?=## )", text)
+          picked = []
+          for sec in sections[1:]:
+              title = sec.splitlines()[0]
+              m = re.search(r"\((\d{4}-\d{2}-\d{2})\)", title)
+              if m is None or not prev_date or m.group(1) > prev_date:
+                  picked.append(sec.rstrip() + "\n")
+
+          # Merged pull requests since the previous tag, from the first parent
+          # history. A merge commit carries the pull request title as the first
+          # line of its body, a squash commit as the subject.
+          rng = f"{prev}..{head}" if prev else head
+          raw = git("log", "--first-parent", "--format=%H%x1f%s%x1f%b%x1e", rng)
+          prs = []
+          for rec in raw.split("\x1e"):
+              rec = rec.strip("\n")
+              if not rec:
+                  continue
+              _sha, subj, body = (rec.split("\x1f") + ["", ""])[:3]
+              m = re.match(r"Merge pull request #(\d+) from ", subj)
+              if m:
+                  lines = [l for l in body.splitlines() if l.strip()]
+                  title = lines[0] if lines else subj
+                  prs.append((m.group(1), title))
+                  continue
+              m = re.search(r"\(#(\d+)\)$", subj)
+              if m:
+                  prs.append((m.group(1), subj[: m.start()].rstrip()))
+
+          def clean(s):
+              # Titles are untrusted text. Keep one line and defuse mentions.
+              s = " ".join(s.split())
+              return s.replace("@", "@​")
+
+          print(f"# FixingPointSystem {version}\n")
+          print("Verify the downloads with `sha256sum -c SHA256SUMS`. The appliance image is not part of")
+          print("this release workflow, so a release lists an image only when the owner attached it.\n")
+          print("## Contract changes\n")
+          if picked:
+              for sec in picked:
+                  # Demote the section headings below the page headings.
+                  print(re.sub(r"(?m)^## ", "### ", sec))
+          else:
+              print("No changelog section is newer than the previous release.\n")
+          print("## Merged pull requests" + (f" since {prev}" if prev else "") + "\n")
+          if prs:
+              for num, title in prs:
+                  print(f"- {clean(title)} (#{num})")
+          else:
+              print("No merged pull request found.")
+          PY
+          cat release/RELEASE_NOTES.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ needs.meta.outputs.version }}
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    name: Create the GitHub release
+    needs: [meta, bundle]
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # No checkout: this job holds the write token and runs no repository code.
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-${{ needs.meta.outputs.version }}
+          path: release
+      - name: Create the release and upload the files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          cd release
+          sha256sum -c SHA256SUMS
+          flags=()
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          files=()
+          for f in *; do
+            [ "$f" = RELEASE_NOTES.md ] || files+=("$f")
+          done
+          gh release create "$TAG" --verify-tag --title "$TAG" \
+            --notes-file RELEASE_NOTES.md "${flags[@]}" -- "${files[@]}"

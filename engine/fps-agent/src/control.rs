@@ -258,7 +258,14 @@ pub struct CaptureSettings {
     /// The number of ring files that a capture keeps, which bounds its size
     /// to `file_bytes * max_files` plus the framing.
     pub max_files: usize,
+    /// How long a finished capture file stays on the agent, counted from the
+    /// moment the file was written, or `None` to keep every file. A file with
+    /// an upload in flight stays until the upload ends, whatever its age.
+    pub retention: Option<Duration>,
 }
+
+/// The default retention of a finished capture file, 24 hours.
+pub const DEFAULT_CAPTURE_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 
 impl Default for CaptureSettings {
     fn default() -> Self {
@@ -266,6 +273,7 @@ impl Default for CaptureSettings {
             dir: std::env::temp_dir().join("fps-agent-captures"),
             file_bytes: 64 << 20,
             max_files: 8,
+            retention: Some(DEFAULT_CAPTURE_RETENTION),
         }
     }
 }
@@ -305,6 +313,35 @@ pub enum CaptureError {
     /// The agent could not read or write the capture files.
     #[error("{0}")]
     Io(String),
+    /// The plan or capture is unknown, or the retention removed the file.
+    #[error("{0}")]
+    NotFound(String),
+    /// The agent already serves a transfer.
+    #[error("{0}")]
+    Busy(String),
+}
+
+/// How far a capture is.
+enum Stage {
+    /// The capture runs, or is being ended.
+    Running,
+    /// The capture ended without a file.
+    NoFile,
+    /// The file is written and does not change any more.
+    Ready(Done),
+}
+
+/// What the download and the retention need to know about a capture. A
+/// mutex of its own guards it, because `Entry::done` stays locked while the
+/// ring is joined and the command loop must never wait for that.
+struct Life {
+    stage: Stage,
+    /// When the file became ready.
+    ready_at: Option<Instant>,
+    /// The number of downloads that read the file.
+    in_flight: usize,
+    /// Set once the retention deleted the file, or a new capture replaced it.
+    removed: bool,
 }
 
 /// One capture of the plan.
@@ -322,6 +359,7 @@ pub struct Entry {
     finishing: AtomicBool,
     /// Set once the capture ended, and the lock serializes the finishing.
     done: Mutex<Option<Result<Done, String>>>,
+    life: Mutex<Life>,
 }
 
 impl std::fmt::Debug for Entry {
@@ -349,6 +387,9 @@ impl Entry {
 struct Book {
     plan_id: String,
     entries: Vec<Arc<Entry>>,
+    /// The finished captures of earlier plans, whose files the retention
+    /// still owns.
+    retired: Vec<Arc<Entry>>,
     /// The id of the capture that the cell feeds.
     active: Option<String>,
 }
@@ -358,6 +399,8 @@ pub struct Captures {
     settings: CaptureSettings,
     cell: CaptureCell,
     book: Mutex<Book>,
+    /// Set while a transfer holds the agent, which serves one at a time.
+    busy: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for Captures {
@@ -428,6 +471,7 @@ impl Captures {
             settings,
             cell: CaptureCell::new(),
             book: Mutex::new(Book::default()),
+            busy: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -437,12 +481,17 @@ impl Captures {
     }
 
     /// Forgets the captures of an earlier plan and names the plan that is
-    /// loaded now. The files stay on the agent.
+    /// loaded now. The files stay on the agent until the retention removes
+    /// them, but no command finds them any more.
     pub fn reset(&self, plan_id: &str) {
         self.cell.clear();
         let mut book = lock(&self.book);
         book.plan_id = plan_id.to_owned();
-        book.entries.clear();
+        let old = std::mem::take(&mut book.entries);
+        book.retired.extend(old.into_iter().filter(|e| {
+            let life = lock(&e.life);
+            !life.removed && matches!(life.stage, Stage::Ready(_))
+        }));
         book.active = None;
     }
 
@@ -510,6 +559,17 @@ impl Captures {
         create_private_dir(&plan_dir).map_err(|e| io("create", &plan_dir, e))?;
         let ring = plan_dir.join(format!("{capture_id}.ring"));
         let out = capture_path(&self.settings.dir, plan_id, capture_id);
+        // The new capture replaces the file of an earlier run of the same
+        // plan, which must not happen under an upload.
+        for old in book.retired.iter().filter(|e| e.out == out) {
+            let mut life = lock(&old.life);
+            if life.in_flight > 0 {
+                return Err(CaptureError::Precondition(format!(
+                    "capture {capture_id} of an earlier run of plan {plan_id} is being downloaded"
+                )));
+            }
+            life.removed = true;
+        }
         // A capture of an earlier plan with the same names would otherwise
         // join this one, because a ring adopts the files of its prefix.
         if ring.exists() {
@@ -541,6 +601,12 @@ impl Captures {
             max_duration,
             finishing: AtomicBool::new(false),
             done: Mutex::new(None),
+            life: Mutex::new(Life {
+                stage: Stage::Running,
+                ready_at: None,
+                in_flight: 0,
+                removed: false,
+            }),
         });
         book.entries.push(Arc::clone(&entry));
         book.active = Some(capture_id.to_owned());
@@ -606,8 +672,137 @@ impl Captures {
                 "capture file ready"
             );
         }
+        {
+            let mut life = lock(&entry.life);
+            match &result {
+                Ok(d) => {
+                    life.stage = Stage::Ready(d.clone());
+                    life.ready_at = Some(Instant::now());
+                }
+                Err(_) => life.stage = Stage::NoFile,
+            }
+        }
         *done = Some(result.clone());
         result
+    }
+
+    /// Opens the finished capture `capture_id` of plan `plan_id` for a
+    /// download from `start_offset` on.
+    ///
+    /// The agent serves one transfer at a time. The returned [`Transfer`]
+    /// keeps the retention from deleting the file until it is dropped.
+    ///
+    /// # Errors
+    ///
+    /// `NotFound` for an unknown capture, a capture without a file, or a file
+    /// that the retention removed. `Precondition` for a capture that has not
+    /// ended. `Invalid` for an offset beyond the size. `Busy` while another
+    /// transfer runs.
+    pub fn open_transfer(
+        &self,
+        plan_id: &str,
+        capture_id: &str,
+        start_offset: u64,
+    ) -> Result<Transfer, CaptureError> {
+        let entry = self.find(plan_id, capture_id).ok_or_else(|| {
+            CaptureError::NotFound(format!(
+                "capture {capture_id:?} is not known in plan {plan_id}"
+            ))
+        })?;
+        let mut life = lock(&entry.life);
+        let done = match &life.stage {
+            _ if life.removed => {
+                return Err(CaptureError::NotFound(format!(
+                    "the file of capture {capture_id:?} is gone, because the retention removed it"
+                )))
+            }
+            Stage::Running => {
+                return Err(CaptureError::Precondition(format!(
+                    "capture {capture_id:?} has not ended"
+                )))
+            }
+            Stage::NoFile => {
+                return Err(CaptureError::NotFound(format!(
+                    "capture {capture_id:?} ended without a file"
+                )))
+            }
+            Stage::Ready(d) => d.clone(),
+        };
+        if start_offset > done.bytes {
+            return Err(CaptureError::Invalid(format!(
+                "start_offset {start_offset} is beyond the {} bytes of capture {capture_id:?}",
+                done.bytes
+            )));
+        }
+        if self
+            .busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(CaptureError::Busy(
+                "the agent already serves a capture transfer".into(),
+            ));
+        }
+        // From here the guard releases the slot, and the count keeps the file.
+        life.in_flight += 1;
+        drop(life);
+        let guard = TransferGuard {
+            entry: Arc::clone(&entry),
+            busy: Arc::clone(&self.busy),
+        };
+        let gone = |e: &dyn std::fmt::Display| {
+            CaptureError::NotFound(format!("the file of capture {capture_id:?} is gone: {e}"))
+        };
+        let file = File::open(&done.path).map_err(|e| gone(&e))?;
+        let len = file.metadata().map_err(|e| gone(&e))?.len();
+        if len != done.bytes {
+            return Err(gone(&format!(
+                "it holds {len} bytes and the capture ended with {}",
+                done.bytes
+            )));
+        }
+        Ok(Transfer {
+            done,
+            start_offset,
+            file: Mutex::new(file),
+            _guard: guard,
+        })
+    }
+
+    /// Deletes the files of finished captures that outlived the retention and
+    /// that no transfer reads, and returns how many it deleted. The agent
+    /// calls it from time to time.
+    pub fn sweep(&self) -> usize {
+        let Some(retention) = self.settings.retention else {
+            return 0;
+        };
+        let mut book = lock(&self.book);
+        let mut deleted = 0;
+        for entry in book.entries.iter().chain(book.retired.iter()) {
+            let mut life = lock(&entry.life);
+            if life.removed || life.in_flight > 0 {
+                continue;
+            }
+            let Stage::Ready(done) = &life.stage else {
+                continue;
+            };
+            if life.ready_at.is_none_or(|t| t.elapsed() < retention) {
+                continue;
+            }
+            match fs::remove_file(&done.path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    tracing::warn!(capture_id = %entry.id, path = %done.path.display(), error = %e, "could not remove an expired capture file");
+                    continue;
+                }
+            }
+            tracing::info!(capture_id = %entry.id, path = %done.path.display(), "capture file removed after its retention");
+            life.removed = true;
+            deleted += 1;
+        }
+        book.retired.retain(|e| !lock(&e.life).removed);
+        deleted
     }
 
     /// Ends every capture that still runs, for the end of the run.
@@ -616,6 +811,74 @@ impl Captures {
         for e in entries {
             let _ = self.finish(&e);
         }
+    }
+}
+
+/// Releases a transfer slot and its hold on the file when it is dropped.
+struct TransferGuard {
+    entry: Arc<Entry>,
+    busy: Arc<AtomicBool>,
+}
+
+impl Drop for TransferGuard {
+    fn drop(&mut self) {
+        {
+            let mut life = lock(&self.entry.life);
+            life.in_flight = life.in_flight.saturating_sub(1);
+        }
+        self.busy.store(false, Ordering::Release);
+    }
+}
+
+/// A finished capture file open for a download. The retention leaves the file
+/// alone while the value lives, and no second transfer starts.
+pub struct Transfer {
+    done: Done,
+    start_offset: u64,
+    file: Mutex<File>,
+    _guard: TransferGuard,
+}
+
+impl std::fmt::Debug for Transfer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Transfer")
+            .field("start_offset", &self.start_offset)
+            .field("bytes", &self.done.bytes)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Transfer {
+    /// The size of the whole file.
+    pub fn total_bytes(&self) -> u64 {
+        self.done.bytes
+    }
+
+    /// The `sha256:` digest of the whole file, as `StopCaptureResult` said.
+    pub fn digest(&self) -> &str {
+        &self.done.digest
+    }
+
+    /// The offset of the first byte to send.
+    pub fn start_offset(&self) -> u64 {
+        self.start_offset
+    }
+
+    /// Reads up to `len` bytes at `offset`. The result is shorter than `len`
+    /// only at the end of the file.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be read, and when it ends before the size
+    /// that the capture reported, which means that something changed it.
+    pub fn read_at(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        use std::io::{Seek, SeekFrom};
+        let want = len.min(usize::try_from(self.done.bytes.saturating_sub(offset)).unwrap_or(len));
+        let mut buf = vec![0u8; want];
+        let mut file = lock(&self.file);
+        file.seek(SeekFrom::Start(offset))?;
+        file.read_exact(&mut buf)?;
+        Ok(buf)
     }
 }
 
@@ -859,5 +1122,145 @@ mod tests {
         for bad in ["", ".hidden", "a/b", "..", "a b", "é"] {
             assert!(plain_name("x", bad).is_err(), "{bad:?}");
         }
+    }
+
+    /// Puts a capture with a written file of `data` into the book of `caps`,
+    /// as `finish` leaves it, and returns the path of the file.
+    fn finished(caps: &Captures, plan: &str, id: &str, data: &[u8]) -> PathBuf {
+        let path = capture_path(&caps.settings.dir, plan, id);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, data).unwrap();
+        let entry = Arc::new(Entry {
+            id: id.into(),
+            out: path.clone(),
+            ring: path.with_extension("ring"),
+            prefix: id.into(),
+            capture: Capture::disabled(),
+            started: Instant::now(),
+            started_at: SystemTime::now(),
+            max_bytes: 0,
+            max_duration: None,
+            finishing: AtomicBool::new(true),
+            done: Mutex::new(None),
+            life: Mutex::new(Life {
+                stage: Stage::Ready(Done {
+                    packets: 0,
+                    bytes: data.len() as u64,
+                    dropped: 0,
+                    digest: format!("sha256:{}", hex(&Sha256::digest(data))),
+                    path: path.clone(),
+                }),
+                ready_at: Some(Instant::now()),
+                in_flight: 0,
+                removed: false,
+            }),
+        });
+        lock(&caps.book).entries.push(entry);
+        path
+    }
+
+    fn scratch(name: &str, retention: Option<Duration>) -> Captures {
+        let dir =
+            std::env::temp_dir().join(format!("fps-agent-unit-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let caps = Captures::new(CaptureSettings {
+            dir,
+            retention,
+            ..CaptureSettings::default()
+        });
+        lock(&caps.book).plan_id = "p".into();
+        caps
+    }
+
+    #[test]
+    fn a_transfer_reads_the_file_from_an_offset_and_refuses_what_it_must() {
+        let caps = scratch("open", None);
+        let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
+        finished(&caps, "p", "c1", &data);
+        let t = caps.open_transfer("p", "c1", 600).unwrap();
+        assert_eq!(t.total_bytes(), 1000);
+        assert_eq!(t.start_offset(), 600);
+        assert_eq!(t.read_at(600, 300).unwrap(), data[600..900]);
+        assert_eq!(
+            t.read_at(900, 300).unwrap(),
+            data[900..],
+            "short at the end"
+        );
+        assert!(t.read_at(1000, 10).unwrap().is_empty());
+        // One transfer at a time.
+        assert!(matches!(
+            caps.open_transfer("p", "c1", 0),
+            Err(CaptureError::Busy(_))
+        ));
+        drop(t);
+        // An offset equal to the size is valid and sends no chunk, one beyond is not.
+        assert!(caps.open_transfer("p", "c1", 1000).is_ok());
+        assert!(matches!(
+            caps.open_transfer("p", "c1", 1001),
+            Err(CaptureError::Invalid(_))
+        ));
+        assert!(matches!(
+            caps.open_transfer("p", "nope", 0),
+            Err(CaptureError::NotFound(_))
+        ));
+        assert!(matches!(
+            caps.open_transfer("other", "c1", 0),
+            Err(CaptureError::NotFound(_))
+        ));
+        let _ = fs::remove_dir_all(&caps.settings.dir);
+    }
+
+    #[test]
+    fn a_capture_that_runs_cannot_be_downloaded() {
+        let caps = scratch("running", None);
+        let path = finished(&caps, "p", "c1", b"x");
+        for e in lock(&caps.book).entries.iter() {
+            lock(&e.life).stage = Stage::Running;
+        }
+        assert!(matches!(
+            caps.open_transfer("p", "c1", 0),
+            Err(CaptureError::Precondition(_))
+        ));
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(&caps.settings.dir);
+    }
+
+    #[test]
+    fn the_retention_deletes_old_files_and_spares_a_transfer_in_flight() {
+        let caps = scratch("retention", Some(Duration::from_millis(50)));
+        let old = finished(&caps, "p", "old", b"old file");
+        let busy = finished(&caps, "p", "busy", b"busy file");
+        std::thread::sleep(Duration::from_millis(80));
+        let held = caps.open_transfer("p", "busy", 0).unwrap();
+        assert_eq!(caps.sweep(), 1);
+        assert!(!old.exists(), "the expired file is deleted");
+        assert!(busy.exists(), "a file with an upload in flight stays");
+        assert_eq!(held.read_at(0, 100).unwrap(), b"busy file");
+        assert!(matches!(
+            caps.open_transfer("p", "old", 0),
+            Err(CaptureError::NotFound(_))
+        ));
+        drop(held);
+        assert_eq!(caps.sweep(), 1);
+        assert!(!busy.exists(), "the file goes once the upload ended");
+        // A new plan retires the captures that it replaces, and the retention
+        // still removes their files.
+        let third = finished(&caps, "p", "third", b"third file");
+        caps.reset("q");
+        assert!(caps.find("p", "third").is_none());
+        std::thread::sleep(Duration::from_millis(80));
+        assert_eq!(caps.sweep(), 1);
+        assert!(!third.exists());
+        let _ = fs::remove_dir_all(&caps.settings.dir);
+    }
+
+    #[test]
+    fn without_a_retention_no_file_is_deleted() {
+        let caps = scratch("forever", None);
+        let kept = finished(&caps, "p", "c1", b"kept");
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(caps.sweep(), 0);
+        assert!(kept.exists());
+        let _ = fs::remove_dir_all(&caps.settings.dir);
     }
 }

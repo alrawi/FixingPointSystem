@@ -36,7 +36,7 @@ use fps_agent::{detect, require_kernel, Outcome, RunOptions, SystemRoot};
 
 const USAGE: &str = "usage: fps-agent capabilities [--root DIR]
        fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS]
-       fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--label KEY=VALUE]... [--redial-limit SECONDS] [--capture-dir DIR]
+       fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--label KEY=VALUE]... [--redial-limit SECONDS] [--capture-dir DIR] [--capture-retention SECONDS]
                           [--cert-dir DIR [--tls-ca FILE] [--tls-ca-sha256 HEX] [--enroll-address HOST:PORT]
                            [--enroll-token-file FILE | --enroll-token-env NAME]]   (https:// controllers)";
 
@@ -204,6 +204,7 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
     let mut labels = std::collections::HashMap::new();
     let mut redial_limit = Some(fps_agent::session::DEFAULT_REDIAL_LIMIT);
     let mut capture_dir = None;
+    let mut retention = Some(fps_agent::control::DEFAULT_CAPTURE_RETENTION);
     let mut tls = TlsFlags::default();
     let mut it = args.iter();
     while let Some(flag) = it.next() {
@@ -214,6 +215,15 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
             "--modules" => modules = Some(PathBuf::from(value)),
             "--root" => root = SystemRoot::new(value),
             "--capture-dir" => capture_dir = Some(PathBuf::from(value)),
+            "--capture-retention" => {
+                let secs: f64 = value
+                    .parse()
+                    .ok()
+                    .filter(|s: &f64| s.is_finite() && *s >= 0.0)
+                    .ok_or_else(|| format!("invalid --capture-retention {value:?}"))?;
+                // Zero keeps every finished capture file.
+                retention = (secs > 0.0).then(|| Duration::from_secs_f64(secs));
+            }
             "--cert-dir" => tls.dir = Some(PathBuf::from(value)),
             "--tls-ca" => tls.ca_file = Some(PathBuf::from(value)),
             "--tls-ca-sha256" => {
@@ -260,6 +270,7 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
     cfg.sides = sides;
     cfg.capabilities.labels = labels;
     cfg.redial_limit = redial_limit;
+    cfg.captures.retention = retention;
     if let Some(dir) = capture_dir {
         cfg.captures.dir = dir;
     }

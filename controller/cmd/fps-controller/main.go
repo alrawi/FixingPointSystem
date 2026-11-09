@@ -8,7 +8,8 @@
 //	               [-enroll-listen host:port] [-data-dir dir] [-pki-dir dir]
 //	               [-tls-names name,...] [-admin-socket path]
 //	               [-metrics-token-file file] [-trust-store-file file]
-//	               [-allow-unsigned-modules] [-log-level level]
+//	               [-allow-unsigned-modules] [-capture-retention duration]
+//	               [-log-level level]
 //	               [-insecure-plain-grpc]
 //	fps-controller token  -agent-id id [-ttl duration] [-config file | -data-dir dir | -admin-socket path]
 //	fps-controller revoke -agent-id id [-config file | -data-dir dir | -admin-socket path]
@@ -46,6 +47,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/app"
 	"github.com/alrawi/FixingPointSystem/controller/internal/metrics"
@@ -81,6 +83,7 @@ type options struct {
 	metricsTokenFile string
 	trustStoreFile   string
 	allowUnsigned    bool
+	captureRetention time.Duration
 	logLevel         string
 	version          bool
 	set              map[string]bool
@@ -104,6 +107,7 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.metricsTokenFile, "metrics-token-file", "", "`file` that holds the bearer token for GET /metrics; empty leaves the endpoint open")
 	fs.StringVar(&o.trustStoreFile, "trust-store-file", "", "`file` of the module signing trust store; empty means the registry does not require signatures")
 	fs.BoolVar(&o.allowUnsigned, "allow-unsigned-modules", false, "install modules without a signature even with a trust store (development only)")
+	fs.DurationVar(&o.captureRetention, "capture-retention", app.DefaultCaptureRetention, "how long the controller keeps a stored capture file, as a Go `duration` such as 168h")
 	fs.StringVar(&o.logLevel, "log-level", app.DefaultLogLevel, "log `level`: debug, info, warn, or error")
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
@@ -159,6 +163,9 @@ func loadConfig(o options) (app.Config, error) {
 	}
 	if o.set["allow-unsigned-modules"] {
 		cfg.AllowUnsignedModules = o.allowUnsigned
+	}
+	if o.set["capture-retention"] {
+		cfg.CaptureRetention = app.Duration(o.captureRetention)
 	}
 	if o.set["log-level"] {
 		cfg.LogLevel = o.logLevel
