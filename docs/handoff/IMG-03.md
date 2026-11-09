@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #199 |
 | Branch | `wp/IMG-03` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (4 of 4 plan steps written, CI pending) |
+| Pull request | #290 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-img03a, lease until 2026-11-09T15:11:44Z (renewed by heartbeat) |
-| Last verified commit | none |
+| Last verified commit | a73dd90 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -62,3 +62,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T15:00Z | claude-img03a | finish | pending | script, test, docs written |
+| 2026-11-09T15:20Z | claude-img03a | ready for review | a73dd90 | CI green on PR #290 |
