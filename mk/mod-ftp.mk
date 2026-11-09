@@ -41,9 +41,9 @@ test-mod-ftp:
 	@zeek="$${FPS_ZEEK:-$$(command -v zeek || true)}"; \
 	if [ -z "$$zeek" ] && [ -x /opt/zeek/bin/zeek ]; then zeek=/opt/zeek/bin/zeek; fi; \
 	if [ -n "$$zeek" ]; then \
-	  echo "modules/ftp/fixtures/zeek_check.py modules/ftp/fixtures/ftp.pcapng --file-transfers 64"; \
+	  echo "modules/ftp/fixtures/zeek_check.py modules/ftp/fixtures/ftp.pcapng --transfers 80 --file-transfers 64"; \
 	  $(PYTHON) modules/ftp/fixtures/zeek_check.py modules/ftp/fixtures/ftp.pcapng \
-	    --zeek "$$zeek" --file-transfers 64; \
+	    --zeek "$$zeek" --transfers 80 --file-transfers 64; \
 	else \
 	  echo "test-mod-ftp skipped the Zeek check because zeek is not installed"; \
 	fi

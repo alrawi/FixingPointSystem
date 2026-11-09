@@ -67,4 +67,4 @@ jobs:
       - name: Check ftp.log and files.log of the committed fixture
         run: |
           python modules/ftp/fixtures/zeek_check.py modules/ftp/fixtures/ftp.pcapng \
-            --file-transfers 64
+            --transfers 80 --file-transfers 64

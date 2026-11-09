@@ -98,7 +98,7 @@ if [[ -z $zeek && -x /opt/zeek/bin/zeek ]]; then
 fi
 if [[ -n $zeek ]]; then
   python3 "$here/zeek_check.py" "$out/ftp.pcapng" --zeek "$zeek" \
-    --file-transfers "$file_transfers"
+    --transfers "$transfers" --file-transfers "$file_transfers"
 else
   echo "capture.sh: skipped the Zeek check because zeek is not installed" >&2
 fi
