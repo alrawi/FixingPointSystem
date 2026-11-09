@@ -218,7 +218,11 @@ func compile(req Request) ([]Plan, error) {
 	}
 	modules := make([]PlanModule, len(c.modules))
 	for i, m := range c.modules {
-		modules[i] = PlanModule{Name: m.Name, Version: m.Version, Digest: m.Digest, Settings: c.settings[m.Name]}
+		modules[i] = PlanModule{
+			Name: m.Name, Version: m.Version, Digest: m.Digest,
+			Signature: m.Signature, SignatureKeyID: m.SignatureKeyID,
+			Settings: c.settings[m.Name],
+		}
 	}
 	hasRate := make([][]bool, len(agents))
 	for a := range hasRate {

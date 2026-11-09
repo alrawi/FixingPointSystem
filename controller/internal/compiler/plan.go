@@ -36,11 +36,19 @@ type Plan struct {
 	Criteria        []Criterion      `json:"criteria,omitempty"`
 }
 
-// ModuleRef pins one module by name, version, and digest.
+// ModuleRef pins one module by name, version, and digest, and carries the
+// signature that the registry stored for it. The struct stays comparable, so
+// the signature is the standard base64 text that proto3 JSON uses for bytes.
 type ModuleRef struct {
 	Name    string `json:"name,omitempty"`
 	Version string `json:"version,omitempty"`
 	Digest  string `json:"digest,omitempty"`
+	// Signature is the base64 encoding of the Ed25519 signature over the UTF-8
+	// bytes of Digest. It is empty for a module without a signature.
+	Signature string `json:"signature,omitempty"`
+	// SignatureKeyID names the key that made Signature, and is empty when
+	// Signature is.
+	SignatureKeyID string `json:"signatureKeyId,omitempty"`
 }
 
 // PlanModule is a ModuleRef of the plan together with the settings of the
@@ -48,10 +56,15 @@ type ModuleRef struct {
 // fps.agent.v1.ModuleRef yet, so the plan carries it ahead of the contract
 // and leaves it out when the test sets nothing for the module.
 type PlanModule struct {
-	Name     string         `json:"name,omitempty"`
-	Version  string         `json:"version,omitempty"`
-	Digest   string         `json:"digest,omitempty"`
-	Settings map[string]any `json:"settings,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
+	Digest  string `json:"digest,omitempty"`
+	// Signature and SignatureKeyID are the fields of fps.agent.v1.ModuleRef of
+	// the same names. The JSON text of the bytes field is base64, which is
+	// what ModuleRef.Signature holds.
+	Signature      string         `json:"signature,omitempty"`
+	SignatureKeyID string         `json:"signatureKeyId,omitempty"`
+	Settings       map[string]any `json:"settings,omitempty"`
 }
 
 // ScenarioSource carries one scenario file and the SHA-256 digest of its bytes.

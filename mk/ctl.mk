@@ -108,3 +108,10 @@ lint-ctl-runs:
 
 test-ctl-runs:
 	cd controller && $(GO) test -race -cover ./internal/runs/...
+
+# CTL-28 signature checks at install and in plans. The targets above cover these
+# packages too, so this one gives a fast loop for the registry, the compiler, and
+# the signing settings of the app configuration.
+.PHONY: test-ctl-trust
+test-ctl-trust:
+	cd controller && $(GO) test -race ./internal/registry/... ./internal/compiler/ ./internal/app/ ./internal/wiring/
