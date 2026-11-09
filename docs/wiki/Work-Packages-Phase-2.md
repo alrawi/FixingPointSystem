@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 74 work packages. Packages marked critical path gate the phase.
+This page lists 79 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -85,6 +85,11 @@ flowchart LR
   CTL_29["CTL-29<br/>Rebuild the agent inventory after a restart"]
   CON_13["CON-13<br/>Capture download over the agent connection"]
   AGT_09["AGT-09<br/>Serve capture downloads in the agent"]
+  CTL_30["CTL-30<br/>Send UpdateRates from the agent manager"]
+  CTL_31["CTL-31<br/>CA in the enrollment chain and trust store flags"]
+  AGT_10["AGT-10<br/>Shared capture cell and pinned enrollment check in the agent"]
+  IMG_06["IMG-06<br/>Mutual TLS in the image"]
+  CON_14["CON-14<br/>Signature headers and calibration history in the REST contract"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -160,6 +165,16 @@ flowchart LR
   CON_05 --> CON_13
   CON_13 --> AGT_09
   AGT_05 --> AGT_09
+  CTL_24 --> CTL_30
+  CTL_27 --> CTL_31
+  CTL_28 --> CTL_31
+  ENG_19 --> AGT_10
+  AGT_08 --> AGT_10
+  CTL_31 --> AGT_10
+  AGT_08 --> IMG_06
+  IMG_02 --> IMG_06
+  CTL_28 --> CON_14
+  CTL_24 --> CON_14
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -242,6 +257,11 @@ flowchart LR
 | [CTL-29](#ctl-29-rebuild-the-agent-inventory-after-a-restart) | Rebuild the agent inventory after a restart | S | CTL-27 |  |
 | [CON-13](#con-13-capture-download-over-the-agent-connection) | Capture download over the agent connection | S | CON-05 |  |
 | [AGT-09](#agt-09-serve-capture-downloads-in-the-agent) | Serve capture downloads in the agent | S | CON-13, AGT-05 |  |
+| [CTL-30](#ctl-30-send-updaterates-from-the-agent-manager) | Send UpdateRates from the agent manager | S | CTL-24 |  |
+| [CTL-31](#ctl-31-ca-in-the-enrollment-chain-and-trust-store-flags) | CA in the enrollment chain and trust store flags | S | CTL-27, CTL-28 |  |
+| [AGT-10](#agt-10-shared-capture-cell-and-pinned-enrollment-check-in-the-agent) | Shared capture cell and pinned enrollment check in the agent | S | ENG-19, AGT-08, CTL-31 |  |
+| [IMG-06](#img-06-mutual-tls-in-the-image) | Mutual TLS in the image | S | AGT-08, IMG-02 |  |
+| [CON-14](#con-14-signature-headers-and-calibration-history-in-the-rest-contract) | Signature headers and calibration history in the REST contract | S | CTL-28, CTL-24 |  |
 
 ## CON Contracts
 
@@ -336,6 +356,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The proto checks pass, buf breaking reports no breaking change, and a round trip test of the new messages passes in both bindings.
+
+### CON-14 Signature headers and calibration history in the REST contract
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CTL-28, CTL-24
+- **Paths.** `contracts/openapi/`, `contracts/changes/`
+
+CTL-28 reads X-Module-Signature-Key-Id and X-Module-Signature on installModule and answers 403 on a refused signature, and CTL-24 records Run.Calibration; neither is in the OpenAPI document. Needs owner approval as a contract change.
+
+Deliverables.
+
+- installModule documents the two optional headers and the 403 response; the run schema gains an optional calibration array; additive, with contracts/changes/CON-14.md.
+
+Acceptance.
+
+- [ ] The OpenAPI checks pass and the change is additive.
 
 ## OPS Repository and swarm tooling
 
@@ -649,6 +686,24 @@ Acceptance.
 
 - [ ] A fake controller test downloads a capture in two parts resumed at an offset and checks the digest.
 
+### AGT-10 Shared capture cell and pinned enrollment check in the agent
+
+Phase 2 · size S · workstream AGT
+
+- **Depends on.** ENG-19, AGT-08, CTL-31
+- **Paths.** `engine/fps-agent/`
+
+ENG-19 added fps_capture::CaptureCell and the runtime tap, and CTL-31 puts the CA in the handshake chain. The agent still has its own cell and checks a pinned fingerprint only after the token is spent.
+
+Deliverables.
+
+- The agent uses fps_capture::CaptureCell and passes it to RuntimeConfig, so TCP and UDP sessions share one capture.
+- With --tls-ca-sha256, the agent finds the pinned CA in the presented chain before it sends the enrollment token, and refuses otherwise.
+
+Acceptance.
+
+- [ ] An agent test captures TCP sessions through StartCapture; a fake enrollment endpoint with another CA gets no token.
+
 ## CTL Controller
 
 ### CTL-21 Throughput rate calibration
@@ -895,6 +950,43 @@ Deliverables.
 Acceptance.
 
 - [ ] A test enrolls an agent, restarts the controller with agent_auto_enroll off, and the agent registers again; a revoked identity does not.
+
+### CTL-30 Send UpdateRates from the agent manager
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CTL-24
+- **Paths.** `controller/internal/agents/`, `controller/internal/fakeagent/`, `controller/internal/runs/`
+
+CTL-24 calibrates throughput objectives through the optional runs.RateUpdater interface, but agents.Manager does not implement it and fakeagent refuses the command, so calibration is off on a real controller.
+
+Deliverables.
+
+- agents.Manager.UpdateRates sends UpdateRatesCommand and returns UpdateRatesResult, like Start.
+- fakeagent accepts UpdateRates while running and changes the session rate it simulates.
+- The CTL-24 test drops its rateManager wrapper and runs against the real manager and fakeagent.
+
+Acceptance.
+
+- [ ] A controller e2e test with fakeagent shows calibration steps in Run.Calibration for a throughput_bps objective.
+
+### CTL-31 CA in the enrollment chain and trust store flags
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CTL-27, CTL-28
+- **Paths.** `controller/internal/pki/`, `controller/cmd/fps-controller/`
+
+The controller sends only its leaf certificate, so an agent that pins the CA fingerprint cannot authenticate the enrollment endpoint before it sends its token (AGT-08 finding). The trust store settings of CTL-28 have no flag form.
+
+Deliverables.
+
+- The gRPC and enrollment listeners send the CA certificate after the leaf.
+- fps-controller flags -trust-store-file and -allow-unsigned-modules, matching the configuration keys.
+
+Acceptance.
+
+- [ ] A test reads the chain from a TLS handshake and finds the CA; a flag test shows the settings reach the configuration.
 
 ## CLI Python SDK and command line client
 
@@ -1485,6 +1577,25 @@ Deliverables.
 Acceptance.
 
 - [ ] The compose lab runs a short test between two agent containers.
+
+### IMG-06 Mutual TLS in the image
+
+Phase 2 · size S · workstream IMG
+
+- **Depends on.** AGT-08, IMG-02
+- **Paths.** `image/`
+
+Remove the insecure_plain_grpc stopgap from the image now that the agent speaks mutual TLS, following the four steps in the AGT-08 log entry.
+
+Deliverables.
+
+- The all in one role provisions an enrollment token through the admin socket at first boot, and an agent role takes a token and CA from cloud-init; no token on any command line.
+- fps-agent-start uses https:// and the AGT-08 flags; isolation.nft and fps-controller.service open and listen on the enrollment port 8445.
+- insecure_plain_grpc is gone from the image configuration and Image.md.
+
+Acceptance.
+
+- [ ] The owner host boot test passes for the all in one, controller, and agent roles with the agent registered over mutual TLS.
 
 ## UI Web UI
 

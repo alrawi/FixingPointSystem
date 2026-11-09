@@ -42,3 +42,7 @@ jobs:
         env:
           FPS_REQUIRE_CAPTURE_TOOLS: "1"
         run: cargo test -p fps-capture --test capture -- --nocapture
+      - name: Capture TCP sessions in the runtime and parse them with tshark (ENG-19)
+        env:
+          FPS_REQUIRE_CAPTURE_TOOLS: "1"
+        run: cargo test -p fps-runtime --test capture -- --nocapture
