@@ -144,6 +144,13 @@ func (p pending) DownloadCapture(w http.ResponseWriter, r *http.Request, id api.
 }
 
 // GetRunReport forwards getRunReport to the report handler, or answers 501.
+// StopCapture answers 501 until the captures package serves stopCapture
+// (CON-15). It resolves the method that every embedded handler inherits from
+// api.Unimplemented.
+func (p pending) StopCapture(w http.ResponseWriter, r *http.Request, id api.Id, captureID string) {
+	api.Unimplemented{}.StopCapture(w, r, id, captureID)
+}
+
 func (p pending) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, params api.GetRunReportParams) {
 	if p.report == nil {
 		api.Unimplemented{}.GetRunReport(w, r, id, params)
