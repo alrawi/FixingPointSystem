@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 69 work packages. Packages marked critical path gate the phase.
+This page lists 72 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -80,6 +80,9 @@ flowchart LR
   CTL_26["CTL-26<br/>Serve the HTML report"]
   CTL_27["CTL-27<br/>Mutual TLS in the controller"]
   AGT_08["AGT-08<br/>Mutual TLS and enrollment in the agent"]
+  ENG_19["ENG-19<br/>Capture TCP sessions in the runtime"]
+  CTL_28["CTL-28<br/>Verify module signatures at install and in plans"]
+  CTL_29["CTL-29<br/>Rebuild the agent inventory after a restart"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -147,6 +150,10 @@ flowchart LR
   CTL_13 --> CTL_26
   CTL_15 --> CTL_27
   CTL_27 --> AGT_08
+  ENG_12 --> ENG_19
+  AGT_05 --> ENG_19
+  CTL_11 --> CTL_28
+  CTL_27 --> CTL_29
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -224,6 +231,9 @@ flowchart LR
 | [CTL-26](#ctl-26-serve-the-html-report) | Serve the HTML report | S | CTL-13 |  |
 | [CTL-27](#ctl-27-mutual-tls-in-the-controller) | Mutual TLS in the controller | M | CTL-15 |  |
 | [AGT-08](#agt-08-mutual-tls-and-enrollment-in-the-agent) | Mutual TLS and enrollment in the agent | M | CTL-27 |  |
+| [ENG-19](#eng-19-capture-tcp-sessions-in-the-runtime) | Capture TCP sessions in the runtime | S | ENG-12, AGT-05 |  |
+| [CTL-28](#ctl-28-verify-module-signatures-at-install-and-in-plans) | Verify module signatures at install and in plans | M | CTL-11 |  |
+| [CTL-29](#ctl-29-rebuild-the-agent-inventory-after-a-restart) | Rebuild the agent inventory after a restart | S | CTL-27 |  |
 
 ## CON Contracts
 
@@ -466,6 +476,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A runtime test pauses a scenario with rate 0, resumes it, and changes its rate twice through RateControl, and the realized rates follow within the ENG-13 tolerances.
+
+### ENG-19 Capture TCP sessions in the runtime
+
+Phase 2 · size S · workstream ENG
+
+- **Depends on.** ENG-12, AGT-05
+- **Paths.** `engine/fps-runtime/`, `engine/fps-capture/`
+
+AGT-05 serves StartCapture with a shared capture cell, but only the agent's UDP workers read it, so a capture of TCP sessions is empty because fps-runtime has no tap hook.
+
+Deliverables.
+
+- The capture cell moves into fps-capture, and fps-runtime reads it when a session opens and wraps the session with Capture::tap, at no cost when no capture runs.
+
+Acceptance.
+
+- [ ] A runtime test starts a capture mid run and finds the sampled TCP sessions in the ring, and tshark parses them where it is installed.
 
 ## TRN Transport backends
 
@@ -790,6 +817,41 @@ Deliverables.
 Acceptance.
 
 - [ ] The controller e2e test runs with mutual TLS, and an agent without a valid certificate cannot register.
+
+### CTL-28 Verify module signatures at install and in plans
+
+Phase 2 · size M · workstream CTL
+
+- **Depends on.** CTL-11
+- **Paths.** `controller/internal/registry/`, `controller/internal/compiler/`
+
+CTL-11 built Ed25519 signing and a trust store, but install does not verify and plans carry no signatures.
+
+Deliverables.
+
+- Registry.Install verifies the archive signature against a configured trust store before unpacking, refuses any failure, accepts unsigned modules only with an explicit development setting, and stores the signature and key id with the module.
+- The compiler fills ModuleRef.signature and signature_key_id from the stored signature.
+
+Acceptance.
+
+- [ ] Install tests accept a signed module, refuse a modified archive and an unknown key, and refuse an unsigned module unless the development setting is on; a compiled plan carries the signature.
+
+### CTL-29 Rebuild the agent inventory after a restart
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CTL-27
+- **Paths.** `controller/internal/agents/`, `controller/internal/pki/`
+
+The agent inventory is in memory and the PKI state is on disk, so after a controller restart agents hold valid certificates but no inventory entry unless agent_auto_enroll is on.
+
+Deliverables.
+
+- At start the controller adds every identity with a valid, unrevoked certificate in the PKI state to the inventory.
+
+Acceptance.
+
+- [ ] A test enrolls an agent, restarts the controller with agent_auto_enroll off, and the agent registers again; a revoked identity does not.
 
 ## CLI Python SDK and command line client
 

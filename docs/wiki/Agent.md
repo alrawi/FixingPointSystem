@@ -78,7 +78,7 @@ fps-agent connect --controller http://127.0.0.1:7443 --agent-id local \
   [--redial-limit SECONDS] [--capture-dir DIR]
 ```
 
-The binary detects the host capabilities, adds the installed modules of `--modules` with their tree digests and the `--label` pairs, and calls `Register` with its state and plan. It then opens the `Session` stream with the token that `Register` returned, sends a heartbeat at the interval of the response and at once after every state change, and serves `prepare`, `start`, `stop`, `update_rates`, `start_capture`, and `stop_capture`. Logs are JSON lines on standard error from `tracing`. The controller speaks plain TCP until CTL-15 adds mutual TLS, so the agent dials `http://` addresses only.
+The binary detects the host capabilities, adds the installed modules of `--modules` with their tree digests and the `--label` pairs, and calls `Register` with its state and plan. It then opens the `Session` stream with the token that `Register` returned, sends a heartbeat at the interval of the response and at once after every state change, and serves `prepare`, `start`, `stop`, `update_rates`, `start_capture`, and `stop_capture`. Logs are JSON lines on standard error from `tracing`. Since CTL-27 the controller requires mutual TLS unless it runs with `insecure_plain_grpc`, and the agent dials `http://` addresses only, so it works only against a controller in that mode until AGT-08 gives it mutual TLS and enrollment.
 
 ### Generated types
 
