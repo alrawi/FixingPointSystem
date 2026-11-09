@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #339 |
 | Branch | `wp/CTL-37` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #342 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-ctl37a |
-| Last verified commit | none |
+| Last verified commit | bbe787b |
 
 ## Goal
 
@@ -19,20 +19,20 @@ Serve `listConfigs` (`GET /v1/configs`) newest first with the contract's paging,
 - [x] 1. Store: creation sequence (schema version 2), `Repository.List`, `Handler.ListConfigs`, tests against the OpenAPI document.
 - [x] 2. Capabilities: `api.WithControllerVersion`, `wiring.Options.Version`, `buildVersion()` from main; wiring stub and `pendingOps` lose `listConfigs`.
 - [x] 3. CLI: `fps config list` uses `GET /v1/configs`, history fallback on 501; unit tests and `cli/e2e`.
-- [ ] 4. Wiki pages, log entry, CI green, review.
+- [x] 4. Wiki pages, log entry, CI green, review.
 
 ## Done and verified
 
 - `cd cli && GOWORK=off go test ./internal/...` passes locally (the CLI module has no external dependencies).
-- Controller Go code cannot build here (no module proxy); `gofmt -l` is clean. CI is the build loop.
+- Controller Go code cannot build here (no module proxy); `gofmt -l` is clean. CI on bbe787b: controller `test`, `controller-e2e`, cli `test` (with `cli/e2e`), contracts, gate (after one re-run) green.
 
 ## Remaining
 
-CI results of the controller packages and of `cli/e2e`.
+Nothing. CI on bbe787b is green (the gate job failed once on a one-off tshark/zeek parser finding in http1 traffic, unrelated, and passed on re-run).
 
 ## Next action
 
-Open the pull request and poll CI.
+Review and merge PR #342.
 
 ## Blockers and open questions
 
@@ -61,3 +61,5 @@ gofmt -l controller cli                        # no output
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T23:15Z | claude-ctl37a | claim | none | claimed #339 |
+| 2026-11-09T23:30Z | claude-ctl37a | checkpoint | bbe787b | PR 342 opened, CI fixes pushed |
+| 2026-11-09T23:40Z | claude-ctl37a | review | bbe787b | CI green, ready for review |
