@@ -141,12 +141,14 @@ impl SideRun {
         tcp: Vec<fps_runtime::WorkerConfig>,
         udp: Vec<fps_runtime::WorkerConfig>,
         hooks: UdpHooks,
+        tcp_capture: CaptureCell,
     ) -> Result<Self, RunError> {
         let tcp = if tcp.is_empty() {
             None
         } else {
             let mut cfg = RuntimeConfig::new(seed, tcp);
             cfg.snapshot_interval = interval;
+            cfg.capture = tcp_capture;
             Some(Runtime::start(cfg)?)
         };
         let udp = if udp.is_empty() {
@@ -300,11 +302,8 @@ impl Prepared {
         self.start_with(interval, CaptureCell::new())
     }
 
-    /// Like [`Prepared::start`], and the UDP workers tap the sessions that
-    /// begin while `capture` holds a capture.
-    ///
-    /// The TCP workers of `fps-runtime` do not read the cell yet, see the
-    /// Agent page.
+    /// Like [`Prepared::start`], and the TCP and UDP workers tap the sessions
+    /// that begin while `capture` holds a capture.
     pub fn start_with(self, interval: Duration, capture: CaptureCell) -> Result<Active, RunError> {
         let Prepared {
             plan,
@@ -316,6 +315,14 @@ impl Prepared {
         // A client session holds both directions of its conversation, so a
         // process that runs clients taps those and not its server sessions.
         let tap_servers = !assembly.has_clients();
+        // A process with clients and servers would record each connection
+        // twice, so its server runtime gets a cell that stays empty.
+        let server_cell = if tap_servers {
+            capture.clone()
+        } else {
+            CaptureCell::new()
+        };
+        let client_cell = capture.clone();
         let hooks = UdpHooks {
             capture,
             tap_servers,
@@ -326,6 +333,7 @@ impl Prepared {
             assembly.tcp_servers,
             assembly.udp_servers,
             hooks.clone(),
+            server_cell,
         )?;
         let clients = match SideRun::start(
             plan.seed,
@@ -333,6 +341,7 @@ impl Prepared {
             assembly.tcp_clients,
             assembly.udp_clients,
             hooks,
+            client_cell,
         ) {
             Ok(c) => c,
             Err(e) => {

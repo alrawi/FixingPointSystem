@@ -13,17 +13,13 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
 use fps_capture::pcapng::{interface_description, section_header, EPB_TYPE};
-use fps_capture::{
-    Capture, CaptureConfig, KeyLogMode, RingConfig, SamplePolicy, SystemClock, TappedDatagram,
-};
-use fps_capture::{FlowEndpoints, Side, Transport};
+use fps_capture::{Capture, CaptureConfig, KeyLogMode, RingConfig, SamplePolicy, SystemClock};
 use fps_sched::{Objective, RateControl};
 use sha2::{Digest, Sha256};
 
@@ -150,102 +146,9 @@ impl Rates {
     }
 }
 
-struct CellInner {
-    on: AtomicBool,
-    capture: RwLock<Option<Capture>>,
-}
-
-/// The capture that new sessions are tapped into, which the workers read
-/// when a session begins.
-///
-/// A worker calls [`CaptureCell::current`] once per session. While no capture
-/// runs that is one relaxed atomic load and no lock. Cloning is cheap, and
-/// every clone shares the cell.
-#[derive(Clone)]
-pub struct CaptureCell {
-    inner: Arc<CellInner>,
-}
-
-impl Default for CaptureCell {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl std::fmt::Debug for CaptureCell {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CaptureCell")
-            .field("on", &self.inner.on.load(Ordering::Relaxed))
-            .finish()
-    }
-}
-
-impl CaptureCell {
-    /// Returns an empty cell.
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(CellInner {
-                on: AtomicBool::new(false),
-                capture: RwLock::new(None),
-            }),
-        }
-    }
-
-    /// Returns the capture of the cell, or `None` when none runs.
-    #[inline]
-    pub fn current(&self) -> Option<Capture> {
-        if !self.inner.on.load(Ordering::Acquire) {
-            return None;
-        }
-        self.inner
-            .capture
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
-    }
-
-    /// Puts `capture` into the cell, so sessions that begin from now on are tapped.
-    pub fn set(&self, capture: Capture) {
-        *self
-            .inner
-            .capture
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = Some(capture);
-        self.inner.on.store(true, Ordering::Release);
-    }
-
-    /// Empties the cell. Sessions that are open keep their recorder.
-    pub fn clear(&self) {
-        self.inner.on.store(false, Ordering::Release);
-        *self
-            .inner
-            .capture
-            .write()
-            .unwrap_or_else(PoisonError::into_inner) = None;
-    }
-
-    /// Wraps a UDP session of this agent in the tap of the current capture.
-    /// A session with no capture, or with endpoints of two families, is
-    /// wrapped without a recorder.
-    pub fn tap_datagram<D: fps_io::DatagramIo>(
-        &self,
-        session_id: u64,
-        side: Side,
-        local: SocketAddr,
-        peer: SocketAddr,
-        io: D,
-    ) -> TappedDatagram<D> {
-        let handle = self.current().and_then(|capture| {
-            let (client, server) = match side {
-                Side::Client => (local, peer),
-                Side::Server => (peer, local),
-            };
-            let flow = FlowEndpoints::new(client, server).ok()?;
-            capture.begin(session_id, flow, Transport::Udp, side)
-        });
-        TappedDatagram::new(io, handle)
-    }
-}
+/// The cell that new sessions are tapped into, shared by the TCP workers of
+/// `fps-runtime` and the UDP workers of this crate.
+pub use fps_capture::CaptureCell;
 
 /// Where the captures of the agent live and how large a ring may grow.
 #[derive(Debug, Clone, PartialEq, Eq)]

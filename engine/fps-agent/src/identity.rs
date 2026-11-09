@@ -24,17 +24,18 @@
 //!
 //! The CA is the trust anchor of both connections. With a pinned fingerprint
 //! and no CA file the agent has no CA certificate before its first
-//! enrollment, because the controller sends only its leaf certificate. It
-//! then accepts the certificate of the enrollment endpoint for the first
-//! exchange only, and it keeps the answer only when the `ca_pem` of the
-//! answer has the pinned fingerprint and the certificate that the endpoint
-//! presented chains to it. A rogue endpoint therefore cannot make the agent
-//! trust it, but it can read the token, so a CA file is the safer choice.
+//! enrollment. The controller presents the leaf and the CA on the enrollment
+//! listener (CTL-31), so a custom verifier ([`PinnedVerifier`]) finds the
+//! certificate with the pinned SHA-256 in the presented chain during the TLS
+//! handshake and requires that the leaf chains to it and names the address.
+//! The agent sends the token only after that check, so an endpoint of
+//! another CA never sees it, and it stores the `ca_pem` of the answer only
+//! when that file holds the pinned certificate.
 
 use std::io::Write as _;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
@@ -292,6 +293,40 @@ pub fn tls_failure(e: &(dyn std::error::Error + 'static)) -> Option<String> {
         .map(|at| text[at..].to_owned())
 }
 
+/// Returns true when the first call on a fresh connection failed because the
+/// connection closed, which is a broken pipe, a reset, an end of file, or an
+/// h2 "connection closed". The caller knows that the TLS handshake had
+/// completed and that no response arrived, because it is the first call of a
+/// connection that the dial opened. A refused or reached endpoint, a timeout,
+/// and a status that the controller sent are not of this kind.
+pub fn closed_before_response(status: &tonic::Status) -> bool {
+    // tonic turns a transport error into UNAVAILABLE or UNKNOWN, and a call
+    // that h2 cancels because the connection closed into CANCELLED, which is
+    // what CI saw (`operation was canceled: connection closed`).
+    if !matches!(
+        status.code(),
+        tonic::Code::Unavailable | tonic::Code::Unknown | tonic::Code::Cancelled
+    ) {
+        return false;
+    }
+    let mut text = status.message().to_ascii_lowercase();
+    let mut cur = std::error::Error::source(status);
+    while let Some(c) = cur {
+        text.push_str(": ");
+        text.push_str(&c.to_string().to_ascii_lowercase());
+        cur = c.source();
+    }
+    [
+        "connection closed",
+        "broken pipe",
+        "connection reset",
+        "unexpected eof",
+        "unexpected end of file",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
 /// What the agent trusts.
 #[derive(Debug, Clone)]
 enum Trust {
@@ -530,11 +565,11 @@ impl Identity {
             csr_pem: &csr,
         })
         .map_err(|e| IdentityError::Answer(e.to_string()))?;
-        let (config, capture) = client_config(trust, None)?;
+        let config = client_config(trust, None)?;
         let answer = post(&self.cfg.enroll_address, config, "/enroll", body).await?;
         let issued = self.accept(answer, "enrollment token")?;
-        if let (Trust::Pin(pin), Some(capture)) = (trust, capture) {
-            verify_pinned_answer(pin, &issued.ca_pem, &capture, &self.cfg.enroll_address)?;
+        if let Trust::Pin(pin) = trust {
+            check_pinned_ca(pin, &issued.ca_pem)?;
         }
         let stored = self.store(&issued, Some(&key.serialize_pem()))?;
         if matches!(trust, Trust::Pin(_)) {
@@ -559,7 +594,7 @@ impl Identity {
             .map_err(|e| IdentityError::Answer(e.to_string()))?;
         let chain = parse_certs(&stored.cert_pem, &self.cfg.dir.join(CERT_FILE))?;
         let key_der = parse_key(&stored.key_pem, &self.cfg.dir.join(KEY_FILE))?;
-        let (config, _) = client_config(&trust, Some((chain, key_der)))?;
+        let config = client_config(&trust, Some((chain, key_der)))?;
         let answer = post(&self.cfg.enroll_address, config, "/renew", body).await?;
         let issued = self.accept(answer, "certificate")?;
         let renewed = self.store(&issued, None)?;
@@ -788,30 +823,61 @@ fn csr_for(agent_id: &str, key: &rcgen::KeyPair) -> Result<String, IdentityError
         .map_err(keygen)
 }
 
-/// A verifier that accepts the certificate of the enrollment endpoint and
-/// records it. It still checks the handshake signature, so the peer proves
-/// that it holds the key of the certificate that it presented. The agent
-/// uses it for the first enrollment with a pinned fingerprint only, and
-/// [`verify_pinned_answer`] decides afterwards.
+/// A verifier for the first enrollment with a pinned fingerprint and no CA
+/// file. It runs inside the TLS handshake, so a refusal ends the connection
+/// before the agent sends the token.
+///
+/// Since CTL-31 the endpoint presents the leaf and the CA. The verifier looks
+/// for the certificate with the pinned SHA-256 among the certificates that
+/// follow the leaf, makes a root store of only that certificate, and hands
+/// the rest of the check (the chain, the validity, the usage, and the name of
+/// the address that the agent dialed) to the webpki verifier of rustls. The
+/// handshake signatures use the algorithms of the provider as usual.
 #[derive(Debug)]
-struct Capture {
+struct PinnedVerifier {
+    pin: [u8; 32],
     provider: Arc<CryptoProvider>,
-    seen: Mutex<Option<CertificateDer<'static>>>,
 }
 
-impl ServerCertVerifier for Capture {
+impl ServerCertVerifier for PinnedVerifier {
     fn verify_server_cert(
         &self,
         end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
-        _now: UnixTime,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp: &[u8],
+        now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        if let Ok(mut seen) = self.seen.lock() {
-            *seen = Some(end_entity.clone().into_owned());
-        }
-        Ok(ServerCertVerified::assertion())
+        let Some(at) = intermediates
+            .iter()
+            .position(|c| fingerprint(c) == self.pin)
+        else {
+            let found: Vec<String> = intermediates.iter().map(|c| hex(&fingerprint(c))).collect();
+            return Err(rustls::Error::General(format!(
+                "the endpoint presented no certificate with the pinned fingerprint sha256:{} \
+                 after its own (it presented {})",
+                hex(&self.pin),
+                if found.is_empty() {
+                    "none".to_owned()
+                } else {
+                    found.join(",")
+                }
+            )));
+        };
+        let mut roots = RootCertStore::empty();
+        roots
+            .add(intermediates[at].clone().into_owned())
+            .map_err(|e| rustls::Error::General(format!("the pinned CA is not usable: {e}")))?;
+        let rest: Vec<CertificateDer<'_>> = intermediates
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != at)
+            .map(|(_, c)| c.clone())
+            .collect();
+        WebPkiServerVerifier::builder_with_provider(Arc::new(roots), Arc::clone(&self.provider))
+            .build()
+            .map_err(|e| rustls::Error::General(e.to_string()))?
+            .verify_server_cert(end_entity, &rest, server_name, ocsp, now)
     }
 
     fn verify_tls12_signature(
@@ -849,68 +915,37 @@ impl ServerCertVerifier for Capture {
     }
 }
 
-/// Checks, after the first exchange, that the CA of the answer has the
-/// pinned fingerprint and that the endpoint presented a certificate that
-/// chains to it and names the address that the agent dialed.
-fn verify_pinned_answer(
-    pin: &[u8; 32],
-    ca_pem: &str,
-    capture: &Capture,
-    address: &str,
-) -> Result<(), IdentityError> {
-    let handshake = |detail: String| IdentityError::Handshake {
-        address: address.to_owned(),
-        detail,
-    };
+/// Checks that the `ca_pem` of the answer holds the certificate with the
+/// pinned fingerprint, which is the file that the agent stores as its CA.
+/// The handshake already checked that the endpoint presented that CA and that
+/// its certificate chains to it.
+fn check_pinned_ca(pin: &[u8; 32], ca_pem: &str) -> Result<(), IdentityError> {
     let cas: Vec<CertificateDer<'static>> = CertificateDer::pem_slice_iter(ca_pem.as_bytes())
         .collect::<Result<_, _>>()
         .map_err(|_| IdentityError::Answer("ca_pem holds no valid certificate".to_owned()))?;
-    let Some(ca) = cas.iter().find(|c| fingerprint(c) == *pin) else {
-        let found: Vec<String> = cas.iter().map(|c| hex(&fingerprint(c))).collect();
-        return Err(IdentityError::PinMismatch {
-            want: hex(pin),
-            found: if found.is_empty() {
-                "none".to_owned()
-            } else {
-                found.join(",")
-            },
-        });
-    };
-    let leaf = capture
-        .seen
-        .lock()
-        .ok()
-        .and_then(|s| s.clone())
-        .ok_or_else(|| handshake("the endpoint presented no certificate".to_owned()))?;
-    let mut roots = RootCertStore::empty();
-    roots
-        .add(ca.clone())
-        .map_err(|e| handshake(format!("the pinned CA is not usable: {e}")))?;
-    let verifier =
-        WebPkiServerVerifier::builder_with_provider(Arc::new(roots), Arc::clone(&capture.provider))
-            .build()
-            .map_err(|e| handshake(e.to_string()))?;
-    let name = server_name(address)?;
-    verifier
-        .verify_server_cert(&leaf, &[], &name, &[], UnixTime::now())
-        .map_err(|e| {
-            handshake(format!(
-                "the certificate of the endpoint does not chain to the pinned CA: {e}"
-            ))
-        })?;
-    Ok(())
+    if cas.iter().any(|c| fingerprint(c) == *pin) {
+        return Ok(());
+    }
+    let found: Vec<String> = cas.iter().map(|c| hex(&fingerprint(c))).collect();
+    Err(IdentityError::PinMismatch {
+        want: hex(pin),
+        found: if found.is_empty() {
+            "none".to_owned()
+        } else {
+            found.join(",")
+        },
+    })
 }
 
 fn provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
-/// Builds the rustls client configuration for the HTTPS requests. The
-/// capture is `Some` for a pinned fingerprint without a CA.
+/// Builds the rustls client configuration for the HTTPS requests.
 fn client_config(
     trust: &Trust,
     identity: Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)>,
-) -> Result<(Arc<ClientConfig>, Option<Arc<Capture>>), IdentityError> {
+) -> Result<Arc<ClientConfig>, IdentityError> {
     let provider = provider();
     let setup = |e: rustls::Error| IdentityError::Handshake {
         address: String::new(),
@@ -919,33 +954,27 @@ fn client_config(
     let builder = ClientConfig::builder_with_provider(Arc::clone(&provider))
         .with_safe_default_protocol_versions()
         .map_err(setup)?;
-    let (builder, capture) = match trust {
+    let builder = match trust {
         Trust::Roots(_, ders) => {
             let mut roots = RootCertStore::empty();
             for der in ders {
                 roots.add(der.clone()).map_err(setup)?;
             }
-            (builder.with_root_certificates(roots), None)
+            builder.with_root_certificates(roots)
         }
-        Trust::Pin(_) => {
-            let capture = Arc::new(Capture {
+        Trust::Pin(pin) => builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(PinnedVerifier {
+                pin: *pin,
                 provider: Arc::clone(&provider),
-                seen: Mutex::new(None),
-            });
-            (
-                builder
-                    .dangerous()
-                    .with_custom_certificate_verifier(capture.clone()),
-                Some(capture),
-            )
-        }
+            })),
     };
     let mut config = match identity {
         Some((chain, key)) => builder.with_client_auth_cert(chain, key).map_err(setup)?,
         None => builder.with_no_client_auth(),
     };
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
-    Ok((Arc::new(config), capture))
+    Ok(Arc::new(config))
 }
 
 fn split_address(address: &str) -> Result<&str, IdentityError> {
@@ -1119,6 +1148,30 @@ mod tests {
         assert!(found.contains("BadCertificate"), "{found}");
         let plain = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
         assert!(tls_failure(&plain).is_none());
+    }
+
+    #[test]
+    fn a_status_from_a_closed_connection_is_told_from_one_of_the_controller() {
+        use tonic::{Code, Status};
+        for (code, text, want) in [
+            (
+                Code::Cancelled,
+                "operation was canceled: transport error: operation was canceled: connection closed",
+                true,
+            ),
+            (Code::Unavailable, "transport error: Broken pipe (os error 32)", true),
+            (Code::Unknown, "h2 protocol error: connection reset", true),
+            (Code::Unavailable, "tcp connect error: Connection refused", false),
+            (Code::Unauthenticated, "connection closed", false),
+            (Code::Internal, "connection closed", false),
+            (Code::Unavailable, "the service is not ready", false),
+        ] {
+            assert_eq!(
+                closed_before_response(&Status::new(code, text)),
+                want,
+                "{code:?} {text}"
+            );
+        }
     }
 
     #[test]
