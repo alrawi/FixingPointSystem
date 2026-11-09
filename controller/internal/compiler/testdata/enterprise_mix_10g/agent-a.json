@@ -43,12 +43,12 @@
     {
       "id": "web_browse",
       "scenario": "http1/web_browse",
-      "weight": 0.6
+      "weight": 0.08271108558299828
     },
     {
       "id": "web_get",
       "scenario": "http1/web_get",
-      "weight": 0.39899999999999997,
+      "weight": 0.6875358989086732,
       "params": {
         "body_size": 65536,
         "requests": 8
@@ -57,7 +57,7 @@
     {
       "id": "lookup",
       "scenario": "dns/lookup",
-      "weight": 0.001
+      "weight": 0.22975301550832858
     }
   ],
   "ports": [
@@ -109,15 +109,15 @@
       "rates": [
         {
           "mixEntry": "web_browse",
-          "sessionsPerSecond": 593.4289845907856
+          "sessionsPerSecond": 375.00000000000006
         },
         {
           "mixEntry": "web_get",
-          "sessionsPerSecond": 394.6302747528724
+          "sessionsPerSecond": 3117.1875
         },
         {
           "mixEntry": "lookup",
-          "sessionsPerSecond": 0.9890483076513095
+          "sessionsPerSecond": 1041.666666666667
         }
       ]
     },
@@ -139,15 +139,15 @@
       "rates": [
         {
           "mixEntry": "web_browse",
-          "sessionsPerSecond": 593.4289845907856
+          "sessionsPerSecond": 375.00000000000006
         },
         {
           "mixEntry": "web_get",
-          "sessionsPerSecond": 394.6302747528724
+          "sessionsPerSecond": 3117.1875
         },
         {
           "mixEntry": "lookup",
-          "sessionsPerSecond": 0.9890483076513095
+          "sessionsPerSecond": 1041.666666666667
         }
       ]
     },
@@ -169,15 +169,15 @@
       "rates": [
         {
           "mixEntry": "web_browse",
-          "sessionsPerSecond": 593.4289845907856
+          "sessionsPerSecond": 375.00000000000006
         },
         {
           "mixEntry": "web_get",
-          "sessionsPerSecond": 394.6302747528724
+          "sessionsPerSecond": 3117.1875
         },
         {
           "mixEntry": "lookup",
-          "sessionsPerSecond": 0.9890483076513095
+          "sessionsPerSecond": 1041.666666666667
         }
       ]
     },
@@ -199,15 +199,15 @@
       "rates": [
         {
           "mixEntry": "web_browse",
-          "sessionsPerSecond": 593.4289845907856
+          "sessionsPerSecond": 375.00000000000006
         },
         {
           "mixEntry": "web_get",
-          "sessionsPerSecond": 394.6302747528724
+          "sessionsPerSecond": 3117.1875
         },
         {
           "mixEntry": "lookup",
-          "sessionsPerSecond": 0.9890483076513095
+          "sessionsPerSecond": 1041.666666666667
         }
       ]
     },
@@ -229,15 +229,15 @@
       "rates": [
         {
           "mixEntry": "web_browse",
-          "sessionsPerSecond": 593.4289845907856
+          "sessionsPerSecond": 375.00000000000006
         },
         {
           "mixEntry": "web_get",
-          "sessionsPerSecond": 394.6302747528724
+          "sessionsPerSecond": 3117.1875
         },
         {
           "mixEntry": "lookup",
-          "sessionsPerSecond": 0.9890483076513095
+          "sessionsPerSecond": 1041.666666666667
         }
       ]
     },
@@ -259,15 +259,15 @@
       "rates": [
         {
           "mixEntry": "web_browse",
-          "sessionsPerSecond": 593.4289845907856
+          "sessionsPerSecond": 375.00000000000006
         },
         {
           "mixEntry": "web_get",
-          "sessionsPerSecond": 394.6302747528724
+          "sessionsPerSecond": 3117.1875
         },
         {
           "mixEntry": "lookup",
-          "sessionsPerSecond": 0.9890483076513095
+          "sessionsPerSecond": 1041.666666666667
         }
       ]
     },
@@ -289,15 +289,15 @@
       "rates": [
         {
           "mixEntry": "web_browse",
-          "sessionsPerSecond": 593.4289845907856
+          "sessionsPerSecond": 375.00000000000006
         },
         {
           "mixEntry": "web_get",
-          "sessionsPerSecond": 394.6302747528724
+          "sessionsPerSecond": 3117.1875
         },
         {
           "mixEntry": "lookup",
-          "sessionsPerSecond": 0.9890483076513095
+          "sessionsPerSecond": 1041.666666666667
         }
       ]
     },
@@ -319,15 +319,15 @@
       "rates": [
         {
           "mixEntry": "web_browse",
-          "sessionsPerSecond": 593.4289845907856
+          "sessionsPerSecond": 375.00000000000006
         },
         {
           "mixEntry": "web_get",
-          "sessionsPerSecond": 394.6302747528724
+          "sessionsPerSecond": 3117.1875
         },
         {
           "mixEntry": "lookup",
-          "sessionsPerSecond": 0.9890483076513095
+          "sessionsPerSecond": 1041.666666666667
         }
       ]
     }
