@@ -6,7 +6,7 @@
 | Branch | `wp/ENG-17` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-e17a3b, lease until 2026-11-09T14:07:00Z |
 | Last verified commit | none |
 
@@ -16,19 +16,22 @@ The runtime compiles a module's extension.wasm once and instantiates it per sess
 
 ## Plan
 
-- [ ] 1. Read ENG-11, ENG-15, ENG-19 code and the extension ABI
-- [ ] 2. FailureKind::reason maps WasmFailure to extension_error
-- [ ] 3. Runtime loads and compiles extension.wasm once; per-session Host
-- [ ] 4. WAT fixture tests including looping extension
+- [x] 1. Read ENG-11, ENG-15, ENG-19 code and the extension ABI
+- [x] 2. FailureKind::reason maps WasmFailure to extension_error
+- [x] 3. Runtime loads and compiles extension.wasm once; per-session Host
+- [x] 4. WAT fixture tests including looping extension
 - [ ] 5. Wiki page, log entry, checks, PR
 
 ## Done and verified
 
-Nothing yet.
+- `engine/fps-runtime/src/extension.rs`: `ExtensionSet`, `SessionExtensions`, `SessionHost`, `extension_rng`. `FlowRef::extensions`, worker wiring in `worker.rs`.
+- `cargo test -p fps-runtime --test extensions`: 7 passed, including the looping-extension acceptance test.
+- `cargo clippy -p fps-runtime --all-targets -- -D warnings`: clean. `cargo fmt --all -- --check`: clean. `plan.py check`, `render --check`, `lint`: ok.
+- FailureKind::reason needed no change (ENG-15 maps every TemplateError::Function to extension_error); verified end to end by the runtime test counting reason `extension_error`.
 
 ## Remaining
 
-Everything.
+PR, CI, review. Follow ups are in the log entry.
 
 ## Next action
 
@@ -40,11 +43,12 @@ none
 
 ## Decisions taken in this package
 
-none yet
+- No change to fps-interp or fps-wasm: the reason mapping already exists and `WasmFunctions` is not used, because the runtime opens instances lazily and needs the module fallback.
+- Instances open at the first template call of the module in a session, not after connect, because the interpreter has no hook seam.
 
 ## Pitfalls
 
-none yet
+The fps-wasm test component refuses session id 13 in on-open. Worker 0 local session 13 has id 13, so the runtime test uses worker ids 20 and 21.
 
 ## Verify the current state
 
