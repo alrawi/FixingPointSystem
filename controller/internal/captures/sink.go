@@ -112,14 +112,14 @@ func fileSize(path string) uint64 {
 	if err != nil || fi.Size() < 0 {
 		return 0
 	}
-	return uint64(fi.Size())
+	return uint64(fi.Size()) //nolint:gosec // G115: checked non negative above
 }
 
 // fileDigest returns sha256: and the lowercase hex SHA-256 of the file at path.
 // A file that does not exist has the digest of no bytes.
 func fileDigest(path string) (string, error) {
 	h := sha256.New()
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304: the path is built from validated identities by the service
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:

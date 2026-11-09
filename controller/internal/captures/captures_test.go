@@ -316,7 +316,7 @@ func TestDownloadResumesAfterAnInterruptedUpload(t *testing.T) {
 		if u.StartOffset != held {
 			t.Fatalf("attempt %d starts at offset %d, the controller held %d", i, u.StartOffset, held)
 		}
-		held = u.StartOffset + uint64(u.Sent)
+		held = u.StartOffset + uint64(u.Sent) //nolint:gosec // G115: a count of bytes
 	}
 	if ups[1].StartOffset == 0 || ups[2].StartOffset <= ups[1].StartOffset || ups[2].Err != nil {
 		t.Fatalf("resume offsets %+v", ups)

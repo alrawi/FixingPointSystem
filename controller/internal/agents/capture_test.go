@@ -29,7 +29,7 @@ type memSink struct {
 func (s *memSink) WriteChunk(offset uint64, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if offset != uint64(s.buf.Len()) {
+	if offset != uint64(s.buf.Len()) { //nolint:gosec // G115: a length
 		return errors.New("gap")
 	}
 	s.buf.Write(data)
@@ -40,7 +40,8 @@ func (s *memSink) End(total uint64, digest string) (uint64, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ends++
-	return uint64(s.buf.Len()), total == uint64(s.buf.Len()) && digest == s.digest, nil
+	n := uint64(s.buf.Len()) //nolint:gosec // G115: a length
+	return n, total == n && digest == s.digest, nil
 }
 
 // captureRig is a manager with fake agents that run plan "p/<id>" with one

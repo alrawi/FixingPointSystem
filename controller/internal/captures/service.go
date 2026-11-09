@@ -434,11 +434,10 @@ func (s *Service) stopAll(ctx context.Context, c *capture, runFinal bool) {
 		res, err := s.cfg.Agents.StopCapture(cctx, f.Agent, &agentpb.StopCaptureCommand{PlanId: f.PlanID, CaptureId: c.id})
 		cancel()
 		c.mu.Lock()
-		switch {
-		case err == nil:
+		if err == nil {
 			f.Stopped, f.Error = true, ""
 			f.Packets, f.Bytes, f.Dropped, f.Digest = res.GetPackets(), res.GetBytes(), res.GetDropped(), res.GetDigest()
-		default:
+		} else {
 			f.Error = err.Error()
 			var cerr *agents.CommandError
 			gone := errors.Is(err, agents.ErrAgentOffline) || errors.Is(err, agents.ErrSessionLost) || errors.Is(err, agents.ErrUnknownAgent)
@@ -470,7 +469,7 @@ type Download struct {
 func (d *Download) WriteTo(w io.Writer) (int64, error) {
 	var n int64
 	for _, p := range d.paths {
-		f, err := os.Open(p)
+		f, err := os.Open(p) //nolint:gosec // G304: the path is built from validated identities by the service
 		if err != nil {
 			return n, fmt.Errorf("open capture file: %w", err)
 		}
