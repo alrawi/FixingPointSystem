@@ -151,7 +151,7 @@ fn a_valid_signature_loads_without_a_warning() {
     let plan = signed_plan(&key);
     let loaded = load(&plan, &dir, &strict(store(&[key.entry("active", None)]))).unwrap();
     assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
-    assert_eq!(loaded.set.len(), plan.modules.len());
+    assert_eq!(loaded.set.manifests.len(), plan.modules.len());
 }
 
 #[test]
@@ -164,9 +164,7 @@ fn a_signature_in_the_canonical_json_plan_reaches_the_check() {
     let mut json: serde_json::Value = serde_json::from_str(&text).unwrap();
     for m in json["modules"].as_array_mut().unwrap() {
         let sig = key.sign(m["digest"].as_str().unwrap());
-        m["signature"] = base64::engine::general_purpose::STANDARD
-            .encode(sig)
-            .into();
+        m["signature"] = base64::engine::general_purpose::STANDARD.encode(sig).into();
         m["signatureKeyId"] = key.id.clone().into();
     }
     let plan = Plan::parse(&json.to_string()).unwrap();
@@ -225,10 +223,16 @@ fn an_unknown_key_is_refused_and_developer_mode_warns() {
     let plan = signed_plan(&signed_by);
     let trust = store(&[other.entry("active", None)]);
     let err = untrusted(load(&plan, &dir, &strict(trust.clone())).unwrap_err());
-    assert!(matches!(err, TrustError::UnknownKey(ref id) if *id == signed_by.id), "{err}");
+    assert!(
+        matches!(err, TrustError::UnknownKey(ref id) if *id == signed_by.id),
+        "{err}"
+    );
     let loaded = load(&plan, &dir, &dev(trust)).unwrap();
     assert_eq!(loaded.warnings.len(), plan.modules.len(), "one per module");
-    assert!(loaded.warnings.iter().all(|w| w.contains("unknown signing key")));
+    assert!(loaded
+        .warnings
+        .iter()
+        .all(|w| w.contains("unknown signing key")));
 }
 
 #[test]
@@ -253,9 +257,8 @@ fn a_revoked_key_never_verifies_and_a_retired_key_stops_at_its_cutoff() {
     let dir = modules_dir("standing");
     let plan = signed_plan(&key);
 
-    let err = untrusted(
-        load(&plan, &dir, &strict(store(&[key.entry("revoked", None)]))).unwrap_err(),
-    );
+    let err =
+        untrusted(load(&plan, &dir, &strict(store(&[key.entry("revoked", None)]))).unwrap_err());
     assert!(matches!(err, TrustError::KeyRevoked(_)), "{err}");
 
     // The cutoff is 1970-01-01T00:01:40Z, second 100.
@@ -302,4 +305,37 @@ fn without_a_trust_store_signatures_are_not_required_and_one_warning_is_logged()
     junk.modules[0].signature = vec![1; 64];
     junk.modules[0].signature_key_id = "ed25519:00".into();
     load(&junk, &dir, &ModulePolicy::default()).unwrap();
+}
+
+#[test]
+fn a_malformed_trust_store_file_ends_the_binary_with_exit_code_2() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fps-agent-signing-flags");
+    fs::create_dir_all(&dir).unwrap();
+    let bad = dir.join("trust.json");
+    fs::write(&bad, r#"{"version": 2, "keys": []}"#).unwrap();
+    let run = ["run", "--plan", "p.json", "--modules", "m"];
+    let connect = [
+        "connect",
+        "--controller",
+        "http://127.0.0.1:1",
+        "--agent-id",
+        "a",
+        "--modules",
+        "m",
+    ];
+    for cmd in [&run[..], &connect[..]] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_fps-agent"))
+            .args(cmd)
+            .arg("--module-trust-store")
+            .arg(&bad)
+            .arg("--dev-modules")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{cmd:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("--module-trust-store") && err.contains("invalid trust store"),
+            "{err}"
+        );
+    }
 }

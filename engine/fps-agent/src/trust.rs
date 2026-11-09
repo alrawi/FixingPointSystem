@@ -139,7 +139,9 @@ pub fn key_id(public: &[u8]) -> String {
 /// Returns whether `d` is `sha256:` and 64 lowercase hex digits.
 pub fn is_digest(d: &str) -> bool {
     d.strip_prefix("sha256:").is_some_and(|h| {
-        h.len() == 64 && h.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        h.len() == 64
+            && h.bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
     })
 }
 
@@ -217,10 +219,7 @@ impl TrustStore {
                 .insert(e.key_id.clone(), Key { public, standing })
                 .is_some()
             {
-                return Err(TrustError::Store(format!(
-                    "key {} appears twice",
-                    e.key_id
-                )));
+                return Err(TrustError::Store(format!("key {} appears twice", e.key_id)));
             }
         }
         Ok(Self { keys })
@@ -461,10 +460,16 @@ mod tests {
             format!("{good} {{}}"),
             good.replace(KEY7_ID, "ed25519:00000000000000000000000000000000"),
             good.replace("\"status\": \"active\"", "\"status\": \"gone\""),
-            good.replace("\"status\": \"active\"", "\"status\": \"active\", \"retired_after\": \"2030-01-01T00:00:00Z\""),
+            good.replace(
+                "\"status\": \"active\"",
+                "\"status\": \"active\", \"retired_after\": \"2030-01-01T00:00:00Z\"",
+            ),
             good.replace("2030-01-01T00:00:00Z", "tomorrow"),
             good.replace(KEY7_PUBLIC, "AAAA"),
-            good.replace("\"status\": \"revoked\"", "\"status\": \"revoked\", \"unknown\": 1"),
+            good.replace(
+                "\"status\": \"revoked\"",
+                "\"status\": \"revoked\", \"unknown\": 1",
+            ),
         ];
         for (i, c) in cases.iter().enumerate() {
             assert!(TrustStore::parse(c.as_bytes()).is_err(), "case {i}");
