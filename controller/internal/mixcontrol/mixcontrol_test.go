@@ -65,7 +65,7 @@ func simulate(t *testing.T, cfg mixcontrol.Config, seed uint64, windows int) []f
 	if err != nil {
 		t.Fatal(err)
 	}
-	rng := rand.New(rand.NewPCG(seed, 1))
+	rng := rand.New(rand.NewPCG(seed, 1)) //nolint:gosec // G404: seeded test data
 	var sumW float64
 	for _, e := range cfg.Entries {
 		sumW += e.SessionWeight
@@ -124,7 +124,7 @@ func TestSettlesWithFewMoves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rng := rand.New(rand.NewPCG(9, 9))
+	rng := rand.New(rand.NewPCG(9, 9)) //nolint:gosec // G404: seeded test data
 	changes := 0
 	for w := 0; w < 300; w++ {
 		samples := make([]mixcontrol.Sample, len(ids))
@@ -273,7 +273,7 @@ func TestSettledSinceFollowsTheLastChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, res := feed(t, st, 80, 100)
+	_, res := feed(t, st, 80, 100)
 	if res.Changed || res.SettledSince.Equal(t0) || res.SettledSince.After(res.At) {
 		t.Errorf("settled since %v at %v, changed %v", res.SettledSince, res.At, res.Changed)
 	}
