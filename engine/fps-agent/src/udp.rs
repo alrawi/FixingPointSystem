@@ -20,10 +20,12 @@ use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use fps_backend_kernel::{Connector, KernelDatagram, KernelDatagramListener};
+use fps_capture::{Side as TapSide, TappedDatagram};
 use fps_flow::program::Program;
 use fps_flow::template::Filler;
 use fps_interp::{
@@ -34,11 +36,30 @@ use fps_runtime::{
     global_session_id, ClientConfig, Collector, FlowRef, Role, ServerConfig, SourceHosts,
     TokioClock, WorkerConfig, WorkerSnapshot,
 };
-use fps_sched::Schedule;
+use fps_sched::{RateControl, Schedule};
 use fps_stats::{metric, CounterId, GaugeId, HistogramId, Shard, StatsError};
 use tokio::sync::{watch, Notify};
 use tokio::task::LocalSet;
 use tokio::time::{interval_at, sleep_until, Instant, MissedTickBehavior};
+
+use crate::control::CaptureCell;
+
+/// The longest a client worker sleeps, so that it sees a new target within
+/// this time also while its schedule is paused or at its cap, as the workers
+/// of `fps-runtime` do.
+const MAX_IDLE: Duration = Duration::from_millis(100);
+
+/// What the owner of a [`UdpRuntime`] hands to its workers besides their
+/// configuration.
+#[derive(Debug, Clone, Default)]
+pub struct UdpHooks {
+    /// The capture that sessions are tapped into when they begin.
+    pub capture: CaptureCell,
+    /// Whether server sessions are tapped. A client session already holds both
+    /// directions, so an agent that runs clients taps those only, and a
+    /// process with server workers only taps the server side.
+    pub tap_servers: bool,
+}
 
 /// Errors of a UDP worker.
 #[derive(Debug, thiserror::Error)]
@@ -114,6 +135,7 @@ pub struct UdpRuntime {
     threads: Vec<(u32, JoinHandle<Result<(), UdpError>>)>,
     snapshots: Receiver<WorkerSnapshot>,
     collector: Collector,
+    rates: Arc<RateControl>,
 }
 
 impl UdpRuntime {
@@ -125,6 +147,17 @@ impl UdpRuntime {
         snapshot_interval: Duration,
         workers: Vec<WorkerConfig>,
     ) -> Result<Self, UdpError> {
+        Self::start_with(seed, snapshot_interval, workers, UdpHooks::default())
+    }
+
+    /// Like [`UdpRuntime::start`], with the hooks that the agent session
+    /// needs for captures.
+    pub fn start_with(
+        seed: u64,
+        snapshot_interval: Duration,
+        workers: Vec<WorkerConfig>,
+        hooks: UdpHooks,
+    ) -> Result<Self, UdpError> {
         let (control, control_rx) = watch::channel(Control::Run);
         let (snap_tx, snapshots) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel::<Ready>();
@@ -133,6 +166,7 @@ impl UdpRuntime {
             threads: Vec::new(),
             snapshots,
             collector: Collector::new(),
+            rates: Arc::new(RateControl::new()),
         };
         let mut failure = None;
         for w in workers {
@@ -144,6 +178,8 @@ impl UdpRuntime {
                 control: control_rx.clone(),
                 snapshots: snap_tx.clone(),
                 ready: ready_tx.clone(),
+                rates: Arc::clone(&me.rates),
+                hooks: hooks.clone(),
             };
             match std::thread::Builder::new()
                 .name(format!("fps-udp-{id}"))
@@ -177,6 +213,13 @@ impl UdpRuntime {
                 Err(e)
             }
         }
+    }
+
+    /// Returns the registry of the rate handles of the client workers by mix
+    /// entry name, as `RuntimeHandle::rate_control` does for TCP. Every client
+    /// worker registered its handle before [`UdpRuntime::start`] returned.
+    pub fn rate_control(&self) -> Arc<RateControl> {
+        Arc::clone(&self.rates)
     }
 
     /// Stops new sessions and resets the open ones after `ramp_down`.
@@ -230,6 +273,8 @@ struct Start {
     control: watch::Receiver<Control>,
     snapshots: Sender<WorkerSnapshot>,
     ready: Sender<Ready>,
+    rates: Arc<RateControl>,
+    hooks: UdpHooks,
 }
 
 fn run_thread(start: Start) -> Result<(), UdpError> {
@@ -326,6 +371,8 @@ struct Worker {
     sequence: Cell<u64>,
     snapshots: Sender<WorkerSnapshot>,
     abort: watch::Sender<bool>,
+    capture: CaptureCell,
+    tap_servers: bool,
 }
 
 impl Worker {
@@ -355,6 +402,8 @@ impl Worker {
             sequence: Cell::new(0),
             snapshots: start.snapshots.clone(),
             abort: watch::channel(false).0,
+            capture: start.hooks.capture.clone(),
+            tap_servers: start.hooks.tap_servers,
         })
     }
 
@@ -426,13 +475,16 @@ async fn run_worker(start: Start) -> Result<(), UdpError> {
     let id = start.config.id;
     let role = start.config.role.clone();
     let prepared = match &role {
-        Role::Client(c) => Worker::new(&start, Side::Client, &c.flow).map(|w| (w, Vec::new())),
+        Role::Client(c) => Worker::new(&start, Side::Client, &c.flow).and_then(|w| {
+            let sched = schedule(id, c, &start.rates)?;
+            Ok((w, Vec::new(), Some(sched)))
+        }),
         Role::Server(s) => Worker::new(&start, Side::Server, &s.flow).and_then(|w| {
             let listeners = bind(id, s)?;
-            Ok((w, listeners))
+            Ok((w, listeners, None))
         }),
     };
-    let (worker, listeners) = match prepared {
+    let (worker, listeners, sched) = match prepared {
         Ok(p) => p,
         Err(e) => {
             let _ = start.ready.send((id, Err(error_chain(&e))));
@@ -447,9 +499,11 @@ async fn run_worker(start: Start) -> Result<(), UdpError> {
         start.snapshot_interval,
     );
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    let stop = match role {
-        Role::Client(c) => client_loop(&worker, *c, &mut control, &mut tick).await?,
-        Role::Server(_) => server_loop(&worker, listeners, &mut control, &mut tick).await,
+    let stop = match (role, sched) {
+        (Role::Client(c), Some(sched)) => {
+            client_loop(&worker, *c, sched, &mut control, &mut tick).await
+        }
+        _ => server_loop(&worker, listeners, &mut control, &mut tick).await,
     };
     let mut deadline = match stop {
         Control::Run => None,
@@ -476,6 +530,23 @@ async fn run_worker(start: Start) -> Result<(), UdpError> {
     Ok(())
 }
 
+/// Builds the schedule of a client worker and registers its rate handle under
+/// the name of its mix entry, before the worker reports ready.
+fn schedule(worker: u32, c: &ClientConfig, rates: &RateControl) -> Result<Schedule, UdpError> {
+    let sched = Schedule::new(c.schedule.clone()).map_err(|e| UdpError::Config {
+        worker,
+        detail: format!("schedule: {e}"),
+    })?;
+    let entry = c.flow.entry.as_deref().unwrap_or(&c.flow.scenario.name);
+    rates
+        .register(entry, sched.rate_handle())
+        .map_err(|e| UdpError::Config {
+            worker,
+            detail: format!("rate handle of {entry}: {e}"),
+        })?;
+    Ok(sched)
+}
+
 fn bind(worker: u32, s: &ServerConfig) -> Result<Vec<KernelDatagramListener>, UdpError> {
     s.listen
         .iter()
@@ -494,14 +565,10 @@ struct ClientCtx {
 async fn client_loop(
     worker: &Rc<Worker>,
     c: ClientConfig,
+    mut sched: Schedule,
     control: &mut watch::Receiver<Control>,
     tick: &mut tokio::time::Interval,
-) -> Result<Control, UdpError> {
-    let wid = worker.id;
-    let mut sched = Schedule::new(c.schedule.clone()).map_err(|e| UdpError::Config {
-        worker: wid,
-        detail: format!("schedule: {e}"),
-    })?;
+) -> Control {
     let ctx = Rc::new(ClientCtx {
         connector: Connector::new(c.connect.clone()),
         config: c,
@@ -510,7 +577,7 @@ async fn client_loop(
     loop {
         let state = *control.borrow_and_update();
         if state != Control::Run {
-            return Ok(state);
+            return state;
         }
         let mut open = worker.open.get();
         for start in sched.drain(&clock, open) {
@@ -525,24 +592,27 @@ async fn client_loop(
                     &ctx.config.servers,
                     ctx.config.port,
                     start.session_id,
+                    Tap::new(&w.capture, w.id, start.session_id, TapSide::Client),
                 );
                 w.session(start.session_id, opener).await;
             });
         }
         if sched.is_finished(&clock) && worker.open.get() == 0 {
-            return Ok(Control::Run);
+            return Control::Run;
         }
+        // Never sleep past MAX_IDLE, so a new target shows within that time.
+        let wake = Instant::now() + MAX_IDLE;
         let due = sched
             .next_due(&clock, worker.open.get())
-            .map(|d| clock.instant_at(d));
+            .map_or(wake, |d| clock.instant_at(d).min(wake));
         tokio::select! {
             biased;
             r = control.changed() => {
                 if r.is_err() {
-                    return Ok(Control::Abort);
+                    return Control::Abort;
                 }
             }
-            () = sleep_until(due.unwrap_or_else(Instant::now)), if due.is_some() => {}
+            () = sleep_until(due) => {}
             () = worker.closed.notified() => {}
             _ = tick.tick() => worker.send_snapshot(false),
         }
@@ -570,7 +640,10 @@ async fn server_loop(
                 w.open.set(w.open.get() + 1);
                 let w = Rc::clone(&w);
                 tokio::task::spawn_local(async move {
-                    w.session(local_id, Accepted { io: Some(io) }).await;
+                    let tap = w
+                        .tap_servers
+                        .then(|| Tap::new(&w.capture, w.id, local_id, TapSide::Server));
+                    w.session(local_id, Accepted { io: Some(io), tap }).await;
                 });
             }
         }));
@@ -604,6 +677,32 @@ struct ClientOpener<'a> {
     port: Option<u16>,
     source: Result<IpAddr, String>,
     session: u64,
+    tap: Tap,
+}
+
+/// What a session needs to join the current capture when it opens.
+struct Tap {
+    cell: CaptureCell,
+    session_id: u64,
+    side: TapSide,
+}
+
+impl Tap {
+    fn new(cell: &CaptureCell, worker: u32, local_id: u64, side: TapSide) -> Self {
+        Self {
+            cell: cell.clone(),
+            session_id: global_session_id(worker, local_id),
+            side,
+        }
+    }
+
+    /// Wraps the socket of the session. The capture is read here, when the
+    /// session opens, so a capture that started a moment ago takes this one.
+    fn wrap(&self, io: KernelDatagram) -> TappedDatagram<KernelDatagram> {
+        let (local, peer) = (io.local_addr(), io.peer_addr());
+        self.cell
+            .tap_datagram(self.session_id, self.side, local, peer, io)
+    }
 }
 
 impl<'a> ClientOpener<'a> {
@@ -613,6 +712,7 @@ impl<'a> ClientOpener<'a> {
         servers: &'a [IpAddr],
         port: Option<u16>,
         session: u64,
+        tap: Tap,
     ) -> Self {
         Self {
             connector,
@@ -620,6 +720,7 @@ impl<'a> ClientOpener<'a> {
             port,
             source: source_addr(sources, session),
             session,
+            tap,
         }
     }
 
@@ -674,12 +775,12 @@ pub(crate) fn source_addr(sources: &SourceHosts, session: u64) -> Result<IpAddr,
 }
 
 impl DatagramOpener for ClientOpener<'_> {
-    type Io = KernelDatagram;
+    type Io = TappedDatagram<KernelDatagram>;
 
     fn open(
         &mut self,
         request: OpenRequest<'_>,
-    ) -> impl Future<Output = io::Result<KernelDatagram>> {
+    ) -> impl Future<Output = io::Result<TappedDatagram<KernelDatagram>>> {
         let opened = (|| {
             if request.kind != OpenKind::Connect {
                 return Err(invalid("a client opener cannot accept".into()));
@@ -688,6 +789,7 @@ impl DatagramOpener for ClientOpener<'_> {
             let destination = self.destination(&request)?;
             self.connector
                 .connect_datagram(source, destination)
+                .map(|io| self.tap.wrap(io))
                 .map_err(|e| io::Error::new(e.io_kind().unwrap_or(io::ErrorKind::Other), e))
         })();
         std::future::ready(opened)
@@ -697,19 +799,25 @@ impl DatagramOpener for ClientOpener<'_> {
 /// Hands the interpreter one session that a listener already opened.
 struct Accepted {
     io: Option<KernelDatagram>,
+    tap: Option<Tap>,
 }
 
 impl DatagramOpener for Accepted {
-    type Io = KernelDatagram;
+    type Io = TappedDatagram<KernelDatagram>;
 
     fn open(
         &mut self,
         request: OpenRequest<'_>,
-    ) -> impl Future<Output = io::Result<KernelDatagram>> {
+    ) -> impl Future<Output = io::Result<TappedDatagram<KernelDatagram>>> {
+        let tap = self.tap.as_ref();
         let io = match request.kind {
             OpenKind::Accept => self
                 .io
                 .take()
+                .map(|io| match tap {
+                    Some(t) => t.wrap(io),
+                    None => TappedDatagram::new(io, None),
+                })
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "session used")),
             OpenKind::Connect => Err(invalid("a server opener cannot connect".into())),
         };

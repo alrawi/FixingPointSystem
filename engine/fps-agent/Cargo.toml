@@ -18,9 +18,13 @@ path = "src/main.rs"
 # Pins the UDP worker threads to their plan cores, as fps-runtime does for TCP.
 core_affinity = "0.8"
 fps-backend-kernel = { path = "../fps-backend-kernel" }
+# The session capture ring that StartCapture and StopCapture serve.
+fps-capture = { path = "../fps-capture" }
 fps-flow = { path = "../fps-flow" }
 fps-hosts = { path = "../fps-hosts" }
 fps-interp = { path = "../fps-interp" }
+# The DatagramIo trait of the tapped UDP sessions.
+fps-io = { path = "../fps-io" }
 fps-module-dns = { path = "../../modules/dns/native" }
 fps-module-http1 = { path = "../../modules/http1/native" }
 fps-runtime = { path = "../fps-runtime" }

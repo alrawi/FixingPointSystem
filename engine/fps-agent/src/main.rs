@@ -32,7 +32,7 @@ use fps_agent::{detect, require_kernel, Outcome, RunOptions, SystemRoot};
 
 const USAGE: &str = "usage: fps-agent capabilities [--root DIR]
        fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS]
-       fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--label KEY=VALUE]... [--redial-limit SECONDS]";
+       fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--label KEY=VALUE]... [--redial-limit SECONDS] [--capture-dir DIR]";
 
 /// The exit code of a run whose criteria hold.
 const EXIT_PASS: u8 = 0;
@@ -197,6 +197,7 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
     let (mut root, mut sides) = (SystemRoot::host(), Sides::Both);
     let mut labels = std::collections::HashMap::new();
     let mut redial_limit = Some(fps_agent::session::DEFAULT_REDIAL_LIMIT);
+    let mut capture_dir = None;
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         let value = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -205,6 +206,7 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
             "--agent-id" => id = Some(value.clone()),
             "--modules" => modules = Some(PathBuf::from(value)),
             "--root" => root = SystemRoot::new(value),
+            "--capture-dir" => capture_dir = Some(PathBuf::from(value)),
             "--side" => {
                 sides = Sides::parse(value).ok_or_else(|| format!("unknown side {value:?}"))?;
             }
@@ -234,6 +236,9 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
     cfg.sides = sides;
     cfg.capabilities.labels = labels;
     cfg.redial_limit = redial_limit;
+    if let Some(dir) = capture_dir {
+        cfg.captures.dir = dir;
+    }
     Ok((cfg, root))
 }
 
