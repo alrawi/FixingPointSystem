@@ -346,9 +346,19 @@ func TestRESTListRunsOrderPagingAndFilter(t *testing.T) {
 			t.Fatalf("state=running returned %s in state %s", r.Id, r.State)
 		}
 	}
-	rest := rh.list(t, "state=running&page_size=2&page_token="+*running.Next)
-	if got := len(running.Items) + len(rest.Items); got != 5 {
-		t.Fatalf("running runs = %d, want 5 (six started, one aborted)", got)
+	total := len(running.Items)
+	for next := running.Next; next != nil; {
+		p := rh.list(t, "state=running&page_size=2&page_token="+*next)
+		for _, r := range p.Items {
+			if r.State != api.RunStateRunning {
+				t.Fatalf("state=running returned %s in state %s", r.Id, r.State)
+			}
+		}
+		total += len(p.Items)
+		next = p.Next
+	}
+	if total != 5 {
+		t.Fatalf("running runs = %d, want 5 (six started, one aborted)", total)
 	}
 	if got := rh.list(t, "state=completed"); len(got.Items) != 0 || got.Next != nil {
 		t.Fatalf("state=completed = %v", ids(got.Items))
