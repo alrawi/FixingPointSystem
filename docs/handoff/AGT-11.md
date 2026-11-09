@@ -6,8 +6,8 @@
 | Branch | `wp/AGT-11` |
 | Pull request | - The fps-wasm test component refuses session id 13 in `on-open`, which is engine worker 0 local session 13, so the test plan uses plan workers 1 and 2.
 - Builds: first cold build of fps-agent takes about 5 minutes with one job. |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-a11b3c |
 | Last verified commit | none |
 
@@ -22,7 +22,7 @@ The agent loads `extension.wasm` of each plan module through `ExtensionSet::load
 - [x] 1. modules::load builds the ExtensionSet; assemble sets FlowRef::extensions; bad extension refuses the plan
 - [x] 2. UDP session loop wraps functions and calls finish
 - [x] 3. Agent tests over TCP and UDP with the WAT extension, looping extension fails only its sessions
-- [ ] 4. Agent wiki page, log entry, checks, PR, CI
+- [x] 4. Agent wiki page, log entry, checks, PR, CI
 
 ## Done and verified
 
@@ -31,11 +31,11 @@ The agent loads `extension.wasm` of each plan module through `ExtensionSet::load
 
 ## Remaining
 
-PR and CI.
+Nothing.
 
 ## Next action
 
-Open the PR, wait for CI.
+Coordinator review and merge.
 
 ## Blockers and open questions
 
@@ -64,3 +64,4 @@ CARGO_PROFILE_DEV_DEBUG=0 cargo test -p fps-agent
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09 | claude-a11b3c | claim | none | claimed #287 |
+| 2026-11-09 | claude-a11b3c | finish | 44c7ae8 | PR #331, CI green |
