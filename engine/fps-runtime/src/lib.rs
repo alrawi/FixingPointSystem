@@ -16,6 +16,10 @@
 //! one second by default, and a final one when it ends. The [`Collector`]
 //! keeps the newest snapshot of every worker and merges them.
 //!
+//! A module that ships `extension.wasm` runs through an [`ExtensionSet`], which
+//! compiles each component once, shares it across the workers, and gives every
+//! session its own instance, see [`FlowRef::extensions`].
+//!
 //! [`RuntimeHandle::stop`] stops new sessions and lets open sessions finish
 //! within the ramp down time, after which it resets the rest.
 //! [`RuntimeHandle::abort`] resets every open session at once.
@@ -27,6 +31,7 @@ mod collector;
 mod config;
 mod control;
 mod error;
+mod extension;
 mod metrics;
 mod opener;
 mod runtime;
@@ -39,5 +44,8 @@ pub use config::{
     WorkerConfig,
 };
 pub use error::RuntimeError;
+pub use extension::{
+    extension_rng, ExtensionError, ExtensionSet, SessionExtensions, SessionKey, EXTENSION_FILE,
+};
 pub use opener::{global_session_id, ClientOpener};
 pub use runtime::{RunReport, Runtime, RuntimeHandle, WorkerExit};

@@ -18,10 +18,21 @@ fps-interp = { path = "../fps-interp" }
 fps-io = { path = "../fps-io" }
 fps-sched = { path = "../fps-sched" }
 fps-stats = { path = "../fps-stats" }
+# Compiles each module extension once and instantiates it per session (ENG-17).
+fps-wasm = { path = "../fps-wasm" }
+# The session generators of the extension host, drawn through RngCore.
+rand = { version = "0.8", default-features = false }
 # Error enums for library code, as docs/wiki/Coding-Standards.md requires.
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
+# Records the log calls of extensions.
+tracing = "0.1"
 
 [dev-dependencies]
 proptest = "1"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "test-util", "time"] }
+# The extension tests build their component from WAT text and the WIT file of the
+# contract, as the tests of fps-wasm do. Apache-2.0 WITH LLVM-exception.
+wat = "1"
+wit-component = "0.254"
+wit-parser = { version = "0.254", default-features = false, features = ["std"] }

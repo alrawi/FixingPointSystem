@@ -15,7 +15,7 @@ use fps_hosts::{HostPool, HostSelector};
 use fps_interp::Limits;
 use fps_sched::ScheduleConfig;
 
-use crate::RuntimeError;
+use crate::{ExtensionSet, RuntimeError};
 
 /// Builds the module functions of one session.
 ///
@@ -41,6 +41,11 @@ pub struct FlowRef {
     /// [`crate::RuntimeHandle::rate_control`]. `None` uses the scenario name.
     /// Set it when two mix entries run the same scenario.
     pub entry: Option<String>,
+    /// The compiled WebAssembly extensions of the modules that the flow calls,
+    /// shared by every worker, or `None` for a flow without extensions. A
+    /// call to a module of the set runs in an instance that the session owns,
+    /// and a call to any other module goes to [`FlowRef::functions`].
+    pub extensions: Option<Arc<ExtensionSet>>,
 }
 
 impl FlowRef {
@@ -53,6 +58,7 @@ impl FlowRef {
             functions: Arc::new(|| Box::new(NoFunctions)),
             limits: Limits::default(),
             entry: None,
+            extensions: None,
         }
     }
 
@@ -75,6 +81,7 @@ impl fmt::Debug for FlowRef {
         f.debug_struct("FlowRef")
             .field("scenario", &self.scenario.name)
             .field("entry", &self.entry)
+            .field("extensions", &self.extensions)
             .field("flow", &self.flow)
             .field("limits", &self.limits)
             .finish_non_exhaustive()
