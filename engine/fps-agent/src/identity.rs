@@ -9,7 +9,8 @@
 //!   SHA-256 fingerprint), the source of the enrollment token, the enrollment
 //!   address, and the directory with the key and the certificate.
 //! - [`Identity::client_tls`] returns the tonic TLS configuration for one
-//!   dial. When the directory holds no valid certificate, it enrolls first:
+//!   dial. When the directory holds no valid certificate, or a token file
+//!   exists, it enrolls first:
 //!   it makes an ECDSA P-256 key, sends a CSR with the common name set to the
 //!   agent id and the token to `POST /enroll`, writes the files with mode
 //!   0600, and forgets the token.
@@ -287,10 +288,8 @@ pub fn tls_failure(e: &(dyn std::error::Error + 'static)) -> Option<String> {
     // h2 keeps the kind and the text of an io error and drops its type, so
     // an alert that arrives on an open HTTP/2 connection reads as text.
     let text = chain(e);
-    text.find("received fatal alert").map(|at| {
-        let tail = &text[at..];
-        tail.split(": ").next().unwrap_or(tail).to_owned()
-    })
+    text.find("received fatal alert")
+        .map(|at| text[at..].to_owned())
 }
 
 /// What the agent trusts.
@@ -368,13 +367,19 @@ impl Identity {
     /// a needed enrollment, or when the enrollment fails.
     pub async fn client_tls(&self) -> Result<ClientTlsConfig, IdentityError> {
         let mut trust = self.trust()?;
+        // A token file that exists means that the operator wants a new
+        // enrollment, for example after a revocation. The agent deletes the
+        // file after every enrollment, so a leftover file is always new.
+        let new_token = matches!(&self.cfg.token, Some(TokenSource::File(p)) if p.exists());
         let stored = match load(&self.cfg.dir)? {
-            Some(s) if SystemTime::now() < s.not_after => s,
+            Some(s) if SystemTime::now() < s.not_after && !new_token => s,
             other => {
-                let reason = if other.is_some() {
-                    "the certificate of the agent expired".to_owned()
-                } else {
-                    format!("the agent has no certificate in {}", self.cfg.dir.display())
+                let reason = match &other {
+                    Some(s) if SystemTime::now() >= s.not_after => {
+                        "the certificate of the agent expired".to_owned()
+                    }
+                    Some(_) => "a new enrollment token is present".to_owned(),
+                    None => format!("the agent has no certificate in {}", self.cfg.dir.display()),
                 };
                 tracing::info!(reason = %reason, "enrolling");
                 let s = self.enroll(&trust, &reason).await?;

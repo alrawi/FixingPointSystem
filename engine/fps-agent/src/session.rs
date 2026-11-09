@@ -272,6 +272,14 @@ pub enum SessionError {
     },
 }
 
+/// Words a permanent TLS failure for the log and for the exit message.
+fn tls_reason(detail: String) -> String {
+    format!(
+        "TLS failure: {detail} (check the CA file, the certificate of this agent, and whether \
+         the controller revoked this agent)"
+    )
+}
+
 /// Why one session ended.
 #[derive(Debug)]
 enum Lost {
@@ -297,8 +305,8 @@ impl Lost {
                 "the controller answered UNAUTHENTICATED: {}",
                 s.message()
             )),
-            Lost::Status(s) => identity::tls_failure(s).map(|d| format!("TLS failure: {d}")),
-            Lost::Transport(e) => identity::tls_failure(e).map(|d| format!("TLS failure: {d}")),
+            Lost::Status(s) => identity::tls_failure(s).map(tls_reason),
+            Lost::Transport(e) => identity::tls_failure(e).map(tls_reason),
             Lost::Identity(e) if e.is_permanent() => Some(chain(e)),
             Lost::Identity(_) | Lost::Closed | Lost::Silent => None,
         }
@@ -1318,16 +1326,17 @@ where
         let core = shared.lock();
         (core.state, core.plan_id.clone())
     };
-    let reg = client
-        .register(pb::RegisterRequest {
-            agent_id: shared.cfg.agent_id.clone(),
-            capabilities: Some(shared.cfg.capabilities.clone()),
-            state: state as i32,
-            plan_id,
-        })
-        .await
-        .map_err(Lost::Status)?
-        .into_inner();
+    // A silent controller must not hold the call, so a shutdown ends it.
+    let register = client.register(pb::RegisterRequest {
+        agent_id: shared.cfg.agent_id.clone(),
+        capabilities: Some(shared.cfg.capabilities.clone()),
+        state: state as i32,
+        plan_id,
+    });
+    let reg = tokio::select! {
+        () = shutdown.as_mut() => return Ok(()),
+        r = register => r.map_err(Lost::Status)?.into_inner(),
+    };
     let interval = match convert::duration("heartbeat_interval", reg.heartbeat_interval.as_ref()) {
         Ok(d) if !d.is_zero() => d,
         _ => DEFAULT_HEARTBEAT_INTERVAL,
@@ -1353,11 +1362,11 @@ where
         })),
     })
     .await?;
-    let mut inbound = client
-        .session(ReceiverStream::new(rx))
-        .await
-        .map_err(Lost::Status)?
-        .into_inner();
+    let open = client.session(ReceiverStream::new(rx));
+    let mut inbound = tokio::select! {
+        () = shutdown.as_mut() => return Ok(()),
+        r = open => r.map_err(Lost::Status)?.into_inner(),
+    };
     *opened = true;
     tracing::info!(controller_id = %reg.controller_id, session = number, interval_ms = interval.as_millis() as u64, timeout_ms = timeout.as_millis() as u64, "session open");
     let mut sequence = 0u64;

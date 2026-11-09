@@ -5,12 +5,23 @@
 #
 # Usage: controller_e2e.sh FPS_CONTROLLER FPS_AGENT
 #
-# The script starts the controller with a temporary configuration, enrolls
-# the agent over REST, starts `fps-agent connect`, installs the example
+# The script starts the controller with a temporary configuration, which
+# serves the agent over mutual TLS (CTL-27). It mints an enrollment token
+# with `fps-controller token`, starts `fps-agent connect` with the token and
+# the CA file of the controller (AGT-08), and waits until the agent has
+# enrolled over HTTPS and registered over mutual TLS. It installs the example
 # modules, stores a small loopback test configuration, starts a run, waits
 # for it to run, stops it, and waits for the completed run. It then checks
 # that the run counted succeeded sessions and that the agent went back to
-# online. It needs curl, tar, and python3, and no root.
+# online.
+#
+# The tail of the script checks the handshake failures. An agent that trusts
+# another CA ends with exit code 2 and a TLS error before it spends its
+# token. After `fps-controller revoke`, the running agent ends with exit code
+# 2 as well, because the controller refuses its certificate at the next
+# dial, and a new token enrolls it again.
+#
+# It needs curl, tar, python3, and openssl, and no root.
 set -euo pipefail
 
 controller=${1:?usage: controller_e2e.sh FPS_CONTROLLER FPS_AGENT}
@@ -21,6 +32,7 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/fps-agent-e2e.XXXXXX")
 admin=e2e-admin-0123456789
 runner=e2e-run-0123456789
 pids=()
+agent_pid=""
 
 cleanup() {
   for p in "${pids[@]}"; do kill "$p" 2>/dev/null || true; done
@@ -41,8 +53,7 @@ fail() {
 cat >"$work/controller.yaml" <<EOF
 listen: 127.0.0.1:0
 grpc_listen: 127.0.0.1:0
-# The agent has no TLS until AGT-08, so this test uses the explicit plain mode.
-insecure_plain_grpc: true
+enroll_listen: 127.0.0.1:0
 log_level: debug
 data_dir: $work/data
 tokens:
@@ -68,14 +79,18 @@ for line in open(sys.argv[1]):
 EOF
 }
 
-rest="" grpc=""
+rest="" grpc="" enroll=""
 for _ in $(seq 150); do
   rest=$(addr "controller listening")
   grpc=$(addr "agent service listening")
-  [[ -n $rest && -n $grpc ]] && break
+  enroll=$(addr "enrollment service listening")
+  [[ -n $rest && -n $grpc && -n $enroll ]] && break
   sleep 0.1
 done
-[[ -n $rest && -n $grpc ]] || fail "the controller did not listen"
+[[ -n $rest && -n $grpc && -n $enroll ]] || fail "the controller did not listen"
+# The controller writes its CA here, in pki_dir, which defaults to data_dir/pki.
+ca="$work/data/pki/ca.crt"
+[[ -s $ca ]] || fail "the controller wrote no CA certificate at $ca"
 
 # call METHOD PATH TOKEN [CURL ARGS...] prints the body and fails on a status
 # of 300 or more.
@@ -93,10 +108,27 @@ for k in sys.argv[1].split("."):
 print("" if v is None else v)' "$1"
 }
 
-call POST /v1/agents "$admin" -H 'Content-Type: application/json' -d '{"id":"local","labels":{"site":"e2e"}}' >/dev/null
+# mint_token writes a fresh enrollment token for the agent `local` to
+# $work/token. Minting a token also adds the identity to the inventory of the
+# controller, so the script needs no POST /v1/agents.
+mint_token() {
+  (umask 077 && "$controller" token -agent-id local -ttl 5m -config "$work/controller.yaml" >"$work/token" 2>>"$work/token.log") ||
+    fail "fps-controller token failed: $(cat "$work/token.log")"
+  [[ -s $work/token ]] || fail "fps-controller token printed no token"
+}
 
-"$agent" connect --controller "http://$grpc" --agent-id local --modules "$examples/modules" 2>"$work/agent.log" &
-pids+=($!)
+# start_agent starts the agent with the token file $work/token, the CA file
+# of the controller, and the enrollment address, and sets agent_pid.
+start_agent() {
+  "$agent" connect --controller "https://$grpc" --agent-id local --modules "$examples/modules" \
+    --cert-dir "$work/agent-pki" --tls-ca "$ca" --enroll-address "$enroll" \
+    --enroll-token-file "$work/token" 2>>"$work/agent.log" &
+  agent_pid=$!
+  pids+=("$agent_pid")
+}
+
+mint_token
+start_agent
 
 state=""
 for _ in $(seq 100); do
@@ -105,6 +137,8 @@ for _ in $(seq 100); do
   sleep 0.1
 done
 [[ $state == online ]] || fail "the agent is $state, want online"
+[[ ! -e $work/token ]] || fail "the agent kept its enrollment token file"
+[[ $(stat -c %a "$work/agent-pki/agent.key") == 600 ]] || fail "the agent key is not mode 0600"
 
 for name in http1 dns; do
   (cd "$examples/modules/$name" && tar -czf "$work/$name.tar.gz" -- *)
@@ -181,3 +215,51 @@ for _ in $(seq 100); do
 done
 [[ $state == online ]] || fail "after the run the agent is $state, want online"
 echo "controller_e2e: run $run completed with $succeeded succeeded sessions, verdict passed"
+
+# A CA that is not the controller CA. The agent checks the enrollment endpoint
+# against it, so the handshake fails before the token leaves the agent.
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 \
+  -subj "/CN=wrong ca" -keyout "$work/wrong-ca.key" -out "$work/wrong-ca.pem" 2>/dev/null ||
+  fail "openssl could not make a CA"
+echo "unused.token" >"$work/unused-token"
+set +e
+"$agent" connect --controller "https://$grpc" --agent-id other --modules "$examples/modules" \
+  --cert-dir "$work/other-pki" --tls-ca "$work/wrong-ca.pem" --enroll-address "$enroll" \
+  --enroll-token-file "$work/unused-token" 2>"$work/wrong-ca.log"
+code=$?
+set -e
+[[ $code == 2 ]] || fail "an agent with the wrong CA exited with $code, want 2: $(cat "$work/wrong-ca.log")"
+grep -q "TLS failure" "$work/wrong-ca.log" || fail "the wrong CA gave no TLS error: $(cat "$work/wrong-ca.log")"
+[[ -e $work/unused-token ]] || fail "the agent used its token although the handshake failed"
+echo "controller_e2e: an agent that trusts another CA ended with exit code 2: $(tail -n 1 "$work/wrong-ca.log")"
+
+# Revoking the identity ends the session. The agent dials again, the
+# controller refuses the revoked certificate in the handshake, and the agent
+# ends with exit code 2.
+"$controller" revoke -agent-id local -config "$work/controller.yaml" >/dev/null 2>>"$work/token.log" ||
+  fail "fps-controller revoke failed: $(cat "$work/token.log")"
+code=""
+for _ in $(seq 100); do
+  if ! kill -0 "$agent_pid" 2>/dev/null; then
+    set +e
+    wait "$agent_pid"
+    code=$?
+    set -e
+    break
+  fi
+  sleep 0.1
+done
+[[ $code == 2 ]] || fail "the agent with a revoked certificate exited with '$code', want 2"
+grep -q "the failure is permanent" "$work/agent.log" || fail "the agent did not log a permanent failure"
+
+# A new token enrolls the agent again, over the revoked certificate.
+mint_token
+start_agent
+state=""
+for _ in $(seq 100); do
+  state=$(call GET /v1/agents "$runner" | json_field 0.state)
+  [[ $state == online ]] && break
+  sleep 0.1
+done
+[[ $state == online ]] || fail "after a new enrollment the agent is $state, want online"
+echo "controller_e2e: the revoked agent ended with exit code 2 and enrolled again with a new token"

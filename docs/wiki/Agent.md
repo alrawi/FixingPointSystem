@@ -1,6 +1,6 @@
 # Agent
 
-This page describes the agent of the AGT workstream. The crate [`fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent) holds the agent binary. AGT-03 added capability detection, which [Implementation Plan](Implementation-Plan.md) describes, and AGT-01 adds the standalone mode, which runs a plan without a controller. AGT-02 added the client loop that dials the controller, which the section [Controller session](#controller-session) describes, and AGT-06 added the kernel requirement and the redial policy, which the sections [Kernel requirement](#kernel-requirement) and [Redial policy](#redial-policy) describe. AGT-05 added the handlers of the v0.2 commands `UpdateRates`, `StartCapture`, and `StopCapture`, which the section [Run time rates and captures](#run-time-rates-and-captures) describes.
+This page describes the agent of the AGT workstream. The crate [`fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent) holds the agent binary. AGT-03 added capability detection, which [Implementation Plan](Implementation-Plan.md) describes, and AGT-01 adds the standalone mode, which runs a plan without a controller. AGT-02 added the client loop that dials the controller, which the section [Controller session](#controller-session) describes, and AGT-06 added the kernel requirement and the redial policy, which the sections [Kernel requirement](#kernel-requirement) and [Redial policy](#redial-policy) describe. AGT-05 added the handlers of the v0.2 commands `UpdateRates`, `StartCapture`, and `StopCapture`, which the section [Run time rates and captures](#run-time-rates-and-captures) describes. AGT-08 added mutual TLS, enrollment, and renewal, which the section [Mutual TLS and enrollment](#mutual-tls-and-enrollment) describes.
 
 ## Standalone mode
 
@@ -76,9 +76,11 @@ AGT-02 added the agent side of the control protocol. The agent dials the control
 fps-agent connect --controller http://127.0.0.1:7443 --agent-id local \
   --modules contracts/examples/modules [--root DIR] [--side both|client|server] [--label site=lab] \
   [--redial-limit SECONDS] [--capture-dir DIR]
+  [--cert-dir DIR [--tls-ca FILE] [--tls-ca-sha256 HEX] [--enroll-address HOST:PORT] \
+   [--enroll-token-file FILE | --enroll-token-env NAME]]    # https:// controllers
 ```
 
-The binary detects the host capabilities, adds the installed modules of `--modules` with their tree digests and the `--label` pairs, and calls `Register` with its state and plan. It then opens the `Session` stream with the token that `Register` returned, sends a heartbeat at the interval of the response and at once after every state change, and serves `prepare`, `start`, `stop`, `update_rates`, `start_capture`, and `stop_capture`. Logs are JSON lines on standard error from `tracing`. Since CTL-27 the controller requires mutual TLS unless it runs with `insecure_plain_grpc`, and the agent dials `http://` addresses only, so it works only against a controller in that mode until AGT-08 gives it mutual TLS and enrollment.
+The binary detects the host capabilities, adds the installed modules of `--modules` with their tree digests and the `--label` pairs, and calls `Register` with its state and plan. It then opens the `Session` stream with the token that `Register` returned, sends a heartbeat at the interval of the response and at once after every state change, and serves `prepare`, `start`, `stop`, `update_rates`, `start_capture`, and `stop_capture`. Logs are JSON lines on standard error from `tracing`. Since CTL-27 the controller requires mutual TLS unless it runs with `insecure_plain_grpc`, so the agent dials an `https://` address with a certificate, see [Mutual TLS and enrollment](#mutual-tls-and-enrollment), and an `http://` address only against a controller in that mode.
 
 ### Generated types
 
@@ -134,10 +136,80 @@ Decision D12 item 11 says that an agent keeps redialing after an abort, with a b
 | Exit code of `fps-agent connect` | Meaning |
 |---|---|
 | 0 | SIGINT or SIGTERM stopped the agent |
-| 2 | A usage error, an invalid controller address, a kernel before Linux 6.3, or a failed capability detection |
+| 2 | A usage error, an invalid controller address, a kernel before Linux 6.3, a failed capability detection, or a failure that redialing cannot fix, see [Mutual TLS and enrollment](#mutual-tls-and-enrollment) |
 | 3 | The agent gave up redialing the controller after the redial limit |
 
 A supervisor such as systemd can restart on code 3 and treat code 2 as a configuration fault.
+
+### Mutual TLS and enrollment
+
+AGT-08 gave the agent the TLS side of the controller (CTL-15 and CTL-27). A controller address with the scheme `https://` selects mutual TLS, and `http://` stays plain TCP for a controller that runs with `insecure_plain_grpc`. The module `fps_agent::identity` holds the code, and the tonic channel uses rustls with the ring provider, the stack of `fps-module-tls`. The owner chose the HTTPS enrollment endpoint, so no contract changed.
+
+```bash
+fps-agent connect --controller https://ctl.lab.example:8444 --agent-id edge-1 \
+  --modules /var/lib/fps/modules --cert-dir /var/lib/fps-agent/pki \
+  --tls-ca /etc/fps/ca.crt --enroll-token-file /etc/fps/enroll.token
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--cert-dir DIR` | none | The directory of the key and the certificate. An `https://` controller needs it |
+| `--tls-ca FILE` | none | A PEM file with the CA certificate of the controller, from `pki_dir/ca.crt` |
+| `--tls-ca-sha256 HEX` | none | The SHA-256 fingerprint of the CA certificate, which the controller logs as `ca_sha256`. Colons, upper case, and a `sha256:` prefix are fine |
+| `--enroll-address HOST:PORT` | host of `--controller`, port 8445 | The HTTPS listener of the controller for `POST /enroll` and `POST /renew` (`enroll_listen`) |
+| `--enroll-token-file FILE` | none | A file that holds the enrollment token |
+| `--enroll-token-env NAME` | `FPS_ENROLL_TOKEN` | The environment variable that holds the token when no file is named |
+
+An `https://` controller needs `--cert-dir` and one of `--tls-ca`, `--tls-ca-sha256`, or a `ca.pem` in the directory from an earlier enrollment. An `http://` controller refuses every TLS flag, which keeps a plain connection from passing for a secure one. The token never travels on the command line, and `fps-agent` has no flag that takes it.
+
+#### The files
+
+The directory has mode 0700 when the agent creates it. Every file is written to a temporary name and renamed, so a reader sees the old file or the new one, and the agent refuses a key that group or others can read.
+
+| File | Mode | Content |
+|---|---|---|
+| `agent.key` | 0600 | The ECDSA P-256 private key in PKCS 8 PEM |
+| `agent.crt` | 0644 | The certificate that the controller issued, with the common name set to `--agent-id` |
+| `identity.json` | 0644 | `not_after` and `renew_at` of the certificate as Unix seconds |
+| `ca.pem` | 0644 | The CA certificate, written only by an enrollment that pinned a fingerprint |
+
+#### Enrollment
+
+At every dial the agent reads the directory. Without a valid certificate, or with a token file that exists, it enrolls first, which takes six steps.
+
+1. It reads the token from the file or the environment variable. Without one it exits with the error `no enrollment token`, which names `fps-controller token` and both sources.
+2. It makes an ECDSA P-256 key and a CSR with the common name `--agent-id` and no other name.
+3. It connects to the enrollment address over TLS with the CA of the trust rules below, and sends `POST /enroll` with the token and the CSR.
+4. It checks that the answer names its own identity, and it parses `not_after` and `renew_at`.
+5. It writes the key, `identity.json`, and the certificate.
+6. It deletes the token file or removes the environment variable, so the agent keeps no spent secret.
+
+A token file that exists at a dial means that the operator wants a new enrollment, for example after `fps-controller revoke`, so the agent enrolls again over a valid certificate. The agent deletes the file after every enrollment, which makes a leftover file always new. A token in the environment enrolls only when no valid certificate exists, because the variable survives a restart.
+
+#### Trust
+
+The CA is the only trust anchor of both connections, and the agent never reads the system roots. It resolves the CA in this order: the file of `--tls-ca`, the `ca.pem` that an earlier enrollment stored, and the fingerprint of `--tls-ca-sha256`. With a CA file and a fingerprint, the file must hold a certificate with that fingerprint.
+
+A fingerprint alone has a weak spot. The controller sends only its leaf certificate, so the agent cannot verify the enrollment endpoint before it has the CA. The first exchange therefore accepts the certificate of the endpoint, still checking the handshake signature, and the agent keeps the answer only when the `ca_pem` of the answer has the pinned fingerprint and the certificate that the endpoint presented chains to it and names the address that the agent dialed. A rogue endpoint cannot make the agent trust it, but it can read the token, which then fails or succeeds at the real controller as a race. A CA file closes that gap, and the follow up in the log entry of AGT-08 proposes that the controller send its CA in the chain.
+
+#### Renewal
+
+A task checks `identity.json` and calls `POST /renew` when `renew_at` has passed. The request presents the current certificate over mutual TLS and carries a fresh CSR for the same key, because the files change one at a time and a new key would leave a window with a mismatched pair. The renewal runs on its own HTTPS connection and never touches the open session, so the agent never redials just to renew, and decision D12 item 12, which drops the plan with a lost session, holds. A renewal during a run is harmless, and it keeps a long run from outliving its certificate. The next dial reads the new files. A failed renewal retries with a wait from 5 s to 60 s until the certificate expires. When the controller refuses the renewal, the agent logs the reason, and the next dial enrolls again if a new token exists.
+
+#### Permanent failures
+
+Redialing cannot fix a handshake failure, `UNAUTHENTICATED`, a refused token, or a missing trust anchor, so the agent aborts any run, releases the plan, logs `the failure is permanent, the agent exits` with the reason, prints `fps-agent: error:` and the reason, and exits with code 2, which a supervisor reads as a configuration fault.
+
+| Failure | Where it shows | Message starts with |
+|---|---|---|
+| The CA does not match the controller certificate, or the peer does not speak TLS | The dial | `TLS failure: invalid peer certificate: UnknownIssuer` and similar |
+| The controller refuses the certificate of the agent, for example after a revocation | The first call after the dial, as an alert of TLS 1.3 | `TLS failure: received fatal alert: BadCertificate` |
+| `Register` answers `UNAUTHENTICATED` | The first call | `the controller answered UNAUTHENTICATED` |
+| The token is unknown, used, or expired | `POST /enroll` | `the controller refused the enrollment token (HTTP 401)` |
+| The CA of the answer has another fingerprint than the pin | `POST /enroll` | `the CA certificate does not have the pinned fingerprint` |
+| No certificate and no token | The dial | `no enrollment token is available` |
+
+A pinned fingerprint that does not match leaves the token spent at the controller, because the agent learns the CA from the answer, and it keeps the token file for a retry with a new token. `PERMISSION_DENIED`, which means that the inventory does not list the agent, and every unreachable controller still redial with the redial limit, because an operator can fix both while the agent runs.
 
 ### Run time rates and captures
 
@@ -208,7 +280,8 @@ The TCP workers belong to `fps-runtime`, which builds its openers with the kerne
 | Component | `tests/run_control.rs` | A fake controller changes the rates of a TCP entry and a UDP entry of a running plan, and the new rates show in the snapshots, refused updates change nothing, a pause and a resume work, and the capture commands answer with the codes above. The controller starts a capture in the middle of the run, stops it, locates the file below the capture directory, reads it block by block, and checks the size, the SHA-256, and the packet count of the result. A second capture ends at its time limit with no `StopCapture`, and a third ends with the run and answers after it |
 | Unit | `src/control.rs` | An update spans both registries and keeps entries that it does not name, every refusal changes nothing, and plan ids with a separator map to flat, distinct directories |
 | Component | `tests/detect.rs`, `tests/redial.rs`, `tests/exit_codes.rs`, `make test-agt-redial` | A 5.4 kernel string gives an error that names `IP_LOCAL_PORT_RANGE`, and 6.3 and newer pass. The backoff doubles, restarts at 200 ms with jitter after an abort, and resets after a session that opened. Failed attempts end `serve` with `RedialLimit` at the limit, aborts alone reach the limit too, and the binary exits with 2 and 3 |
-| End to end | `tests/controller_e2e.sh FPS_CONTROLLER FPS_AGENT` | The real `fps-controller` enrolls the real agent, installs the example modules, and drives a loopback run over REST to `completed` with a passed verdict |
+| Component | `tests/mtls.rs` | A fake enrollment endpoint and a fake controller over mutual TLS, both made with rcgen. The agent enrolls with a token from a file, which it deletes, registers with a certificate that names it, and renews at `renew_at` without a new session. A pinned fingerprint replaces the CA file and a stored CA serves the next start. A new token file replaces a certificate. A wrong pin, a refused token, a missing token, a controller of another CA, a certificate that the controller refuses, `UNAUTHENTICATED`, and a peer that does not speak TLS each end the agent with a permanent error, an unreachable controller does not, and the binary exits with code 2 and a TLS message |
+| End to end | `tests/controller_e2e.sh FPS_CONTROLLER FPS_AGENT` | The real `fps-controller` mints a token with `fps-controller token`, the real agent enrolls with it over HTTPS and registers over mutual TLS, installs the example modules, and drives a loopback run over REST to `completed` with a passed verdict. An agent that trusts another CA ends with exit code 2 before it spends its token, and after `fps-controller revoke` the running agent ends with exit code 2 and enrolls again with a new token |
 
 A local run of the end to end script with debug builds completed its run with 148 succeeded `http1` sessions in three seconds at 40 sessions per second. The controller checks port locations against the agent capabilities, which leave out loopback, so the script names the first detected interface while the loopback pools carry the traffic.
 
@@ -217,5 +290,6 @@ A local run of the end to end script with debug builds completed its run with 14
 - `per_worker` snapshots are not implemented. The agent logs a warning and sends aggregate snapshots.
 - The agent does not bind ports during `prepare`. The workers bind their sockets when the run starts.
 - The redial limit counts time and not attempts, and a dial that hangs for its five second connect timeout can overshoot it by that much.
-- Mutual TLS waits for CTL-15 on the controller side.
+- The agent renews with the key that it enrolled with, and it never rotates the key. A new key needs a cert and key pair that one rename switches.
+- A fingerprint without a CA file leaves the token open to a rogue enrollment endpoint for the first exchange, see [Trust](#trust).
 - TCP sessions are not captured until `fps-runtime` reads the capture cell, see [Run time rates and captures](#run-time-rates-and-captures). Filters, ports, and snap lengths are refused, and the capture file stays on the agent until a later package defines the transfer.

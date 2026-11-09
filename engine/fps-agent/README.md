@@ -12,8 +12,12 @@ The agent needs Linux 6.3 or newer, because workers take their source ports from
 fps-agent capabilities [--root DIR]
 fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS]
 fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] \
-  [--side both|client|server] [--label KEY=VALUE]... [--redial-limit SECONDS]
+  [--side both|client|server] [--label KEY=VALUE]... [--redial-limit SECONDS] \
+  [--cert-dir DIR --tls-ca FILE|--tls-ca-sha256 HEX [--enroll-address HOST:PORT] \
+   [--enroll-token-file FILE|--enroll-token-env NAME]]   # https:// controllers only
 ```
+
+An `https://` controller needs mutual TLS, and the agent enrolls with a one time token when `--cert-dir` holds no certificate. The wiki page [Agent](../../docs/wiki/Agent.md#mutual-tls-and-enrollment) describes the flags, the files, enrollment, renewal, and the permanent failures. An `http://` controller needs `insecure_plain_grpc`.
 
 ## Redialing the controller
 
@@ -26,7 +30,7 @@ After a lost connection or an abort, `connect` dials again. The wait starts at 2
 | Exit code of `connect` | Meaning |
 |---|---|
 | 0 | SIGINT or SIGTERM stopped the agent |
-| 2 | A usage error, a kernel before Linux 6.3, or a failed capability detection |
+| 2 | A usage error, a kernel before Linux 6.3, a failed capability detection, or a failure that redialing cannot fix, such as a TLS handshake failure or `UNAUTHENTICATED` |
 | 3 | The agent gave up redialing the controller |
 
 ## Tests

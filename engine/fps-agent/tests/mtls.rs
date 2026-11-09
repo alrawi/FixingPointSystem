@@ -577,6 +577,32 @@ async fn a_pinned_fingerprint_replaces_the_ca_file() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_new_token_file_replaces_a_certificate_that_the_controller_refuses() {
+    let pki = Arc::new(Pki::new("test ca"));
+    let enroll = enroller(&pki, Arc::clone(&pki), &["new.token"]).await;
+    let (addr, ctl) = controller(&pki.server(), &pki, false).await;
+    let dir = TestDir::new("new-token");
+    write(&dir.path("ca.crt"), &pki.pem());
+    // The old certificate is valid on the clock of the agent, but the
+    // controller revoked it, which only the controller knows.
+    let old = pki.client(AGENT);
+    seed_identity(&dir.path("pki"), &old);
+    write(&dir.path("token"), "new.token");
+    let mut cfg = tls(&dir.path("pki"), enroll.addr);
+    cfg.ca_file = Some(dir.path("ca.crt"));
+    cfg.token = Some(TokenSource::File(dir.path("token")));
+    let agent = Agent::start(addr, cfg);
+    wait_for("a session", || ctl.sessions.load(Ordering::SeqCst) == 1).await;
+    assert_eq!(enroll.state.enrolls.load(Ordering::SeqCst), 1);
+    assert_ne!(
+        std::fs::read_to_string(dir.path("pki/agent.crt")).expect("cert"),
+        old.cert_pem
+    );
+    assert!(!dir.path("token").exists());
+    agent.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_wrong_pin_is_permanent_and_stores_nothing() {
     let pki = Arc::new(Pki::new("real ca"));
     let enroll = enroller(&pki, Arc::clone(&pki), &["good.token"]).await;
