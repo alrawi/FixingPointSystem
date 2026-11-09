@@ -8,7 +8,7 @@
 | Status | ready for review |
 | Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-c02f7a, lease until 2026-11-09T17:42:54Z |
-| Last verified commit | b52a979 |
+| Last verified commit | 12e418d |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -32,11 +32,11 @@ A Go command line client `fps` in the new module `cli/` (standard library only) 
 
 ## Remaining
 
-The coordinator adds the workflow `cli-go.yml` from the PR body to the branch. `TestEndToEnd` has not run anywhere yet: it skips locally because the controller cannot build offline, and no workflow runs `cli/`. The controller workflow builds, vets, and lints `controller/cmd/fps-fakeagent`, and it passed.
+Nothing. The workflow `cli-go` passed on 12e418d, and `TestEndToEnd` ran for about 30 seconds against the real controller and the fake agent.
 
 ## Next action
 
-After the coordinator adds the workflow, read the result of `TestEndToEnd` and fix the test or the fake agent helper if it fails.
+Review pull request #306.
 
 ## Blockers and open questions
 
@@ -66,3 +66,4 @@ cd cli && GOWORK=off GOFLAGS=-mod=mod GOPROXY=off go test ./...
 | 2026-11-09T17:13Z | claude-c02f7a | claim | none | Claimed issue #169 |
 | 2026-11-09T17:45Z | claude-c02f7a | checkpoint | 1ccbd4a | Client, tests, fake agent helper, make targets; docs next |
 | 2026-11-09T18:00Z | claude-c02f7a | review | b52a979 | Pull request #306 opened, ready for review |
+| 2026-11-09T18:30Z | claude-c02f7a | checkpoint | 12e418d | Fixed the gosec G705 finding and the failed-criterion assertion; cli-go green |
