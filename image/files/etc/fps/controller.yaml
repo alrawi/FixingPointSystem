@@ -3,16 +3,19 @@
 # Controller settings of the appliance. The unit passes the listen addresses on
 # the command line, because they are the address of mgmt0, which DHCP assigns:
 #   -listen ${FPS_MGMT_ADDR}:8443 -grpc-listen ${FPS_MGMT_ADDR}:8444
+#   -enroll-listen ${FPS_MGMT_ADDR}:8445
 log_level: info
 data_dir: /var/lib/fps
-# The agent on this VM registers itself. Set this to false and enroll agents with
-# POST /v1/agents when other machines may reach the management network.
+# Agents talk over mutual TLS: the unit passes -enroll-listen for the enrollment
+# port 8445, and the controller keeps its CA in /var/lib/fps/pki. An agent holds a
+# certificate that the CA signed after it presented a one time token
+# (`fps-controller token -agent-id ID`). A controller certificate names the address
+# of mgmt0; set tls_names here when agents dial a DNS name or another address.
+#
+# The agent with a valid certificate joins the inventory. Keep this true: the
+# inventory lives in memory, so a restart of the controller empties it while the
+# agents keep valid certificates.
 agent_auto_enroll: true
-# Stopgap until AGT-08 gives the agent mutual TLS: since CTL-27 the controller
-# requires client certificates on gRPC, and the agent in this image cannot present
-# one yet. This flag keeps the plain gRPC listener of IMG-01 and logs INSECURE.
-# Remove it when the image provisions an enrollment token for the agent.
-insecure_plain_grpc: true
 tokens:
   # /etc/fps/admin.token comes from cloud-init user-data, or the controller
   # creates it on the first start. Read it with: sudo cat /etc/fps/admin.token

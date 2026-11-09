@@ -21,8 +21,8 @@ When `go` is missing or older than `controller/go.mod` asks for, the script down
 | `fps-mgmt-addr.service` | Waits for the DHCP address of `mgmt0` and writes it to `/run/fps/mgmt.env` |
 | `fps-role.service` | Reads the role from `/etc/fps/role.env` (cloud-init data), marks the units of the role, enables them, and disables the others |
 | `fps-tune.service` | Applies the tuning profile of the role, and asks for the one reboot that kernel options need |
-| `fps-controller.service` | Runs `fps-controller` as user `fps` with `-listen ${FPS_MGMT_ADDR}:8443 -grpc-listen ${FPS_MGMT_ADDR}:8444` |
-| `fps-agent.service` | Runs `fps-agent connect` against `http://${FPS_MGMT_ADDR}:8444` with agent id `local` |
+| `fps-controller.service` | Runs `fps-controller` as user `fps` with `-listen ${FPS_MGMT_ADDR}:8443 -grpc-listen ${FPS_MGMT_ADDR}:8444 -enroll-listen ${FPS_MGMT_ADDR}:8445` |
+| `fps-agent.service` | Runs `fps-agent connect` against `https://${FPS_MGMT_ADDR}:8444` with agent id `local`, over mutual TLS. `fps-enroll-token` runs first (see [Mutual TLS and enrollment](#mutual-tls-and-enrollment)) |
 
 Both service units start only in their roles (see [Roles and tuning](#roles-and-tuning)). The controller reads its token from `/etc/fps/admin.token`. A cloud-init `write_files` entry may provide the file, and otherwise `fps-init-token` creates a random token on the first start. The agent restarts after a crash or after it gave up redialing (exit code 3), and it does not restart after exit code 2, which a usage error or a kernel before Linux 6.3 causes.
 
@@ -49,9 +49,23 @@ The management interface is the Ethernet device with the lowest PCI address, or 
 | Listeners | The controller binds the REST and gRPC ports to the address of `mgmt0` only |
 | Sysctl | `net.ipv4.ip_forward`, `net.ipv6.conf.all.forwarding`, and the `default` forwarding setting stay at 0 |
 | nftables forward hook | `iifname "mgmt0"` and `oifname "mgmt0"` packets drop, so nothing routes between the management and a test interface even when forwarding turns on |
-| nftables input hook | Connections to ports 22, 8443, and 8444 drop on every interface except `mgmt0` and the loopback, because Linux answers for a local address on any interface |
+| nftables input hook | Connections to ports 22, 8443, 8444, and 8445 drop on every interface except `mgmt0` and the loopback, because Linux answers for a local address on any interface |
 
 Both hooks run at priority -100 in the table `inet fps_isolation`. The rules apply to the namespace of the host. The kernel test ports that [Hosts](Hosts.md) moves into `fps-port-*` namespaces never share a routing table with `mgmt0`.
+
+## Mutual TLS and enrollment
+
+Since IMG-06 the agent and the controller speak mutual TLS and `controller.yaml` has no `insecure_plain_grpc`. The controller serves gRPC on 8444 and the HTTPS enrollment endpoint (`POST /enroll`, `POST /renew`) on 8445, both on the management address, and keeps its CA in `/var/lib/fps/pki`. The agent keeps its key (0600) and certificate in `/var/lib/fps-agent/pki`, in a state directory with mode 0700.
+
+The enrollment token is a secret that is valid once. It never appears on a command line, in a unit file, or in a log. `fps-enroll-token` runs as root before the agent (`ExecStartPre=+`) and decides:
+
+1. A token that cloud-init wrote to `/etc/fps/enroll.token` (mode 0600) moves to `/var/lib/fps-agent/enroll.token`, and the original is deleted. It replaces an existing certificate, which re-enrolls a revoked agent.
+2. Otherwise, in the all-in-one role, when the agent has neither `agent.crt` nor a token file, the helper waits up to 30 seconds for the admin socket `/var/lib/fps/pki/admin.sock` and runs `fps-controller token -agent-id <id> -ttl 10m -config /etc/fps/controller.yaml` with umask 077 and standard output redirected into the token file. The agent enrolls, deletes the file, and a reboot does not enroll again.
+3. Otherwise it does nothing. An agent role without a token or a certificate exits with code 2 (`no enrollment token is available`), which `RestartPreventExitStatus=2` leaves stopped.
+
+`fps-agent-start` passes `--cert-dir /var/lib/fps-agent/pki --enroll-token-file /var/lib/fps-agent/enroll.token` for an `https://` controller, `--tls-ca /var/lib/fps/pki/ca.crt` (all-in-one) or `--tls-ca /etc/fps/controller-ca.pem` or `--tls-ca-sha256 $FPS_CA_SHA256` (agent role), and `--enroll-address` from `FPS_ENROLL_ADDRESS` or `<mgmt address>:8445` in the all-in-one role. An `http://` URI gets none of these flags.
+
+The agent role takes its trust and token from the cloud-init data that `fps-role` reads: `/etc/fps/enroll.token` and `/etc/fps/controller-ca.pem` through `write_files`, and the `role.env` keys `FPS_CA_SHA256` and `FPS_ENROLL_ADDRESS`. `fps-role` refuses a token inside `role.env`, which every user can read. The operator mints the token on the controller with `fps-controller token -agent-id <id>`. The README of the image has the full example. The controller certificate names the management address, so an agent that dials a DNS name or another address needs `tls_names` in `controller.yaml`. `agent_auto_enroll` stays on, so that a restart of the controller, which empties its in-memory inventory, still admits the agents that hold valid certificates.
 
 ## Cloud-init defaults
 
@@ -62,15 +76,15 @@ Both hooks run at priority -100 in the table `inet fps_isolation`. The rules app
 | Command | Level | Needs |
 |---|---|---|
 | `make lint-img` | Lint of the scripts with `bash -n`, ShellCheck, and `packer fmt -check` when installed | Nothing |
-| `make test-img` | Static checks of the sources, including `nft -c`, and the offline tests of the role selector and of the tuning sizes and reboot logic | Nothing |
+| `make test-img` | Static checks of the sources, including `nft -c`, and the offline tests of the role selector of the tuning sizes and reboot logic, and of the enrollment helper and the agent arguments | Nothing |
 | `sudo make e2e-img` | Namespace test of the shipped rules: a router forwards without them, and drops traffic between `mgmt0` and `test0` with them | root, `ip`, `nft`, `curl`, `python3` |
 | `image/boot-test.sh [--role controller\|agent\|all-in-one\|all]` | Boots the built qcow2 under QEMU/KVM with a management NIC and a test NIC, seeds the role, and prints PASS or FAIL per check. The agent role boots with 4 CPUs and 4 GiB and waits for its tuning reboot | KVM, a built image |
 
-The boot test seeds the role through NoCloud and checks, per role, which units are active, enabled, and running as processes, and the applied tuning: `/proc/cmdline`, the isolated CPUs, the hugepage count, the agent pinning, the sysctls, and the notrack table. It also checks `GET /v1/capabilities` through a host port forward on the management NIC, the listeners of the controller, the services, the registration of the local agent, the sysctl values, and the namespace test with the real rules inside the VM.
+The boot test seeds the role through NoCloud and checks, per role, which units are active, enabled, and running as processes, and the applied tuning: `/proc/cmdline`, the isolated CPUs, the hugepage count, the agent pinning, the sysctls, and the notrack table. It also checks `GET /v1/capabilities` through a host port forward on the management NIC, the listeners of the controller, the services, the registration of the local agent over mutual TLS (state online), the absence of `insecure_plain_grpc`, the agent arguments, the sysctl values, and the namespace test with the real rules inside the VM.
 
 ## Limits
 
-1. The controller serves plain HTTP, and plain gRPC through the explicit `insecure_plain_grpc: true` of `/etc/fps/controller.yaml`, so the management network must be trusted. CTL-27 made the controller require mutual TLS on gRPC by default, and the image keeps the plain listener as a stopgap until AGT-08 gives the agent mutual TLS and the image provisions its enrollment token.
+1. The REST API on 8443 is plain HTTP with a bearer token, so the management network must be trusted for the API. The control channel to the agents (8444) and the enrollment (8445) use TLS.
 2. `agent_auto_enroll` is on in every role, so the controller role accepts agents from the management network without enrollment. The role selector does not change it, and the enrollment packages (CTL-27 and AGT-08) decide how it narrows.
 3. The agent runs as root, because the host setup moves interfaces into namespaces. The role selector does not narrow this.
 4. The DHCP address of `mgmt0` is read once at start. A changed lease needs a restart of `fps-mgmt-addr.service` and the two services.

@@ -11,6 +11,11 @@
 #   agent         fps-agent
 #   all-in-one    fps-controller and fps-agent
 #
+# Mutual TLS (IMG-06): the enrollment token never goes into role.env, which the
+# VM keeps readable. Cloud-init writes it to /etc/fps/enroll.token (mode 0600), and
+# fps-enroll-token moves it into the agent state directory. The controller CA goes
+# to /etc/fps/controller-ca.pem, or role.env names its fingerprint in FPS_CA_SHA256.
+#
 # The script reads only the keys below and never sources the file. It writes
 #   /run/fps/role.env         the checked values, quoted, for fps-agent-start
 #   /run/fps/role.d/<unit>    one marker per unit of the role; the units name the
@@ -39,12 +44,14 @@ FPS_CONTROLLER_URI=""
 FPS_AGENT_ID=""
 FPS_AGENT_LABELS=""
 FPS_AGENT_EXTRA_ARGS=""
+FPS_CA_SHA256=""
+FPS_ENROLL_ADDRESS=""
 
 if [[ -f "$role_file" ]]; then
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		line="${line%$'\r'}"
 		[[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
-		if [[ ! "$line" =~ ^[[:space:]]*([A-Z_]+)=(.*)$ ]]; then
+		if [[ ! "$line" =~ ^[[:space:]]*([A-Z0-9_]+)=(.*)$ ]]; then
 			die "$role_file: cannot read the line: $line"
 		fi
 		key="${BASH_REMATCH[1]}"
@@ -59,7 +66,10 @@ if [[ -f "$role_file" ]]; then
 			die "$role_file: the value of $key holds a control character"
 		fi
 		case "$key" in
-		FPS_ROLE | FPS_CONTROLLER_URI | FPS_AGENT_ID | FPS_AGENT_LABELS | FPS_AGENT_EXTRA_ARGS)
+		FPS_ENROLL_TOKEN)
+			die "$role_file: a token must not go into this file, which every user may read. Write it to /etc/fps/enroll.token with mode 0600"
+			;;
+		FPS_ROLE | FPS_CONTROLLER_URI | FPS_AGENT_ID | FPS_AGENT_LABELS | FPS_AGENT_EXTRA_ARGS | FPS_CA_SHA256 | FPS_ENROLL_ADDRESS)
 			printf -v "$key" '%s' "$val"
 			;;
 		*) echo "fps-role: $role_file: ignoring the unknown key $key" >&2 ;;
@@ -79,7 +89,7 @@ esac
 
 if [[ "$FPS_ROLE" == agent ]]; then
 	[[ -n "$FPS_CONTROLLER_URI" ]] ||
-		die "the agent role needs FPS_CONTROLLER_URI in $role_file, for example http://192.0.2.10:8444"
+		die "the agent role needs FPS_CONTROLLER_URI in $role_file, for example https://192.0.2.10:8444"
 fi
 uri_re='^https?://[][A-Za-z0-9._:-]+(/[A-Za-z0-9._~/%-]*)?$'
 if [[ -n "$FPS_CONTROLLER_URI" && ! "$FPS_CONTROLLER_URI" =~ $uri_re ]]; then
@@ -87,6 +97,15 @@ if [[ -n "$FPS_CONTROLLER_URI" && ! "$FPS_CONTROLLER_URI" =~ $uri_re ]]; then
 fi
 if [[ -n "$FPS_AGENT_ID" && ! "$FPS_AGENT_ID" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
 	die "FPS_AGENT_ID '$FPS_AGENT_ID' is not 1 to 64 letters, digits, dots, dashes, or underscores"
+fi
+
+if [[ -n "$FPS_CA_SHA256" ]]; then
+	FPS_CA_SHA256="${FPS_CA_SHA256#sha256:}"
+	FPS_CA_SHA256="${FPS_CA_SHA256//:/}"
+	[[ "$FPS_CA_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]] || die "FPS_CA_SHA256 is not a SHA-256 fingerprint of 64 hex digits"
+fi
+if [[ -n "$FPS_ENROLL_ADDRESS" && ! "$FPS_ENROLL_ADDRESS" =~ ^[][A-Za-z0-9._:-]+:[0-9]{1,5}$ ]]; then
+	die "FPS_ENROLL_ADDRESS '$FPS_ENROLL_ADDRESS' is not host:port"
 fi
 
 mkdir -p "$run_dir/role.d"
@@ -98,6 +117,8 @@ printf '%s\n' "$FPS_ROLE" >"$run_dir/role"
 	if [[ -n "$FPS_AGENT_ID" ]]; then printf 'FPS_AGENT_ID=%q\n' "$FPS_AGENT_ID"; fi
 	if [[ -n "$FPS_AGENT_LABELS" ]]; then printf 'FPS_AGENT_LABELS=%q\n' "$FPS_AGENT_LABELS"; fi
 	if [[ -n "$FPS_AGENT_EXTRA_ARGS" ]]; then printf 'FPS_AGENT_EXTRA_ARGS=%q\n' "$FPS_AGENT_EXTRA_ARGS"; fi
+	if [[ -n "$FPS_CA_SHA256" ]]; then printf 'FPS_CA_SHA256=%q\n' "$FPS_CA_SHA256"; fi
+	if [[ -n "$FPS_ENROLL_ADDRESS" ]]; then printf 'FPS_ENROLL_ADDRESS=%q\n' "$FPS_ENROLL_ADDRESS"; fi
 } >"$run_dir/role.env"
 chmod 0644 "$run_dir/role.env"
 
