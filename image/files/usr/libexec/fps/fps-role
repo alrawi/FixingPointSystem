@@ -1,0 +1,131 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Selects the role of this VM at every boot, before the services start. The role
+# comes from /etc/fps/role.env, which cloud-init user-data writes with write_files
+# (see image/seed-example/user-data). Without the file the role is all-in-one,
+# which is the behavior of the first image.
+#
+#   role          services that start
+#   controller    fps-controller
+#   agent         fps-agent
+#   all-in-one    fps-controller and fps-agent
+#
+# The script reads only the keys below and never sources the file. It writes
+#   /run/fps/role.env         the checked values, quoted, for fps-agent-start
+#   /run/fps/role.d/<unit>    one marker per unit of the role; the units name the
+#                             marker in ConditionPathExists, so a unit outside the
+#                             role is skipped on this boot even when it is enabled
+#   /etc/fps/role.applied     the record of what this script did
+# and it enables the units of the role and disables the others, without
+# `--now`. A role that is not valid fails the service and starts nothing.
+#
+# The paths and the systemctl command come from the environment so that the
+# offline test (image/tests/role-test.sh) can run the script without root.
+set -euo pipefail
+
+role_file="${FPS_ROLE_FILE:-/etc/fps/role.env}"
+run_dir="${FPS_RUN_DIR:-/run/fps}"
+applied="${FPS_ROLE_APPLIED:-/etc/fps/role.applied}"
+systemctl_cmd="${FPS_SYSTEMCTL:-systemctl}"
+
+die() {
+	echo "fps-role: $*" >&2
+	exit 1
+}
+
+FPS_ROLE=all-in-one
+FPS_CONTROLLER_URI=""
+FPS_AGENT_ID=""
+FPS_AGENT_LABELS=""
+FPS_AGENT_EXTRA_ARGS=""
+
+if [[ -f "$role_file" ]]; then
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		line="${line%$'\r'}"
+		[[ "$line" =~ ^[[:space:]]*(#.*)?$ ]] && continue
+		if [[ ! "$line" =~ ^[[:space:]]*([A-Z_]+)=(.*)$ ]]; then
+			die "$role_file: cannot read the line: $line"
+		fi
+		key="${BASH_REMATCH[1]}"
+		val="${BASH_REMATCH[2]}"
+		# Strip one pair of matching quotes, or else the trailing spaces.
+		if [[ "$val" =~ ^\"(.*)\"[[:space:]]*$ || "$val" =~ ^\'(.*)\'[[:space:]]*$ ]]; then
+			val="${BASH_REMATCH[1]}"
+		else
+			val="${val%"${val##*[![:space:]]}"}"
+		fi
+		if [[ "$val" =~ [[:cntrl:]] ]]; then
+			die "$role_file: the value of $key holds a control character"
+		fi
+		case "$key" in
+		FPS_ROLE | FPS_CONTROLLER_URI | FPS_AGENT_ID | FPS_AGENT_LABELS | FPS_AGENT_EXTRA_ARGS)
+			printf -v "$key" '%s' "$val"
+			;;
+		*) echo "fps-role: $role_file: ignoring the unknown key $key" >&2 ;;
+		esac
+	done <"$role_file"
+fi
+
+# Start from nothing, so a failed check never leaves the markers of an earlier boot.
+rm -rf "${run_dir:?}/role.d" "$run_dir/role" "$run_dir/role.env"
+
+case "$FPS_ROLE" in
+controller) units=(fps-controller) ;;
+agent) units=(fps-agent) ;;
+all-in-one) units=(fps-controller fps-agent) ;;
+*) die "$role_file: FPS_ROLE is '$FPS_ROLE', and the valid roles are controller, agent, and all-in-one" ;;
+esac
+
+if [[ "$FPS_ROLE" == agent ]]; then
+	[[ -n "$FPS_CONTROLLER_URI" ]] ||
+		die "the agent role needs FPS_CONTROLLER_URI in $role_file, for example http://192.0.2.10:8444"
+fi
+uri_re='^https?://[][A-Za-z0-9._:-]+(/[A-Za-z0-9._~/%-]*)?$'
+if [[ -n "$FPS_CONTROLLER_URI" && ! "$FPS_CONTROLLER_URI" =~ $uri_re ]]; then
+	die "FPS_CONTROLLER_URI '$FPS_CONTROLLER_URI' is not an http or https URI"
+fi
+if [[ -n "$FPS_AGENT_ID" && ! "$FPS_AGENT_ID" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
+	die "FPS_AGENT_ID '$FPS_AGENT_ID' is not 1 to 64 letters, digits, dots, dashes, or underscores"
+fi
+
+mkdir -p "$run_dir/role.d"
+chmod 0755 "$run_dir"
+printf '%s\n' "$FPS_ROLE" >"$run_dir/role"
+{
+	printf 'FPS_ROLE=%q\n' "$FPS_ROLE"
+	if [[ -n "$FPS_CONTROLLER_URI" ]]; then printf 'FPS_CONTROLLER_URI=%q\n' "$FPS_CONTROLLER_URI"; fi
+	if [[ -n "$FPS_AGENT_ID" ]]; then printf 'FPS_AGENT_ID=%q\n' "$FPS_AGENT_ID"; fi
+	if [[ -n "$FPS_AGENT_LABELS" ]]; then printf 'FPS_AGENT_LABELS=%q\n' "$FPS_AGENT_LABELS"; fi
+	if [[ -n "$FPS_AGENT_EXTRA_ARGS" ]]; then printf 'FPS_AGENT_EXTRA_ARGS=%q\n' "$FPS_AGENT_EXTRA_ARGS"; fi
+} >"$run_dir/role.env"
+chmod 0644 "$run_dir/role.env"
+
+enabled=()
+disabled=()
+for unit in fps-controller fps-agent; do
+	in_role=no
+	for u in "${units[@]}"; do
+		if [[ "$u" == "$unit" ]]; then in_role=yes; fi
+	done
+	if [[ "$in_role" == yes ]]; then
+		: >"$run_dir/role.d/$unit.service"
+		"$systemctl_cmd" enable --no-reload "$unit.service" >/dev/null 2>&1 || die "cannot enable $unit.service"
+		enabled+=("$unit.service")
+	else
+		"$systemctl_cmd" disable --no-reload "$unit.service" >/dev/null 2>&1 || die "cannot disable $unit.service"
+		disabled+=("$unit.service")
+	fi
+done
+
+source_name=default
+if [[ -f "$role_file" ]]; then source_name="$role_file"; fi
+{
+	echo "# Written by /usr/libexec/fps/fps-role at every boot. Do not edit."
+	echo "role=$FPS_ROLE"
+	echo "enabled=${enabled[*]:-}"
+	echo "disabled=${disabled[*]:-}"
+	echo "source=$source_name"
+	echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} >"$applied"
+echo "fps-role: role $FPS_ROLE, enabled: ${enabled[*]:-none}, disabled: ${disabled[*]:-none}"

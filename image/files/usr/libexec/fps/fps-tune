@@ -1,0 +1,288 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Applies the tuning profile of the role, sized from the CPU count and the memory
+# of this VM.
+#
+#   fps-tune apply                      run at every boot by fps-tune.service
+#   fps-tune plan ROLE CPUS MEM_MIB     print the profile, change nothing
+#
+# Profiles
+#   controller   nothing. The controller is light, so the kernel stays as it is.
+#   all-in-one   sysctls and the loopback notrack table. No kernel command line
+#                change and no reboot, so the VM behaves as the first image did.
+#   agent        everything: CPU isolation, hugepages, sysctls, notrack.
+#
+# CPU isolation (agent, at least 4 CPUs). The housekeeping CPUs are CPUS/4 rounded
+# down, at least 1, counted from CPU 0. They run the system, ssh, and the
+# controller. The other CPUs are isolated with isolcpus, nohz_full, and rcu_nocbs,
+# and fps-agent-start pins the agent to them with taskset. A VM with fewer than 4
+# CPUs keeps every CPU for the system.
+#
+# Hugepages (agent, at least 1024 MiB). A quarter of the memory as 2 MiB pages,
+# reserved at boot with hugepages=N, because a late reservation can fail on
+# fragmented memory. The memory is rounded to 256 MiB first, so a small difference
+# in the memory that the kernel reports does not change the profile.
+#
+# Kernel command line. The options go into /etc/default/grub.d/60-fps-tune.cfg and
+# update-grub runs when the file changes. The options need one reboot. The script
+# compares what /proc/cmdline holds with what the profile wants, so it is
+# idempotent: a VM that already runs the options does nothing. It asks for a
+# reboot once per profile, and it records `status=failed` instead of rebooting
+# again when the options are still missing after that reboot. Delete
+# /etc/fps/tune.applied to try again. While a reboot is pending the script writes
+# /run/fps/tune-reboot, and fps-agent.service does not start until the reboot.
+#
+# The record of what happened is /etc/fps/tune.applied.
+#
+# The paths and commands come from the environment, so that the offline test
+# (image/tests/tune-test.sh) can run the script without root.
+set -euo pipefail
+
+run_dir="${FPS_RUN_DIR:-/run/fps}"
+state_file="${FPS_TUNE_STATE:-/etc/fps/tune.applied}"
+grub_file="${FPS_TUNE_GRUB_FILE:-/etc/default/grub.d/60-fps-tune.cfg}"
+sysctl_file="${FPS_TUNE_SYSCTL_FILE:-/etc/sysctl.d/90-fps-agent.conf}"
+notrack_nft="${FPS_TUNE_NOTRACK_NFT:-/etc/fps/notrack.nft}"
+cmdline_file="${FPS_TUNE_CMDLINE_FILE:-/proc/cmdline}"
+conntrack_probe="${FPS_TUNE_CONNTRACK_PROBE:-/proc/sys/net/netfilter/nf_conntrack_max}"
+hugepages_file="${FPS_TUNE_HUGEPAGES_FILE:-/proc/sys/vm/nr_hugepages}"
+update_grub="${FPS_TUNE_UPDATE_GRUB:-update-grub}"
+sysctl_cmd="${FPS_TUNE_SYSCTL:-sysctl}"
+nft_cmd="${FPS_TUNE_NFT:-nft}"
+systemctl_cmd="${FPS_SYSTEMCTL:-systemctl}"
+
+# The kernel options that this script owns.
+managed_re='^(isolcpus|nohz_full|rcu_nocbs|hugepagesz|hugepages)='
+
+die() {
+	echo "fps-tune: $*" >&2
+	exit 1
+}
+
+# compute_plan ROLE CPUS MEM_MIB sets the plan_* variables.
+compute_plan() {
+	local role="$1" cpus="$2" mem="$3"
+	[[ "$cpus" =~ ^[0-9]+$ && "$cpus" -ge 1 ]] || die "CPUS '$cpus' is not a positive number"
+	[[ "$mem" =~ ^[0-9]+$ && "$mem" -ge 1 ]] || die "MEM_MIB '$mem' is not a positive number"
+	plan_role="$role"
+	plan_cpus="$cpus"
+	plan_mem_mib=$(((mem + 128) / 256 * 256))
+	plan_housekeeping="0-$((cpus - 1))"
+	if ((cpus == 1)); then plan_housekeeping=0; fi
+	plan_isolated=""
+	plan_hugepages=0
+	plan_sysctl=no
+	plan_notrack=no
+	plan_cmdline=""
+	case "$role" in
+	controller) ;;
+	all-in-one)
+		plan_sysctl=yes
+		plan_notrack=yes
+		;;
+	agent)
+		plan_sysctl=yes
+		plan_notrack=yes
+		if ((cpus >= 4)); then
+			local hk=$((cpus / 4))
+			plan_housekeeping=0
+			if ((hk > 1)); then plan_housekeeping="0-$((hk - 1))"; fi
+			plan_isolated="$hk-$((cpus - 1))"
+			plan_cmdline="isolcpus=$plan_isolated nohz_full=$plan_isolated rcu_nocbs=$plan_isolated"
+		fi
+		if ((plan_mem_mib >= 1024)); then
+			plan_hugepages=$((plan_mem_mib / 4 / 2))
+			plan_cmdline="${plan_cmdline:+$plan_cmdline }hugepagesz=2M hugepages=$plan_hugepages"
+		fi
+		;;
+	*) die "unknown role '$role'" ;;
+	esac
+}
+
+print_plan() {
+	echo "role=$plan_role"
+	echo "cpus=$plan_cpus"
+	echo "mem_mib=$plan_mem_mib"
+	echo "housekeeping_cpus=$plan_housekeeping"
+	echo "isolated_cpus=$plan_isolated"
+	echo "hugepages=$plan_hugepages"
+	echo "cmdline=$plan_cmdline"
+	echo "sysctl=$plan_sysctl"
+	echo "notrack=$plan_notrack"
+}
+
+# The sorted managed options of a command line, one per line.
+managed_options() {
+	tr ' ' '\n' | grep -E "$managed_re" | sort -u || true
+}
+
+sysctl_content() {
+	cat <<'EOF'
+# SPDX-License-Identifier: GPL-3.0-only
+# Written by /usr/libexec/fps/fps-tune for the agent and all-in-one roles.
+# Many sessions need many source ports, a deep accept queue, and many descriptors.
+net.ipv4.ip_local_port_range = 1024 65535
+net.ipv4.tcp_tw_reuse = 1
+net.core.somaxconn = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.core.netdev_max_backlog = 65535
+fs.file-max = 4194304
+fs.nr_open = 4194304
+EOF
+}
+
+apply() {
+	local role=all-in-one
+	if [[ -r "$run_dir/role" ]]; then role="$(head -n 1 "$run_dir/role")"; fi
+	local cpus mem_kb
+	cpus="${FPS_TUNE_CPUS:-$(getconf _NPROCESSORS_CONF)}"
+	mem_kb="${FPS_TUNE_MEM_KB:-$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)}"
+	compute_plan "$role" "$cpus" "$((mem_kb / 1024))"
+
+	local detail=""
+	local status=none
+	local prev_reboot_for=""
+	if [[ -f "$state_file" ]]; then
+		prev_reboot_for="$(sed -n 's/^reboot_requested_for=//p' "$state_file" | head -n 1)"
+		# The kernel reports a little less memory on one boot than on another. A
+		# change of one rounding step on the same role and CPU count keeps the
+		# recorded size, so the options never flap between two reboots.
+		local prev_role prev_cpus prev_mem
+		prev_role="$(sed -n 's/^role=//p' "$state_file" | head -n 1)"
+		prev_cpus="$(sed -n 's/^cpus=//p' "$state_file" | head -n 1)"
+		prev_mem="$(sed -n 's/^mem_mib=//p' "$state_file" | head -n 1)"
+		if [[ "$prev_role" == "$role" && "$prev_cpus" == "$cpus" && "$prev_mem" =~ ^[0-9]+$ ]]; then
+			local diff=$((plan_mem_mib - prev_mem))
+			if ((diff < 0)); then diff=$((-diff)); fi
+			if ((diff <= 256)); then compute_plan "$role" "$cpus" "$prev_mem"; fi
+		fi
+	fi
+	rm -f "$run_dir/tune-reboot"
+
+	# 1. Kernel command line.
+	local want_sorted have_sorted grub_changed=no
+	want_sorted="$(printf '%s' "$plan_cmdline" | managed_options)"
+	have_sorted="$(managed_options <"$cmdline_file")"
+	local want_text=""
+	if [[ -n "$plan_cmdline" ]]; then
+		want_text="$(printf '%s\n' "# SPDX-License-Identifier: GPL-3.0-only" \
+			"# Written by /usr/libexec/fps/fps-tune for the role $plan_role. Do not edit." \
+			"GRUB_CMDLINE_LINUX_DEFAULT=\"\${GRUB_CMDLINE_LINUX_DEFAULT:+\$GRUB_CMDLINE_LINUX_DEFAULT }$plan_cmdline\"")"
+	fi
+	if [[ -n "$want_text" ]]; then
+		if [[ ! -f "$grub_file" ]] || [[ "$(cat "$grub_file")" != "$want_text" ]]; then
+			mkdir -p "$(dirname "$grub_file")"
+			printf '%s\n' "$want_text" >"$grub_file"
+			grub_changed=yes
+		fi
+	elif [[ -f "$grub_file" ]]; then
+		rm -f "$grub_file"
+		grub_changed=yes
+	fi
+	local grub_ok=yes
+	if [[ "$grub_changed" == yes ]]; then
+		if "$update_grub" >/dev/null 2>&1; then
+			detail="grub configuration updated"
+		else
+			grub_ok=no
+			detail="update-grub failed"
+		fi
+	fi
+	local reboot_for=""
+	if [[ "$want_sorted" == "$have_sorted" ]]; then
+		if [[ -n "$want_sorted" ]]; then status=active; fi
+	elif [[ "$grub_ok" == no ]]; then
+		status=failed
+	else
+		local hash
+		hash="$(printf '%s' "$plan_cmdline" | sha256sum | cut -c1-16)"
+		if [[ "$prev_reboot_for" == "$hash" ]]; then
+			status=failed
+			detail="the options are still missing after the reboot; delete $state_file to try again"
+		else
+			status=reboot-pending
+			reboot_for="$hash"
+		fi
+	fi
+
+	# 2. Sysctls.
+	local sysctl_state=no
+	if [[ "$plan_sysctl" == yes ]]; then
+		local want_sysctl
+		want_sysctl="$(sysctl_content)"
+		if [[ ! -f "$sysctl_file" ]] || [[ "$(cat "$sysctl_file")" != "$want_sysctl" ]]; then
+			printf '%s\n' "$want_sysctl" >"$sysctl_file"
+		fi
+		if "$sysctl_cmd" -q -p "$sysctl_file" >/dev/null 2>&1; then
+			sysctl_state=yes
+		else
+			sysctl_state=error
+			detail="${detail:+$detail; }a sysctl was refused"
+		fi
+	else
+		rm -f "$sysctl_file"
+	fi
+
+	# 3. No connection tracking on the loopback, only when the module is loaded.
+	local notrack_state="no (role $plan_role)"
+	if [[ "$plan_notrack" == yes ]]; then
+		if [[ -e "$conntrack_probe" ]]; then
+			if "$nft_cmd" -f "$notrack_nft" >/dev/null 2>&1; then
+				notrack_state=yes
+			else
+				notrack_state=error
+				detail="${detail:+$detail; }nft refused $notrack_nft"
+			fi
+		else
+			notrack_state="no (nf_conntrack is not loaded)"
+		fi
+	fi
+
+	# 4. The agent pins itself to the isolated CPUs once the options run.
+	local agent_cpus=""
+	if [[ "$status" == active && -n "$plan_isolated" ]]; then agent_cpus="$plan_isolated"; fi
+
+	local allocated=""
+	if [[ -r "$hugepages_file" ]]; then allocated="$(cat "$hugepages_file")"; fi
+
+	mkdir -p "$(dirname "$state_file")"
+	{
+		echo "# Written by /usr/libexec/fps/fps-tune at every boot. Do not edit."
+		echo "role=$plan_role"
+		echo "status=$status"
+		echo "cpus=$plan_cpus"
+		echo "mem_mib=$plan_mem_mib"
+		echo "housekeeping_cpus=$plan_housekeeping"
+		echo "isolated_cpus=$plan_isolated"
+		echo "agent_cpus=$agent_cpus"
+		echo "hugepages_wanted=$plan_hugepages"
+		echo "hugepages_allocated=$allocated"
+		echo "cmdline=$plan_cmdline"
+		echo "grub_file=$([[ -f "$grub_file" ]] && echo "$grub_file" || echo none)"
+		echo "sysctl=$sysctl_state"
+		echo "notrack=$notrack_state"
+		echo "reboot_requested_for=$reboot_for"
+		echo "detail=$detail"
+		echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	} >"$state_file"
+	echo "fps-tune: role $plan_role, status $status, cmdline '${plan_cmdline:-none}', sysctl $sysctl_state, notrack $notrack_state"
+
+	if [[ "$status" == reboot-pending ]]; then
+		mkdir -p "$run_dir"
+		: >"$run_dir/tune-reboot"
+		echo "fps-tune: the kernel options need one reboot, which starts now"
+		"$systemctl_cmd" --no-block reboot
+	fi
+	if [[ "$status" == failed ]]; then exit 1; fi
+}
+
+case "${1:-}" in
+apply) apply ;;
+plan)
+	[[ $# -eq 4 ]] || die "usage: fps-tune plan ROLE CPUS MEM_MIB"
+	compute_plan "$2" "$3" "$4"
+	print_plan
+	;;
+*) die "usage: fps-tune apply | plan ROLE CPUS MEM_MIB" ;;
+esac

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[Unit]
+Description=FixingPointSystem tuning profile of the role
+Documentation=https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md
+# fps-agent.service Wants this unit and does not Require it: an agent that runs
+# untuned beats no agent, and the failed unit shows the problem.
+After=fps-role.service cloud-init.service
+Requires=fps-role.service
+Before=fps-agent.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/fps/fps-tune apply
+
+[Install]
+WantedBy=multi-user.target

@@ -3,9 +3,11 @@
 Description=FixingPointSystem controller
 Documentation=https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md
 # cloud-init.service runs first, so user-data may write /etc/fps/admin.token.
-After=fps-mgmt-addr.service fps-firewall.service cloud-init.service
+After=fps-mgmt-addr.service fps-firewall.service cloud-init.service fps-role.service
 Requires=fps-mgmt-addr.service
 Wants=fps-firewall.service
+# fps-role writes this marker for the roles that run the controller.
+ConditionPathExists=/run/fps/role.d/fps-controller.service
 
 [Service]
 Type=simple

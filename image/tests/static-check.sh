@@ -27,11 +27,39 @@ for unit in "$img"/files/etc/systemd/system/*.service; do
 done
 
 # 2. Every service that provision.sh enables has a unit file.
-for name in fps-firewall fps-mgmt-net fps-mgmt-addr fps-controller fps-agent; do
+for name in fps-firewall fps-mgmt-net fps-mgmt-addr fps-role fps-tune fps-controller fps-agent; do
 	if [[ -f "$img/files/etc/systemd/system/$name.service" ]] && grep -q "$name.service" "$img/scripts/provision.sh"; then
 		pass "$name.service has a unit and provision.sh enables it"
 	else
 		fail "$name.service has a unit and provision.sh enables it"
+	fi
+done
+
+# 2b. The roles. Each service unit of a role names the marker that fps-role writes, so
+# a unit outside the role is skipped, and the agent waits for a pending tuning reboot.
+for pair in fps-controller:fps-controller fps-agent:fps-agent; do
+	unit="${pair%%:*}"
+	if grep -q "^ConditionPathExists=/run/fps/role.d/$unit.service" "$img/files/etc/systemd/system/$unit.service" &&
+		grep -q 'fps-role.service' "$img/files/etc/systemd/system/$unit.service"; then
+		pass "$unit.service starts only when fps-role marks it, and orders after fps-role.service"
+	else
+		fail "$unit.service starts only when fps-role marks it, and orders after fps-role.service"
+	fi
+done
+if grep -q '^ConditionPathExists=!/run/fps/tune-reboot' "$img/files/etc/systemd/system/fps-agent.service" &&
+	grep -q '^LimitNOFILE=' "$img/files/etc/systemd/system/fps-agent.service"; then
+	pass "fps-agent.service waits for a pending tuning reboot and raises the file limit"
+else
+	fail "fps-agent.service waits for a pending tuning reboot and raises the file limit"
+fi
+
+# 2c. The offline tests of the role selector and the tuning profiles.
+for t in role-test tune-test; do
+	if out="$("$img/tests/$t.sh" 2>&1)"; then
+		pass "$t.sh: $(grep -c '^PASS' <<<"$out") checks pass"
+	else
+		fail "$t.sh"
+		echo "$out" | grep -v '^PASS'
 	fi
 done
 
@@ -70,6 +98,11 @@ fi
 if command -v nft >/dev/null 2>&1; then
 	if nft -c -f "$img/files/etc/fps/isolation.nft" 2>/dev/null; then
 		pass "nft -c accepts isolation.nft"
+		if nft -c -f "$img/files/etc/fps/notrack.nft" 2>/dev/null; then
+			pass "nft -c accepts notrack.nft"
+		else
+			echo "NOTE nft -c refused notrack.nft, perhaps because the kernel lacks nft_ct"
+		fi
 	else
 		echo "NOTE nft -c failed here, perhaps for lack of privileges, so the syntax check is skipped"
 	fi

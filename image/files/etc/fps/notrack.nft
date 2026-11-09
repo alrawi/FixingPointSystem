@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Loopback traffic skips connection tracking. The tests open tens of thousands of
+# loopback connections a second, and conntrack keeps each closed one for 120
+# seconds, so a loaded nf_conntrack fills its table and drops packets. The table
+# has a name of its own, so rules of other software stay untouched. The first two
+# lines make the file safe to load again. fps-tune loads it only when nf_conntrack
+# is loaded, because a notrack rule would load the module otherwise.
+table inet fps_notrack
+delete table inet fps_notrack
+table inet fps_notrack {
+	chain prerouting {
+		type filter hook prerouting priority raw; policy accept;
+		iif "lo" notrack
+	}
+	chain output {
+		type filter hook output priority raw; policy accept;
+		oif "lo" notrack
+	}
+}

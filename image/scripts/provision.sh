@@ -40,10 +40,11 @@ cp -a "$STAGE/modules/." /usr/share/fps/modules/
 chown -R root:root /usr/share/fps
 cp -a "$STAGE/files/." /
 chmod 0755 /usr/libexec/fps/*
-chmod 0644 /etc/fps/*.env /etc/fps/controller.yaml /etc/fps/isolation.nft
+chmod 0644 /etc/fps/*.env /etc/fps/controller.yaml /etc/fps/isolation.nft /etc/fps/notrack.nft
 
 echo "== Validate the rules and units that we installed"
 nft -c -f /etc/fps/isolation.nft
+nft -c -f /etc/fps/notrack.nft || echo "notrack.nft was not checked, because the build kernel lacks nft_ct"
 systemd-analyze verify /etc/systemd/system/fps-*.service || true
 
 echo "== Remove the network files that the cloud image or cloud-init made"
@@ -51,7 +52,9 @@ rm -f /etc/netplan/*.yaml
 rm -f /etc/systemd/network/10-netplan-*.network /run/systemd/network/10-netplan-*
 
 echo "== Enable the services"
-systemctl enable fps-firewall.service fps-mgmt-net.service fps-mgmt-addr.service \
+# fps-role.service enables or disables the controller and the agent again at every
+# boot, from the role in the cloud-init data (all-in-one without it).
+systemctl enable fps-firewall.service fps-role.service fps-tune.service fps-mgmt-net.service fps-mgmt-addr.service \
 	fps-controller.service fps-agent.service qemu-guest-agent.service systemd-networkd.service
 
 echo "== Smoke test the binaries"
