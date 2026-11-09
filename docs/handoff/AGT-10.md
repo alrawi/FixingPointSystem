@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #276 |
 | Branch | `wp/AGT-10` |
-| Pull request | #0 |
+| Pull request | #307 |
 | Status | in progress |
 | Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-a10c3e, lease until 2026-11-09T17:41:43Z |
-| Last verified commit | none |
+| Last verified commit | 45ef53e |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 

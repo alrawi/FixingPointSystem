@@ -300,9 +300,12 @@ pub fn tls_failure(e: &(dyn std::error::Error + 'static)) -> Option<String> {
 /// connection that the dial opened. A refused or reached endpoint, a timeout,
 /// and a status that the controller sent are not of this kind.
 pub fn closed_before_response(status: &tonic::Status) -> bool {
+    // tonic turns a transport error into UNAVAILABLE or UNKNOWN, and a call
+    // that h2 cancels because the connection closed into CANCELLED, which is
+    // what CI saw (`operation was canceled: connection closed`).
     if !matches!(
         status.code(),
-        tonic::Code::Unavailable | tonic::Code::Unknown
+        tonic::Code::Unavailable | tonic::Code::Unknown | tonic::Code::Cancelled
     ) {
         return false;
     }
@@ -1145,6 +1148,30 @@ mod tests {
         assert!(found.contains("BadCertificate"), "{found}");
         let plain = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
         assert!(tls_failure(&plain).is_none());
+    }
+
+    #[test]
+    fn a_status_from_a_closed_connection_is_told_from_one_of_the_controller() {
+        use tonic::{Code, Status};
+        for (code, text, want) in [
+            (
+                Code::Cancelled,
+                "operation was canceled: transport error: operation was canceled: connection closed",
+                true,
+            ),
+            (Code::Unavailable, "transport error: Broken pipe (os error 32)", true),
+            (Code::Unknown, "h2 protocol error: connection reset", true),
+            (Code::Unavailable, "tcp connect error: Connection refused", false),
+            (Code::Unauthenticated, "connection closed", false),
+            (Code::Internal, "connection closed", false),
+            (Code::Unavailable, "the service is not ready", false),
+        ] {
+            assert_eq!(
+                closed_before_response(&Status::new(code, text)),
+                want,
+                "{code:?} {text}"
+            );
+        }
     }
 
     #[test]
