@@ -84,3 +84,15 @@ lint-ctl-tls:
 
 test-ctl-tls:
 	cd controller && $(GO) test -race ./internal/app/ ./internal/agents/ ./internal/wiring/ ./cmd/... -run 'TLS|Tls|Admin|Expired|EndSession|AutoEnroll|PlainMode|Secure|Config|ServerNames|PKI|ExitCodes|SIGTERM|EndToEnd'
+
+# CTL-11 module signing and the signed registry index. The package uses only the
+# standard library, and the targets above cover it too, so these two give a fast
+# loop for the package alone.
+.PHONY: lint-ctl-signing test-ctl-signing
+lint-ctl-signing:
+	@out="$$(cd controller && gofmt -l internal/registry/signing)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+	cd controller && $(GO) vet ./internal/registry/signing/
+
+test-ctl-signing:
+	cd controller && $(GO) test -race -cover ./internal/registry/signing/
