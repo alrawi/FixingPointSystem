@@ -1,5 +1,13 @@
 # Contracts changelog
 
+## Controller API 0.6.0 and agent protocol 0.2.3 (2026-11-09)
+
+Capture and criteria gaps (CON-15). All changes are additive. See `changes/CON-15.md`.
+
+- OpenAPI 0.6.0 adds `stopCapture` (`POST /runs/{id}/captures/{capture_id}:stop`), which ends a capture without downloading it, and the optional `Capture.files` (schema `CaptureFile`), which names the agent that produced each capture file. `port` of `startCapture` stays required.
+- Agent protocol 0.2.3 adds `StartCaptureCommand.export_tls_keys` (8) and `Criterion.labels` (4), a label filter such as `side: server`.
+- The example test `dns_zone.yaml` uses the first party scenario `dns/lookup_a`.
+
 ## 0.2.0 (2026-11-02)
 
 Scenario contract v0.2 (CON-04).

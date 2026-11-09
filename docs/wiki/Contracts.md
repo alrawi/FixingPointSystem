@@ -6,8 +6,8 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 
 | File | Contract |
 |---|---|
-| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.5.0 |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.2, unreleased |
+| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.6.0 |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.3 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.1.0 |
@@ -95,7 +95,7 @@ CON-13 moves the protocol from 0.2.1 to 0.2.2 and lets the controller fetch a fi
 | `UploadCaptureRequest` | A stream of one `open` (transfer id and session token), `CaptureChunk` messages with an `offset` and 1 to 262144 bytes in ascending order from `start_offset`, and one `end` with `total_bytes` and the `sha256:` digest of the whole file, which equals the digest of `StopCaptureResult` | CTL-14, AGT-09 |
 | `UploadCaptureResponse` | `received_offset` and `verified`, sent once after `end` | CTL-14 |
 
-The upload is a separate HTTP/2 stream, so its flow control does not hold up heartbeats on `Session`, and the contract defines no credit messages. A chunk is at most 256 KiB. To resume, the controller keeps the bytes it received and sends a new command with a new `transfer_id` and the offset it holds. The file is immutable, so the digest covers the bytes of every attempt together. The new RPC and command are additive, `buf breaking` reports nothing, and the version takes a patch number so that the controller, which admits agents by major and minor, keeps accepting every agent. The controller sends `fetch_capture` only to an agent that reports 0.2.2 or later. The Rust agent reports 0.2.2 and serves the download since AGT-09.
+The upload is a separate HTTP/2 stream, so its flow control does not hold up heartbeats on `Session`, and the contract defines no credit messages. A chunk is at most 256 KiB. To resume, the controller keeps the bytes it received and sends a new command with a new `transfer_id` and the offset it holds. The file is immutable, so the digest covers the bytes of every attempt together. The new RPC and command are additive, `buf breaking` reports nothing, and the version takes a patch number so that the controller, which admits agents by major and minor, keeps accepting every agent. The controller sends `fetch_capture` only to an agent that reports 0.2.2 or later. The Rust agent reports 0.2.3 (CON-15) and serves the download since AGT-09.
 
 ## Metric catalog views, reasons, and side label
 
@@ -158,3 +158,18 @@ CON-14 documents two behaviors of the controller that the REST contract did not 
 | `CalibrationStep` | `time`, `factor`, `target`, and `sessions_per_second`, plus the optional `entries` (`id`, `bytes_per_session`, `measured`) and `multipliers` (byte mix multiplier by mix entry id) |
 
 The Go struct of a step has no JSON tags, so `runs.ToAPI` produces the contract names. The controller keeps the newest 256 steps of a run. The generated Go code is regenerated with `go generate ./internal/api`, and the Python SDK and the UI schema follow the document.
+
+## Capture and criteria gaps
+
+CON-15 closes gaps that CTL-14, AGT-07, and AGT-09 found, and moves the controller API from 0.5.0 to 0.6.0 and the agent protocol from 0.2.2 to 0.2.3. Every change is additive, and the entry `contracts/changes/CON-15.md` records it.
+
+| Change | Rule |
+|---|---|
+| `stopCapture`, `POST /runs/{id}/captures/{capture_id}:stop` | Ends the capture on every agent without a download and answers 200 with the `Capture`. The state is then `completed` (or `failed`), and `completed` means that the files are ready to download. The operation is idempotent. A download of a running capture still ends it |
+| `Capture.files` | Optional array of `CaptureFile`, ordered by agent identity. Each entry has the required `agent` and the optional `started`, `error`, `packets`, `bytes`, `dropped`, and `digest` |
+| `startCapture` `port` | Stays required. AGT-12 makes the agent filter by the port, and its end to end script starts a capture with a port, so no contract change is needed. Making it optional later would be additive |
+| `StartCaptureCommand.export_tls_keys` (8) | When true, the agent puts the TLS key log lines into the file. An agent of 0.2.2 skips the field and decides on its own |
+| `Criterion.labels` (4) | A label filter like `where` in the test configuration, for example `side: server`. Without a `side` label a criterion counts the client side |
+| `examples/tests/dns_zone.yaml` | Uses the first party scenario `dns/lookup_a`. `tools/contracts/validate.py` validates it against `modules/dns` |
+
+An agent of 0.2.2 skips `labels` and would count every series, so the controller sends a labeled criterion only to an agent that reports 0.2.3 or later. The Rust agent reports 0.2.3 and refuses a plan with a labeled criterion until an AGT package applies them, because a silent skip would measure another rule. The generated Go code is regenerated by the coordinator, and the Python SDK and the UI schema follow the document.

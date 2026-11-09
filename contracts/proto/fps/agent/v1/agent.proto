@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Agent control protocol, contract version 0.2.2.
+// Agent control protocol, contract version 0.2.3.
 //
 // The controller compiles a test configuration into one Plan per agent. Each
 // agent dials the controller, so an agent behind NAT or in a cloud needs no
@@ -29,6 +29,12 @@
 // the agent opens on its own connection when the controller asks. It only adds
 // a command, an RPC, and messages. The controller sends FetchCapture only to
 // an agent whose Capabilities.engine_api is 0.2.2 or later.
+//
+// Version 0.2.3 adds StartCaptureCommand.export_tls_keys and Criterion.labels.
+// It only adds fields. An agent of an earlier version skips both: it writes
+// the TLS key log lines whenever it has them, and it counts every series of the
+// metric for a criterion. The controller sends a criterion with labels only to
+// an agent whose Capabilities.engine_api is 0.2.3 or later.
 
 syntax = "proto3";
 
@@ -427,6 +433,11 @@ message StartCaptureCommand {
   // max_duration ends the capture after this time, or is absent for no time
   // limit.
   google.protobuf.Duration max_duration = 7;
+  // export_tls_keys asks the agent to put the TLS key log lines of the
+  // captured sessions into the file. When
+  // false, or when an agent of version 0.2.2 or earlier skips the field, the
+  // agent decides on its own whether the lines are in the file.
+  bool export_tls_keys = 8;
 }
 
 // StopCaptureCommand ends one capture. A capture that already ended at a limit
@@ -936,4 +947,12 @@ message Criterion {
   CriterionOp op = 2;
   // value is the threshold.
   double value = 3;
+  // labels select the series of the metric that the criterion checks, as the
+  // where field of a test criterion does: a series counts when its labels equal
+  // every entry given here. The side label names the client or the server side
+  // of a process, with the values client and server. A criterion without a side
+  // label counts the client side, or the server side in a plan without client
+  // workers. Keys are label names that the metric catalog lists for the
+  // metric. The map is empty for a criterion without a filter.
+  map<string, string> labels = 4;
 }

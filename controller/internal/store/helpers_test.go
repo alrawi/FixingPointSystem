@@ -65,7 +65,7 @@ func readFixtures(t *testing.T, dir string) []fixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		f := fixture{name: strings.TrimSuffix(filepath.Base(p), ".yaml"), data: data}
+		f := fixture{name: strings.TrimSuffix(filepath.Base(p), ".yaml"), data: exampleModuleScenarios(data)}
 		line, _ := bufio.NewReader(bytes.NewReader(data)).ReadString('\n')
 		if w, ok := strings.CutPrefix(strings.TrimSpace(line), "# want:"); ok {
 			f.want = strings.TrimSpace(w)
@@ -169,4 +169,12 @@ func mustCanonical(t *testing.T, data []byte) []byte {
 		t.Fatal(err)
 	}
 	return doc
+}
+
+// exampleModuleScenarios maps the first party scenario dns/lookup_a, which
+// contracts/examples/tests/dns_zone.yaml names since CON-15, to dns/resolve of
+// the example dns module under contracts/examples/modules/, which these tests
+// install. Both modules have the same name, version, and zone_file setting.
+func exampleModuleScenarios(data []byte) []byte {
+	return bytes.ReplaceAll(data, []byte("dns/lookup_a"), []byte("dns/resolve"))
 }

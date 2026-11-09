@@ -356,14 +356,43 @@ type CapabilitiesBackends string
 
 // Capture defines model for Capture.
 type Capture struct {
-	Bytes *int         `json:"bytes,omitempty"`
-	Id    string       `json:"id"`
-	Port  string       `json:"port"`
+	Bytes *int `json:"bytes,omitempty"`
+
+	// Files One entry per agent that was asked to capture, ordered by agent identity. A controller older than 0.6.0 does not send it.
+	Files *[]CaptureFile `json:"files,omitempty"`
+	Id    string         `json:"id"`
+	Port  string         `json:"port"`
+
+	// State running while an agent still captures. completed means that the files are ready to download, which includes a capture that stopCapture, a limit, or the end of the run ended.
 	State CaptureState `json:"state"`
 }
 
-// CaptureState defines model for Capture.State.
+// CaptureState running while an agent still captures. completed means that the files are ready to download, which includes a capture that stopCapture, a limit, or the end of the run ended.
 type CaptureState string
+
+// CaptureFile The part of a capture that one agent holds, and so the agent that produced it.
+type CaptureFile struct {
+	// Agent Identity of the agent that captured the file.
+	Agent string `json:"agent"`
+
+	// Bytes Size of the agent file, known once the agent reported the end.
+	Bytes *int `json:"bytes,omitempty"`
+
+	// Digest sha256: and 64 hex digits of the agent file, known once the agent reported the end.
+	Digest *string `json:"digest,omitempty"`
+
+	// Dropped Packets that the agent dropped, known once the agent reported the end.
+	Dropped *int `json:"dropped,omitempty"`
+
+	// Error Why the agent did not start the capture. Absent when it started.
+	Error *string `json:"error,omitempty"`
+
+	// Packets Packets written, known once the agent reported the end.
+	Packets *int `json:"packets,omitempty"`
+
+	// Started False when the agent did not start the capture.
+	Started *bool `json:"started,omitempty"`
+}
 
 // ConfigRef defines model for ConfigRef.
 type ConfigRef struct {
@@ -571,10 +600,14 @@ type StartRunJSONBody struct {
 // StartCaptureJSONBody defines parameters for StartCapture.
 type StartCaptureJSONBody struct {
 	// Bpf Berkeley Packet Filter expression.
-	Bpf           *string `json:"bpf,omitempty"`
-	ExportTlsKeys *bool   `json:"export_tls_keys,omitempty"`
-	MaxBytes      *int    `json:"max_bytes,omitempty"`
-	Port          string  `json:"port"`
+	Bpf *string `json:"bpf,omitempty"`
+
+	// ExportTlsKeys Asks each agent to include the TLS key log lines in its capture file (agent protocol 0.2.3 and later). An agent that reports an older engine_api ignores the request and writes the lines whenever it has them.
+	ExportTlsKeys *bool `json:"export_tls_keys,omitempty"`
+	MaxBytes      *int  `json:"max_bytes,omitempty"`
+
+	// Port Name of a port of the run's test configuration (network.ports[].name). Required, so one capture records one port. A client that wants several ports starts one capture per port.
+	Port string `json:"port"`
 }
 
 // GetRunMetricsParams defines parameters for GetRunMetrics.
@@ -687,6 +720,9 @@ type ServerInterface interface {
 
 	// (GET /runs/{id}/captures/{capture_id})
 	DownloadCapture(w http.ResponseWriter, r *http.Request, id Id, captureId string)
+
+	// (POST /runs/{id}/captures/{capture_id}:stop)
+	StopCapture(w http.ResponseWriter, r *http.Request, id Id, captureId string)
 
 	// (GET /runs/{id}/metrics)
 	GetRunMetrics(w http.ResponseWriter, r *http.Request, id Id, params GetRunMetricsParams)
@@ -1310,6 +1346,46 @@ func (siw *ServerInterfaceWrapper) DownloadCapture(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// StopCapture operation middleware
+func (siw *ServerInterfaceWrapper) StopCapture(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "capture_id" -------------
+	var captureId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "capture_id", r.PathValue("capture_id"), &captureId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "capture_id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerTokenScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StopCapture(w, r, id, captureId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetRunMetrics operation middleware
 func (siw *ServerInterfaceWrapper) GetRunMetrics(w http.ResponseWriter, r *http.Request) {
 
@@ -1652,6 +1728,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/runs/{id}/captures", wrapper.ListCaptures)
 	m.HandleFunc("POST "+options.BaseURL+"/runs/{id}/captures", wrapper.StartCapture)
 	m.HandleFunc("GET "+options.BaseURL+"/runs/{id}/captures/{capture_id}", wrapper.DownloadCapture)
+	m.HandleFunc("POST "+options.BaseURL+"/runs/{id}/captures/{capture_id}:stop", wrapper.StopCapture)
 	m.HandleFunc("GET "+options.BaseURL+"/runs/{id}/metrics", wrapper.GetRunMetrics)
 	m.HandleFunc("GET "+options.BaseURL+"/runs/{id}/metrics:stream", wrapper.StreamRunMetrics)
 	m.HandleFunc("GET "+options.BaseURL+"/runs/{id}/report", wrapper.GetRunReport)

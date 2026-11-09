@@ -11,7 +11,7 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
 | `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels |
 | `metrics/catalog.schema.json` | Format of the metric catalog |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.2 between the controller and agents (gRPC, proto3). Agents dial the controller. |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3 between the controller and agents (gRPC, proto3). Agents dial the controller. |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |
 | `examples/` | Example modules, tests, and agent plans that every validator run checks |
 
