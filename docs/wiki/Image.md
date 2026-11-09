@@ -1,6 +1,6 @@
 # Image
 
-This page describes the appliance image of the IMG workstream. IMG-01 builds the qcow2 base image with Packer. The directory [`image/`](https://github.com/alrawi/FixingPointSystem/tree/main/image) holds the sources, and its [README](https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md) gives the exact build and boot test steps. IMG-02 adds the role selector and the tuning profiles. Later packages add format conversion (IMG-03) and the CI boot test (IMG-04).
+This page describes the appliance image of the IMG workstream. IMG-01 builds the qcow2 base image with Packer. The directory [`image/`](https://github.com/alrawi/FixingPointSystem/tree/main/image) holds the sources, and its [README](https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md) gives the exact build and boot test steps. IMG-02 adds the role selector and the tuning profiles. IMG-03 adds the format conversion. A later package adds the CI boot test (IMG-04).
 
 ## Build
 
@@ -71,12 +71,28 @@ The agent role takes its trust and token from the cloud-init data that `fps-role
 
 `/etc/cloud/cloud.cfg.d/90-fps.cfg` lists the datasources NoCloud, ConfigDrive, and None, disables cloud-init's network configuration, and defines the default user `fps-admin` with key login only. The image ships no password. A VM without a seed has no login, so every deployment supplies a seed with an ssh key. `image/seed-example/` holds an example.
 
+## Formats
+
+`image/convert.sh` turns the qcow2 into the formats that other hypervisors and clouds import. IMG-03 added it. It reads `image/output/fps-base.qcow2` by default and writes next to it, or into `--out-dir`.
+
+| Format | File | Target |
+|---|---|---|
+| raw | `fps-base.raw` | `dd`, KVM, cloud importers that take raw |
+| VHDX | `fps-base.vhdx` | Hyper-V |
+| fixed VHD | `fps-base.vhd` | Azure, which demands a size that is a multiple of 1 MiB plus the 512 byte footer |
+| OVA | `fps-base.ova` | VMware, VirtualBox, and other OVF importers |
+
+The script rounds the virtual size up to a multiple of 1 MiB, makes a raw disk of that size, and converts it with `qemu-img convert -O vpc -o subformat=fixed,force_size=on`. Without `force_size=on`, qemu-img rounds the size to a disk geometry and misses the 1 MiB rule. The script checks that the VHD size minus 512 is a multiple of 1 MiB and fails when it is not. The raw disk is deleted afterwards unless raw is in `--formats` or `--keep-raw` is set. When the output directory lacks the space for a format that the default list included, the script warns and skips it; a format named with `--formats` that does not fit is an error.
+
+The OVA is a tar archive with the members in this order: `<name>.ovf`, the streamOptimized `<name>.vmdk`, and `<name>.mf`, which holds one `SHA256(<member>)= <hex>` line for the .ovf and the .vmdk. The OVF 1.0 descriptor names the CPUs (default 4), the memory (default 8192 MiB), one disk on a SCSI controller, and two E1000 NICs: the first is the management NIC that becomes `mgmt0`, the second a test NIC. `--cpus`, `--memory-mb`, and `--nics 1` change them. The agent role isolates CPUs only with at least 4 CPUs (see Limits). The script runs `qemu-img check` on the qcow2, the VHDX, and the VMDK, and `qemu-img info` on raw and VHD, which have no check. `SHA256SUMS` covers every output of the run.
+
 ## Tests
 
 | Command | Level | Needs |
 |---|---|---|
 | `make lint-img` | Lint of the scripts with `bash -n`, ShellCheck, and `packer fmt -check` when installed | Nothing |
 | `make test-img` | Static checks of the sources, including `nft -c`, and the offline tests of the role selector of the tuning sizes and reboot logic, and of the enrollment helper and the agent arguments | Nothing |
+| `image/tests/convert-test.sh` (part of `make test-img`) | Converts a tiny qcow2 with `convert.sh` and checks the VHD rule, the OVA member order, the manifest, and the checksums. Prints SKIP without `qemu-img`, and fails when `FPS_REQUIRE_IMAGE_TOOLS=1` | `qemu-img` |
 | `sudo make e2e-img` | Namespace test of the shipped rules: a router forwards without them, and drops traffic between `mgmt0` and `test0` with them | root, `ip`, `nft`, `curl`, `python3` |
 | `image/boot-test.sh [--role controller\|agent\|all-in-one\|all]` | Boots the built qcow2 under QEMU/KVM with a management NIC and a test NIC, seeds the role, and prints PASS or FAIL per check. The agent role boots with 4 CPUs and 4 GiB and waits for its tuning reboot | KVM, a built image |
 
