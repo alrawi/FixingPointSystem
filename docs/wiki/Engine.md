@@ -16,7 +16,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | [`fps-sched`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-sched) | Load profile, session schedule, drain iterator, and injected clock | The worker runtime drives it, and AGT-05 routes `UpdateRates` to the `RateControl` that `RuntimeHandle::rate_control` returns |
 | [`fps-hosts`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-hosts) | Host pool address mapping, slicing, and seeded host selection, see [Hosts](Hosts.md) | HST-02 adds kernel port setup |
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `SessionIo` over kernel TCP sockets, see [Transport](Transport.md) | TRN-02 adds UDP |
-| [`fps-wasm`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-wasm) | The WebAssembly extension host, with fuel and memory limits, see [The WebAssembly extension host](#the-webassembly-extension-host) | The interpreter and the runtime wire it into their module table |
+| [`fps-wasm`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-wasm) | The WebAssembly extension host, with fuel and memory limits, see [The WebAssembly extension host](#the-webassembly-extension-host) | `fps-runtime` loads it into sessions through an `ExtensionSet`, see [WebAssembly extensions in sessions](#webassembly-extensions-in-sessions) (ENG-17) |
 | [`fps-capture`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-capture) | The seeded session sampler, the tap wrappers, frame synthesis, and the bounded pcapng ring with TLS key logs, see [Session sampling and capture](#session-sampling-and-capture) | AGT-05 serves `StartCapture` and `StopCapture` with it, and `fps-runtime` taps its TCP sessions through the `CaptureCell` of the crate (ENG-19) |
 
 Every crate carries `#![forbid(unsafe_code)]` and the lint header, except `fps-backend-kernel`, which carries `#![deny(unsafe_code)]` with one allowed socket module that [Transport](Transport.md#unsafe-code) explains. The lint header comes from [Coding Standards](Coding-Standards.md#rust). A `clippy.toml` in each crate with tests lets unit tests call `unwrap`, `expect`, and `panic`, which library code may not. We run the tests of every engine crate with `make test-eng`, and the `rust` job of `ci.yml` runs them on every pull request.
@@ -353,6 +353,38 @@ ENG-19 lets the runtime tap its TCP sessions for `fps-capture`. `RuntimeConfig::
 
 Both worker roles tap. A client session records the bytes of the client end and a server session those of the accepted end, so a run that holds both sides in one process and gives them one `Capture` records each connection twice, under two session ids. The agent has one role per process, so it does not meet this. The tap sits on the kernel stream, below any TLS that a module layers on top, so a capture holds what a packet capture would hold.
 
+### WebAssembly extensions in sessions
+
+ENG-17 loads the extensions into the runtime. `fps_runtime::ExtensionSet` holds one compiled `fps_wasm::WasmExtension` per module name, behind an `Arc`. The owner builds it before `Runtime::start`: `ExtensionSet::load(module, bytes, limits, declared)` compiles a component, and `load_module_dir(&manifest, dir, limits)` reads `extension.wasm` from the module directory and returns `Ok(false)` when the module ships none. Compilation happens once per module and never on a worker thread. `FlowRef::extensions` carries the `Arc<ExtensionSet>` to every worker, so all workers share the compiled component, and each session that calls the module instantiates it through `WasmExtension::open`, which compiles nothing.
+
+The catalog is checked at load. With a manifest `Catalog` given, the function names, the parameter names and order, the types, and the required flags must equal what the extension returns from `functions`, as `contracts/README.md` demands, and the load fails with `ExtensionError::Catalog` otherwise. The manifest keeps no default values, so those are not compared.
+
+A session whose flow has an extension set runs its module functions through `SessionExtensions`, which wraps the native `FunctionFactory` output of the flow. A call to a module of the set goes to the extension, and any other call goes to the native functions, so a scenario can mix native and WebAssembly modules. A flow without an extension set takes no wrapper, and the worker pays one `Option` check per session. The extension instance opens on the first call that names its module, so a session that never calls the module never instantiates it. The worker ends the instances with `finish`, which runs `on-close` with the close reason that the outcome of the session maps to (`finished`, `reset`, `peer-closed`, `timeout`, or `failed`).
+
+#### Failures
+
+A hook error, an out of fuel trap, a memory limit, or another trap ends the calling session and no other, because every session owns its instance. The `WasmFailure` becomes an `FnError` for the renderer, which wraps it in `TemplateError::Function`, and `FailureKind::reason` returns `extension_error` for every such failure, so `sessions.failed` counts it under that reason. `FailureKind::reason` needed no change for this: ENG-15 already maps a function failure of any kind to `extension_error`, and the test below confirms it end to end. `SessionExtensions::take_failure` keeps the `WasmFailure` behind the error, for the finer label. A looping extension stops at `Limits::fuel_per_call`. The hook runs on the worker thread, so the other sessions of that worker wait for the fuel budget (20 million instructions by default) and then continue.
+
+#### Randomness
+
+Every extension session gets its own `Host`, whose `random_u64` and `random_bytes` draw from `fps_runtime::extension_rng(seed, module, session_id, side)`. It is `fps_interp::session_rng` over the run seed xor a domain constant for extensions xor an FNV-1a hash of the module name, so a replay with the same seed reproduces every draw, the order of sessions does not matter, and the stream is separate from the template stream of the session and from the streams of other modules. The session id is the run wide id of `global_session_id`, which has the worker id in its high bits.
+
+#### Limits of this step
+
+The interpreter has no seam yet for transport writes, timers, or received bytes, so the runtime calls the `render` and `on-close` hooks only. `send` and `set-timer` return `not-allowed` to the guest, `on-data` and `on-timer` are never called, and `on-open` runs at the first template call and not after `connect` or `accept`. The agent still has to call `ExtensionSet::load_module_dir` for each plan module and set `FlowRef::extensions`. A failure in `on-close` is returned by `finish` and dropped by the worker, because the session outcome is recorded by then. The runtime handles TCP sessions only, so `SessionInfo::transport` is always `tcp`.
+
+#### Tests
+
+`tests/extensions.rs` reuses the WAT component of `fps-wasm` through a `#[path]` module.
+
+| Test | What it checks |
+|---|---|
+| `a_looping_extension_fails_only_its_own_sessions` | Two client workers and two server workers share one compiled extension with a 200,000 fuel limit. One scenario calls `t.echo` on both sides, the other renders `t.spin()`. All 40 looping client sessions fail with reason `extension_error`, and the 40 good sessions on the same threads succeed on both sides, with no failure |
+| `extension_randomness_derives_from_the_seed_and_the_session_id` | The same seed and session id give the same bytes in a new instance, a different id, seed, or side gives other bytes, and the first draw equals `extension_rng` |
+| `a_fuel_limit_fails_the_session_and_leaves_other_sessions_alone` | `OutOfFuel` with reason `extension_error`, a bystander instance that opened earlier keeps working, a hook error keeps its kind, an unknown function is `Unsupported` |
+| `modules_outside_the_set_use_the_native_functions` | A call to a module that the set lacks reaches the fallback functions |
+| `the_catalog_must_match_the_manifest`, `an_extension_loads_from_the_module_directory` | Catalog mismatch, missing function, invalid component, duplicate module, and loading from a module directory with and without `extension.wasm` |
+
 ### Statistics
 
 Every worker registers its session series once and records `sessions.attempted`, `sessions.established`, `sessions.succeeded`, `sessions.failed` by reason, `bytes.tx`, `bytes.rx`, `sessions.concurrent`, and `sessions.duration`, with the `application` label from the flow module, the `scenario` label from the scenario name, and the `side` label of the worker. A worker registers them through `fps_stats::SessionCounters`, which `metrics.rs` calls with the worker side and the interpreter reason mapped to `fps_stats::FailureReason`, so the runtime has no loop over the reasons of its own. Once per snapshot interval, one second by default, and once more when it ends, the worker sends a cumulative `WorkerSnapshot` over a channel. The `Collector` keeps the newest snapshot of every worker and merges them per side, so the two sides of one session never add up, although every series now also carries its `side` label. `RuntimeHandle::collect` reads the snapshots that arrived so far, and `RuntimeHandle::join` returns a `RunReport` with the collector and the exit of every worker.
@@ -520,7 +552,7 @@ Every failure of an extension counts as `sessions.failed` with the reason `exten
 
 The engine calls follow the table of the extension README. The hook that runs decides what is valid, and a call that is not valid returns `not-allowed`. The calls `random-u64` and `random-bytes` have no error case, so a call during `on-close` traps the guest, and `random-bytes` traps when it asks for more bytes than the memory limit.
 
-`WasmFunctions` ignores the `rng` argument of `TemplateFn::render`. An extension gets randomness only through the `random-*` calls, which the `Host` of its session serves, so the host should derive its generator from the run seed and the session id.
+`WasmFunctions` ignores the `rng` argument of `TemplateFn::render`. An extension gets randomness only through the `random-*` calls, which the `Host` of its session serves, so the host derives its generator from the run seed and the session id. `fps-runtime` does so since ENG-17, see [Randomness](#randomness).
 
 ### Tests
 

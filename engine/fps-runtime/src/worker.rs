@@ -5,6 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::time::Duration;
 
 use fps_backend_kernel::{Connector, KernelListener};
@@ -21,10 +22,11 @@ use crate::clock::TokioClock;
 use crate::collector::WorkerSnapshot;
 use crate::config::{ClientConfig, FlowRef, Role, ServerConfig, WorkerConfig};
 use crate::control::Control;
+use crate::extension::close_reason;
 use crate::metrics::SessionMetrics;
 use crate::opener::{global_session_id, Accepted, ClientOpener, Endpoints, TapOpener};
 use crate::runtime::WorkerExit;
-use crate::RuntimeError;
+use crate::{RuntimeError, SessionKey};
 
 /// What a worker thread receives from the runtime.
 pub(crate) struct WorkerStart {
@@ -162,9 +164,27 @@ impl Worker {
         let stop = self.aborted();
         let (outcome, stats) = match self.flow.get() {
             Ok(flow) => {
-                let mut functions = (self.flow.functions)();
+                let native = (self.flow.functions)();
                 let id = global_session_id(self.id, local_id);
                 let mut opener = TapOpener::new(opener, &self.capture, id, self.side);
+                // A flow without extensions takes the native functions as they
+                // are. Otherwise the wrapper routes the modules of the set to
+                // the instances that this session owns.
+                let mut wrapped = None;
+                let mut plain = None;
+                let functions: &mut dyn fps_flow::TemplateFn = match &self.flow.extensions {
+                    Some(set) => wrapped.insert(set.session_functions(
+                        SessionKey {
+                            seed: self.seed,
+                            session_id: id,
+                            side: self.side,
+                            scenario: Arc::clone(&self.flow.scenario),
+                            flow: self.flow.flow,
+                        },
+                        native,
+                    )),
+                    None => plain.insert(native).as_mut(),
+                };
                 let mut session = Session::new(SessionCtx {
                     vars: &self.flow.scenario.vars,
                     filler: &self.filler,
@@ -172,11 +192,18 @@ impl Worker {
                     side: self.side,
                     session_id: id,
                     rng: session_rng(self.seed, id, self.side),
-                    functions: functions.as_mut(),
+                    functions,
                     limits: self.flow.limits,
                 });
                 let outcome = session.run_program(&mut opener, program, stop).await;
-                (outcome, session.stats())
+                let stats = session.stats();
+                drop(session);
+                if let Some(w) = wrapped {
+                    // The outcome is recorded below, so a failing on-close
+                    // hook cannot change it.
+                    let _ = w.finish(close_reason(&outcome));
+                }
+                (outcome, stats)
             }
             // The configuration check rules this out before any thread starts.
             Err(_) => return,

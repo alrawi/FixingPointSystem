@@ -1005,9 +1005,15 @@ dependencies = [
  "fps-io",
  "fps-sched",
  "fps-stats",
+ "fps-wasm",
  "proptest",
+ "rand 0.8.8",
  "thiserror 2.0.21",
  "tokio",
+ "tracing",
+ "wat",
+ "wit-component",
+ "wit-parser",
 ]
 
 [[package]]
