@@ -3,7 +3,16 @@
 #
 # Boots the qcow2 appliance under QEMU and checks it from the host and from inside.
 #
-#   image/boot-test.sh [IMAGE]       IMAGE defaults to image/output/fps-base.qcow2
+#   image/boot-test.sh [--role ROLE] [IMAGE]
+#
+#   IMAGE defaults to image/output/fps-base.qcow2.
+#   ROLE is all-in-one (the default, and the behavior of IMG-01), controller,
+#   agent, or all, which boots the image once per role, one after the other. The
+#   script seeds the role through NoCloud user-data (/etc/fps/role.env), boots,
+#   and checks which units run and which do not, and the tuning of the role. The
+#   agent role boots with 4 CPUs and 4 GiB, so that CPU isolation and hugepages
+#   apply, and the VM reboots once by itself to apply the kernel options. The
+#   script waits for that reboot.
 #
 # The VM gets two NICs. The first is the management NIC on user networking, with a
 # host port forward to the controller API (127.0.0.1:$FPS_TEST_API_PORT) and to ssh
@@ -17,11 +26,51 @@
 #   FPS_TEST_API_PORT    host port for the controller API       (default 18443)
 #   FPS_TEST_SSH_PORT    host port for ssh                      (default 12222)
 #   FPS_TEST_BOOT_WAIT   seconds to wait for the API            (default 300)
+#   FPS_TEST_SMP         CPUs of the VM    (default 2, and 4 for the agent role)
+#   FPS_TEST_MEM         MiB of the VM     (default 2048, and 4096 for the agent role)
 #   FPS_ALLOW_TCG=1      use software emulation when /dev/kvm is missing (slow)
 set -euo pipefail
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-image="${1:-$root/image/output/fps-base.qcow2}"
+self="${BASH_SOURCE[0]}"
+root="$(cd "$(dirname "$self")/.." && pwd)"
+role=all-in-one
+image_arg=""
+while (($# > 0)); do
+	case "$1" in
+	--role)
+		if (($# < 2)); then
+			echo "FAIL --role needs a value" >&2
+			exit 2
+		fi
+		role="$2"
+		shift 2
+		;;
+	--role=*)
+		role="${1#--role=}"
+		shift
+		;;
+	-h | --help)
+		sed -n '4,22p' "$self"
+		exit 0
+		;;
+	-*)
+		echo "FAIL unknown option: $1" >&2
+		exit 2
+		;;
+	*)
+		image_arg="$1"
+		shift
+		;;
+	esac
+done
+case "$role" in
+all-in-one | controller | agent | all) ;;
+*)
+	echo "FAIL unknown role: $role (use all-in-one, controller, agent, or all)" >&2
+	exit 2
+	;;
+esac
+image="${image_arg:-$root/image/output/fps-base.qcow2}"
 api_port="${FPS_TEST_API_PORT:-18443}"
 ssh_port="${FPS_TEST_SSH_PORT:-12222}"
 boot_wait="${FPS_TEST_BOOT_WAIT:-300}"
@@ -53,6 +102,32 @@ if [[ ! -f "$image" ]]; then
 	exit 2
 fi
 image="$(readlink -f "$image")"
+
+if [[ "$role" == all ]]; then
+	overall=0
+	summary=()
+	for r in all-in-one controller agent; do
+		echo "=== role $r"
+		if "$self" --role "$r" "$image"; then
+			summary+=("PASS role $r")
+		else
+			summary+=("FAIL role $r")
+			overall=1
+		fi
+	done
+	echo
+	printf '%s\n' "${summary[@]}"
+	if ((overall == 0)); then echo "RESULT: PASS (all roles)"; else echo "RESULT: FAIL (see the roles above)"; fi
+	exit "$overall"
+fi
+
+# The agent profile isolates CPUs and reserves hugepages, so it needs CPUs and memory to spare.
+vm_smp="${FPS_TEST_SMP:-2}"
+vm_mem="${FPS_TEST_MEM:-2048}"
+if [[ "$role" == agent ]]; then
+	vm_smp="${FPS_TEST_SMP:-4}"
+	vm_mem="${FPS_TEST_MEM:-4096}"
+fi
 
 if [[ -w /dev/kvm ]]; then
 	accel=(-machine "q35,accel=kvm" -cpu host)
@@ -93,7 +168,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- Seed: an ssh key for the default user fps-admin, and a known API token. ---
+# --- Seed: an ssh key for the default user fps-admin, a known API token, and the role. ---
+# The all-in-one role gets no role file at all, which proves that it is the default.
 ssh-keygen -q -t ed25519 -N '' -f "$work/key" -C fps-boot-test
 cat >"$work/user-data" <<EOF
 #cloud-config
@@ -105,6 +181,29 @@ write_files:
     permissions: "0640"
     content: $token
 EOF
+case "$role" in
+controller)
+	cat >>"$work/user-data" <<EOF
+  - path: /etc/fps/role.env
+    permissions: "0644"
+    content: |
+      FPS_ROLE=controller
+EOF
+	;;
+agent)
+	# 10.0.2.2 is the host in user networking. Nothing needs to answer there: the test
+	# looks at what the agent role starts and tunes, and the agent redials without limit.
+	cat >>"$work/user-data" <<EOF
+  - path: /etc/fps/role.env
+    permissions: "0644"
+    content: |
+      FPS_ROLE=agent
+      FPS_CONTROLLER_URI=http://10.0.2.2:8444
+      FPS_AGENT_EXTRA_ARGS=--redial-limit 0
+EOF
+	;;
+esac
+echo "NOTE role $role, $vm_smp CPUs, $vm_mem MiB"
 cat >"$work/meta-data" <<EOF
 instance-id: fps-boot-test-$(openssl rand -hex 4)
 local-hostname: fps-boot-test
@@ -115,7 +214,7 @@ cloud-localds "$work/seed.img" "$work/user-data" "$work/meta-data"
 qemu-img create -q -f qcow2 -F qcow2 -b "$image" "$work/overlay.qcow2"
 
 qemu-system-x86_64 \
-	"${accel[@]}" -smp 2 -m 2048 \
+	"${accel[@]}" -smp "$vm_smp" -m "$vm_mem" \
 	-display none -serial "file:$serial" -monitor none \
 	-drive "file=$work/overlay.qcow2,if=virtio,format=qcow2" \
 	-drive "file=$work/seed.img,if=virtio,format=raw,readonly=on" \
@@ -132,56 +231,79 @@ api() { # api PATH [curl options]: GET on the forwarded management port
 	curl -s -m 5 "$@" "http://127.0.0.1:${api_port}${path}"
 }
 
-# --- Check 1: /v1/capabilities answers on the management interface. ---
-body=""
-code=000
-deadline=$((SECONDS + boot_wait))
-while ((SECONDS < deadline)); do
-	if ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then
-		break
-	fi
-	code="$(api /v1/capabilities -o "$work/caps.json" -w '%{http_code}' -H "Authorization: Bearer $token" || true)"
-	if [[ "$code" == 200 ]]; then
-		body="$(cat "$work/caps.json")"
-		break
-	fi
-	sleep 3
-done
-if [[ "$code" == 200 ]] && python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d, dict)' "$work/caps.json"; then
-	pass "GET /v1/capabilities on the management interface answers 200 with a JSON object"
-	echo "NOTE capabilities: $(printf '%s' "$body" | head -c 300)"
-else
-	fail "GET /v1/capabilities on the management interface answers 200 with a JSON object" "last HTTP status $code"
-fi
-
-# --- Check 2: the API demands a token. ---
-code="$(api /v1/capabilities -o /dev/null -w '%{http_code}' || true)"
-if [[ "$code" == 401 ]]; then
-	pass "GET /v1/capabilities without a token answers 401"
-else
-	fail "GET /v1/capabilities without a token answers 401" "HTTP status $code"
-fi
-
 # --- Checks 3 and up: from inside the VM, over ssh. ---
 ssh_opts=(-i "$work/key" -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
 	-o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=5)
 scp_opts=(-i "$work/key" -P "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
 	-o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=5)
+# --- Checks 1 and 2: /v1/capabilities answers on the management interface, and
+# demands a token. The agent role has no controller and checks the opposite later. ---
+if [[ "$role" != agent ]]; then
+	body=""
+	code=000
+	deadline=$((SECONDS + boot_wait))
+	while ((SECONDS < deadline)); do
+		if ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+			break
+		fi
+		code="$(api /v1/capabilities -o "$work/caps.json" -w '%{http_code}' -H "Authorization: Bearer $token" || true)"
+		if [[ "$code" == 200 ]]; then
+			body="$(cat "$work/caps.json")"
+			break
+		fi
+		sleep 3
+	done
+	if [[ "$code" == 200 ]] && python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); assert isinstance(d, dict)' "$work/caps.json"; then
+		pass "GET /v1/capabilities on the management interface answers 200 with a JSON object"
+		echo "NOTE capabilities: $(printf '%s' "$body" | head -c 300)"
+	else
+		fail "GET /v1/capabilities on the management interface answers 200 with a JSON object" "last HTTP status $code"
+	fi
+
+	# --- Check 2: the API demands a token. ---
+	code="$(api /v1/capabilities -o /dev/null -w '%{http_code}' || true)"
+	if [[ "$code" == 401 ]]; then
+		pass "GET /v1/capabilities without a token answers 401"
+	else
+		fail "GET /v1/capabilities without a token answers 401" "HTTP status $code"
+	fi
+fi
+
+# The agent role boots twice, because the kernel options of its tuning profile need
+# a reboot. The wait ends when fps-tune records status=active, which happens on
+# the second boot. The VM keeps its disk, ports, and seed across that reboot.
 ssh_ok=no
-for _ in $(seq 1 40); do
-	if ssh "${ssh_opts[@]}" fps-admin@127.0.0.1 true 2>/dev/null; then
+ssh_tries=40
+ssh_probe=true
+if [[ "$role" == agent ]]; then
+	ssh_tries=$((boot_wait * 2 / 3))
+	ssh_probe='grep -qx status=active /etc/fps/tune.applied'
+fi
+for _ in $(seq 1 "$ssh_tries"); do
+	# shellcheck disable=SC2029 # the probe is ours, and it runs on the VM
+	if ssh "${ssh_opts[@]}" fps-admin@127.0.0.1 "$ssh_probe" 2>/dev/null; then
 		ssh_ok=yes
 		break
 	fi
+	if ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then break; fi
 	sleep 3
 done
+if [[ "$role" == agent ]]; then
+	code="$(api /v1/capabilities -o /dev/null -w '%{http_code}' || true)"
+	if [[ "$code" != 200 && "$code" != 401 ]]; then
+		pass "agent role: nothing answers on the forwarded management API port (HTTP status $code)"
+	else
+		fail "agent role: nothing answers on the forwarded management API port" "HTTP status $code"
+	fi
+fi
 if [[ "$ssh_ok" == yes ]]; then
 	pass "ssh as fps-admin with the seed key works"
 	vm_out="$work/vm-checks.out"
 	: >"$vm_out"
 	if scp "${scp_opts[@]}" "$root/image/tests/vm-checks.sh" "$root/image/tests/isolation-netns.sh" fps-admin@127.0.0.1:/tmp/ &&
 		ssh "${ssh_opts[@]}" fps-admin@127.0.0.1 'chmod +x /tmp/vm-checks.sh /tmp/isolation-netns.sh'; then
-		ssh "${ssh_opts[@]}" fps-admin@127.0.0.1 'sudo /tmp/vm-checks.sh' >"$vm_out" 2>&1 || true
+		# shellcheck disable=SC2029 # role is one of three fixed words
+		ssh "${ssh_opts[@]}" fps-admin@127.0.0.1 "sudo /tmp/vm-checks.sh $role" >"$vm_out" 2>&1 || true
 	fi
 	while IFS= read -r line; do
 		echo "$line"

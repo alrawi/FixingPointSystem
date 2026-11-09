@@ -12,3 +12,20 @@ ssh_authorized_keys:
 #     owner: root:fps
 #     permissions: "0640"
 #     content: change-me-to-a-long-random-token
+# Optional: choose the role of the VM (IMG-02). Without /etc/fps/role.env the VM is
+# an all-in-one lab, which runs the controller and the agent. Put the block below
+# into one write_files list together with the token block above.
+#
+#   controller   runs only fps-controller; no tuning
+#   agent        runs only fps-agent against FPS_CONTROLLER_URI; hugepages and CPU
+#                isolation, sized from the CPUs and memory, and one automatic reboot
+#                on the first boot to apply them
+#   all-in-one   both services, sysctls only (the default)
+#
+# write_files:
+#   - path: /etc/fps/role.env
+#     permissions: "0644"
+#     content: |
+#       FPS_ROLE=agent
+#       FPS_CONTROLLER_URI=http://192.0.2.10:8444
+#       # Optional: FPS_AGENT_ID, FPS_AGENT_LABELS="role=agent site=lab", FPS_AGENT_EXTRA_ARGS
