@@ -257,6 +257,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{id}/captures/{capture_id}:stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+                capture_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Ends the capture on every agent without downloading it. The capture then has the state completed (or failed when no agent delivered an end), and its files are ready for downloadCapture. The operation is idempotent: a capture that already ended answers with its current state. Downloading a capture that still runs also ends it. */
+        post: operations["stopCapture"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents": {
         parameters: {
             query?: never;
@@ -523,9 +543,31 @@ export interface components {
         Capture: {
             id: string;
             port: string;
-            /** @enum {string} */
+            /**
+             * @description running while an agent still captures. completed means that the files are ready to download, which includes a capture that stopCapture, a limit, or the end of the run ended.
+             * @enum {string}
+             */
             state: "running" | "completed" | "failed";
             bytes?: number;
+            /** @description One entry per agent that was asked to capture, ordered by agent identity. A controller older than 0.6.0 does not send it. */
+            files?: components["schemas"]["CaptureFile"][];
+        };
+        /** @description The part of a capture that one agent holds, and so the agent that produced it. */
+        CaptureFile: {
+            /** @description Identity of the agent that captured the file. */
+            agent: string;
+            /** @description False when the agent did not start the capture. */
+            started?: boolean;
+            /** @description Why the agent did not start the capture. Absent when it started. */
+            error?: string;
+            /** @description Packets written, known once the agent reported the end. */
+            packets?: number;
+            /** @description Size of the agent file, known once the agent reported the end. */
+            bytes?: number;
+            /** @description Packets that the agent dropped, known once the agent reported the end. */
+            dropped?: number;
+            /** @description sha256: and 64 hex digits of the agent file, known once the agent reported the end. */
+            digest?: string;
         };
         identifier: string;
         semver: string;
@@ -1225,12 +1267,16 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description Name of a port of the run's test configuration (network.ports[].name). Required, so one capture records one port. A client that wants several ports starts one capture per port. */
                     port: string;
                     /** @description Berkeley Packet Filter expression. */
                     bpf?: string;
                     /** @default 104857600 */
                     max_bytes?: number;
-                    /** @default false */
+                    /**
+                     * @description Asks each agent to include the TLS key log lines in its capture file (agent protocol 0.2.3 and later). An agent that reports an older engine_api ignores the request and writes the lines whenever it has them.
+                     * @default false
+                     */
                     export_tls_keys?: boolean;
                 };
             };
@@ -1267,6 +1313,30 @@ export interface operations {
                 };
                 content: {
                     "application/vnd.tcpdump.pcap": string;
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    stopCapture: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+                capture_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The capture after the stop. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Capture"];
                 };
             };
             default: components["responses"]["Problem"];

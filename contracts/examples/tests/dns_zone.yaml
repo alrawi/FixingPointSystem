@@ -1,4 +1,4 @@
-# Uses decision D12 item 22. The controller compiler reads modules after CTL-18, and the dns server reads zone_file after MOD-19.
+# Uses decision D12 item 22. The scenario dns/lookup_a and the zone_file setting belong to the first party dns module in modules/dns, which the agent runs (CON-15).
 apiVersion: fixingpoint.dev/v1alpha1
 kind: Test
 metadata:
@@ -19,7 +19,7 @@ modules:
 profile:
   basis: sessions
   mix:
-    - { scenario: dns/resolve, weight: 1 }
+    - { scenario: dns/lookup_a, weight: 1 }
 load:
   objective: { type: sessions_per_second, value: 500 }
   phases:

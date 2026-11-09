@@ -51,6 +51,14 @@ pub enum ConvertError {
         /// The module.
         module: String,
     },
+    /// A criterion carries `labels`, which this agent does not apply yet. A
+    /// silent skip would count every series and measure another rule, so the
+    /// plan is refused (CON-15 added the field in 0.2.3).
+    #[error("criterion {metric}: labels are not applied by this agent")]
+    CriterionLabels {
+        /// The metric of the criterion.
+        metric: String,
+    },
     /// The snapshot JSON did not have the expected shape.
     #[error("snapshot: {0}")]
     Snapshot(String),
@@ -270,6 +278,12 @@ pub fn plan_from_pb(p: &pb::Plan) -> Result<Plan, PlanError> {
     };
     let mut criteria = Vec::with_capacity(p.criteria.len());
     for c in &p.criteria {
+        if !c.labels.is_empty() {
+            return Err(ConvertError::CriterionLabels {
+                metric: c.metric.clone(),
+            }
+            .into());
+        }
         criteria.push(plan::Criterion {
             metric: c.metric.clone(),
             op: enum_of(
@@ -621,6 +635,7 @@ pub fn plan_to_pb(p: &Plan) -> pb::Plan {
                     CriterionOp::Ne => 6,
                 },
                 value: c.value,
+                labels: Default::default(),
             })
             .collect(),
     }
@@ -763,6 +778,24 @@ pub fn capabilities_to_pb(c: &proto::Capabilities) -> pb::Capabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_criterion_with_labels_is_refused() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../contracts/examples/plans/http_dns_smoke.json");
+        let plan = Plan::load(&path).unwrap();
+        let mut wire = plan_to_pb(&plan);
+        assert!(!wire.criteria.is_empty());
+        assert!(plan_from_pb(&wire).is_ok());
+        wire.criteria[0]
+            .labels
+            .insert("side".to_owned(), "server".to_owned());
+        let err = plan_from_pb(&wire).unwrap_err().to_string();
+        assert!(
+            err.contains("labels") && err.contains(&wire.criteria[0].metric),
+            "{err}"
+        );
+    }
 
     #[test]
     fn durations_reject_negative_values() {

@@ -6,7 +6,7 @@
 | Branch | `wp/CON-15` |
 | Pull request | not yet |
 | Status | in progress |
-| Progress | 0% (0 of 3 plan steps) |
+| Progress | 90% (3 of 3 plan steps, CI pending) |
 | Current holder | claude-c15a7e, lease 2026-11-09T19:41:43Z |
 | Last verified commit | none |
 
@@ -16,21 +16,21 @@ Close the gaps that CTL-14 and AGT-07 found, all additive: a way to stop a captu
 
 ## Plan
 
-- [ ] 1. OpenAPI 0.6.0 and proto 0.2.3 edits, example, change record, changelog.
-- [ ] 2. Generated code (Python SDK, UI schema) and the Rust mirrors with round trip tests.
-- [ ] 3. Wiki page, log entry, checks, PR.
+- [x] 1. OpenAPI 0.6.0 and proto 0.2.3 edits, example, change record, changelog.
+- [x] 2. Generated code (Python SDK, UI schema) and the Rust mirrors with round trip tests.
+- [x] 3. Wiki page, log entry, checks, PR.
 
 ## Done and verified
 
-Nothing yet.
+Contract files, generated code (Python SDK, UI schema), Rust mirrors, wiki and log written. validate.py, pytest tools/contracts, plan.py checks, sdk tests, cargo test contract and detect, clippy and fmt pass locally. buf and the Go build run only in CI.
 
 ## Remaining
 
-Everything.
+CI result, Go regen by the coordinator.
 
 ## Next action
 
-Edit `contracts/openapi/fps-api-v1.yaml` and the proto file.
+Wait for CI.
 
 ## Blockers and open questions
 

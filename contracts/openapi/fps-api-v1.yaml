@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FixingPointSystem Controller API
-  version: 0.5.0
+  version: 0.6.0
   summary: Contract v0.2 for the controller REST API.
   description: >
     The controller stores test configurations, installs modules, starts runs on
@@ -363,10 +363,23 @@ paths:
               additionalProperties: false
               required: [port]
               properties:
-                port: { type: string }
+                port:
+                  type: string
+                  description: >
+                    Name of a port of the run's test configuration
+                    (network.ports[].name). Required, so one capture records one
+                    port. A client that wants several ports starts one capture
+                    per port.
                 bpf: { type: string, description: Berkeley Packet Filter expression. }
                 max_bytes: { type: integer, minimum: 1, default: 104857600 }
-                export_tls_keys: { type: boolean, default: false }
+                export_tls_keys:
+                  type: boolean
+                  default: false
+                  description: >
+                    Asks each agent to include the TLS key log lines in its
+                    capture file (agent protocol 0.2.3 and later). An agent
+                    that reports an older engine_api ignores the request and
+                    writes the lines whenever it has them.
       responses:
         "202":
           description: Capture started.
@@ -388,6 +401,27 @@ paths:
           content:
             application/vnd.tcpdump.pcap:
               schema: { type: string, contentMediaType: application/vnd.tcpdump.pcap }
+        default: { $ref: "#/components/responses/Problem" }
+  /runs/{id}/captures/{capture_id}:stop:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { name: capture_id, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [runs]
+      operationId: stopCapture
+      x-required-scope: run
+      description: >
+        Ends the capture on every agent without downloading it. The capture
+        then has the state completed (or failed when no agent delivered an
+        end), and its files are ready for downloadCapture. The operation is
+        idempotent: a capture that already ended answers with its current
+        state. Downloading a capture that still runs also ends it.
+      responses:
+        "200":
+          description: The capture after the stop.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Capture" }
         default: { $ref: "#/components/responses/Problem" }
   /agents:
     get:
@@ -720,5 +754,29 @@ components:
       properties:
         id: { type: string }
         port: { type: string }
-        state: { type: string, enum: [running, completed, failed] }
+        state:
+          type: string
+          enum: [running, completed, failed]
+          description: >
+            running while an agent still captures. completed means that the
+            files are ready to download, which includes a capture that
+            stopCapture, a limit, or the end of the run ended.
         bytes: { type: integer }
+        files:
+          type: array
+          description: >
+            One entry per agent that was asked to capture, ordered by agent
+            identity. A controller older than 0.6.0 does not send it.
+          items: { $ref: "#/components/schemas/CaptureFile" }
+    CaptureFile:
+      type: object
+      description: The part of a capture that one agent holds, and so the agent that produced it.
+      required: [agent]
+      properties:
+        agent: { type: string, description: Identity of the agent that captured the file. }
+        started: { type: boolean, description: False when the agent did not start the capture. }
+        error: { type: string, description: Why the agent did not start the capture. Absent when it started. }
+        packets: { type: integer, minimum: 0, description: "Packets written, known once the agent reported the end." }
+        bytes: { type: integer, minimum: 0, description: "Size of the agent file, known once the agent reported the end." }
+        dropped: { type: integer, minimum: 0, description: "Packets that the agent dropped, known once the agent reported the end." }
+        digest: { type: string, description: "sha256: and 64 hex digits of the agent file, known once the agent reported the end." }

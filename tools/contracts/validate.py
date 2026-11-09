@@ -11,6 +11,7 @@ import ipaddress
 import json
 import re
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -1131,6 +1132,23 @@ def run(modules_dirs: list[Path], tests: list[Path], openapi: Path | None,
     return report
 
 
+# Example tests that name a scenario of a first party module under modules/. The
+# example modules of contracts/examples/modules/ have their own scenarios, so
+# these tests are validated against the first party module they name (CON-15).
+FIRST_PARTY_TESTS = {"dns_zone.yaml": "dns"}
+
+
+def run_first_party(tests: list[Path], catalog_path: Path) -> Report:
+    """Validate example tests against the first party modules that they name."""
+    report = Report()
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in sorted({FIRST_PARTY_TESTS[t.name] for t in tests}):
+            (Path(tmp) / name).symlink_to(REPO / "modules" / name)
+        sub = run([Path(tmp)], tests, None, catalog_path)
+        report.findings.extend(sub.findings)
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--modules", type=Path, action="append",
@@ -1144,8 +1162,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     modules = args.modules or [EXAMPLES / "modules"]
+    default_tests = args.tests is None and args.modules is None
     tests = args.tests if args.tests is not None else sorted((EXAMPLES / "tests").glob("*.yaml"))
+    first_party = [t for t in tests if default_tests and t.name in FIRST_PARTY_TESTS]
+    tests = [t for t in tests if t not in first_party]
     report = run(modules, tests, None if args.no_openapi else OPENAPI, args.catalog)
+    if first_party:
+        report.findings.extend(run_first_party(first_party, args.catalog).findings)
     for finding in report.findings:
         if not args.quiet or finding.severity == "error":
             print(finding)

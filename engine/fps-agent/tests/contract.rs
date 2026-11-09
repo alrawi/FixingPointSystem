@@ -290,6 +290,63 @@ fn capture_download_messages_round_trip() {
 }
 
 #[test]
+fn capture_start_and_criterion_fields_match_the_proto_numbers() {
+    let text = proto_text();
+    let start = table(&[
+        ("plan_id", 1),
+        ("capture_id", 2),
+        ("port", 3),
+        ("filter", 4),
+        ("snap_length", 5),
+        ("max_bytes", 6),
+        ("max_duration", 7),
+        ("export_tls_keys", 8),
+    ]);
+    assert_eq!(message_fields(&text, "StartCaptureCommand"), start);
+    let criterion = table(&[("metric", 1), ("op", 2), ("value", 3), ("labels", 4)]);
+    assert_eq!(message_fields(&text, "Criterion"), criterion);
+}
+
+#[test]
+fn export_tls_keys_and_criterion_labels_round_trip() {
+    use fps_agent::pb;
+    use prost::Message as _;
+    let start = pb::StartCaptureCommand {
+        plan_id: "p".into(),
+        capture_id: "c".into(),
+        port: "client0".into(),
+        export_tls_keys: true,
+        ..Default::default()
+    };
+    round_trip(&start);
+    let back = pb::StartCaptureCommand::decode(start.encode_to_vec().as_slice()).unwrap();
+    assert!(back.export_tls_keys);
+    // A sender that leaves the field out, as an agent of 0.2.2 does, reads as false.
+    let without = pb::StartCaptureCommand {
+        export_tls_keys: false,
+        ..start.clone()
+    };
+    let back = pb::StartCaptureCommand::decode(without.encode_to_vec().as_slice()).unwrap();
+    assert!(!back.export_tls_keys);
+
+    let crit = pb::Criterion {
+        metric: "sessions.failed_ratio".into(),
+        op: 5,
+        value: 0.0,
+        labels: [("side".to_owned(), "server".to_owned())].into(),
+    };
+    round_trip(&crit);
+    let plan = pb::Plan {
+        criteria: vec![crit, pb::Criterion::default()],
+        ..Default::default()
+    };
+    round_trip(&plan);
+    let back = pb::Plan::decode(plan.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(back.criteria[0].labels["side"], "server");
+    assert!(back.criteria[1].labels.is_empty());
+}
+
+#[test]
 fn engine_api_matches_the_proto_contract_version() {
     let header = format!("contract version {}.", fps_agent::capabilities::ENGINE_API);
     assert!(
