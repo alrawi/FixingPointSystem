@@ -55,6 +55,9 @@ func TestParseConfigRejectsBadInput(t *testing.T) {
 		{"unknown log level", "log_level: verbose\n", "log_level", true},
 		{"zero shutdown timeout", "shutdown_timeout: 0s\n", "shutdown_timeout", true},
 		{"negative read header timeout", "read_header_timeout: -1s\n", "read_header_timeout", true},
+		{"zero capture retention", "capture_retention: 0s\n", "capture_retention", true},
+		{"negative capture retention", "capture_retention: -1h\n", "capture_retention", true},
+		{"capture retention in days", "capture_retention: 7d\n", "unknown unit", false},
 		{"list instead of mapping", "- a\n", "cannot unmarshal", false},
 		{"grpc listen without port", "grpc_listen: localhost\n", "grpc_listen", true},
 		{"token without name", "tokens: [{scope: read, token: " + longToken + "}]\n", "tokens[0]: name is empty", true},
@@ -103,6 +106,7 @@ func TestLoadConfigFileReadsExample(t *testing.T) {
 		TLSNames:          []string{"ctl.lab.example", "10.0.0.5"},
 		AdminSocket:       "/run/fps/admin.sock",
 		AgentAutoEnroll:   true,
+		CaptureRetention:  Duration(DefaultCaptureRetention),
 		Tokens: []Token{
 			{Name: "ci", Scope: "run", Token: "example-run-token-0123456789"},
 			{Name: "ops", Scope: "admin", TokenFile: "/etc/fps/admin.token"}, //nolint:gosec // G101: a file path from testdata/controller.yaml, not a credential

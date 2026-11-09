@@ -116,6 +116,7 @@ func newRig(t *testing.T, ids []string, o rigOptions) *rig {
 	if r.svc, err = captures.New(cfg); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(r.svc.Close)
 	if r.doc, err = contract.Load(contractPath); err != nil {
 		t.Fatal(err)
 	}
