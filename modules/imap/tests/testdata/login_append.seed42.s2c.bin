@@ -1,0 +1,11 @@
+* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN] imap.example.test Dovecot ready.
+* CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN
+A001 OK Pre-login capabilities listed, post-login capabilities have more (0.005 + 0.002 secs).
++ Ready for literal data
+A002 OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT UIDPLUS MOVE NAMESPACE CHILDREN] Logged in
+* STATUS "Sent" (MESSAGES 3 UIDNEXT 1004)
+A003 OK Status completed (0.009 + 0.001 secs).
++ Ready for literal data
+A004 OK [APPENDUID 1514323356 1004] Append completed (0.003 + 0.001 secs).
+* BYE Logging out
+A005 OK Logout completed (0.006 + 0.003 secs).

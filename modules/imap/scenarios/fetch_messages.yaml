@@ -1,0 +1,71 @@
+scenario: fetch_messages
+description: A mail client on port 143 that downloads whole messages from a read-only mailbox. After CAPABILITY and LOGIN it opens INBOX with EXAMINE, so the server reports no permanent flags and the code READ-ONLY, and then fetches the variable fetches (default 3) messages one by one with BODY.PEEK[]. Each response is one literal {n} that carries a MIME message with a base64 attachment of a size between attachment_min and attachment_max, in one of three kinds, and the client waits a think time between the messages. The server draws its messages from the content module, and the client counts its tags up from A000.
+vars:
+  server_port: 143
+  server_name: imap.example.test
+  messages: 6
+  fetches: 3
+  body_size: 1800
+  attachment_min: 24000
+  attachment_max: 160000
+  tag: A000
+flows:
+  - id: fetch_messages
+    module: imap
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} CAPABILITY\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - set:
+          login: "{{ imap.credential('user') }}"
+          secret: "{{ imap.credential('password') }}"
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} LOGIN \"{{ vars.login }}\" \"{{ vars.secret }}\"\r\n"
+      - expect: { pattern: " Logged in\r\n", timeout_ms: 5000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} EXAMINE \"INBOX\"\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - loop:
+          count: "{{ vars.fetches }}"
+          do:
+            - set: { tag: "{{ imap.next(vars.tag) }}" }
+            - send: "{{ vars.tag }} FETCH {{ rand_int(1, vars.messages) }} (UID FLAGS BODY.PEEK[])\r\n"
+            - expect: { pattern: "secs).\r\n", timeout_ms: 30000 }
+            - delay: { dist: exponential, mean_ms: 80 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} LOGOUT\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN] {{ vars.server_name }} Dovecot ready.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "* CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN\r\n{{ imap.tagged(last, text='Pre-login capabilities listed, post-login capabilities have more', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ imap.tagged(last, code='CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT UIDPLUS MOVE NAMESPACE CHILDREN', text='Logged in') }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ imap.select_data(vars.messages, read_only=true) }}{{ imap.tagged(last, code='READ-ONLY', text='Examine completed', timing=true) }}"
+      - loop:
+          count: "{{ vars.fetches }}"
+          do:
+            - expect: { pattern: "\r\n", timeout_ms: 30000 }
+            - set: { sid: "{{ rand_int(1, 2000000000) }}" }
+            - set:
+                subject: "Documents {{ rand_int(1000, 9999) }}"
+                text: "{{ content.email(size=vars.body_size) }}"
+            - branch:
+                - p: 0.4
+                  do:
+                    - set: { msg: "{{ imap.message(imap.address(vars.sid, 1), imap.address(vars.sid, 2), vars.subject, vars.text, cc=imap.address(vars.sid, 3), attachment=content.binary(kind='pdf', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='statement.pdf', content_type='application/pdf') }}" }
+                - p: 0.3
+                  do:
+                    - set: { msg: "{{ imap.message(imap.address(vars.sid, 1), imap.address(vars.sid, 2), vars.subject, vars.text, attachment=content.binary(kind='jpeg', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='photo.jpg', content_type='image/jpeg') }}" }
+                - p: 0.3
+                  do:
+                    - set: { msg: "{{ imap.message(imap.address(vars.sid, 1), imap.address(vars.sid, 2), vars.subject, vars.text, attachment=content.binary(kind='zip', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='archive.zip', content_type='application/zip') }}" }
+            - send: "{{ imap.fetch(last, vars.msg) }}{{ imap.tagged(last, text='Fetch completed', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - send: "* BYE Logging out\r\n{{ imap.tagged(last, text='Logout completed', timing=true) }}"
+      - close: fin

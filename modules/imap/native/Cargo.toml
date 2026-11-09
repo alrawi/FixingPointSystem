@@ -25,3 +25,16 @@ rand_pcg = "0.3"
 serde_yaml = { package = "serde_norway", version = "0.9" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "test-util", "time"] }
 
+# The module layout keeps tests in modules/imap/tests, next to the scenarios
+# they exercise, so the targets point one directory up.
+[[test]]
+name = "catalog"
+path = "../tests/catalog.rs"
+
+[[test]]
+name = "scenarios"
+path = "../tests/scenarios.rs"
+
+[[test]]
+name = "transcript"
+path = "../tests/transcript.rs"
