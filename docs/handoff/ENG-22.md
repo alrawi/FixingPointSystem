@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #340 |
 | Branch | `wp/ENG-22` |
-| Pull request | #0 |
-| Status | in progress |
+| Pull request | #341 |
+| Status | ready for review |
 | Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-e22a7c, lease until 2026-11-10T00:39:09Z |
-| Last verified commit | none |
+| Last verified commit | 9bf7a21 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -36,11 +36,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Pull request and CI.
+Nothing.
 
 ## Next action
 
-Open the PR and wait for CI.
+Coordinator reviews and merges PR #341.
 
 ## Blockers and open questions
 
@@ -68,3 +68,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T00:00Z | claude-e22a7c | claim | origin/main | claimed #340 |
+| 2026-11-09T00:00Z | claude-e22a7c | finish | 9bf7a21 | PR #341 opened, CI green, ready for review |
