@@ -11,7 +11,8 @@ IMG_SHELL_FILES := image/build.sh image/boot-test.sh image/tests/static-check.sh
 	image/files/usr/libexec/fps/fps-init-token image/files/usr/libexec/fps/fps-agent-start \
 	image/files/usr/libexec/fps/fps-role image/files/usr/libexec/fps/fps-tune \
 	image/files/usr/libexec/fps/fps-enroll-token image/tests/enroll-token-test.sh \
-	image/convert.sh image/tests/convert-test.sh
+	image/convert.sh image/tests/convert-test.sh \
+	image/tests/vm-run.sh image/ci-summary.sh
 
 # Syntax of every script, and ShellCheck and Packer when they are installed.
 LINT_TARGETS += lint-img
