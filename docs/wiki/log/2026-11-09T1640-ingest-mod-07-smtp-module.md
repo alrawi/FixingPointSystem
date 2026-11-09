@@ -1,0 +1,10 @@
+## [2026-11-09] ingest | MOD-07 SMTP module
+
+MOD-07 adds the `smtp` module under `modules/smtp`. Its native crate `fps-module-smtp` implements ten template functions for the EHLO reply, synthetic credentials and addresses, `AUTH PLAIN` and `AUTH LOGIN` tokens, `RCPT TO` lines, MIME messages with a base64 attachment, and the dot stuffed DATA payload. Six scenarios cover relay on port 25 (sequential, pipelined, and text only) and submission on port 587 (`AUTH PLAIN`, `AUTH LOGIN`, and a batch of pipelined messages). The scenarios take the message body and the attachment from the content module, so attachment sizes vary per session. `fixtures/zeek_check.py` checks `smtp.log`, `files.log`, and `weird.log` of a capture, and `capture.sh` runs it where Zeek is installed. We updated the [Modules](../Modules.md) page and `modules/smtp/README.md`. The module has no STARTTLS scenario because the scenario language has no action that upgrades the transport of a running flow.
+
+### Shared page notes
+
+- `engine/fps-agent/src/modules.rs`: `NativeFunctions` dispatches only `http1` and `dns`. A plan with an smtp scenario fails every call until the agent also dispatches `fps_module_smtp::Smtp` and `fps_module_content::Content`, and `engine/fps-agent/Cargo.toml` lists both crates.
+- Contract and engine follow up: STARTTLS needs an action in the scenario language, for example `upgrade: tls`, that hands the stream of a running flow to a transport module. The TLS wrapper of TRN-04 takes a whole `SessionIo`, so the engine would wrap the stream in place. A new package should own it, and MOD-07 can then add `starttls_submission`.
+- Testing: the module adds a fifth proof for mail modules, which is a Zeek log check of the capture (`modules/smtp/fixtures/zeek_check.py`). The IMAP and POP3 modules can reuse it.
+- `mk/mod-smtp.mk` and `.github/workflows/mod-smtp.yml` are new files in the style of the dns module. The `realism` workflow already selects the module, because it ships `fixtures/capture.sh` and `fixtures/expected.yaml`.
