@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of a capture of the web_browse scenario in web_browse.scenario.yaml.
+# The structure section turns on the session structure check, which compares the
+# connections of each instance with the flows and edges of the scenario.
+# realism/schema/labels.schema.json defines the format.
+labels: fps-realism-labels
+version: 1
+sessions:
+  - application: http1
+    match: {transport: tcp, server_port: 8080}
+  - application: dns
+    match: {transport: udp, server_port: 53}
+structure:
+  scenarios:
+    - file: web_browse.scenario.yaml

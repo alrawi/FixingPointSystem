@@ -102,6 +102,10 @@
         {
           "if": {"properties": {"check": {"const": "content"}}, "required": ["check"]},
           "then": {"$ref": "#/$defs/content"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "session_structure"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/session_structure"}
         }
       ]
     },
@@ -580,6 +584,144 @@
         "failures": {
           "description": "One sentence for each reason that the check failed. Empty when it passed.",
           "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "session_structure": {
+      "description": "Connection count and ordering of each scenario instance against the flow graph of its scenario. The check passes when at least one instance was found for every scenario, every flow has a number of connections that the scenario allows, every after edge holds (the later flow starts once the earlier flow completed), every spawn edge holds (the spawned flow starts while its parent runs), and the number of instances agrees with expected_instances where the labels give one. failures names the instance and the violated edge in words.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "max_gap_s", "tolerance_s", "sessions_total",
+        "sessions_assigned", "sessions_unassigned", "instances", "failed_instances", "scenarios",
+        "failed_instance_details", "failures_total", "failures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "session_structure"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "Empty until the metric catalog defines a session structure metric.",
+          "type": "array",
+          "maxItems": 0
+        },
+        "max_gap_s": {
+          "description": "Silence of a client, in seconds, that starts a new instance. Null when no gap splits instances.",
+          "type": ["number", "null"]
+        },
+        "tolerance_s": {"type": "number", "minimum": 0},
+        "sessions_total": {"type": "integer", "minimum": 0},
+        "sessions_assigned": {"type": "integer", "minimum": 0},
+        "sessions_unassigned": {
+          "description": "Sessions that match no flow of any scenario or that no scenario entry may claim. The check does not judge them.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "instances": {"type": "integer", "minimum": 0},
+        "failed_instances": {"type": "integer", "minimum": 0},
+        "scenarios": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "scenario", "source", "expected_instances", "instances", "failed_instances",
+              "sessions", "flows", "edges"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "scenario": {"type": "string", "minLength": 1},
+              "source": {"type": "string", "minLength": 1},
+              "expected_instances": {"type": ["integer", "null"], "minimum": 0},
+              "instances": {"type": "integer", "minimum": 0},
+              "failed_instances": {"type": "integer", "minimum": 0},
+              "sessions": {"type": "integer", "minimum": 0},
+              "flows": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id", "module", "transport", "server_port", "spawned", "after",
+                    "min_connections", "max_connections", "connections"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {"type": "string", "minLength": 1},
+                    "module": {"type": "string"},
+                    "transport": {"enum": ["tcp", "udp"]},
+                    "server_port": {
+                      "description": "Server port that the scenario fixes, null when the flow matches any port that no other flow fixes.",
+                      "type": ["integer", "null"],
+                      "minimum": 0,
+                      "maximum": 65535
+                    },
+                    "spawned": {"type": "boolean"},
+                    "after": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                    "min_connections": {"type": "integer", "minimum": 0},
+                    "max_connections": {"type": ["integer", "null"], "minimum": 0},
+                    "connections": {
+                      "description": "Connections that the capture holds for the flow, over all instances.",
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "edges": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["kind", "from", "to"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {"enum": ["after", "spawn"]},
+                    "from": {"type": "string", "minLength": 1},
+                    "to": {"type": "string", "minLength": 1}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "failed_instance_details": {
+          "description": "The first 50 instances with a failure, with their connections in start order.",
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": ["scenario", "instance", "client_ip", "start", "opened_by", "connections", "failures"],
+            "additionalProperties": false,
+            "properties": {
+              "scenario": {"type": "string", "minLength": 1},
+              "instance": {"type": "integer", "minimum": 1},
+              "client_ip": {"type": "string"},
+              "start": {"description": "Capture time of the first packet, in seconds.", "type": "number"},
+              "opened_by": {
+                "description": "Why this instance opened when the one before it had no room, or null for the first instance of a client.",
+                "type": ["string", "null"]
+              },
+              "connections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["flow", "session", "start", "end"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "flow": {"type": "string", "minLength": 1},
+                    "session": {"type": "integer", "minimum": 1},
+                    "start": {"description": "Seconds after the first packet of the instance.", "type": "number"},
+                    "end": {"description": "Seconds after the first packet of the instance at which the session completes.", "type": "number"}
+                  }
+                }
+              },
+              "failures": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            }
+          }
+        },
+        "failures_total": {"type": "integer", "minimum": 0},
+        "failures": {
+          "description": "One sentence for each broken rule, at most 50. failures_total counts them all.",
+          "type": "array",
+          "maxItems": 50,
           "items": {"type": "string", "minLength": 1}
         }
       }
