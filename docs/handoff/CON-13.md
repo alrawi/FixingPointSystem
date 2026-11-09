@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #265 |
 | Branch | `wp/CON-13` |
-| Pull request | pending |
-| Status | in progress |
-| Progress | 80% (2 of 3 plan steps) |
+| Pull request | #270 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-c13a7e, lease until 2026-11-09T05:23:53Z |
 | Last verified commit | none |
 
@@ -18,19 +18,19 @@ Let the controller fetch a finished capture by id, from an offset, in ordered ch
 
 - [x] 1. Proto: `FetchCapture` command and `UploadCapture` RPC, version 0.2.2, change entry
 - [x] 2. Rust mirrors, round trip test, UNIMPLEMENTED answer, contract test tool update, wiki
-- [ ] 3. PR and CI
+- [x] 3. PR and CI
 
 ## Done and verified
 
-`buf format`, `buf lint`, and `buf breaking` against origin/main pass. `cargo test -p fps-agent` contract, detect, session, and run_control pass. `pytest tools/contracts` passes.
+`buf format`, `buf lint`, and `buf breaking` against origin/main pass. `cargo test -p fps-agent` contract, detect, session, and run_control pass. `pytest tools/contracts` passes. CI at 5e9c676 is green except `TestGeneratedCodeIsCurrent`, which waits for regen-agentpb.
 
 ## Remaining
 
-PR, CI, and the regeneration of `controller/internal/agents/agentpb` by the coordinator.
+The regeneration of `controller/internal/agents/agentpb` by the coordinator.
 
 ## Next action
 
-Open the PR and wait for CI.
+Coordinator runs regen-agentpb on this branch, then reviews PR #270.
 
 ## Blockers and open questions
 
@@ -56,3 +56,4 @@ cargo test -p fps-agent --test contract
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-08 | claude-c13a7e | claim | none | start |
+| 2026-11-08 | claude-c13a7e | review | 5e9c676 | PR #270 opened, regeneration pending |
