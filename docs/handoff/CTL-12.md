@@ -6,7 +6,7 @@
 | Branch | `wp/CTL-12` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 25% (1 of 4 plan steps) |
+| Progress | 80% (3 of 4 plan steps) |
 | Current holder | claude-c12a7e |
 | Last verified commit | none |
 
@@ -17,21 +17,21 @@ For a test with `profile.basis: bytes`, correct the per entry session rates ever
 ## Plan
 
 - [x] 1. Claim commit, handoff, and the pure package `controller/internal/mixcontrol/` with unit tests (local `go test` works, the package uses only the standard library)
-- [ ] 2. Compose with the CTL-24 calibration loop in `controller/internal/runs/calibration.go` (additive), per scenario bytes in `fakeagent.Traffic` (additive)
-- [ ] 3. End to end test, `mk/ctl.mk` targets
+- [x] 2. Compose with the CTL-24 calibration loop in `controller/internal/runs/calibration.go` (additive), per scenario bytes in `fakeagent.Traffic` (additive)
+- [x] 3. End to end test, `mk/ctl.mk` targets
 - [ ] 4. Controller wiki page, log entry, checks, PR
 
 ## Done and verified
 
-Step 1: `go test -race -cover ./internal/mixcontrol/` passes locally with 100 percent coverage.
+Steps 2 and 3 are written but only CI can build `internal/runs` (modules do not download here). Step 1: `go test -race -cover ./internal/mixcontrol/` passes locally with 100 percent coverage.
 
 ## Remaining
 
-Steps 2 to 4.
+Step 4: open the PR and get CI green.
 
 ## Next action
 
-Edit `controller/internal/runs/calibration.go` so the calibration loop owns a `mixcontrol.State` when `profile.basis` is `bytes`.
+Open the PR, wait for CI, fix failures in `internal/runs/bytemix*.go`.
 
 ## Blockers and open questions
 

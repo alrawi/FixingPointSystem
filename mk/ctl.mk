@@ -128,3 +128,19 @@ lint-ctl-captures:
 
 test-ctl-captures:
 	cd controller && $(GO) test -race -cover ./internal/captures/ ./internal/agents/ ./internal/fakeagent/
+
+# CTL-12 byte weighted mix control. The package mixcontrol uses only the
+# standard library, and the targets above cover it too, so the first two give a
+# fast loop for the package alone. The last target runs the end to end tests of
+# the run loop with the fake agent, which take a few seconds.
+.PHONY: lint-ctl-mixcontrol test-ctl-mixcontrol test-ctl-bytemix
+lint-ctl-mixcontrol:
+	@out="$$(cd controller && gofmt -l internal/mixcontrol)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+	cd controller && $(GO) vet ./internal/mixcontrol/
+
+test-ctl-mixcontrol:
+	cd controller && $(GO) test -race -cover ./internal/mixcontrol/
+
+test-ctl-bytemix:
+	cd controller && $(GO) test -race -run 'ByteMix|Calibration' ./internal/runs/ ./internal/fakeagent/

@@ -41,9 +41,9 @@
 // throughput calibration, this rests on a property of the traffic and not on
 // the achieved byte shares, so the loop has no feedback delay and cannot
 // oscillate with the ramp of the agents. The applied multipliers move toward
-// the targets in the logarithmic domain, and the largest ratio of one update is
-// bounded by MaxStep, so a large correction takes a few windows and one noisy
-// window cannot throw the mix off. A dead band holds the multipliers while
+// the targets, and the ratio of one update is bounded by MaxStep for each
+// entry, so a large correction takes a few windows and one noisy window cannot
+// throw the mix off. A dead band holds the multipliers while
 // every target stays within DeadBand of them.
 package mixcontrol
 
@@ -60,8 +60,8 @@ const DefaultWindow = time.Second
 
 // Defaults apply to Config fields that are zero.
 const (
-	// DefaultMaxStep lets the largest multiplier change by at most a factor of
-	// two per update, so a ratio of 1000 between two entries takes ten windows.
+	// DefaultMaxStep lets a multiplier change by at most a factor of two per
+	// update, so a distance of 1000 takes ten windows.
 	DefaultMaxStep = 1.0
 	// DefaultDeadBand holds the multipliers while every target stays within
 	// 1.5 percent. This costs under one point of byte share.
@@ -117,8 +117,8 @@ type Config struct {
 	Entries []Entry
 	// Preserve selects the total that the multipliers leave unchanged.
 	Preserve Preserve
-	// MaxStep bounds the relative change of the largest multiplier per
-	// update. A value of 1 lets it double or halve.
+	// MaxStep bounds the relative change of a multiplier per update. A value
+	// of 1 lets it double or halve.
 	MaxStep float64
 	// DeadBand is the relative distance below which the multipliers stay
 	// unchanged. It must stay below MaxStep.
@@ -350,27 +350,21 @@ func (s State) Update(now time.Time, samples []Sample) (State, Result, error) {
 	}
 	target := n.targets(bps)
 
-	// The distance to the targets. The dead band holds every multiplier while
-	// the largest relative distance stays small.
-	var worst, worstLog float64
+	// The dead band holds every multiplier while the largest relative distance
+	// to a target stays small. Outside the band, each multiplier moves toward
+	// its target by at most a factor of 1+MaxStep, so an entry with a small
+	// share and a distant target, such as a scenario with tiny sessions, does
+	// not hold back the entries that carry the bytes.
+	var worst float64
 	for i := range target {
-		r := target[i] / s.mult[i]
-		worst = math.Max(worst, math.Abs(r-1))
-		worstLog = math.Max(worstLog, math.Abs(math.Log(r)))
+		worst = math.Max(worst, math.Abs(target[i]/s.mult[i]-1))
 	}
 	n.mult = append([]float64(nil), s.mult...)
 	changed := false
 	if worst > s.cfg.DeadBand {
-		// Every multiplier moves by the same fraction of its logarithmic
-		// distance, so the largest one changes by at most 1+MaxStep and the
-		// direction toward the target stays whole.
-		alpha := math.Min(1, math.Log1p(s.cfg.MaxStep)/worstLog)
 		for i := range n.mult {
-			if alpha == 1 {
-				n.mult[i] = target[i]
-			} else {
-				n.mult[i] = s.mult[i] * math.Pow(target[i]/s.mult[i], alpha)
-			}
+			lo, hi := s.mult[i]/(1+s.cfg.MaxStep), s.mult[i]*(1+s.cfg.MaxStep)
+			n.mult[i] = math.Min(math.Max(target[i], lo), hi)
 			if n.mult[i] != s.mult[i] {
 				changed = true
 			}

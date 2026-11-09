@@ -221,7 +221,7 @@ A request carries five inputs.
 
 The compiler applies the nine rules below.
 
-1. **Mix.** Each entry resolves to `<module>/<scenario>`, and a bare name must be unique in the catalog. Weights normalize to sum 1 and act as session shares, also for the `bytes` basis, until CTL-12 adds byte based correction. The entry id is the scenario name, with `_2`, `_3`, and so on for repeats.
+1. **Mix.** Each entry resolves to `<module>/<scenario>`, and a bare name must be unique in the catalog. Weights normalize to sum 1 and act as session shares, also for the `bytes` basis. The byte weighted mix control (CTL-12, [Byte weighted mix control](#byte-weighted-mix-control)) corrects the rates during the run. The entry id is the scenario name, with `_2`, `_3`, and so on for repeats.
 2. **Workers.** Agents sort by id, and each agent contributes one worker per core, where worker i pins to core i.
 3. **Ports.** A location `<agent>/<interface>` pins the port to that one agent, which must be in the inventory and must have the interface, or the compiler fails with `ErrInvalidInventory`. A bare `<interface>` or `*/<interface>` spreads the port across every agent that has the interface, where an agent with an empty interface list counts as having it, and fails with `ErrInvalidInventory` when no agent has it. A plan lists only the ports and the host pool slices of its own agent. When a port runs on fewer than all agents, the mix entries name their default pools explicitly, because an agent that lacks the first pool of a role would otherwise default to another pool, and an agent keeps a mix entry in its plan only when it has a rate for it or emulates the hosts of its server pool.
 4. **Host pools.** Each pool divides over the workers of the agents that run its port, in global worker order. Every such worker gets the pool count divided by the number of those workers, and the first workers get one more host each until the remainder is used up. An agent therefore owns a contiguous slice. A pool with fewer hosts than workers is valid and leaves the last workers without hosts, but the compiler fails with `ErrPoolTooSmall` when an agent that runs the port would get no host of the pool. A pool without `mac_base` gets the locally administered base `02:xx:yy:00:00:00`, where xx and yy hold the pool index, which keeps MAC addresses unique across agents.
@@ -974,6 +974,52 @@ The orchestrator reads `engine_api` from the capabilities of the agent when it s
 ### Tests
 
 `calibration_test.go` is the end to end test. The orchestrator runs on the real `agents.Manager`, and fake agents with `fakeagent.Options.Traffic` run the compiled rate in simulated time at 100 times the real speed, report the counters of sessions that carry 40 kB each against a manifest estimate of 10 kB, and take `UpdateRates` into their own rate, so the loop between orchestrator, manager, and agent closes. It checks that an 8 Mbit/s objective, which the compiled rate overshoots fourfold, ends within 5 percent after the factor falls to 0.25 in steps of at most 1.5x, that the log and `Run.Calibration` agree, and that no command arrives after the run ended. Further tests check that an agent with engine 0.1.0 gets no command and is logged once, that a `sessions_per_second` objective and a switched off calibration send nothing, and that a manager without `RateUpdater` leaves the rates alone. `calibration_internal_test.go` covers the window arithmetic, the command builder, and the version check.  `internal/agents/updaterates_test.go` checks the manager method against the fake agent, including the all or nothing rule and the running state requirement. `make lint-ctl-runs test-ctl-runs` runs the package alone.
+
+## Byte weighted mix control
+
+CTL-12 keeps the byte share of every mix entry at its weight when the test sets `profile.basis: bytes`. The test configuration schema already has this setting (`sessions` or `bytes`), so the feature needs no contract change and no extra setting: the configuration asks for it, and a `sessions` basis is untouched.
+
+The compiler (CTL-05) normalizes the weights as session shares whatever the basis, so at the compiled rates a scenario with heavy sessions takes more than its share of the bytes. The package `internal/mixcontrol/` measures the bytes per session of each entry and returns one multiplier per entry. The compiled session rate of the entry times its multiplier gives the entry its byte share.
+
+### Composition with the throughput calibration
+
+A run has exactly one loop that sends `UpdateRates`, the CTL-24 calibration loop in `internal/runs/`. Two loops would overwrite each other's totals. `mixcontrol` therefore sends nothing and reads no clock. The calibration loop feeds the samples of each window to both estimators and sends, for every mix entry, `compiled rate * factor * multiplier` as the whole agent total, in one command per agent and window.
+
+| Piece | Job | Why it composes |
+|---|---|---|
+| `calibrate` factor `f` | Scales the total to the `throughput_bps` objective | The factor rests on the weighted mean bytes per session of the compiled session weights |
+| `mixcontrol` multiplier `m_i` | Moves bytes between entries | Multipliers keep that weighted mean unchanged (`PreserveBytes`): `sum w_i m_i e_i = sum w_i e_i`, so `f` stays right |
+
+The target multiplier is `m_i = (b_i / (w_i e_i)) * sum_j(w_j e_j)`, with `b` the normalized byte weights, `w` the compiled session weights, and `e` the bytes per session estimates. The entry then carries the byte share `w_i m_i e_i / sum_j(w_j m_j e_j) = b_i`. A `PreserveSessions` mode keeps the total session rate instead, for an objective in sessions per second. The run loop does not use it yet.
+
+### Estimate and control law
+
+| Part | Value |
+|---|---|
+| Estimate | Pooled byte and session sums per entry, decayed by 0.95 per window. An entry with 20 pooled sessions replaces its manifest estimate `expected_bytes` with the measured bytes per session. Before that, the estimate shapes the mix |
+| Window | One second, as the catalog asks. When `Calibration.Window` is zero, a byte weighted run uses `mixcontrol.DefaultWindow` (1 s) for the whole loop and not the 5 s of the calibration alone. The calibration tolerates this: its estimate is a property of the traffic, and its factor moves by at most 1.5 times per window. A configured window wins |
+| Step | Each multiplier moves toward its target by at most a factor of two per window, so an entry with a distant target (a scenario with tiny sessions) does not hold back the entries that carry the bytes |
+| Dead band | Multipliers hold while every target stays within 1.5 percent, which costs under one point of byte share and keeps the loop from sending a command every window for noise |
+
+Like the calibration, the control never reacts to the achieved byte shares. It estimates a property of the traffic, so it has no feedback delay and no oscillation with the ramp of the agents. `State.Update(now, samples)` takes the time for its `SettledSince` field, and the package has no other time or random input.
+
+### In the run loop
+
+`internal/runs/bytemix.go` attaches the control. `Create` calls `attachByteMix` after `newCalibrator`. The control starts when `profile.basis` is `bytes`, the objective is `throughput_bps`, the calibration is on, and `CalibrationConfig.ByteMixOff` is false. For a `bytes` basis with another objective the log says `byte weighted mix control is off: it needs a throughput_bps objective and the calibration loop, so the mix keeps its compiled session weights` once, and the run keeps its compiled rates. Each change of a multiplier is a `byte mix step` log line and a `CalibrationStep` in `Run.Calibration`, which now carries the `Multipliers` map. `CalibrationConfig.MixTuning` sets `MaxStep`, `DeadBand`, `MinSessions`, and `Forget`.
+
+`internal/fakeagent` got `Traffic.BytesByScenario` and `Agent.ScenarioBytes()` for this package, so one fake agent can run scenarios with very different bytes per session.
+
+### Tests
+
+`mixcontrol_test.go` simulates the closed loop without a clock: noisy sessions (40 percent per session), estimates that are off by factors of four in both directions, 20 seeds each. The byte shares stay within 2 points from window 30 on, for 300 windows. Further tests cover both preserve modes, the dead band, few moves when settled, the manifest estimate before measurements, immutability, determinism, and every validation error. Coverage is 100 percent.
+
+`bytemix_test.go` is the acceptance test on the real agent manager and a fake agent. The mix has the byte weights 60, 39.9, and 0.1 over scenarios whose sessions carry 20 kB, 200 kB, and 200 B, against manifest estimates of 40 kB, 50 kB, and 1 kB, at 80 Mbit/s. At the compiled rates the heavy scenario takes 87 percent of the bytes. The test runs 120 simulated seconds (the fake agent runs 20 simulated seconds per real second, and a window of 50 ms is one simulated second) and requires every share to stay within 2 points of its weight from 30 simulated seconds on, the throughput to stay within 5 percent of the objective, and every command to carry all entries. Two more tests check that a `sessions` basis and `ByteMixOff` leave the compiled session ratios alone, and that a `bytes` basis with a `sessions_per_second` objective logs and sends nothing. `make lint-ctl-mixcontrol test-ctl-mixcontrol test-ctl-bytemix` runs them.
+
+### Limits
+
+- Only `throughput_bps` objectives are controlled in the run loop. A `bytes` basis with `sessions_per_second` or concurrency objectives needs a loop without the throughput factor (the `PreserveSessions` mode exists), and concurrency objectives also need `concurrent_sessions` targets in `UpdateRates`.
+- The mix entry is matched to the `scenario` label of the counters, as in CTL-24.
+- The bytes of failed sessions count in the byte counters but not in the completed sessions, so a high failure ratio biases the estimate, as in CTL-24.
 
 ## Mutual TLS
 

@@ -23,6 +23,10 @@ type Traffic struct {
 	// BytesPerSession is the number of payload bytes of one completed session,
 	// counted once, half as bytes.tx and half as bytes.rx. It must be positive.
 	BytesPerSession float64
+	// BytesByScenario overrides BytesPerSession for the scenarios that it
+	// names, by scenario name such as web_get, so one agent can run scenarios
+	// whose sessions carry very different bytes. The values must be positive.
+	BytesByScenario map[string]float64
 	// Speed is the number of simulated seconds that pass per real second.
 	// Zero means 1.
 	Speed float64
@@ -130,6 +134,18 @@ func (a *Agent) TrafficTotals() (bytes uint64, simSeconds float64) {
 	return a.sim.bytes, a.sim.simTime
 }
 
+// ScenarioBytes returns the payload bytes that the simulation completed so far,
+// by scenario name. It is empty without Options.Traffic.
+func (a *Agent) ScenarioBytes() map[string]uint64 {
+	a.sim.mu.Lock()
+	defer a.sim.mu.Unlock()
+	out := make(map[string]uint64, len(a.sim.totals))
+	for key, t := range a.sim.totals {
+		out[key.name] += t.bytes
+	}
+	return out
+}
+
 // startTraffic starts the traffic simulation of the running plan. It does
 // nothing without Options.Traffic.
 func (a *Agent) startTraffic() {
@@ -164,7 +180,7 @@ func (a *Agent) startTraffic() {
 			if st, _ := a.State(); st != agentpb.AgentState_AGENT_STATE_RUNNING {
 				return
 			}
-			counters := a.sim.step(tick.Seconds()*speed, t.BytesPerSession)
+			counters := a.sim.step(tick.Seconds()*speed, t.BytesPerSession, t.BytesByScenario)
 			if _, err := a.Snapshot(counters...); err != nil {
 				return
 			}
@@ -189,7 +205,7 @@ func (a *Agent) StopTraffic() {
 
 // step advances the simulation by dt simulated seconds and returns the
 // cumulative client side counters.
-func (s *trafficSim) step(dt, bytesPerSession float64) []*agentpb.CounterValue {
+func (s *trafficSim) step(dt, bytesPerSession float64, byScenario map[string]float64) []*agentpb.CounterValue {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, id := range s.order {
@@ -197,6 +213,10 @@ func (s *trafficSim) step(dt, bytesPerSession float64) []*agentpb.CounterValue {
 		whole := math.Floor(s.acc[id])
 		s.acc[id] -= whole
 		key := s.scenario[id]
+		per := bytesPerSession
+		if b, ok := byScenario[key.name]; ok && b > 0 {
+			per = b
+		}
 		t := s.totals[key]
 		if t == nil {
 			t = &simTotals{}
@@ -204,8 +224,8 @@ func (s *trafficSim) step(dt, bytesPerSession float64) []*agentpb.CounterValue {
 		}
 		n := uint64(whole)
 		t.sessions += n
-		t.bytes += uint64(float64(n) * bytesPerSession)
-		s.bytes += uint64(float64(n) * bytesPerSession)
+		t.bytes += uint64(float64(n) * per)
+		s.bytes += uint64(float64(n) * per)
 	}
 	s.simTime += dt
 	var out []*agentpb.CounterValue

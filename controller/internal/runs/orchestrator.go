@@ -380,6 +380,7 @@ func (o *Orchestrator) Create(ctx context.Context, req StartRequest) (Run, error
 		// The run still meets its objective with the compiled rates.
 		o.log.Warn("throughput calibration is off", "run_id", id, "error", err)
 	}
+	o.attachByteMix(id, cfg, cal, plans, scenarios)
 	r.cal = cal
 
 	o.mu.Lock()
