@@ -11,6 +11,17 @@ import (
 	"strings"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/api"
+	"github.com/alrawi/FixingPointSystem/controller/internal/registry/signing"
+)
+
+// Request headers that carry the detached signature of an installModule body.
+// The signature is not part of the module tree, so it cannot travel inside the
+// archive. The value of SignatureHeader is the standard base64 encoding of the
+// 64 byte Ed25519 signature over the module tree digest, and the value of
+// SignatureKeyHeader is the key id. The contract does not name the headers yet.
+const (
+	SignatureHeader    = "X-Module-Signature"
+	SignatureKeyHeader = "X-Module-Signature-Key-Id"
 )
 
 // defaultPageSize and maxPageSize follow the PageSize parameter of the contract.
@@ -88,10 +99,23 @@ func (a *API) ListModules(w http.ResponseWriter, r *http.Request, params api.Lis
 }
 
 // InstallModule serves installModule. The body is a module archive, a tar
-// file that may be gzip compressed, with manifest.yaml at its root.
+// file that may be gzip compressed, with manifest.yaml at its root. The
+// signature headers carry the detached signature, which the registry verifies
+// when it has a trust store. A request with only one of the two headers, or a
+// signature that is not base64, is a 400.
 func (a *API) InstallModule(w http.ResponseWriter, r *http.Request) {
+	var opts []InstallOption
+	keyID, sigText := r.Header.Get(SignatureKeyHeader), r.Header.Get(SignatureHeader)
+	if keyID != "" || sigText != "" {
+		sig, err := base64.StdEncoding.DecodeString(sigText)
+		if keyID == "" || sigText == "" || err != nil {
+			api.WriteProblem(w, r, api.Problemf(http.StatusBadRequest, "%s and %s must both be set, and %s must be standard base64", SignatureKeyHeader, SignatureHeader, SignatureHeader))
+			return
+		}
+		opts = append(opts, WithSignature(signing.Signature{KeyID: keyID, Bytes: sig}))
+	}
 	body := http.MaxBytesReader(w, r.Body, a.reg.limits.MaxBytes)
-	e, err := a.reg.Install(r.Context(), body)
+	e, err := a.reg.Install(r.Context(), body, opts...)
 	if err != nil {
 		var mbe *http.MaxBytesError
 		if errors.As(err, &mbe) {
@@ -139,6 +163,8 @@ func (a *API) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		}
 		p.Errors = &findings
 		api.WriteProblem(w, r, p)
+	case errors.Is(err, ErrUntrusted):
+		api.WriteProblem(w, r, api.NewProblem(http.StatusForbidden, err.Error()))
 	case errors.Is(err, ErrModuleNotFound):
 		api.WriteProblem(w, r, api.NewProblem(http.StatusNotFound, err.Error()))
 	case errors.Is(err, ErrModuleExists):

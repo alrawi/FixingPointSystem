@@ -142,7 +142,9 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 		regDir = c.tempDir
 		logger.Warn("data_dir is not set, so configurations and modules end with the process", "registry", regDir)
 	}
-	if c.Registry, err = registry.Open(regDir, registry.Limits{}); err != nil {
+	if c.Registry, err = registry.Open(regDir, registry.Limits{},
+		registry.WithTrust(registry.TrustPolicy{StorePath: cfg.TrustStoreFile, AllowUnsigned: cfg.AllowUnsignedModules}),
+		registry.WithLogger(logger)); err != nil {
 		return nil, err
 	}
 

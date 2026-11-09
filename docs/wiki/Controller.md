@@ -155,6 +155,53 @@ Every error is an `application/problem+json` body with type `about:blank`, the s
 | `github.com/getkin/kin-openapi` v0.133.0 | MIT | The contract loader and the contract tests only |
 
 We stay on these versions because later releases of oapi-codegen and kin-openapi need Go 1.25, and the module builds with Go 1.24.
+## Signature checks at install and in plans
+
+CTL-28 connected the signing package of CTL-11 to the registry and the compiler. `Registry.Install` verifies the signature of an archive before it unpacks anything, the registry stores the signature with the module, and the compiler copies it into every plan.
+
+### Trust policy
+
+The registry takes a `TrustPolicy` through `registry.Open(root, limits, registry.WithTrust(policy))`. Two settings of the controller configuration fill it, and the controller logs a warning at start up when no trust store is set.
+
+```yaml
+trust_store_file: /etc/fps/trust.json   # empty or absent: signatures are not required
+allow_unsigned_modules: false           # development setting, only meaningful with a trust store
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `trust_store_file` | none | JSON file that `signing.TrustStore.Encode` writes. The registry reads it when it opens and again at every install, so a key that an operator revokes in the file stops verifying without a restart. A missing or malformed file stops the controller at start, and an install fails closed when the file goes bad later |
+| `allow_unsigned_modules` | `false` | Lets the registry install a module that has no signature, and logs a warning for each. A signature that fails is refused in every case |
+
+The rules, in the order that `Install` applies them:
+
+1. **No trust store.** The registry does not require signatures. It installs every module that passes validation and logs a warning, so a controller that nobody configured for signing and the example modules keep working. A signature that accompanies the module cannot be checked, so the registry ignores it and stores none, because a stored signature always means that the registry verified it.
+2. **Trust store, no signature.** The install fails with `ErrUntrusted`, which wraps `signing.ErrNoSignature`, unless `allow_unsigned_modules` is on. `InstallDir` follows the same rule, so seeding a registry from a module directory needs a signature too.
+3. **Trust store, signature.** `Verifier.VerifyArchive` digests the archive and checks the signature before the registry unpacks. A modified archive, an unknown, revoked, or expired key, a wrong key id, and a truncated signature all fail with `ErrUntrusted` wrapping the cause of the signing package, for example `signing.ErrBadSignature` or `signing.ErrUnknownKey`. The development setting does not soften this. An archive that cannot be read still fails with `ErrArchive` or `ErrArchiveTooLarge`.
+
+To verify the bytes that it later unpacks, the registry first copies the archive into a file in `staging/`, which it removes at the end, bounded by the size limit plus 1 KiB per allowed file. After unpacking and validation it checks that the digest of the tree equals the digest that the signature covered. `InstallDir` verifies the digest of the staged tree before the module enters the registry.
+
+### Passing the signature
+
+The signature is not part of the module tree, so it travels beside the archive. The Go call is `Install(ctx, archive, registry.WithSignature(sig))`. The REST operation `installModule` reads two request headers, which the OpenAPI contract does not name yet.
+
+| Header | Value |
+|---|---|
+| `X-Module-Signature-Key-Id` | The key id, for example `ed25519:fe812c12f3ab4ce6ac5db69ac352f906` |
+| `X-Module-Signature` | The 64 byte signature in standard base64 |
+
+A request with only one of the two, or a signature that is not base64, answers 400. A refused signature answers 403 with the reason in the problem detail.
+
+### Stored signature and plans
+
+`index.json` gives each entry that was installed with a verified signature two more fields, `signature` (standard base64) and `signature_key_id`. Entries without a signature leave them out, and the index format version stays 1, so older indexes load as before. `Entry.StoredSignature` decodes them. The signature does not change the tree digest.
+
+The compiler stays free of I/O. The catalog adapter in `internal/wiring` copies the two fields of the entry into `compiler.ModuleRef`, and the compiler writes them to `PlanModule.signature` (base64, the proto3 JSON form of bytes) and `PlanModule.signatureKeyId`, the fields of `fps.agent.v1.ModuleRef`. A module without a signature adds no fields, so the golden plans did not change. The compiler still signs nothing and does not verify. The agent verifies the signature against its own trust store (AGT-04).
+
+### Tests
+
+`make test-ctl-trust` runs the registry, compiler, app, and wiring packages. The registry tests reuse the key of the CTL-11 golden vectors (seed 0x07) and cover a signed module in plain and gzip form, a modified archive, an unknown, revoked, and retired key, a truncated signature, an unsigned module with and without the development setting, no trust store, a trust store file that changes and breaks, `InstallDir`, the spool bound, and the HTTP headers. The compiler tests check that a plan carries the signature and key id of a module and that unsigned modules add no fields.
+
 ## Test compiler
 
 The package `internal/compiler` turns one test configuration and one agent inventory into one plan per agent. CTL-05 added it. `compiler.Compile` reads no clock and does no I/O. It draws a random number only when neither the configuration nor the request names a seed, so the same request with a seed always yields the same plans, ordered by agent id. The plan types mirror the [canonical JSON mapping](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/README.md#canonical-json-mapping) of `fps.agent.v1.Plan` field for field, and `Plan.MarshalCanonical` writes the layout of `contracts/examples/plans/`. We will switch to generated protobuf types once the controller generates code from `contracts/proto/`.
@@ -250,7 +297,7 @@ The package `internal/registry` keeps the installed modules in one local directo
 6. **Scenarios.** CTL-25 added the contract checks of scenario contract v0.3 (`scenario.go`). Each scenario file that the manifest lists, and each `scenarios-pending/*.yaml` file, validates against `contracts/schemas/scenario.schema.json`. The package embeds a copy of this schema too, `TestEmbeddedScenarioSchemaMatchesContract` fails when the copy differs, and `go generate ./internal/registry` refreshes both copies. A small parser for the template grammar then checks every placeholder in the template fields of the actions (`send`, and `host`, `port`, `bytes`, `min_bytes`, `count`, `ms`, and `set` values, also inside `loop` and `branch` bodies) for the two roots that v0.3 added. A `profiles.<name>` reference must name a profile that the scenario declares, and a bare `profiles` or a reference with more fields fails. A `dist.<name>(...)` call must name `pareto`, `lognormal`, `exponential`, or `uniform` and follow the rules of CON-10: the argument count and keyword names, the required parameters, `float` parameters that also take an `int`, `cap` as an `int`, literal `alpha`, `scale`, `sigma`, `mean`, and `cap` above 0, literal `low` and `high` at least 0, and `low` not above `high`. A syntax error or unbalanced braces fails as well. The registry does not check module function calls or the other references, because the contract validator and the compiler own them, and it does not index the pending scenarios. A finding has the path `file:<path>#<JSON Pointer>`, for example `file:scenarios/web_page.yaml#/flows/0/client/1/send`. Tests install the example `web_profile.yaml` listed and pending, and reject an undeclared profile and each distribution rule.
 7. **Digest.** The registry computes the module tree digest of plan rule 1 in `contracts/README.md` and records it in the index. A test checks that the example `http1` and `dns` modules get the digests of `contracts/examples/plans/http_dns_smoke.json`.
 
-The tree then moves into place and the index is rewritten through a temporary file and a rename. A module version is immutable, so installing a name and version that the registry holds fails with `ErrModuleExists`.
+The tree then moves into place and the index is rewritten through a temporary file and a rename. A module version is immutable, so installing a name and version that the registry holds fails with `ErrModuleExists`. With a trust store configured, an install also verifies the module signature first, as [Signature checks at install and in plans](#signature-checks-at-install-and-in-plans) describes.
 
 ### Allowed licenses
 
@@ -286,7 +333,7 @@ Well known incompatible licenses, such as GPL-2.0-only, EPL-2.0, CDDL-1.0, SSPL-
 | `github.com/dlclark/regexp2` v1.11.5 | MIT | Runs ECMA-262 patterns with lookahead, which `regexp` cannot express |
 ## Module signing and signed index
 
-CTL-11 added the package `internal/registry/signing`. It signs module archives and the registry index with Ed25519, and it uses only the standard library (`crypto/ed25519`, `crypto/x509`, `archive/tar`). Nothing calls it yet: the install path, the compiler, and the agent are outside CTL-11, so [Where the other packages use it](#where-the-other-packages-use-it) lists what each of them must do.
+CTL-11 added the package `internal/registry/signing`. It signs module archives and the registry index with Ed25519, and it uses only the standard library (`crypto/ed25519`, `crypto/x509`, `archive/tar`). CTL-28 connected it to the install path and the compiler, and [Where the other packages use it](#where-the-other-packages-use-it) lists what the others must still do.
 
 ```go
 s, _ := signing.GenerateSigner(rand.Reader)                  // key pair; keep s.MarshalPEM() secret
@@ -371,8 +418,8 @@ Private keys carry the same risk as the CA key of [Mutual TLS](#mutual-tls). Kee
 
 ### Where the other packages use it
 
-- **Install.** `Registry.Install` has the archive bytes, so it should call `VerifyArchive` before it unpacks when a signature accompanies the archive, and refuse the install on any error except `ErrNoSignature`. The registry's trust policy then decides what `ErrNoSignature` means: refuse it by default, and accept it only when the operator turns on a development setting. After the digest check the registry should record the signature and key id next to the index entry, so that a later plan can fill them without re-reading the archive. When a signed index is the source of modules, check `VerifyIndex` first, require a serial at least as high as the last one seen, and require that the digest of each downloaded archive equals the `Find` result for its name and version.
-- **Compiler.** For each module of a plan, the compiler copies the digest into `ModuleRef.digest` as it does today, the 64 signature bytes into `ModuleRef.signature`, and the key id into `ModuleRef.signature_key_id`, taking both from the stored signature of the install. The fields stay empty for an unsigned module. The compiler signs nothing itself, because the controller holds no private key.
+- **Install.** CTL-28 did this: [Signature checks at install and in plans](#signature-checks-at-install-and-in-plans) describes the trust policy and the stored signature. The remaining advice is for the signed index. When a signed index is the source of modules, check `VerifyIndex` first, require a serial at least as high as the last one seen, and require that the digest of each downloaded archive equals the `Find` result for its name and version.
+- **Compiler.** CTL-28 did this. For each module of a plan, the compiler copies the digest as it did before, and the signature and key id from the stored signature of the install. The fields stay empty for an unsigned module. The compiler signs nothing itself, because the controller holds no private key.
 - **Agent (AGT-04).** The agent holds a trust store file and calls `VerifyDigest(ref.digest, Signature{ref.signature_key_id, ref.signature})` for each module after it checks the tree digest, and refuses a failure unless developer mode is on. The agent is Rust, so it implements the same checks with an Ed25519 library: verify 64 bytes over the digest text under the key that the id names, with the same retired, revoked, and cutoff rules. The golden vectors are its test input.
 - **Publisher tooling.** There is no command line tool yet. Generating keys, signing an archive, and writing the index file need a small command, which is a follow up.
 
@@ -605,6 +652,8 @@ tokens:
 | `grpc_listen`, `-grpc-listen address` | `localhost:8444` | TCP address of `ControllerService`, which agents dial. It requires mutual TLS unless `insecure_plain_grpc` is set |
 | `agent_auto_enroll` | false | Admits an agent whose identity the inventory does not list. With mutual TLS the identity comes from the client certificate, see [agent_auto_enroll](#agent_auto_enroll-with-certificates) |
 | `tokens` | none | Bearer tokens of the REST API, each with a `name`, a `scope` of `read`, `run`, or `admin`, and exactly one of `token` and `token_file` |
+| `trust_store_file` | none | Trust store of module signing keys. With it the registry refuses a module without a verified signature, see [Trust policy](#trust-policy) (CTL-28). Without it signatures are not required and the controller logs a warning |
+| `allow_unsigned_modules` | false | Development setting that lets a registry with a trust store install unsigned modules. A bad signature is still refused |
 
 A token holds at least 16 bytes. A `token_file` holds the token alone, and the controller trims the white space around it. Names must be unique, and two entries must not hold the same token. A token that breaks a rule, or a token file that the controller cannot read, ends the process with exit code 2. Without tokens every `/v1` operation answers 401, and the controller logs a warning at startup.
 

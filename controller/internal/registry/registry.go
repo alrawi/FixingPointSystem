@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +17,8 @@ import (
 	"sync"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/alrawi/FixingPointSystem/controller/internal/registry/signing"
 )
 
 // ErrModuleNotFound reports that no installed module has the requested name
@@ -45,6 +48,14 @@ type Entry struct {
 	Scenarios []string `json:"scenarios,omitempty"`
 	// Digest is the module tree digest that plans carry.
 	Digest string `json:"digest"`
+	// Signature is the base64 encoding of the 64 byte Ed25519 signature over
+	// the UTF-8 bytes of Digest, which install verified against the trust
+	// store. It is empty for a module that was installed without a signature.
+	// It is not part of the module tree, so it does not change Digest.
+	Signature string `json:"signature,omitempty"`
+	// SignatureKeyID names the key that made Signature, and is empty when
+	// Signature is.
+	SignatureKeyID string `json:"signature_key_id,omitempty"`
 }
 
 type indexFile struct {
@@ -71,21 +82,35 @@ var _ Lookup = (*Registry)(nil)
 type Registry struct {
 	root   string
 	limits Limits
+	trust  TrustPolicy
+	logger *slog.Logger
 
 	mu      sync.RWMutex
 	entries []Entry // sorted by name, then version precedence
 }
 
 // Open opens the registry at root and creates the directory and an empty
-// index when they do not exist. A zero lim selects DefaultLimits.
-func Open(root string, lim Limits) (*Registry, error) {
+// index when they do not exist. A zero lim selects DefaultLimits. WithTrust
+// turns on signature checks at install, and Open then fails when the trust
+// store file is unreadable or malformed.
+func Open(root string, lim Limits, opts ...Option) (*Registry, error) {
 	if lim.MaxBytes <= 0 {
 		lim.MaxBytes = DefaultLimits.MaxBytes
 	}
 	if lim.MaxFiles <= 0 {
 		lim.MaxFiles = DefaultLimits.MaxFiles
 	}
-	r := &Registry{root: filepath.Clean(root), limits: lim}
+	r := &Registry{root: filepath.Clean(root), limits: lim, logger: slog.New(slog.DiscardHandler)}
+	for _, o := range opts {
+		o(r)
+	}
+	if r.trust.Enforced() {
+		if _, err := r.trust.verifier(); err != nil {
+			return nil, fmt.Errorf("open registry %s: %w", root, err)
+		}
+	} else {
+		r.logger.Warn("no trust store is configured, so the registry installs modules without checking signatures", "setting", "trust_store")
+	}
 	for _, d := range []string{r.root, r.modulesDir(), r.stagingDir()} {
 		if err := os.MkdirAll(d, 0o750); err != nil {
 			return nil, fmt.Errorf("open registry %s: %w", root, err)
@@ -203,17 +228,52 @@ func (r *Registry) Verify(ctx context.Context, name, version string) error {
 // the registry. The archive is a tar file, optionally gzip compressed, with
 // manifest.yaml at its root. A manifest or tree problem is a *ValidationError,
 // and an unreadable archive wraps ErrArchive or ErrArchiveTooLarge.
-func (r *Registry) Install(ctx context.Context, archive io.Reader) (Entry, error) {
-	return r.install(ctx, func(dst string) error { return unpack(archive, dst, r.limits) })
+//
+// With a trust store (see TrustPolicy), Install verifies the signature that
+// WithSignature supplies against the digest of the archive before it unpacks
+// anything. It refuses a failure with an error that wraps ErrUntrusted, and
+// stores the signature in the index entry of the module.
+func (r *Registry) Install(ctx context.Context, archive io.Reader, opts ...InstallOption) (Entry, error) {
+	sg, err := r.gate(opts)
+	if err != nil {
+		return Entry{}, fmt.Errorf("install module: %w", err)
+	}
+	if sg == nil {
+		return r.install(ctx, func(dst string) error { return unpack(archive, dst, r.limits) }, nil)
+	}
+	spool, err := r.spool(archive)
+	if err != nil {
+		return Entry{}, fmt.Errorf("install module: %w", err)
+	}
+	defer func() {
+		_ = spool.Close()
+		_ = os.Remove(spool.Name())
+	}()
+	sg.digest, err = sg.verifier.VerifyArchive(spool, sg.sig, signing.Limits{MaxBytes: r.limits.MaxBytes, MaxFiles: r.limits.MaxFiles})
+	if err != nil {
+		return Entry{}, fmt.Errorf("install module: %w", refuse(err))
+	}
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		return Entry{}, fmt.Errorf("install module: %w", err)
+	}
+	return r.install(ctx, func(dst string) error { return unpack(spool, dst, r.limits) }, sg)
 }
 
 // InstallDir installs the module tree in the directory src, for example a
-// module under modules/ of the repository.
-func (r *Registry) InstallDir(ctx context.Context, src string) (Entry, error) {
-	return r.install(ctx, func(dst string) error { return copyTree(src, dst, r.limits) })
+// module under modules/ of the repository. The trust policy applies as it does
+// to Install, and the signature is verified against the digest of the staged
+// tree before the module enters the registry.
+func (r *Registry) InstallDir(ctx context.Context, src string, opts ...InstallOption) (Entry, error) {
+	sg, err := r.gate(opts)
+	if err != nil {
+		return Entry{}, fmt.Errorf("install module: %w", err)
+	}
+	return r.install(ctx, func(dst string) error { return copyTree(src, dst, r.limits) }, sg)
 }
 
-func (r *Registry) install(ctx context.Context, fill func(dst string) error) (Entry, error) {
+// install fills a staging directory, validates it, and moves it into place. A
+// non nil sg holds a signature that must verify, and install stores it.
+func (r *Registry) install(ctx context.Context, fill func(dst string) error, sg *signed) (Entry, error) {
 	stage, err := os.MkdirTemp(r.stagingDir(), "install-")
 	if err != nil {
 		return Entry{}, fmt.Errorf("install module: %w", err)
@@ -228,6 +288,23 @@ func (r *Registry) install(ctx context.Context, fill func(dst string) error) (En
 	e, err := checkTree(stage)
 	if err != nil {
 		return Entry{}, fmt.Errorf("install module: %w", err)
+	}
+	if sg != nil {
+		switch {
+		case sg.digest == "":
+			if err := sg.verifier.VerifyDigest(e.Digest, sg.sig); err != nil {
+				return Entry{}, fmt.Errorf("install module %s %s: %w", e.Name, e.Version, refuse(err))
+			}
+		case sg.digest != e.Digest:
+			// The unpacked tree must be the tree that the signature covers.
+			return Entry{}, fmt.Errorf("install module %s %s: %w: the unpacked tree has digest %s and the signed archive %s",
+				e.Name, e.Version, ErrUntrusted, e.Digest, sg.digest)
+		}
+		sg.encode(&e)
+	} else if r.trust.Enforced() {
+		r.logger.Warn("installed a module without a signature", "module", e.Name, "version", e.Version, "setting", "allow_unsigned_modules")
+	} else {
+		r.logger.Warn("installed a module without checking its signature", "module", e.Name, "version", e.Version)
 	}
 
 	r.mu.Lock()
