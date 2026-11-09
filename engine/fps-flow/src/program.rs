@@ -81,6 +81,28 @@ pub enum CloseMode {
     Half,
 }
 
+/// The part that a side plays in the handshake of a `tls_upgrade`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TlsRole {
+    /// Start the handshake with a ClientHello.
+    Client,
+    /// Wait for the ClientHello and answer it.
+    Server,
+}
+
+/// A compiled `tls_upgrade` action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TlsUpgrade {
+    /// The name of the TLS profile of the run, which the engine resolves.
+    pub profile: String,
+    /// The role in the handshake, or `None` for the role that matches the
+    /// side: the client side connects, and the server side accepts.
+    pub role: Option<TlsRole>,
+    /// The server name to verify and send as SNI, for the client role. `None`
+    /// leaves the choice to the engine.
+    pub server_name: Option<String>,
+}
+
 /// One operation of a compiled program.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
@@ -119,6 +141,9 @@ pub enum Op {
     /// Start the same side of the named flow, which declares `spawned: true`.
     /// Only [`Scenario::parse_instance`] compiles this op.
     Spawn(String),
+    /// Wrap the transport of the running session in TLS, so every later
+    /// action runs over TLS.
+    UpgradeTls(TlsUpgrade),
     /// End the session.
     Close(CloseMode),
 }
@@ -432,6 +457,13 @@ fn dump_program(out: &mut String, side: &str, p: &Program) {
             Op::Spawn(flow) => {
                 let _ = writeln!(out, "spawn {flow}");
             }
+            Op::UpgradeTls(u) => {
+                let _ = writeln!(
+                    out,
+                    "tls_upgrade profile {} role {:?} server_name {:?}",
+                    u.profile, u.role, u.server_name
+                );
+            }
         }
     }
 }
@@ -698,6 +730,38 @@ fn num(v: &Yaml, key: &'static str) -> Result<f64, LoadError> {
         .ok_or_else(|| missing(key))
 }
 
+/// Compiles the body of a `tls_upgrade` action.
+fn tls_upgrade(body: &Yaml) -> Result<TlsUpgrade, LoadError> {
+    let map = body
+        .as_mapping()
+        .ok_or_else(|| invalid("tls_upgrade takes a mapping"))?;
+    for key in map.keys() {
+        match key.as_str() {
+            Some("profile" | "role" | "server_name") => {}
+            other => return Err(invalid(format!("unknown tls_upgrade field {other:?}"))),
+        }
+    }
+    let text = |field: &str| -> Result<Option<String>, LoadError> {
+        match body.get(field) {
+            None => Ok(None),
+            Some(Yaml::String(s)) if !s.is_empty() => Ok(Some(s.clone())),
+            Some(_) => Err(invalid(format!("{field} takes a non empty string")).at_field(field)),
+        }
+    };
+    let profile = text("profile")?.ok_or_else(|| missing("profile"))?;
+    let role = match text("role")?.as_deref() {
+        None => None,
+        Some("client") => Some(TlsRole::Client),
+        Some("server") => Some(TlsRole::Server),
+        Some(r) => return Err(invalid(format!("unknown tls role '{r}'")).at_field("role")),
+    };
+    Ok(TlsUpgrade {
+        profile,
+        role,
+        server_name: text("server_name")?,
+    })
+}
+
 fn template(v: &Yaml, field: &str) -> Result<Template, LoadError> {
     let t = match v {
         Yaml::String(s) => Template::compile(s),
@@ -889,6 +953,7 @@ impl Compiler {
                 Some("half") => CloseMode::Half,
                 other => return Err(invalid(format!("unknown close mode {other:?}"))),
             })),
+            "tls_upgrade" => ops.push(Op::UpgradeTls(tls_upgrade(body)?)),
             "connect" | "accept" => return Err(invalid(format!("'{kind}' may only open a side"))),
             "spawn" if self.spawn => {
                 let flow = body
@@ -952,6 +1017,40 @@ flows:
         assert_eq!(ops[6], Op::Jump(7));
         assert_eq!(ops[7], Op::LoopEnd { start: 0 });
         assert_eq!(ops[8], Op::Close(CloseMode::Fin));
+    }
+
+    #[test]
+    fn compiles_tls_upgrade() {
+        let text = r#"
+scenario: t
+flows:
+  - id: a
+    module: m
+    client:
+      - connect: { port: 25 }
+      - tls_upgrade: { profile: strict, server_name: mail.example.test }
+      - tls_upgrade: { profile: p, role: server }
+"#;
+        let s = Scenario::parse(text).unwrap();
+        let ops = &s.flows[0].client.ops;
+        assert_eq!(
+            ops[0],
+            Op::UpgradeTls(TlsUpgrade {
+                profile: "strict".into(),
+                role: None,
+                server_name: Some("mail.example.test".into()),
+            })
+        );
+        assert!(matches!(&ops[1], Op::UpgradeTls(u) if u.role == Some(TlsRole::Server)));
+        for bad in [
+            "{ role: client }",
+            "{ profile: p, role: both }",
+            "{ profile: p, extra: 1 }",
+            "p",
+        ] {
+            let text = text.replace("{ profile: strict, server_name: mail.example.test }", bad);
+            assert!(Scenario::parse(&text).is_err(), "{bad}");
+        }
     }
 
     #[test]

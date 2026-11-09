@@ -12,7 +12,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::{Buf, BytesMut};
-use fps_flow::program::{CloseMode, Op, Program, StopRule};
+use fps_flow::program::{CloseMode, Op, Program, StopRule, TlsRole, TlsUpgrade};
 use fps_flow::template::{Filler, Part, RenderCtx};
 use fps_flow::{Template, TemplateFn, Value, Vars};
 use fps_io::{DatagramIo, DatagramIoExt, SessionIo, MAX_DATAGRAM};
@@ -27,6 +27,7 @@ use crate::failure::{Failure, FailureKind};
 use crate::instance::{SpawnQueue, SpawnRequest};
 use crate::open::{DatagramOpener, OpenKind, OpenRequest, Opener};
 use crate::rng::Side;
+use crate::upgrade::{Borrowed, Swappable, TlsUpgrader, UpgradeError, UpgradeRequest};
 
 /// Growth step of the read buffer. Spike S1 measured that 16 KiB reads keep
 /// small request and response exchanges cheap without per read reallocation.
@@ -129,6 +130,7 @@ pub struct Session<'a> {
     stats: SideStats,
     max_datagram: usize,
     spawns: Option<SpawnQueue>,
+    upgrader: Option<&'a dyn TlsUpgrader>,
 }
 
 impl<'a> Session<'a> {
@@ -155,6 +157,7 @@ impl<'a> Session<'a> {
             stats: SideStats::default(),
             max_datagram: MAX_DATAGRAM,
             spawns: None,
+            upgrader: None,
         }
     }
 
@@ -165,6 +168,14 @@ impl<'a> Session<'a> {
     /// `invalid`, because only a scenario instance runs spawned flows.
     pub fn set_spawn_queue(&mut self, queue: SpawnQueue) {
         self.spawns = Some(queue);
+    }
+
+    /// Hands the `tls_upgrade` actions of this side to `upgrader`.
+    ///
+    /// A side without an upgrader fails at its first `tls_upgrade` with
+    /// reason `internal`, because the interpreter itself has no TLS code.
+    pub fn set_tls_upgrader(&mut self, upgrader: &'a dyn TlsUpgrader) {
+        self.upgrader = Some(upgrader);
     }
 
     /// Sets the largest datagram that an `expect` of a UDP side accepts.
@@ -205,8 +216,7 @@ impl<'a> Session<'a> {
     ) -> Result<(), Failure> {
         tokio::pin!(stop);
         let mut io = self.open_pinned(opener, program, stop.as_mut()).await?;
-        self.run_pinned(Wire::<_, NoDatagram>::Stream(&mut io), &program.ops, stop)
-            .await
+        self.run_stream(&mut io, &program.ops, stop).await
     }
 
     /// Opens a UDP session with `opener` and runs the body of `program`
@@ -277,8 +287,26 @@ impl<'a> Session<'a> {
         stop: F,
     ) -> Result<(), Failure> {
         tokio::pin!(stop);
-        self.run_pinned(Wire::<_, NoDatagram>::Stream(io), ops, stop)
-            .await
+        self.run_stream(io, ops, stop).await
+    }
+
+    /// Runs `ops` over a stream. A program with a `tls_upgrade` runs over a
+    /// swappable transport, and every other program runs over the stream
+    /// itself, so it pays nothing for the upgrade.
+    async fn run_stream<S: SessionIo, F: Future<Output = ()>>(
+        &mut self,
+        io: &mut S,
+        ops: &[Op],
+        stop: Pin<&mut F>,
+    ) -> Result<(), Failure> {
+        if ops.iter().any(|op| matches!(op, Op::UpgradeTls(_))) {
+            let mut slot = Swappable::new(Box::new(Borrowed(io)));
+            self.run_pinned(Wire::<NoStream, NoDatagram>::Swap(&mut slot), ops, stop)
+                .await
+        } else {
+            self.run_pinned(Wire::<_, NoDatagram>::Stream(io), ops, stop)
+                .await
+        }
     }
 
     async fn open_pinned<O: Opener, F: Future<Output = ()>>(
@@ -361,7 +389,7 @@ impl<'a> Session<'a> {
 
     async fn run_pinned<S: SessionIo, D: DatagramIo, F: Future<Output = ()>>(
         &mut self,
-        mut wire: Wire<'_, S, D>,
+        mut wire: Wire<'_, '_, S, D>,
         ops: &[Op],
         stop: Pin<&mut F>,
     ) -> Result<(), Failure> {
@@ -383,6 +411,7 @@ impl<'a> Session<'a> {
             None => {
                 match wire {
                     Wire::Stream(io) => io.abort(),
+                    Wire::Swap(io) => io.abort(),
                     Wire::Datagram(io) => io.close(),
                 }
                 Err(self.failure(ops, FailureKind::Aborted))
@@ -392,17 +421,19 @@ impl<'a> Session<'a> {
 
     async fn run_ops<S: SessionIo, D: DatagramIo>(
         &mut self,
-        wire: &mut Wire<'_, S, D>,
+        wire: &mut Wire<'_, '_, S, D>,
         ops: &[Op],
     ) -> Result<(), FailureKind> {
         while let Some(op) = ops.get(self.pc) {
             match op {
                 Op::Send(t) => match wire {
                     Wire::Stream(io) => self.send(*io, t).await?,
+                    Wire::Swap(io) => self.send(*io, t).await?,
                     Wire::Datagram(io) => self.send_datagram(*io, t).await?,
                 },
                 Op::Expect { rule, timeout } => match wire {
                     Wire::Stream(io) => self.expect(*io, rule, *timeout).await?,
+                    Wire::Swap(io) => self.expect(*io, rule, *timeout).await?,
                     Wire::Datagram(io) => self.expect_datagram(*io, rule, *timeout).await?,
                 },
                 Op::Delay(d) => {
@@ -468,14 +499,84 @@ impl<'a> Session<'a> {
                 }
                 Op::Close(mode) => match wire {
                     Wire::Stream(io) => self.close(*io, *mode).await?,
+                    Wire::Swap(io) => self.close(*io, *mode).await?,
                     // UDP has no close handshake, so every mode releases the socket.
                     Wire::Datagram(io) => io.close(),
                 },
                 Op::Spawn(flow) => self.spawn(flow)?,
+                Op::UpgradeTls(upgrade) => match wire {
+                    Wire::Swap(io) => self.upgrade_tls(*io, upgrade).await?,
+                    Wire::Datagram(_) => {
+                        return Err(FailureKind::Invalid(
+                            "tls_upgrade does not apply to UDP flows".into(),
+                        ))
+                    }
+                    Wire::Stream(_) => {
+                        return Err(FailureKind::Invalid(
+                            "invariant: tls_upgrade runs over a swappable transport".into(),
+                        ))
+                    }
+                },
             }
             self.pc += 1;
         }
         Ok(())
+    }
+
+    /// Wraps the transport in TLS through the upgrader of the session.
+    ///
+    /// The handshake runs under the open timeout. It fails with reason
+    /// `tls_failure` when the handshake fails or times out, and with reason
+    /// `internal` when the session has no upgrader or the upgrader does not
+    /// know the profile. Bytes that the peer sent before the handshake and
+    /// that an earlier `expect` left in the read buffer fail the upgrade too,
+    /// because they would be plaintext that precedes the handshake.
+    async fn upgrade_tls(
+        &mut self,
+        io: &mut Swappable<'_>,
+        upgrade: &TlsUpgrade,
+    ) -> Result<(), FailureKind> {
+        let Some(upgrader) = self.upgrader else {
+            return Err(FailureKind::Invalid(
+                "tls_upgrade needs a TLS upgrader, which this runner does not provide".into(),
+            ));
+        };
+        if !self.rbuf.is_empty() {
+            return Err(FailureKind::Invalid(format!(
+                "{} bytes are buffered before tls_upgrade, so the peer sent data before the handshake",
+                self.rbuf.len()
+            )));
+        }
+        let role = upgrade.role.unwrap_or(match self.side {
+            Side::Client => TlsRole::Client,
+            Side::Server => TlsRole::Server,
+        });
+        let request = UpgradeRequest {
+            role,
+            profile: &upgrade.profile,
+            server_name: upgrade.server_name.as_deref(),
+        };
+        let Some(inner) = io.take() else {
+            return Err(FailureKind::from_io(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "transport lost in an earlier upgrade",
+            )));
+        };
+        let limit = self.limits.open_timeout;
+        match tokio::time::timeout(limit, upgrader.upgrade(inner, request)).await {
+            Err(_) => Err(FailureKind::Tls {
+                source: io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("tls handshake timed out after {} ms", millis(limit)),
+                ),
+            }),
+            Ok(Ok(secured)) => {
+                io.put(secured);
+                Ok(())
+            }
+            Ok(Err(UpgradeError::Unavailable(detail))) => Err(FailureKind::Invalid(detail)),
+            Ok(Err(UpgradeError::Handshake(source))) => Err(FailureKind::Tls { source }),
+        }
     }
 
     /// Queues the start of the same side of `flow` with the variables that
@@ -838,8 +939,10 @@ impl<'a> Session<'a> {
 }
 
 /// The transport of a running side, a byte stream or a datagram socket.
-enum Wire<'w, S, D> {
+enum Wire<'w, 's, S, D> {
     Stream(&'w mut S),
+    /// A byte stream that a `tls_upgrade` may replace.
+    Swap(&'w mut Swappable<'s>),
     Datagram(&'w mut D),
 }
 
@@ -1006,6 +1109,7 @@ fn locate(ops: &[Op], pc: usize) -> (usize, &'static str) {
         Some(Op::Branch { .. } | Op::Jump(_)) => "branch",
         Some(Op::Close(_)) => "close",
         Some(Op::Spawn(_)) => "spawn",
+        Some(Op::UpgradeTls(_)) => "tls_upgrade",
         // A failure after the last op, such as an abort at the end.
         None => "close",
     };
