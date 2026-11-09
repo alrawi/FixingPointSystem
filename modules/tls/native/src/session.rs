@@ -400,12 +400,15 @@ impl std::fmt::Debug for TlsConnector {
 impl TlsConnector {
     /// Builds a connector that verifies servers against `roots`.
     pub fn new(profile: &ClientProfile, roots: RootCertStore) -> Result<Self, TlsError> {
-        let mut config =
-            ClientConfig::builder_with_provider(provider(&profile.groups, &profile.cipher_suites))
-                .with_protocol_versions(&versions(&profile.versions)?)
-                .map_err(|e| TlsError::Config(format!("client profile {}: {e}", profile.name)))?
-                .with_root_certificates(roots)
-                .with_no_client_auth();
+        let mut config = ClientConfig::builder_with_provider(provider(
+            &profile.groups,
+            &profile.cipher_suites,
+            &profile.sig_schemes,
+        ))
+        .with_protocol_versions(&versions(&profile.versions)?)
+        .map_err(|e| TlsError::Config(format!("client profile {}: {e}", profile.name)))?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
         config.alpn_protocols = profile.alpn.clone();
         config.enable_sni = profile.send_sni;
         config.resumption = match profile.resumption {
@@ -470,18 +473,21 @@ impl std::fmt::Debug for TlsAcceptor {
 impl TlsAcceptor {
     /// Builds an acceptor that presents `identity`.
     pub fn new(profile: &ServerProfile, identity: &ServerIdentity) -> Result<Self, TlsError> {
-        let mut config =
-            ServerConfig::builder_with_provider(provider(&profile.groups, &profile.cipher_suites))
-                .with_protocol_versions(&versions(&profile.versions)?)
-                .map_err(|e| TlsError::Config(format!("server profile {}: {e}", profile.name)))?
-                .with_no_client_auth()
-                .with_single_cert(
-                    identity.chain().to_vec(),
-                    rustls::pki_types::PrivateKeyDer::Pkcs8(identity.key()),
-                )
-                .map_err(|e| {
-                    TlsError::Config(format!("server profile {}: certificate: {e}", profile.name))
-                })?;
+        let mut config = ServerConfig::builder_with_provider(provider(
+            &profile.groups,
+            &profile.cipher_suites,
+            &[],
+        ))
+        .with_protocol_versions(&versions(&profile.versions)?)
+        .map_err(|e| TlsError::Config(format!("server profile {}: {e}", profile.name)))?
+        .with_no_client_auth()
+        .with_single_cert(
+            identity.chain().to_vec(),
+            rustls::pki_types::PrivateKeyDer::Pkcs8(identity.key()),
+        )
+        .map_err(|e| {
+            TlsError::Config(format!("server profile {}: certificate: {e}", profile.name))
+        })?;
         config.alpn_protocols = profile.alpn.clone();
         config.ignore_client_order = profile.use_server_cipher_order;
         match profile.resumption {
