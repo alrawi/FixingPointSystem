@@ -61,6 +61,9 @@ type Handlers struct {
 	Metrics MetricsHandler
 	// Report serves GET /v1/runs/{id}/report. Nil answers it with 501.
 	Report ReportHandler
+	// Captures serves the three capture operations of a run. Nil answers them
+	// with 501.
+	Captures CaptureHandler
 }
 
 // NewServer returns the combined server over h.
@@ -71,7 +74,7 @@ func NewServer(h Handlers) *Server {
 		configOps:     h.Configs,
 		moduleOps:     h.Modules,
 		runOps:        h.Runs,
-		pending:       pending{metrics: h.Metrics, report: h.Report},
+		pending:       pending{metrics: h.Metrics, report: h.Report, captures: h.Captures},
 	}
 }
 
@@ -92,12 +95,25 @@ type ReportHandler interface {
 	GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, params api.GetRunReportParams)
 }
 
+// CaptureHandler serves the capture operations of a run, which CTL-14 adds in
+// internal/captures. *captures.API satisfies it.
+type CaptureHandler interface {
+	// ListCaptures serves GET /v1/runs/{id}/captures.
+	ListCaptures(w http.ResponseWriter, r *http.Request, id api.Id)
+	// StartCapture serves POST /v1/runs/{id}/captures.
+	StartCapture(w http.ResponseWriter, r *http.Request, id api.Id)
+	// DownloadCapture serves GET /v1/runs/{id}/captures/{capture_id}.
+	DownloadCapture(w http.ResponseWriter, r *http.Request, id api.Id, captureID string)
+}
+
 // pending answers the operations that no package implements yet. It forwards
-// the metrics operations to a MetricsHandler and the report operation to a
-// ReportHandler when one is set.
+// the metrics operations to a MetricsHandler, the report operation to a
+// ReportHandler, and the capture operations to a CaptureHandler when one is
+// set.
 type pending struct {
-	metrics MetricsHandler
-	report  ReportHandler
+	metrics  MetricsHandler
+	report   ReportHandler
+	captures CaptureHandler
 }
 
 // ListRuns answers listRuns with a 501 problem.
@@ -105,19 +121,31 @@ func (pending) ListRuns(w http.ResponseWriter, r *http.Request, params api.ListR
 	api.Unimplemented{}.ListRuns(w, r, params)
 }
 
-// ListCaptures answers listCaptures with a 501 problem.
-func (pending) ListCaptures(w http.ResponseWriter, r *http.Request, id api.Id) {
-	api.Unimplemented{}.ListCaptures(w, r, id)
+// ListCaptures forwards listCaptures to the capture handler, or answers 501.
+func (p pending) ListCaptures(w http.ResponseWriter, r *http.Request, id api.Id) {
+	if p.captures == nil {
+		api.Unimplemented{}.ListCaptures(w, r, id)
+		return
+	}
+	p.captures.ListCaptures(w, r, id)
 }
 
-// StartCapture answers startCapture with a 501 problem.
-func (pending) StartCapture(w http.ResponseWriter, r *http.Request, id api.Id) {
-	api.Unimplemented{}.StartCapture(w, r, id)
+// StartCapture forwards startCapture to the capture handler, or answers 501.
+func (p pending) StartCapture(w http.ResponseWriter, r *http.Request, id api.Id) {
+	if p.captures == nil {
+		api.Unimplemented{}.StartCapture(w, r, id)
+		return
+	}
+	p.captures.StartCapture(w, r, id)
 }
 
-// DownloadCapture answers downloadCapture with a 501 problem.
-func (pending) DownloadCapture(w http.ResponseWriter, r *http.Request, id api.Id, captureID string) {
-	api.Unimplemented{}.DownloadCapture(w, r, id, captureID)
+// DownloadCapture forwards downloadCapture to the capture handler, or answers 501.
+func (p pending) DownloadCapture(w http.ResponseWriter, r *http.Request, id api.Id, captureID string) {
+	if p.captures == nil {
+		api.Unimplemented{}.DownloadCapture(w, r, id, captureID)
+		return
+	}
+	p.captures.DownloadCapture(w, r, id, captureID)
 }
 
 // GetRunReport forwards getRunReport to the report handler, or answers 501.

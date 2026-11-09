@@ -115,3 +115,16 @@ test-ctl-runs:
 .PHONY: test-ctl-trust
 test-ctl-trust:
 	cd controller && $(GO) test -race ./internal/registry/... ./internal/compiler/ ./internal/app/ ./internal/wiring/
+
+# CTL-14 captures API. The targets above cover these packages too, so these two
+# give a fast loop for the capture service, the upload path of the agent
+# manager, and the fake agent. The tests move files through in memory gRPC
+# connections and take a few seconds.
+.PHONY: lint-ctl-captures test-ctl-captures
+lint-ctl-captures:
+	@out="$$(cd controller && gofmt -l internal/captures internal/agents internal/fakeagent)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+	cd controller && $(GO) vet ./internal/captures/ ./internal/agents/ ./internal/fakeagent/
+
+test-ctl-captures:
+	cd controller && $(GO) test -race -cover ./internal/captures/ ./internal/agents/ ./internal/fakeagent/
