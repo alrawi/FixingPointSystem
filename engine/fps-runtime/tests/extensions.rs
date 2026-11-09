@@ -21,13 +21,13 @@ use fps_hosts::{HostPool, HostSelector, PoolSpec, Selection};
 use fps_interp::Side;
 use fps_runtime::{
     extension_rng, ClientConfig, ExtensionError, ExtensionSet, FlowRef, Role, RunReport, Runtime,
-    RuntimeConfig, ServerConfig, SessionKey, SourceHosts, WorkerConfig,
+    RuntimeConfig, ServerConfig, SessionKey, SourceHosts, Transport, WorkerConfig,
 };
 use fps_sched::{stream_id, Arrival, LoadProfile, Objective, Phase, ScheduleConfig, Shape};
 use fps_stats::{metric, SeriesValue, Snapshot};
 use fps_wasm::{CloseReason, Limits, WasmFailure};
 use rand::RngCore;
-use support::component_bytes;
+use support::{component_bytes, component_wat};
 
 const SEED: u64 = 20_261_110;
 /// Sessions that each client worker starts.
@@ -258,6 +258,7 @@ fn key(seed: u64, session_id: u64, scenario: &Arc<Scenario>) -> SessionKey {
         side: Side::Client,
         scenario: Arc::clone(scenario),
         flow: 0,
+        transport: Transport::Tcp,
     }
 }
 
@@ -422,6 +423,124 @@ fn an_extension_loads_from_the_module_directory() {
         .load_module_dir(&manifest, &dir, Limits::default())
         .unwrap());
     assert!(set.contains("t"));
+}
+
+/// The test component with an `on-open` that refuses a UDP session, so a
+/// session shows the transport that its extension saw.
+fn udp_refusing_component() -> Vec<u8> {
+    let wat = component_wat();
+    let patched = wat.replace(
+        "(if (i64.eq (local.get 0) (i64.const 13))",
+        "(if (i32.or (i64.eq (local.get 0) (i64.const 13)) \
+         (i32.eq (local.get 4) (i32.const 1)))",
+    );
+    assert_ne!(wat, patched, "the on-open guard moved, update this test");
+    let mut core = wat::parse_str(patched).unwrap();
+    let mut resolve = wit_parser::Resolve::default();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/extension");
+    let (pkg, _) = resolve.push_path(dir).unwrap();
+    let world = resolve.select_world(&[pkg], Some("extension")).unwrap();
+    wit_component::embed_component_metadata(
+        &mut core,
+        &resolve,
+        world,
+        wit_component::StringEncoding::UTF8,
+    )
+    .unwrap();
+    wit_component::ComponentEncoder::default()
+        .module(&core)
+        .unwrap()
+        .validate(true)
+        .encode()
+        .unwrap()
+}
+
+#[test]
+fn the_extension_sees_the_transport_of_its_session() {
+    let mut set = ExtensionSet::new().unwrap();
+    set.load("t", &udp_refusing_component(), Limits::default(), None)
+        .unwrap();
+    let set = Arc::new(set);
+    let scenario = compile(GOOD);
+    let render = |transport: Transport| {
+        let mut k = key(SEED, 1, &scenario);
+        k.transport = transport;
+        let mut f = set.session_functions(k, Box::new(NoFunctions));
+        let mut out = Vec::new();
+        let r = f.render(
+            &call("rand"),
+            &mut rand::rngs::mock::StepRng::new(0, 1),
+            &mut out,
+        );
+        (r.is_ok(), f.take_failure().is_some())
+    };
+    assert_eq!(render(Transport::Tcp), (true, false));
+    // The extension refused the open because it saw transport udp.
+    assert_eq!(render(Transport::Udp), (false, true));
+}
+
+#[test]
+fn the_compiled_extension_is_the_bytes_the_caller_passes() {
+    let dir: PathBuf = [env!("CARGO_TARGET_TMPDIR"), "eng21-module"]
+        .iter()
+        .collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let manifest = Manifest::parse(MANIFEST).unwrap();
+    let good = component_bytes();
+
+    // The file on disk differs from the digested bytes, as after a swap:
+    // the component that loads is the passed one.
+    std::fs::write(dir.join("extension.wasm"), b"swapped after the digest").unwrap();
+    let mut set = ExtensionSet::new().unwrap();
+    set.load_module_bytes(&manifest, &good, Limits::default())
+        .unwrap();
+    assert!(set.contains("t"));
+    let set = Arc::new(set);
+    let scenario = compile(GOOD);
+    assert_eq!(draw(&set, key(SEED, 1, &scenario)).len(), 8);
+
+    // Bad bytes fail even when the file on disk is good.
+    std::fs::write(dir.join("extension.wasm"), &good).unwrap();
+    let mut set = ExtensionSet::new().unwrap();
+    let err = set
+        .load_module_bytes(&manifest, b"not a component", Limits::default())
+        .unwrap_err();
+    assert!(matches!(err, ExtensionError::Load { .. }), "{err}");
+    assert!(set.is_empty());
+
+    // The bytes still meet the catalog check against the manifest.
+    let other = Manifest::parse("name: t\ntype: app\nfunctions:\n  - name: other\n").unwrap();
+    let err = set
+        .load_module_bytes(&other, &good, Limits::default())
+        .unwrap_err();
+    assert!(matches!(err, ExtensionError::Catalog { .. }), "{err}");
+
+    // load_module_dir still reads the file and loads the same way.
+    assert!(set
+        .load_module_dir(&manifest, &dir, Limits::default())
+        .unwrap());
+    assert!(set.contains("t"));
+}
+
+#[test]
+fn close_reason_maps_outcomes_for_every_runner() {
+    use fps_interp::{Failure, FailureKind, Reason};
+    assert_eq!(fps_runtime::close_reason(&Ok(())), CloseReason::Finished);
+    let failed = |reason| {
+        fps_runtime::close_reason(&Err(Failure {
+            flow: "f".to_owned(),
+            side: Side::Client,
+            action_index: 0,
+            action_type: "connect",
+            reason,
+            kind: Box::new(FailureKind::OpenTimeout { timeout_ms: 1 }),
+        }))
+    };
+    assert_eq!(failed(Reason::Aborted), CloseReason::Reset);
+    assert_eq!(failed(Reason::PeerClosed), CloseReason::PeerClosed);
+    assert_eq!(failed(Reason::ExpectTimeout), CloseReason::Timeout);
+    assert_eq!(failed(Reason::ExtensionError), CloseReason::Failed);
 }
 
 #[test]

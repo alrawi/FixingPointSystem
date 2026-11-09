@@ -40,7 +40,6 @@ use fps_runtime::{
 use fps_sched::{RateControl, Schedule};
 use fps_stats::Side as StatsSide;
 use fps_stats::{FailureReason, SessionCounters, Shard, StatsError};
-use fps_wasm::CloseReason;
 use tokio::sync::{watch, Notify};
 use tokio::task::LocalSet;
 use tokio::time::{interval_at, sleep_until, Instant, MissedTickBehavior};
@@ -316,20 +315,6 @@ fn stats_side(side: Side) -> StatsSide {
     }
 }
 
-/// Maps the outcome of a session to the close reason of its extensions, as
-/// `fps-runtime` does for its TCP sessions.
-fn close_reason(outcome: &Result<(), Failure>) -> CloseReason {
-    match outcome {
-        Ok(()) => CloseReason::Finished,
-        Err(f) => match f.reason {
-            Reason::Aborted | Reason::UnexpectedReset => CloseReason::Reset,
-            Reason::PeerClosed => CloseReason::PeerClosed,
-            Reason::ConnectTimeout | Reason::ExpectTimeout => CloseReason::Timeout,
-            _ => CloseReason::Failed,
-        },
-    }
-}
-
 /// Maps a failure reason of the interpreter to its `reason` label value.
 fn stats_reason(reason: Reason) -> FailureReason {
     match reason {
@@ -483,6 +468,7 @@ impl Worker {
                     side: self.side,
                     scenario: Arc::clone(&self.flow.scenario),
                     flow: self.flow.flow,
+                    transport: fps_runtime::Transport::Udp,
                 },
                 native,
             )),
@@ -506,7 +492,7 @@ impl Worker {
         if let Some(w) = wrapped {
             // The outcome is recorded below, so a failing on-close hook
             // cannot change it.
-            let _ = w.finish(close_reason(&outcome));
+            let _ = w.finish(fps_runtime::close_reason(&outcome));
         }
         let us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         self.metrics

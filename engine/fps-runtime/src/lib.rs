@@ -51,8 +51,10 @@ pub use config::{
 };
 pub use error::RuntimeError;
 pub use extension::{
-    extension_rng, ExtensionError, ExtensionSet, SessionExtensions, SessionKey, EXTENSION_FILE,
+    close_reason, extension_rng, ExtensionError, ExtensionSet, SessionExtensions, SessionKey,
+    EXTENSION_FILE,
 };
+pub use fps_wasm::Transport;
 pub use opener::{global_session_id, ClientOpener};
 pub use runtime::{RunReport, Runtime, RuntimeHandle, WorkerExit};
 pub use tls::{TlsProfiles, DEFAULT_SERVER_NAME};
