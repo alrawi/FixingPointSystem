@@ -1,0 +1,118 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: imap
+version: 0.1.0
+type: app
+summary: IMAP clients and servers with LOGIN, SELECT, EXAMINE, FETCH with literals, SEARCH, STORE, APPEND, IDLE, and LOGOUT, tag sequencing, and continuation responses.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: imap, transport: tcp, port: 143 }
+requires:
+  - { module: content, version: ">=0.1" }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 143, description: TCP port of the server side. }
+    server_name: { type: string, minLength: 1, default: imap.example.test, description: Name that the server gives in its greeting. }
+    messages: { type: integer, minimum: 1, maximum: 1000, default: 6, description: Messages in the mailbox, which the server reports as EXISTS and the client walks through. }
+    fetches: { type: integer, minimum: 1, maximum: 1000, default: 3, description: Messages that the fetch_messages scenario downloads. }
+    hits: { type: integer, minimum: 1, maximum: 1000, default: 2, description: Messages that a SEARCH of the search_store scenario finds. It must not exceed messages. }
+    body_size: { type: integer, minimum: 0, maximum: 1048576, default: 1800, description: Size of the text part of a message in bytes. }
+    attachment_min: { type: integer, minimum: 1, maximum: 16777216, default: 24000, description: Smallest attachment in bytes. Each message draws its attachment size between attachment_min and attachment_max. }
+    attachment_max: { type: integer, minimum: 1, maximum: 16777216, default: 160000, description: Largest attachment in bytes. }
+functions:
+  - name: credential
+    summary: Synthetic user name (an address under example.test) or password (it starts with Tst-). A seed of zero or more fixes the value, and -1 draws from the session generator.
+    params:
+      - { name: field, type: text }
+      - { name: seed, type: int, default: -1 }
+  - name: address
+    summary: Synthetic mailbox address of the form first.last@domain. The same seed and index always give the same address.
+    params:
+      - { name: seed, type: int }
+      - { name: index, type: int, default: 1 }
+      - { name: domain, type: text, default: example.test }
+  - name: auth_plain
+    summary: Base64 token of an AUTHENTICATE PLAIN answer as RFC 4616 defines it, without the line break. No scenario uses it, see the README.
+    params:
+      - { name: user, type: text }
+      - { name: password, type: text }
+      - { name: authzid, type: text, default: "" }
+  - name: message
+    summary: RFC 5322 message with CRLF line breaks, a text part, and an optional base64 attachment in a multipart/mixed structure. The boundary, the date, and the message id come from the session generator.
+    params:
+      - { name: sender, type: bytes }
+      - { name: to, type: bytes }
+      - { name: subject, type: text }
+      - { name: body, type: bytes }
+      - { name: cc, type: bytes, default: "" }
+      - { name: attachment, type: bytes, default: "" }
+      - { name: filename, type: text, default: attachment.bin }
+      - { name: content_type, type: text, default: application/octet-stream }
+      - { name: mailer, type: text, default: FixingPointSystem Mail 0.1 }
+  - name: next
+    summary: The tag or number that follows the value by step. A tag is letters and digits such as A007, and the digits keep their width, so A009 gives A010. A number gives a number.
+    params:
+      - { name: value, type: any }
+      - { name: step, type: int, default: 1 }
+  - name: literal_marker
+    summary: The marker {n} that announces a literal of the data, where n is its length in bytes.
+    params:
+      - { name: data, type: bytes }
+  - name: literal_size
+    summary: Size in bytes, as text, that the last {n} or {n+} of a command line announces. The line is a value of last.
+    params:
+      - { name: command, type: bytes }
+  - name: tagged
+    summary: Tagged completion line of the command in command (a value of last), with its tag, the status, an optional [code], and the text. With timing the text ends in a suffix such as (0.003 + 0.000 secs).
+    params:
+      - { name: command, type: bytes }
+      - { name: status, type: text, default: OK }
+      - { name: text, type: text, default: Completed }
+      - { name: code, type: text, default: "" }
+      - { name: timing, type: boolean, default: false }
+  - name: select_data
+    summary: Untagged responses to SELECT and EXAMINE, from FLAGS to UIDNEXT. A negative uidvalidity draws it from the session generator, and read_only reports no permanent flags.
+    params:
+      - { name: exists, type: int }
+      - { name: recent, type: int, default: 0 }
+      - { name: unseen, type: int, default: 0 }
+      - { name: uidvalidity, type: int, default: -1 }
+      - { name: read_only, type: boolean, default: false }
+  - name: fetch
+    summary: Untagged FETCH responses to the FETCH command in command (a value of last), with message as the literal of BODY items. A listing of a range needs no message, and exists resolves a star.
+    params:
+      - { name: command, type: bytes }
+      - { name: message, type: bytes, default: "" }
+      - { name: exists, type: int, default: 0 }
+  - name: search_reply
+    summary: Untagged SEARCH response that lists hits distinct message numbers between 1 and exists in ascending order.
+    params:
+      - { name: exists, type: int }
+      - { name: hits, type: int }
+  - name: search_hit
+    summary: The index-th message number, counted from 1, of the SEARCH response in response, as text. The response is a value of last.
+    params:
+      - { name: response, type: bytes }
+      - { name: index, type: int, default: 1 }
+  - name: store_reply
+    summary: Untagged FETCH responses to the STORE or UID STORE command in command, which is a value of last. They carry the flags after the change. A SILENT item gives no response.
+    params:
+      - { name: command, type: bytes }
+  - name: expunge_reply
+    summary: Untagged EXPUNGE responses for the messages that the STORE command in stored flagged as Deleted. Each message that goes shifts the numbers of the later ones.
+    params:
+      - { name: stored, type: bytes }
+scenarios:
+  - scenarios/mailbox_sync.yaml
+  - scenarios/fetch_messages.yaml
+  - scenarios/search_store.yaml
+  - scenarios/login_append.yaml
+  - scenarios/idle_push.yaml
+fixtures:
+  - { capture: fixtures/imap.pcapng, expect: { ndpi: [IMAP] } }
+provenance:
+  source: synthetic
+  notes: Dialogues follow RFC 3501 for the commands, the responses, and the literals, RFC 4616 for the PLAIN token, RFC 2177 for IDLE, and RFC 5322 and RFC 2045 to 2047 for messages. The greeting, the capability list, and the timing text imitate what Dovecot writes. Message bodies and attachments come from the content module, and every user name, password, address, and host name is synthetic and lies under the reserved .test domain.

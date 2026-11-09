@@ -1,0 +1,67 @@
+* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN] imap.example.test Dovecot ready.
+* CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN
+A001 OK Pre-login capabilities listed, post-login capabilities have more (0.005 + 0.002 secs).
+A002 OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT UIDPLUS MOVE NAMESPACE CHILDREN] Logged in
+* FLAGS (\Answered \Flagged \Deleted \Seen \Draft)
+* OK [PERMANENTFLAGS (\Answered \Flagged \Deleted \Seen \Draft \*)] Flags permitted.
+* 3 EXISTS
+* 0 RECENT
+* OK [UNSEEN 1] First unseen.
+* OK [UIDVALIDITY 1380189741] UIDs valid
+* OK [UIDNEXT 1004] Predicted next UID
+A003 OK [READ-WRITE] Select completed (0.002 + 0.003 secs).
+* SEARCH 1 2
+A004 OK Search completed (0.006 + 0.003 secs).
+* 1 FETCH (UID 1001 FLAGS (\Seen) BODY[] {1515}
+From: noklizer.geiliduk@example.test
+To: stihusou.mahi@example.test
+Subject: Newsletter 8891
+Date: Fri, 18 Sep 2026 01:00:00 +0000
+Message-ID: <5c6da77f22dc80359b8ce912@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_ba530013436cd50a054c"
+
+This is a multi-part message in MIME format.
+--=_fps_ba530013436cd50a054c
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Dunae,
+
+A patient teacher shares the results with the group before the winter begins
+(9671). The old bridge repairs the broken clocks. A small workshop shares
+the results with the group near the harbour (4525).
+
+Ref: CASE-470268
+
+Kind regards,
+Iloquapel Orara
+Support desk
+iloquapel.orara@example.test
+--=_fps_ba530013436cd50a054c
+Content-Type: application/gzip; name="digest.csv.gz"
+Content-Disposition: attachment; filename="digest.csv.gz"
+Content-Transfer-Encoding: base64
+
+H4sIAAAAAAAA/wFfAaD+VGhlIHF1aWV0IHJpdmVyIHJlcGFpcnMgdGhlIGJyb2tlbiBjbG9ja3Mg
+aW4gdGhlIGVhcmx5IGV2ZW5pbmcgKDUwMikuIFRoZSBsb2NhbCBjb3VuY2lsIG1lYXN1cmVzIHRo
+ZSB3YXRlciBlYWNoIHdlZWsgYmVmb3JlIHRoZSB3aW50ZXIgYmVnaW5zICg3NjAyKS4gVGhlIG9s
+ZCBicmlkZ2UgcGxhbnMgYSBjYXJlZnVsIHN1cnZleSAoOTg2MCkuIEEgc21hbGwgd29ya3Nob3Ag
+cmVwYWlycyB0aGUgYnJva2VuIGNsb2NrcyBiZWZvcmUgdGhlIHdpbnRlciBiZWdpbnMuCgpBIHBh
+dGllbnQgdGVhY2hlciByZXBhaXJzIHRoZSBicm9rZW4gY2xvY2tzIG5lYXIgdGhlIGhhcmJvdXIu
+IFRoZSBtb3JuaW5nIG1hcmtldCB3ZWxjRw5oq18BAAA=
+--=_fps_ba530013436cd50a054c--
+)
+A005 OK Fetch completed (0.008 + 0.001 secs).
+* 1 FETCH (FLAGS (\Seen \Flagged))
+A006 OK Store completed (0.006 + 0.001 secs).
+* SEARCH 2 3
+A007 OK Search completed (0.002 + 0.002 secs).
+* 2 FETCH (FLAGS (\Answered \Seen \Deleted))
+A008 OK Store completed (0.007 + 0.002 secs).
+* 2 EXPUNGE
+A009 OK Expunge completed (0.002 + 0.001 secs).
+A010 OK Close completed (0.003 + 0.001 secs).
+* BYE Logging out
+A011 OK Logout completed (0.001 + 0.003 secs).
