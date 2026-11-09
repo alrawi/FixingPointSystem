@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #275 |
 | Branch | `wp/CTL-31` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #279 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-c31a7e, lease until 2026-11-09T14:06:59Z (renewed at each checkpoint) |
-| Last verified commit | none |
+| Last verified commit | 56263a9 (CI green) |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,8 +21,8 @@ Both controller TLS listeners send the CA certificate after the leaf, so an agen
 - [x] 1. Send `[leaf, CA]` from `serverCertificate`, with a handshake test for both listeners.
 - [x] 2. Add the two flags with a precedence test.
 - [x] 3. Update `docs/wiki/Controller.md` and write the log entry.
-- [ ] 4. Open the PR and get CI green, including `controller-e2e` of the Rust agent.
-- [ ] 5. Hand off for review.
+- [x] 4. Open the PR and get CI green, including `controller-e2e` of the Rust agent.
+- [x] 5. Hand off for review.
 
 ## Done and verified
 
