@@ -512,10 +512,8 @@ impl Captures {
         let out = capture_path(&self.settings.dir, plan_id, capture_id);
         // A capture of an earlier plan with the same names would otherwise
         // join this one, because a ring adopts the files of its prefix.
-        for p in [&ring] {
-            if p.exists() {
-                fs::remove_dir_all(p).map_err(|e| io("remove", p, e))?;
-            }
+        if ring.exists() {
+            fs::remove_dir_all(&ring).map_err(|e| io("remove", &ring, e))?;
         }
         if out.exists() {
             fs::remove_file(&out).map_err(|e| io("remove", &out, e))?;
