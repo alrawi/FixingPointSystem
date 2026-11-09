@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #312 |
 | Branch | `wp/CTL-35` |
-| Pull request | not yet opened |
+| Pull request | #314 |
 | Status | in progress |
 | Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-c35a7e, lease until 2026-11-09T19:41:21Z |
@@ -29,11 +29,11 @@ Steps 1 to 3 written. `gofmt -l`, `plan.py check`, `render --check`, and `lint` 
 
 ## Remaining
 
-Pull request, CI, fixes.
+CI is red on the first push with no job or log visible through the API (zero jobs listed), rerun did the same. Retriggering with a new commit.
 
 ## Next action
 
-Open the PR and watch CI.
+Watch CI of the newest commit; fix failures inside the package paths.
 
 ## Blockers and open questions
 
@@ -59,3 +59,4 @@ gofmt -l controller cli
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T18:11Z | claude-c35a7e | claim | | Claimed #312 |
+| 2026-11-09T18:25Z | claude-c35a7e | checkpoint | f44ebce | PR #314 opened; ctl and cli-go failed with no visible jobs or logs, rerun failed the same way |
