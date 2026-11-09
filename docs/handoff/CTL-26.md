@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #250 |
 | Branch | `wp/CTL-26` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 3 plan steps, CI pending) |
+| Pull request | #255 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-c26a7e, lease until 2026-11-09T04:07:27Z |
-| Last verified commit | none |
+| Last verified commit | 3a05ec0 |
 
 ## Goal
 
@@ -22,15 +22,15 @@
 
 ## Done and verified
 
-Code, tests, wiring, wiki page, and log entry written; gofmt clean. Not built locally (no Go modules). CI is the verification.
+Code, tests, wiring, wiki page, and log entry written; gofmt clean. Not built locally (no Go modules). CI on 3a05ec0 is green (all check runs).
 
 ## Remaining
 
-Wait for CI; fix failures inside controller/internal/report/ and the wiring call.
+none
 
 ## Next action
 
-Open the PR and poll CI.
+Coordinator reviews and merges PR #255.
 
 ## Blockers and open questions
 
@@ -55,3 +55,4 @@ git log --oneline -3
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-08 | claude-c26a7e | claim | none | claimed #250 |
+| 2026-11-08 | claude-c26a7e | finish | 3a05ec0 | PR #255, CI green |
