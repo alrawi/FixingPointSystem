@@ -18,9 +18,9 @@ lint-mod-imap:
 	$(PYTHON) tools/contracts/validate.py --modules $(MOD_IMAP_OUT)/modules --tests --no-openapi
 
 # The interpreter, catalog, and golden transcript tests, then the realism score
-# of the committed fixture, which needs ndpiReader and tshark. Zeek has no IMAP
-# analyzer that logs messages, so the realism job only checks that it parses
-# the capture without a parser error.
+# of the committed fixture, which needs ndpiReader and tshark. The module has
+# no Zeek log check, so the realism job only checks that Zeek parses the
+# capture without a parser error.
 TEST_TARGETS += test-mod-imap
 test-mod-imap:
 	$(CARGO) test -p fps-module-imap
