@@ -12,7 +12,9 @@ IMG_SHELL_FILES := image/build.sh image/boot-test.sh image/tests/static-check.sh
 	image/files/usr/libexec/fps/fps-role image/files/usr/libexec/fps/fps-tune \
 	image/files/usr/libexec/fps/fps-enroll-token image/tests/enroll-token-test.sh \
 	image/convert.sh image/tests/convert-test.sh \
-	image/tests/vm-run.sh image/ci-summary.sh
+	image/tests/vm-run.sh image/ci-summary.sh \
+	image/containers/run-lab.sh image/containers/static-check.sh \
+	image/containers/lab/enroll.sh image/containers/lab/prep.sh image/containers/lab/run-test.sh
 
 # Syntax of every script, and ShellCheck and Packer when they are installed.
 LINT_TARGETS += lint-img
@@ -27,6 +29,7 @@ lint-img:
 TEST_TARGETS += test-img
 test-img:
 	image/tests/static-check.sh
+	image/containers/static-check.sh
 
 # The namespace test proves that the rules block forwarding. It needs root, ip,
 # nft, ping, curl, and python3. The boot test, image/boot-test.sh, stays out of

@@ -1,0 +1,121 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Container images and the compose lab of IMG-05. The job builds the controller image,
+# the agent image, and the lab tools image (image/containers/Dockerfile.*), starts the
+# compose lab of image/containers/compose.yaml (one controller and two agents, which
+# enroll over HTTPS and talk over mutual TLS), runs a short HTTP and DNS test between
+# the two agent containers, and uploads the logs. The job fails when the test verdict
+# does not pass.
+#
+# Security rules, which docs/wiki/Operations.md repeats:
+#   - The job runs on a GitHub hosted runner only. This public repository never lets a
+#     workflow reach the self hosted fps-bench runner or any other self hosted label.
+#   - The token is read only, and the workflow uses no secret.
+#   - The job never logs in to a registry and never pushes an image. The images stay
+#     in the local Docker daemon of the runner and vanish with it.
+#   - Event text such as branch names never reaches a script through ${{ }}.
+name: containers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - image/containers/**
+      - engine/**
+      - controller/**
+      - modules/http1/**
+      - modules/dns/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/containers.yml
+  pull_request:
+    paths:
+      - image/containers/**
+      - engine/**
+      - controller/**
+      - modules/http1/**
+      - modules/dns/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/containers.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: containers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lab:
+    name: Build the images and run the compose lab
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Static checks of the container sources
+        run: |
+          set -euo pipefail
+          image/containers/static-check.sh
+
+      # Hadolint comes from its own pinned image. The step runs it without the network
+      # of the lab and without any mount except the Dockerfile on standard input.
+      - name: Hadolint the Dockerfiles
+        run: |
+          set -euo pipefail
+          for f in image/containers/Dockerfile.controller image/containers/Dockerfile.agent; do
+            echo "== hadolint $f"
+            docker run --rm -i --network none \
+              hadolint/hadolint@sha256:3c206a451cec6d486367e758645269fd7d696c5ccb6ff59d8b03b0e45268a199 \
+              hadolint --failure-threshold warning - < "$f"
+          done
+
+      - name: Docker versions
+        run: |
+          docker version
+          docker compose version
+          nproc
+          free -m
+
+      - name: Build the images, run the lab, and collect the logs
+        run: |
+          set -euo pipefail
+          mkdir -p lab-out
+          start=$SECONDS
+          image/containers/run-lab.sh --out lab-out 2>&1 | tee lab-out/run-lab.log
+          echo "the lab took $((SECONDS - start)) s"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Container lab"
+            echo
+            echo '```'
+            grep -E '^(PASS|FAIL|RESULT)' lab-out/run-lab.log 2>/dev/null || echo "no result lines, the lab did not run"
+            echo '```'
+            echo
+            echo "### Test between agent1 (client) and agent2 (server)"
+            echo
+            echo '```'
+            grep -E '(PASS|FAIL|RESULT|NOTE)' lab-out/lab-test.log 2>/dev/null | sed -E 's/^[^|]*\|[[:space:]]*//' || true
+            echo '```'
+            echo
+            echo "### Images"
+            echo
+            echo '```'
+            cat lab-out/images.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: container-lab
+          path: lab-out/
+          if-no-files-found: warn
+          retention-days: 14

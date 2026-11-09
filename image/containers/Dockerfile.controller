@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Controller image of IMG-05. Build it from the repository root:
+#
+#   docker build -f image/containers/Dockerfile.controller --target controller -t fps-controller .
+#   docker build -f image/containers/Dockerfile.controller --target tools      -t fps-lab-tools .
+#
+# Target controller: the static controller (Go, CGO off, as in image/build.sh) on an
+# empty root file system, as the non root user 10001. It holds no shell, no package
+# manager, and no libc. The configuration is image/containers/controller.yaml, and
+# the compose file overrides it with a mount when a lab needs other settings.
+#
+# Target tools: the lab helpers of the compose file. It holds the same controller
+# binary (for `fps-controller token`, which talks to the admin socket), a shell, curl,
+# and jq, the controller configuration, the module trees, and the scripts of
+# image/containers/lab. It is a lab image and not a deployment image.
+#
+# The base images are pinned by digest. Update a digest together with its tag, and
+# check the new image with `docker buildx imagetools inspect <image>:<tag>`.
+
+FROM golang:1.24.7-bookworm@sha256:b8bae5bd9ba9b1f89b635c91c24cc75cea335a16fb5076310f38566fc674b1ec AS build
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+WORKDIR /src/controller
+# controller/go.mod replaces the golden test helper module with ../tests/golden/go.
+COPY tests/golden/go /src/tests/golden/go
+COPY controller/go.mod controller/go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    GOWORK=off GOTOOLCHAIN=local go mod download
+COPY controller/ ./
+# Both the controller and the appliance image build with CGO off, so the binary is static.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GOWORK=off GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=linux \
+    go build -trimpath -ldflags '-s -w' -o /out/fps-controller ./cmd/fps-controller \
+ && go version -m /out/fps-controller | grep -q 'CGO_ENABLED=0' \
+ && /out/fps-controller -version
+
+# The tree of the empty root. A scratch image cannot run mkdir or chown, so this stage
+# builds the tree with its owners and modes, and the final stage copies the whole tree,
+# which keeps them. The image has no /tmp: the compose file mounts a tmpfs there when a
+# process needs one. The directories /var/lib/fps and /secrets are mount points of
+# volumes. Docker copies the owner and the mode of a mount point into a new volume, and
+# compose may create the containers of a lab in any order, so every image that mounts a
+# volume must describe its directory the same way (see Dockerfile.agent).
+FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f AS rootfs
+RUN mkdir -p /rootfs/etc /rootfs/var/lib/fps /rootfs/secrets \
+ && printf 'fps:x:10001:10001:fps controller:/var/lib/fps:/sbin/nologin\n' >/rootfs/etc/passwd \
+ && printf 'fps:x:10001:\n' >/rootfs/etc/group \
+ && chown 10001:10001 /rootfs/var/lib/fps /rootfs/secrets \
+ && chmod 0750 /rootfs/var/lib/fps \
+ && chmod 0700 /rootfs/secrets
+
+FROM scratch AS controller
+COPY --from=rootfs /rootfs/ /
+COPY --from=build /out/fps-controller /usr/bin/fps-controller
+COPY image/containers/controller.yaml /etc/fps/controller.yaml
+USER 10001:10001
+# REST (plain HTTP with a bearer token), agent gRPC (mutual TLS), enrollment (HTTPS).
+EXPOSE 8443 8444 8445
+ENTRYPOINT ["/usr/bin/fps-controller"]
+CMD ["-config", "/etc/fps/controller.yaml"]
+
+FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f AS tools
+# hadolint ignore=DL3018
+RUN apk add --no-cache curl jq \
+ && addgroup -g 10001 fps \
+ && addgroup -g 10002 fps-agent \
+ && adduser -D -H -u 10001 -G fps -h /var/lib/fps -s /sbin/nologin fps \
+ && mkdir -p /secrets /ca /enroll/agent1 /enroll/agent2 /var/lib/fps /results \
+ && chown 10001:10001 /secrets /var/lib/fps /results /ca \
+ && chown 10001:10002 /enroll/agent1 /enroll/agent2 \
+ && chmod 0700 /secrets \
+ && chmod 0750 /var/lib/fps \
+ && chmod 0755 /ca \
+ && chmod 0770 /enroll/agent1 /enroll/agent2 \
+ && chmod 0755 /results
+COPY --from=build /out/fps-controller /usr/bin/fps-controller
+COPY image/containers/controller.yaml /etc/fps/controller.yaml
+COPY image/containers/test-config.yaml /usr/share/fps-lab/test-config.yaml
+COPY --chmod=0755 image/containers/lab/ /usr/libexec/fps-lab/
+# The same module trees as the agent image, so both digests agree.
+COPY modules/http1 /usr/share/fps/modules/http1
+COPY modules/dns /usr/share/fps/modules/dns
+USER 10001:10001
+ENTRYPOINT ["/bin/sh"]

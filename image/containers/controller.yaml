@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Controller settings of the container image (IMG-05).
+#
+# Agents talk over mutual TLS. The controller keeps its CA in /var/lib/fps/pki, serves
+# the agent gRPC on 8444 and the HTTPS enrollment on 8445, and serves an admin
+# socket in the CA directory (/var/lib/fps/pki/admin.sock, mode 0600, owner fps).
+# There is no insecure_plain_grpc here, and the lab never turns it on.
+#
+# The REST API on 8443 is plain HTTP with a bearer token. The lab keeps it on the
+# lab network and publishes no port to the host.
+log_level: info
+data_dir: /var/lib/fps
+listen: 0.0.0.0:8443
+grpc_listen: 0.0.0.0:8444
+enroll_listen: 0.0.0.0:8445
+# A listener on every interface adds no name to the certificate, so name the
+# addresses that agents dial. The agents dial https://controller:8444.
+tls_names: [controller, localhost]
+# Only an identity that an operator enrolled (a minted token) joins the inventory.
+agent_auto_enroll: false
+tokens:
+  # The lab step "prep" writes this file into the volume "secrets". The token never
+  # appears in this file, in a command line, or in the environment of a container.
+  - { name: admin, scope: admin, token_file: /secrets/admin.token }

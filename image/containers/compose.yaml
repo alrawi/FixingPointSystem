@@ -1,0 +1,203 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# All in one lab of IMG-05: one controller and two agents on a lab network. The
+# agents enroll over HTTPS with one time tokens, and then talk to the controller
+# over mutual TLS. The test (service lab-test) runs the http1 and dns scenarios
+# with the client side in agent1 and the server side in agent2.
+#
+#   docker compose -f image/containers/compose.yaml up --build --abort-on-container-exit --exit-code-from lab-test
+#
+# image/containers/run-lab.sh does this and collects the logs.
+#
+# Order of the steps (depends_on):
+#   prep       writes the admin API token into the volume "secrets"
+#   controller starts, creates its CA and the admin socket in the volume "ctl-data"
+#   enroll     mints one enrollment token per agent through the admin socket, and
+#              copies the public CA certificate into the volume "ca"
+#   agent1/2   start, enroll with their token over HTTPS, and register
+#   lab-test   runs the test through the REST API and prints the verdict
+#
+# Secrets. No token is a command line argument, an environment variable, or a log
+# line, so none shows in `docker inspect` or `ps`. Each token is a file in a volume:
+#   secrets    admin.token (0600, user 10001). Mounted read only into the controller
+#              and the helper steps, which run as user 10001
+#   a1-enroll  enroll.token of agent1 (0640, user 10001, group 10002). Mounted into
+#   a2-enroll  the one agent only, which deletes the file after it enrolled
+# The volume ctl-data holds the CA key and the admin socket. Only the controller and
+# the enroll step mount it, and no agent does. The volume ca holds the public CA
+# certificate, which agents mount read only.
+#
+# Every container drops all Linux capabilities and runs with no-new-privileges and a
+# read only root file system. The agent needs no capability here (README, Capabilities).
+
+name: fps-lab
+
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+
+x-tools: &tools
+  image: fps-lab-tools:local
+  build:
+    context: ../..
+    dockerfile: image/containers/Dockerfile.controller
+    target: tools
+  <<: *hardening
+
+x-agent: &agent
+  image: fps-agent:local
+  build:
+    context: ../..
+    dockerfile: image/containers/Dockerfile.agent
+    target: agent
+  <<: *hardening
+  restart: "no"
+  depends_on:
+    enroll:
+      condition: service_completed_successfully
+  networks: [lab]
+
+services:
+  prep:
+    <<: *tools
+    command: ["/usr/libexec/fps-lab/prep.sh"]
+    volumes:
+      - secrets:/secrets
+    network_mode: none
+
+  controller:
+    image: fps-controller:local
+    build:
+      context: ../..
+      dockerfile: image/containers/Dockerfile.controller
+      target: controller
+    <<: *hardening
+    hostname: controller
+    depends_on:
+      prep:
+        condition: service_completed_successfully
+    volumes:
+      - secrets:/secrets:ro
+      - ctl-data:/var/lib/fps
+    networks:
+      lab:
+        ipv4_address: 172.30.77.2
+    restart: "no"
+
+  enroll:
+    <<: *tools
+    user: "10001:10002"
+    command: ["/usr/libexec/fps-lab/enroll.sh"]
+    depends_on:
+      controller:
+        condition: service_started
+    volumes:
+      - secrets:/secrets:ro
+      - ctl-data:/var/lib/fps
+      - ca:/ca
+      - a1-enroll:/enroll/agent1
+      - a2-enroll:/enroll/agent2
+    network_mode: none
+
+  agent1:
+    <<: *agent
+    hostname: agent1
+    # The client side of the test. The address is the only host of the client pool
+    # 172.30.77.4/30 in image/containers/test-config.yaml.
+    command:
+      - connect
+      - --controller
+      - https://controller:8444
+      - --agent-id
+      - agent1
+      - --side
+      - client
+      - --label
+      - side=client
+      - --modules
+      - /usr/share/fps/modules
+      - --cert-dir
+      - /var/lib/fps-agent/pki
+      - --tls-ca
+      - /ca/ca.crt
+      - --enroll-address
+      - controller:8445
+      - --enroll-token-file
+      - /enroll/enroll.token
+    volumes:
+      - ca:/ca:ro
+      - a1-enroll:/enroll
+      - a1-state:/var/lib/fps-agent
+    networks:
+      lab:
+        ipv4_address: 172.30.77.5
+
+  agent2:
+    <<: *agent
+    hostname: agent2
+    # The server side of the test. The address is the only host of the server pool
+    # 172.30.77.8/30.
+    command:
+      - connect
+      - --controller
+      - https://controller:8444
+      - --agent-id
+      - agent2
+      - --side
+      - server
+      - --label
+      - side=server
+      - --modules
+      - /usr/share/fps/modules
+      - --cert-dir
+      - /var/lib/fps-agent/pki
+      - --tls-ca
+      - /ca/ca.crt
+      - --enroll-address
+      - controller:8445
+      - --enroll-token-file
+      - /enroll/enroll.token
+    volumes:
+      - ca:/ca:ro
+      - a2-enroll:/enroll
+      - a2-state:/var/lib/fps-agent
+    networks:
+      lab:
+        ipv4_address: 172.30.77.9
+
+  lab-test:
+    <<: *tools
+    command: ["/usr/libexec/fps-lab/run-test.sh"]
+    depends_on:
+      agent1:
+        condition: service_started
+      agent2:
+        condition: service_started
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    volumes:
+      - secrets:/secrets:ro
+      - results:/results
+      # Read only views of the token directories, to check that the agents used them.
+      - a1-enroll:/enroll/agent1:ro
+      - a2-enroll:/enroll/agent2:ro
+    networks: [lab]
+
+networks:
+  lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.77.0/24
+          gateway: 172.30.77.1
+
+volumes:
+  secrets:
+  ctl-data:
+  ca:
+  a1-enroll:
+  a2-enroll:
+  a1-state:
+  a2-state:
+  results:

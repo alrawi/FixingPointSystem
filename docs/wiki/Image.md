@@ -1,6 +1,6 @@
 # Image
 
-This page describes the appliance image of the IMG workstream. IMG-01 builds the qcow2 base image with Packer. The directory [`image/`](https://github.com/alrawi/FixingPointSystem/tree/main/image) holds the sources, and its [README](https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md) gives the exact build and boot test steps. IMG-02 adds the role selector and the tuning profiles. IMG-03 adds the format conversion. IMG-04 adds the CI boot test, which the section [CI boot test](#ci-boot-test) describes.
+This page describes the appliance image of the IMG workstream. IMG-01 builds the qcow2 base image with Packer. The directory [`image/`](https://github.com/alrawi/FixingPointSystem/tree/main/image) holds the sources, and its [README](https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md) gives the exact build and boot test steps. IMG-02 adds the role selector and the tuning profiles. IMG-03 adds the format conversion. IMG-04 adds the CI boot test, which the section [CI boot test](#ci-boot-test) describes. IMG-05 adds container images and a compose lab, which the section [Containers](#containers) describes.
 
 ## Build
 
@@ -116,6 +116,28 @@ The short run is a reduced variant of the [Gate 1](Gates.md) suite. The Gate 1 s
 
 The artifact `image-boot-test` holds `boot-test.log` (every check and the result line), `serial-all-in-one.log` (the VM console), `vm-checks-all-in-one.out`, `vm-run.out`, `build.log`, `fps-base.qcow2.sha256`, and the directory `run/` with the test configuration, the run summary, the run report in JSON and CSV, and the application metrics. The job summary shows the accelerator, the result line, the failed checks, and the sessions per application.
 
+## Containers
+
+IMG-05 builds container images for Docker and Kubernetes labs. The directory [`image/containers/`](https://github.com/alrawi/FixingPointSystem/tree/main/image/containers) holds the sources, and its [README](https://github.com/alrawi/FixingPointSystem/blob/main/image/containers/README.md) gives the commands.
+
+| Image | Build | Content |
+|---|---|---|
+| Controller | `Dockerfile.controller`, target `controller` | The static controller (Go, `CGO_ENABLED=0`, as in `image/build.sh`) on an empty root file system, user 10001, `/etc/fps/controller.yaml`, state in `/var/lib/fps` |
+| Agent | `Dockerfile.agent` | The static musl agent (`x86_64-unknown-linux-musl`, as in `image/build.sh`) on an empty root file system, user 10002, the `http1` and `dns` module trees, state in `/var/lib/fps-agent` |
+| Lab tools | `Dockerfile.controller`, target `tools` | A shell, curl, jq, the controller binary, the module trees, and the three lab scripts. It is for the compose lab only |
+
+Both build stages are multi stage: a pinned `golang` or `rust` image compiles the binary, and the final stage is `scratch`, so the images hold no shell, no package manager, and no libc. Every base image is pinned by tag and digest, and `image/containers/static-check.sh` fails on one that is not. The CI runs Hadolint on both Dockerfiles.
+
+The compose file `image/containers/compose.yaml` runs an all in one lab: one controller and two agents on a bridge network. The steps run in order. `prep` writes the admin API token into a volume. The controller starts and creates its CA and its admin socket. `enroll` mints one enrollment token per agent through the admin socket (`fps-controller token`) and copies the public CA certificate into a volume. The agents start, enroll over HTTPS on 8445, and register over mutual TLS on 8444, as the appliance does ([Mutual TLS and enrollment](#mutual-tls-and-enrollment)). The lab never sets `insecure_plain_grpc`, and `agent_auto_enroll` is false, so only identities that carry a minted token join.
+
+No token is an argument or an environment variable, so none shows in `docker inspect`. Each token is a file in a volume: the admin token in `secrets` (mode 0600, user 10001), and the enrollment token of an agent in a volume that only that agent mounts for writing (mode 0640, group of the agents, deleted by the agent after use). The volume with the CA key and the admin socket is mounted by the controller and the `enroll` step only. The admin socket has mode 0600 and belongs to the controller user, so `enroll` runs as that user. After the test, `run-lab.sh` reads the admin token from its volume and checks that it appears in no `docker inspect` output and in no log.
+
+Every container drops all capabilities, sets `no-new-privileges`, and has a read only root file system. The agent needs no capability in the lab, because the test pools are `/30` networks of one host each, whose host is the address of the container (the agent numbers a pool from network plus one, so the containers sit at addresses that are 1 modulo 4), the scenarios listen above port 1024, and the lab starts no capture. The README lists each capability that a lab with a real test interface may need, with its reason: `NET_ADMIN` for interface and address setup, `NET_RAW` for capture, `NET_BIND_SERVICE` for ports below 1024, and `IPC_LOCK` for hugepage mappings (the engine maps none yet).
+
+The test (`lab/run-test.sh`) follows the [Gate 1](Gates.md) suite: one test configuration, stored once per agent, runs as two runs, the server run on agent2 (`--side server`) and the client run on agent1 (`--side client`), because the compiler gives an agent the host pools of its own ports only. The mix is `http1/single_fetch` on TCP port 18080 and `dns/lookup_a` on UDP port 15353. The run passes when the client run is `completed` with the verdict `passed` (`sessions.failed_ratio <= 0.01`) and when both agents counted succeeded sessions of both applications on their own side, so the traffic crossed from one container to the other.
+
+The workflow [`containers.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/.github/workflows/containers.yml) runs on every pull request and every push to `main` that touches `image/containers/`, `engine/`, `controller/`, the `http1` or `dns` module, `Cargo.toml`, or `Cargo.lock`. It runs on a GitHub hosted `ubuntu-24.04` runner only, holds the read only token (`contents: read`), uses no secret, and never logs in to a registry or pushes an image. The steps are the static checks, Hadolint, and `image/containers/run-lab.sh`, which builds the three images, starts the lab, runs the test, checks for leaked tokens, and writes the logs. The job summary shows the result lines, and the artifact `container-lab` holds `compose.log`, one log per service, `inspect.json`, and `results/` with the test configurations, the run summaries, the report, and the metrics.
+
 ## Limits
 
 1. The REST API on 8443 is plain HTTP with a bearer token, so the management network must be trusted for the API. The control channel to the agents (8444) and the enrollment (8445) use TLS.
@@ -123,3 +145,4 @@ The artifact `image-boot-test` holds `boot-test.log` (every check and the result
 3. The agent runs as root, because the host setup moves interfaces into namespaces. The role selector does not narrow this.
 4. The DHCP address of `mgmt0` is read once at start. A changed lease needs a restart of `fps-mgmt-addr.service` and the two services.
 5. The agent role isolates CPUs only on a VM with at least 4 CPUs. Hugepages stay reserved for the life of the VM, so an agent VM with little memory loses a quarter of it to them.
+6. The container images build for x86_64 only. The compose lab runs on one Docker host and one bridge network, so it shows the control and the application path and not the throughput of a real test interface. A host pool of the lab holds one host, because the pool address must be the address of the container.

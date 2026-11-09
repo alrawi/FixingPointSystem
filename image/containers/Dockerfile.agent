@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Agent image of IMG-05. Build it from the repository root:
+#
+#   docker build -f image/containers/Dockerfile.agent -t fps-agent .
+#
+# The agent is the static musl binary of image/build.sh (cargo, release profile,
+# x86_64-unknown-linux-musl) on an empty root file system, as the non root user 10002.
+# The image holds the module trees http1 and dns under /usr/share/fps/modules, and
+# an empty state directory /var/lib/fps-agent for the key and the certificate of the
+# agent (mutual TLS). It holds no shell.
+#
+# The agent needs no Linux capability in this image. It opens sockets on addresses
+# of its own container and on ports above 1024, and the lab pools use the address
+# of the container. See image/containers/README.md, Capabilities.
+#
+# The build host must be x86_64, as for image/build.sh. The base image is pinned by
+# digest. Update the digest together with its tag.
+
+FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS build
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# ring and other dependencies compile C code, which the musl target compiles with musl-gcc.
+# hadolint ignore=DL3008
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends musl-tools \
+ && rm -rf /var/lib/apt/lists/* \
+ && rustup target add x86_64-unknown-linux-musl
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --locked --target x86_64-unknown-linux-musl -p fps-agent \
+ && install -D -m 0755 target/x86_64-unknown-linux-musl/release/fps-agent /out/fps-agent \
+ && strip /out/fps-agent \
+ && ! readelf -lW /out/fps-agent | grep -q INTERP
+
+# The tree of the empty root, built here because a scratch image cannot run chown. The
+# final stage copies the whole tree, which keeps owners and modes.
+#   /var/lib/fps-agent  the key (mode 0600) and the certificate of the agent. A volume
+#                       mounts over it
+#   /enroll             the directory of the one time enrollment token, which a volume
+#                       mounts over. The lab step "enroll" (user 10001) writes the token
+#                       and the agent (group 10002) deletes it after it enrolled
+#   /ca                 the mount point of the public CA certificate (read only)
+# Docker copies the owner and the mode of a mount point into a new volume, and compose
+# may create the containers of a lab in any order, so /enroll and /ca match the lab
+# tools image (Dockerfile.controller) exactly.
+FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f AS rootfs
+RUN mkdir -p /rootfs/etc /rootfs/var/lib/fps-agent /rootfs/enroll /rootfs/ca \
+ && printf 'fps-agent:x:10002:10002:fps agent:/var/lib/fps-agent:/sbin/nologin\n' >/rootfs/etc/passwd \
+ && printf 'fps-agent:x:10002:\n' >/rootfs/etc/group \
+ && chown 10002:10002 /rootfs/var/lib/fps-agent \
+ && chown 10001:10002 /rootfs/enroll \
+ && chown 10001:10001 /rootfs/ca \
+ && chmod 0700 /rootfs/var/lib/fps-agent \
+ && chmod 0770 /rootfs/enroll \
+ && chmod 0755 /rootfs/ca
+
+FROM scratch AS agent
+COPY --from=rootfs /rootfs/ /
+COPY --from=build /out/fps-agent /usr/bin/fps-agent
+COPY --from=build /src/modules/http1 /usr/share/fps/modules/http1
+COPY --from=build /src/modules/dns /usr/share/fps/modules/dns
+USER 10002:10002
+ENTRYPOINT ["/usr/bin/fps-agent"]
+CMD ["--help"]
