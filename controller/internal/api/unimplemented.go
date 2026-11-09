@@ -106,6 +106,11 @@ func (Unimplemented) DownloadCapture(w http.ResponseWriter, r *http.Request, _ I
 	notImplemented(w, r, "downloadCapture")
 }
 
+// ListConfigs answers 501 until the configuration store lists its entries.
+func (Unimplemented) ListConfigs(w http.ResponseWriter, r *http.Request, _ ListConfigsParams) {
+	notImplemented(w, r, "listConfigs")
+}
+
 // StopCapture answers 501 until the captures package serves it.
 func (Unimplemented) StopCapture(w http.ResponseWriter, r *http.Request, _ Id, _ string) {
 	notImplemented(w, r, "stopCapture")

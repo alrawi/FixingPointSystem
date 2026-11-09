@@ -347,8 +347,11 @@ type Capabilities struct {
 	Agents     []Agent                `json:"agents"`
 	ApiVersion *string                `json:"api_version,omitempty"`
 	Backends   []CapabilitiesBackends `json:"backends"`
-	EngineApi  string                 `json:"engine_api"`
-	Modules    []ModuleSummary        `json:"modules"`
+
+	// ControllerVersion Version of the controller build, such as a release number or a commit, and absent when the build carries none. It is not the REST contract version, which `api_version` gives.
+	ControllerVersion *string         `json:"controller_version,omitempty"`
+	EngineApi         string          `json:"engine_api"`
+	Modules           []ModuleSummary `json:"modules"`
 }
 
 // CapabilitiesBackends defines model for Capabilities.Backends.
@@ -563,6 +566,12 @@ type RegisterAgentJSONBody struct {
 	Labels *map[string]string `json:"labels,omitempty"`
 }
 
+// ListConfigsParams defines parameters for ListConfigs.
+type ListConfigsParams struct {
+	PageSize  *PageSize  `form:"page_size,omitempty" json:"page_size,omitempty"`
+	PageToken *PageToken `form:"page_token,omitempty" json:"page_token,omitempty"`
+}
+
 // CreateConfigJSONBody defines parameters for CreateConfig.
 type CreateConfigJSONBody = map[string]interface{}
 
@@ -681,6 +690,9 @@ type ServerInterface interface {
 	// Engine API version, backends, agent inventory, and installed modules.
 	// (GET /capabilities)
 	GetCapabilities(w http.ResponseWriter, r *http.Request)
+	// List stored configurations.
+	// (GET /configs)
+	ListConfigs(w http.ResponseWriter, r *http.Request, params ListConfigsParams)
 
 	// (POST /configs)
 	CreateConfig(w http.ResponseWriter, r *http.Request)
@@ -859,6 +871,47 @@ func (siw *ServerInterfaceWrapper) GetCapabilities(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCapabilities(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListConfigs operation middleware
+func (siw *ServerInterfaceWrapper) ListConfigs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerTokenScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListConfigsParams
+
+	// ------------- Optional query parameter "page_size" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page_size", r.URL.Query(), &params.PageSize, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_size", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "page_token" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page_token", r.URL.Query(), &params.PageToken, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListConfigs(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1715,6 +1768,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/agents/{id}:release", wrapper.ReleaseAgent)
 	m.HandleFunc("POST "+options.BaseURL+"/agents/{id}:reserve", wrapper.ReserveAgent)
 	m.HandleFunc("GET "+options.BaseURL+"/capabilities", wrapper.GetCapabilities)
+	m.HandleFunc("GET "+options.BaseURL+"/configs", wrapper.ListConfigs)
 	m.HandleFunc("POST "+options.BaseURL+"/configs", wrapper.CreateConfig)
 	m.HandleFunc("GET "+options.BaseURL+"/configs/{id}", wrapper.GetConfig)
 	m.HandleFunc("POST "+options.BaseURL+"/configs/{id}:validate", wrapper.ValidateConfig)

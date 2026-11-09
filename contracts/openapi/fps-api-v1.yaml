@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FixingPointSystem Controller API
-  version: 0.6.0
+  version: 0.7.0
   summary: Contract v0.2 for the controller REST API.
   description: >
     The controller stores test configurations, installs modules, starts runs on
@@ -144,6 +144,26 @@ paths:
         "204": { description: Removed. }
         default: { $ref: "#/components/responses/Problem" }
   /configs:
+    get:
+      tags: [configs]
+      operationId: listConfigs
+      summary: List stored configurations.
+      x-required-scope: read
+      parameters:
+        - { $ref: "#/components/parameters/PageSize" }
+        - { $ref: "#/components/parameters/PageToken" }
+      responses:
+        "200":
+          description: Stored configurations, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ConfigRef" } }
+                  next_page_token: { type: string }
+        default: { $ref: "#/components/responses/Problem" }
     post:
       tags: [configs]
       operationId: createConfig
@@ -576,6 +596,10 @@ components:
       properties:
         engine_api: { type: string, examples: ["0.1.0"] }
         api_version: { type: string, examples: ["0.1.0"] }
+        controller_version:
+          type: string
+          description: Version of the controller build, such as a release number or a commit, and absent when the build carries none. It is not the REST contract version, which `api_version` gives.
+          examples: ["0.4.0"]
         backends:
           type: array
           items: { type: string, enum: [kernel, af_xdp, dpdk] }

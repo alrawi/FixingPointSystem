@@ -14,6 +14,7 @@ func operations(w *ServerInterfaceWrapper) []operation {
 		{method: http.MethodPost, path: "/agents/{id}:release", id: "releaseAgent", scope: ScopeRun, handler: w.ReleaseAgent},
 		{method: http.MethodPost, path: "/agents/{id}:reserve", id: "reserveAgent", scope: ScopeRun, handler: w.ReserveAgent},
 		{method: http.MethodGet, path: "/capabilities", id: "getCapabilities", scope: ScopeRead, handler: w.GetCapabilities},
+		{method: http.MethodGet, path: "/configs", id: "listConfigs", scope: ScopeRead, handler: w.ListConfigs},
 		{method: http.MethodPost, path: "/configs", id: "createConfig", scope: ScopeRun, handler: w.CreateConfig},
 		{method: http.MethodGet, path: "/configs/{id}", id: "getConfig", scope: ScopeRead, handler: w.GetConfig},
 		{method: http.MethodPost, path: "/configs/{id}:validate", id: "validateConfig", scope: ScopeRun, handler: w.ValidateConfig},

@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Breaking change check of the REST contracts (CON-16). oasdiff compares the
+# OpenAPI documents of the change with those of the base and fails on a breaking
+# change. The fixture tests first prove that the check passes on an additive
+# change and fails on a deliberately breaking one (tools/contracts/fixtures/).
+#
+# The job runs on a GitHub hosted runner, reads the repository only, and uses no
+# secret. oasdiff is built from the pinned module version with `go install`: the
+# Go toolchain checks the module against go.sum of its dependencies and against
+# the public checksum database (sum.golang.org), so a changed or substituted
+# release fails the build.
+name: openapi-breaking
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - contracts/openapi/**
+      - tools/contracts/check_openapi_breaking.py
+      - tools/contracts/test_openapi_breaking.py
+      - tools/contracts/fixtures/openapi-breaking/**
+      - .github/workflows/openapi-breaking.yml
+  pull_request:
+    paths:
+      - contracts/openapi/**
+      - tools/contracts/check_openapi_breaking.py
+      - tools/contracts/test_openapi_breaking.py
+      - tools/contracts/fixtures/openapi-breaking/**
+      - .github/workflows/openapi-breaking.yml
+
+permissions:
+  contents: read
+
+env:
+  OASDIFF_VERSION: v1.11.7
+
+jobs:
+  breaking:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install oasdiff
+        run: |
+          go install "github.com/oasdiff/oasdiff@${OASDIFF_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Install test tools
+        run: python -m pip install pytest pyyaml
+      - name: Fixture tests (the check passes on an additive change and fails on a breaking one)
+        env:
+          FPS_REQUIRE_OASDIFF: "1"
+        run: |
+          oasdiff --version
+          python -m pytest -q tools/contracts/test_openapi_breaking.py
+      - name: Compare the OpenAPI documents with the base
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then base="$PR_BASE"; else base="$PUSH_BEFORE"; fi
+          if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "::notice::Base commit $base is not available, nothing to compare."
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/base"
+          git archive "$base" contracts | tar -x -C "$RUNNER_TEMP/base"
+          status=0
+          for doc in fps-api-v1.yaml fps-metrics.yaml; do
+            if [ ! -f "$RUNNER_TEMP/base/contracts/openapi/$doc" ]; then
+              echo "::notice::$doc does not exist in the base, nothing to compare."
+              continue
+            fi
+            echo "== $doc"
+            python tools/contracts/check_openapi_breaking.py \
+              "$RUNNER_TEMP/base/contracts/openapi/$doc" "contracts/openapi/$doc" || status=1
+          done
+          exit $status

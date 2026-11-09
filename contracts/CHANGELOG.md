@@ -1,5 +1,13 @@
 # Contracts changelog
 
+## Controller API 0.7.0 (2026-11-09)
+
+Controller version, configuration listing, and a REST breaking check (CON-16). All changes are additive. See `changes/CON-16.md`.
+
+- OpenAPI 0.7.0 adds the optional `Capabilities.controller_version` and `listConfigs` (`GET /configs`, paged like `listRuns`).
+- The comment of `MixEntry.weight` in the agent protocol says session share. The protocol stays at 0.2.3, because only a comment changed.
+- The workflow `openapi-breaking.yml` runs oasdiff on the OpenAPI documents and fails on a breaking change. `tools/contracts/test_openapi_breaking.py` checks it against a deliberately breaking fixture.
+
 ## Controller API 0.6.0 and agent protocol 0.2.3 (2026-11-09)
 
 Capture and criteria gaps (CON-15). All changes are additive. See `changes/CON-15.md`.
