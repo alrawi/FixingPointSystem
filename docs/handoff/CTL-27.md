@@ -5,10 +5,10 @@
 | Issue | #251 |
 | Branch | `wp/CTL-27` |
 | Pull request | #257 |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-ctl27-a1, lease until 2026-11-09T04:08:27Z |
-| Last verified commit | 8f31914 |
+| Last verified commit | 1965c1f |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ The controller opens the CTL-15 authority from its data directory, serves agent 
 - [x] 2. Wiring of the authority, the TLS gRPC server, the enrollment listener, and the admin socket
 - [x] 3. Binary: flags, the token and revoke subcommands, existing tests and the two Rust agent scripts moved to the explicit plain flag
 - [x] 4. Mutual TLS tests (wiring and end to end with a Go fake agent)
-- [ ] 5. Docs, make targets, log entry, CI green, review
+- [x] 5. Docs, make targets, log entry, CI green, review
 
 ## Done and verified
 
@@ -30,11 +30,11 @@ The controller opens the CTL-15 authority from its data directory, serves agent 
 
 ## Remaining
 
-Wait for the `ci` workflow, then set ready for review.
+Nothing. The ci, ctl, agt, and qa-gate1 workflows passed on 1965c1f.
 
 ## Next action
 
-Poll the checks of the pull request and run `fps_swarm.py review 251 --pr 257`.
+Coordinator review of pull request 257.
 
 ## Blockers and open questions
 
@@ -64,3 +64,4 @@ make lint-ctl test-ctl
 |---|---|---|---|---|
 | 2026-11-08 | claude-ctl27-a1 | claim | | claimed issue 251 |
 | 2026-11-09 | claude-ctl27-a1 | checkpoint | 8f31914 | steps 1 to 4, ctl workflow green, PR 257 opened |
+| 2026-11-09 | claude-ctl27-a1 | finish | 1965c1f | CI green, ready for review |
