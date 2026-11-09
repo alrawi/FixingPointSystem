@@ -2637,3 +2637,51 @@ work_packages:
       - installModule documents the two optional headers and the 403 response; the run schema gains an optional calibration array; additive, with contracts/changes/CON-14.md.
     acceptance:
       - The OpenAPI checks pass and the change is additive.
+
+  # Batch 16 follow-ups (2026-11-09).
+
+  - id: AGT-11
+    title: Load WebAssembly extensions in the agent
+    phase: 2
+    workstream: AGT
+    size: S
+    depends_on: [ENG-17, AGT-07]
+    paths: [engine/fps-agent/]
+    summary: >-
+      ENG-17 loads extension.wasm in fps-runtime through ExtensionSet, but the agent does not call it,
+      and its UDP path has its own session loop.
+    deliverables:
+      - The agent calls ExtensionSet::load_module_dir for each plan module and sets FlowRef::extensions.
+      - The UDP session loop wraps native functions through ExtensionSet::session_functions and calls finish at session end.
+    acceptance:
+      - An agent test runs a plan whose module ships a WAT-built extension over TCP and UDP, and a looping extension fails only its own sessions with extension_error.
+
+  - id: CTL-32
+    title: Capture file retention in the controller
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CTL-14]
+    paths: [controller/internal/captures/, controller/internal/app/]
+    summary: >-
+      CTL-14 stores downloaded capture files under the data directory and nothing removes them.
+    deliverables:
+      - A capture_retention setting (default 7 days) and a sweep that deletes capture files older than it, plus deletion when a run is deleted if the run API has a delete.
+    acceptance:
+      - A test with a fake clock shows a file kept before the retention ends and deleted after it, and a download of a deleted capture answers 404.
+
+  - id: CON-15
+    title: Capture and criteria contract gaps
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [CON-13, CTL-14, AGT-07]
+    paths: [contracts/]
+    summary: >-
+      Gaps that CTL-14 and AGT-07 found. Needs owner approval as a contract change.
+    deliverables:
+      - REST - a way to stop a capture without downloading it (a stop operation or a ready state in Capture) and the agent of each capture file.
+      - fps.agent.v1 - an export_tls_keys field in StartCaptureCommand, and labels on the wire Criterion so a criterion can name a side.
+      - contracts/examples/tests/dns_zone.yaml uses the first party dns/lookup_a scenario, so it runs against the agent. All additive, with contracts/changes/CON-15.md.
+    acceptance:
+      - The OpenAPI and proto checks pass, buf breaking reports no breaking change, and the example validates.
