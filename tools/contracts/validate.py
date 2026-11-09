@@ -755,6 +755,8 @@ def check_scenario(doc: dict, file: Path, report: Report, module: dict | None = 
                                  f"'{kind}' is reserved for module types {sorted(RESERVED_ACTION_TYPES[kind])}")
                 if kind == "expect" and isinstance(body, dict):
                     _check_expect(body, udp, path, file, report)
+                if kind == "tls_upgrade" and udp:
+                    report.error(file, _pointer(path), "tls_upgrade applies only to TCP flows")
             scope = TemplateScope(vars=var_types, modules=callable_modules, module_name=module_name,
                                   profiles=profile_names)
             _check_side_templates(flow.get(side, []), ["flows", i, side], scope, False, file, report)
