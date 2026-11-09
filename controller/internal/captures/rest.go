@@ -20,7 +20,7 @@ import (
 // maxBody bounds the request body of the start operation.
 const maxBody = 1 << 20
 
-// API serves the three capture operations of the REST contract from a
+// API serves the four capture operations of the REST contract from a
 // Service and answers every other operation with the 501 problem of
 // api.Unimplemented.
 type API struct {
@@ -72,6 +72,18 @@ func (a *API) StartCapture(w http.ResponseWriter, r *http.Request, id api.Id) {
 	writeJSON(w, http.StatusAccepted, ToAPI(c))
 }
 
+// StopCapture answers POST /v1/runs/{id}/captures/{capture_id}:stop with 200
+// and the capture. It ends the capture on every agent without downloading it,
+// and a capture that already ended answers with its state.
+func (a *API) StopCapture(w http.ResponseWriter, r *http.Request, id api.Id, captureID string) {
+	c, err := a.svc.Stop(r.Context(), id, captureID)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ToAPI(c))
+}
+
 // DownloadCapture answers GET /v1/runs/{id}/captures/{capture_id} with the
 // pcapng file of the capture. A capture that still runs ends first. The
 // headers X-FPS-Capture-Agents and X-FPS-Capture-Missing name the agents whose
@@ -100,12 +112,38 @@ func (a *API) DownloadCapture(w http.ResponseWriter, r *http.Request, id api.Id,
 }
 
 // ToAPI returns the Capture schema of the REST contract for c. The bytes
-// appear once the capture completed.
+// appear once the capture completed. Files lists every agent that was asked,
+// in the order of c.Agents, which is the order of the agent identities.
 func ToAPI(c Capture) api.Capture {
 	out := api.Capture{Id: c.ID, Port: c.Port, State: c.State}
 	if c.State == api.CaptureStateCompleted {
 		n := int(c.Bytes) //nolint:gosec // G115: bounded by MaxFileBytes per agent
 		out.Bytes = &n
+	}
+	files := make([]api.CaptureFile, len(c.Agents))
+	for i, f := range c.Agents {
+		files[i] = fileToAPI(f)
+	}
+	out.Files = &files
+	return out
+}
+
+// fileToAPI returns the CaptureFile schema for f. The numbers and the digest
+// are known once the agent reported its end, and the error says why the agent
+// did not start.
+func fileToAPI(f AgentFile) api.CaptureFile {
+	out := api.CaptureFile{Agent: f.Agent, Started: &f.Started}
+	if f.StartError != "" {
+		e := f.StartError
+		out.Error = &e
+	}
+	if f.Started && f.Stopped {
+		packets, size, dropped := int(f.Packets), int(f.Bytes), int(f.Dropped) //nolint:gosec // G115: bounded by MaxFileBytes per agent
+		out.Packets, out.Bytes, out.Dropped = &packets, &size, &dropped
+		if f.Digest != "" {
+			digest := f.Digest
+			out.Digest = &digest
+		}
 	}
 	return out
 }
@@ -149,7 +187,7 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, ErrInvalidRequest):
 		status = http.StatusUnprocessableEntity
-	case errors.Is(err, ErrRunNotRunning), errors.Is(err, ErrStartFailed),
+	case errors.Is(err, ErrRunNotRunning), errors.Is(err, ErrStartFailed), errors.Is(err, ErrStopIncomplete),
 		errors.Is(err, agents.ErrAgentOffline), errors.Is(err, agents.ErrSessionLost):
 		status = http.StatusConflict
 	case errors.Is(err, agents.ErrCaptureUnsupported):

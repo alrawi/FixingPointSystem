@@ -1,0 +1,40 @@
+[package]
+name = "fps-module-pop3"
+description = "Native template functions of the pop3 module (decision D10)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+fps-flow = { path = "../../../engine/fps-flow" }
+# RngCore appears in the signature of the TemplateFn trait.
+rand = { version = "0.8", default-features = false }
+
+[dev-dependencies]
+# The scenarios call the content module for message bodies and attachments.
+fps-module-content = { path = "../../content/native" }
+# The fixture_peer example runs the scenarios over kernel sockets.
+fps-backend-kernel = { path = "../../../engine/fps-backend-kernel" }
+fps-golden = { path = "../../../tests/golden/rust" }
+fps-interp = { path = "../../../engine/fps-interp" }
+fps-io = { path = "../../../engine/fps-io" }
+rand_pcg = "0.3"
+# serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
+serde_yaml = { package = "serde_norway", version = "0.9" }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "test-util", "time"] }
+
+# The module layout keeps tests in modules/pop3/tests, next to the scenarios
+# they exercise, so the targets point one directory up.
+[[test]]
+name = "catalog"
+path = "../tests/catalog.rs"
+
+[[test]]
+name = "scenarios"
+path = "../tests/scenarios.rs"
+
+[[test]]
+name = "transcript"
+path = "../tests/transcript.rs"

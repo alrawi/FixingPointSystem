@@ -61,6 +61,9 @@ var (
 	ErrRunNotRunning = errors.New("run is not running")
 	// ErrStartFailed reports that no agent of the run started the capture.
 	ErrStartFailed = errors.New("no agent started the capture")
+	// ErrStopIncomplete reports that an agent did not end its capture, so the
+	// capture still runs. The stop is idempotent, and the caller may repeat it.
+	ErrStopIncomplete = errors.New("an agent did not end its capture")
 	// ErrNoFile reports that no agent of the capture could deliver its file.
 	ErrNoFile = errors.New("no capture file available")
 	// ErrDigestMismatch reports that the bytes of a transfer have another
@@ -362,6 +365,9 @@ func (s *Service) Start(ctx context.Context, runID string, req StartRequest) (Ca
 			targets = append(targets, a)
 		}
 	}
+	// Capture.files is ordered by agent identity, whatever the order of the run.
+	slices.Sort(targets)
+	targets = slices.Compact(targets)
 	if len(targets) == 0 {
 		return Capture{}, fmt.Errorf("start capture on run %s: the run has no working agent: %w", runID, ErrStartFailed)
 	}
@@ -387,6 +393,7 @@ func (s *Service) Start(ctx context.Context, runID string, req StartRequest) (Ca
 			defer cancel()
 			_, errs[i] = s.cfg.Agents.StartCapture(cctx, a, &agentpb.StartCaptureCommand{
 				PlanId: f.PlanID, CaptureId: id, Port: req.Port, Filter: req.BPF, MaxBytes: req.MaxBytes,
+				ExportTlsKeys: req.ExportTLSKeys,
 			})
 		}()
 	}
@@ -507,6 +514,47 @@ func (s *Service) stopAll(ctx context.Context, c *capture, runFinal bool) {
 			s.log.Warn("stop capture failed", "run_id", c.runID, "capture_id", c.id, "agent_id", f.Agent, "error", err)
 		}
 	}
+}
+
+// Stop ends the capture on every agent that has not reported an end, without
+// fetching any file, and returns the capture. It is idempotent: a capture
+// that already ended answers with its state and sends no command. An agent
+// answers a repeated stop with its first result. The capture is completed
+// when at least one agent delivered an end, and failed when none did. Stop
+// fails with ErrStopIncomplete when an agent that may still capture did not
+// answer, because the capture would be neither running nor ended then; the
+// caller may repeat the stop. A capture that the retention sweep deleted is
+// not found.
+func (s *Service) Stop(ctx context.Context, runID, captureID string) (Capture, error) {
+	run, err := s.cfg.Runs.Get(runID)
+	if err != nil {
+		return Capture{}, err
+	}
+	c := s.find(runID, captureID)
+	if c == nil {
+		return Capture{}, fmt.Errorf("capture %s of run %s: %w", captureID, runID, ErrCaptureNotFound)
+	}
+	c.work.Lock()
+	defer c.work.Unlock()
+	c.mu.Lock()
+	gone := c.removed
+	c.mu.Unlock()
+	if gone {
+		return Capture{}, fmt.Errorf("capture %s of run %s: expired: %w", captureID, runID, ErrCaptureNotFound)
+	}
+	s.stopAll(ctx, c, runs.Final(run.State))
+	v := c.view()
+	if v.State == api.CaptureStateRunning {
+		var errs []error
+		for _, f := range v.Agents {
+			if f.Started && !f.Stopped && !f.Lost && f.Error != "" {
+				errs = append(errs, fmt.Errorf("agent %s: %s", f.Agent, f.Error))
+			}
+		}
+		return v, fmt.Errorf("stop capture %s of run %s: %w: %w", captureID, runID, ErrStopIncomplete, errors.Join(errs...))
+	}
+	s.log.Info("capture stopped", "run_id", runID, "capture_id", captureID, "state", v.State)
+	return v, nil
 }
 
 // Download is a capture ready to serve: the verified files of its agents.

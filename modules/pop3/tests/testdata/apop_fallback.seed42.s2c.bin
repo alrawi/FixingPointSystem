@@ -1,0 +1,60 @@
++OK Dovecot ready. <10896.1795099906@pop3.example.test>
+-ERR [AUTH] Authentication failed.
++OK
++OK Logged in.
++OK 3 326351
++OK 3 messages:
+1 64527
+2 67041
+3 194783
+.
++OK 2027 octets
+From: deten.gedas@example.test
+To: lourir.tudinol@example.test
+Cc: pokam.stohaik@example.test
+Subject: Statement 9731
+Date: Fri, 18 Sep 2026 01:00:00 +0000
+Message-ID: <5c6da77f22dc80359b8ce912@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_ba530013436cd50a054c"
+
+This is a multi-part message in MIME format.
+--=_fps_ba530013436cd50a054c
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Duilo,
+
+Our new library carries a long list of notes. A patient teacher repairs the
+broken clocks (6523). The old bridge carries a long list of notes. The old
+bridge welcomes every visitor with great care. Our new library measures the
+water each week with great care.
+
+Ref: ORD-352437
+
+Kind regards,
+Saqua Losa
+Support desk
+saqua.losa@example.test
+--=_fps_ba530013436cd50a054c
+Content-Type: application/pdf; name="statement.pdf"
+Content-Disposition: attachment; filename="statement.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4K
+ZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4K
+ZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAg
+MCA2MTIgNzkyXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAw
+IFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAxNDQgPj4Kc3RyZWFtCkJUIC9G
+MSAxNCBUZiA1MCA3ODAgVGQgKERvY3VtZW50IDJiNTdmMzJmMjkpIFRqIEVUCkJUIC9GMSAxMCBU
+ZiA1MCA3NjAgVGQgKE91ciBuZXcgbGlicmFyeSBjYXJyaWVzIGEgbG9uZyBsaXN0IG9mIG5vdGVz
+IHdpdGggZ3JlYXQgY2FyZS4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNSAwIG9iago8PCAvVHlw
+ZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jhc2VGb250IC9IZWx2ZXRpY2EgPj4KZW5kb2JqCnhy
+ZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxNSAwMDAwMCBuIAowMDAwMDAwMDY0
+IDAwMDAwIG4gCjAwMDAwMDAxMjEgMDAwMDAgbiAKMDAwMDAwMDI0NyAwMDAwMCBuIAowMDAwMDAw
+NDQxIDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgNiAvUm9vdCAxIDAgUiA+PgpzdGFydHhyZWYK
+NTExCiUlRU9GCg==
+--=_fps_ba530013436cd50a054c--
+.
++OK Logging out.

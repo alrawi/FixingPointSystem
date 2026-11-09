@@ -1,0 +1,92 @@
++OK Dovecot ready. <10896.1795099906@pop3.example.test>
++OK
++OK Logged in.
++OK 3 326351
++OK 3 messages:
+1 64527
+2 67041
+3 194783
+.
++OK
+From: deten.gedas@example.test
+To: lourir.tudinol@example.test
+Subject: Invoice 9731
+Date: Sat, 04 Apr 2026 07:40:26 +0000
+Message-ID: <5b2d4fda6c37895b18af9d3a@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_af81be24255c9764f016"
+
+This is a multi-part message in MIME format.
+--=_fps_af81be24255c9764f016
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Duilo,
+.
++OK
+From: mobraklais.failitran@example.test
+To: brizeige.beiroukeil@example.test
+Subject: Invoice 4077
+Date: Mon, 10 Aug 2026 18:22:30 +0000
+Message-ID: <477a67216c554b69e03e426c@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_e6bffbd2e89c30e51869"
+
+This is a multi-part message in MIME format.
+--=_fps_e6bffbd2e89c30e51869
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Ilokafen,
+.
++OK 1 000003E959D87485
++OK 1936 octets
+From: zogon.narosou@example.test
+To: mira.klofos@example.test
+Subject: Invoice 8865
+Date: Fri, 18 Dec 2026 04:20:53 +0000
+Message-ID: <ff600f3dcac917ea9dbd9dba@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_808f1c4f938292377d03"
+
+This is a multi-part message in MIME format.
+--=_fps_808f1c4f938292377d03
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Tenka,
+
+The morning market measures the water each week with great care. A small
+workshop keeps the records in order with great care (4564). The old bridge
+carries a long list of notes. The northern station opens the doors at dawn
+with great care.
+
+Ref: BKG-225100
+
+Kind regards,
+Pelra Dupel
+Support desk
+pelra.dupel@example.test
+--=_fps_808f1c4f938292377d03
+Content-Type: application/pdf; name="invoice.pdf"
+Content-Disposition: attachment; filename="invoice.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4K
+ZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4K
+ZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAg
+MCA2MTIgNzkyXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAw
+IFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAxMjIgPj4Kc3RyZWFtCkJUIC9G
+MSAxNCBUZiA1MCA3ODAgVGQgKERvY3VtZW50IDIyNGNkMjMzNDcpIFRqIEVUCkJUIC9GMSAxMCBU
+ZiA1MCA3NjAgVGQgKE91ciBuZXcgbGlicmFyeSB3ZWxjb21lcyBldmVyeSB2aXNpdG9yLikgVGog
+RVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBl
+MSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUz
+NSBmIAowMDAwMDAwMDE1IDAwMDAwIG4gCjAwMDAwMDAwNjQgMDAwMDAgbiAKMDAwMDAwMDEyMSAw
+MDAwMCBuIAowMDAwMDAwMjQ3IDAwMDAwIG4gCjAwMDAwMDA0MTkgMDAwMDAgbiAKdHJhaWxlcgo8
+PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo0ODkKJSVFT0YK
+--=_fps_808f1c4f938292377d03--
+.
++OK Logging out.

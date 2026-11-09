@@ -1,0 +1,106 @@
++OK Dovecot ready. <53870.1793081379@pop3.example.test>
++OK
++OK Logged in.
++OK 3 102247
++OK 1593 octets
+From: deten.gedas@example.test
+To: lourir.tudinol@example.test
+Subject: Receipt 9731
+Date: Fri, 18 Sep 2026 01:00:00 +0000
+Message-ID: <5c6da77f22dc80359b8ce912@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_ba530013436cd50a054c"
+
+This is a multi-part message in MIME format.
+--=_fps_ba530013436cd50a054c
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Duilo,
+
+Our new library carries a long list of notes. A patient teacher repairs the
+broken clocks (6523). The old bridge carries a long list of notes. The old
+bridge welcomes every visitor with great care. Our new library measures the
+water each week with great care.
+
+Ref: ORD-352437
+
+Kind regards,
+Saqua Losa
+Support desk
+saqua.losa@example.test
+
+..
+... the receipt follows in the attachment
+--=_fps_ba530013436cd50a054c
+Content-Type: application/gzip; name="export.gz"
+Content-Disposition: attachment; filename="export.gz"
+Content-Transfer-Encoding: base64
+
+H4sIAAAAAAAA/wFfAaD+VGhlIHF1aWV0IHJpdmVyIHJlcGFpcnMgdGhlIGJyb2tlbiBjbG9ja3Mg
+aW4gdGhlIGVhcmx5IGV2ZW5pbmcgKDUwMikuIFRoZSBsb2NhbCBjb3VuY2lsIG1lYXN1cmVzIHRo
+ZSB3YXRlciBlYWNoIHdlZWsgYmVmb3JlIHRoZSB3aW50ZXIgYmVnaW5zICg3NjAyKS4gVGhlIG9s
+ZCBicmlkZ2UgcGxhbnMgYSBjYXJlZnVsIHN1cnZleSAoOTg2MCkuIEEgc21hbGwgd29ya3Nob3Ag
+cmVwYWlycyB0aGUgYnJva2VuIGNsb2NrcyBiZWZvcmUgdGhlIHdpbnRlciBiZWdpbnMuCgpBIHBh
+dGllbnQgdGVhY2hlciByZXBhaXJzIHRoZSBicm9rZW4gY2xvY2tzIG5lYXIgdGhlIGhhcmJvdXIu
+IFRoZSBtb3JuaW5nIG1hcmtldCB3ZWxjRw5oq18BAAA=
+--=_fps_ba530013436cd50a054c--
+.
++OK Marked to be deleted.
++OK 2059 octets
+From: vureis.zoseir@example.test
+To: buhaikou.brenagan@example.test
+Cc: trounimir.dreidas@example.test
+Subject: Receipt 8865
+Date: Mon, 14 Dec 2026 07:15:22 +0000
+Message-ID: <fd3d6da95c96dcf4b317d61c@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_9d704964541186660288"
+
+This is a multi-part message in MIME format.
+--=_fps_9d704964541186660288
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Tenka,
+
+The morning market measures the water each week with great care. A small
+workshop keeps the records in order with great care (4564). The old bridge
+carries a long list of notes. The northern station opens the doors at dawn
+with great care.
+
+Ref: BKG-225100
+
+Kind regards,
+Pelra Dupel
+Support desk
+pelra.dupel@example.test
+
+..
+... the receipt follows in the attachment
+--=_fps_9d704964541186660288
+Content-Type: application/pdf; name="receipt.pdf"
+Content-Disposition: attachment; filename="receipt.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4K
+ZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4K
+ZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAg
+MCA2MTIgNzkyXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAw
+IFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAxNDUgPj4Kc3RyZWFtCkJUIC9G
+MSAxNCBUZiA1MCA3ODAgVGQgKERvY3VtZW50IGI3MTQ2ZTlmMzYpIFRqIEVUCkJUIC9GMSAxMCBU
+ZiA1MCA3NjAgVGQgKFRoZSBvbGQgYnJpZGdlIHJlcGFpcnMgdGhlIGJyb2tlbiBjbG9ja3MgaW4g
+dGhlIGVhcmx5IGV2ZW5pbmcuKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5
+cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4
+cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTUgMDAwMDAgbiAKMDAwMDAwMDA2
+NCAwMDAwMCBuIAowMDAwMDAwMTIxIDAwMDAwIG4gCjAwMDAwMDAyNDcgMDAwMDAgbiAKMDAwMDAw
+MDQ0MiAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDYgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVm
+CjUxMgolJUVPRgo=
+--=_fps_9d704964541186660288--
+.
++OK Marked to be deleted.
++OK Marked to be deleted.
++OK
++OK Logging out.

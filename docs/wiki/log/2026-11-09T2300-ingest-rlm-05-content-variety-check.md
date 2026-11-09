@@ -1,0 +1,10 @@
+## [2026-11-09] ingest | RLM-05 Content variety check
+
+We added the `content` check to the realism report. The runner reassembles the payloads of each TCP direction from the sequence numbers, splits HTTP/1 streams into messages and UDP into datagrams, and hashes each normalized unit with SHA-256. HTTP units drop the headers that vary without changing the content, such as `Date` and `ETag`, DNS units drop the transaction identifier, and a labels file can drop more headers. The duplicate ratio is counted per application and direction, and the check fails when an application is above `content.max_duplicate_ratio`, which defaults to 1% and which `--max-duplicate-ratio` overrides. The entry also reports the size distribution (quantiles, standard deviation, and coefficient of variation) and compares it with `content.sizes` when the labels give one. Encrypted sessions are skipped and counted, because the RLM-04 decryption path gives no plaintext. The report format moved to 0.5.0. The evidence is `docs/handoff/RLM-05.md` and `realism/tests/test_content.py`, which builds a capture with repeated bodies that fails and a varied capture that passes. We described the check in [Realism](Realism.md#content-variety-check).
+
+### Shared page notes
+
+- [Implementation Plan](Implementation-Plan.md): the realism report seam is at format 0.5.0 and has the `content` entry. The check is opt in, so labels files of earlier packages behave as before. GATE2 and CTL-12 must add a `content` section, or pass `--max-duplicate-ratio`, to include the check.
+- [Testing](Testing.md): `test-rlm` now also runs `realism/tests/test_content.py`, which needs no external tool and no workflow change.
+- Metric catalog: the check leaves `metrics` empty. `realism.duplicate_payload_ratio`, a gauge with the label `application`, would let the controller read the check, as issue #89 proposes for parser errors.
+- Encryption check: the check would cover TLS sessions if RLM-04 exposed the decrypted application data, for example through `tshark -T fields -e tls.app_data`. It skips them now.

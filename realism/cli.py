@@ -92,6 +92,12 @@ def _parser() -> argparse.ArgumentParser:
         help="TLS key log in the NSS format for the encryption check, in addition to the "
         "keys that a pcapng capture embeds",
     )
+    score_cmd.add_argument(
+        "--max-duplicate-ratio",
+        type=_threshold,
+        help="largest share of duplicate payloads per application, from 0 to 1; adds the "
+        "content variety check and overrides the labels file, whose default is 0.01",
+    )
     score_cmd.add_argument("--tshark", help="path of tshark, defaults to FPS_TSHARK or the path")
     score_cmd.add_argument("--zeek", help="path of zeek, defaults to FPS_ZEEK or the path")
     modules_cmd = commands.add_parser(
@@ -168,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
             skip_reasons=reasons,
             tls_probe=TsharkTlsProbe(args.tshark, args.timeout),
             keylog=args.keylog,
+            max_duplicate_ratio=args.max_duplicate_ratio,
         )
     except (CaptureError, LabelsError, ClassifierError, ParserError) as exc:
         print(f"realism score failed: {exc}", file=sys.stderr)

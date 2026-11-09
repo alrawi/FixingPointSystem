@@ -258,6 +258,25 @@ def decode(frame: Frame) -> Packet | None:
     Truncated headers, other link types, other transports, and IP fragments after
     the first all return None, so the caller counts them as skipped.
     """
+    segment = decode_segment(frame)
+    return segment.packet if segment is not None else None
+
+
+@dataclass(frozen=True)
+class Segment:
+    """A decoded packet together with its TCP sequence number and its payload bytes.
+
+    The sequence number is 0 for UDP. The payload is cut at the end of the IP
+    packet, so Ethernet padding never counts as payload.
+    """
+
+    packet: Packet
+    seq: int
+    payload: bytes
+
+
+def decode_segment(frame: Frame) -> Segment | None:
+    """Decode a frame like :func:`decode` and keep the sequence number and payload."""
     ip_data = _network_layer(frame)
     if ip_data is None:
         return None
@@ -273,21 +292,17 @@ def decode(frame: Frame) -> Packet | None:
         header_len = (segment[12] >> 4) * 4
         if header_len < 20 or header_len > len(segment):
             return None
-        return Packet(
-            frame.timestamp,
-            "tcp",
-            src,
-            sport,
-            dst,
-            dport,
-            len(segment) - header_len,
-            segment[13],
-        )
+        seq = struct.unpack("!I", segment[4:8])[0]
+        body = segment[header_len:]
+        packet = Packet(frame.timestamp, "tcp", src, sport, dst, dport, len(body), segment[13])
+        return Segment(packet, seq, body)
     if proto == _IP_UDP:
         if len(segment) < 8:
             return None
         sport, dport = struct.unpack("!HH", segment[:4])
-        return Packet(frame.timestamp, "udp", src, sport, dst, dport, len(segment) - 8)
+        body = segment[8:]
+        packet = Packet(frame.timestamp, "udp", src, sport, dst, dport, len(body))
+        return Segment(packet, 0, body)
     return None
 
 
