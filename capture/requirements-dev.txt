@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Test and lint tools of the capture compiler. The compiler itself needs only the
+# standard library.
+pytest>=8.0              # MIT
+jsonschema>=4.20         # MIT
+ruff==0.17.3             # MIT
+mypy==2.4.1              # MIT
+types-jsonschema         # Apache-2.0
