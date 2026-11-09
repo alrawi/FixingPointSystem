@@ -29,7 +29,7 @@ Steps 1 to 3 written. `gofmt -l`, `plan.py check`, `render --check`, and `lint` 
 
 ## Remaining
 
-CI is red on the first push with no job or log visible through the API (zero jobs listed), rerun did the same. Retriggering with a new commit.
+The ctl workflow run ends as failure with zero jobs and cannot be re-run (the API answers that it cannot be retried); other branches show the same pattern, so it looks like Actions infrastructure. cli-go passes, which includes the e2e test with `fps run list` exit 0. Retriggering ctl with a new commit.
 
 ## Next action
 
@@ -60,3 +60,4 @@ gofmt -l controller cli
 |---|---|---|---|---|
 | 2026-11-09T18:11Z | claude-c35a7e | claim | | Claimed #312 |
 | 2026-11-09T18:25Z | claude-c35a7e | checkpoint | f44ebce | PR #314 opened; ctl and cli-go failed with no visible jobs or logs, rerun failed the same way |
+| 2026-11-09T18:36Z | claude-c35a7e | checkpoint | b2086e7 | cli-go green; ctl run has no jobs, retrigger |
