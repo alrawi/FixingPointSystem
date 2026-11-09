@@ -1,0 +1,9 @@
+## [2026-11-09] ingest | CTL-32 capture file retention in the controller
+
+The controller now deletes stored capture files after `capture_retention` (default `168h`, flag `-capture-retention`). `captures.Service` sweeps once at start and then on its own ticker, by an injectable clock, and `Service.Close` stops the ticker. The sweep deletes a capture, its files and its record, when its newest file is older than the retention, so a download answers 404 afterwards. It never deletes a running capture, a capture whose transfer holds the `work` lock, or a capture with an open `Download` (`Prepare` counts it, `Download.Close` releases it). It also removes directories that a restart orphaned. The REST contract has no delete operation for runs, so no deletion follows a run delete. The [Controller](../Controller.md#retention-of-capture-files) page describes it.
+
+### Shared page notes
+
+- [Testing](../Testing.md): the tests are in `controller/internal/captures/retention_test.go` and run under `make test-ctl-captures`. Names: `TestSweepKeepsAFileBeforeTheRetentionEndsAndDeletesItAfter`, `TestSweepDeletesOnlyTheExpiredCapture`, `TestSweepKeepsARunningCapture`, `TestSweepKeepsTheFilesOfAnOpenDownload`, `TestSweepSkipsACaptureWhoseTransferIsRunning`, `TestSweepDeletesOrphanedDirectoriesByAge`, `TestWithoutRetentionNothingIsDeleted`, `TestTheServiceSweepsOnItsTickerUntilClosed`. Config and flag tests: `TestParseConfigReadsCaptureRetention`, `TestLoadConfigLayersCaptureRetention`.
+- `controller/internal/wiring/controller.go` changed outside the catalog paths of CTL-32: it passes `Retention` and `Clock` to `captures.New`, keeps the service in the `Controller`, and closes it in `Controller.Close`.
+- `controller/cmd/fps-controller/main.go` gained the flag `-capture-retention`, which follows the pattern of CTL-31.

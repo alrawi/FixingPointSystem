@@ -598,9 +598,25 @@ The manager sends `fetch_capture` only to an agent that reports `engine_api` 0.2
 
 ### Storage, resume, and verification
 
-The capture directory is `<data_dir>/captures`, or a temporary directory that ends with the process when no data directory is set. A file lives at `<run id>/<capture id>/<agent id>.pcapng`, and a transfer in progress at the same path with the suffix `.part`. Nothing deletes a file yet, because no retention policy exists.
+The capture directory is `<data_dir>/captures`, or a temporary directory that ends with the process when no data directory is set. A file lives at `<run id>/<capture id>/<agent id>.pcapng`, and a transfer in progress at the same path with the suffix `.part`. A retention sweep deletes old captures, see [Retention](#retention-of-capture-files).
 
 When a transfer breaks, the service reads the size of the part file and sends a new `fetch_capture` with a new transfer id and a `start_offset` equal to that size, up to five times. The agent keeps the file unchanged, so the resumed bytes continue the same file. The sink appends and, at `end`, hashes the whole part file, the bytes of every attempt together, and accepts it only when the size and the digest equal both the end message and what `stop_capture` reported. A file that fails is removed, the agent receives `verified: false`, and the next attempt starts at offset zero. A file that fails every attempt is never served, and the download answers 502 with the mismatch in its detail. A part file that is already complete is verified without a transfer. A file larger than 8 GiB per agent is refused.
+
+### Retention of capture files
+
+Nothing else removes a capture file, so `captures.Service` sweeps the capture directory (CTL-32). The setting `capture_retention` (flag `-capture-retention`, default `168h`, must be positive) says how long a capture lives, and `wiring.New` hands it to the service together with the controller clock. The service owns a `time.Ticker` and sweeps once at start, which cleans up after an earlier process, and then every hour (`Config.SweepInterval`). `Service.Close`, which `Controller.Close` calls before it closes the store, stops the ticker and waits for a sweep in progress. `Retention` zero in `captures.Config` starts no sweep, so a service built without it keeps every file as before.
+
+The age of a capture is the newest modification time of its directory and the files in it, or the time that the service started it, whichever is later, compared with the clock of the service. A capture is deleted when that time lies more than `capture_retention` in the past. The sweep then removes the directory `<run id>/<capture id>` and the capture itself, so a download of it answers 404 like a download of an unknown capture, and the list of the run no longer shows it. A capture that was never downloaded holds no file but expires the same way. The sweep also deletes directories that no capture of the running process owns, which a restart leaves behind because the capture records live in memory, by the age of their files, and it removes a run directory once it is empty and old.
+
+The sweep never deletes what is in use:
+
+- It takes the lock `capture.work` that a stop and a fetch hold for their whole length, with `TryLock`. A capture whose transfer runs is skipped and the next sweep tries again, so the sweep never waits for a transfer.
+- `Service.Prepare` counts the download that it returns, and `Download.Close` releases it. The REST handler closes the download after it wrote the body, and the sweep skips a capture with open downloads. Code that calls `Prepare` itself must call `Close`.
+- A capture that still runs is never deleted, because an agent still writes into it. A running capture of a run that ended becomes final at the next list or download, and the sweep can delete it after that.
+
+The REST contract has no operation that deletes a run, so there is no deletion of capture files with a run. A later package that adds one can call the same removal.
+
+`Config.Clock` is a one method interface, `Now() time.Time`, so a test moves time by hand. `retention_test.go` shows a file that stays at 6 days 23 hours and is deleted at 7 days 1 hour, then a download that answers 404.
 
 ### Tests of the captures
 
@@ -700,6 +716,7 @@ tokens:
 | `agent_auto_enroll` | false | Admits an agent whose identity the inventory does not list. With mutual TLS the identity comes from the client certificate, see [agent_auto_enroll](#agent_auto_enroll-with-certificates) |
 | `tokens` | none | Bearer tokens of the REST API, each with a `name`, a `scope` of `read`, `run`, or `admin`, and exactly one of `token` and `token_file` |
 | `trust_store_file` | none | Trust store of module signing keys. With it the registry refuses a module without a verified signature, see [Trust policy](#trust-policy) (CTL-28). Without it signatures are not required and the controller logs a warning |
+| `capture_retention`, `-capture-retention duration` | `168h` | How long the controller keeps a stored capture, as a Go duration (`7d` is not one, write `168h`). It must be positive. See [Retention](#retention-of-capture-files) (CTL-32) |
 | `allow_unsigned_modules` | false | Development setting that lets a registry with a trust store install unsigned modules. A bad signature is still refused |
 
 A token holds at least 16 bytes. A `token_file` holds the token alone, and the controller trims the white space around it. Names must be unique, and two entries must not hold the same token. A token that breaks a rule, or a token file that the controller cannot read, ends the process with exit code 2. Without tokens every `/v1` operation answers 401, and the controller logs a warning at startup.

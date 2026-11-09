@@ -318,6 +318,41 @@ func TestLoadConfigLayersTrustStoreSettings(t *testing.T) {
 	}
 }
 
+func TestLoadConfigLayersCaptureRetention(t *testing.T) {
+	path := writeConfig(t, "capture_retention: 48h\n")
+	for _, tc := range []struct {
+		name string
+		args []string
+		want time.Duration
+	}{
+		{"defaults", nil, 7 * 24 * time.Hour},
+		{"file", []string{"-config", path}, 48 * time.Hour},
+		{"flag", []string{"-capture-retention", "1h30m"}, 90 * time.Minute},
+		{"flag over file", []string{"-config", path, "-capture-retention", "2h"}, 2 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, err := parseFlags(tc.args, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := loadConfig(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := time.Duration(cfg.CaptureRetention); got != tc.want {
+				t.Errorf("CaptureRetention = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	o, err := parseFlags([]string{"-capture-retention", "0s"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadConfig(o); err == nil {
+		t.Error("loadConfig accepted -capture-retention 0s")
+	}
+}
+
 // TestBinaryShutsDownOnSIGTERM builds the real binary, starts it, checks the
 // health endpoint, sends SIGTERM, and expects exit code 0 with JSON logs.
 func TestBinaryShutsDownOnSIGTERM(t *testing.T) {

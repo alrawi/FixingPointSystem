@@ -82,6 +82,7 @@ func (a *API) DownloadCapture(w http.ResponseWriter, r *http.Request, id api.Id,
 		writeError(w, r, err)
 		return
 	}
+	defer d.Close()
 	h := w.Header()
 	h.Set("Content-Type", ContentType)
 	h.Set("Content-Length", strconv.FormatInt(d.Size, 10))

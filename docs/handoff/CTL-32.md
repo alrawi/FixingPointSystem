@@ -6,7 +6,7 @@
 | Branch | `wp/CTL-32` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-e61608, lease until 2026-11-09T15:12:51Z |
 | Last verified commit | none |
 
@@ -23,15 +23,15 @@ CTL-14 stores downloaded capture files under the data directory and nothing remo
 
 ## Done and verified
 
-Nothing yet.
+Steps 1 to 3 written. Go cannot build here, so only `gofmt -l` (clean), `plan.py check`, `render --check`, and `lint` ran locally; CI is the build and test loop.
 
 ## Remaining
 
-Everything.
+Open the PR and fix what CI reports.
 
 ## Next action
 
-Implement step 1.
+Open the PR and poll CI.
 
 ## Blockers and open questions
 

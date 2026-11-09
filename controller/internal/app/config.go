@@ -50,6 +50,9 @@ const (
 	StoreFile = "configs.db"
 	// ModulesDir is the name of the module registry under DataDir.
 	ModulesDir = "modules"
+	// DefaultCaptureRetention is how long the controller keeps a stored
+	// capture file: seven days.
+	DefaultCaptureRetention = 7 * 24 * time.Hour
 	// MinTokenLength is the shortest API token that the controller accepts.
 	MinTokenLength = 16
 )
@@ -122,6 +125,11 @@ type Config struct {
 	// install a module without a signature when a trust store is configured.
 	// A module whose signature fails is refused either way.
 	AllowUnsignedModules bool `yaml:"allow_unsigned_modules"`
+	// CaptureRetention is how long the controller keeps a capture file that it
+	// stored below DataDir/captures. A sweep deletes a capture, and its record,
+	// when nothing below it changed for this long. It is a Go duration, so seven
+	// days is "168h".
+	CaptureRetention Duration `yaml:"capture_retention"`
 }
 
 // Token is one bearer token of the REST API. Exactly one of Token and
@@ -170,6 +178,7 @@ func DefaultConfig() Config {
 		ReadHeaderTimeout: Duration(DefaultReadHeaderTimeout),
 		GRPCListen:        DefaultGRPCListen,
 		EnrollListen:      DefaultEnrollListen,
+		CaptureRetention:  Duration(DefaultCaptureRetention),
 	}
 }
 
@@ -217,6 +226,9 @@ func (c Config) Validate() error {
 	}
 	if c.ReadHeaderTimeout <= 0 {
 		return fmt.Errorf("%w: read_header_timeout must be positive", ErrInvalidConfig)
+	}
+	if c.CaptureRetention <= 0 {
+		return fmt.Errorf("%w: capture_retention must be positive", ErrInvalidConfig)
 	}
 	if _, _, err := net.SplitHostPort(c.GRPCListen); err != nil {
 		return fmt.Errorf("%w: grpc_listen %q: %w", ErrInvalidConfig, c.GRPCListen, err)

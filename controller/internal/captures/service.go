@@ -41,6 +41,8 @@ const (
 	// DefaultMaxFileBytes is the largest capture file that the service
 	// stores per agent.
 	DefaultMaxFileBytes uint64 = 8 << 30
+	// DefaultSweepInterval is the time between two retention sweeps.
+	DefaultSweepInterval = time.Hour
 	// maxBusyRetries bounds the retries after an agent that still serves
 	// a broken transfer.
 	maxBusyRetries = 10
@@ -84,6 +86,16 @@ var (
 	_ RunSource = (*runs.Orchestrator)(nil)
 )
 
+// Clock tells the time to the retention sweep. agents.Clock and the clocks of
+// the tests satisfy it.
+type Clock interface {
+	Now() time.Time
+}
+
+type wallClock struct{}
+
+func (wallClock) Now() time.Time { return time.Now() }
+
 // Config configures a Service. Agents, Runs, and Dir are required.
 type Config struct {
 	// Agents sends the capture commands.
@@ -109,6 +121,17 @@ type Config struct {
 	// MaxFileBytes refuses a capture file of an agent that is larger. Zero
 	// means DefaultMaxFileBytes.
 	MaxFileBytes uint64
+	// Retention is how long the service keeps a capture. A sweep deletes the
+	// files of a capture, and forgets it, when nothing below its directory
+	// changed for longer than Retention. Zero or less keeps every capture and
+	// starts no sweep.
+	Retention time.Duration
+	// SweepInterval is the time between two sweeps. Zero means
+	// DefaultSweepInterval.
+	SweepInterval time.Duration
+	// Clock tells the time that the sweep compares the age of a capture with.
+	// Nil reads the wall clock.
+	Clock Clock
 }
 
 // StartRequest is the body of POST /v1/runs/{id}/captures.
@@ -175,11 +198,17 @@ type capture struct {
 	maxBytes                uint64
 	tlsKeys                 bool
 	dir                     string
+	// started is when the service started the capture, by its clock.
+	started time.Time
 
 	work sync.Mutex
 	mu   sync.Mutex
 	// files is ordered by agent identity.
 	files []*AgentFile
+	// users counts the downloads that hold files of the capture open, and
+	// removed is true once the sweep deleted the capture. mu guards both.
+	users   int
+	removed bool
 }
 
 func (c *capture) view() Capture {
@@ -219,6 +248,10 @@ type Service struct {
 
 	mu    sync.Mutex
 	byRun map[string][]*capture
+
+	stop      context.CancelFunc
+	sweepDone chan struct{}
+	closeOnce sync.Once
 }
 
 // New returns a Service and creates its capture directory.
@@ -247,7 +280,31 @@ func New(cfg Config) (*Service, error) {
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create capture directory %s: %w", cfg.Dir, err)
 	}
-	return &Service{cfg: cfg, log: cfg.Logger, byRun: map[string][]*capture{}}, nil
+	if cfg.SweepInterval <= 0 {
+		cfg.SweepInterval = DefaultSweepInterval
+	}
+	if cfg.Clock == nil {
+		cfg.Clock = wallClock{}
+	}
+	s := &Service{cfg: cfg, log: cfg.Logger, byRun: map[string][]*capture{}}
+	if cfg.Retention > 0 {
+		var ctx context.Context
+		ctx, s.stop = context.WithCancel(context.Background())
+		s.sweepDone = make(chan struct{})
+		go s.sweepLoop(ctx)
+	}
+	return s, nil
+}
+
+// Close stops the retention sweep and waits for a sweep in progress to end. It
+// leaves the files alone and is safe to call more than once.
+func (s *Service) Close() {
+	s.closeOnce.Do(func() {
+		if s.stop != nil {
+			s.stop()
+			<-s.sweepDone
+		}
+	})
 }
 
 func randomID() (string, error) {
@@ -316,7 +373,7 @@ func (s *Service) Start(ctx context.Context, runID string, req StartRequest) (Ca
 		return Capture{}, fmt.Errorf("capture id %q is not a valid identifier", id)
 	}
 	c := &capture{id: id, runID: runID, port: req.Port, filter: req.BPF, maxBytes: req.MaxBytes, tlsKeys: req.ExportTLSKeys,
-		dir: filepath.Join(s.cfg.Dir, runID, id)}
+		dir: filepath.Join(s.cfg.Dir, runID, id), started: s.cfg.Clock.Now()}
 	c.files = make([]*AgentFile, len(targets))
 	errs := make([]error, len(targets))
 	var wg sync.WaitGroup
@@ -462,6 +519,19 @@ type Download struct {
 	Missing []string
 
 	paths []string
+	c     *capture
+	once  sync.Once
+}
+
+// Close releases the files, so the retention sweep may delete them. Every
+// Download that Prepare returns needs one Close, and a repeated Close does
+// nothing.
+func (d *Download) Close() {
+	d.once.Do(func() {
+		d.c.mu.Lock()
+		d.c.users--
+		d.c.mu.Unlock()
+	})
 }
 
 // WriteTo writes the files one after the other, which is a valid pcapng
@@ -485,7 +555,9 @@ func (d *Download) WriteTo(w io.Writer) (int64, error) {
 
 // Prepare ends the capture when it still runs, fetches the file of every
 // agent that the service does not hold yet, and returns the files. It
-// succeeds when at least one agent delivered a verified file.
+// succeeds when at least one agent delivered a verified file, and then the
+// caller closes the Download when it has sent the files. A capture that the
+// retention sweep deleted is not found.
 func (s *Service) Prepare(ctx context.Context, runID, captureID string) (*Download, error) {
 	run, err := s.cfg.Runs.Get(runID)
 	if err != nil {
@@ -497,6 +569,12 @@ func (s *Service) Prepare(ctx context.Context, runID, captureID string) (*Downlo
 	}
 	c.work.Lock()
 	defer c.work.Unlock()
+	c.mu.Lock()
+	gone := c.removed
+	c.mu.Unlock()
+	if gone {
+		return nil, fmt.Errorf("capture %s of run %s: expired: %w", captureID, runID, ErrCaptureNotFound)
+	}
 	s.stopAll(ctx, c, runs.Final(run.State))
 	var firstErr error
 	for _, f := range c.files {
@@ -519,7 +597,7 @@ func (s *Service) Prepare(ctx context.Context, runID, captureID string) (*Downlo
 			firstErr = errors.Join(firstErr, err)
 		}
 	}
-	d := &Download{}
+	d := &Download{c: c}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, f := range c.files {
@@ -539,6 +617,9 @@ func (s *Service) Prepare(ctx context.Context, runID, captureID string) (*Downlo
 		}
 		return nil, fmt.Errorf("capture %s of run %s: %w: %w", captureID, runID, ErrNoFile, firstErr)
 	}
+	// The sweep takes c.work before it checks users, and the caller holds the
+	// download open until Close, so the files stay until then.
+	c.users++
 	return d, nil
 }
 
