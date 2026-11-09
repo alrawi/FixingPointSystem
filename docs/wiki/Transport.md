@@ -9,7 +9,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | Crate | Contents | Next package |
 |---|---|---|
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `Connector`, `KernelListener`, and `KernelStream`, which implement `SessionIo` over kernel TCP sockets, the operating system profiles of TRN-03, and `KernelDatagram`, `KernelDatagramListener`, and the two datagram openers of TRN-02, see [Kernel UDP backend](#kernel-udp-backend) | TRN-04 added TLS, see below |
-| [`fps-module-tls`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/tls) | `TlsConnector`, `TlsAcceptor`, and `TlsSession`, which wrap any `SessionIo` in TLS 1.2 or 1.3, the client and server profiles, `RunAuthority`, and `NssKeyLog`, see [TLS module](#tls-module) | TRN-05 adds browser fingerprint profiles |
+| [`fps-module-tls`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/tls) | `TlsConnector`, `TlsAcceptor`, and `TlsSession`, which wrap any `SessionIo` in TLS 1.2 or 1.3, the client and server profiles, `RunAuthority`, and `NssKeyLog`, see [TLS module](#tls-module) | TRN-05 added the browser profiles, see [Browser profiles and JA4](#browser-profiles-and-ja4) |
 
 The `test-eng` target and the `rust` job of `ci.yml` run the tests of every crate under `engine/`, so the backend needs no make file or workflow of its own.
 
@@ -239,11 +239,58 @@ A `ClientProfile` fixes what the ClientHello carries, and a `ServerProfile` fixe
 | `alpn` | yes | yes | Protocol ids in preference order. A server with a non empty list that shares none with a client that offers ids fails with `no_application_protocol` |
 | `groups` | yes | yes | Key exchange groups in order, from `x25519`, `secp256r1`, and `secp384r1`. The ClientHello lists them in this order and the first one supplies the key share |
 | `cipher_suites` | yes | yes | The nine suites of the ring provider in order. Suites of a version that is not enabled drop out |
+| `sig_schemes` | yes | | The `signature_algorithms` extension in order, from the nine schemes of ring (TRN-05). It also limits the signatures that the client accepts |
 | `use_server_cipher_order` | | yes | The server picks by its own order and not the client's |
 | `resumption` | `Disabled` or `InMemory` | `Disabled`, `Tickets`, or `SessionCache` | See below |
 | `key_log` | yes | yes | Receives the secrets of every handshake |
 
-`CipherSuite`, `Group`, and `TlsVersion` implement `FromStr`, so a module can parse names from its settings. The test `client_hello_follows_the_profile` records the first bytes of a handshake, parses the ClientHello, and checks the order of suites, groups, ALPN ids, versions, the key share group, and the SNI against the profile. TRN-05 builds the browser profiles on these fields, and the limits below name what a browser order needs beyond them.
+`CipherSuite`, `Group`, and `TlsVersion` implement `FromStr`, so a module can parse names from its settings. The test `client_hello_follows_the_profile` records the first bytes of a handshake, parses the ClientHello, and checks the order of suites, groups, ALPN ids, versions, the key share group, and the SNI against the profile. TRN-05 builds the browser profiles on these fields, see [Browser profiles and JA4](#browser-profiles-and-ja4).
+
+### Browser profiles and JA4
+
+TRN-05 added the module `fps_module_tls::browser` with four profiles. Each `BrowserProfile` carries the `ClientProfile`, the `expected_ja4` that this implementation puts on the wire, the `browser_ja4` of the real browser, the `sources` of its field orders, and the `gaps` that explain why the two fingerprints differ. `browser::BROWSER_PROFILES` lists them and `browser::find(name)` looks one up. The labels file of the realism check takes `expected_ja4` as the `ja4` of the profile `name` (see [Realism](Realism.md#encryption-check)), so RLM-04 reports the expected value for every profile.
+
+**Rustls cannot reproduce a browser ClientHello, so no profile matches the JA4 of its browser.** The profiles follow the browsers where the crate has a knob, and the table records what comes out. The JA4 values below were computed from the bytes of a real handshake with the server name `tls.example.test` and cross checked with tshark 4.2.2.
+
+| Profile | Follows | `expected_ja4` (this implementation) | `browser_ja4` (public captures) |
+|---|---|---|---|
+| `chrome-136` | Chrome 132 to 137 | `t13d1011h2_61a7ad8aa9b6_6d021c4c45cd` | `t13d1516h2_8daaf6152771_d8a2da3f94cd` |
+| `edge-134` | Edge 122 to 134, a Chromium build | `t13d1011h2_61a7ad8aa9b6_6d021c4c45cd` | `t13d1516h2_8daaf6152771_02713d6af862` |
+| `firefox-139` | Firefox 135 to 139 | `t13d1011h2_61a7ad8aa9b6_f674693fb0dc` | `t13d1717h2_5b57614c22b0_3cbfd9057e0d` |
+| `safari-18.5` | Safari 18.2 to 18.5 on macOS | `t13d1011h2_61a7ad8aa9b6_6d021c4c45cd` | `t13d2014h2_a09f3c656075_e42f34c56612` |
+
+What a profile controls, and what it follows from the browser:
+
+| Field | Chrome and Edge | Firefox | Safari |
+|---|---|---|---|
+| Suite order (rustls subset, `0x00ff` appended) | 1301 1302 1303 c02b c02f c02c c030 cca9 cca8 | 1301 1303 1302 c02b c02f cca9 cca8 c02c c030 | 1301 1302 1303 c02c c02b cca9 c030 c02f cca8 |
+| Signature schemes (ring subset) | 0403 0804 0401 0503 0805 0501 0806 0601 | 0403 0503 0807 0804 0805 0806 0401 0501 0601 | 0403 0804 0401 0503 0805 0501 0806 0601 |
+| Groups (ring subset) | x25519, secp256r1, secp384r1 | the same | the same |
+| ALPN | `h2`, `http/1.1` | the same | the same |
+
+Four gaps hold for every profile. The first two decide the JA4 hash parts, so none of the four profiles can match.
+
+1. **Cipher suites (JA4 part b and the count in part a).** Ring offers nine ECDHE AEAD suites, and rustls adds the signal suite `0x00ff`, so the ClientHello has 10 suites. A browser also offers the CBC suites `c009`, `c00a`, `c013`, `c014` (Safari also `c008`, `c012`, `000a`) and the RSA key exchange suites `009c`, `009d`, `002f`, `0035`, which no rustls provider implements. JA4 hashes the sorted suite list, so the hash is `61a7ad8aa9b6` for all four profiles, and the browsers' hashes are `8daaf6152771` (Chrome, Edge), `5b57614c22b0` (Firefox), and `a09f3c656075` (Safari). Order does not enter JA4, so the suite order above shows only in the wire form and in JA4_o.
+2. **Extensions (JA4 part c and the count in part a).** Rustls sends 11 extensions, `0000`, `0005`, `000a`, `000b`, `000d`, `0010`, `0017`, `0023`, `002b`, `002d`, and `0033`. Chrome and Edge also send `0012` (signed_certificate_timestamp), `001b` (compress_certificate), `4469` or `44cd` (application_settings), `fe0d` (ECH GREASE), and `ff01` (renegotiation_info), Firefox also `0012`, `001b`, `001c` (record_size_limit), `0022` (delegated_credential), `fe0d`, and `ff01`, and Safari also `0012`, `001b`, and `ff01`. Rustls cannot send `0012`, `4469`, `44cd`, `001c`, `0022`, or `ff01` at all. `fe0d` needs an HPKE implementation, which the ring provider lacks (only aws-lc-rs has one, and the module follows decision D4 to keep ring). `001b` needs a certificate decompressor, and a stub that advertises compression without decoding would break handshakes with servers that compress certificates.
+3. **GREASE.** Rustls adds no GREASE value to the suites, extensions, groups, or versions. JA4 drops GREASE before it counts and hashes, so it costs nothing in JA4, but it shows in JA3 and in the wire form.
+4. **Extension order.** Rustls shuffles the extensions with a seed that it draws for each connection, and the crate cannot set it. Chrome and Edge shuffle too, Firefox and Safari use a fixed order. JA4 sorts the extensions, so it is stable, and JA4_o and JA3 are not.
+
+The profiles also differ from their browsers in groups (no `X25519MLKEM768`, P-521, or FFDHE) and in signature schemes (no SHA-1 schemes, P-521, or Ed448), which JA4 does not read for groups and reads for schemes in part c.
+
+Because only the signature scheme order differs, three of the four profiles share one fingerprint. Chrome, Edge, and Safari list the same schemes in the same order after the filter, so `chrome-136`, `edge-134`, and `safari-18.5` have the same `expected_ja4`, and only `firefox-139` differs, in part c. A fingerprint check cannot tell these three profiles apart, so a realism run that needs to separate Chrome from Safari traffic has to use the HTTP layer (the `User-Agent` and header order) and not JA4. This is the honest limit of rustls. Matching the browsers needs a TLS stack that can set the suite list and the extensions freely, for example BoringSSL, whose license needs a review against GPL-3.0 first, or a patched rustls that takes a ClientHello hook. Either needs an owner decision, and this package does not make it.
+
+**Sources.** The `browser_ja4` values and the version ranges come from the expectations in the tests of `wreq-util` 2.2.6, which check the emulations of Chrome, Edge, Firefox, and Safari against captured fingerprints ([Chrome](https://docs.rs/crate/wreq-util/2.2.6/source/tests/emulation_chrome.rs), [Firefox](https://docs.rs/crate/wreq-util/2.2.6/source/tests/emulation_firefox.rs), [Safari](https://docs.rs/crate/wreq-util/2.2.6/source/tests/emulation_safari.rs)). The Chrome fingerprint of the FoxIO worked example, `t13d1516h2_8daaf6152771_e5627efa2ab1`, comes from the [JA4 specification](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md), and its ClientHello is the fixture of `realism/tests/test_ja4.py`, which is the source of the Chrome suite and signature scheme order. The Firefox and Safari suite orders and signature scheme orders are the orders of public ClientHello captures (tls.peet.ws, ja4db) as the author recalled them, and the author could not fetch the capture pages in the sandbox of this package. Treat those two rows as unverified until someone compares them with a capture of the named version. The gap on this point does not change `expected_ja4` for Firefox or Safari, because JA4 ignores the suite order, but it would change the Firefox value if the scheme order were wrong. The names `chrome-136`, `edge-134`, `firefox-139`, and `safari-18.5` name the newest version of each range in the sources, which is older than the stable releases of November 2026, because no newer capture was available.
+
+**Tests.** `modules/tls/tests/ja4.rs` runs a real handshake per profile, records the ClientHello bytes, and computes the JA4 with `realism/ja4.py` through `modules/tls/tests/ja4_of_hello.py`, which needs only `python3`.
+
+| Test | Needs | Check |
+|---|---|---|
+| `every_browser_profile_produces_its_expected_ja4` | `python3` | The JA4 of the recorded ClientHello equals `expected_ja4` and differs from `browser_ja4` |
+| `profile_orders_reach_the_wire` | `python3` | The suites (plus `00ff`), the signature schemes, and the ALPN ids appear in the order of the profile |
+| `profiles_that_share_a_client_hello_share_a_ja4` | none | Chrome and Edge have one `expected_ja4` and two `browser_ja4` values |
+| `tshark_agrees_with_the_expected_ja4` | `tshark` 4.2 or newer | `tls.handshake.ja4` of tshark equals `expected_ja4` for every profile |
+
+The Python tests run in the `rust` job of `ci.yml` through `cargo test --workspace`. The `mod-tls` workflow runs only `--test capture`, so the tshark test does not run there until the workflow has the step `cargo test -p fps-module-tls --test ja4` with `FPS_REQUIRE_CAPTURE_TOOLS: "1"`, see the log entry of TRN-05.
 
 ### Certificates
 
@@ -308,7 +355,7 @@ The async wrapper costs more than the profile code. `handshake_bench --mode sess
 |---|---|
 | No client certificates, no 0-RTT, and no custom certificate verifier | The first version verifies the server against the run authority and offers no mutual TLS. A package that needs them extends the profiles |
 | No post quantum groups, AES-CCM, or CBC suites | The ring provider does not implement them |
-| The ClientHello extension order is rustls's | Rustls fixes the extension order and adds no GREASE, so a profile that must match a browser fingerprint needs more than the fields here, which TRN-05 investigates |
+| The ClientHello of a profile cannot match a browser's JA4 | Rustls with ring fixes the extension set, shuffles the order, adds no GREASE, and offers no CBC or RSA key exchange suites, see [Browser profiles and JA4](#browser-profiles-and-ja4) |
 | A TLS 1.3 server flushes its tickets lazily | See the session behaviors above |
 | A transport that ends without `close_notify` reads as a clean end | Truncation is not an error, which suits servers that close this way |
 | `alert_sent` is known only for plaintext alerts and for errors that imply one | Rustls sends the other alerts encrypted and does not report them |

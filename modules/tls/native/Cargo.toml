@@ -29,3 +29,7 @@ path = "../tests/sessions.rs"
 [[test]]
 name = "capture"
 path = "../tests/capture.rs"
+
+[[test]]
+name = "ja4"
+path = "../tests/ja4.rs"
