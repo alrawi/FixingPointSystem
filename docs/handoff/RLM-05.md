@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #187 |
 | Branch | `wp/RLM-05` |
-| Pull request | #0 |
+| Pull request | #328 |
 | Status | in progress |
 | Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-d41386, lease until 2026-11-09T21:24:01Z |
@@ -21,7 +21,7 @@ Add the content variety check to the realism report. It reassembles application 
 - [x] 1. Segment decoding and reassembly, normalization, hashing (`realism/content.py`, `Segment` in `realism/capture.py`)
 - [x] 2. Labels `content` section, report schema 0.5.0, `--max-duplicate-ratio`
 - [x] 3. Tests with generated fixtures (`realism/tests/test_content.py`)
-- [ ] 4. README, wiki page, log entry, pull request, CI
+- [x] 4. README, wiki page, log entry, pull request, CI
 
 ## Done and verified
 
@@ -29,11 +29,11 @@ Add the content variety check to the realism report. It reassembles application 
 
 ## Remaining
 
-Step 4.
+Wait for CI.
 
 ## Next action
 
-Update `realism/README.md` and `docs/wiki/Realism.md`, add the log entry, and open the pull request.
+Poll the checks of pull request #328 and fix failures inside the paths.
 
 ## Blockers and open questions
 
