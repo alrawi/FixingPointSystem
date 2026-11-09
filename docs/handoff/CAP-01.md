@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #193 |
 | Branch | `wp/CAP-01` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 95% (5 of 5 plan steps, CI pending) |
+| Pull request | #305 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-c4a901, lease until 2026-11-09T17:42:01Z |
-| Last verified commit | none |
+| Last verified commit | 20d88c9 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -36,7 +36,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Wait for CI.
+none
 
 ## Next action
 
@@ -67,3 +67,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T17:12Z | claude-c4a901 | claim | none | claimed #193 |
+| 2026-11-09T17:55Z | claude-c4a901 | review | 20d88c9 | PR #305, CI green |
