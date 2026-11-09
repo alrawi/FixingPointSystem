@@ -19,8 +19,8 @@ import (
 // The byte mix tests run the CTL-12 acceptance on the real agent manager and
 // fake agents. The mix has three scenarios whose sessions carry 20 kB, 200 kB,
 // and 200 B, a factor of 1000 apart, against manifest estimates that are off
-// by factors of 2, 4, and 5. At the compiled session rates the heavy scenario
-// takes 87 percent of the bytes, and the weights ask for 39.9.
+// by factors of 2, 4, and 5. At the compiled session shares the heavy scenario
+// takes 84 percent of the bytes, and the weights ask for 39.9.
 const (
 	mixObjectiveBps = 80e6
 	// mixSimSpeed and mixWindow make one control window span one simulated
@@ -46,26 +46,32 @@ func mixConfig(basis, objective string) string {
 
 var mixThroughput = mixConfig("bytes", "{ type: throughput_bps, value: 80000000 }")
 
-// mixCatalog serves the three scenarios with their manifest estimates.
-type mixCatalog struct{}
+// mixCatalog serves the three scenarios with their manifest estimates, which
+// are off by factors of 2, 4, and 5, or with the true bytes per session when
+// exact is set.
+type mixCatalog struct{ exact bool }
 
-func (mixCatalog) Scenarios(context.Context) ([]compiler.Scenario, error) {
+func (c mixCatalog) Scenarios(context.Context) ([]compiler.Scenario, error) {
+	browse, get, lookup := 40e3, 50e3, 1000.0
+	if c.exact {
+		browse, get, lookup = mixTrueBytes["web_browse"], mixTrueBytes["web_get"], mixTrueBytes["lookup"]
+	}
 	digest := "sha256:" + strings.Repeat("0", 64)
 	http1 := compiler.ModuleRef{Name: "http1", Version: "0.1.0", Digest: digest}
 	dns := compiler.ModuleRef{Name: "dns", Version: "0.1.0", Digest: digest}
 	return []compiler.Scenario{
-		{Module: http1, Name: "web_browse", Source: "name: web_browse\n", BytesPerSession: 40e3},
-		{Module: http1, Name: "web_get", Source: "name: web_get\n", BytesPerSession: 50e3},
-		{Module: dns, Name: "lookup", Source: "name: lookup\n", BytesPerSession: 1000},
+		{Module: http1, Name: "web_browse", Source: "name: web_browse\n", BytesPerSession: browse},
+		{Module: http1, Name: "web_get", Source: "name: web_get\n", BytesPerSession: get},
+		{Module: dns, Name: "lookup", Source: "name: lookup\n", BytesPerSession: lookup},
 	}, nil
 }
 
-func mixHarness(t *testing.T, cfgBody string, cal runs.CalibrationConfig) (*harness, *logRecorder) {
+func mixHarness(t *testing.T, cfgBody string, cal runs.CalibrationConfig, cat mixCatalog) (*harness, *logRecorder) {
 	t.Helper()
 	rec := &logRecorder{}
 	h := newHarness(t, func(c *runs.Config) {
 		c.Store = memStore{"thr": cfgBody}
-		c.Catalog = mixCatalog{}
+		c.Catalog = cat
 		c.Calibration = cal
 		c.Logger = slog.New(rec)
 	})
@@ -130,11 +136,13 @@ func trackShares(t *testing.T, a *fakeagent.Agent, until float64) []shareSample 
 	return nil
 }
 
-// TestByteMixConvergesAndStays is the acceptance test of CTL-12: the byte
-// shares reach 2 points of the weights within 30 simulated seconds and stay
-// there, while the throughput stays on the objective.
+// TestByteMixConvergesAndStays is the acceptance test of CTL-12 for wrong
+// manifest estimates: the compiler converts the byte weights with them, so the
+// run starts at the wrong shares, the byte shares reach 2 points of the
+// weights within 30 simulated seconds and stay there, while the throughput
+// stays on the objective.
 func TestByteMixConvergesAndStays(t *testing.T) {
-	h, rec := mixHarness(t, mixThroughput, mixCalibration(false))
+	h, rec := mixHarness(t, mixThroughput, mixCalibration(false), mixCatalog{})
 	a := startMixAgent(t, h, "agent-a")
 	run := h.startThroughputRun(t, a)
 
@@ -182,9 +190,10 @@ func TestByteMixConvergesAndStays(t *testing.T) {
 		t.Fatal("the run recorded no calibration step")
 	}
 	m := rec1.Calibration[len(rec1.Calibration)-1].Multipliers
-	// With the compiled weights equal to the byte weights, the multiplier of an
-	// entry is inversely proportional to its bytes per session.
-	if got, want := m["web_get"]/m["web_browse"], mixTrueBytes["web_browse"]/mixTrueBytes["web_get"]; math.Abs(got/want-1) > 0.05 {
+	// The compiled session shares follow the estimates, so the multiplier of an
+	// entry is its estimate over its true bytes per session, up to a common
+	// factor: (50 kB / 200 kB) / (40 kB / 20 kB) for web_get over web_browse.
+	if got, want := m["web_get"]/m["web_browse"], (50e3/mixTrueBytes["web_get"])/(40e3/mixTrueBytes["web_browse"]); math.Abs(got/want-1) > 0.05 {
 		t.Errorf("multiplier ratio %v, want %v", got, want)
 	}
 	if rec.count("byte mix step") == 0 {
@@ -205,12 +214,16 @@ func TestByteMixOnlyWhenAsked(t *testing.T) {
 	for name, tc := range map[string]struct {
 		cfg string
 		off bool
+		// ratio is the compiled session rate of web_get over web_browse: the
+		// weights themselves for the sessions basis, and the byte weights over
+		// the manifest estimates (50 kB and 40 kB) for the bytes basis.
+		ratio float64
 	}{
-		"sessions basis": {mixConfig("sessions", "{ type: throughput_bps, value: 80000000 }"), false},
-		"byte mix off":   {mixThroughput, true},
+		"sessions basis": {mixConfig("sessions", "{ type: throughput_bps, value: 80000000 }"), false, 39.9 / 60},
+		"byte mix off":   {mixThroughput, true, (39.9 / 50e3) / (60 / 40e3)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			h, rec := mixHarness(t, tc.cfg, mixCalibration(tc.off))
+			h, rec := mixHarness(t, tc.cfg, mixCalibration(tc.off), mixCatalog{})
 			a := startMixAgent(t, h, "agent-a")
 			h.startThroughputRun(t, a)
 			samples := trackShares(t, a, 40)
@@ -236,7 +249,7 @@ func TestByteMixOnlyWhenAsked(t *testing.T) {
 						get = r.GetSessionsPerSecond()
 					}
 				}
-				if math.Abs(get/browse-39.9/60) > 1e-6 {
+				if math.Abs(get/browse-tc.ratio) > 1e-6 {
 					t.Errorf("session rates %v and %v leave the compiled ratio", browse, get)
 				}
 			}
@@ -247,7 +260,7 @@ func TestByteMixOnlyWhenAsked(t *testing.T) {
 // TestByteMixNeedsThroughputObjective checks that a byte basis with another
 // objective keeps the compiled rates and says why.
 func TestByteMixNeedsThroughputObjective(t *testing.T) {
-	h, rec := mixHarness(t, mixConfig("bytes", "{ type: sessions_per_second, value: 1000 }"), mixCalibration(false))
+	h, rec := mixHarness(t, mixConfig("bytes", "{ type: sessions_per_second, value: 1000 }"), mixCalibration(false), mixCatalog{})
 	a := startMixAgent(t, h, "agent-a")
 	h.startThroughputRun(t, a)
 	time.Sleep(10 * mixWindow)
@@ -256,5 +269,49 @@ func TestByteMixNeedsThroughputObjective(t *testing.T) {
 	}
 	if n := len(updateCommands(a)); n != 0 {
 		t.Errorf("%d UpdateRates commands, want none", n)
+	}
+}
+
+// TestByteMixExactEstimatesStartOnTarget is the acceptance test of CTL-34: when
+// the manifest estimates are exact, the compiler turns the byte weights into
+// session shares that already give the byte weights, so the byte shares are
+// within 2 points from the first window on, the rates keep the compiled
+// ratios, and the throughput stays on the objective.
+func TestByteMixExactEstimatesStartOnTarget(t *testing.T) {
+	h, _ := mixHarness(t, mixThroughput, mixCalibration(false), mixCatalog{exact: true})
+	a := startMixAgent(t, h, "agent-a")
+	h.startThroughputRun(t, a)
+
+	samples := trackShares(t, a, 60)
+	if len(samples) < 10 {
+		t.Fatalf("%d share samples, want at least 10", len(samples))
+	}
+	for _, s := range samples {
+		if s.errPP > 2 {
+			t.Errorf("at %.0f simulated seconds the byte shares are %.2f points off, want at most 2 from the first window on", s.sim, s.errPP)
+		}
+	}
+	last := samples[len(samples)-1]
+	if math.Abs(last.bps/mixObjectiveBps-1) > 0.05 {
+		t.Errorf("throughput %.0f bit/s is not within 5%% of the objective %.0f bit/s", last.bps, mixObjectiveBps)
+	}
+	// Exact estimates leave the multipliers at 1 and the calibration factor
+	// scales every entry alike, so the agent may get no UpdateRates at all, and
+	// every command that it gets keeps the compiled session ratio, the byte
+	// weight over the estimate.
+	want := (39.9 / mixTrueBytes["web_get"]) / (60 / mixTrueBytes["web_browse"])
+	for _, c := range updateCommands(a) {
+		var browse, get float64
+		for _, r := range c.GetRates() {
+			switch r.GetMixEntry() {
+			case "web_browse":
+				browse = r.GetSessionsPerSecond()
+			case "web_get":
+				get = r.GetSessionsPerSecond()
+			}
+		}
+		if math.Abs(get/browse/want-1) > 0.1 {
+			t.Errorf("session rates %v and %v are not at the compiled ratio %v", browse, get, want)
+		}
 	}
 }

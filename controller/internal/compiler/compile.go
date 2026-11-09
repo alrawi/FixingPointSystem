@@ -46,7 +46,7 @@ var (
 	ErrAmbiguousScenario = errors.New("ambiguous scenario")
 	// ErrPoolTooSmall reports a host pool that cannot give every agent at least one host.
 	ErrPoolTooSmall = errors.New("host pool too small for the agents")
-	// ErrNoByteEstimate reports a throughput objective with a scenario that has no bytes per session estimate.
+	// ErrNoByteEstimate reports a scenario that has no bytes per session estimate where the test needs one: a throughput objective, or the profile basis bytes.
 	ErrNoByteEstimate = errors.New("no bytes per session estimate")
 )
 
@@ -73,7 +73,8 @@ type Scenario struct {
 	// Source is the scenario file in YAML.
 	Source string
 	// BytesPerSession estimates the bytes that one session moves in both
-	// directions. Only the throughput_bps objective needs it.
+	// directions. The throughput_bps objective and the profile basis bytes
+	// need it.
 	BytesPerSession float64
 	// SettingsSchema is the settings schema of the module manifest as JSON.
 	// Empty means that the module accepts no settings.
@@ -645,6 +646,16 @@ func usableHosts(prefix string, gw netip.Addr) (uint64, error) {
 
 // profile resolves the mix against the catalog and normalizes the weights.
 // It returns the bytes per session estimate of each mix entry.
+//
+// The Weight of a compiled mix entry is always its session share, because the
+// worker rates divide the session rate by it. With the basis sessions it is
+// the configured weight over the total. With the basis bytes the configured
+// weight is the share of the bytes, and the session share of entry i is
+// proportional to weight_i over its bytes per session, so that sessions at
+// these shares move the configured byte shares. A scenario without a positive
+// finite estimate cannot be converted, and the compiler refuses the test with
+// ErrNoByteEstimate, because a silent fallback to session shares would run
+// another mix than the one that the test asks for.
 func (c *compiled) profile(cfg Config, pools map[string]int, catalog []Scenario) ([]float64, error) {
 	prof := cfg.Profile
 	if prof.Basis != "sessions" && prof.Basis != "bytes" {
@@ -720,6 +731,11 @@ func (c *compiled) profile(cfg Config, pools map[string]int, catalog []Scenario)
 		}
 		c.mix = append(c.mix, entry)
 	}
+	if prof.Basis == "bytes" {
+		if err := c.bytesToSessions(estimates); err != nil {
+			return nil, err
+		}
+	}
 	settings, err := moduleSettings(cfg, catalog, modules)
 	if err != nil {
 		return nil, err
@@ -784,6 +800,24 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// bytesToSessions replaces the byte shares in c.mix with the session shares
+// that carry them, share_i = (weight_i / bytes_i) / sum_j (weight_j / bytes_j).
+func (c *compiled) bytesToSessions(estimates []float64) error {
+	var sum float64
+	per := make([]float64, len(c.mix))
+	for i, e := range c.mix {
+		if !(estimates[i] > 0) || math.IsInf(estimates[i], 0) {
+			return fmt.Errorf("%w: scenario %s has no positive bytes per session estimate, which profile.basis bytes needs to turn byte weights into session shares", ErrNoByteEstimate, e.Scenario)
+		}
+		per[i] = e.Weight / estimates[i]
+		sum += per[i]
+	}
+	for i := range c.mix {
+		c.mix[i].Weight = per[i] / sum
+	}
+	return nil
 }
 
 // loadAndCriteria checks the objective, derives the phase fractions, and
