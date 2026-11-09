@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #216 |
 | Branch | `wp/AGT-07` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #283 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-a7c3e1, lease until 2026-11-09T14:07:01Z |
 | Last verified commit | none |
 
@@ -21,7 +21,7 @@ Apply `ModuleRef.settings` in the agent (dns `zone_file`, relative paths resolve
 - [x] 1. Module settings reach the dns native functions, with path confinement and tests
 - [x] 2. UDP worker registers through SessionCounters; snapshots hold both sides; criteria default to the client side
 - [x] 3. Controller e2e run of a dns zone test in controller_e2e.sh
-- [ ] 4. Agent wiki page, log entry, checks, PR, CI
+- [x] 4. Agent wiki page, log entry, checks, PR, CI
 
 ## Done and verified
 
@@ -30,11 +30,11 @@ Apply `ModuleRef.settings` in the agent (dns `zone_file`, relative paths resolve
 
 ## Remaining
 
-PR and CI. The controller e2e script ran only in CI (no Go modules in the sandbox).
+Nothing. CI on 9612624 is green (20 of 20 checks, including controller-e2e and rust). The controller e2e log shows the dns zone run passed with 156 succeeded dns sessions, and the control run without the setting ended failed on its criteria.
 
 ## Next action
 
-Open the PR and watch the controller-e2e job.
+Coordinator review and merge.
 
 ## Blockers and open questions
 
@@ -64,3 +64,4 @@ cargo test -p fps-agent
 | 2026-11-09 | claude-a7c3e1 | claim | none | Claimed #216 |
 | 2026-11-09 | claude-a7c3e1 | checkpoint | see branch | Steps 1 and 2 done |
 | 2026-11-09 | claude-a7c3e1 | checkpoint | see branch | Steps 3 and 4 written, opening the PR |
+| 2026-11-09 | claude-a7c3e1 | review | 9612624 | CI green, PR #283 |
