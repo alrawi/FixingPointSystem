@@ -1,5 +1,5 @@
 scenario: login_append
-description: A mail client on port 143 that sends data to the server in literals. It logs in with the password as a synchronizing literal, so the command line ends in {n}, the server answers with a + continuation request, and the client sends the password. It then files a copy of a MIME message in the folder Sent with APPEND, which announces the message as a literal of its exact size and sends it after the second continuation request. The server reads each literal with the size that literal_size takes from the command line, and its APPEND completion carries an APPENDUID code. The client chooses the folder with STATUS before it appends, and the scenario ends with LOGOUT.
+description: A mail client on port 143 that sends data to the server in literals. It skips CAPABILITY, as some clients do, and logs in with the password as a synchronizing literal, so the command line ends in {n}, the server answers with a + continuation request, and the client sends the password. It then files a copy of a MIME message in the folder Sent with APPEND, which announces the message as a literal of its exact size and sends it after the second continuation request. The server reads each literal with the size that literal_size takes from the command line, and its APPEND completion carries an APPENDUID code. The client chooses the folder with STATUS before it appends, and the scenario ends with LOGOUT.
 vars:
   server_port: 143
   server_name: imap.example.test
@@ -14,9 +14,6 @@ flows:
     client:
       - connect: { port: "{{ vars.server_port }}" }
       - expect: { pattern: "\r\n", timeout_ms: 5000 }
-      - set: { tag: "{{ imap.next(vars.tag) }}" }
-      - send: "{{ vars.tag }} CAPABILITY\r\n"
-      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
       - set:
           login: "{{ imap.credential('user') }}"
           secret: "{{ imap.credential('password') }}"
@@ -45,8 +42,6 @@ flows:
     server:
       - accept: { port: "{{ vars.server_port }}" }
       - send: "* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN] {{ vars.server_name }} Dovecot ready.\r\n"
-      - expect: { pattern: "\r\n", timeout_ms: 5000 }
-      - send: "* CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN\r\n{{ imap.tagged(last, text='Pre-login capabilities listed, post-login capabilities have more', timing=true) }}"
       - expect: { pattern: "\r\n", timeout_ms: 5000 }
       - set:
           login_cmd: "{{ last }}"

@@ -1,8 +1,7 @@
-A001 CAPABILITY
-A002 LOGIN "brorais.logem@example.test" {16}
+A001 LOGIN "brorais.logem@example.test" {16}
 Tst-Noutrouk9797
-A003 STATUS "Sent" (MESSAGES UIDNEXT)
-A004 APPEND "Sent" (\Seen) {2018}
+A002 STATUS "Sent" (MESSAGES UIDNEXT)
+A003 APPEND "Sent" (\Seen) {2018}
 From: drezoulir.soutraipais@example.test
 To: trege.touter@example.test
 Cc: taigeloun.drumeir@example.test
@@ -51,4 +50,4 @@ MDA0NDMgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJl
 Zgo1MTMKJSVFT0YK
 --=_fps_2cb0989b731f78ba5ea9--
 
-A005 LOGOUT
+A004 LOGOUT

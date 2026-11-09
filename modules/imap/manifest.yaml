@@ -3,7 +3,7 @@ kind: Module
 name: imap
 version: 0.1.0
 type: app
-summary: IMAP clients and servers with LOGIN, SELECT, FETCH with literals, SEARCH, STORE, APPEND, IDLE, and LOGOUT, tag sequencing, and continuation responses.
+summary: IMAP clients and servers with LOGIN, SELECT, EXAMINE, FETCH with literals, SEARCH, STORE, APPEND, IDLE, and LOGOUT, tag sequencing, and continuation responses.
 engine_api: ">=0.2, <0.3"
 license: GPL-3.0-only
 provides:
@@ -35,7 +35,7 @@ functions:
       - { name: index, type: int, default: 1 }
       - { name: domain, type: text, default: example.test }
   - name: auth_plain
-    summary: Base64 token of an AUTHENTICATE PLAIN answer as RFC 4616 defines it, without the line break.
+    summary: Base64 token of an AUTHENTICATE PLAIN answer as RFC 4616 defines it, without the line break. No scenario uses it, see the README.
     params:
       - { name: user, type: text }
       - { name: password, type: text }
@@ -109,7 +109,6 @@ scenarios:
   - scenarios/mailbox_sync.yaml
   - scenarios/fetch_messages.yaml
   - scenarios/search_store.yaml
-  - scenarios/authenticate_plain.yaml
   - scenarios/login_append.yaml
   - scenarios/idle_push.yaml
 fixtures:

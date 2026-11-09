@@ -93,7 +93,9 @@ fn tagged(a: &args::Args<'_>, out: &mut Vec<u8>, rng: &mut dyn RngCore) -> Resul
     check_line("tagged", "text", text)?;
     check_line("tagged", "code", code)?;
     if code.bytes().any(|b| b == b']' || b == b'[') {
-        return Err(invalid("'code' of 'tagged' must not contain a bracket".into()));
+        return Err(invalid(
+            "'code' of 'tagged' must not contain a bracket".into(),
+        ));
     }
     push(out, command.tag);
     push(out, " ");
@@ -217,7 +219,12 @@ impl TemplateFn for Imap {
             }
             "fetch" => {
                 let a = args::bind(&catalog::FETCH, &call.args)?;
-                reply::fetch(a.bytes("command")?, a.bytes("message")?, a.int("exists")?, out)?;
+                reply::fetch(
+                    a.bytes("command")?,
+                    a.bytes("message")?,
+                    a.int("exists")?,
+                    out,
+                )?;
             }
             "search_reply" => {
                 let a = args::bind(&catalog::SEARCH_REPLY, &call.args)?;
@@ -311,8 +318,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(s, "AHRpbQB0YW5zdGFhZnRhbnN0YWFm");
-        assert!(render("auth_plain", &[ArgValue::Text("a\0"), ArgValue::Text("b")], &[]).is_err());
-        assert!(render("auth_plain", &[ArgValue::Text(""), ArgValue::Text("b")], &[]).is_err());
+        assert!(render(
+            "auth_plain",
+            &[ArgValue::Text("a\0"), ArgValue::Text("b")],
+            &[]
+        )
+        .is_err());
+        assert!(render(
+            "auth_plain",
+            &[ArgValue::Text(""), ArgValue::Text("b")],
+            &[]
+        )
+        .is_err());
     }
 
     #[test]
@@ -338,7 +355,10 @@ mod tests {
 
     #[test]
     fn tags_count_up_from_integers_text_and_bytes() {
-        assert_eq!(render("next", &[ArgValue::Text("A000")], &[]).unwrap(), "A001");
+        assert_eq!(
+            render("next", &[ArgValue::Text("A000")], &[]).unwrap(),
+            "A001"
+        );
         assert_eq!(render("next", &[text("A009")], &[]).unwrap(), "A010");
         assert_eq!(render("next", &[ArgValue::Int(6)], &[]).unwrap(), "7");
         assert!(render("next", &[ArgValue::Boolean(true)], &[]).is_err());
@@ -367,7 +387,10 @@ mod tests {
             ],
         )
         .unwrap();
-        assert!(s.starts_with("x9 OK [READ-WRITE] Select completed (0.00"), "{s}");
+        assert!(
+            s.starts_with("x9 OK [READ-WRITE] Select completed (0.00"),
+            "{s}"
+        );
         assert!(s.ends_with(" secs).\r\n"), "{s}");
         let no = render(
             "tagged",
@@ -443,13 +466,11 @@ mod tests {
             &[],
         )
         .unwrap();
-        let f = render(
-            "fetch",
-            &[text("A006 FETCH 2 (BODY[])\r\n"), text(&m)],
-            &[],
-        )
-        .unwrap();
-        assert!(f.starts_with(&format!("* 2 FETCH (BODY[] {{{}}}\r\nFrom: a.b@example.test\r\n", m.len())));
+        let f = render("fetch", &[text("A006 FETCH 2 (BODY[])\r\n"), text(&m)], &[]).unwrap();
+        assert!(f.starts_with(&format!(
+            "* 2 FETCH (BODY[] {{{}}}\r\nFrom: a.b@example.test\r\n",
+            m.len()
+        )));
         // Without the message, a command for body data fails the call.
         assert!(render("fetch", &[text("A006 FETCH 2 (BODY[])\r\n")], &[]).is_err());
     }

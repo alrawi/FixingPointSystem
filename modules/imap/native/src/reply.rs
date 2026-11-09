@@ -86,12 +86,7 @@ pub(crate) fn parse_command<'a>(function: &str, line: &'a [u8]) -> Result<Comman
 
 /// Expands a sequence set such as `1:4,7,9:*` into message numbers. With
 /// `uid` the set names UIDs, which the module maps to message numbers.
-fn expand_set(
-    function: &str,
-    set: &str,
-    exists: i64,
-    uid: bool,
-) -> Result<Vec<i64>, FnError> {
+fn expand_set(function: &str, set: &str, exists: i64, uid: bool) -> Result<Vec<i64>, FnError> {
     let top = if uid { UID_BASE + exists } else { exists };
     let num = |s: &str| -> Result<i64, FnError> {
         if s == "*" {
@@ -588,9 +583,15 @@ pub(crate) fn select_data(
         }
         None => 1_000_000_000 + (drawn % 700_000_000) as i64,
     };
-    push(out, "* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n");
+    push(
+        out,
+        "* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n",
+    );
     if read_only {
-        push(out, "* OK [PERMANENTFLAGS ()] No permanent flags permitted.\r\n");
+        push(
+            out,
+            "* OK [PERMANENTFLAGS ()] No permanent flags permitted.\r\n",
+        );
     } else {
         push(
             out,
@@ -650,7 +651,9 @@ pub(crate) fn search_hit(response: &[u8], index: i64) -> Result<i64, FnError> {
         .split_whitespace()
         .map(str::parse)
         .collect::<Result<_, _>>()
-        .map_err(|_| protocol("the SEARCH line of 'search_hit' holds a value that is no number".into()))?;
+        .map_err(|_| {
+            protocol("the SEARCH line of 'search_hit' holds a value that is no number".into())
+        })?;
     usize::try_from(index - 1)
         .ok()
         .and_then(|i| hits.get(i).copied())
@@ -671,7 +674,9 @@ pub(crate) fn literal_size(command: &[u8]) -> Result<i64, FnError> {
         .strip_suffix('}')
         .and_then(|l| l.rsplit_once('{'))
         .map(|(_, n)| n.strip_suffix('+').unwrap_or(n))
-        .ok_or_else(|| protocol("the command of 'literal_size' does not end in a literal size".into()))?;
+        .ok_or_else(|| {
+            protocol("the command of 'literal_size' does not end in a literal size".into())
+        })?;
     inner
         .parse::<i64>()
         .ok()
@@ -686,7 +691,8 @@ pub(crate) fn next(value: &str, step: i64) -> Result<String, FnError> {
         .find(|c: char| c.is_ascii_digit())
         .ok_or_else(|| invalid(format!("'{value}' holds no number for 'next' to count")))?;
     let (prefix, digits) = value.split_at(split);
-    if !prefix.bytes().all(|b| b.is_ascii_alphabetic()) || !digits.bytes().all(|b| b.is_ascii_digit())
+    if !prefix.bytes().all(|b| b.is_ascii_alphabetic())
+        || !digits.bytes().all(|b| b.is_ascii_digit())
     {
         return Err(invalid(format!(
             "'{value}' is neither a number nor letters followed by a number"
@@ -717,11 +723,23 @@ mod tests {
     #[test]
     fn commands_parse_with_and_without_uid() {
         let c = parse_command("t", b"A001 uid fetch 3 (FLAGS)\r\n").unwrap();
-        assert_eq!((c.tag, c.name.as_str(), c.uid, c.rest), ("A001", "FETCH", true, "3 (FLAGS)"));
+        assert_eq!(
+            (c.tag, c.name.as_str(), c.uid, c.rest),
+            ("A001", "FETCH", true, "3 (FLAGS)")
+        );
         let c = parse_command("t", b"a1 NOOP\r\n").unwrap();
         assert_eq!((c.name.as_str(), c.rest), ("NOOP", ""));
-        for bad in [&b"\r\n"[..], b"A001\r\n", b"A(1 NOOP\r\n", b"+ NOOP\r\n", &[0xff, 0xfe]] {
-            assert_eq!(parse_command("t", bad).unwrap_err().kind, FnErrorKind::Protocol);
+        for bad in [
+            &b"\r\n"[..],
+            b"A001\r\n",
+            b"A(1 NOOP\r\n",
+            b"+ NOOP\r\n",
+            &[0xff, 0xfe],
+        ] {
+            assert_eq!(
+                parse_command("t", bad).unwrap_err().kind,
+                FnErrorKind::Protocol
+            );
         }
     }
 
@@ -740,18 +758,32 @@ mod tests {
     #[test]
     fn literal_sizes_come_from_the_end_of_the_line() {
         assert_eq!(literal_size(b"A002 LOGIN user {12}\r\n").unwrap(), 12);
-        assert_eq!(literal_size(b"A003 APPEND Sent (\\Seen) {4096+}\r\n").unwrap(), 4096);
-        for bad in [&b"A002 NOOP\r\n"[..], b"A002 X {}\r\n", b"A002 X {-1}\r\n", b"A002 X {9999999999}\r\n"] {
+        assert_eq!(
+            literal_size(b"A003 APPEND Sent (\\Seen) {4096+}\r\n").unwrap(),
+            4096
+        );
+        for bad in [
+            &b"A002 NOOP\r\n"[..],
+            b"A002 X {}\r\n",
+            b"A002 X {-1}\r\n",
+            b"A002 X {9999999999}\r\n",
+        ] {
             assert!(literal_size(bad).is_err(), "{bad:?}");
         }
     }
 
     #[test]
     fn sets_expand_and_uid_sets_map_to_numbers() {
-        assert_eq!(expand_set("t", "1:3,7", 9, false).unwrap(), vec![1, 2, 3, 7]);
+        assert_eq!(
+            expand_set("t", "1:3,7", 9, false).unwrap(),
+            vec![1, 2, 3, 7]
+        );
         assert_eq!(expand_set("t", "5:*", 7, false).unwrap(), vec![5, 6, 7]);
         assert_eq!(expand_set("t", "3:1", 7, false).unwrap(), vec![1, 2, 3]);
-        assert_eq!(expand_set("t", "1002:1004", 7, true).unwrap(), vec![2, 3, 4]);
+        assert_eq!(
+            expand_set("t", "1002:1004", 7, true).unwrap(),
+            vec![2, 3, 4]
+        );
         assert!(expand_set("t", "0", 7, false).is_err());
         assert!(expand_set("t", "x", 7, false).is_err());
         assert!(expand_set("t", "*", 0, false).is_err());
@@ -765,7 +797,10 @@ mod tests {
         let lines: Vec<&str> = a.split_terminator("\r\n").collect();
         assert_eq!(lines.len(), 4);
         assert!(lines[2].starts_with("* 3 FETCH (UID 1003 FLAGS ("));
-        assert_eq!(b.trim_end().split_once("FLAGS ").unwrap().1, lines[2].split_once("FLAGS ").unwrap().1);
+        assert_eq!(
+            b.trim_end().split_once("FLAGS ").unwrap().1,
+            lines[2].split_once("FLAGS ").unwrap().1
+        );
     }
 
     #[test]
@@ -790,17 +825,29 @@ mod tests {
 
     #[test]
     fn a_full_fetch_carries_the_message_as_one_literal() {
-        let s = run(|o| fetch(b"A006 FETCH 1 (RFC822.SIZE INTERNALDATE BODY[])\r\n", MSG, 5, o));
+        let s = run(|o| {
+            fetch(
+                b"A006 FETCH 1 (RFC822.SIZE INTERNALDATE BODY[])\r\n",
+                MSG,
+                5,
+                o,
+            )
+        });
         assert!(s.starts_with("* 1 FETCH (RFC822.SIZE "));
         assert!(s.contains(" INTERNALDATE \"25-Jul-2026 17:57:51 +0000\" "));
         assert!(s.contains(&format!("BODY[] {{{}}}\r\n", MSG.len())));
         // The literal is followed by the implied flags of a fetch that is not
         // a peek, and the response ends with one closing parenthesis.
-        assert!(s.ends_with(&format!("body line\r\n FLAGS {})\r\n", flag_list(&{
-            let mut f = flags_of(1).to_vec();
-            if !f.contains(&"\\Seen") { f.push("\\Seen"); }
-            f
-        }))));
+        assert!(s.ends_with(&format!(
+            "body line\r\n FLAGS {})\r\n",
+            flag_list(&{
+                let mut f = flags_of(1).to_vec();
+                if !f.contains(&"\\Seen") {
+                    f.push("\\Seen");
+                }
+                f
+            })
+        )));
         let peek = run(|o| fetch(b"A006 FETCH 1 (BODY.PEEK[])\r\n", MSG, 5, o));
         assert!(peek.ends_with("body line\r\n)\r\n"));
         let text = run(|o| fetch(b"A006 FETCH 1 (BODY.PEEK[TEXT])\r\n", MSG, 5, o));
@@ -839,13 +886,24 @@ mod tests {
             "* 3 FETCH (FLAGS (\\Deleted))\r\n"
         );
         assert_eq!(
-            run(|o| store(b"A010 STORE 1:2 -FLAGS (\\Seen \\Flagged \\Answered)\r\n", o)),
+            run(|o| store(
+                b"A010 STORE 1:2 -FLAGS (\\Seen \\Flagged \\Answered)\r\n",
+                o
+            )),
             "* 1 FETCH (FLAGS ())\r\n* 2 FETCH (FLAGS ())\r\n"
         );
-        assert_eq!(run(|o| store(b"A010 STORE 3 +FLAGS.SILENT (\\Seen)\r\n", o)), "");
+        assert_eq!(
+            run(|o| store(b"A010 STORE 3 +FLAGS.SILENT (\\Seen)\r\n", o)),
+            ""
+        );
         let u = run(|o| store(b"A010 UID STORE 1004 +FLAGS (\\Deleted)\r\n", o));
         assert!(u.starts_with("* 4 FETCH (UID 1004 FLAGS ("));
-        for bad in [&b"A1 STORE 3 +FLAGS\r\n"[..], b"A1 STORE 3 ~FLAGS (\\Seen)\r\n", b"A1 STORE 3 +FLAGS (a\"b)\r\n", b"A1 FETCH 3 (FLAGS)\r\n"] {
+        for bad in [
+            &b"A1 STORE 3 +FLAGS\r\n"[..],
+            b"A1 STORE 3 ~FLAGS (\\Seen)\r\n",
+            b"A1 STORE 3 +FLAGS (a\"b)\r\n",
+            b"A1 FETCH 3 (FLAGS)\r\n",
+        ] {
             assert!(store(bad, &mut Vec::new()).is_err(), "{bad:?}");
         }
     }
@@ -872,7 +930,9 @@ mod tests {
             "* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft \\*)] Flags permitted.\r\n* 12 EXISTS\r\n* 2 RECENT\r\n* OK [UNSEEN 4] First unseen.\r\n* OK [UIDVALIDITY 1700000001] UIDs valid\r\n* OK [UIDNEXT 1013] Predicted next UID\r\n"
         );
         let r = run(|o| select_data(0, 0, 0, None, true, 7, o));
-        assert!(r.contains("PERMANENTFLAGS ()") && !r.contains("UNSEEN") && r.contains("* 0 EXISTS"));
+        assert!(
+            r.contains("PERMANENTFLAGS ()") && !r.contains("UNSEEN") && r.contains("* 0 EXISTS")
+        );
         assert!(select_data(3, 4, 0, None, false, 0, &mut Vec::new()).is_err());
         assert!(select_data(3, 0, 0, Some(0), false, 0, &mut Vec::new()).is_err());
     }
@@ -882,9 +942,15 @@ mod tests {
         let mut r = Rng::new(5);
         for hits in 0..=6 {
             let s = run(|o| search_reply(6, hits, &mut r, o));
-            let nums: Vec<i64> = s.trim_end().split_whitespace().skip(2).map(|n| n.parse().unwrap()).collect();
+            let nums: Vec<i64> = s
+                .split_whitespace()
+                .skip(2)
+                .map(|n| n.parse().unwrap())
+                .collect();
             assert_eq!(nums.len(), hits as usize);
-            assert!(nums.windows(2).all(|w| w[0] < w[1]) && nums.iter().all(|n| (1..=6).contains(n)));
+            assert!(
+                nums.windows(2).all(|w| w[0] < w[1]) && nums.iter().all(|n| (1..=6).contains(n))
+            );
         }
         assert!(search_reply(3, 4, &mut r, &mut Vec::new()).is_err());
         let resp = b"* SEARCH 2 5 9\r\nA011 OK Search completed (0.001 + 0.000 secs).\r\n";

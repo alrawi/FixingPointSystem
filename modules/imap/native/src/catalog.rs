@@ -179,7 +179,11 @@ pub const SELECT_DATA: FunctionSpec = FunctionSpec {
         opt("recent", ValueType::Int, DefaultValue::Int(0)),
         opt("unseen", ValueType::Int, DefaultValue::Int(0)),
         opt("uidvalidity", ValueType::Int, DefaultValue::Int(-1)),
-        opt("read_only", ValueType::Boolean, DefaultValue::Boolean(false)),
+        opt(
+            "read_only",
+            ValueType::Boolean,
+            DefaultValue::Boolean(false),
+        ),
     ],
 };
 

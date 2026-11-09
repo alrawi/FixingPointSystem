@@ -33,7 +33,7 @@ struct Cmd {
     /// The literal that the command announces, which the client sends after
     /// the continuation request.
     literal: Option<Vec<u8>>,
-    /// The line that follows AUTHENTICATE or IDLE.
+    /// The line that follows IDLE, which is DONE.
     extra: Option<String>,
 }
 
@@ -57,10 +57,14 @@ fn parse_client(mut rest: &[u8]) -> Vec<Cmd> {
         if let Some(n) = literal_len(&line) {
             assert!(rest.len() >= n + 2, "the literal is complete");
             cmd.literal = Some(rest[..n].to_vec());
-            assert_eq!(&rest[n..n + 2], b"\r\n", "CRLF ends the command after the literal");
+            assert_eq!(
+                &rest[n..n + 2],
+                b"\r\n",
+                "CRLF ends the command after the literal"
+            );
             rest = &rest[n + 2..];
         }
-        if cmd.name == "AUTHENTICATE" || cmd.name == "IDLE" {
+        if cmd.name == "IDLE" {
             let end = find(rest, b"\r\n").expect("a line follows");
             cmd.extra = Some(String::from_utf8(rest[..end].to_vec()).unwrap());
             rest = &rest[end + 2..];
@@ -93,7 +97,9 @@ fn parse_server(mut rest: &[u8]) -> Vec<Resp> {
         let mut literals = Vec::new();
         loop {
             let end = find(rest, b"\r\n").expect("every line ends with CRLF");
-            text.push_str(std::str::from_utf8(&rest[..end]).expect("responses are ASCII outside literals"));
+            text.push_str(
+                std::str::from_utf8(&rest[..end]).expect("responses are ASCII outside literals"),
+            );
             rest = &rest[end + 2..];
             match literal_len(&text) {
                 Some(n) if text.starts_with("* ") => {
@@ -150,7 +156,10 @@ fn pair<'a>(cmds: &'a [Cmd], resps: &'a [Resp]) -> Vec<Exchange<'a>> {
                 Kind::Continuation => continuations += 1,
                 Kind::Tagged => {
                     let (tag, rest) = r.text.split_once(' ').unwrap();
-                    assert_eq!(tag, cmd.tag, "the tagged response names the tag of its command");
+                    assert_eq!(
+                        tag, cmd.tag,
+                        "the tagged response names the tag of its command"
+                    );
                     assert!(rest.starts_with("OK "), "{}", r.text);
                     out.push(Exchange {
                         cmd,
@@ -163,7 +172,11 @@ fn pair<'a>(cmds: &'a [Cmd], resps: &'a [Resp]) -> Vec<Exchange<'a>> {
             }
         }
     }
-    assert_eq!(i, resps.len(), "the server sent a response without a command");
+    assert_eq!(
+        i,
+        resps.len(),
+        "the server sent a response without a command"
+    );
     out
 }
 
@@ -267,7 +280,11 @@ fn parse_mail(message: &[u8]) -> Mail {
     };
     assert_eq!(get("Content-Transfer-Encoding"), "base64");
     for line in encoded.trim_end().split("\r\n") {
-        assert!(line.len() <= 76, "a base64 line of {} characters", line.len());
+        assert!(
+            line.len() <= 76,
+            "a base64 line of {} characters",
+            line.len()
+        );
     }
     let name = get("Content-Disposition")
         .strip_prefix("attachment; filename=\"")
@@ -283,12 +300,25 @@ fn parse_mail(message: &[u8]) -> Mail {
 /// `kinds` lists the attachments that the scenario may draw.
 fn check_message(name: &str, literal: &[u8], kinds: &[(&[u8], &str, &str)]) -> usize {
     let m = parse_mail(literal);
-    for h in ["From", "To", "Subject", "Date", "Message-ID", "MIME-Version"] {
+    for h in [
+        "From",
+        "To",
+        "Subject",
+        "Date",
+        "Message-ID",
+        "MIME-Version",
+    ] {
         assert!(m.header(h).is_some(), "{name}: no {h} header");
     }
-    assert!(m.header("From").unwrap().ends_with("@example.test"), "{name}");
+    assert!(
+        m.header("From").unwrap().ends_with("@example.test"),
+        "{name}"
+    );
     assert!(m.header("Date").unwrap().contains(" 2026 "), "{name}");
-    assert!(m.text.contains("Ref: "), "{name}: the text part comes from content.email");
+    assert!(
+        m.text.contains("Ref: "),
+        "{name}: the text part comes from content.email"
+    );
     let (file, ctype, bytes) = m.attachment.expect("an attachment");
     let hit = kinds
         .iter()
@@ -323,12 +353,18 @@ fn flags_of(text: &str) -> Vec<&str> {
 fn search_numbers(e: &Exchange<'_>) -> Vec<usize> {
     assert_eq!(e.untagged.len(), 1, "{:?}", e.untagged);
     let line = e.untagged[0].text.strip_prefix("* SEARCH").expect("SEARCH");
-    line.split_whitespace().map(|n| n.parse().unwrap()).collect()
+    line.split_whitespace()
+        .map(|n| n.parse().unwrap())
+        .collect()
 }
 
 fn check_login(e: &Exchange<'_>) {
     assert!(e.tagged.text.ends_with(" Logged in"), "{}", e.tagged.text);
-    assert!(e.tagged.text.contains(" OK [CAPABILITY IMAP4rev1 "), "{}", e.tagged.text);
+    assert!(
+        e.tagged.text.contains(" OK [CAPABILITY IMAP4rev1 "),
+        "{}",
+        e.tagged.text
+    );
     let (user, secret) = match e.cmd.name.as_str() {
         "LOGIN" => {
             let user = e.cmd.line.split('"').nth(1).unwrap().to_string();
@@ -341,18 +377,6 @@ fn check_login(e: &Exchange<'_>) {
             };
             (user, secret)
         }
-        "AUTHENTICATE" => {
-            assert_eq!(e.cmd.line.split(' ').nth(2), Some("PLAIN"));
-            assert_eq!(e.continuations, 1, "the server asks for the answer once");
-            let token = unbase64(e.cmd.extra.as_ref().unwrap());
-            let parts: Vec<&[u8]> = token.split(|&b| b == 0).collect();
-            assert_eq!(parts.len(), 3, "authzid NUL user NUL password");
-            assert!(parts[0].is_empty());
-            (
-                String::from_utf8(parts[1].to_vec()).unwrap(),
-                String::from_utf8(parts[2].to_vec()).unwrap(),
-            )
-        }
         other => panic!("{other}"),
     };
     assert!(user.ends_with("@example.test"), "{user}");
@@ -362,7 +386,10 @@ fn check_login(e: &Exchange<'_>) {
 fn check_select(e: &Exchange<'_>, messages: usize, read_only: bool) {
     let lines: Vec<&str> = e.untagged.iter().map(|r| r.text.as_str()).collect();
     assert!(lines[0].starts_with("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)"));
-    assert!(lines.contains(&format!("* {messages} EXISTS").as_str()), "{lines:?}");
+    assert!(
+        lines.contains(&format!("* {messages} EXISTS").as_str()),
+        "{lines:?}"
+    );
     assert!(lines.contains(&"* 0 RECENT"));
     assert!(lines.iter().any(|l| l.starts_with("* OK [UIDVALIDITY ")));
     assert!(
@@ -373,7 +400,11 @@ fn check_select(e: &Exchange<'_>, messages: usize, read_only: bool) {
         lines.iter().any(|l| l.contains("[PERMANENTFLAGS ()]")),
         read_only
     );
-    let code = if read_only { "[READ-ONLY]" } else { "[READ-WRITE]" };
+    let code = if read_only {
+        "[READ-ONLY]"
+    } else {
+        "[READ-WRITE]"
+    };
     assert!(e.tagged.text.contains(code), "{}", e.tagged.text);
 }
 
@@ -389,7 +420,10 @@ fn check_fetch_head(e: &Exchange<'_>, seq: usize) -> String {
 
 fn check_header_literal(text: &str, literal: &[u8], allowed: &[&str]) {
     let raw = std::str::from_utf8(literal).unwrap();
-    assert!(raw.ends_with("\r\n\r\n"), "the header block ends with an empty line");
+    assert!(
+        raw.ends_with("\r\n\r\n"),
+        "the header block ends with an empty line"
+    );
     assert_eq!(raw.matches("\r\n\r\n").count(), 1);
     let (headers, _) = split_head(raw);
     for (n, _) in &headers {
@@ -415,28 +449,46 @@ async fn check(name: &str, s: &Scenario, session_id: u64) -> Vec<usize> {
     let messages = var(s, "messages");
     let mut sizes = Vec::new();
 
-    // Every session starts with CAPABILITY and ends with LOGOUT, and the
-    // greeting and the CAPABILITY response advertise the same protocol.
-    assert_eq!(ex[0].cmd.name, "CAPABILITY", "{name}");
-    assert!(ex[0].untagged[0].text.starts_with("* CAPABILITY IMAP4rev1 "), "{name}");
-    assert_eq!(ex.last().unwrap().cmd.line.split(' ').nth(1), Some("LOGOUT"), "{name}");
-    assert_eq!(ex.last().unwrap().untagged[0].text, "* BYE Logging out", "{name}");
+    // Every session but login_append starts with CAPABILITY, and every one
+    // ends with LOGOUT.
+    if name != "login_append" {
+        assert_eq!(ex[0].cmd.name, "CAPABILITY", "{name}");
+        assert!(
+            ex[0].untagged[0]
+                .text
+                .starts_with("* CAPABILITY IMAP4rev1 "),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        ex.last().unwrap().cmd.line.split(' ').nth(1),
+        Some("LOGOUT"),
+        "{name}"
+    );
+    assert_eq!(
+        ex.last().unwrap().untagged[0].text,
+        "* BYE Logging out",
+        "{name}"
+    );
     // Only the commands that need one get a continuation request.
     for e in &ex {
-        let wants = usize::from(e.cmd.literal.is_some() || e.cmd.name == "AUTHENTICATE" || e.cmd.name == "IDLE");
+        let wants = usize::from(e.cmd.literal.is_some() || e.cmd.name == "IDLE");
         assert_eq!(e.continuations, wants, "{name}: {}", e.cmd.line);
     }
 
     match name {
         "mailbox_sync" => {
             let mut want = vec!["CAPABILITY", "LOGIN", "SELECT", "FETCH"];
-            want.extend(std::iter::repeat("FETCH").take(messages));
+            want.extend(std::iter::repeat_n("FETCH", messages));
             want.push("LOGOUT");
             assert_eq!(names(&ex), want);
             check_login(&ex[1]);
             check_select(&ex[2], messages, false);
             // The listing names every message with its UID, flags, and size.
-            assert_eq!(ex[3].cmd.line, format!("A004 FETCH 1:{messages} (UID FLAGS RFC822.SIZE)"));
+            assert_eq!(
+                ex[3].cmd.line,
+                format!("A004 FETCH 1:{messages} (UID FLAGS RFC822.SIZE)")
+            );
             assert_eq!(ex[3].untagged.len(), messages);
             for (i, r) in ex[3].untagged.iter().enumerate() {
                 let n = i + 1;
@@ -452,18 +504,28 @@ async fn check(name: &str, s: &Scenario, session_id: u64) -> Vec<usize> {
                     format!("A{:03} FETCH {n} (UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID)])", 4 + n)
                 );
                 let text = check_fetch_head(e, n);
-                assert!(text.contains(" BODY[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID)] {"), "{text}");
+                assert!(
+                    text.contains(" BODY[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID)] {"),
+                    "{text}"
+                );
                 let lit = &e.untagged[0].literals;
                 assert_eq!(lit.len(), 1);
-                check_header_literal(&text, &lit[0], &["From", "To", "Cc", "Subject", "Date", "Message-ID"]);
+                check_header_literal(
+                    &text,
+                    &lit[0],
+                    &["From", "To", "Cc", "Subject", "Date", "Message-ID"],
+                );
                 let raw = std::str::from_utf8(&lit[0]).unwrap();
-                assert!(raw.starts_with("From: ") && raw.contains("\r\nSubject: "), "{raw}");
+                assert!(
+                    raw.starts_with("From: ") && raw.contains("\r\nSubject: "),
+                    "{raw}"
+                );
             }
         }
         "fetch_messages" => {
             let fetches = var(s, "fetches");
             let mut want = vec!["CAPABILITY", "LOGIN", "EXAMINE"];
-            want.extend(std::iter::repeat("FETCH").take(fetches));
+            want.extend(std::iter::repeat_n("FETCH", fetches));
             want.push("LOGOUT");
             assert_eq!(names(&ex), want);
             check_login(&ex[1]);
@@ -476,13 +538,20 @@ async fn check(name: &str, s: &Scenario, session_id: u64) -> Vec<usize> {
             for e in &ex[3..3 + fetches] {
                 let seq: usize = e.cmd.line.split(' ').nth(2).unwrap().parse().unwrap();
                 assert!((1..=messages).contains(&seq), "{}", e.cmd.line);
-                assert!(e.cmd.line.ends_with(" (UID FLAGS BODY.PEEK[])"), "{}", e.cmd.line);
+                assert!(
+                    e.cmd.line.ends_with(" (UID FLAGS BODY.PEEK[])"),
+                    "{}",
+                    e.cmd.line
+                );
                 let text = check_fetch_head(e, seq);
                 let lit = &e.untagged[0].literals;
                 assert_eq!(lit.len(), 1);
                 // A peek leaves the flags alone, so the response ends with
                 // the literal.
-                assert!(text.contains(&format!(" BODY[] {{{}}}", lit[0].len())), "{text}");
+                assert!(
+                    text.contains(&format!(" BODY[] {{{}}}", lit[0].len())),
+                    "{text}"
+                );
                 assert!(text.ends_with(&format!("{{{}}})", lit[0].len())), "{text}");
                 sizes.push(check_message(name, &lit[0], &kinds));
             }
@@ -490,7 +559,19 @@ async fn check(name: &str, s: &Scenario, session_id: u64) -> Vec<usize> {
         "search_store" => {
             assert_eq!(
                 names(&ex),
-                ["CAPABILITY", "LOGIN", "SELECT", "SEARCH", "FETCH", "STORE", "SEARCH", "STORE", "EXPUNGE", "CLOSE", "LOGOUT"]
+                [
+                    "CAPABILITY",
+                    "LOGIN",
+                    "SELECT",
+                    "SEARCH",
+                    "FETCH",
+                    "STORE",
+                    "SEARCH",
+                    "STORE",
+                    "EXPUNGE",
+                    "CLOSE",
+                    "LOGOUT"
+                ]
             );
             check_login(&ex[1]);
             check_select(&ex[2], messages, false);
@@ -506,74 +587,96 @@ async fn check(name: &str, s: &Scenario, session_id: u64) -> Vec<usize> {
             // A fetch that is not a peek reports the flag that it sets.
             assert!(flags_of(&text).contains(&"\\Seen"), "{text}");
             let lit = &ex[4].untagged[0].literals;
-            sizes.push(check_message(name, &lit[0], &[(b"\x1f\x8b", "digest.csv.gz", "application/gzip")]));
-            assert_eq!(ex[5].cmd.line, format!("A006 STORE {h} +FLAGS (\\Seen \\Flagged)"));
+            sizes.push(check_message(
+                name,
+                &lit[0],
+                &[(b"\x1f\x8b", "digest.csv.gz", "application/gzip")],
+            ));
+            assert_eq!(
+                ex[5].cmd.line,
+                format!("A006 STORE {h} +FLAGS (\\Seen \\Flagged)")
+            );
             assert_eq!(ex[5].untagged.len(), 1);
-            assert!(ex[5].untagged[0].text.starts_with(&format!("* {h} FETCH (FLAGS (")));
+            assert!(ex[5].untagged[0]
+                .text
+                .starts_with(&format!("* {h} FETCH (FLAGS (")));
             let f = flags_of(&ex[5].untagged[0].text);
             assert!(f.contains(&"\\Seen") && f.contains(&"\\Flagged"), "{f:?}");
             // The second search names the message that the client deletes.
             assert!(ex[6].cmd.line.starts_with("A007 SEARCH FROM \""));
             assert!(ex[6].cmd.line.ends_with("@example.test\" SINCE 1-Jan-2026"));
             let junk = search_numbers(&ex[6])[0];
-            assert_eq!(ex[7].cmd.line, format!("A008 STORE {junk} +FLAGS (\\Deleted)"));
+            assert_eq!(
+                ex[7].cmd.line,
+                format!("A008 STORE {junk} +FLAGS (\\Deleted)")
+            );
             assert!(flags_of(&ex[7].untagged[0].text).contains(&"\\Deleted"));
             assert_eq!(ex[8].untagged.len(), 1);
             assert_eq!(ex[8].untagged[0].text, format!("* {junk} EXPUNGE"));
         }
-        "authenticate_plain" => {
-            assert_eq!(
-                names(&ex),
-                ["CAPABILITY", "AUTHENTICATE", "STATUS", "SELECT", "FETCH", "NOOP", "LOGOUT"]
-            );
-            check_login(&ex[1]);
-            assert_eq!(
-                ex[2].untagged[0].text,
-                format!("* STATUS \"INBOX\" (MESSAGES {messages} UNSEEN 1 UIDNEXT {})", 1001 + messages)
-            );
-            check_select(&ex[3], messages, false);
-            assert_eq!(ex[4].cmd.line, format!("A005 FETCH {messages} (UID FLAGS BODY[HEADER])"));
-            let text = check_fetch_head(&ex[4], messages);
-            assert!(flags_of(&text).contains(&"\\Seen"), "{text}");
-            let lit = &ex[4].untagged[0].literals;
-            let raw = std::str::from_utf8(&lit[0]).unwrap();
-            assert!(raw.ends_with("\r\n\r\n") && raw.contains("MIME-Version: 1.0\r\n"), "{raw}");
-            assert!(raw.contains("Content-Type: multipart/mixed; boundary="), "{raw}");
-            assert!(ex[5].tagged.text.contains("NOOP completed"));
-        }
         "login_append" => {
-            assert_eq!(names(&ex), ["CAPABILITY", "LOGIN", "STATUS", "APPEND", "LOGOUT"]);
-            assert!(ex[1].cmd.literal.is_some(), "the password is a literal");
-            check_login(&ex[1]);
+            assert_eq!(names(&ex), ["LOGIN", "STATUS", "APPEND", "LOGOUT"]);
+            assert!(ex[0].cmd.literal.is_some(), "the password is a literal");
+            check_login(&ex[0]);
             assert_eq!(
-                ex[2].untagged[0].text,
-                format!("* STATUS \"Sent\" (MESSAGES {messages} UIDNEXT {})", 1001 + messages)
+                ex[1].untagged[0].text,
+                format!(
+                    "* STATUS \"Sent\" (MESSAGES {messages} UIDNEXT {})",
+                    1001 + messages
+                )
             );
-            let a = &ex[3];
-            assert!(a.cmd.line.starts_with("A004 APPEND \"Sent\" (\\Seen) {"), "{}", a.cmd.line);
+            let a = &ex[2];
+            assert!(
+                a.cmd.line.starts_with("A003 APPEND \"Sent\" (\\Seen) {"),
+                "{}",
+                a.cmd.line
+            );
             let lit = a.cmd.literal.as_ref().unwrap();
             assert!(lit.ends_with(b"\r\n"));
-            sizes.push(check_message(name, lit, &[(b"%PDF-", "proposal.pdf", "application/pdf")]));
+            sizes.push(check_message(
+                name,
+                lit,
+                &[(b"%PDF-", "proposal.pdf", "application/pdf")],
+            ));
             let m = parse_mail(lit);
             assert!(m.header("Cc").is_some());
             assert!(
-                a.tagged.text.contains(&format!(" OK [APPENDUID ")) && a.tagged.text.contains(&format!(" {}] Append completed", 1001 + messages)),
+                a.tagged.text.contains(" OK [APPENDUID ")
+                    && a.tagged
+                        .text
+                        .contains(&format!(" {}] Append completed", 1001 + messages)),
                 "{}",
                 a.tagged.text
             );
         }
         "idle_push" => {
-            assert_eq!(names(&ex), ["CAPABILITY", "LOGIN", "SELECT", "IDLE", "FETCH", "LOGOUT"]);
+            assert_eq!(
+                names(&ex),
+                ["CAPABILITY", "LOGIN", "SELECT", "IDLE", "FETCH", "LOGOUT"]
+            );
             check_login(&ex[1]);
             check_select(&ex[2], messages, false);
             assert_eq!(ex[3].cmd.extra.as_deref(), Some("DONE"));
             let pushed: Vec<&str> = ex[3].untagged.iter().map(|r| r.text.as_str()).collect();
-            assert_eq!(pushed, [format!("* {} EXISTS", messages + 1), "* 1 RECENT".to_string()]);
+            assert_eq!(
+                pushed,
+                [
+                    format!("* {} EXISTS", messages + 1),
+                    "* 1 RECENT".to_string()
+                ]
+            );
             assert!(ex[3].tagged.text.contains("Idle completed"));
             let new = messages + 1;
-            assert_eq!(ex[4].cmd.line, format!("A005 FETCH {new} (UID FLAGS BODY.PEEK[])"));
+            assert_eq!(
+                ex[4].cmd.line,
+                format!("A005 FETCH {new} (UID FLAGS BODY.PEEK[])")
+            );
             check_fetch_head(&ex[4], new);
-            sizes.push(check_message(name, &ex[4].untagged[0].literals[0], &[(b"\xff\xd8\xff", "scan.jpg", "image/jpeg")]));
+            sizes.push(check_message(
+                name,
+                &ex[4].untagged[0].literals[0],
+                &[(b"\xff\xd8\xff", "scan.jpg", "image/jpeg")],
+            ));
         }
         other => panic!("no expectation for scenario {other}"),
     }
@@ -581,7 +684,7 @@ async fn check(name: &str, s: &Scenario, session_id: u64) -> Vec<usize> {
 }
 
 #[test]
-fn the_manifest_lists_six_scenarios() {
+fn the_manifest_lists_five_scenarios() {
     let names: Vec<String> = scenarios().into_iter().map(|(n, _)| n).collect();
     assert_eq!(
         names,
@@ -589,7 +692,6 @@ fn the_manifest_lists_six_scenarios() {
             "mailbox_sync",
             "fetch_messages",
             "search_store",
-            "authenticate_plain",
             "login_append",
             "idle_push"
         ]
@@ -665,11 +767,26 @@ async fn the_greeting_and_the_capability_list_look_like_a_dovecot_server() {
         let r = run(&s, 42, 1).await;
         let text = String::from_utf8_lossy(&r.s2c).into_owned();
         let lines: Vec<&str> = text.split("\r\n").take(3).collect();
-        assert!(lines[0].starts_with("* OK [CAPABILITY IMAP4rev1 "), "{name}");
-        assert!(lines[0].ends_with("imap.example.test Dovecot ready."), "{name}");
+        assert!(
+            lines[0].starts_with("* OK [CAPABILITY IMAP4rev1 "),
+            "{name}"
+        );
+        assert!(
+            lines[0].ends_with("imap.example.test Dovecot ready."),
+            "{name}"
+        );
+        if name == "login_append" {
+            continue;
+        }
         assert!(lines[1].starts_with("* CAPABILITY IMAP4rev1 "), "{name}");
-        assert!(lines[2].starts_with("A001 OK Pre-login capabilities listed"), "{name}");
+        assert!(
+            lines[2].starts_with("A001 OK Pre-login capabilities listed"),
+            "{name}"
+        );
         // Plain IMAP: no STARTTLS and no disabled LOGIN.
-        assert!(!lines[1].contains("STARTTLS") && !lines[1].contains("LOGINDISABLED"), "{name}");
+        assert!(
+            !lines[1].contains("STARTTLS") && !lines[1].contains("LOGINDISABLED"),
+            "{name}"
+        );
     }
 }
