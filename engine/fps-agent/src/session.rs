@@ -292,6 +292,10 @@ enum Lost {
     Status(tonic::Status),
     /// The controller closed the stream.
     Closed,
+    /// The first call on a fresh connection that presented a client
+    /// certificate ended because the connection closed, before any HTTP/2
+    /// response. The TCP and TLS handshakes had completed.
+    ClosedAfterHandshake(tonic::Status),
     /// The controller stayed silent for the heartbeat timeout.
     Silent,
     /// The key, the certificate, or the enrollment failed.
@@ -311,8 +315,16 @@ impl Lost {
             Lost::Status(s) => identity::tls_failure(s).map(tls_reason),
             Lost::Transport(e) => identity::tls_failure(e).map(tls_reason),
             Lost::Identity(e) if e.is_permanent() => Some(chain(e)),
-            Lost::Identity(_) | Lost::Closed | Lost::Silent => None,
+            Lost::Identity(_) | Lost::Closed | Lost::Silent | Lost::ClosedAfterHandshake(_) => None,
         }
+    }
+
+    /// Returns true for a connection that closed right after a handshake
+    /// with a client certificate. One such close may be a controller that is
+    /// restarting, so the agent confirms it with an immediate second dial
+    /// before it calls the certificate refused.
+    fn closed_after_handshake(&self) -> bool {
+        matches!(self, Lost::ClosedAfterHandshake(_))
     }
 }
 
@@ -320,7 +332,7 @@ impl std::fmt::Display for Lost {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Lost::Transport(e) => write!(f, "transport: {}", chain(e)),
-            Lost::Status(s) => {
+            Lost::Status(s) | Lost::ClosedAfterHandshake(s) => {
                 write!(f, "status {:?}: {}", s.code(), s.message())?;
                 let mut cur = std::error::Error::source(s);
                 while let Some(c) = cur {
@@ -1537,7 +1549,19 @@ where
     });
     let reg = tokio::select! {
         () = shutdown.as_mut() => return Ok(()),
-        r = register => r.map_err(Lost::Status)?.into_inner(),
+        r = register => r
+            .map_err(|status| {
+                // Under TLS 1.3 a client finishes its handshake before the
+                // server checks the client certificate, so a server that
+                // refuses it may close the connection with no alert that the
+                // client reads. This is the first call on a fresh connection.
+                if shared.identity.is_some() && identity::closed_before_response(&status) {
+                    Lost::ClosedAfterHandshake(status)
+                } else {
+                    Lost::Status(status)
+                }
+            })?
+            .into_inner(),
     };
     let interval = match convert::duration("heartbeat_interval", reg.heartbeat_interval.as_ref()) {
         Ok(d) if !d.is_zero() => d,
@@ -1708,6 +1732,8 @@ where
     );
     let mut number = 0u64;
     let mut outcome = Ok(());
+    // Whether the previous session ended in a close right after a handshake.
+    let mut closed_before = false;
     loop {
         number += 1;
         let mut opened = false;
@@ -1720,8 +1746,24 @@ where
                     break;
                 }
                 let aborted = matches!(&lost, Lost::Status(s) if s.code() == tonic::Code::Aborted);
+                let closed = lost.closed_after_handshake();
+                if closed && closed_before {
+                    let reason = tls_reason(format!(
+                        "the controller closed the connection right after the TLS handshake, \
+                         before any response, on two dials in a row with this agent's client \
+                         certificate ({lost}); a controller that refuses a client certificate \
+                         does this under TLS 1.3"
+                    ));
+                    tracing::error!(session = number, reason = %reason, "the failure is permanent, the agent exits");
+                    outcome = Err(SessionError::Permanent { reason });
+                    break;
+                }
+                // The confirming dial follows at once.
+                let confirm = closed && !closed_before;
+                closed_before = closed;
                 match policy.session_ended(Instant::now(), opened, aborted) {
                     Redial::After(wait) => {
+                        let wait = if confirm { Duration::ZERO } else { wait };
                         tracing::warn!(session = number, opened, aborted, error = %lost, backoff_ms = wait.as_millis() as u64, "session lost");
                         wait
                     }

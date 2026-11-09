@@ -521,6 +521,41 @@ fn read_pcapng(bytes: &[u8]) -> (usize, usize) {
     (sections, packets)
 }
 
+/// Counts the TCP and the UDP packets of a pcapng file of Ethernet frames, and
+/// the TCP packets whose source or destination port is `tcp_port`, with no
+/// code of the agent.
+fn transports(bytes: &[u8], tcp_port: u16) -> (usize, usize, usize) {
+    let (mut at, mut tcp, mut udp, mut on_port) = (0, 0, 0, 0);
+    while at < bytes.len() {
+        let kind = u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        let len = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().unwrap()) as usize;
+        if kind == 6 {
+            // Enhanced packet block: 8 bytes of header, 20 of fixed fields.
+            let cap = u32::from_le_bytes(bytes[at + 20..at + 24].try_into().unwrap()) as usize;
+            let f = &bytes[at + 28..at + 28 + cap];
+            let (proto, l4) = match [f[12], f[13]] {
+                [0x08, 0x00] => (f[23], &f[34..]),
+                [0x86, 0xdd] => (f[20], &f[54..]),
+                other => panic!("ethertype {other:?}"),
+            };
+            match proto {
+                6 => {
+                    tcp += 1;
+                    let src = u16::from_be_bytes([l4[0], l4[1]]);
+                    let dst = u16::from_be_bytes([l4[2], l4[3]]);
+                    if src == tcp_port || dst == tcp_port {
+                        on_port += 1;
+                    }
+                }
+                17 => udp += 1,
+                other => panic!("protocol {other}"),
+            }
+        }
+        at += len;
+    }
+    (tcp, udp, on_port)
+}
+
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "fps-agent-{name}-{}-{}",
@@ -722,6 +757,12 @@ async fn a_fake_controller_changes_rates_and_reads_a_capture() {
     let (sections, packets) = read_pcapng(&bytes);
     assert!(sections >= 1);
     assert_eq!(packets as u64, first.packets);
+    // One capture holds the TCP sessions of the HTTP entry and the UDP
+    // sessions of the DNS entry (AGT-10): both read the same cell.
+    let (tcp, udp, on_port) = transports(&bytes, 18_280);
+    assert!(tcp > 10, "the capture holds {tcp} TCP packets");
+    assert!(udp > 2, "the capture holds {udp} UDP packets");
+    assert_eq!(tcp, on_port, "every TCP packet belongs to the HTTP entry");
     // No ring directory is left beside the file.
     let leftovers: Vec<_> = std::fs::read_dir(file.parent().unwrap())
         .unwrap()

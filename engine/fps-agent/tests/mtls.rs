@@ -149,6 +149,10 @@ struct EnrollState {
     tokens: Mutex<HashSet<String>>,
     enrolls: AtomicU32,
     renews: AtomicU32,
+    /// The requests whose headers and body arrived, whatever they asked.
+    posts: AtomicU32,
+    /// The TLS handshakes that completed on the server side.
+    handshakes: AtomicU32,
     /// The common name of every CSR.
     names: Mutex<Vec<String>>,
     /// How long after an enrollment `renew_at` lies, in milliseconds.
@@ -161,8 +165,21 @@ struct Enroller {
 }
 
 /// Serves the endpoint on a loopback port. The server certificate comes from
-/// `server_pki` and the CA of the certificates that it issues is `issuer`.
+/// `server_pki` and the CA of the certificates that it issues is `issuer`. Like
+/// the controller since CTL-31, the endpoint presents the leaf and its CA.
 async fn enroller(server_pki: &Pki, issuer: Arc<Pki>, tokens: &[&str]) -> Enroller {
+    let leaf = server_pki.server();
+    let chain = vec![leaf.cert_der.clone(), server_pki.cert.der().clone()];
+    enroller_with_chain(leaf, chain, issuer, tokens).await
+}
+
+/// Like [`enroller`] with a leaf and the chain that the endpoint presents.
+async fn enroller_with_chain(
+    leaf: Leaf,
+    chain: Vec<rustls_pki_types::CertificateDer<'static>>,
+    issuer: Arc<Pki>,
+    tokens: &[&str],
+) -> Enroller {
     let state = Arc::new(EnrollState::default());
     state
         .tokens
@@ -170,7 +187,6 @@ async fn enroller(server_pki: &Pki, issuer: Arc<Pki>, tokens: &[&str]) -> Enroll
         .expect("tokens")
         .extend(tokens.iter().map(|t| (*t).to_owned()));
     *state.renew_after_ms.lock().expect("renew_after") = 3_600_000;
-    let leaf = server_pki.server();
     let mut roots = RootCertStore::empty();
     roots.add(issuer.cert.der().clone()).expect("root");
     let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider())
@@ -181,10 +197,7 @@ async fn enroller(server_pki: &Pki, issuer: Arc<Pki>, tokens: &[&str]) -> Enroll
         .with_safe_default_protocol_versions()
         .expect("versions")
         .with_client_cert_verifier(verifier)
-        .with_single_cert(
-            vec![leaf.cert_der.clone()],
-            PrivatePkcs8KeyDer::from(leaf.key_der.clone()).into(),
-        )
+        .with_single_cert(chain, PrivatePkcs8KeyDer::from(leaf.key_der.clone()).into())
         .expect("server config");
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
@@ -205,6 +218,7 @@ async fn enroller(server_pki: &Pki, issuer: Arc<Pki>, tokens: &[&str]) -> Enroll
                 let Ok(tls) = acceptor.accept(tcp).await else {
                     return;
                 };
+                st.handshakes.fetch_add(1, Ordering::SeqCst);
                 let has_cert = tls.get_ref().1.peer_certificates().is_some();
                 let svc = service_fn(move |req| {
                     let st = Arc::clone(&st);
@@ -238,6 +252,7 @@ async fn handle(
 ) -> HttpResponse<Full<Bytes>> {
     let path = req.uri().path().to_owned();
     let body = req.into_body().collect().await.expect("body").to_bytes();
+    st.posts.fetch_add(1, Ordering::SeqCst);
     let json: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
     let denied = || {
         reply(
@@ -693,20 +708,176 @@ async fn a_certificate_that_the_controller_refuses_is_a_permanent_failure() {
     cfg.ca_file = Some(dir.path("ca.crt"));
     // Under TLS 1.3 the client finishes its handshake before the server checks
     // the client certificate, so the server's alert races the close of the
-    // connection. When the alert arrives the failure is permanent; when the
-    // close wins, the agent sees a closed connection and ends at the redial
-    // limit. Either way it ends and never opens a session.
-    match Agent::start(addr, cfg).ended().await {
-        Err(SessionError::Permanent { reason }) => {
-            assert!(reason.contains("TLS failure"), "{reason}")
-        }
-        Err(SessionError::RedialLimit { last, .. }) => assert!(
-            last.contains("connection closed") || last.contains("alert"),
-            "{last}"
-        ),
-        other => panic!("want a permanent failure or the redial limit, got {other:?}"),
-    }
+    // connection. Either the alert arrives, or the connection closes right
+    // after the handshake and before any response, and the agent confirms
+    // that with one more dial. Both are permanent.
+    let reason = permanent(Agent::start(addr, cfg).ended().await);
+    assert!(reason.contains("TLS failure"), "{reason}");
     assert_eq!(ctl.sessions.load(Ordering::SeqCst), 0);
+}
+
+/// The endpoint presents `chain` and the agent pins `pin`. The agent must end
+/// permanently, and the endpoint must never see a request.
+async fn pinned_refusal(name: &str, enroll: Enroller, pin: [u8; 32]) -> String {
+    let pki = Arc::new(Pki::new("controller ca"));
+    let (addr, ctl) = controller(&pki.server(), &pki, false).await;
+    let dir = TestDir::new(name);
+    let mut cfg = tls(&dir.path("pki"), enroll.addr);
+    cfg.ca_sha256 = Some(pin);
+    write(&dir.path("token"), "good.token");
+    cfg.token = Some(TokenSource::File(dir.path("token")));
+    let reason = permanent(Agent::start(addr, cfg).ended().await);
+    assert_eq!(
+        enroll.state.posts.load(Ordering::SeqCst),
+        0,
+        "the endpoint saw a request, so the token left the agent"
+    );
+    assert_eq!(enroll.state.enrolls.load(Ordering::SeqCst), 0);
+    assert!(
+        enroll
+            .state
+            .tokens
+            .lock()
+            .expect("tokens")
+            .contains("good.token"),
+        "the endpoint holds the token, which it never received"
+    );
+    assert!(
+        dir.path("token").exists(),
+        "the token stays for another try"
+    );
+    assert!(!dir.path("pki/agent.key").exists());
+    assert!(!dir.path("pki/ca.pem").exists());
+    assert_eq!(ctl.sessions.load(Ordering::SeqCst), 0);
+    reason
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_endpoint_whose_chain_has_another_ca_never_sees_the_token() {
+    let pinned = Pki::new("pinned ca");
+    let rogue = Arc::new(Pki::new("rogue ca"));
+    // The rogue endpoint presents its own leaf and its own CA.
+    let enroll = enroller(&rogue, Arc::clone(&rogue), &["good.token"]).await;
+    let reason = pinned_refusal("pin-other-chain", enroll, pinned.fingerprint()).await;
+    assert!(reason.contains("pinned fingerprint"), "{reason}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_endpoint_that_presents_only_its_leaf_never_sees_the_token() {
+    let pki = Arc::new(Pki::new("pinned ca"));
+    let leaf = pki.server();
+    let chain = vec![leaf.cert_der.clone()];
+    let enroll = enroller_with_chain(leaf, chain, Arc::clone(&pki), &["good.token"]).await;
+    let reason = pinned_refusal("pin-leaf-only", enroll, pki.fingerprint()).await;
+    assert!(reason.contains("pinned fingerprint"), "{reason}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_leaf_that_does_not_chain_to_the_pinned_ca_never_sees_the_token() {
+    // The chain holds the pinned CA, but the leaf is from another CA.
+    let pki = Arc::new(Pki::new("pinned ca"));
+    let rogue = Pki::new("rogue ca");
+    let leaf = rogue.server();
+    let chain = vec![leaf.cert_der.clone(), pki.cert.der().clone()];
+    let enroll = enroller_with_chain(leaf, chain, Arc::clone(&pki), &["good.token"]).await;
+    let reason = pinned_refusal("pin-foreign-leaf", enroll, pki.fingerprint()).await;
+    assert!(reason.contains("TLS failure"), "{reason}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pinned_ca_enrolls_when_the_chain_carries_it_and_the_token_arrives_once() {
+    let pki = Arc::new(Pki::new("pinned ca"));
+    let enroll = enroller(&pki, Arc::clone(&pki), &["good.token"]).await;
+    let (addr, ctl) = controller(&pki.server(), &pki, false).await;
+    let dir = TestDir::new("pin-ok");
+    let mut cfg = tls(&dir.path("pki"), enroll.addr);
+    cfg.ca_sha256 = Some(pki.fingerprint());
+    write(&dir.path("token"), "good.token");
+    cfg.token = Some(TokenSource::File(dir.path("token")));
+    let agent = Agent::start(addr, cfg);
+    wait_for("a session", || ctl.sessions.load(Ordering::SeqCst) == 1).await;
+    assert_eq!(enroll.state.posts.load(Ordering::SeqCst), 1);
+    assert!(enroll.state.handshakes.load(Ordering::SeqCst) >= 1);
+    agent.shutdown().await;
+}
+
+/// Listens like a controller that restarts: the first `closes` connections get
+/// a completed TLS handshake with the real server certificate and are then
+/// closed before any HTTP/2 byte, and every later connection goes to `real`.
+async fn flaky_front(server: &Leaf, ca: &Pki, real: SocketAddr, closes: u32) -> SocketAddr {
+    let mut roots = RootCertStore::empty();
+    roots.add(ca.cert.der().clone()).expect("root");
+    let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider())
+        .build()
+        .expect("client verifier");
+    let mut config = rustls::ServerConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .expect("versions")
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(
+            vec![server.cert_der.clone()],
+            PrivatePkcs8KeyDer::from(server.key_der.clone()).into(),
+        )
+        .expect("server config");
+    config.alpn_protocols = vec![b"h2".to_vec()];
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let mut seen = 0u32;
+        while let Ok((mut tcp, _)) = listener.accept().await {
+            seen += 1;
+            if seen <= closes {
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    if let Ok(tls) = acceptor.accept(tcp).await {
+                        // Hold the connection a moment, so the client has
+                        // finished its handshake, and then close it.
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        drop(tls);
+                    }
+                });
+                continue;
+            }
+            tokio::spawn(async move {
+                if let Ok(mut up) = tokio::net::TcpStream::connect(real).await {
+                    let _ = tokio::io::copy_bidirectional(&mut tcp, &mut up).await;
+                }
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_close_after_the_handshake_is_redialed_and_two_in_a_row_are_permanent() {
+    let pki = Arc::new(Pki::new("test ca"));
+    let enroll = enroller(&pki, Arc::clone(&pki), &[]).await;
+    let server = pki.server();
+    let (real, ctl) = controller(&server, &pki, false).await;
+    let dir = TestDir::new("flaky");
+    write(&dir.path("ca.crt"), &pki.pem());
+    seed_identity(&dir.path("pki"), &pki.client(AGENT));
+    let mut cfg = tls(&dir.path("pki"), enroll.addr);
+    cfg.ca_file = Some(dir.path("ca.crt"));
+
+    // A controller that closes one connection and then serves: the agent
+    // redials and registers.
+    let once = flaky_front(&server, &pki, real, 1).await;
+    let agent = Agent::start(once, cfg.clone());
+    wait_for("a session after one close", || {
+        ctl.sessions.load(Ordering::SeqCst) == 1
+    })
+    .await;
+    agent.shutdown().await;
+
+    // A controller that closes every connection ends the agent permanently.
+    let always = flaky_front(&server, &pki, real, u32::MAX).await;
+    let reason = permanent(Agent::start(always, cfg).ended().await);
+    assert!(reason.contains("TLS failure"), "{reason}");
+    assert!(reason.contains("two dials in a row"), "{reason}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
