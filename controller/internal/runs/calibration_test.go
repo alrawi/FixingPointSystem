@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alrawi/FixingPointSystem/controller/internal/agents"
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents/agentpb"
 	"github.com/alrawi/FixingPointSystem/controller/internal/compiler"
 	"github.com/alrawi/FixingPointSystem/controller/internal/fakeagent"
@@ -20,7 +19,8 @@ import (
 	"github.com/alrawi/FixingPointSystem/controller/internal/runs/calibrate"
 )
 
-// The throughput tests run a 8 Mbit/s objective on a scenario that the
+// The throughput tests run on the real agent manager and fake agents that
+// simulate traffic (fakeagent.Traffic). They run a 8 Mbit/s objective on a scenario that the
 // manifest estimates at 10 kB per session. The compiled rate is therefore 100
 // sessions per second, and sessions that really carry four times as much move
 // four times the objective until the calibration corrects the rate to 25.
@@ -54,171 +54,46 @@ func (b byteCatalog) Scenarios(context.Context) ([]compiler.Scenario, error) {
 	}}, nil
 }
 
-// simAgent drives a fake agent like an engine whose sessions carry trueBytes
-// bytes each. It runs the rate of the plan in simulated time, reports the
-// counters of the sessions that it completed, and takes new rates from
-// UpdateRates, so the loop between the controller and the agent closes.
-type simAgent struct {
-	fake *fakeagent.Agent
-
-	mu       sync.Mutex
-	rates    map[string]float64 // sessions per second of the whole agent, by mix entry
-	acc      float64            // sessions that are due but not yet whole
-	sessions uint64
-	bytes    uint64
-	simTime  float64
-	updates  []*agentpb.UpdateRatesCommand
-	stop     chan struct{}
-	done     chan struct{}
+// trafficOptions makes a fake agent simulate sessions that carry trueBytes
+// bytes each. The agent runs the rate of its plan in simulated time, reports
+// the counters of the sessions that it completed, and takes new rates from
+// UpdateRates, so the loop between the controller and the agent closes on the
+// real agent manager.
+func trafficOptions() *fakeagent.Traffic {
+	return &fakeagent.Traffic{BytesPerSession: trueBytes, Speed: simSpeed, Tick: simTick}
 }
 
-// startSim returns a simulated agent for fake, which must have a prepared plan,
-// attaches it to rm for UpdateRates, and starts its traffic. The test ends it with Stop.
-func startSim(t *testing.T, rm *rateManager, fake *fakeagent.Agent) *simAgent {
-	t.Helper()
-	s := &simAgent{fake: fake, rates: map[string]float64{}, stop: make(chan struct{}), done: make(chan struct{})}
-	var plan *agentpb.Plan
-	for _, c := range fake.Commands() {
-		if p := c.GetPrepare(); p != nil {
-			plan = p.GetPlan()
-		}
-	}
-	if plan == nil {
-		t.Fatalf("agent %s has no plan", fake.ID())
-	}
-	for _, w := range plan.GetWorkers() {
-		for _, r := range w.GetRates() {
-			s.rates[r.GetMixEntry()] += r.GetSessionsPerSecond()
-		}
-	}
-	rm.attach(fake.ID(), s)
-	go s.run()
-	t.Cleanup(s.Stop)
-	return s
-}
-
-// Stop ends the traffic. It may be called more than once.
-func (s *simAgent) Stop() {
-	s.mu.Lock()
-	select {
-	case <-s.stop:
-	default:
-		close(s.stop)
-	}
-	s.mu.Unlock()
-	<-s.done
-}
-
-func (s *simAgent) run() {
-	defer close(s.done)
-	tick := time.NewTicker(simTick)
-	defer tick.Stop()
-	for {
-		select {
-		case <-s.stop:
-			return
-		case <-tick.C:
-		}
-		s.mu.Lock()
-		dt := simTick.Seconds() * simSpeed
-		for _, r := range s.rates {
-			s.acc += r * dt
-		}
-		whole := uint64(s.acc)
-		s.acc -= float64(whole)
-		s.sessions += whole
-		s.bytes += whole * trueBytes
-		s.simTime += dt
-		sessions, bytes := s.sessions, s.bytes
-		s.mu.Unlock()
-		client := scenario("client")
-		_, _ = s.fake.Snapshot(
-			labeled("sessions.attempted", sessions, client),
-			labeled("sessions.succeeded", sessions, client),
-			labeled("bytes.tx", bytes/2, client),
-			labeled("bytes.rx", bytes-bytes/2, client),
-		)
-	}
-}
-
-// apply is the agent's handling of UpdateRates: all entries or none.
-func (s *simAgent) apply(cmd *agentpb.UpdateRatesCommand) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, r := range cmd.GetRates() {
-		if _, ok := s.rates[r.GetMixEntry()]; !ok {
-			return fmt.Errorf("mix entry %q is not a mix entry of the plan", r.GetMixEntry())
-		}
-	}
-	for _, r := range cmd.GetRates() {
-		s.rates[r.GetMixEntry()] = r.GetSessionsPerSecond()
-	}
-	s.updates = append(s.updates, cmd)
-	return nil
-}
-
-// total returns the session rate of the whole agent.
-func (s *simAgent) total() float64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// totalRate returns the session rate that the agent runs, over every mix entry.
+func totalRate(a *fakeagent.Agent) float64 {
 	var sum float64
-	for _, r := range s.rates {
+	for _, r := range a.Rates() {
 		sum += r
 	}
 	return sum
 }
 
-// mark returns the bytes and the simulated seconds so far.
-func (s *simAgent) mark() (bytes uint64, simTime float64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.bytes, s.simTime
-}
-
-func (s *simAgent) updateCommands() []*agentpb.UpdateRatesCommand {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]*agentpb.UpdateRatesCommand(nil), s.updates...)
-}
-
-// rateManager is an agent manager that also sends UpdateRates, which it hands
-// to the simulated agent of the target. The agent manager of the controller
-// does not send the command yet.
-type rateManager struct {
-	*agents.Manager
-	mu    sync.Mutex
-	sims  map[string]*simAgent
-	calls map[string]int
-}
-
-func newRateManager(m *agents.Manager) *rateManager {
-	return &rateManager{Manager: m, sims: map[string]*simAgent{}, calls: map[string]int{}}
-}
-
-func (m *rateManager) attach(id string, s *simAgent) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.sims[id] = s
-}
-
-func (m *rateManager) callsTo(id string) int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.calls[id]
-}
-
-func (m *rateManager) UpdateRates(_ context.Context, id string, cmd *agentpb.UpdateRatesCommand) (*agentpb.UpdateRatesResult, error) {
-	m.mu.Lock()
-	m.calls[id]++
-	s := m.sims[id]
-	m.mu.Unlock()
-	if s == nil {
-		return nil, fmt.Errorf("no simulated agent %s", id)
+// compiledRate returns the session rate of the plan that the agent prepared.
+func compiledRate(a *fakeagent.Agent) float64 {
+	var sum float64
+	for _, c := range a.Commands() {
+		for _, w := range c.GetPrepare().GetPlan().GetWorkers() {
+			for _, r := range w.GetRates() {
+				sum += r.GetSessionsPerSecond()
+			}
+		}
 	}
-	if err := s.apply(cmd); err != nil {
-		return nil, err
+	return sum
+}
+
+// updateCommands returns the UpdateRates commands that the agent received.
+func updateCommands(a *fakeagent.Agent) []*agentpb.UpdateRatesCommand {
+	var out []*agentpb.UpdateRatesCommand
+	for _, c := range a.Commands() {
+		if u := c.GetUpdateRates(); u != nil {
+			out = append(out, u)
+		}
 	}
-	return &agentpb.UpdateRatesResult{}, nil
+	return out
 }
 
 // engineCaps returns fake agent capabilities with the engine version.
@@ -230,25 +105,18 @@ func engineCaps(engine string) *agentpb.Capabilities {
 
 // throughputHarness starts a harness whose configuration "thr" has a
 // throughput objective, whose catalog carries the byte estimate, and whose
-// calibration runs a window of 20 ms. It returns the rate manager and the
-// recorder of its log.
-func throughputHarness(t *testing.T, cfgBody string, cal runs.CalibrationConfig) (*harness, *rateManager, *logRecorder) {
+// calibration runs a window of 20 ms. The orchestrator runs on the real agent
+// manager. It returns the recorder of its log.
+func throughputHarness(t *testing.T, cfgBody string, cal runs.CalibrationConfig) (*harness, *logRecorder) {
 	t.Helper()
-	var rm *rateManager
 	rec := &logRecorder{}
 	h := newHarness(t, func(c *runs.Config) {
 		c.Store = memStore{"thr": cfgBody}
 		c.Catalog = byteCatalog(expectedBytes)
 		c.Calibration = cal
 		c.Logger = slog.New(rec)
-		mgr, ok := c.Agents.(*agents.Manager)
-		if !ok {
-			t.Fatalf("harness agent manager is %T", c.Agents)
-		}
-		rm = newRateManager(mgr)
-		c.Agents = rm
 	})
-	return h, rm, rec
+	return h, rec
 }
 
 // fastCalibration is the calibration of the tests: short windows, and the
@@ -304,7 +172,7 @@ func (h *harness) startThroughputRun(t *testing.T, fakes ...*fakeagent.Agent) ru
 
 func startAgent(t *testing.T, h *harness, id, engine string) *fakeagent.Agent {
 	t.Helper()
-	a, err := fakeagent.Start(testContext(t), fakeagent.Options{ID: id, Dial: h.dial, Capabilities: engineCaps(engine)})
+	a, err := fakeagent.Start(testContext(t), fakeagent.Options{ID: id, Dial: h.dial, Capabilities: engineCaps(engine), Traffic: trafficOptions()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,16 +183,16 @@ func startAgent(t *testing.T, h *harness, id, engine string) *fakeagent.Agent {
 // measuredBps returns the throughput that the agents moved over about 200 ms
 // of real time, which is 20 s of simulated traffic, in bits per second of
 // simulated time.
-func measuredBps(sims ...*simAgent) float64 {
-	b0 := make([]uint64, len(sims))
-	t0 := make([]float64, len(sims))
-	for i, s := range sims {
-		b0[i], t0[i] = s.mark()
+func measuredBps(agents ...*fakeagent.Agent) float64 {
+	b0 := make([]uint64, len(agents))
+	t0 := make([]float64, len(agents))
+	for i, a := range agents {
+		b0[i], t0[i] = a.TrafficTotals()
 	}
 	time.Sleep(200 * time.Millisecond)
 	var bits, secs float64
-	for i, s := range sims {
-		b1, t1 := s.mark()
+	for i, a := range agents {
+		b1, t1 := a.TrafficTotals()
 		bits += float64(b1 - b0[i])
 		secs = math.Max(secs, t1-t0[i])
 	}
@@ -336,24 +204,22 @@ func measuredBps(sims ...*simAgent) float64 {
 // objective at the compiled rate, and the calibration brings the realized
 // throughput within 5 percent of the objective.
 func TestThroughputCalibrationReachesObjective(t *testing.T) {
-	h, rm, rec := throughputHarness(t, throughputConfig, fastCalibration())
+	h, rec := throughputHarness(t, throughputConfig, fastCalibration())
 	a := startAgent(t, h, "agent-a", "0.2.1")
 	run := h.startThroughputRun(t, a)
-	sim := startSim(t, rm, a)
-
-	// At the compiled rate the sessions move 4 times the objective.
-	if got := sim.total() * trueBytes * 8; math.Abs(got/objectiveBps-4) > 1e-9 {
+	// At the compiled rate of the plan the sessions move 4 times the objective.
+	if got := compiledRate(a) * trueBytes * 8; math.Abs(got/objectiveBps-4) > 1e-9 {
 		t.Fatalf("compiled rate gives %v bit/s, want 4 times the objective", got)
 	}
 	waitFor(t, "the corrected rate", func() bool {
-		return math.Abs(sim.total()*trueBytes*8/objectiveBps-1) <= 0.02
+		return math.Abs(totalRate(a)*trueBytes*8/objectiveBps-1) <= 0.02
 	})
-	if got := measuredBps(sim); math.Abs(got/objectiveBps-1) > 0.05 {
+	if got := measuredBps(a); math.Abs(got/objectiveBps-1) > 0.05 {
 		t.Errorf("throughput %.0f bit/s is not within 5%% of the objective %.0f bit/s", got, objectiveBps)
 	}
 
 	// The agent got whole agent totals, and the run records the steps.
-	cmds := sim.updateCommands()
+	cmds := updateCommands(a)
 	if len(cmds) == 0 {
 		t.Fatal("the agent received no UpdateRates")
 	}
@@ -388,7 +254,6 @@ func TestThroughputCalibrationReachesObjective(t *testing.T) {
 	}
 
 	// The calibration ends with the run, and the run completes as usual.
-	sim.Stop()
 	if err := a.Finish(); err != nil {
 		t.Fatal(err)
 	}
@@ -396,9 +261,9 @@ func TestThroughputCalibrationReachesObjective(t *testing.T) {
 	if end.State != runs.Completed || len(end.Calibration) < len(steps) {
 		t.Errorf("run ended %s with %d steps", end.State, len(end.Calibration))
 	}
-	calls := rm.callsTo(a.ID())
+	calls := len(updateCommands(a))
 	time.Sleep(3 * calWin)
-	if n := rm.callsTo(a.ID()); n != calls {
+	if n := len(updateCommands(a)); n != calls {
 		t.Errorf("UpdateRates reached the agent after the run ended: %d calls, then %d", calls, n)
 	}
 }
@@ -407,32 +272,29 @@ func TestThroughputCalibrationReachesObjective(t *testing.T) {
 // engine_api 0.1.0 never receives the command, that the orchestrator logs
 // that once, and that the agent with 0.2.1 is corrected.
 func TestCalibrationSkipsAgentsWithoutUpdateRates(t *testing.T) {
-	h, rm, rec := throughputHarness(t, throughputConfig, fastCalibration())
+	h, rec := throughputHarness(t, throughputConfig, fastCalibration())
 	newer := startAgent(t, h, "agent-new", "0.2.1")
 	older := startAgent(t, h, "agent-old", "0.1.0")
 	run := h.startThroughputRun(t, newer, older)
-	simNew, simOld := startSim(t, rm, newer), startSim(t, rm, older)
-	baseOld := simOld.total()
+	baseOld := totalRate(older)
 
 	waitFor(t, "the corrected rate of the new agent", func() bool {
 		r, _ := h.orch.Get(run.ID)
 		return len(r.Calibration) >= 4
 	})
 	time.Sleep(5 * calWin)
-	if n := rm.callsTo(older.ID()); n != 0 {
+	if n := len(updateCommands(older)); n != 0 {
 		t.Errorf("the old agent received %d UpdateRates commands", n)
 	}
-	if got := simOld.total(); got != baseOld {
+	if got := totalRate(older); got != baseOld {
 		t.Errorf("the old agent runs %v sessions per second, compiled %v", got, baseOld)
 	}
-	if len(simNew.updateCommands()) == 0 {
+	if len(updateCommands(newer)) == 0 {
 		t.Error("the new agent received no UpdateRates")
 	}
 	if n := rec.count("agent has no UpdateRates, so its rates stay uncalibrated"); n != 1 {
 		t.Errorf("logged %d times that the old agent has no UpdateRates, want once", n)
 	}
-	simNew.Stop()
-	simOld.Stop()
 	if _, err := h.orch.Stop(run.ID, true); err != nil {
 		t.Fatal(err)
 	}
@@ -451,23 +313,21 @@ func TestCalibrationLeavesOtherObjectivesAlone(t *testing.T) {
 		"calibration off":     {throughputConfig, runs.CalibrationConfig{Window: -1}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			h, rm, rec := throughputHarness(t, tc.config, tc.cal)
+			h, rec := throughputHarness(t, tc.config, tc.cal)
 			a := startAgent(t, h, "agent-a", "0.2.1")
 			run := h.startThroughputRun(t, a)
-			sim := startSim(t, rm, a)
-			base := sim.total()
+			base := totalRate(a)
 			time.Sleep(10 * calWin)
 			r, err := h.orch.Get(run.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if n := rm.callsTo(a.ID()); n != 0 || len(r.Calibration) != 0 || sim.total() != base {
-				t.Errorf("%d UpdateRates, %d steps, rate %v from %v", n, len(r.Calibration), sim.total(), base)
+			if n := len(updateCommands(a)); n != 0 || len(r.Calibration) != 0 || totalRate(a) != base {
+				t.Errorf("%d UpdateRates, %d steps, rate %v from %v", n, len(r.Calibration), totalRate(a), base)
 			}
 			if n := rec.count("throughput calibration started"); n != 0 {
 				t.Errorf("calibration started %d times", n)
 			}
-			sim.Stop()
 			if _, err := h.orch.Stop(run.ID, true); err != nil {
 				t.Fatal(err)
 			}
