@@ -264,7 +264,7 @@ tokens:
 	waitRunState(t, p, run.Id, api.RunStateRunning)
 	// The orchestrator moves the run to running before it sends Start, so the
 	// fake agent reaches RUNNING a moment after the run does: wait for it.
-	waitAgentState(t, ag, agentpb.AgentState_AGENT_STATE_RUNNING)
+	waitFakeAgentState(t, ag, agentpb.AgentState_AGENT_STATE_RUNNING)
 	checkRunMetrics(t, p, ag, run.Id)
 	p.postJSON(t, "/v1/runs/"+run.Id+":stop", e2eRunToken, "{}", http.StatusAccepted, nil)
 	final := waitRunState(t, p, run.Id, api.RunStateCompleted)
@@ -504,8 +504,8 @@ func waitRunState(t *testing.T, p *controllerProcess, id string, want api.RunSta
 	return run
 }
 
-// waitAgentState polls the fake agent until it is in state want.
-func waitAgentState(t *testing.T, ag *fakeagent.Agent, want agentpb.AgentState) {
+// waitFakeAgentState polls the fake agent until it is in state want.
+func waitFakeAgentState(t *testing.T, ag *fakeagent.Agent, want agentpb.AgentState) {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
 	var s agentpb.AgentState
