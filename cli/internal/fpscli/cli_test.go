@@ -256,6 +256,9 @@ func TestConfigUploadListShow(t *testing.T) {
 			writeJSON(w, 201, `{"id":"cfg_1","name":"http_smoke","created_at":"2026-11-09T10:00:00Z"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/configs/cfg_1":
 			writeJSON(w, 200, `{"kind":"Test","metadata":{"name":"http_smoke"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/configs":
+			// A controller without listConfigs: the CLI falls back to its history.
+			problem(w, 501, "operation listConfigs is not implemented yet")
 		default:
 			problem(w, 404, "no")
 		}
@@ -298,8 +301,12 @@ func TestConfigUploadListShow(t *testing.T) {
 		t.Errorf("--json upload: exit %d, stdout %q", res.code, res.stdout)
 	}
 
-	// The history holds one entry per configuration of the controller.
+	// The controller answers listConfigs with 501, so the history lists the
+	// uploads, one entry per configuration of the controller.
 	res = cliEnv(t, env, "", "config", "list")
+	if !strings.Contains(res.stderr, "does not serve listConfigs") {
+		t.Errorf("list names no fallback: %q", res.stderr)
+	}
 	if res.code != 0 || !strings.Contains(res.stdout, "cfg_1") || !strings.Contains(res.stdout, "http_smoke") || strings.Count(res.stdout, "cfg_1") != 1 {
 		t.Errorf("list: exit %d, stdout %q", res.code, res.stdout)
 	}
@@ -311,7 +318,10 @@ func TestConfigUploadListShow(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.stdout), &listed); err != nil || len(listed.Items) != 1 {
 		t.Errorf("--json list: %q %v", res.stdout, err)
 	}
-	other := map[string]string{"FPS_URL": "http://localhost:1", "FPS_HISTORY_FILE": hist}
+	otherSrv := newStub(t, func(w http.ResponseWriter, _ *http.Request) {
+		problem(w, 501, "operation listConfigs is not implemented yet")
+	})
+	other := map[string]string{"FPS_URL": otherSrv.URL, "FPS_HISTORY_FILE": hist}
 	if res := cliEnv(t, other, "", "config", "list"); res.code != 0 || strings.Contains(res.stdout, "cfg_1") {
 		t.Errorf("list of another controller: %q", res.stdout)
 	}
@@ -440,6 +450,86 @@ func TestRunStartStopShowList(t *testing.T) {
 	var listed struct{ Items []map[string]any }
 	if err := json.Unmarshal([]byte(res.stdout), &listed); err != nil || len(listed.Items) != 2 {
 		t.Errorf("--json list: %q %v", res.stdout, err)
+	}
+}
+
+func TestConfigListServedByController(t *testing.T) {
+	srv := newStub(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/configs" && r.URL.Query().Get("page_token") == "":
+			writeJSON(w, 200, `{"items":[{"id":"cfg_3","name":"newest","created_at":"2026-11-09T12:00:00Z"},{"id":"cfg_2","name":"middle","created_at":"2026-11-09T11:00:00Z"}],"next_page_token":"tok2"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/configs" && r.URL.Query().Get("page_token") == "tok2":
+			writeJSON(w, 200, `{"items":[{"id":"cfg_1","name":"oldest"}]}`)
+		default:
+			problem(w, 404, "no")
+		}
+	})
+	// The history file of the machine holds another configuration, which the
+	// listing of the controller must not mix in.
+	hist := filepath.Join(t.TempDir(), "h.json")
+	if err := os.WriteFile(hist, []byte(`{"configs":[{"controller":"`+srv.URL+`","id":"cfg_local","name":"local_only","uploaded_at":"2026-11-01T00:00:00Z"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"FPS_URL": srv.URL, "FPS_TOKEN": testToken, "FPS_HISTORY_FILE": hist}
+
+	res := cliEnv(t, env, "", "config", "list")
+	if res.code != 0 || !strings.Contains(res.stdout, "cfg_3") || !strings.Contains(res.stdout, "cfg_2") ||
+		strings.Contains(res.stdout, "cfg_1") || strings.Contains(res.stdout, "cfg_local") ||
+		strings.Index(res.stdout, "cfg_3") > strings.Index(res.stdout, "cfg_2") || !strings.Contains(res.stderr, "tok2") {
+		t.Errorf("list: exit %d, stdout %q, stderr %q", res.code, res.stdout, res.stderr)
+	}
+	if r := srv.last(); r.path != "/v1/configs" || !strings.Contains(r.auth, testToken) {
+		t.Errorf("request = %+v", r)
+	}
+	res = cliEnv(t, env, "", "config", "list", "--page-token", "tok2")
+	if res.code != 0 || !strings.Contains(res.stdout, "cfg_1") || strings.Contains(res.stdout, "cfg_3") {
+		t.Errorf("list --page-token: exit %d, stdout %q", res.code, res.stdout)
+	}
+	res = cliEnv(t, env, "", "config", "list", "--all", "--page-size", "2")
+	if res.code != 0 || !strings.Contains(res.stdout, "cfg_3") || !strings.Contains(res.stdout, "cfg_1") || strings.Contains(res.stderr, "more configurations") {
+		t.Errorf("list --all: exit %d, stdout %q, stderr %q", res.code, res.stdout, res.stderr)
+	}
+	res = cliEnv(t, env, "", "--json", "config", "list", "--all")
+	var listed struct{ Items []ConfigRef }
+	if err := json.Unmarshal([]byte(res.stdout), &listed); err != nil || len(listed.Items) != 3 || listed.Items[2].ID != "cfg_1" {
+		t.Errorf("--json list: %q %v", res.stdout, err)
+	}
+	if res := cliEnv(t, env, "", "config", "list", "--page-size", "501"); res.code != ExitUsage {
+		t.Errorf("--page-size 501: exit %d", res.code)
+	}
+	// The listing across controllers needs the history, and never calls the controller.
+	res = cliEnv(t, env, "", "config", "list", "--all-controllers")
+	if res.code != 0 || !strings.Contains(res.stdout, "cfg_local") || strings.Contains(res.stdout, "cfg_3") {
+		t.Errorf("--all-controllers: exit %d, stdout %q", res.code, res.stdout)
+	}
+}
+
+func TestConfigListErrorsDoNotFallBack(t *testing.T) {
+	hist := filepath.Join(t.TempDir(), "h.json")
+	for name, status := range map[string]int{"unauthorized": 401, "forbidden": 403, "server error": 500} {
+		t.Run(name, func(t *testing.T) {
+			srv := newStub(t, func(w http.ResponseWriter, _ *http.Request) { problem(w, status, "refused") })
+			if err := os.WriteFile(hist, []byte(`{"configs":[{"controller":"`+srv.URL+`","id":"cfg_local","name":"n","uploaded_at":"x"}]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			env := map[string]string{"FPS_URL": srv.URL, "FPS_TOKEN": testToken, "FPS_HISTORY_FILE": hist}
+			res := cliEnv(t, env, "", "config", "list")
+			if res.code == 0 || strings.Contains(res.stdout, "cfg_local") {
+				t.Errorf("exit %d, stdout %q: the history hid the error", res.code, res.stdout)
+			}
+		})
+	}
+}
+
+func TestConfigListEmpty(t *testing.T) {
+	srv := newStub(t, func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, `{"items":[]}`) })
+	res := cli(t, srv.URL, "", "config", "list")
+	if res.code != 0 || res.stdout != "" || !strings.Contains(res.stderr, "no configuration") {
+		t.Errorf("exit %d, stdout %q, stderr %q", res.code, res.stdout, res.stderr)
+	}
+	res = cli(t, srv.URL, "", "--json", "config", "list")
+	if res.code != 0 || !strings.Contains(res.stdout, `"items": []`) {
+		t.Errorf("--json: exit %d, stdout %q", res.code, res.stdout)
 	}
 }
 

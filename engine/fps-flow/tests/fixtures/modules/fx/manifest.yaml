@@ -58,6 +58,9 @@ scenarios:
   - scenarios/undefined_var.yaml
   - scenarios/unknown_core_function.yaml
   - scenarios/unbalanced.yaml
+  - scenarios/tls_upgrade_tcp.yaml
+  - scenarios/tls_upgrade_udp.yaml
+  - scenarios/tls_upgrade_udp_nested.yaml
 provenance:
   source: synthetic
   notes: Test fixture of the scenario loader. All content is generated.

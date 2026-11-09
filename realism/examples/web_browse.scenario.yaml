@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# The web_browse scenario of docs/spec/specification.md, with the plain HTTP page flow
+# that the ENG-07 test uses. One instance resolves a name over UDP port 53, and the page
+# flow then fetches the page over TCP port 8080, because it runs `after` the lookup.
+# The realism tests and web_browse.labels.yaml use this file as the graph of the session
+# structure check. contracts/examples/modules/http1/scenarios/web_browse.yaml is another
+# scenario of the same name that has the single flow `browse`.
+scenario: web_browse
+vars:
+  host: www.example.test
+  dns_port: 53
+  server_port: 8080
+  page_size: 18000
+flows:
+  - id: lookup
+    module: dns
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.dns_port }}" }
+      - send: "{{ dns.query(name=vars.host, qtype='A') }}"
+      - expect: { min_bytes: 12, timeout_ms: 2000 }
+      - set: { server_ip: "{{ dns.answer_ip(last) }}" }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.dns_port }}" }
+      - expect: { min_bytes: 12, timeout_ms: 2000 }
+      - send: "{{ dns.response(last, address='192.0.2.1') }}"
+      - close: fin
+  - id: page
+    after: lookup
+    module: http1
+    client:
+      - connect: { host: "{{ vars.server_ip }}", port: "{{ vars.server_port }}" }
+      - send: "GET / HTTP/1.1\r\nHost: {{ vars.host }}\r\n\r\n"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - expect: { bytes: "{{ vars.page_size }}", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "HTTP/1.1 200 OK\r\nContent-Length: {{ vars.page_size }}\r\n\r\n{{ fill(vars.page_size) }}"
+      - close: fin

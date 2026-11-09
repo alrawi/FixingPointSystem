@@ -23,6 +23,7 @@ from realism.labels import LabelsError
 from realism.modules import ModuleError, discover, matrix, select
 from realism.parsers import PARSER_NAMES, ParserError, not_found_reason, resolve
 from realism.report import score
+from realism.scenario_graph import ScenarioError
 
 EXIT_PASS = 0
 EXIT_FAIL = 1
@@ -97,6 +98,15 @@ def _parser() -> argparse.ArgumentParser:
         type=_threshold,
         help="largest share of duplicate payloads per application, from 0 to 1; adds the "
         "content variety check and overrides the labels file, whose default is 0.01",
+    )
+    score_cmd.add_argument(
+        "--scenario",
+        type=Path,
+        action="append",
+        default=[],
+        help="scenario file whose flow graph the session structure check compares with the "
+        "capture; repeat it for several scenarios; adds the check next to the structure "
+        "section of the labels file",
     )
     score_cmd.add_argument("--tshark", help="path of tshark, defaults to FPS_TSHARK or the path")
     score_cmd.add_argument("--zeek", help="path of zeek, defaults to FPS_ZEEK or the path")
@@ -175,8 +185,9 @@ def main(argv: list[str] | None = None) -> int:
             tls_probe=TsharkTlsProbe(args.tshark, args.timeout),
             keylog=args.keylog,
             max_duplicate_ratio=args.max_duplicate_ratio,
+            scenario_files=args.scenario,
         )
-    except (CaptureError, LabelsError, ClassifierError, ParserError) as exc:
+    except (CaptureError, LabelsError, ClassifierError, ParserError, ScenarioError) as exc:
         print(f"realism score failed: {exc}", file=sys.stderr)
         return EXIT_ERROR
     text = report.to_json()

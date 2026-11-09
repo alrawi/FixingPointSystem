@@ -6,8 +6,10 @@
 // the controller assigns. SQLite implements it with the pure Go driver
 // modernc.org/sqlite, so the controller builds without cgo.
 //
-// Handler serves the three configuration operations of the REST contract.
-// POST /v1/configs accepts a JSON or YAML body, checks it against
+// Handler serves the four configuration operations of the REST contract.
+// GET /v1/configs lists the stored configurations newest first, paged by their
+// creation sequence, so a configuration that arrives between two requests
+// never shifts or repeats an item. POST /v1/configs accepts a JSON or YAML body, checks it against
 // contracts/schemas/test-config.schema.json, and stores it. A body that breaks
 // the schema gets a 422 problem whose errors name each failing field with a
 // JSON Pointer. GET /v1/configs/{id} returns the stored document, and

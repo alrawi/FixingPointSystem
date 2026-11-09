@@ -10,9 +10,11 @@ import (
 	"time"
 )
 
-// The REST API has no operation that lists stored configurations, so the
-// client keeps a list of the configurations that it uploaded. The file lives
-// below the user's state directory and holds no secret.
+// The client keeps a list of the configurations that it uploaded. Since
+// listConfigs (REST 0.7.0) it only serves as the fallback of fps config list
+// for a controller that answers that operation with 501, and for the listing
+// across controllers. The file lives below the user's state directory and
+// holds no secret.
 
 // historyEntry is one uploaded configuration.
 type historyEntry struct {
