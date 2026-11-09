@@ -8,6 +8,7 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use fps_backend_kernel::{Connector, KernelListener};
+use fps_capture::CaptureCell;
 use fps_flow::template::Filler;
 use fps_interp::{session_rng, Session, SessionCtx, Side};
 use fps_sched::{RateHandle, Schedule};
@@ -21,7 +22,7 @@ use crate::collector::WorkerSnapshot;
 use crate::config::{ClientConfig, FlowRef, Role, ServerConfig, WorkerConfig};
 use crate::control::Control;
 use crate::metrics::SessionMetrics;
-use crate::opener::{global_session_id, Accepted, ClientOpener};
+use crate::opener::{global_session_id, Accepted, ClientOpener, Endpoints, TapOpener};
 use crate::runtime::WorkerExit;
 use crate::RuntimeError;
 
@@ -33,6 +34,7 @@ pub(crate) struct WorkerStart {
     pub(crate) control: watch::Receiver<Control>,
     pub(crate) snapshots: Sender<WorkerSnapshot>,
     pub(crate) ready: Sender<(u32, Result<Ready, RuntimeError>)>,
+    pub(crate) capture: CaptureCell,
 }
 
 /// What a worker reports when it is ready.
@@ -94,6 +96,7 @@ struct Worker {
     sequence: Cell<u64>,
     snapshots: Sender<WorkerSnapshot>,
     abort: watch::Sender<bool>,
+    capture: CaptureCell,
 }
 
 impl Worker {
@@ -116,6 +119,7 @@ impl Worker {
             sequence: Cell::new(0),
             snapshots: start.snapshots.clone(),
             abort: watch::channel(false).0,
+            capture: start.capture.clone(),
         })
     }
 
@@ -149,8 +153,10 @@ impl Worker {
         self: Rc<Self>,
         local_id: u64,
         program: &fps_flow::program::Program,
-        mut opener: O,
-    ) {
+        opener: O,
+    ) where
+        O::Io: Endpoints,
+    {
         let started = Instant::now();
         self.metrics.started(&mut self.shard.borrow_mut());
         let stop = self.aborted();
@@ -158,6 +164,7 @@ impl Worker {
             Ok(flow) => {
                 let mut functions = (self.flow.functions)();
                 let id = global_session_id(self.id, local_id);
+                let mut opener = TapOpener::new(opener, &self.capture, id, self.side);
                 let mut session = Session::new(SessionCtx {
                     vars: &self.flow.scenario.vars,
                     filler: &self.filler,

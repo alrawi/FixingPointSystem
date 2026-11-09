@@ -307,6 +307,31 @@ func (m *Manager) Enroll(id string, labels map[string]string) (Agent, error) {
 	return r.snapshot(), nil
 }
 
+// Seed adds each identity of ids to the inventory as an enrolled agent that
+// has no operator labels, and returns the identities that it added. It skips
+// an identity that the inventory already holds, so it never replaces labels
+// or a reservation, and it skips an identity outside the Id pattern. The
+// controller calls it at start with the identities that hold a valid
+// certificate, so that agents register again after a restart without
+// Config.AutoEnroll. Operator labels are not persisted and an operator sets
+// them again with Enroll.
+func (m *Manager) Seed(ids []string) []string {
+	m.mu.Lock()
+	var added []string
+	for _, id := range ids {
+		if !ValidID(id) || m.agents[id] != nil {
+			continue
+		}
+		m.agents[id] = &record{id: id, enrolled: true}
+		added = append(added, id)
+	}
+	m.mu.Unlock()
+	for _, id := range added {
+		m.log.Info("agent restored from the certificate state", "agent_id", id)
+	}
+	return added
+}
+
 // Get returns the agent with identity id.
 func (m *Manager) Get(id string) (Agent, error) {
 	m.mu.Lock()

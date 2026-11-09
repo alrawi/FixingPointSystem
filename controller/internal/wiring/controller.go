@@ -142,7 +142,9 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 		regDir = c.tempDir
 		logger.Warn("data_dir is not set, so configurations and modules end with the process", "registry", regDir)
 	}
-	if c.Registry, err = registry.Open(regDir, registry.Limits{}); err != nil {
+	if c.Registry, err = registry.Open(regDir, registry.Limits{},
+		registry.WithTrust(registry.TrustPolicy{StorePath: cfg.TrustStoreFile, AllowUnsigned: cfg.AllowUnsignedModules}),
+		registry.WithLogger(logger)); err != nil {
 		return nil, err
 	}
 
@@ -171,6 +173,9 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 		Observer:          c.observe,
 	}); err != nil {
 		return nil, fmt.Errorf("create agent manager: %w", err)
+	}
+	if c.PKI != nil {
+		c.Agents.Seed(c.PKI.ValidIdentities())
 	}
 
 	if c.Evaluator, err = report.NewEvaluator(nil); err != nil {

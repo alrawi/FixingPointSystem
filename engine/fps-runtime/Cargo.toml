@@ -11,6 +11,7 @@ publish.workspace = true
 # Pins a worker thread to one core with sched_setaffinity, so this crate needs no unsafe code.
 core_affinity = "0.8"
 fps-backend-kernel = { path = "../fps-backend-kernel" }
+fps-capture = { path = "../fps-capture" }
 fps-flow = { path = "../fps-flow" }
 fps-hosts = { path = "../fps-hosts" }
 fps-interp = { path = "../fps-interp" }
