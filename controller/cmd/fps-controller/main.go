@@ -246,7 +246,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 // serve builds the controller, serves the REST API and the agent gRPC service
 // until ctx ends or one of them fails, and then shuts both down.
 func serve(ctx context.Context, cfg app.Config, logger *slog.Logger) (err error) {
-	ctl, err := wiring.New(ctx, wiring.Options{Config: cfg, Logger: logger})
+	ctl, err := wiring.New(ctx, wiring.Options{Config: cfg, Logger: logger, Version: buildVersion()})
 	if err != nil {
 		return err
 	}

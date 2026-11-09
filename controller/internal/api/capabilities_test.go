@@ -130,6 +130,32 @@ func TestContractCapabilities(t *testing.T) {
 	}
 }
 
+// TestCapabilitiesControllerVersion checks that the option sets
+// controller_version, and that a build without a version leaves the field out.
+func TestCapabilitiesControllerVersion(t *testing.T) {
+	rec := getCapabilities(t, api.NewCapabilitiesAPI(nil, nil, api.WithControllerVersion("1.4.0-rc1")))
+	var got api.Capabilities
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ControllerVersion == nil || *got.ControllerVersion != "1.4.0-rc1" {
+		t.Errorf("controller_version = %v, want 1.4.0-rc1", got.ControllerVersion)
+	}
+	if got.ApiVersion == nil || *got.ApiVersion != api.APIVersion {
+		t.Errorf("api_version = %v, want %q: the controller version must not replace it", got.ApiVersion, api.APIVersion)
+	}
+	for name, impl := range map[string]*api.CapabilitiesAPI{
+		"no option":     api.NewCapabilitiesAPI(nil, nil),
+		"empty version": api.NewCapabilitiesAPI(nil, nil, api.WithControllerVersion("")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if body := getCapabilities(t, impl).Body.String(); strings.Contains(body, "controller_version") {
+				t.Errorf("body %s carries controller_version", body)
+			}
+		})
+	}
+}
+
 // TestCapabilitiesEmpty checks that no agents and no modules, and nil
 // sources, give empty arrays, which the contract requires, not null.
 func TestCapabilitiesEmpty(t *testing.T) {

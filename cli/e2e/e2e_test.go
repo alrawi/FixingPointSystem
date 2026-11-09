@@ -267,11 +267,17 @@ tokens:
 
 func (f *fixture) rest(t *testing.T, method, path, ctype string, body []byte, want int) {
 	t.Helper()
+	f.restAs(t, adminToken, method, path, ctype, body, want)
+}
+
+// restAs is rest with the named token.
+func (f *fixture) restAs(t *testing.T, token, method, path, ctype string, body []byte, want int) {
+	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), method, f.url+path, bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+adminToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", ctype)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -372,8 +378,35 @@ func TestEndToEnd(t *testing.T) {
 	if configID == "" {
 		t.Fatalf("config upload printed no identifier: %q", up.stdout)
 	}
-	if l := f.fps(t, "", "config", "list").expect(t, "config list", 0); !strings.Contains(l.stdout, configID) {
+	// The controller lists the configurations. A history file that no upload
+	// wrote proves that the listing comes from GET /v1/configs, and a second
+	// configuration that goes straight to the REST API, which the CLI never
+	// saw, proves that it covers every upload, newest first.
+	noHistory := map[string]string{"FPS_TOKEN_FILE": f.tokenFile, "FPS_HISTORY_FILE": filepath.Join(f.dir, "no-history.json")}
+	l := f.fpsEnv(t, "", noHistory, "config", "list").expect(t, "config list", 0)
+	if !strings.Contains(l.stdout, configID) || !strings.Contains(l.stdout, "http_smoke") {
 		t.Errorf("config list lacks %s:\n%s", configID, l.stdout)
+	}
+	f.restAs(t, runToken, http.MethodPost, "/v1/configs", "application/yaml", []byte(passing), http.StatusCreated)
+	var listed struct {
+		Items []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	lj := f.fpsEnv(t, "", noHistory, "--json", "config", "list").expect(t, "config list --json", 0)
+	if err := json.Unmarshal([]byte(lj.stdout), &listed); err != nil {
+		t.Fatalf("config list --json: %v\n%s", err, lj.stdout)
+	}
+	if len(listed.Items) != 2 || listed.Items[1].ID != configID || listed.Items[0].ID == configID || listed.Items[0].Name != "http_smoke" {
+		t.Errorf("config list --json = %+v, want the REST upload first and %s second", listed.Items, configID)
+	}
+	paged := f.fpsEnv(t, "", noHistory, "config", "list", "--page-size", "1").expect(t, "config list --page-size 1", 0)
+	if !strings.Contains(paged.stderr, "--page-token") || strings.Contains(paged.stdout, configID) {
+		t.Errorf("config list --page-size 1 should show only the newest configuration and name a page token:\nstdout:\n%s\nstderr:\n%s", paged.stdout, paged.stderr)
+	}
+	if all := f.fpsEnv(t, "", noHistory, "config", "list", "--page-size", "1", "--all").expect(t, "config list --all", 0); !strings.Contains(all.stdout, configID) {
+		t.Errorf("config list --all lacks %s:\n%s", configID, all.stdout)
 	}
 	if s := f.fps(t, "", "config", "show", configID).expect(t, "config show", 0); !strings.Contains(s.stdout, "http_smoke") {
 		t.Errorf("config show lacks the name:\n%s", s.stdout)

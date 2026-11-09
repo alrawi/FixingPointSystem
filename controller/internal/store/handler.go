@@ -4,6 +4,7 @@ package store
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/api"
@@ -19,7 +21,7 @@ import (
 // MaxBodyBytes bounds the size of a configuration body.
 const MaxBodyBytes = 1 << 20
 
-// Handler serves createConfig, getConfig, and validateConfig, and answers
+// Handler serves listConfigs, createConfig, getConfig, and validateConfig, and answers
 // every other operation through the embedded api.Unimplemented.
 type Handler struct {
 	api.Unimplemented
@@ -82,6 +84,68 @@ func RandomID() (string, error) {
 		return "", fmt.Errorf("new config id: %w", err)
 	}
 	return "cfg_" + hex.EncodeToString(b[:]), nil
+}
+
+// Page sizes of listConfigs, from the PageSize parameter of the contract.
+const (
+	defaultPageSize = 50
+	maxPageSize     = 500
+)
+
+// ListConfigs answers GET /v1/configs with the stored configurations newest
+// first. The page token is opaque and names the creation sequence of the last
+// configuration of the previous page, so pages stay stable when a
+// configuration is stored between two requests.
+func (h *Handler) ListConfigs(w http.ResponseWriter, r *http.Request, params api.ListConfigsParams) {
+	opt := ListOptions{Limit: defaultPageSize}
+	if params.PageSize != nil {
+		if *params.PageSize < 1 || *params.PageSize > maxPageSize {
+			api.WriteProblem(w, r, api.Problemf(http.StatusBadRequest, "page_size must be between 1 and %d", maxPageSize))
+			return
+		}
+		opt.Limit = *params.PageSize
+	}
+	if params.PageToken != nil && *params.PageToken != "" {
+		after, ok := decodePageToken(*params.PageToken)
+		if !ok {
+			api.WriteProblem(w, r, api.NewProblem(http.StatusBadRequest, "page_token is not a token that listConfigs returned"))
+			return
+		}
+		opt.After = after
+	}
+	page, err := h.repo.List(r.Context(), opt)
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	out := struct {
+		Items         []api.ConfigRef `json:"items"`
+		NextPageToken *string         `json:"next_page_token,omitempty"`
+	}{Items: make([]api.ConfigRef, len(page.Items))}
+	for i, s := range page.Items {
+		created := s.CreatedAt
+		out.Items[i] = api.ConfigRef{Id: s.ID, Name: s.Name, CreatedAt: &created}
+	}
+	if page.Next != 0 {
+		tok := encodePageToken(page.Next)
+		out.NextPageToken = &tok
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// encodePageToken returns the opaque token for the creation sequence seq.
+func encodePageToken(seq uint64) string {
+	return base64.RawURLEncoding.EncodeToString([]byte("c" + strconv.FormatUint(seq, 10)))
+}
+
+// decodePageToken returns the sequence that tok names.
+func decodePageToken(tok string) (uint64, bool) {
+	b, err := base64.RawURLEncoding.DecodeString(tok)
+	if err != nil || len(b) < 2 || b[0] != 'c' {
+		return 0, false
+	}
+	seq, err := strconv.ParseUint(string(b[1:]), 10, 64)
+	return seq, err == nil && seq != 0
 }
 
 // CreateConfig stores a schema valid configuration and answers 201 with its

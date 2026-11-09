@@ -4,11 +4,14 @@ package fpscli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -26,7 +29,7 @@ func (a *app) configCmd(ctx context.Context, args []string) error {
 	case "upload":
 		return a.configUpload(ctx, rest)
 	case "list":
-		return a.configList(rest)
+		return a.configList(ctx, rest)
 	default:
 		return a.configShow(ctx, rest)
 	}
@@ -200,9 +203,12 @@ func (a *app) writeValidation(id string, rep *ValidationReport) {
 	}
 }
 
-func (a *app) configList(args []string) error {
+func (a *app) configList(ctx context.Context, args []string) error {
 	fs := a.newFlagSet("fps config list")
-	all := fs.Bool("all-controllers", false, "list the configurations of every controller, not only of --url")
+	size := fs.Int("page-size", 0, "configurations per page, 1 to 500 (default 50)")
+	token := fs.String("page-token", "", "`TOKEN` of the page to fetch, from a previous next_page_token")
+	all := fs.Bool("all", false, "follow every page")
+	allControllers := fs.Bool("all-controllers", false, "list the uploads of this machine to every controller, from the history file, not only to --url")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
@@ -210,13 +216,91 @@ func (a *app) configList(args []string) error {
 	if err := wantArgs("config list", pos); err != nil {
 		return err
 	}
+	if *size < 0 || *size > 500 {
+		return usagef("--page-size must be between 1 and 500")
+	}
+	if *allControllers {
+		return a.configListHistory(true, "")
+	}
+	c, err := a.newClient()
+	if err != nil {
+		return err
+	}
+	var items []json.RawMessage
+	var typed []ConfigRef
+	next := *token
+	for first := true; ; first = false {
+		q := url.Values{}
+		if *size > 0 {
+			q.Set("page_size", strconv.Itoa(*size))
+		}
+		if next != "" {
+			q.Set("page_token", next)
+		}
+		var page struct {
+			Items         []json.RawMessage `json:"items"`
+			NextPageToken string            `json:"next_page_token"`
+		}
+		if _, err := c.fetchJSON(ctx, request{method: http.MethodGet, path: "/configs", query: q}, &page); err != nil {
+			// Only a controller that answers 501 lacks the operation. Any
+			// other failure is the answer, so the history never hides it.
+			var apiErr *APIError
+			if first && errors.As(err, &apiErr) && apiErr.Status == http.StatusNotImplemented {
+				return a.configListHistory(false, "this controller does not serve listConfigs, so this lists the uploads of this machine")
+			}
+			return err
+		}
+		items = append(items, page.Items...)
+		for _, it := range page.Items {
+			var ref ConfigRef
+			if err := json.Unmarshal(it, &ref); err != nil {
+				return err
+			}
+			typed = append(typed, ref)
+		}
+		next = page.NextPageToken
+		if next == "" || !*all {
+			break
+		}
+	}
+	if a.g.JSON {
+		out := map[string]any{"items": items}
+		if items == nil {
+			out["items"] = []json.RawMessage{}
+		}
+		if next != "" {
+			out["next_page_token"] = next
+		}
+		return printValue(a.env.Stdout, out)
+	}
+	if len(typed) == 0 {
+		a.eprintf("the controller stores no configuration yet\n")
+		return nil
+	}
+	tw := newTable(a.env.Stdout)
+	_, _ = tw.Write([]byte("ID\tNAME\tCREATED\n"))
+	for _, r := range typed {
+		_, _ = tw.Write([]byte(r.ID + "\t" + r.Name + "\t" + dash(r.CreatedAt) + "\n"))
+	}
+	_ = tw.Flush()
+	if next != "" {
+		a.eprintf("more configurations follow, pass --page-token %s or --all\n", next)
+	}
+	return nil
+}
+
+// configListHistory lists the uploads that the history file records. It is
+// the fallback for a controller that answers listConfigs with 501, and the
+// only way to list the uploads to several controllers. A non empty note goes
+// to standard error after the list.
+func (a *app) configListHistory(all bool, note string) error {
 	h, err := a.readHistory()
 	if err != nil {
 		return usagef("read the history file %s: %v", a.historyPath(), err)
 	}
 	var shown []historyEntry
 	for _, e := range h.Configs {
-		if *all || e.Controller == a.g.URL {
+		if all || e.Controller == a.g.URL {
 			shown = append(shown, e)
 		}
 	}
@@ -228,23 +312,28 @@ func (a *app) configList(args []string) error {
 	}
 	if len(shown) == 0 {
 		a.eprintf("no configuration was uploaded from this machine to %s yet\n", a.g.URL)
+		if note != "" {
+			a.eprintf("%s\n", note)
+		}
 		return nil
 	}
 	tw := newTable(a.env.Stdout)
 	hdr := "ID\tNAME\tUPLOADED\tSOURCE"
-	if *all {
+	if all {
 		hdr += "\tCONTROLLER"
 	}
 	_, _ = tw.Write([]byte(hdr + "\n"))
 	for _, e := range shown {
 		line := e.ID + "\t" + e.Name + "\t" + e.UploadedAt + "\t" + dash(e.Source)
-		if *all {
+		if all {
 			line += "\t" + e.Controller
 		}
 		_, _ = tw.Write([]byte(line + "\n"))
 	}
 	_ = tw.Flush()
-	a.eprintf("the controller API cannot list configurations, so this lists the uploads of this machine\n")
+	if note != "" {
+		a.eprintf("%s\n", note)
+	}
 	return nil
 }
 
