@@ -1,0 +1,21 @@
+220 (vsFTPd 3.0.5)
+331 Please specify the password.
+230 Login successful.
+215 UNIX Type: L8
+211-Features:
+ EPRT
+ EPSV
+ MDTM
+ PASV
+ REST STREAM
+ SIZE
+ TVFS
+ UTF8
+211 End
+250 Directory successfully changed.
+200 Switching to Binary mode.
+202 ALLO command ignored.
+227 Entering Passive Mode (192,0,2,10,198,115).
+150 Ok to send data.
+226 Transfer complete.
+221 Goodbye.

@@ -1,0 +1,10 @@
+USER droufa.tagaizoum
+PASS Tst-Noutrouk9797
+SYST
+FEAT
+CWD /srv/ftp/exports
+TYPE I
+ALLO 370
+PASV
+STOR steizuvain_klimer-202609.zip
+QUIT

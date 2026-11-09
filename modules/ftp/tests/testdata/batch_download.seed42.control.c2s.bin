@@ -1,0 +1,13 @@
+USER droufa.tagaizoum
+PASS Tst-Noutrouk9797
+SYST
+PWD
+CWD /srv/ftp/exports
+TYPE I
+SIZE traitres_hovobai-202608.zip
+PASV
+RETR traitres_hovobai-202608.zip
+SIZE stabra_gairuku-202602.zip
+PASV
+RETR stabra_gairuku-202602.zip
+QUIT

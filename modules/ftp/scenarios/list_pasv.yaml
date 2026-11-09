@@ -1,0 +1,85 @@
+scenario: list_pasv
+description: A directory listing over a passive mode data connection. The client logs in with USER and PASS, asks for SYST, FEAT, and PWD, changes the directory, switches to ASCII mode, and sends PASV. The server draws a data port, spawns the data flow, which listens on that port as a real server does, and only then announces the port in its 227 reply. The client reads the port with ftp.pasv_port, sends LIST, and spawns its side of the data flow, which opens one connection to the announced port, carries the listing, and closes. The server sends the 226 reply when the transfer is over. The control connection and the data connection are two sessions, and the client closes the control connection with QUIT.
+vars:
+  server_port: 21
+  server_ip: 192.0.2.10
+  data_port_min: 50000
+  data_port_max: 50999
+  server_banner: (vsFTPd 3.0.5)
+  login_dir: /srv/ftp
+  work_dir: /srv/ftp/exports
+  list_entries: 24
+flows:
+  - id: control
+    module: ftp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "USER {{ ftp.credential('user') }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "PASS {{ ftp.credential('password') }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "SYST\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "FEAT\r\n"
+      - expect: { pattern: "\r\n211 End\r\n", timeout_ms: 5000 }
+      - send: "PWD\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "CWD {{ vars.work_dir }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "TYPE A\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "PASV\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { data_port: "{{ ftp.pasv_port(last) }}" }
+      - send: "LIST\r\n"
+      - spawn: { flow: data }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - send: "QUIT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "220 {{ vars.server_banner }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "331 Please specify the password.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "230 Login successful.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "215 UNIX Type: L8\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ ftp.feat_reply() }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "257 \"{{ vars.login_dir }}\" is the current directory\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "250 Directory successfully changed.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "200 Switching to ASCII mode.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { data_port: "{{ rand_int(vars.data_port_min, vars.data_port_max) }}" }
+      - spawn: { flow: data }
+      - delay: { dist: uniform, min_ms: 1, max_ms: 3 }
+      - send: "{{ ftp.pasv_reply(vars.server_ip, vars.data_port) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "150 Here comes the directory listing.\r\n"
+      - delay: { dist: uniform, min_ms: 10, max_ms: 40 }
+      - send: "226 Directory send OK.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "221 Goodbye.\r\n"
+      - close: fin
+  - id: data
+    module: ftp
+    spawned: true
+    client:
+      - connect: { port: "{{ vars.data_port }}" }
+      - loop:
+          count: "{{ vars.list_entries }}"
+          do:
+            - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.data_port }}" }
+      - delay: { dist: uniform, min_ms: 1, max_ms: 4 }
+      - send: "{{ ftp.listing(rand_int(1, 2000000000), vars.list_entries) }}"
+      - close: fin
