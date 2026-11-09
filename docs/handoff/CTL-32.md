@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #288 |
 | Branch | `wp/CTL-32` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #291 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-e61608, lease until 2026-11-09T15:12:51Z |
-| Last verified commit | none |
+| Last verified commit | bc925b2 |
 
 ## Goal
 
@@ -16,22 +16,22 @@ CTL-14 stores downloaded capture files under the data directory and nothing remo
 
 ## Plan
 
-- [ ] 1. `capture_retention` in `internal/app` config (default 168h, validated, optional flag).
-- [ ] 2. Sweep, injectable clock, ticker owned by the service, use guard for downloads and uploads in `internal/captures`.
-- [ ] 3. Wiring of the setting and shutdown in `internal/wiring`, tests, Controller wiki page, log entry.
-- [ ] 4. PR and CI green.
+- [x] 1. `capture_retention` in `internal/app` config (default 168h, validated, optional flag).
+- [x] 2. Sweep, injectable clock, ticker owned by the service, use guard for downloads and uploads in `internal/captures`.
+- [x] 3. Wiring of the setting and shutdown in `internal/wiring`, tests, Controller wiki page, log entry.
+- [x] 4. PR and CI green.
 
 ## Done and verified
 
-Steps 1 to 3 written. Go cannot build here, so only `gofmt -l` (clean), `plan.py check`, `render --check`, and `lint` ran locally; CI is the build and test loop.
+All steps done. CI on bc925b2: ctl job (gofmt, go vet, golangci-lint, go test -race), controller-e2e, gate, and the rest are green. Go cannot build here, so only `gofmt -l` (clean), `plan.py check`, `render --check`, and `lint` ran locally; CI is the build and test loop.
 
 ## Remaining
 
-Open the PR and fix what CI reports.
+none
 
 ## Next action
 
-Open the PR and poll CI.
+Review PR #291.
 
 ## Blockers and open questions
 
@@ -57,3 +57,4 @@ gofmt -l controller/internal/captures controller/internal/app controller/interna
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T13:43Z | claude-e61608 | claim | none | Claimed #288 |
+| 2026-11-09T13:55Z | claude-e61608 | finish | bc925b2 | PR #291, CI green, ready for review |
