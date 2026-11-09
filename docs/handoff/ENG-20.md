@@ -5,10 +5,10 @@
 | Issue | #311 |
 | Branch | `wp/ENG-20` |
 | Pull request | #320 |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-e20a7c, lease until 2026-11-09T19:58:56Z |
-| Last verified commit | none |
+| Last verified commit | a15373c |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ A flow action `tls_upgrade` wraps the existing transport of a running session in
 - [x] 1. Flow compiler: `Op::UpgradeTls` and the `tls_upgrade` action in `fps-flow`.
 - [x] 2. Interpreter: the `TlsUpgrader` seam and the in place swap in `fps-interp`.
 - [x] 3. Runtime: a TLS profile registry in `fps-runtime`, wired into each session, with the TRN-04 module as the upgrader.
-- [ ] 4. Loopback SMTP STARTTLS test with capture and key log, `docs/wiki/Engine.md`, log entry, checks, PR.
+- [x] 4. Loopback SMTP STARTTLS test with capture and key log, `docs/wiki/Engine.md`, log entry, checks, PR.
 
 ## Done and verified
 
@@ -60,3 +60,4 @@ cargo test -p fps-flow -p fps-interp -p fps-runtime
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T18:13:00Z | claude-e20a7c | claim | none | claimed issue #311 |
+| 2026-11-09T18:43:00Z | claude-e20a7c | finish | a15373c | PR #320 open, CI green, ready for review |
