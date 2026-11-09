@@ -74,10 +74,10 @@ func statusText(code int) string {
 }
 
 func (e *APIError) exitCode() int {
-	switch {
-	case e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden:
+	switch e.Status {
+	case http.StatusUnauthorized, http.StatusForbidden:
 		return ExitAuth
-	case e.Status == http.StatusNotFound:
+	case http.StatusNotFound:
 		return ExitNotFound
 	default:
 		return ExitAPI

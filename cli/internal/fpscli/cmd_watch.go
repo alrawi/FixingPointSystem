@@ -140,7 +140,6 @@ type display struct {
 	id    string
 	table bool
 	cur   map[string]MetricSample
-	state string
 }
 
 // tick draws the samples of one tick.
