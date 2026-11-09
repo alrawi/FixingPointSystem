@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #186 |
 | Branch | `wp/RLM-04` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #316 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-9c41e7, lease until 2026-11-09T19:41:01Z |
-| Last verified commit | none |
+| Last verified commit | a174129 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,19 +22,19 @@ Add the encryption check to the realism report. It decrypts a sample of TLS sess
 - [x] 2. Labels `tls` section and `tls_profile` rule field, the tshark probe, and the `encryption` check
 - [x] 3. Report schema 0.4.0, CLI `--keylog`, and the job summary row
 - [x] 4. Tests with generated TLS captures: stub probes and real tshark, embedded and sidecar keys
-- [ ] 5. README, wiki page, log entry, pull request, and CI
+- [x] 5. README, wiki page, log entry, pull request, and CI
 
 ## Done and verified
 
-1 to 4: `make lint-rlm test-rlm` passes locally with tshark 4.2.2 and openssl installed, so the real tshark tests ran and did not skip.
+1 to 4: `make lint-rlm test-rlm` passes locally with tshark 4.2.2 and openssl installed (198 passed, 6 skipped for Zeek and ndpiReader), so the real tshark tests ran. 5: `plan.py check`, `render --check`, and `lint` pass. CI on a174129 is green after a rerun of workflows that GitHub had failed at startup with no jobs, and the rlm job ran 204 tests with none skipped.
 
 ## Remaining
 
-Open the pull request and wait for CI.
+none
 
 ## Next action
 
-Run `python3 tools/swarm/fps_swarm.py review 186 --pr <PR>` after CI is green.
+Review pull request #316.
 
 ## Blockers and open questions
 
@@ -65,3 +65,4 @@ make lint-rlm test-rlm
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T18:29:00Z | claude-9c41e7 | claim | none | Claimed #186 with 4 steps |
+| 2026-11-09T18:45:00Z | claude-9c41e7 | finish | a174129 | PR #316, CI green, ready for review |
