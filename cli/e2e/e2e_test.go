@@ -434,7 +434,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 	failID := strings.TrimSpace(f.fps(t, "", "config", "upload", failing).expect(t, "upload failing config", 0).stdout)
 	res := f.fps(t, "", "run", "start", failID, "--agent", "local", "--watch").expect(t, "run start --watch with a failing criterion", 1)
-	if !strings.Contains(res.stdout, "sessions.attempted < 0") || !strings.Contains(res.stderr, "missed its criteria") {
+	if !strings.Contains(res.stdout, "sessions.attempted < 0") || !strings.Contains(res.stderr, "criteria failed") {
 		t.Errorf("failing run:\nstdout:\n%s\nstderr:\n%s", res.stdout, res.stderr)
 	}
 
