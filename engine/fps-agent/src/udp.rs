@@ -28,17 +28,19 @@ use fps_backend_kernel::{Connector, KernelDatagram, KernelDatagramListener};
 use fps_capture::{Side as TapSide, TappedDatagram};
 use fps_flow::program::Program;
 use fps_flow::template::Filler;
+use fps_flow::TemplateFn;
 use fps_interp::{
     session_rng, DatagramOpener, Failure, OpenKind, OpenRequest, Reason, Session, SessionCtx, Side,
     SideStats,
 };
 use fps_runtime::{
-    global_session_id, ClientConfig, Collector, FlowRef, Role, ServerConfig, SourceHosts,
-    TokioClock, WorkerConfig, WorkerSnapshot,
+    global_session_id, ClientConfig, Collector, FlowRef, Role, ServerConfig, SessionKey,
+    SourceHosts, TokioClock, WorkerConfig, WorkerSnapshot,
 };
 use fps_sched::{RateControl, Schedule};
 use fps_stats::Side as StatsSide;
 use fps_stats::{FailureReason, SessionCounters, Shard, StatsError};
+use fps_wasm::CloseReason;
 use tokio::sync::{watch, Notify};
 use tokio::task::LocalSet;
 use tokio::time::{interval_at, sleep_until, Instant, MissedTickBehavior};
@@ -314,6 +316,20 @@ fn stats_side(side: Side) -> StatsSide {
     }
 }
 
+/// Maps the outcome of a session to the close reason of its extensions, as
+/// `fps-runtime` does for its TCP sessions.
+fn close_reason(outcome: &Result<(), Failure>) -> CloseReason {
+    match outcome {
+        Ok(()) => CloseReason::Finished,
+        Err(f) => match f.reason {
+            Reason::Aborted | Reason::UnexpectedReset => CloseReason::Reset,
+            Reason::PeerClosed => CloseReason::PeerClosed,
+            Reason::ConnectTimeout | Reason::ExpectTimeout => CloseReason::Timeout,
+            _ => CloseReason::Failed,
+        },
+    }
+}
+
 /// Maps a failure reason of the interpreter to its `reason` label value.
 fn stats_reason(reason: Reason) -> FailureReason {
     match reason {
@@ -452,8 +468,26 @@ impl Worker {
             .flows
             .get(self.flow.flow)
             .map_or("", |f| f.id.as_str());
-        let mut functions = (self.flow.functions)();
+        let native = (self.flow.functions)();
         let id = global_session_id(self.id, local_id);
+        // A flow without extensions takes the native functions as they are.
+        // Otherwise the wrapper routes the modules of the set to the
+        // instances that this session owns, as the TCP worker does.
+        let mut wrapped = None;
+        let mut plain = None;
+        let functions: &mut dyn TemplateFn = match &self.flow.extensions {
+            Some(set) => wrapped.insert(set.session_functions(
+                SessionKey {
+                    seed: self.seed,
+                    session_id: id,
+                    side: self.side,
+                    scenario: Arc::clone(&self.flow.scenario),
+                    flow: self.flow.flow,
+                },
+                native,
+            )),
+            None => plain.insert(native).as_mut(),
+        };
         let mut session = Session::new(SessionCtx {
             vars: &self.flow.scenario.vars,
             filler: &self.filler,
@@ -461,15 +495,22 @@ impl Worker {
             side: self.side,
             session_id: id,
             rng: session_rng(self.seed, id, self.side),
-            functions: functions.as_mut(),
+            functions,
             limits: self.flow.limits,
         });
         let outcome = session
             .run_datagram_program(&mut opener, program, stop)
             .await;
+        let stats = session.stats();
+        drop(session);
+        if let Some(w) = wrapped {
+            // The outcome is recorded below, so a failing on-close hook
+            // cannot change it.
+            let _ = w.finish(close_reason(&outcome));
+        }
         let us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         self.metrics
-            .ended(&mut self.shard.borrow_mut(), session.stats(), &outcome, us);
+            .ended(&mut self.shard.borrow_mut(), stats, &outcome, us);
         self.open.set(self.open.get().saturating_sub(1));
         self.closed.notify_one();
     }
