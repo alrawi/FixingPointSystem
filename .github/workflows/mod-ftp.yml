@@ -63,7 +63,7 @@ jobs:
         run: |
           python -m realism score --pcap modules/ftp/fixtures/ftp.pcapng \
             --labels modules/ftp/fixtures/expected.yaml --parsers tshark,zeek --output report.json
-          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c["applications"] for c in r["checks"]], indent=2))'
+          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))'
       - name: Check ftp.log and files.log of the committed fixture
         run: |
           python modules/ftp/fixtures/zeek_check.py modules/ftp/fixtures/ftp.pcapng \

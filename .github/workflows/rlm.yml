@@ -58,4 +58,4 @@ jobs:
           cp realism/examples/http-dns.labels.yaml "$tmp/labels.yaml"
           cd "$tmp"
           python -I -m realism score --pcap mix.pcapng --labels labels.yaml --parsers tshark,zeek --output report.json
-          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c["applications"] for c in r["checks"]], indent=2))'
+          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))'

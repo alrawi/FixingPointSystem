@@ -55,7 +55,7 @@ jobs:
         run: |
           python -m realism score --pcap modules/dns/fixtures/dns.pcapng \
             --labels modules/dns/fixtures/expected.yaml --parsers tshark --output report.json
-          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c["applications"] for c in r["checks"]], indent=2))'
+          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))'
 
   harness:
     runs-on: ubuntu-24.04
@@ -74,5 +74,5 @@ jobs:
         run: |
           sudo env FPS_FIXTURE_PEER="$PWD/target/debug/examples/fixture_peer" \
             modules/dns/fixtures/capture.sh "$RUNNER_TEMP/fixture"
-          python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); print(json.dumps([c["applications"] for c in r["checks"]], indent=2))' \
+          python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))' \
             "$RUNNER_TEMP/fixture/dns.report.json"
