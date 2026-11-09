@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 79 work packages. Packages marked critical path gate the phase.
+This page lists 82 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -90,6 +90,9 @@ flowchart LR
   AGT_10["AGT-10<br/>Shared capture cell and pinned enrollment check in the agent"]
   IMG_06["IMG-06<br/>Mutual TLS in the image"]
   CON_14["CON-14<br/>Signature headers and calibration history in the REST contract"]
+  AGT_11["AGT-11<br/>Load WebAssembly extensions in the agent"]
+  CTL_32["CTL-32<br/>Capture file retention in the controller"]
+  CON_15["CON-15<br/>Capture and criteria contract gaps"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -175,6 +178,12 @@ flowchart LR
   IMG_02 --> IMG_06
   CTL_28 --> CON_14
   CTL_24 --> CON_14
+  ENG_17 --> AGT_11
+  AGT_07 --> AGT_11
+  CTL_14 --> CTL_32
+  CON_13 --> CON_15
+  CTL_14 --> CON_15
+  AGT_07 --> CON_15
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -262,6 +271,9 @@ flowchart LR
 | [AGT-10](#agt-10-shared-capture-cell-and-pinned-enrollment-check-in-the-agent) | Shared capture cell and pinned enrollment check in the agent | S | ENG-19, AGT-08, CTL-31 |  |
 | [IMG-06](#img-06-mutual-tls-in-the-image) | Mutual TLS in the image | S | AGT-08, IMG-02 |  |
 | [CON-14](#con-14-signature-headers-and-calibration-history-in-the-rest-contract) | Signature headers and calibration history in the REST contract | S | CTL-28, CTL-24 |  |
+| [AGT-11](#agt-11-load-webassembly-extensions-in-the-agent) | Load WebAssembly extensions in the agent | S | ENG-17, AGT-07 |  |
+| [CTL-32](#ctl-32-capture-file-retention-in-the-controller) | Capture file retention in the controller | S | CTL-14 |  |
+| [CON-15](#con-15-capture-and-criteria-contract-gaps) | Capture and criteria contract gaps | S | CON-13, CTL-14, AGT-07 |  |
 
 ## CON Contracts
 
@@ -373,6 +385,25 @@ Deliverables.
 Acceptance.
 
 - [ ] The OpenAPI checks pass and the change is additive.
+
+### CON-15 Capture and criteria contract gaps
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CON-13, CTL-14, AGT-07
+- **Paths.** `contracts/`
+
+Gaps that CTL-14 and AGT-07 found. Needs owner approval as a contract change.
+
+Deliverables.
+
+- REST - a way to stop a capture without downloading it (a stop operation or a ready state in Capture) and the agent of each capture file.
+- fps.agent.v1 - an export_tls_keys field in StartCaptureCommand, and labels on the wire Criterion so a criterion can name a side.
+- contracts/examples/tests/dns_zone.yaml uses the first party dns/lookup_a scenario, so it runs against the agent. All additive, with contracts/changes/CON-15.md.
+
+Acceptance.
+
+- [ ] The OpenAPI and proto checks pass, buf breaking reports no breaking change, and the example validates.
 
 ## OPS Repository and swarm tooling
 
@@ -703,6 +734,25 @@ Deliverables.
 Acceptance.
 
 - [ ] An agent test captures TCP sessions through StartCapture; a fake enrollment endpoint with another CA gets no token.
+- [ ] {'tests/mtls.rs a_certificate_that_the_controller_refuses_is_a_permanent_failure is stable': 'under TLS 1.3 a refused client certificate can surface as a closed connection instead of an alert, which the agent then treats as redialable (seen once in CI on 2026-11-09).'}
+
+### AGT-11 Load WebAssembly extensions in the agent
+
+Phase 2 · size S · workstream AGT
+
+- **Depends on.** ENG-17, AGT-07
+- **Paths.** `engine/fps-agent/`
+
+ENG-17 loads extension.wasm in fps-runtime through ExtensionSet, but the agent does not call it, and its UDP path has its own session loop.
+
+Deliverables.
+
+- The agent calls ExtensionSet::load_module_dir for each plan module and sets FlowRef::extensions.
+- The UDP session loop wraps native functions through ExtensionSet::session_functions and calls finish at session end.
+
+Acceptance.
+
+- [ ] An agent test runs a plan whose module ships a WAT-built extension over TCP and UDP, and a looping extension fails only its own sessions with extension_error.
 
 ## CTL Controller
 
@@ -987,6 +1037,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A test reads the chain from a TLS handshake and finds the CA; a flag test shows the settings reach the configuration.
+
+### CTL-32 Capture file retention in the controller
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CTL-14
+- **Paths.** `controller/internal/captures/`, `controller/internal/app/`
+
+CTL-14 stores downloaded capture files under the data directory and nothing removes them.
+
+Deliverables.
+
+- A capture_retention setting (default 7 days) and a sweep that deletes capture files older than it, plus deletion when a run is deleted if the run API has a delete.
+
+Acceptance.
+
+- [ ] A test with a fake clock shows a file kept before the retention ends and deleted after it, and a download of a deleted capture answers 404.
 
 ## CLI Python SDK and command line client
 

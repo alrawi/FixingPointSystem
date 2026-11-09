@@ -1064,7 +1064,7 @@ A certificate proves who an agent is, and the inventory decides whether the cont
 
 #### Plain mode
 
-`insecure_plain_grpc` (flag `-insecure-plain-grpc`) serves `ControllerService` on plain TCP, trusts the `agent_id` of each request, opens no authority, and serves neither the enrollment listener nor the admin socket. It exists for development and for tests. The Rust agent has TLS since AGT-08, so only the image (until IMG-06) and `tests/gates/gate1/run.sh` still use it. The controller logs `INSECURE` warnings at start up, when the service starts listening, and for every identity that it accepts. The Gate 1 script and `TestEndToEnd` set it, and the image sets it as a stopgap until IMG-06. The end to end test with the real agent (`engine/fps-agent/tests/controller_e2e.sh`) uses mutual TLS since AGT-08. Never set it on a shared network.
+`insecure_plain_grpc` (flag `-insecure-plain-grpc`) serves `ControllerService` on plain TCP, trusts the `agent_id` of each request, opens no authority, and serves neither the enrollment listener nor the admin socket. It exists for development and for tests. The Rust agent has TLS since AGT-08, and the image dropped it in IMG-06, so only `tests/gates/gate1/run.sh` and `TestEndToEnd` still use it. The controller logs `INSECURE` warnings at start up, when the service starts listening, and for every identity that it accepts. The end to end test with the real agent (`engine/fps-agent/tests/controller_e2e.sh`) uses mutual TLS since AGT-08. Never set it on a shared network.
 
 #### What the agent must change
 
