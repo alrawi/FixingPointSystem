@@ -7,9 +7,11 @@
 # agent runs its own side only.
 #
 # The pools use the container addresses, so the agents need no capability and no
-# route. A pool of /31 holds one usable host, and the host is network + 1:
-#   clients 172.30.77.10/31 -> 172.30.77.11, the address of agent1
-#   servers 172.30.77.12/31 -> 172.30.77.13, the address of agent2
+# route. A /30 pool holds two usable hosts. The agent counts the network and the broadcast
+# address out, and the first host is network + 1. A pool of one host has the address
+# of the container when the container address is 1 modulo 4:
+#   clients 172.30.77.4/30 -> 172.30.77.5, the address of agent1
+#   servers 172.30.77.8/30 -> 172.30.77.9, the address of agent2
 # The agent does not configure addresses (docs/wiki/Agent.md), so a pool address
 # must already belong to the container.
 #
@@ -26,8 +28,8 @@ network:
     - { name: client0, location: @AGENT@/eth0 }
     - { name: server0, location: @AGENT@/eth0 }
   host_pools:
-    - { name: clients, port: client0, role: client, ipv4: 172.30.77.10/31, count: 1 }
-    - { name: servers, port: server0, role: server, ipv4: 172.30.77.12/31, count: 1 }
+    - { name: clients, port: client0, role: client, ipv4: 172.30.77.4/30, count: 1 }
+    - { name: servers, port: server0, role: server, ipv4: 172.30.77.8/30, count: 1 }
 profile:
   basis: sessions
   mix:

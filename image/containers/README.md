@@ -41,9 +41,9 @@ docker build -f image/containers/Dockerfile.agent -t fps-agent .
                        lab network 172.30.77.0/24 (bridge)
    +------------+      +----------------+      +----------------+
    | controller |      | agent1         |      | agent2         |
-   | .2         |<-----| .11  --side    |----->| .13  --side    |
+   | .2         |<-----| .5   --side    |----->| .9   --side    |
    | 8443 REST  | mTLS | client         | test | server         |
-   | 8444 gRPC  |      | pool .10/31    |      | pool .12/31    |
+   | 8444 gRPC  |      | pool .4/30     |      | pool .8/30     |
    | 8445 enroll|      +----------------+      +----------------+
    +------------+
 ```
@@ -56,7 +56,7 @@ The steps run in this order:
 4. `agent1` and `agent2` start. Each reads its token file, enrolls over HTTPS on port 8445 (checking the controller certificate against `/ca/ca.crt`), deletes the token file, and registers over mutual TLS on port 8444.
 5. `lab-test` installs the `http1` and `dns` modules, stores a test configuration for each agent, starts the server run on agent2 and then the client run on agent1, stops the server run, and checks the verdict.
 
-The test follows the Gate 1 suite: two runs of one configuration, one agent each, with `--side server` and `--side client`. The mix has `http1/single_fetch` on TCP port 18080 and `dns/lookup_a` on UDP port 15353. The pools are `/31` networks, whose one usable host is the address of the container, so the agents need no route and no capability. The client run passes when its verdict is `passed` (`sessions.failed_ratio <= 0.01`) and when both sides counted succeeded sessions of both applications.
+The test follows the Gate 1 suite: two runs of one configuration, one agent each, with `--side server` and `--side client`. The mix has `http1/single_fetch` on TCP port 18080 and `dns/lookup_a` on UDP port 15353. The pools are `/30` networks of one host each. The agent counts the network and the broadcast address out and numbers a pool from network plus one, so the one host of `172.30.77.4/30` is `172.30.77.5`, the address of agent1 (the same for `.8/30` and agent2). Each pool address is the address of its container, so the agents need no route and no capability. The client run passes when its verdict is `passed` (`sessions.failed_ratio <= 0.01`) and when both sides counted succeeded sessions of both applications.
 
 ## Secrets
 

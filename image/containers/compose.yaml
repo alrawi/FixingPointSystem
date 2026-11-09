@@ -105,7 +105,7 @@ services:
     <<: *agent
     hostname: agent1
     # The client side of the test. The address is the only host of the client pool
-    # 172.30.77.10/31 in image/containers/test-config.yaml.
+    # 172.30.77.4/30 in image/containers/test-config.yaml.
     command:
       - connect
       - --controller
@@ -132,13 +132,13 @@ services:
       - a1-state:/var/lib/fps-agent
     networks:
       lab:
-        ipv4_address: 172.30.77.11
+        ipv4_address: 172.30.77.5
 
   agent2:
     <<: *agent
     hostname: agent2
     # The server side of the test. The address is the only host of the server pool
-    # 172.30.77.12/31.
+    # 172.30.77.8/30.
     command:
       - connect
       - --controller
@@ -165,7 +165,7 @@ services:
       - a2-state:/var/lib/fps-agent
     networks:
       lab:
-        ipv4_address: 172.30.77.13
+        ipv4_address: 172.30.77.9
 
   lab-test:
     <<: *tools
