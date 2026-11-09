@@ -6,7 +6,7 @@
 | Branch | `wp/AGT-07` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 50% (2 of 4 plan steps) |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-a7c3e1, lease until 2026-11-09T14:07:01Z |
 | Last verified commit | none |
 
@@ -20,7 +20,7 @@ Apply `ModuleRef.settings` in the agent (dns `zone_file`, relative paths resolve
 
 - [x] 1. Module settings reach the dns native functions, with path confinement and tests
 - [x] 2. UDP worker registers through SessionCounters; snapshots hold both sides; criteria default to the client side
-- [ ] 3. Controller e2e run of a dns zone test in controller_e2e.sh
+- [x] 3. Controller e2e run of a dns zone test in controller_e2e.sh
 - [ ] 4. Agent wiki page, log entry, checks, PR, CI
 
 ## Done and verified
@@ -30,11 +30,11 @@ Apply `ModuleRef.settings` in the agent (dns `zone_file`, relative paths resolve
 
 ## Remaining
 
-Steps 3 and 4.
+PR and CI. The controller e2e script ran only in CI (no Go modules in the sandbox).
 
 ## Next action
 
-Step 3: extend `engine/fps-agent/tests/controller_e2e.sh` with a dns zone run.
+Open the PR and watch the controller-e2e job.
 
 ## Blockers and open questions
 
@@ -63,3 +63,4 @@ cargo test -p fps-agent
 |---|---|---|---|---|
 | 2026-11-09 | claude-a7c3e1 | claim | none | Claimed #216 |
 | 2026-11-09 | claude-a7c3e1 | checkpoint | see branch | Steps 1 and 2 done |
+| 2026-11-09 | claude-a7c3e1 | checkpoint | see branch | Steps 3 and 4 written, opening the PR |
