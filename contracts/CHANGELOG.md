@@ -1,5 +1,11 @@
 # Contracts changelog
 
+## Scenario contract 0.4 (2026-11-09)
+
+The `tls_upgrade` action (CON-17). The change is additive. See `changes/CON-17.md`.
+
+- The scenario schema adds the action `tls_upgrade` (`profile`, and optional `role` and `server_name`), which wraps the transport of a running session in TLS in place, so STARTTLS is expressible. The validator reports `tls_upgrade` in a UDP flow as an error.
+
 ## Controller API 0.7.0 (2026-11-09)
 
 Controller version, configuration listing, and a REST breaking check (CON-16). All changes are additive. See `changes/CON-16.md`.

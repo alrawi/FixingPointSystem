@@ -6,7 +6,7 @@
 | Branch | `wp/CON-17` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 3 plan steps) |
+| Progress | 90% (3 of 3 plan steps, PR and CI pending) |
 | Current holder | claude-c17a4e |
 | Last verified commit | none |
 
@@ -16,21 +16,21 @@ Add the `tls_upgrade` flow action to the scenario contract (schema keyword, READ
 
 ## Plan
 
-- [ ] 1. Schema keyword, embedded Go copy, README row, validator rule
-- [ ] 2. Tests in tools/contracts, change entry, version bump, CHANGELOG, Contracts wiki page, log entry
-- [ ] 3. Checks, pull request, CI
+- [x] 1. Schema keyword, embedded Go copy, README row, validator rule
+- [x] 2. Tests in tools/contracts, change entry, version bump, CHANGELOG, Contracts wiki page, log entry
+- [x] 3. Checks, pull request, CI
 
 ## Done and verified
 
-Nothing yet.
+Schema keyword, Go embedded copy, README row, validator rule, tests, CON-17 entry, v0.4 bump, CHANGELOG, Contracts page, log entry. `make test-con` passes (185 passed, 1 skipped); plan.py check, render --check, lint pass.
 
 ## Remaining
 
-Everything.
+CI result. fps-flow check_action for UDP is an ENG change (reported).
 
 ## Next action
 
-Edit contracts/schemas/scenario.schema.json.
+Poll CI, then run fps_swarm.py review.
 
 ## Blockers and open questions
 
@@ -38,7 +38,7 @@ none
 
 ## Decisions taken in this package
 
-none yet
+Version v0.3 to v0.4 (minor), because the change adds a keyword, as CON-04 and CON-10 did. The Go embedded schema copy is refreshed because its test compares it with the contract.
 
 ## Pitfalls
 

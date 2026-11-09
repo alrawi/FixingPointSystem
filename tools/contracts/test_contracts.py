@@ -349,6 +349,51 @@ def test_schema_bounds_max_datagram(resolve):
     assert not v.schema_errors(v.load_schema("scenario.schema.json"), resolve, report, Path("s.yaml"))
 
 
+# --- tls_upgrade -------------------------------------------------------------
+
+STARTTLS = {"tls_upgrade": {"profile": "strict", "server_name": "mail.example.test"}}
+
+
+def test_tls_upgrade_validates_in_a_tcp_flow(web_get, http_manifest):
+    flow = web_get["flows"][0]
+    flow["client"].insert(1, copy.deepcopy(STARTTLS))
+    flow["server"].insert(1, {"tls_upgrade": {"profile": "strict", "role": "server"}})
+    assert not check_scenario(web_get, http_manifest).errors
+
+
+def test_tls_upgrade_is_checked_inside_a_loop(web_get, http_manifest):
+    web_get["flows"][0]["client"][1]["loop"]["do"].insert(0, copy.deepcopy(STARTTLS))
+    assert not check_scenario(web_get, http_manifest).errors
+
+
+def test_tls_upgrade_in_a_udp_flow_is_an_error(resolve, dns_manifest):
+    assert resolve["flows"][0]["l4"] == "udp"
+    resolve["flows"][0]["client"].insert(1, copy.deepcopy(STARTTLS))
+    assert any("tls_upgrade applies only to TCP" in m for m in messages(check_scenario(resolve, dns_manifest)))
+
+
+def test_tls_upgrade_nested_in_a_udp_flow_is_an_error(resolve, dns_manifest):
+    resolve["flows"][0]["client"].insert(1, {"loop": {"count": 2, "do": [copy.deepcopy(STARTTLS)]}})
+    assert any("tls_upgrade applies only to TCP" in m for m in messages(check_scenario(resolve, dns_manifest)))
+
+
+@pytest.mark.parametrize("body", [
+    {},
+    {"profile": ""},
+    {"profile": "p", "role": "peer"},
+    {"profile": "p", "server_name": ""},
+    {"profile": "p", "extra": 1},
+])
+def test_schema_rejects_a_malformed_tls_upgrade(body, web_get):
+    web_get["flows"][0]["client"].insert(1, {"tls_upgrade": body})
+    report = v.Report()
+    assert not v.schema_errors(v.load_schema("scenario.schema.json"), web_get, report, Path("s.yaml"))
+
+
+def test_scenario_schema_is_v0_4():
+    assert "v0.4" in v.load_schema("scenario.schema.json")["description"]
+
+
 # --- scenario semantics -----------------------------------------------------
 
 def test_duplicate_flow_ids(web_get, http_manifest):

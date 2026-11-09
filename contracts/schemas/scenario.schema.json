@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/alrawi/FixingPointSystem/contracts/schemas/scenario.schema.json",
   "title": "FixingPointSystem scenario (flow programs)",
-  "description": "Scenario contract v0.3. A scenario groups flow programs with ordering and shared variables, and may declare behavior profiles. Each flow program lists actions per side.",
+  "description": "Scenario contract v0.4. A scenario groups flow programs with ordering and shared variables, and may declare behavior profiles. Each flow program lists actions per side.",
   "type": "object",
   "additionalProperties": false,
   "required": ["scenario", "flows"],
@@ -175,6 +175,17 @@
           "properties": { "flow": { "$ref": "#/$defs/identifier" } }
         },
         "close": { "enum": ["fin", "rst", "half"] },
+        "tls_upgrade": {
+          "description": "TCP flows only. Upgrades the transport of the running session to TLS in place, as STARTTLS does. The client role starts the handshake and the server role accepts it. Every later action of the side runs over TLS.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["profile"],
+          "properties": {
+            "profile": { "description": "Name of a TLS profile of the run.", "type": "string", "minLength": 1 },
+            "role": { "description": "The part in the handshake. Defaults to client on the client side and server on the server side.", "enum": ["client", "server"] },
+            "server_name": { "description": "Name that a client handshake verifies and sends as SNI. The engine chooses when it is missing.", "type": "string", "minLength": 1 }
+          }
+        },
         "raw": {
           "description": "Reserved for strike and fuzzer modules. Writes bytes without template validation.",
           "type": "object",

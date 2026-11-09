@@ -8,7 +8,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.7.0 |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3, unreleased |
-| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.3 |
+| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.4 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.1.0 |
 | `examples/` | Example modules, tests, and plans that every validator run checks |
@@ -186,3 +186,15 @@ CON-16 moves the controller API from 0.6.0 to 0.7.0. The change is additive, and
 | Breaking check | The workflow `.github/workflows/openapi-breaking.yml` runs oasdiff on `contracts/openapi/*.yaml` against the base of the pull request (or the previous commit of a push to `main`) and fails on a breaking change. `tools/contracts/test_openapi_breaking.py` proves with the fixture pair in `tools/contracts/fixtures/openapi-breaking/` that the check passes an additive change and fails a breaking one |
 
 The proto files keep `buf breaking` with the `FILE` rules. The REST documents now have the same automatic check, so the additive rule holds for both. A deliberate breaking change needs a new major path (`/v2`) and the owner's approval, not a way around the check. The Python SDK and the UI schema follow the document, and the coordinator regenerates the Go code.
+
+## The tls_upgrade action
+
+CON-17 moves the scenario contract from v0.3 to v0.4. The change is additive, so every v0.3 scenario stays valid, and the entry `contracts/changes/CON-17.md` records it.
+
+| Change | Rule |
+|---|---|
+| `tls_upgrade` | New flow action for TCP flows. It wraps the transport of the running session in TLS in place, as STARTTLS does, and every later action of the side runs over TLS. `profile` (required) names a TLS profile of the run, `role` is `client` or `server` and defaults to the role of the side, and `server_name` is verified and sent as SNI by a client handshake |
+| UDP rule | `tools/contracts/validate.py` reports `tls_upgrade` in a flow with `l4: udp` as an error, at any depth of `loop` and `branch`. The validator does not check that the profile exists, because the profiles belong to the run |
+| Embedded copy | The controller embeds the scenario schema, so the copy under `controller/internal/registry/schema/` follows the contract and the controller accepts the keyword |
+
+The engine has parsed the action since ENG-20. `fps-flow` does not reject it in a UDP flow yet, and the runtime fails such a session with reason `internal`, so the engine needs the same rule as an ENG change. The agent builds no TLS profiles until AGT-14, so a session of a plan with the action fails until then. MOD-20 can add the STARTTLS variants of SMTP and IMAP once this change merges.
