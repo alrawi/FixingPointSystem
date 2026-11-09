@@ -322,12 +322,20 @@ fn error_code(r: &pb::CommandResult) -> Option<ErrorCode> {
         .map(|e| ErrorCode::try_from(e.code).expect("a known code"))
 }
 
-/// Sums the counters of `metric` whose `scenario` label contains `scenario`.
+/// Sums the counters of `metric` on the client side whose `scenario` label
+/// contains `scenario`. A snapshot holds the series of both sides, and a sum
+/// over both would count every session twice.
 fn by_scenario(snap: &pb::CounterSnapshot, metric: &str, scenario: &str) -> u64 {
+    by_scenario_on(snap, metric, scenario, "client")
+}
+
+/// Like [`by_scenario`] for `side`.
+fn by_scenario_on(snap: &pb::CounterSnapshot, metric: &str, scenario: &str, side: &str) -> u64 {
     snap.counters
         .iter()
         .filter(|c| {
             c.metric == metric
+                && c.labels.get("side").is_some_and(|s| s == side)
                 && c.labels
                     .get("scenario")
                     .is_some_and(|s| s.contains(scenario))
@@ -463,6 +471,20 @@ async fn a_fake_controller_changes_rates_and_reads_a_capture() {
     assert!(r.error.is_none(), "{r:?}");
     h.wait_state(AgentState::Running).await;
     advance(&mut h, 3).await;
+
+    // Every snapshot series carries the side label, and the snapshot holds
+    // the client and the server side of the sessions that this agent runs.
+    let snap = h.snapshots.last().expect("a snapshot");
+    assert!(
+        snap.counters.iter().all(|c| c.labels.contains_key("side")),
+        "a series lacks the side label: {snap:?}"
+    );
+    for side in ["client", "server"] {
+        assert!(
+            by_scenario_on(snap, "sessions.attempted", "", side) > 0,
+            "no {side} series with sessions: {snap:?}"
+        );
+    }
 
     // The compiled rates are 80 sessions per second for the HTTP entry on TCP
     // and 20 for the DNS entry on UDP, over two workers each.

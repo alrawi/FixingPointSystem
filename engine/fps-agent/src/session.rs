@@ -443,6 +443,7 @@ fn code_of(e: &RunError) -> ErrorCode {
             ModuleError::ScenarioDigest { .. }
             | ModuleError::Scenario { .. }
             | ModuleError::ScenarioName { .. }
+            | ModuleError::Settings { .. }
             | ModuleError::Param { .. } => ErrorCode::InvalidArgument,
         },
         RunError::Unimplemented(_) => ErrorCode::Unimplemented,
