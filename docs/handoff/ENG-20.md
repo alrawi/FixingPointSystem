@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #311 |
 | Branch | `wp/ENG-20` |
-| Pull request | #0 |
+| Pull request | #320 |
 | Status | in progress |
 | Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-e20a7c, lease until 2026-11-09T19:58:56Z |
