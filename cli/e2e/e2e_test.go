@@ -398,7 +398,9 @@ func TestEndToEnd(t *testing.T) {
 	if err := json.Unmarshal([]byte(lj.stdout), &listed); err != nil {
 		t.Fatalf("config list --json: %v\n%s", err, lj.stdout)
 	}
-	if len(listed.Items) != 2 || listed.Items[1].ID != configID || listed.Items[0].ID == configID || listed.Items[0].Name != "http_smoke" {
+	// Three configurations exist, because config validate stores the file
+	// first: the validation, then the CLI upload, then the REST upload.
+	if len(listed.Items) != 3 || listed.Items[1].ID != configID || listed.Items[0].ID == configID || listed.Items[2].ID == configID || listed.Items[0].Name != "http_smoke" {
 		t.Errorf("config list --json = %+v, want the REST upload first and %s second", listed.Items, configID)
 	}
 	paged := f.fpsEnv(t, "", noHistory, "config", "list", "--page-size", "1").expect(t, "config list --page-size 1", 0)

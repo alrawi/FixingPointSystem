@@ -301,8 +301,8 @@ func TestMigrationFromVersionOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, stmt := range append(slices.Clone(migrations[0]),
-		`INSERT INTO configs (id, name, body, created_at) VALUES ('zz', 'first', '{}', '2026-11-01T00:00:00Z')`,
-		`INSERT INTO configs (id, name, body, created_at) VALUES ('aa', 'second', '{}', '2026-11-02T00:00:00Z')`,
+		`INSERT INTO configs (id, name, body, created_at) VALUES ('zz', 'first', x'7b7d', '2026-11-01T00:00:00Z')`,
+		`INSERT INTO configs (id, name, body, created_at) VALUES ('aa', 'second', x'7b7d', '2026-11-02T00:00:00Z')`,
 		`PRAGMA user_version = 1`) {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			t.Fatal(err)
