@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #177 |
 | Branch | `wp/MOD-10` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #332 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-b7c1e4, lease until 2026-11-09T21:23:51Z |
-| Last verified commit | none |
+| Last verified commit | d5ee571 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Ship the `ftp` module with control channel scenarios and spawned passive mode da
 - [x] 2. Manifest and five scenarios, validated, with the interpreter tests and golden transcripts over `ScenarioInstance`
 - [x] 3. `fixture_peer`, the committed loopback capture, `expected.yaml`, `capture.sh`, `structure_check.py`, and `zeek_check.py` with their tests
 - [x] 4. README, Modules page, log entry, `mk/mod-ftp.mk`, and `.github/workflows/mod-ftp.yml`
-- [ ] 5. Open the pull request, wait for CI (the Zeek check runs there for the first time), fix failures inside the module paths
+- [x] 5. Open the pull request, wait for CI (the Zeek check runs there for the first time), fix failures inside the module paths
 
 ## Done and verified
 
@@ -34,12 +34,12 @@ Ship the `ftp` module with control channel scenarios and spawned passive mode da
 
 ## Remaining
 
-- CI proof of the Zeek check and the nDPI label FTP_CONTROL, which the sandbox cannot run (no zeek, no ndpiReader).
+- none. CI is green on d5ee571, including the Zeek 9 check and the nDPI label FTP_CONTROL.
 - `engine/fps-agent` dispatch, which the module does not edit.
 
 ## Next action
 
-Open the pull request and poll its checks.
+Review and merge by the owner. After merge, wire the `engine/fps-agent` dispatch (see the log entry).
 
 ## Blockers and open questions
 
@@ -73,3 +73,4 @@ python3 modules/ftp/fixtures/structure_check.py modules/ftp/fixtures/ftp.pcapng 
 |---|---|---|---|---|
 | 2026-11-09T20:53Z | claude-b7c1e4 | claim | none | Claimed #177 |
 | 2026-11-09T21:10Z | claude-b7c1e4 | checkpoint | none | Steps 1 to 4 done, first push |
+| 2026-11-09T21:50Z | claude-b7c1e4 | ready for review | d5ee571 | CI green after the Zeek check fix, PR #332 |
