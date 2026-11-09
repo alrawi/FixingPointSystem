@@ -29,6 +29,7 @@ pub mod control;
 pub mod convert;
 pub mod criteria;
 pub mod error;
+pub mod identity;
 pub mod modules;
 pub mod pb;
 pub mod plan;

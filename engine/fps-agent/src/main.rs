@@ -12,7 +12,10 @@
 //!   and [`EXIT_ERROR`] on any error.
 //! - `fps-agent connect --controller URI --agent-id ID --modules DIR
 //!   [--redial-limit SECONDS]` serves a controller. It exits with
-//!   [`EXIT_REDIAL`] when the dials fail for the redial limit.
+//!   [`EXIT_REDIAL`] when the dials fail for the redial limit, and with
+//!   [`EXIT_ERROR`] on a failure that redialing cannot fix, such as an
+//!   `UNAUTHENTICATED` answer or a failed TLS handshake. An `https://`
+//!   controller needs `--cert-dir` and a CA, see [`fps_agent::identity`].
 //!
 //! `run` and `connect` refuse to start on a kernel older than Linux 6.3,
 //! which lacks the `IP_LOCAL_PORT_RANGE` socket option.
@@ -26,13 +29,16 @@ use std::time::Duration;
 
 use fps_agent::assemble::Sides;
 use fps_agent::capabilities::{AfXdpSupport, HostCapabilities};
+use fps_agent::identity::{parse_fingerprint, TlsConfig, TokenSource, DEFAULT_ENROLL_PORT};
 use fps_agent::session::Config;
 use fps_agent::session::SessionError;
 use fps_agent::{detect, require_kernel, Outcome, RunOptions, SystemRoot};
 
 const USAGE: &str = "usage: fps-agent capabilities [--root DIR]
        fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS]
-       fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--label KEY=VALUE]... [--redial-limit SECONDS] [--capture-dir DIR]";
+       fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--label KEY=VALUE]... [--redial-limit SECONDS] [--capture-dir DIR]
+                          [--cert-dir DIR [--tls-ca FILE] [--tls-ca-sha256 HEX] [--enroll-address HOST:PORT]
+                           [--enroll-token-file FILE | --enroll-token-env NAME]]   (https:// controllers)";
 
 /// The exit code of a run whose criteria hold.
 const EXIT_PASS: u8 = 0;
@@ -198,6 +204,7 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
     let mut labels = std::collections::HashMap::new();
     let mut redial_limit = Some(fps_agent::session::DEFAULT_REDIAL_LIMIT);
     let mut capture_dir = None;
+    let mut tls = TlsFlags::default();
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         let value = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
@@ -207,6 +214,20 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
             "--modules" => modules = Some(PathBuf::from(value)),
             "--root" => root = SystemRoot::new(value),
             "--capture-dir" => capture_dir = Some(PathBuf::from(value)),
+            "--cert-dir" => tls.dir = Some(PathBuf::from(value)),
+            "--tls-ca" => tls.ca_file = Some(PathBuf::from(value)),
+            "--tls-ca-sha256" => {
+                tls.ca_sha256 =
+                    Some(parse_fingerprint(value).map_err(|e| format!("--tls-ca-sha256: {e}"))?);
+            }
+            "--enroll-address" => tls.enroll_address = Some(value.clone()),
+            "--enroll-token-file" | "--enroll-token-env" if tls.token.is_some() => {
+                return Err(
+                    "give at most one of --enroll-token-file and --enroll-token-env".to_owned(),
+                );
+            }
+            "--enroll-token-file" => tls.token = Some(TokenSource::File(PathBuf::from(value))),
+            "--enroll-token-env" => tls.token = Some(TokenSource::Env(value.clone())),
             "--side" => {
                 sides = Sides::parse(value).ok_or_else(|| format!("unknown side {value:?}"))?;
             }
@@ -228,11 +249,14 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
             other => return Err(format!("unknown flag {other}")),
         }
     }
+    let controller: String = controller.ok_or("missing --controller")?;
+    let tls = tls.finish(&controller)?;
     let mut cfg = Config::new(
-        controller.ok_or("missing --controller")?,
+        controller,
         id.ok_or("missing --agent-id")?,
         modules.ok_or("missing --modules")?,
     );
+    cfg.tls = tls;
     cfg.sides = sides;
     cfg.capabilities.labels = labels;
     cfg.redial_limit = redial_limit;
@@ -240,6 +264,67 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
         cfg.captures.dir = dir;
     }
     Ok((cfg, root))
+}
+
+/// The TLS flags of `connect`, before they meet the controller address.
+#[derive(Default)]
+struct TlsFlags {
+    dir: Option<PathBuf>,
+    ca_file: Option<PathBuf>,
+    ca_sha256: Option<[u8; 32]>,
+    enroll_address: Option<String>,
+    token: Option<TokenSource>,
+}
+
+impl TlsFlags {
+    /// Checks the flags against the scheme of the controller address. An
+    /// `http://` address takes none of them, and an `https://` address needs
+    /// a directory and a trust anchor.
+    fn finish(self, controller: &str) -> Result<Option<TlsConfig>, String> {
+        let any = self.dir.is_some()
+            || self.ca_file.is_some()
+            || self.ca_sha256.is_some()
+            || self.enroll_address.is_some()
+            || self.token.is_some();
+        if controller.starts_with("http://") {
+            return if any {
+                Err("the TLS flags need an https:// --controller, and http:// serves a controller with insecure_plain_grpc only".to_owned())
+            } else {
+                Ok(None)
+            };
+        }
+        if !controller.starts_with("https://") {
+            // Leave the address check to the dial, which names the error.
+            return Ok(None);
+        }
+        let dir = self
+            .dir
+            .ok_or("an https:// --controller needs --cert-dir, the directory of the key and the certificate")?;
+        if self.ca_file.is_none()
+            && self.ca_sha256.is_none()
+            && !dir.join(fps_agent::identity::CA_FILE).exists()
+        {
+            return Err("an https:// --controller needs --tls-ca FILE or --tls-ca-sha256 HEX to trust the controller".to_owned());
+        }
+        let enroll_address = match self.enroll_address {
+            Some(a) => a,
+            None => {
+                let uri: tonic::transport::Uri = controller
+                    .parse()
+                    .map_err(|e| format!("invalid --controller {controller:?}: {e}"))?;
+                let host = uri.host().ok_or("the --controller address has no host")?;
+                // A literal IPv6 address keeps its brackets in the URI host.
+                format!("{host}:{DEFAULT_ENROLL_PORT}")
+            }
+        };
+        Ok(Some(TlsConfig {
+            ca_file: self.ca_file,
+            ca_sha256: self.ca_sha256,
+            token: self.token,
+            enroll_address,
+            dir,
+        }))
+    }
 }
 
 fn chain(e: &dyn std::error::Error) -> String {

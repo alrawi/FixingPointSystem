@@ -49,6 +49,7 @@ use tonic::transport::Endpoint;
 use crate::assemble::Sides;
 use crate::control::{CaptureError, CaptureSettings, Captures, Rates, RatesError};
 use crate::convert::{self, plan_from_pb, snapshot_to_pb};
+use crate::identity::{self, Identity, IdentityError, TlsConfig};
 use crate::modules::ModuleError;
 use crate::pb::{self, AgentState, ErrorCode};
 use crate::run::{self, Prepared, RunError, SERVER_RAMP_DOWN};
@@ -213,6 +214,10 @@ pub struct Config {
     /// Where `StartCapture` writes its files and how large a capture ring
     /// grows.
     pub captures: CaptureSettings,
+    /// The mutual TLS settings. They are required for an `https://`
+    /// controller and refused for an `http://` one, which needs a controller
+    /// that runs with `insecure_plain_grpc`.
+    pub tls: Option<TlsConfig>,
 }
 
 impl Config {
@@ -230,6 +235,7 @@ impl Config {
             jitter_seed: 0,
             linger: Duration::from_secs(5),
             captures: CaptureSettings::default(),
+            tls: None,
         }
     }
 }
@@ -246,6 +252,16 @@ pub enum SessionError {
         #[source]
         source: tonic::transport::Error,
     },
+    /// The settings do not fit the controller address.
+    #[error("{0}")]
+    Setup(String),
+    /// A failure that redialing cannot fix, such as an `UNAUTHENTICATED`
+    /// answer, a failed TLS handshake, or a refused enrollment token.
+    #[error("the controller connection failed for good and the agent exits: {reason}")]
+    Permanent {
+        /// What failed.
+        reason: String,
+    },
     /// The controller stayed unreachable for the redial limit.
     #[error("gave up redialing the controller after {failing_for:?} of failed attempts, last error: {last}")]
     RedialLimit {
@@ -254,6 +270,14 @@ pub enum SessionError {
         /// Why the last session ended.
         last: String,
     },
+}
+
+/// Words a permanent TLS failure for the log and for the exit message.
+fn tls_reason(detail: String) -> String {
+    format!(
+        "TLS failure: {detail} (check the CA file, the certificate of this agent, and whether \
+         the controller revoked this agent)"
+    )
 }
 
 /// Why one session ended.
@@ -267,15 +291,44 @@ enum Lost {
     Closed,
     /// The controller stayed silent for the heartbeat timeout.
     Silent,
+    /// The key, the certificate, or the enrollment failed.
+    Identity(IdentityError),
+}
+
+impl Lost {
+    /// Returns why redialing cannot fix this failure, or `None` when a new
+    /// dial may. `UNAUTHENTICATED` and a TLS failure are permanent, because
+    /// the same certificate and the same trust fail again.
+    fn permanent(&self) -> Option<String> {
+        match self {
+            Lost::Status(s) if s.code() == tonic::Code::Unauthenticated => Some(format!(
+                "the controller answered UNAUTHENTICATED: {}",
+                s.message()
+            )),
+            Lost::Status(s) => identity::tls_failure(s).map(tls_reason),
+            Lost::Transport(e) => identity::tls_failure(e).map(tls_reason),
+            Lost::Identity(e) if e.is_permanent() => Some(chain(e)),
+            Lost::Identity(_) | Lost::Closed | Lost::Silent => None,
+        }
+    }
 }
 
 impl std::fmt::Display for Lost {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Lost::Transport(e) => write!(f, "transport: {e}"),
-            Lost::Status(s) => write!(f, "status {:?}: {}", s.code(), s.message()),
+            Lost::Transport(e) => write!(f, "transport: {}", chain(e)),
+            Lost::Status(s) => {
+                write!(f, "status {:?}: {}", s.code(), s.message())?;
+                let mut cur = std::error::Error::source(s);
+                while let Some(c) = cur {
+                    write!(f, ": {c}")?;
+                    cur = c.source();
+                }
+                Ok(())
+            }
             Lost::Closed => f.write_str("the controller closed the stream"),
             Lost::Silent => f.write_str("the controller stayed silent for the heartbeat timeout"),
+            Lost::Identity(e) => write!(f, "identity: {}", chain(e)),
         }
     }
 }
@@ -350,6 +403,8 @@ struct Shared {
     core: Mutex<Core>,
     events: mpsc::UnboundedSender<Event>,
     captures: Captures,
+    /// The mutual TLS identity, when the controller address is `https://`.
+    identity: Option<Arc<Identity>>,
 }
 
 fn state_name(s: AgentState) -> &'static str {
@@ -1249,10 +1304,19 @@ async fn session<F>(
 where
     F: std::future::Future<Output = ()>,
 {
-    let endpoint = Endpoint::from_shared(shared.cfg.controller.clone())
+    let mut endpoint = Endpoint::from_shared(shared.cfg.controller.clone())
         .map_err(Lost::Transport)?
         .connect_timeout(CONNECT_TIMEOUT)
         .tcp_nodelay(true);
+    if let Some(id) = &shared.identity {
+        // The files are read at every dial, so a renewed certificate serves
+        // the next session. An enrollment, when one is due, happens here.
+        let tls = tokio::select! {
+            () = shutdown.as_mut() => return Ok(()),
+            t = id.client_tls() => t.map_err(Lost::Identity)?,
+        };
+        endpoint = endpoint.tls_config(tls).map_err(Lost::Transport)?;
+    }
     let channel = tokio::select! {
         () = shutdown.as_mut() => return Ok(()),
         c = endpoint.connect() => c.map_err(Lost::Transport)?,
@@ -1262,16 +1326,17 @@ where
         let core = shared.lock();
         (core.state, core.plan_id.clone())
     };
-    let reg = client
-        .register(pb::RegisterRequest {
-            agent_id: shared.cfg.agent_id.clone(),
-            capabilities: Some(shared.cfg.capabilities.clone()),
-            state: state as i32,
-            plan_id,
-        })
-        .await
-        .map_err(Lost::Status)?
-        .into_inner();
+    // A silent controller must not hold the call, so a shutdown ends it.
+    let register = client.register(pb::RegisterRequest {
+        agent_id: shared.cfg.agent_id.clone(),
+        capabilities: Some(shared.cfg.capabilities.clone()),
+        state: state as i32,
+        plan_id,
+    });
+    let reg = tokio::select! {
+        () = shutdown.as_mut() => return Ok(()),
+        r = register => r.map_err(Lost::Status)?.into_inner(),
+    };
     let interval = match convert::duration("heartbeat_interval", reg.heartbeat_interval.as_ref()) {
         Ok(d) if !d.is_zero() => d,
         _ => DEFAULT_HEARTBEAT_INTERVAL,
@@ -1297,11 +1362,11 @@ where
         })),
     })
     .await?;
-    let mut inbound = client
-        .session(ReceiverStream::new(rx))
-        .await
-        .map_err(Lost::Status)?
-        .into_inner();
+    let open = client.session(ReceiverStream::new(rx));
+    let mut inbound = tokio::select! {
+        () = shutdown.as_mut() => return Ok(()),
+        r = open => r.map_err(Lost::Status)?.into_inner(),
+    };
     *opened = true;
     tracing::info!(controller_id = %reg.controller_id, session = number, interval_ms = interval.as_millis() as u64, timeout_ms = timeout.as_millis() as u64, "session open");
     let mut sequence = 0u64;
@@ -1370,6 +1435,23 @@ where
             source,
         });
     }
+    let secure = cfg.controller.starts_with("https://");
+    let identity = match (&cfg.tls, secure) {
+        (Some(tls), true) => Some(Arc::new(Identity::new(tls.clone(), cfg.agent_id.clone()))),
+        (None, true) => {
+            return Err(SessionError::Setup(format!(
+                "the controller address {} is https, so the agent needs its TLS settings (--cert-dir and a CA)",
+                cfg.controller
+            )))
+        }
+        (Some(_), false) => {
+            return Err(SessionError::Setup(format!(
+                "TLS settings need an https:// controller address, and {} is not",
+                cfg.controller
+            )))
+        }
+        (None, false) => None,
+    };
     let (tx, mut events) = mpsc::unbounded_channel();
     let shared = Arc::new(Shared {
         core: Mutex::new(Core {
@@ -1389,9 +1471,14 @@ where
         }),
         events: tx,
         captures: Captures::new(cfg.captures.clone()),
+        identity,
         cfg,
     });
     let dog = tokio::spawn(watchdog(Arc::clone(&shared)));
+    let renewer = shared
+        .identity
+        .clone()
+        .map(|id| tokio::spawn(async move { id.run_renewals().await }));
     tokio::pin!(shutdown);
     let mut policy = RedialPolicy::new(
         shared.cfg.backoff,
@@ -1406,6 +1493,11 @@ where
         let wait = match session(&shared, &mut events, number, &mut shutdown, &mut opened).await {
             Ok(()) => break,
             Err(lost) => {
+                if let Some(reason) = lost.permanent() {
+                    tracing::error!(session = number, opened, reason = %reason, error = %lost, "the failure is permanent, the agent exits");
+                    outcome = Err(SessionError::Permanent { reason });
+                    break;
+                }
                 let aborted = matches!(&lost, Lost::Status(s) if s.code() == tonic::Code::Aborted);
                 match policy.session_ended(Instant::now(), opened, aborted) {
                     Redial::After(wait) => {
@@ -1429,6 +1521,9 @@ where
         }
     }
     dog.abort();
+    if let Some(r) = renewer {
+        r.abort();
+    }
     let driver = {
         let mut core = shared.lock();
         core.generation += 1;
