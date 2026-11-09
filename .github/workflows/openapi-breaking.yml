@@ -56,7 +56,7 @@ jobs:
           go install "github.com/oasdiff/oasdiff@${OASDIFF_VERSION}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Install test tools
-        run: python -m pip install pytest
+        run: python -m pip install pytest pyyaml
       - name: Fixture tests (the check passes on an additive change and fails on a breaking one)
         env:
           FPS_REQUIRE_OASDIFF: "1"

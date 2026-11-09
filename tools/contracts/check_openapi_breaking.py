@@ -13,12 +13,60 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+import yaml
 
 OASDIFF_BREAKING_FOUND = 1
 
 
+def _opaque(node: Any) -> Any:
+    """Replace references to JSON Schema files by an opaque object schema.
+
+    The test configuration schema is JSON Schema 2020-12 (numeric
+    `exclusiveMinimum`), which oasdiff cannot load as an OpenAPI schema. The
+    schema has its own contract version, so the REST check treats it as an
+    opaque object.
+    """
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("../") and ref.split("#")[0].endswith(".json"):
+            return {"type": "object"}
+        return {k: _opaque(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_opaque(v) for v in node]
+    return node
+
+
+def sanitized(path: str, into: Path) -> str:
+    """Write a copy of every YAML document next to `path` into `into` and return the copy of `path`.
+
+    Relative references between the documents (fps-metrics.yaml points into
+    fps-api-v1.yaml) keep working, because the copies stay side by side.
+    """
+    src = Path(path)
+    for doc in src.parent.glob("*.yaml"):
+        data = yaml.safe_load(doc.read_text(encoding="utf-8"))
+        (into / doc.name).write_text(yaml.safe_dump(_opaque(data), sort_keys=False), encoding="utf-8")
+    return str(into / src.name)
+
+
 def breaking_exit_code(base: str, revision: str) -> tuple[int, str]:
     """Run `oasdiff breaking` and return its exit code and output."""
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "base").mkdir()
+        (Path(tmp) / "rev").mkdir()
+        try:
+            base_copy = sanitized(base, Path(tmp) / "base")
+            rev_copy = sanitized(revision, Path(tmp) / "rev")
+        except (OSError, yaml.YAMLError) as err:
+            return 102, f"cannot read the documents: {err}\n"
+        return _run(base_copy, rev_copy)
+
+
+def _run(base: str, revision: str) -> tuple[int, str]:
     proc = subprocess.run(
         ["oasdiff", "breaking", base, revision, "--fail-on", "ERR"],
         capture_output=True,
