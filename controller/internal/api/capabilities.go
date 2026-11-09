@@ -55,14 +55,29 @@ type CapabilitiesAPI struct {
 	Unimplemented
 	modules ModuleLister
 	agents  AgentInventory
+	version string
+}
+
+// CapabilitiesOption configures a CapabilitiesAPI.
+type CapabilitiesOption func(*CapabilitiesAPI)
+
+// WithControllerVersion sets the version of the controller build, which
+// GET /v1/capabilities reports as controller_version. An empty version leaves
+// the field out, as the contract says for a build without one.
+func WithControllerVersion(version string) CapabilitiesOption {
+	return func(c *CapabilitiesAPI) { c.version = version }
 }
 
 var _ ServerInterface = (*CapabilitiesAPI)(nil)
 
 // NewCapabilitiesAPI returns the capabilities operation over modules and
 // agents. A nil source reports an empty list.
-func NewCapabilitiesAPI(modules ModuleLister, agents AgentInventory) *CapabilitiesAPI {
-	return &CapabilitiesAPI{modules: modules, agents: agents}
+func NewCapabilitiesAPI(modules ModuleLister, agents AgentInventory, opts ...CapabilitiesOption) *CapabilitiesAPI {
+	c := &CapabilitiesAPI{modules: modules, agents: agents}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // Capabilities returns the capabilities document. Agents and modules keep the
@@ -75,6 +90,9 @@ func (c *CapabilitiesAPI) Capabilities(ctx context.Context) (Capabilities, error
 		Backends:   []CapabilitiesBackends{},
 		Agents:     []Agent{},
 		Modules:    []ModuleSummary{},
+	}
+	if c.version != "" {
+		out.ControllerVersion = ptr(c.version)
 	}
 	if c.agents != nil {
 		list, err := c.agents.AgentCapabilities(ctx)

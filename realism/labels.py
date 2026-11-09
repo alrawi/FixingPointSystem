@@ -45,7 +45,11 @@ _TOP_LEVEL = {
     "default",
     "tls",
     "content",
+    "structure",
 }
+_STRUCTURE_FIELDS = {"scenarios", "max_gap_s", "tolerance_s"}
+_STRUCTURE_SCENARIO_FIELDS = {"file", "vars", "match", "expected_instances"}
+DEFAULT_STRUCTURE_TOLERANCE_S = 0.0
 _CONTENT_FIELDS = {"max_duplicate_ratio", "ignore_headers", "sizes"}
 _SIZE_FIELDS = {"direction", "median", "cv", "tolerance"}
 DIRECTIONS = ("client", "server", "both")
@@ -120,6 +124,36 @@ class ContentLabels:
     sizes: Mapping[str, SizeExpectation] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class StructureScenario:
+    """One scenario file whose flow graph the session structure check applies.
+
+    ``file`` is a path relative to the labels file. ``vars`` replaces scenario variables,
+    for example a port that the run changed. ``match`` limits the sessions that the
+    scenario may claim, with the fields of a session rule. ``expected_instances`` is the
+    number of instances that the capture must hold, absent when the labels leave it open.
+    """
+
+    file: str
+    vars: Mapping[str, Any] = field(default_factory=dict)
+    match: Rule | None = None
+    expected_instances: int | None = None
+
+
+@dataclass(frozen=True)
+class StructureLabels:
+    """Settings of the session structure check.
+
+    ``max_gap_s`` starts a new instance when a client is silent for longer than this many
+    seconds before its next connection, and it is absent when no gap splits instances.
+    ``tolerance_s`` is the slack in seconds for the ordering comparisons.
+    """
+
+    scenarios: tuple[StructureScenario, ...] = ()
+    max_gap_s: float | None = None
+    tolerance_s: float = DEFAULT_STRUCTURE_TOLERANCE_S
+
+
 @dataclass
 class Labels:
     """The expected labels of one capture."""
@@ -130,6 +164,8 @@ class Labels:
     applications: dict[str, dict[str, tuple[str, ...]]] = field(default_factory=dict)
     tls: TlsLabels | None = None
     content: ContentLabels | None = None
+    structure: StructureLabels | None = None
+    base_dir: Path | None = None
 
     def tls_profile_of(self, session: Session) -> str | None:
         """Return the client profile of a session from its first matching rule, or None."""
@@ -167,7 +203,9 @@ def load(path: Path) -> Labels:
             doc = json.loads(text)
         except json.JSONDecodeError as exc:
             raise LabelsError(f"parse labels {path}: {exc}") from exc
-    return parse(doc, source=str(path))
+    labels = parse(doc, source=str(path))
+    labels.base_dir = path.resolve().parent
+    return labels
 
 
 def _load_yaml(path: Path, text: str) -> Any:
@@ -224,6 +262,7 @@ def parse(doc: Any, source: str = "<labels>") -> Labels:
         applications=applications,
         tls=tls,
         content=_content(doc["content"], where) if "content" in doc else None,
+        structure=_structure(doc["structure"], where) if "structure" in doc else None,
     )
 
 
@@ -272,6 +311,60 @@ def _content(value: Any, where: str) -> ContentLabels:
         max_duplicate_ratio=float(ratio),
         ignore_headers=tuple(h.strip().lower() for h in headers),
         sizes=sizes,
+    )
+
+
+def _structure(value: Any, where: str) -> StructureLabels:
+    """Validate the structure section of the session structure check."""
+    if not isinstance(value, dict) or set(value) - _STRUCTURE_FIELDS:
+        raise LabelsError(
+            f"{where} structure: must be a mapping with only {sorted(_STRUCTURE_FIELDS)}"
+        )
+    raw = value.get("scenarios")
+    if not isinstance(raw, list) or not raw:
+        raise LabelsError(f"{where} structure.scenarios: must be a non empty list")
+    scenarios = []
+    for index, entry in enumerate(raw):
+        here = f"{where} structure.scenarios[{index}]"
+        if (
+            not isinstance(entry, dict)
+            or set(entry) - _STRUCTURE_SCENARIO_FIELDS
+            or not isinstance(entry.get("file"), str)
+            or not entry["file"]
+        ):
+            raise LabelsError(
+                f"{here}: must be a mapping with a file and only "
+                f"{sorted(_STRUCTURE_SCENARIO_FIELDS)}"
+            )
+        overrides = entry.get("vars", {})
+        if not isinstance(overrides, dict) or not all(isinstance(k, str) for k in overrides):
+            raise LabelsError(f"{here}.vars: must be a mapping of variable names")
+        expected = entry.get("expected_instances")
+        if expected is not None and (isinstance(expected, bool) or not isinstance(expected, int)):
+            raise LabelsError(f"{here}.expected_instances: must be an integer of 0 or more")
+        if expected is not None and expected < 0:
+            raise LabelsError(f"{here}.expected_instances: must be an integer of 0 or more")
+        match = entry.get("match")
+        scenarios.append(
+            StructureScenario(
+                file=entry["file"],
+                vars=dict(overrides),
+                match=_rule({"application": "scenario", "match": match}, here)
+                if match is not None
+                else None,
+                expected_instances=expected,
+            )
+        )
+    gap = value.get("max_gap_s")
+    if gap is not None and (not _number(gap) or gap <= 0):
+        raise LabelsError(f"{where} structure.max_gap_s: must be a number above 0")
+    tolerance = value.get("tolerance_s", DEFAULT_STRUCTURE_TOLERANCE_S)
+    if not _number(tolerance) or tolerance < 0:
+        raise LabelsError(f"{where} structure.tolerance_s: must be a number of 0 or more")
+    return StructureLabels(
+        scenarios=tuple(scenarios),
+        max_gap_s=float(gap) if gap is not None else None,
+        tolerance_s=float(tolerance),
     )
 
 

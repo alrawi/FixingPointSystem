@@ -69,6 +69,10 @@ type Options struct {
 	// keep the sweep of the heartbeat timeout out of the way.
 	HeartbeatInterval time.Duration
 	HeartbeatTimeout  time.Duration
+	// Version is the version of the controller build, which GET
+	// /v1/capabilities reports as controller_version. Empty leaves the field
+	// out.
+	Version string
 }
 
 // Controller owns every component of one controller process. Its exported
@@ -208,7 +212,7 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 	}
 	c.API = NewServer(Handlers{
 		Agents:       agents.NewAPI(c.Agents),
-		Capabilities: api.NewCapabilitiesAPI(catalog, inventory),
+		Capabilities: api.NewCapabilitiesAPI(catalog, inventory, api.WithControllerVersion(opts.Version)),
 		Configs:      configs,
 		Modules:      registry.NewAPI(c.Registry, logger),
 		Runs:         runs.NewAPI(c.Runs),

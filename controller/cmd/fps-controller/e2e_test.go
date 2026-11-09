@@ -50,6 +50,10 @@ var (
 	e2eReadToken  = e2eTokens[api.ScopeRead]
 )
 
+// e2eVersion is the version stamp of the binary that TestEndToEnd builds. The
+// test expects GET /v1/capabilities to report it as controller_version.
+const e2eVersion = "0.0.0-e2e"
+
 // controllerProcess is one started fps-controller binary.
 type controllerProcess struct {
 	cmd      *exec.Cmd
@@ -149,7 +153,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Skip("builds the binary")
 	}
 	bin := filepath.Join(t.TempDir(), "fps-controller")
-	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+	if out, err := exec.Command("go", "build", "-ldflags", "-X main.version="+e2eVersion, "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 
@@ -218,6 +222,9 @@ tokens:
 	if len(capsResp.Agents) != 1 || len(capsResp.Modules) != 2 || !slices.Equal(capsResp.Backends, []api.CapabilitiesBackends{api.CapabilitiesBackendsKernel}) {
 		t.Errorf("GET /v1/capabilities = %+v", capsResp)
 	}
+	if capsResp.ControllerVersion == nil || *capsResp.ControllerVersion != e2eVersion {
+		t.Errorf("GET /v1/capabilities controller_version = %v, want the stamp %q", capsResp.ControllerVersion, e2eVersion)
+	}
 
 	// Store the example test configuration and validate it against the
 	// registry and the agent inventory.
@@ -234,6 +241,13 @@ tokens:
 	p.call(t, http.MethodPost, "/v1/configs", e2eRunToken, "application/yaml", bytes.NewReader(smoke), http.StatusCreated, &ref)
 	if ref.ID == "" {
 		t.Fatal("POST /v1/configs returned no id")
+	}
+	var configList struct {
+		Items []api.ConfigRef `json:"items"`
+	}
+	p.getJSON(t, "/v1/configs", e2eReadToken, &configList)
+	if len(configList.Items) != 1 || configList.Items[0].Id != ref.ID || configList.Items[0].Name != "http_smoke" {
+		t.Fatalf("GET /v1/configs = %+v, want the stored configuration %s", configList.Items, ref.ID)
 	}
 	var report api.ValidationReport
 	p.postJSON(t, "/v1/configs/"+ref.ID+":validate", e2eRunToken, "", http.StatusOK, &report)
@@ -285,6 +299,10 @@ tokens:
 	// A restart on the same data directory keeps configurations and modules.
 	p2 := startController(t, bin, cfgPath)
 	p2.getJSON(t, "/v1/configs/"+ref.ID, e2eReadToken, nil)
+	p2.getJSON(t, "/v1/configs", e2eReadToken, &configList)
+	if len(configList.Items) != 1 || configList.Items[0].Id != ref.ID {
+		t.Errorf("GET /v1/configs after restart = %+v, want %s", configList.Items, ref.ID)
+	}
 	if got := listModules(t, p2); !slices.Equal(got, wantModules) {
 		t.Errorf("modules after restart = %v, want %v", got, wantModules)
 	}

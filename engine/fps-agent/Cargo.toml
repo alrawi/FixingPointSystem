@@ -25,8 +25,14 @@ fps-hosts = { path = "../fps-hosts" }
 fps-interp = { path = "../fps-interp" }
 # The DatagramIo trait of the tapped UDP sessions.
 fps-io = { path = "../fps-io" }
+# The first party modules of the registry in src/modules.rs (AGT-13).
+fps-module-content = { path = "../../modules/content/native" }
 fps-module-dns = { path = "../../modules/dns/native" }
+fps-module-ftp = { path = "../../modules/ftp/native" }
 fps-module-http1 = { path = "../../modules/http1/native" }
+fps-module-imap = { path = "../../modules/imap/native" }
+fps-module-pop3 = { path = "../../modules/pop3/native" }
+fps-module-smtp = { path = "../../modules/smtp/native" }
 fps-runtime = { path = "../fps-runtime" }
 fps-sched = { path = "../fps-sched" }
 fps-stats = { path = "../fps-stats" }

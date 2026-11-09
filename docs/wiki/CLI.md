@@ -26,7 +26,7 @@ fps report run_1 --format html -o report.html
 | `fps config upload FILE\|-` | `createConfig` | The configuration id on standard output |
 | `fps config validate [--id ID] [FILE\|-]` | `createConfig`, then `validateConfig` | The report with its findings. The API has no dry run, so a file is stored first |
 | `fps config show ID` | `getConfig` | The stored configuration as JSON |
-| `fps config list` | none | The configurations that this machine uploaded, see below |
+| `fps config list [--page-size N] [--page-token T] [--all] [--all-controllers]` | `listConfigs` | One line per stored configuration, newest first, see below |
 | `fps run start CONFIG_ID [--agent ID]... [--label K=V]... [--watch]` | `startRun` | The run id. With `--watch` the command follows the run and exits by its outcome |
 | `fps run list [--state S] [--page-size N] [--page-token T] [--all]` | `listRuns` | One line per run, newest first |
 | `fps run show ID` | `getRun` | State, reason, totals, and the criteria of the verdict |
@@ -36,7 +36,9 @@ fps report run_1 --format html -o report.html
 
 Flags and arguments mix freely, so `fps run stop r1 --force` and `fps run stop --force r1` both work. `fps help` prints the usage, and `fps <command> -h` prints the flags of one command.
 
-The contract has no operation that lists configurations, so `fps config list` shows the uploads of this machine, from `$XDG_STATE_HOME/fps/configs.json` or `~/.local/state/fps/configs.json` (mode 0600, no secret). A configuration stored by someone else does not appear. A contract change that adds `GET /configs` would let the command ask the controller. The controller serves `listRuns` since CTL-35, so `fps run list` exits with 0 and the end to end test checks that it shows the runs that it started. Against a controller that still answers 501 the command exits with 5 and says that the controller does not implement the operation.
+`fps config list` asks the controller with `GET /v1/configs` (`listConfigs`, REST 0.7.0, served since CTL-37), so it shows every stored configuration, including those that other people or other machines uploaded, with the columns `ID`, `NAME`, and `CREATED`. `--page-size`, `--page-token`, and `--all` work as in `fps run list`, and `--json` prints `{items, next_page_token}`. Any other failure of the request, such as 401 or 500, is the answer of the command: the history never hides an error.
+
+The local history file is only a fallback. A controller that answers the first request with 501, which means that it does not serve `listConfigs`, makes the command list the uploads of this machine to `--url` from `$XDG_STATE_HOME/fps/configs.json` or `~/.local/state/fps/configs.json` (mode 0600, no secret), with the columns `ID`, `NAME`, `UPLOADED`, and `SOURCE`, and say so on standard error. `fps config upload` keeps writing the file for that purpose. `--all-controllers` is a property of the file and never calls a controller: it lists the uploads of this machine to every controller and adds the column `CONTROLLER`. The end to end test uploads a configuration through the CLI and one through the REST API, and checks with an empty history file that `fps config list` shows both, newest first, and pages through them. The controller serves `listRuns` since CTL-35, so `fps run list` exits with 0 and the end to end test checks that it shows the runs that it started. Against a controller that still answers 501 the command exits with 5 and says that the controller does not implement the operation.
 
 ## Global flags and environment
 
@@ -51,7 +53,7 @@ Each global flag works before and after the command name.
 | `--json` | `FPS_JSON` | Print the answer of the controller as JSON |
 | `--timeout D` | none | Timeout of one request, default 30s. It does not apply to a metrics stream |
 | `--insecure-http` | `FPS_INSECURE_HTTP` | Allow the token over plain `http` to a host that is not loopback |
-| `--history-file FILE` | `FPS_HISTORY_FILE` | The list of uploaded configurations |
+| `--history-file FILE` | `FPS_HISTORY_FILE` | The list of uploaded configurations, the fallback of `fps config list` for a controller without `listConfigs` |
 
 The token comes from `--token-file`, then `FPS_TOKEN_FILE`, then `FPS_TOKEN`. There is deliberately no `--token` flag, because a command line shows in the process list. The client sends it as `Authorization: Bearer <token>`, as the contract's `bearerToken` scheme says. No output, error, or log line shows it, and the client replaces it with `[redacted]` in any text that a server sends back. The client never follows a redirect, so the token reaches the configured host only. It refuses to send the token over `http` to a host other than loopback unless `--insecure-http` is set.
 

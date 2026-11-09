@@ -394,6 +394,11 @@ fn check_action(
             }
         }
         "expect" if body.is_mapping() => check_expect(at, path, body, udp)?,
+        "tls_upgrade" if udp => {
+            return Err(LoadError::TlsUpgradeOnUdp {
+                at: at.at(path, None),
+            })
+        }
         _ => {}
     }
     for (action, types) in RESERVED_ACTIONS {

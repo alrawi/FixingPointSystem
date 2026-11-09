@@ -48,7 +48,7 @@ const (
 
 // pendingOps are the operations that no package implements yet.
 var pendingOps = []string{
-	"getRunMetrics", "listConfigs", "streamRunMetrics",
+	"getRunMetrics", "streamRunMetrics",
 }
 
 func testConfig(t *testing.T, dataDir string) app.Config {
@@ -142,6 +142,28 @@ func TestServerRoutesEveryOperation(t *testing.T) {
 	slices.Sort(unimplemented)
 	if !slices.Equal(unimplemented, pendingOps) {
 		t.Errorf("operations that answer 501 = %v, want %v", unimplemented, pendingOps)
+	}
+}
+
+// TestVersionReachesCapabilities checks that Options.Version is the
+// controller_version of GET /v1/capabilities, and that listConfigs is served.
+func TestVersionReachesCapabilities(t *testing.T) {
+	c, err := New(context.Background(), Options{Config: testConfig(t, ""), Version: "3.1.4"})
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	h := newHandler(t, c)
+	rec := do(t, h, http.MethodGet, "/v1/capabilities", readToken, "")
+	var caps api.Capabilities
+	if err := json.Unmarshal(rec.Body.Bytes(), &caps); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("capabilities: status %d, err %v, body %s", rec.Code, err, rec.Body)
+	}
+	if caps.ControllerVersion == nil || *caps.ControllerVersion != "3.1.4" {
+		t.Errorf("controller_version = %v, want 3.1.4", caps.ControllerVersion)
+	}
+	if rec := do(t, h, http.MethodGet, "/v1/configs", readToken, ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"items":[]`) {
+		t.Errorf("listConfigs: status %d, body %s", rec.Code, rec.Body)
 	}
 }
 

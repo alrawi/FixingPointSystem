@@ -250,6 +250,7 @@ The loader rejects a scenario for each rule below. The rules on templates use th
 | A uniform delay has `min_ms` above `max_ms` | `UniformRange` |
 | `raw` appears outside a strike or fuzzer module | `ReservedAction` |
 | `max_datagram` on TCP, or a UDP expect that cannot fit one datagram | `MaxDatagramOnTcp`, `DatagramLimit` |
+| `tls_upgrade` in a UDP flow, at any depth of `loop` and `branch` | `TlsUpgradeOnUdp` |
 | `last` where no `expect` always ran earlier on the same side | `LastWithoutExpect` |
 | A call names a foreign module or a function that the manifest lacks | `ForeignModule`, `UnknownModuleFunction` |
 | An undefined variable or profile, or a call with a wrong arity, parameter, or argument type, or a `dist` literal out of range | `Template` with the matching `TemplateError` |
@@ -332,7 +333,7 @@ The interpreter checks three things before it calls the upgrader. The session mu
 
 The action type of both is `tls_upgrade`, and its action index is the position of the action in the document as for every action.
 
-`Scenario::parse` and `Scenario::parse_instance` accept the action in every mode. The contract file `contracts/schemas/scenario.schema.json` lists the action keywords and rejects unknown ones, so the schema and the Python validator reject `tls_upgrade` until a CON package adds it, see the follow up in the [log entry](log/2026-11-09T2000-ingest-eng-20-upgrade-a-running-flow-to-tls.md).
+`Scenario::parse` and `Scenario::parse_instance` accept the action in every mode. CON-17 added the action to the scenario schema, and ENG-22 made the semantic check agree with `tools/contracts/validate.py`: `check_action` raises `LoadError::TlsUpgradeOnUdp` ("tls_upgrade applies only to TCP flows") for the action in a UDP flow, at any depth of `loop` and `branch`, so a scenario that the contract refuses never reaches the runtime, where the flow would fail with `internal`. The fixtures `tls_upgrade_tcp`, `tls_upgrade_udp`, and `tls_upgrade_udp_nested` in `engine/fps-flow/tests/fixtures/` carry the verdicts for both validators.
 
 ### Tests
 
