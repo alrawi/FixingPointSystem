@@ -5,10 +5,10 @@
 | Issue | #187 |
 | Branch | `wp/RLM-05` |
 | Pull request | #328 |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-d41386, lease until 2026-11-09T21:24:01Z |
-| Last verified commit | 5d888cc |
+| Last verified commit | edf5cd1 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -29,11 +29,11 @@ Add the content variety check to the realism report. It reassembles application 
 
 ## Remaining
 
-Wait for CI.
+none
 
 ## Next action
 
-Poll the checks of pull request #328 and fix failures inside the paths.
+Review pull request #328.
 
 ## Blockers and open questions
 
