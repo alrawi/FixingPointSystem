@@ -7,7 +7,8 @@
 //	fps-controller [-config file] [-listen host:port] [-grpc-listen host:port]
 //	               [-enroll-listen host:port] [-data-dir dir] [-pki-dir dir]
 //	               [-tls-names name,...] [-admin-socket path]
-//	               [-metrics-token-file file] [-log-level level]
+//	               [-metrics-token-file file] [-trust-store-file file]
+//	               [-allow-unsigned-modules] [-log-level level]
 //	               [-insecure-plain-grpc]
 //	fps-controller token  -agent-id id [-ttl duration] [-config file | -data-dir dir | -admin-socket path]
 //	fps-controller revoke -agent-id id [-config file | -data-dir dir | -admin-socket path]
@@ -78,6 +79,8 @@ type options struct {
 	adminSocket      string
 	insecurePlain    bool
 	metricsTokenFile string
+	trustStoreFile   string
+	allowUnsigned    bool
 	logLevel         string
 	version          bool
 	set              map[string]bool
@@ -99,6 +102,8 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.adminSocket, "admin-socket", "", "unix socket `path` of the admin API; empty means pki-dir/admin.sock")
 	fs.BoolVar(&o.insecurePlain, "insecure-plain-grpc", false, "serve the agent gRPC service without TLS and trust agent ids (development and tests only)")
 	fs.StringVar(&o.metricsTokenFile, "metrics-token-file", "", "`file` that holds the bearer token for GET /metrics; empty leaves the endpoint open")
+	fs.StringVar(&o.trustStoreFile, "trust-store-file", "", "`file` of the module signing trust store; empty means the registry does not require signatures")
+	fs.BoolVar(&o.allowUnsigned, "allow-unsigned-modules", false, "install modules without a signature even with a trust store (development only)")
 	fs.StringVar(&o.logLevel, "log-level", app.DefaultLogLevel, "log `level`: debug, info, warn, or error")
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
@@ -148,6 +153,12 @@ func loadConfig(o options) (app.Config, error) {
 	}
 	if o.set["metrics-token-file"] {
 		cfg.MetricsTokenFile = o.metricsTokenFile
+	}
+	if o.set["trust-store-file"] {
+		cfg.TrustStoreFile = o.trustStoreFile
+	}
+	if o.set["allow-unsigned-modules"] {
+		cfg.AllowUnsignedModules = o.allowUnsigned
 	}
 	if o.set["log-level"] {
 		cfg.LogLevel = o.logLevel

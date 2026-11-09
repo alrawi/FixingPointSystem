@@ -79,6 +79,7 @@ func (a *Authority) serverConfig(auth tls.ClientAuthType, protos, names []string
 }
 
 // serverCertificate returns the cached server certificate or issues a new one.
+// The certificate chain is the leaf followed by the CA certificate.
 func (a *Authority) serverCertificate(names []string) (*tls.Certificate, error) {
 	a.srvMu.Lock()
 	defer a.srvMu.Unlock()
@@ -124,7 +125,9 @@ func (a *Authority) serverCertificate(names []string) (*tls.Certificate, error) 
 	a.srv = &serverCert{
 		names: append([]string(nil), names...),
 		leaf:  leaf,
-		cert:  &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf},
+		// The chain holds the leaf and then the CA, so a client that pins the
+		// CA fingerprint finds the CA in the handshake before it sends a token.
+		cert: &tls.Certificate{Certificate: [][]byte{der, a.caCert.Raw}, PrivateKey: key, Leaf: leaf},
 	}
 	return a.srv.cert, nil
 }
