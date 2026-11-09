@@ -64,6 +64,15 @@ collect() {
 	fi
 }
 
+# dump_logs prints the tail of every service log, for a run that failed before the test.
+dump_logs() {
+	for s in prep controller enroll agent1 agent2 lab-test; do
+		echo "---- log of $s"
+		tail -n 40 "$out/$s.log" 2>/dev/null || true
+	done
+	cat "$out/ps.txt" 2>/dev/null || true
+}
+
 # Single quotes on purpose: the trap expands the variables when it runs.
 # shellcheck disable=SC2016
 trap '[[ "$keep" == 0 ]] && "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1' EXIT
@@ -85,6 +94,7 @@ docker image ls --format '{{.Repository}}:{{.Tag}} {{.Size}}' | grep -E '^fps-(c
 echo "== Start the controller and the two agents"
 if ! "${compose[@]}" up -d agent1 agent2 2>&1 | tee "$out/up.log"; then
 	collect
+	dump_logs
 	fail "the controller and the agents start (prep and enroll complete)"
 	echo "RESULT FAIL the lab did not start"
 	exit 1
@@ -95,6 +105,7 @@ echo "== Run the test"
 "${compose[@]}" up --no-deps --exit-code-from lab-test lab-test 2>&1 | tee "$out/test.log"
 test_code=${PIPESTATUS[0]}
 collect
+[[ "$test_code" == 0 ]] || dump_logs
 if [[ "$test_code" == 0 ]]; then
 	pass "the test between agent1 and agent2 ends with exit code 0"
 else
