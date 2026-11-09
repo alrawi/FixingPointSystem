@@ -536,7 +536,7 @@ async fn upload_capture(mut client: Client, token: String, up: Upload) {
             let len = data.len() as u64;
             send(pb::upload_capture_request::Body::Chunk(pb::CaptureChunk {
                 offset,
-                data: data.into(),
+                data,
             }))
             .await?;
             offset += len;
