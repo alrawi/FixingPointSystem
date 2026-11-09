@@ -1,0 +1,80 @@
+scenario: retrieve_all
+description: A mail client on port 110 that logs in with USER and PASS and downloads messages. After CAPA it sends the user name and the password in clear text, asks for STAT, for the full LIST and the full UIDL, which are multi line responses that end in a line with a single dot, and then fetches the variable fetches (default 3) messages one by one with RETR n. Each response is the status line with the size in octets, a dot stuffed MIME message with a base64 attachment of a size between attachment_min and attachment_max in one of three kinds, and the closing dot line. The text part of each message has a line with a single dot and a line that starts with two dots, so the server stuffs them and the client reads the whole message up to the closing line. The server draws its messages from the content module, and the client waits a think time between the messages.
+vars:
+  server_port: 110
+  server_name: pop3.example.test
+  messages: 6
+  fetches: 3
+  body_size: 1800
+  attachment_min: 24000
+  attachment_max: 160000
+  n: 0
+flows:
+  - id: retrieve_all
+    module: pop3
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "CAPA\r\n"
+      - expect: { pattern: "\r\n.\r\n", timeout_ms: 5000 }
+      - set:
+          login: "{{ pop3.credential('user') }}"
+          secret: "{{ pop3.credential('password') }}"
+      - send: "USER {{ vars.login }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "PASS {{ vars.secret }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "STAT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "LIST\r\n"
+      - expect: { pattern: "\r\n.\r\n", timeout_ms: 5000 }
+      - send: "UIDL\r\n"
+      - expect: { pattern: "\r\n.\r\n", timeout_ms: 5000 }
+      - loop:
+          count: "{{ vars.fetches }}"
+          do:
+            - set: { n: "{{ pop3.next(vars.n) }}" }
+            - send: "RETR {{ vars.n }}\r\n"
+            - expect: { pattern: "\r\n.\r\n", timeout_ms: 30000 }
+            - delay: { dist: exponential, mean_ms: 80 }
+      - send: "QUIT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - set: { box: "{{ rand_int(1, 2000000000) }}" }
+      - send: "+OK Dovecot ready. {{ pop3.banner(vars.server_name) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "+OK\r\nCAPA\r\nTOP\r\nUIDL\r\nRESP-CODES\r\nPIPELINING\r\nAUTH-RESP-CODE\r\nUSER\r\nSASL PLAIN\r\n.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "+OK\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "+OK Logged in.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ pop3.stat_reply(vars.messages, vars.box) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ pop3.list_reply(last, vars.messages, vars.box) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ pop3.uidl_reply(last, vars.messages, vars.box) }}"
+      - loop:
+          count: "{{ vars.fetches }}"
+          do:
+            - expect: { pattern: "\r\n", timeout_ms: 30000 }
+            - set: { sid: "{{ rand_int(1, 2000000000) }}" }
+            - set:
+                subject: "Documents {{ rand_int(1000, 9999) }}"
+                text: "{{ content.email(size=vars.body_size) }}\n.\n.. the rest follows in the attachment\n"
+            - branch:
+                - p: 0.4
+                  do:
+                    - set: { msg: "{{ pop3.message(pop3.address(vars.sid, 1), pop3.address(vars.sid, 2), vars.subject, vars.text, cc=pop3.address(vars.sid, 3), attachment=content.binary(kind='pdf', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='statement.pdf', content_type='application/pdf') }}" }
+                - p: 0.3
+                  do:
+                    - set: { msg: "{{ pop3.message(pop3.address(vars.sid, 1), pop3.address(vars.sid, 2), vars.subject, vars.text, attachment=content.binary(kind='jpeg', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='photo.jpg', content_type='image/jpeg') }}" }
+                - p: 0.3
+                  do:
+                    - set: { msg: "{{ pop3.message(pop3.address(vars.sid, 1), pop3.address(vars.sid, 2), vars.subject, vars.text, attachment=content.binary(kind='zip', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='archive.zip', content_type='application/zip') }}" }
+            - send: "{{ pop3.retr_reply(last, vars.msg, vars.messages) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - send: "+OK Logging out.\r\n"
+      - close: fin
