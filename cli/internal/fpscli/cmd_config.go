@@ -157,8 +157,8 @@ func (a *app) configValidate(ctx context.Context, args []string) error {
 		// The API has no dry run, so validation stores the configuration first.
 		ref, _, err := a.upload(ctx, c, data, ctype, source)
 		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.Status == http.StatusUnprocessableEntity {
-			// The schema check of the upload failed: the configuration is invalid.
+		if errors.As(err, &apiErr) && (apiErr.Status == http.StatusUnprocessableEntity || apiErr.Status == http.StatusBadRequest) {
+			// The upload refused the document: it is invalid.
 			a.eprintf("%s\n", apiErr.Error())
 			apiErr.printFindings(a.env.Stderr)
 			return &outcomeError{msg: "the configuration is invalid and was not stored"}
