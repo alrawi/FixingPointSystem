@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #155 |
 | Branch | `wp/OPS-05` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #293 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-7a6ec6, lease until 2026-11-09T15:12:20Z |
 | Last verified commit | none |
 
@@ -19,7 +19,7 @@ A tag triggered workflow builds the agent, controller, module archives, and Pyth
 - [x] 1. Write `.github/workflows/release.yml` and lint it with actionlint
 - [x] 2. Document it in `docs/wiki/Operations.md` with the manual image attachment
 - [x] 3. Dry run on the branch (push run 42628407496, dispatch run 42629459202)
-- [ ] 4. Open the PR and wait for CI
+- [x] 4. Open the PR and wait for CI
 
 ## Done and verified
 
@@ -27,11 +27,11 @@ A tag triggered workflow builds the agent, controller, module archives, and Pyth
 
 ## Remaining
 
-PR and CI.
+none
 
 ## Next action
 
-Open the PR, wait for CI, then run fps_swarm.py review.
+none
 
 ## Blockers and open questions
 
