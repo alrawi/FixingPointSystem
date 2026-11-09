@@ -20,6 +20,11 @@
 //! compiles each component once, shares it across the workers, and gives every
 //! session its own instance, see [`FlowRef::extensions`].
 //!
+//! A flow that upgrades its transport with `tls_upgrade` resolves the profile of
+//! the action in [`RuntimeConfig::tls`], see [`TlsProfiles`]. The upgrade wraps the
+//! session in TLS below the interpreter and above the capture tap, so a capture
+//! records the encrypted bytes.
+//!
 //! [`RuntimeHandle::stop`] stops new sessions and lets open sessions finish
 //! within the ramp down time, after which it resets the rest.
 //! [`RuntimeHandle::abort`] resets every open session at once.
@@ -35,6 +40,7 @@ mod extension;
 mod metrics;
 mod opener;
 mod runtime;
+mod tls;
 mod worker;
 
 pub use clock::TokioClock;
@@ -49,3 +55,4 @@ pub use extension::{
 };
 pub use opener::{global_session_id, ClientOpener};
 pub use runtime::{RunReport, Runtime, RuntimeHandle, WorkerExit};
+pub use tls::{TlsProfiles, DEFAULT_SERVER_NAME};

@@ -26,7 +26,7 @@ use crate::extension::close_reason;
 use crate::metrics::SessionMetrics;
 use crate::opener::{global_session_id, Accepted, ClientOpener, Endpoints, TapOpener};
 use crate::runtime::WorkerExit;
-use crate::{RuntimeError, SessionKey};
+use crate::{RuntimeError, SessionKey, TlsProfiles};
 
 /// What a worker thread receives from the runtime.
 pub(crate) struct WorkerStart {
@@ -37,6 +37,7 @@ pub(crate) struct WorkerStart {
     pub(crate) snapshots: Sender<WorkerSnapshot>,
     pub(crate) ready: Sender<(u32, Result<Ready, RuntimeError>)>,
     pub(crate) capture: CaptureCell,
+    pub(crate) tls: Option<Arc<TlsProfiles>>,
 }
 
 /// What a worker reports when it is ready.
@@ -99,6 +100,7 @@ struct Worker {
     snapshots: Sender<WorkerSnapshot>,
     abort: watch::Sender<bool>,
     capture: CaptureCell,
+    tls: Option<Arc<TlsProfiles>>,
 }
 
 impl Worker {
@@ -122,6 +124,7 @@ impl Worker {
             snapshots: start.snapshots.clone(),
             abort: watch::channel(false).0,
             capture: start.capture.clone(),
+            tls: start.tls.clone(),
         })
     }
 
@@ -195,6 +198,9 @@ impl Worker {
                     functions,
                     limits: self.flow.limits,
                 });
+                if let Some(profiles) = &self.tls {
+                    session.set_tls_upgrader(&**profiles);
+                }
                 let outcome = session.run_program(&mut opener, program, stop).await;
                 let stats = session.stats();
                 drop(session);

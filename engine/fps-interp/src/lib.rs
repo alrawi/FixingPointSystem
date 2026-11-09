@@ -17,6 +17,9 @@
 //! writes one datagram, each `expect` reads and consumes exactly one
 //! datagram, which also becomes `last`, and `close` releases the socket.
 //!
+//! The `tls_upgrade` action hands the transport of a running session to a
+//! [`TlsUpgrader`], which wraps it in TLS in place, see [`upgrade`].
+//!
 //! A [`ScenarioInstance`] runs every flow of one scenario that
 //! [`fps_flow::Scenario::parse_instance`] compiled. It orders flows by
 //! `after`, starts spawned flows at each `spawn`, shares the variables that
@@ -31,6 +34,7 @@ pub mod instance;
 pub mod open;
 pub mod rng;
 pub mod session;
+pub mod upgrade;
 
 pub use failure::{Failure, FailureKind, Reason};
 pub use instance::{
@@ -40,3 +44,4 @@ pub use instance::{
 pub use open::{DatagramOpener, OpenKind, OpenRequest, Opener};
 pub use rng::{session_rng, Side};
 pub use session::{Limits, Session, SessionCtx, SideStats, VECTORED_FILL_MIN};
+pub use upgrade::{BoxedIo, TlsUpgrader, UpgradeError, UpgradeFuture, UpgradeRequest};
