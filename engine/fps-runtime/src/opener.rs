@@ -6,7 +6,8 @@ use std::io;
 use std::net::{IpAddr, SocketAddr};
 
 use fps_backend_kernel::{Connector, KernelStream};
-use fps_interp::{OpenKind, OpenRequest, Opener};
+use fps_capture::{CaptureCell, FlowEndpoints, Tapped, Transport};
+use fps_interp::{OpenKind, OpenRequest, Opener, Side};
 use fps_io::SessionIo;
 
 use crate::config::SourceHosts;
@@ -147,6 +148,73 @@ impl<S: SessionIo> Opener for Accepted<S> {
             OpenKind::Connect => Err(invalid("a server opener cannot connect".into())),
         };
         std::future::ready(io)
+    }
+}
+
+/// A session transport that knows its two addresses, which the tap needs to
+/// synthesize frames.
+pub(crate) trait Endpoints {
+    /// Returns the local and the peer address, or `None` when the transport
+    /// has none, for example after a reset.
+    fn endpoints(&self) -> Option<(SocketAddr, SocketAddr)>;
+}
+
+impl Endpoints for KernelStream {
+    fn endpoints(&self) -> Option<(SocketAddr, SocketAddr)> {
+        Some((self.local_addr().ok()?, self.peer_addr().ok()?))
+    }
+}
+
+/// Wraps the sessions that an opener opens in the tap of the current capture.
+///
+/// It reads the [`CaptureCell`] once per open, which is one atomic load while
+/// no capture runs. A session that opens while a capture runs is wrapped by
+/// [`fps_capture::Capture::begin`], which decides by the sampler whether the
+/// session is recorded. The local address of a client session is its source
+/// and that of a server session is its listener.
+pub(crate) struct TapOpener<'a, O> {
+    inner: O,
+    cell: &'a CaptureCell,
+    session_id: u64,
+    side: Side,
+}
+
+impl<'a, O> TapOpener<'a, O> {
+    /// Wraps `inner`, whose sessions carry the run wide id `session_id`.
+    pub(crate) fn new(inner: O, cell: &'a CaptureCell, session_id: u64, side: Side) -> Self {
+        Self {
+            inner,
+            cell,
+            session_id,
+            side,
+        }
+    }
+}
+
+impl<O: Opener> Opener for TapOpener<'_, O>
+where
+    O::Io: Endpoints,
+{
+    type Io = Tapped<O::Io>;
+
+    fn open(&mut self, request: OpenRequest<'_>) -> impl Future<Output = io::Result<Self::Io>> {
+        let (cell, id, side) = (self.cell, self.session_id, self.side);
+        let opened = self.inner.open(request);
+        async move {
+            let io = opened.await?;
+            let Some(capture) = cell.current() else {
+                return Ok(Tapped::new(io, None));
+            };
+            let handle = io.endpoints().and_then(|(local, peer)| {
+                let (client, server, side) = match side {
+                    Side::Client => (local, peer, fps_capture::Side::Client),
+                    Side::Server => (peer, local, fps_capture::Side::Server),
+                };
+                let flow = FlowEndpoints::new(client, server).ok()?;
+                capture.begin(id, flow, Transport::Tcp, side)
+            });
+            Ok(Tapped::new(io, handle))
+        }
     }
 }
 

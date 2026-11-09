@@ -10,7 +10,7 @@
 | Branch | `wp/ENG-19` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of N plan steps) |
+| Progress | 90% (3 of 4 plan steps, PR and CI pending) |
 | Current holder | claude-4e19a7, lease until 2026-11-09T05:22:58Z |
 | Last verified commit | none |
 
@@ -24,22 +24,22 @@ Move the capture cell into fps-capture, let fps-runtime read it when a client or
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. CaptureCell in fps-capture with unit tests
-- [ ] 2. fps-runtime tap opener, config and handle accessor
-- [ ] 3. Runtime capture test (ring reader and tshark)
-- [ ] 4. Docs, log entry, checks, PR
+- [x] 1. CaptureCell in fps-capture with unit tests
+- [x] 2. fps-runtime tap opener, config and handle accessor
+- [x] 3. Runtime capture test (ring reader and tshark)
+- [x] 4. Docs, log entry, checks, PR
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+`cargo test -p fps-capture -p fps-runtime` all green (3 new cell tests, 3 new runtime capture tests, loopback 9 green); `cargo clippy -p fps-runtime -p fps-capture --all-targets -D warnings` clean; `cargo check -p fps-agent --all-targets` builds. plan.py check, render --check, lint pass.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Open the PR and wait for CI. tshark did not run locally.
 
 ## Next action
 
-Step 1: add engine/fps-capture/src/cell.rs.
+Open the PR, wait for CI, then run fps_swarm.py review.
 
 ## Blockers and open questions
 
@@ -47,7 +47,7 @@ Write "none" or name each blocker with a link to its issue.
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+Tap in the opener (TapOpener), not in fps-interp, so the interpreter stays free of capture. The cell is read once per open and the socket is asked for addresses only while a capture runs. The agent's cell is left in place (AGT-08 works there).
 
 ## Pitfalls
 

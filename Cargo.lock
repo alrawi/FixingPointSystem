@@ -919,6 +919,7 @@ version = "0.0.1"
 dependencies = [
  "core_affinity",
  "fps-backend-kernel",
+ "fps-capture",
  "fps-flow",
  "fps-hosts",
  "fps-interp",
