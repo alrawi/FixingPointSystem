@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: GPL-3.0-only
+name: cli-go
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - cli/**
+      - controller/**
+      - contracts/**
+      - .github/**
+      - Makefile
+      - mk/cli.mk
+  pull_request:
+    paths:
+      - cli/**
+      - controller/**
+      - contracts/**
+      - .github/**
+      - Makefile
+      - mk/cli.mk
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: controller/go.sum
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "gofmt needed on:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          version: v2.12.2
+          working-directory: cli
+      - name: go test -race
+        run: make -C .. test-cli

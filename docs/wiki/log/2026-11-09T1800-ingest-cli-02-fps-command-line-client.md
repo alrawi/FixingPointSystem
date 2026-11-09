@@ -1,0 +1,15 @@
+## [2026-11-09] ingest | CLI-02 fps command line client
+
+The new Go module `cli/` (`github.com/alrawi/FixingPointSystem/cli`, standard library only) provides the command `fps` with `config validate|upload|list|show`, `run start|list|show|stop`, `watch`, and `report`. It reads the API token from `FPS_TOKEN_FILE`, `--token-file`, or `FPS_TOKEN` and never prints it, trusts an extra CA file for HTTPS, prints JSON with `--json`, and documents its exit codes. `fps watch` follows the Server Sent Events stream with reconnection and falls back to polling. The unit tests run against a stub server, and the end to end test runs the real controller with fake agents. We described the client in the new page [CLI](CLI.md).
+
+The package adds one directory outside `cli/`, as the work package allowed: `controller/cmd/fps-fakeagent`, a thin `main` around `controller/internal/fakeagent`, because `cli/` cannot import the internal packages of the controller. It also adds `mk/cli.mk`, which the root Makefile includes by wildcard, so the root Makefile did not change.
+
+### Shared page notes
+
+- Home and sidebar: link the new page [CLI](CLI.md) once the batch merges. CLI.md did not exist, so CLI-02 created it.
+- Testing: add a row for the CLI. `make lint-cli` runs gofmt, go vet, and golangci-lint in `cli/`, and `make test-cli` runs `go test -race ./...` there, including `TestEndToEnd`, which builds `fps-controller` and `fps-fakeagent` from `controller/` and skips with the build error when that fails. `make test-cli-e2e` runs the end to end test alone. The CLI row of the level table has unit and end to end levels.
+- CI: no workflow covers `cli/`. A new `.github/workflows/cli-go.yml` is needed. It triggers on `cli/**`, `controller/**`, `contracts/**`, `.github/**`, `Makefile`, and `mk/cli.mk`, has one job on `ubuntu-24.04` with `GOWORK=off`, and runs from `actions/checkout@v4` and `actions/setup-go@v5` (`go-version-file: cli/go.mod`, `cache-dependency-path: controller/go.sum`), then `gofmt -l .` and `go vet ./...` in `cli/`, `golangci/golangci-lint-action` pinned as in `controller.yml` with `working-directory: cli`, and `go test -race -count=1 ./...` in `cli/`. The test step needs network access to the Go module proxy, because the end to end test builds the controller.
+- Controller: the controller workflow already covers `controller/cmd/fps-fakeagent`, so `make lint-ctl` and `make test-ctl` build and lint it. The Controller page can list the helper under the binary section.
+- Contracts: the API has no operation that lists configurations, so `fps config list` shows the uploads of the local machine. A CON package could add `GET /configs`. The controller answers 501 to `listRuns`, which `fps run list` reports with exit code 5, until a CTL package implements it.
+- Makefile area: `mk/cli.mk` holds the Go client targets only. The SDK targets that the CLI-01 entry suggests (`lint-cli-sdk` and `test-cli-sdk`) are still open and can join the same file.
+- Implementation Plan: CLI-02 is done once merged.
