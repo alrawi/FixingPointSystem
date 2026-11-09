@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 82 work packages. Packages marked critical path gate the phase.
+This page lists 85 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -93,6 +93,9 @@ flowchart LR
   AGT_11["AGT-11<br/>Load WebAssembly extensions in the agent"]
   CTL_32["CTL-32<br/>Capture file retention in the controller"]
   CON_15["CON-15<br/>Capture and criteria contract gaps"]
+  AGT_12["AGT-12<br/>Port filter for captures and a real end to end capture"]
+  CTL_33["CTL-33<br/>Version stamp in fps-controller"]
+  CTL_34["CTL-34<br/>Byte weights in the compiler"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -184,6 +187,10 @@ flowchart LR
   CON_13 --> CON_15
   CTL_14 --> CON_15
   AGT_07 --> CON_15
+  AGT_09 --> AGT_12
+  AGT_10 --> AGT_12
+  OPS_05 --> CTL_33
+  CTL_12 --> CTL_34
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -274,6 +281,9 @@ flowchart LR
 | [AGT-11](#agt-11-load-webassembly-extensions-in-the-agent) | Load WebAssembly extensions in the agent | S | ENG-17, AGT-07 |  |
 | [CTL-32](#ctl-32-capture-file-retention-in-the-controller) | Capture file retention in the controller | S | CTL-14 |  |
 | [CON-15](#con-15-capture-and-criteria-contract-gaps) | Capture and criteria contract gaps | S | CON-13, CTL-14, AGT-07 |  |
+| [AGT-12](#agt-12-port-filter-for-captures-and-a-real-end-to-end-capture) | Port filter for captures and a real end to end capture | S | AGT-09, AGT-10 |  |
+| [CTL-33](#ctl-33-version-stamp-in-fps-controller) | Version stamp in fps-controller | S | OPS-05 |  |
+| [CTL-34](#ctl-34-byte-weights-in-the-compiler) | Byte weights in the compiler | S | CTL-12 |  |
 
 ## CON Contracts
 
@@ -754,6 +764,24 @@ Acceptance.
 
 - [ ] An agent test runs a plan whose module ships a WAT-built extension over TCP and UDP, and a looping extension fails only its own sessions with extension_error.
 
+### AGT-12 Port filter for captures and a real end to end capture
+
+Phase 2 · size S · workstream AGT
+
+- **Depends on.** AGT-09, AGT-10
+- **Paths.** `engine/fps-agent/`
+
+The REST contract requires a port when a capture starts, and the agent refuses any port, so no capture starts through the controller against the real agent (AGT-09 finding).
+
+Deliverables.
+
+- The agent accepts StartCapture with a port and records only sessions whose server port matches, for TCP (the shared cell of AGT-10) and UDP; an empty port keeps recording every session.
+- engine/fps-agent/tests/controller_e2e.sh starts a capture on a dns run through POST /v1/runs/{id}/captures, stops it through the download, and checks the pcapng and its SHA-256.
+
+Acceptance.
+
+- [ ] The controller e2e job downloads a capture from the real agent over mutual TLS and tshark (when installed) or the fps-capture reader parses it; agent tests show a port filter that skips other sessions.
+
 ## CTL Controller
 
 ### CTL-21 Throughput rate calibration
@@ -1054,6 +1082,40 @@ Deliverables.
 Acceptance.
 
 - [ ] A test with a fake clock shows a file kept before the retention ends and deleted after it, and a download of a deleted capture answers 404.
+
+### CTL-33 Version stamp in fps-controller
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** OPS-05
+- **Paths.** `controller/cmd/fps-controller/`, `.github/workflows/release.yml`
+
+fps-controller -version reads only the Go build info, so the release workflow cannot stamp the tag into the binary (OPS-05 finding).
+
+Deliverables.
+
+- A version variable set with -ldflags -X that -version, the startup log, and GET /v1/capabilities report when set; the release workflow passes the tag version.
+
+Acceptance.
+
+- [ ] A test builds with -X and reads the version back; a release dry run shows the stamped version.
+
+### CTL-34 Byte weights in the compiler
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CTL-12
+- **Paths.** `controller/internal/compiler/`, `controller/internal/runs/`
+
+For profile.basis bytes the compiler still treats weights as session shares, so a run starts at session weighted byte shares and mixcontrol corrects it in the first seconds (CTL-12 finding).
+
+Deliverables.
+
+- For basis bytes the compiler turns byte weights into session shares with each scenario's expected bytes per session, and newByteMix in runs/bytemix.go starts from those compiled weights.
+
+Acceptance.
+
+- [ ] A golden plan for basis bytes shows the converted session shares; the CTL-12 convergence test shows byte shares within 2 points from the first window.
 
 ## CLI Python SDK and command line client
 
