@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #277 |
 | Branch | `wp/IMG-06` |
-| Pull request | pending |
-| Status | in progress |
-| Progress | 90% (3 of 3 plan steps, CI pending) |
+| Pull request | #281 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-img06a, lease until 2026-11-09T14:08:18Z |
-| Last verified commit | none |
+| Last verified commit | 5f9c69d |
 
 ## Goal
 
