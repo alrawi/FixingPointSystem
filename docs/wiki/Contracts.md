@@ -100,7 +100,7 @@ A total over both sides counts each session twice, so the API views and test cri
 
 ## Failure reasons and the metrics endpoint
 
-CON-07 applied decision D12 items 19 and 20 to the controller API, which is now at version 0.3.0.
+CON-07 applied decision D12 items 19 and 20 to the controller API and moved it to version 0.3.0. [CON-12](#side-selection-in-the-run-metrics-api) moved it on to 0.4.0.
 
 | Field or document | Meaning |
 |---|---|
@@ -125,3 +125,9 @@ CON-10 applied decision D12 item 18 and moved the scenario contract to v0.3. The
 | `http1.request` | New optional parameter `headers` of type `text` |
 
 The specification example lives at `contracts/examples/modules/http1/scenarios-pending/web_profile.yaml`. The validator checks it, and the engine and the controller do not compile `profiles` or `dist` yet, so the manifest does not list it. `contracts/README.md` still shows the v0.2 grammar until the coordinator folds the text that the change entry carries.
+
+## Side selection in the run metrics API
+
+CON-12 adds the optional query parameter `side` to `GET /v1/runs/{id}/metrics` and to `GET /v1/runs/{id}/metrics:stream`, and moves the controller API from 0.3.0 to 0.4.0. The values are `client` and `server`, and the default is `client`, so a request without the parameter gets the answer that it got before. Any other value answers 400. On the stream, one `side` applies to every requested view.
+
+The change takes a minor number because it adds a parameter that a reader can see in the document, as CON-07 did for its fields. The REST version has no admission rule like the `engine_api` rule that made CON-11 choose a patch number. A response does not echo the side, and no value selects both sides, because a total over both counts each session twice. The server side holds values only for the metrics that carry the `side` label of CON-08. The controller serves it from `Window.Side` and `Aggregator.LatestSide` of CTL-23. The entry `contracts/changes/CON-12.md` records the change, and `api.gen.go` is regenerated with `go generate ./internal/api`.

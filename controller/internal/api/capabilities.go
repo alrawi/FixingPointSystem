@@ -16,7 +16,7 @@ const EngineAPIVersion = "0.2.0"
 // APIVersion is the version of the REST contract, from info.version of
 // contracts/openapi/fps-api-v1.yaml, which GET /v1/capabilities reports as
 // api_version.
-const APIVersion = "0.3.0"
+const APIVersion = "0.4.0"
 
 // ModuleLister lists the installed modules for GET /v1/capabilities. The
 // controller binary adapts the module registry to it.
