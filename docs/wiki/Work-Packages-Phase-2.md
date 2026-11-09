@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 89 work packages. Packages marked critical path gate the phase.
+This page lists 93 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -100,6 +100,10 @@ flowchart LR
   ENG_20["ENG-20<br/>Upgrade a running flow to TLS"]
   CTL_35["CTL-35<br/>List runs"]
   CON_16["CON-16<br/>Controller version, configuration listing, and REST breaking check"]
+  CON_17["CON-17<br/>The tls_upgrade action in the scenario contract"]
+  CTL_36["CTL-36<br/>Serve stopCapture, capture files, and labeled criteria"]
+  AGT_14["AGT-14<br/>TLS profiles, TLS key export, and labeled criteria in the agent"]
+  MOD_20["MOD-20<br/>STARTTLS scenarios for smtp and imap"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -200,6 +204,14 @@ flowchart LR
   TRN_04 --> ENG_20
   MOD_07 --> ENG_20
   CON_15 --> CON_16
+  ENG_20 --> CON_17
+  CON_15 --> CTL_36
+  ENG_20 --> AGT_14
+  CON_15 --> AGT_14
+  AGT_13 --> AGT_14
+  CON_17 --> MOD_20
+  AGT_14 --> MOD_20
+  MOD_08 --> MOD_20
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -297,6 +309,10 @@ flowchart LR
 | [ENG-20](#eng-20-upgrade-a-running-flow-to-tls) | Upgrade a running flow to TLS | M | TRN-04, MOD-07 |  |
 | [CTL-35](#ctl-35-list-runs) | List runs | S | CTL-07 |  |
 | [CON-16](#con-16-controller-version-configuration-listing-and-rest-breaking-check) | Controller version, configuration listing, and REST breaking check | S | CON-15 |  |
+| [CON-17](#con-17-the-tls_upgrade-action-in-the-scenario-contract) | The tls_upgrade action in the scenario contract | S | ENG-20 |  |
+| [CTL-36](#ctl-36-serve-stopcapture-capture-files-and-labeled-criteria) | Serve stopCapture, capture files, and labeled criteria | S | CON-15 |  |
+| [AGT-14](#agt-14-tls-profiles-tls-key-export-and-labeled-criteria-in-the-agent) | TLS profiles, TLS key export, and labeled criteria in the agent | M | ENG-20, CON-15, AGT-13 |  |
+| [MOD-20](#mod-20-starttls-scenarios-for-smtp-and-imap) | STARTTLS scenarios for smtp and imap | S | CON-17, AGT-14, MOD-08 |  |
 
 ## CON Contracts
 
@@ -444,6 +460,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The OpenAPI and proto checks pass, and the new breaking check passes on this change and fails on a deliberately breaking fixture.
+
+### CON-17 The tls_upgrade action in the scenario contract
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** ENG-20
+- **Paths.** `contracts/`, `tools/contracts/`
+
+ENG-20 parses tls_upgrade in the engine, but the scenario schema refuses unknown action keywords. Needs owner approval as a contract change.
+
+Deliverables.
+
+- tls_upgrade in contracts/schemas/scenario.schema.json as the ENG-20 log entry gives it, the README action table row, the validator rule that tls_upgrade in a UDP flow is an error, and contracts/changes/CON-17.md with the scenario contract version bump.
+
+Acceptance.
+
+- [ ] The contract checks pass, a scenario with tls_upgrade validates, and one in a UDP flow fails.
 
 ## OPS Repository and swarm tooling
 
@@ -846,6 +879,24 @@ Acceptance.
 
 - [ ] The controller e2e test runs an smtp plan through the real agent, and an agent test shows each first party module's functions resolve.
 
+### AGT-14 TLS profiles, TLS key export, and labeled criteria in the agent
+
+Phase 2 · size M · workstream AGT
+
+- **Depends on.** ENG-20, CON-15, AGT-13
+- **Paths.** `engine/fps-agent/`
+
+The agent builds no TlsProfiles, so a plan with tls_upgrade fails every session; it ignores export_tls_keys and refuses a criterion with labels (ENG-20 and CON-15 findings).
+
+Deliverables.
+
+- The agent builds the TLS profiles a plan names and sets RuntimeConfig::tls, with a key log that the capture download ships when export_tls_keys is set.
+- Criterion.labels apply, at least side.
+
+Acceptance.
+
+- [ ] A controller e2e run with an SMTP STARTTLS scenario passes through the real agent, and a capture of it decrypts with the exported keys; a server side criterion counts the server series.
+
 ## CTL Controller
 
 ### CTL-21 Throughput rate calibration
@@ -1198,6 +1249,24 @@ Acceptance.
 
 - [ ] Contract tests of listRuns pass, and the CLI e2e test expects exit 0 from fps run list.
 
+### CTL-36 Serve stopCapture, capture files, and labeled criteria
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CON-15
+- **Paths.** `controller/internal/captures/`, `controller/internal/compiler/`, `controller/internal/agents/`
+
+CON-15 added stopCapture, Capture.files, StartCaptureCommand.export_tls_keys, and Criterion.labels. The controller answers stopCapture with 501 and fills none of them.
+
+Deliverables.
+
+- stopCapture ends the capture on every agent without a download; Capture.files lists the agent, packets, bytes, digest, and error of each file; export_tls_keys reaches the agents; labeled criteria go only to agents reporting engine_api 0.2.3 or later.
+- TestDownloadResumesAfterAnInterruptedUpload is stable (it failed once in CI on 2026-11-09).
+
+Acceptance.
+
+- [ ] Contract tests for stopCapture and Capture.files pass against fake agents, and stopCapture leaves the pending operations list.
+
 ## CLI Python SDK and command line client
 
 ### CLI-01 Python SDK
@@ -1508,6 +1577,23 @@ Deliverables.
 Acceptance.
 
 - [ ] nDPI classifies at least 99% of fixture sessions as MQTT.
+
+### MOD-20 STARTTLS scenarios for smtp and imap
+
+Phase 2 · size S · workstream MOD
+
+- **Depends on.** CON-17, AGT-14, MOD-08
+- **Paths.** `modules/smtp/`, `modules/imap/`
+
+Add the STARTTLS variants that MOD-07 and MOD-08 left out now that the engine can upgrade a flow.
+
+Deliverables.
+
+- smtp submission on 587 with STARTTLS and imap with STARTTLS, offered in the capability lists.
+
+Acceptance.
+
+- [ ] The realism job decrypts the fixture captures with the exported keys and Zeek logs the messages inside TLS.
 
 ## RLM Realism validation
 
