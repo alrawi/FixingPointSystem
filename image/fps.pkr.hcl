@@ -80,6 +80,12 @@ variable "cpus" {
   default     = 2
 }
 
+variable "ssh_timeout" {
+  type        = string
+  description = "How long Packer waits for ssh in the build VM. Software emulation (tcg) boots slowly and needs more than the default."
+  default     = "20m"
+}
+
 variable "headless" {
   type        = bool
   description = "Run QEMU without a display window."
@@ -117,7 +123,7 @@ source "qemu" "fps" {
   communicator = "ssh"
   ssh_username = "packer"
   ssh_password = var.ssh_password
-  ssh_timeout  = "20m"
+  ssh_timeout  = var.ssh_timeout
 
   # Remove the build user and its sudo rule, then power off.
   shutdown_command = "sudo sh -c 'rm -f /etc/sudoers.d/90-cloud-init-users; userdel -rf packer; shutdown -P now'"

@@ -1,6 +1,6 @@
 # Image
 
-This page describes the appliance image of the IMG workstream. IMG-01 builds the qcow2 base image with Packer. The directory [`image/`](https://github.com/alrawi/FixingPointSystem/tree/main/image) holds the sources, and its [README](https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md) gives the exact build and boot test steps. IMG-02 adds the role selector and the tuning profiles. IMG-03 adds the format conversion. A later package adds the CI boot test (IMG-04).
+This page describes the appliance image of the IMG workstream. IMG-01 builds the qcow2 base image with Packer. The directory [`image/`](https://github.com/alrawi/FixingPointSystem/tree/main/image) holds the sources, and its [README](https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md) gives the exact build and boot test steps. IMG-02 adds the role selector and the tuning profiles. IMG-03 adds the format conversion. IMG-04 adds the CI boot test, which the section [CI boot test](#ci-boot-test) describes.
 
 ## Build
 
@@ -95,8 +95,26 @@ The OVA is a tar archive with the members in this order: `<name>.ovf`, the strea
 | `image/tests/convert-test.sh` (part of `make test-img`) | Converts a tiny qcow2 with `convert.sh` and checks the VHD rule, the OVA member order, the manifest, and the checksums. Prints SKIP without `qemu-img`, and fails when `FPS_REQUIRE_IMAGE_TOOLS=1` | `qemu-img` |
 | `sudo make e2e-img` | Namespace test of the shipped rules: a router forwards without them, and drops traffic between `mgmt0` and `test0` with them | root, `ip`, `nft`, `curl`, `python3` |
 | `image/boot-test.sh [--role controller\|agent\|all-in-one\|all]` | Boots the built qcow2 under QEMU/KVM with a management NIC and a test NIC, seeds the role, and prints PASS or FAIL per check. The agent role boots with 4 CPUs and 4 GiB and waits for its tuning reboot | KVM, a built image |
+| `image/boot-test.sh --run` | The all-in-one boot test plus the short HTTP and DNS run of `image/tests/vm-run.sh` inside the VM (IMG-04) | KVM or `FPS_ALLOW_TCG=1`, a built image |
 
 The boot test seeds the role through NoCloud and checks, per role, which units are active, enabled, and running as processes, and the applied tuning: `/proc/cmdline`, the isolated CPUs, the hugepage count, the agent pinning, the sysctls, and the notrack table. It also checks `GET /v1/capabilities` through a host port forward on the management NIC, the listeners of the controller, the services, the registration of the local agent over mutual TLS (state online), the absence of `insecure_plain_grpc`, the agent arguments, the sysctl values, and the namespace test with the real rules inside the VM.
+
+## CI boot test
+
+The workflow [`image.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/.github/workflows/image.yml) (IMG-04) builds the image and boots it on every pull request and every push to `main` that touches `image/`, `engine/`, `controller/`, the `http1` or `dns` module, `Cargo.toml`, or `Cargo.lock`. A manual run (`workflow_dispatch`) has the input `force_tcg`, which tests the fallback.
+
+The job runs on a GitHub hosted `ubuntu-24.04` runner and nowhere else. The repository is public, so the workflow never names a self hosted runner label, holds the read only token (`contents: read`), and uses no secret. The steps are
+
+1. Choose the accelerator. GitHub hosted Linux runners expose `/dev/kvm`. The step adds the standard udev rule (`KERNEL=="kvm", GROUP="kvm", MODE="0666"`) and reloads it, so the runner user may write the device. The accelerator is `kvm` when `/dev/kvm` is writable, and `tcg` (software emulation) otherwise or when `force_tcg` is set.
+2. Install the host packages and Packer (the runner image already has it, and the step installs it from the HashiCorp repository otherwise), the Rust toolchain with the musl target, and Go from `controller/go.mod`.
+3. Restore the caches: cargo (`Swatinem/rust-cache`), Go modules (`actions/setup-go`), the Packer plugins (keyed by the hash of `image/fps.pkr.hcl`), and the Ubuntu cloud image (keyed by its SHA-256 from the release `SHA256SUMS`, which the build also passes as the pinned checksum).
+4. Run `image/build.sh`, which builds the static controller and the static musl agent, and runs Packer. With TCG the build sets `FPS_ALLOW_TCG=1` and the Packer ssh timeout `FPS_SSH_TIMEOUT=60m`.
+5. Run `image/boot-test.sh --role all-in-one --run`. It boots the image with two NICs and checks the all-in-one role (the 43 checks of the boot test), and then runs `image/tests/vm-run.sh` inside the VM. With TCG the boot wait grows and the run uses 10 sessions per second.
+6. Write the job summary with `image/ci-summary.sh`, and upload the artifact `image-boot-test`.
+
+The short run is a reduced variant of the [Gate 1](Gates.md) suite. The Gate 1 suite needs the namespace harness, two agents, and the realism tools, which the VM does not have. The run inside the VM uses what the image has. It calls the controller REST API on the management address with the admin token, and the agent `local`, which enrolled over mutual TLS and is the one agent of the run. It installs the `http1` and `dns` module trees that the agent loads, stores a test configuration with the Gate 1 mix entries (`http1/single_fetch` and `dns/lookup_a`) on loopback pools, runs it for 12 seconds (2 seconds of ramp and 10 of steady phase) at 50 sessions per second, and checks that the run is `completed`, that the verdict is `passed` (`sessions.failed_ratio <= 0.01`), and that both applications counted succeeded sessions. The environment tunes it: `FPS_RUN_RATE`, `FPS_RUN_STEADY_S`, and `FPS_RUN_WAIT_S`.
+
+The artifact `image-boot-test` holds `boot-test.log` (every check and the result line), `serial-all-in-one.log` (the VM console), `vm-checks-all-in-one.out`, `vm-run.out`, `build.log`, `fps-base.qcow2.sha256`, and the directory `run/` with the test configuration, the run summary, the run report in JSON and CSV, and the application metrics. The job summary shows the accelerator, the result line, the failed checks, and the sessions per application.
 
 ## Limits
 
