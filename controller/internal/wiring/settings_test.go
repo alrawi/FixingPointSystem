@@ -3,6 +3,7 @@
 package wiring
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -117,6 +118,9 @@ func TestSettingsExamplesValidateThroughTheAPI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// dns_zone names the first party dns/lookup_a since CON-15; the
+		// example dns module installed here calls that scenario dns/resolve.
+		body = bytes.ReplaceAll(body, []byte("dns/lookup_a"), []byte("dns/resolve"))
 		id := createConfigYAML(t, h, name, string(body))
 		rec := do(t, h, http.MethodPost, "/v1/configs/"+id+":validate", adminToken, "")
 		var rep api.ValidationReport

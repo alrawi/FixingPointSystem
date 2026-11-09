@@ -106,6 +106,11 @@ func (Unimplemented) DownloadCapture(w http.ResponseWriter, r *http.Request, _ I
 	notImplemented(w, r, "downloadCapture")
 }
 
+// StopCapture answers 501 until the captures package serves it.
+func (Unimplemented) StopCapture(w http.ResponseWriter, r *http.Request, _ Id, _ string) {
+	notImplemented(w, r, "stopCapture")
+}
+
 // GetRunMetrics answers getRunMetrics with a 501 problem.
 func (Unimplemented) GetRunMetrics(w http.ResponseWriter, r *http.Request, _ Id, _ GetRunMetricsParams) {
 	notImplemented(w, r, "getRunMetrics")
