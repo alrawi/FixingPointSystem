@@ -48,7 +48,7 @@ func (m serveMetrics) Totals(id string) (map[string]float64, error) {
 	return m.totals, nil
 }
 
-func (m serveMetrics) Samples(id string, v api.MetricView, w metrics.Window) ([]metrics.Sample, error) {
+func (m serveMetrics) Samples(id string, v api.MetricView, _ metrics.Window) ([]metrics.Sample, error) {
 	if v != api.MetricViewApplication {
 		return nil, fmt.Errorf("unexpected view %q", v)
 	}
