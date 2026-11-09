@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Capture session extraction (CAP workstream): ruff, mypy --strict and pytest
+# for the capture/ package through make lint-cap test-cap.
+name: cap
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - capture/**
+      - mk/cap.mk
+      - Makefile
+      - .github/workflows/cap.yml
+  pull_request:
+    paths:
+      - capture/**
+      - mk/cap.mk
+      - Makefile
+      - .github/workflows/cap.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install development tools
+        run: python -m pip install -r capture/requirements-dev.txt
+      - name: Lint and test
+        run: make lint-cap test-cap PYTHON=python
