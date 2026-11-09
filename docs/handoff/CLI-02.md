@@ -6,7 +6,7 @@
 | Branch | `wp/CLI-02` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-c02f7a, lease until 2026-11-09T17:42:54Z |
 | Last verified commit | none |
 
@@ -18,23 +18,25 @@ A Go command line client `fps` in the new module `cli/` (standard library only) 
 
 ## Plan
 
-- [ ] 1. Module, HTTP client, global flags, auth, exit codes, output
-- [ ] 2. `config`, `run`, `report` commands
-- [ ] 3. `watch` command (SSE with polling fallback) and unit tests against a stub server
-- [ ] 4. Test helper `controller/cmd/fps-fakeagent` and the end to end test
+- [x] 1. Module, HTTP client, global flags, auth, exit codes, output
+- [x] 2. `config`, `run`, `report` commands
+- [x] 3. `watch` command (SSE with polling fallback) and unit tests against a stub server
+- [x] 4. Test helper `controller/cmd/fps-fakeagent` and the end to end test
 - [ ] 5. `mk/cli.mk`, wiki page `docs/wiki/CLI.md`, log entry, pull request, CI
 
 ## Done and verified
 
-Nothing yet.
+- `cd cli && go test -race ./...` with `GOWORK=off GOFLAGS=-mod=mod GOPROXY=off`: the unit tests pass (84% coverage of `internal/fpscli`), and the end to end test skips because the controller cannot build offline.
+- `golangci-lint run` in `cli/`: 0 issues. `make lint-cli test-cli` pass offline.
+- `plan.py check`, `render --check`, and `lint`: ok.
 
 ## Remaining
 
-Everything.
+Open the pull request and wait for CI. The end to end test and `controller/cmd/fps-fakeagent` have only run in CI, never locally.
 
 ## Next action
 
-Write the module skeleton under `cli/`.
+Open the pull request, poll CI, and fix the end to end test inside `cli/` if it fails.
 
 ## Blockers and open questions
 
@@ -43,6 +45,9 @@ none
 ## Decisions taken in this package
 
 - The API has no operation that lists configurations, so `fps config list` shows the configurations that this client uploaded, from a local history file.
+- `fps config validate FILE` stores the configuration first, because the API has no dry run.
+- The token comes from a file or the environment only, never from a flag, so it does not show in the process list.
+- `fps run list` reports the 501 of the controller (listRuns is pending in CTL wiring) with exit code 5.
 
 ## Pitfalls
 
@@ -59,3 +64,4 @@ cd cli && GOWORK=off GOFLAGS=-mod=mod GOPROXY=off go test ./...
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T17:13Z | claude-c02f7a | claim | none | Claimed issue #169 |
+| 2026-11-09T17:45Z | claude-c02f7a | checkpoint | 1ccbd4a | Client, tests, fake agent helper, make targets; docs next |
