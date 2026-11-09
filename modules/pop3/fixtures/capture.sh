@@ -33,6 +33,12 @@ fi
 # structure, and every message still draws its own attachment size.
 vars=(--var body_size=900 --var attachment_min=2000 --var attachment_max=12000)
 
+# nDPI 4.2 identifies POP3 only when a PASS command has passed (its other
+# condition, four +OK lines, cannot hold in the two bit counter of its flow
+# state), so a session that logs in with APOP alone stays unknown. The
+# fixture leaves out apop_login for that reason, and apop_fallback covers APOP.
+vars+=(--skip apop_login)
+
 # FPS_FIXTURE_PEER names a prebuilt fixture_peer, for runners where root has no
 # Rust toolchain.
 peer=${FPS_FIXTURE_PEER:-}

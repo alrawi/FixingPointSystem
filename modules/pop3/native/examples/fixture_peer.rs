@@ -17,6 +17,7 @@
 //!   --sessions N      sessions per scenario, default 10
 //!   --seed S          run seed, default 42
 //!   --var NAME=INT    replace an integer variable in every scenario that declares it
+//!   --skip NAME       leave out the scenario with this file name stem, as many times as needed
 //! ```
 
 use std::future::Future;
@@ -121,6 +122,7 @@ struct Options {
     sessions: u64,
     seed: u64,
     vars: Vec<(String, Value)>,
+    skip: Vec<String>,
 }
 
 fn parse_args() -> Result<Options, String> {
@@ -137,6 +139,7 @@ fn parse_args() -> Result<Options, String> {
         sessions: 10,
         seed: 42,
         vars: Vec::new(),
+        skip: Vec::new(),
     };
     let ip = |s: Option<String>| -> Result<IpAddr, String> {
         s.ok_or("missing address")?
@@ -165,13 +168,14 @@ fn parse_args() -> Result<Options, String> {
                 let v: i64 = v.parse().map_err(|e| format!("bad value of {k}: {e}"))?;
                 o.vars.push((k.to_string(), Value::Int(v)));
             }
+            "--skip" => o.skip.push(args.next().ok_or("missing scenario name")?),
             other => return Err(format!("unknown option {other}")),
         }
     }
     Ok(o)
 }
 
-fn load(vars: &[(String, Value)]) -> Result<Vec<(String, Scenario)>, String> {
+fn load(vars: &[(String, Value)], skip: &[String]) -> Result<Vec<(String, Scenario)>, String> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let m = Manifest::load(&dir.join("manifest.yaml")).map_err(|e| e.to_string())?;
     let mut set = ModuleSet::default();
@@ -184,6 +188,10 @@ fn load(vars: &[(String, Value)]) -> Result<Vec<(String, Scenario)>, String> {
     let ctx = set.context("pop3").ok_or("no pop3 context")?;
     let mut out = Vec::new();
     for rel in &m.scenarios {
+        let stem = rel.file_stem().map(|s| s.to_string_lossy().into_owned());
+        if stem.is_some_and(|s| skip.contains(&s)) {
+            continue;
+        }
         let mut s = Scenario::load_with(&dir.join(rel), Some(&ctx)).map_err(|e| e.to_string())?;
         let own: Vec<(String, Value)> = vars
             .iter()
@@ -198,7 +206,7 @@ fn load(vars: &[(String, Value)]) -> Result<Vec<(String, Scenario)>, String> {
 }
 
 async fn run(o: Options) -> Result<(), String> {
-    let scenarios = load(&o.vars)?;
+    let scenarios = load(&o.vars, &o.skip)?;
     let filler = Filler::new(o.seed);
     let mut opener = KernelOpener {
         server: o.server,

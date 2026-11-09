@@ -1,0 +1,7 @@
+APOP brorais.logem@example.test 4f12364396d481969378e503dad2d78e
+USER brorais.logem@example.test
+PASS Tst-Noutrouk9797
+STAT
+LIST
+RETR 1
+QUIT

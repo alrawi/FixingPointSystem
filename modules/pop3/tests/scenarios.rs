@@ -340,7 +340,7 @@ fn expectations(name: &str) -> Expect {
             kinds: ALL,
             dots: true,
         },
-        "apop_login" => Expect {
+        "apop_login" | "apop_fallback" => Expect {
             login: "APOP",
             kinds: APOP,
             dots: false,
@@ -388,12 +388,19 @@ async fn check(name: &str, s: &Scenario, session_id: u64) -> Vec<usize> {
     let mut deleted = 0;
     let mut retrieved = Vec::new();
     for (c, resp) in cmds.iter().zip(&resps) {
-        assert!(
-            resp.status.starts_with("+OK"),
-            "{name}: {} {}",
-            c.line,
-            resp.status
-        );
+        // The one rejection of the scenarios is the APOP that apop_fallback
+        // sends first.
+        let rejected = name == "apop_fallback" && c.name == "APOP";
+        if rejected {
+            assert_eq!(resp.status, "-ERR [AUTH] Authentication failed.");
+        } else {
+            assert!(
+                resp.status.starts_with("+OK"),
+                "{name}: {} {}",
+                c.line,
+                resp.status
+            );
+        }
         match c.name.as_str() {
             "CAPA" => {
                 let text = String::from_utf8(resp.payload.clone()).unwrap();
@@ -557,6 +564,16 @@ async fn check(name: &str, s: &Scenario, session_id: u64) -> Vec<usize> {
                 ["APOP", "STAT", "LIST", "UIDL", "LIST", "UIDL", "RETR", "QUIT"]
             );
         }
+        "apop_fallback" => {
+            assert_eq!(
+                names(&cmds),
+                ["APOP", "USER", "PASS", "STAT", "LIST", "RETR", "QUIT"]
+            );
+            // The digest and the password come from one secret, and the
+            // login is the same name in both commands.
+            assert_eq!(cmds[0].args[0], cmds[1].args[0]);
+            assert_eq!(retrieved.len(), 1);
+        }
         "top_preview" => {
             let lines = var(s, "preview_lines");
             let tops: Vec<&Cmd> = cmds.iter().filter(|c| c.name == "TOP").collect();
@@ -588,13 +605,14 @@ async fn check(name: &str, s: &Scenario, session_id: u64) -> Vec<usize> {
 }
 
 #[test]
-fn the_manifest_lists_five_scenarios() {
+fn the_manifest_lists_six_scenarios() {
     let names: Vec<String> = scenarios().into_iter().map(|(n, _)| n).collect();
     assert_eq!(
         names,
         [
             "retrieve_all",
             "apop_login",
+            "apop_fallback",
             "top_preview",
             "fetch_delete",
             "poll_new_mail"
@@ -669,26 +687,32 @@ async fn a_one_message_maildrop_still_runs() {
 
 #[tokio::test(start_paused = true)]
 async fn the_apop_digest_follows_the_banner_of_each_session() {
-    let scenario = scenarios()
-        .into_iter()
-        .find(|(n, _)| n == "apop_login")
-        .unwrap()
-        .1;
-    let mut digests = std::collections::HashSet::new();
-    let mut banners = std::collections::HashSet::new();
-    for session_id in 1..=8 {
-        let r = run(&scenario, 42, session_id).await;
-        let cmds = parse_client(&r.c2s);
-        digests.insert(cmds[0].args[1].clone());
-        let greeting = String::from_utf8_lossy(&r.s2c);
-        banners.insert(greeting.lines().next().unwrap().to_string());
+    for wanted in ["apop_login", "apop_fallback"] {
+        let scenario = scenarios()
+            .into_iter()
+            .find(|(n, _)| n == wanted)
+            .unwrap()
+            .1;
+        let mut digests = std::collections::HashSet::new();
+        let mut banners = std::collections::HashSet::new();
+        for session_id in 1..=8 {
+            let r = run(&scenario, 42, session_id).await;
+            let cmds = parse_client(&r.c2s);
+            digests.insert(cmds[0].args[1].clone());
+            let greeting = String::from_utf8_lossy(&r.s2c);
+            banners.insert(greeting.lines().next().unwrap().to_string());
+        }
+        assert_eq!(
+            banners.len(),
+            8,
+            "{wanted}: every greeting has its own banner"
+        );
+        assert_eq!(
+            digests.len(),
+            8,
+            "{wanted}: every digest follows its banner and secret"
+        );
     }
-    assert_eq!(banners.len(), 8, "every greeting has its own banner");
-    assert_eq!(
-        digests.len(),
-        8,
-        "every digest follows its banner and secret"
-    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -698,9 +722,11 @@ async fn plain_pop3_offers_no_starttls_and_uses_port_110() {
         let r = run(&s, 42, 1).await;
         let text = String::from_utf8_lossy(&r.s2c).into_owned();
         assert!(!text.contains("STLS"), "{name}");
-        assert!(
-            !text.contains("-ERR"),
-            "{name}: no error in a normal session"
+        // The rejected APOP of apop_fallback is the only error status.
+        assert_eq!(
+            text.matches("-ERR").count(),
+            usize::from(name == "apop_fallback"),
+            "{name}"
         );
     }
 }

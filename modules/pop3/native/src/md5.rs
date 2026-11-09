@@ -90,10 +90,12 @@ pub(crate) fn digest(data: &[u8]) -> [u8; 16] {
         padded.push(0);
     }
     padded.extend_from_slice(&((data.len() as u64).wrapping_mul(8)).to_le_bytes());
-    for block in padded.chunks_exact(64) {
+    for start in (0..padded.len()).step_by(64) {
+        let block = &padded[start..start + 64];
         let mut m = [0u32; 16];
-        for (w, bytes) in m.iter_mut().zip(block.chunks_exact(4)) {
-            *w = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        for (i, w) in m.iter_mut().enumerate() {
+            let j = 4 * i;
+            *w = u32::from_le_bytes([block[j], block[j + 1], block[j + 2], block[j + 3]]);
         }
         let [mut a, mut b, mut c, mut d] = state;
         for i in 0..64 {
@@ -119,8 +121,8 @@ pub(crate) fn digest(data: &[u8]) -> [u8; 16] {
         state[3] = state[3].wrapping_add(d);
     }
     let mut out = [0u8; 16];
-    for (chunk, word) in out.chunks_exact_mut(4).zip(state) {
-        chunk.copy_from_slice(&word.to_le_bytes());
+    for (i, word) in state.iter().enumerate() {
+        out[4 * i..4 * i + 4].copy_from_slice(&word.to_le_bytes());
     }
     out
 }

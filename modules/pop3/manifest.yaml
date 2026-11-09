@@ -102,6 +102,7 @@ functions:
 scenarios:
   - scenarios/retrieve_all.yaml
   - scenarios/apop_login.yaml
+  - scenarios/apop_fallback.yaml
   - scenarios/top_preview.yaml
   - scenarios/fetch_delete.yaml
   - scenarios/poll_new_mail.yaml

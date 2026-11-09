@@ -32,7 +32,8 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 ## Done and verified
 
 - Steps 1 to 3: `cargo test -p fps-module-pop3` passes (40 unit tests, 2 catalog, 7 scenario, 2 transcript tests), `cargo clippy -p fps-module-pop3 --all-targets -- -D warnings` and `cargo fmt --check` are clean, `make lint-mod-pop3` reports 0 errors.
-- Fixture `modules/pop3/fixtures/pop3.pcapng` recorded on loopback with dumpcap: 40 sessions, 1168 packets. tshark reports no malformed packet and no warning. A Python port of nDPI 4.2 `mail_pop.c` classifies 40 of 40 as POP3 (24 at packet 4, 8 at 6, 8 at 7).
+- Fixture `modules/pop3/fixtures/pop3.pcapng` recorded on loopback with dumpcap: 40 sessions, 1153 packets. tshark reports no malformed packet and no warning. `ndpiReader` 4.2.0 (apt libndpi-bin, same as CI) classifies 40 of 40 as POP3, confidence DPI; `python3 -m realism score --parsers tshark` passes with ratio 1.0.
+- First CI run failed: nDPI 4.2 cannot identify an APOP only session (mail_pop_stage is 2 bits, so stage > 3 never holds and no PASS is sent). Added apop_fallback (APOP rejected, then USER/PASS) and left apop_login out of the fixture with --skip apop_login. Also fixed clippy chunks_exact lints of Rust 1.99 in md5.rs.
 
 ## Remaining
 
@@ -50,11 +51,11 @@ none
 
 - MD5 is implemented in the crate (no dependency), checked against RFC 1321 and the RFC 1939 APOP example.
 - No STLS scenario and no STLS in CAPA, because a flow binds its transport once (ENG-20 adds the action).
-- `apop_login` starts with APOP, STAT, LIST so the fourth +OK (payload packet 7) comes before any command that nDPI 4.2 does not list (QUIT, TOP, RSET).
+- apop_login (success) stays in the manifest but not in the fixture: nDPI 4.2 only detects POP3 after a PASS. apop_fallback is the fixture's APOP scenario.
 
 ## Pitfalls
 
-`ss` is missing in this sandbox, so the readiness loop of capture.sh is useless here and the client started late, which desynchronised the session pairs. Background `dumpcap` ignores SIGINT in a script, use SIGTERM.
+apt-get install libndpi-bin gives the real ndpiReader here, use it instead of a hand port of the dissector. `ss` is missing in this sandbox, so the readiness loop of capture.sh is useless here and the client started late, which desynchronised the session pairs. Background `dumpcap` ignores SIGINT in a script, use SIGTERM.
 
 ## Verify the current state
 
