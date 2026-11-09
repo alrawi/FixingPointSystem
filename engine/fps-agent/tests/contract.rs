@@ -150,6 +150,145 @@ fn backend_mirrors_the_proto_enum() {
     assert_eq!(entries(block(&proto_text(), "enum", "Backend")), rust);
 }
 
+/// Encodes and decodes a message and checks that nothing changed.
+fn round_trip<M: prost::Message + Default + PartialEq + std::fmt::Debug>(m: &M) {
+    let bytes = m.encode_to_vec();
+    let back = M::decode(bytes.as_slice()).expect("decode");
+    assert_eq!(&back, m);
+}
+
+#[test]
+fn capture_download_messages_match_the_proto_numbers() {
+    let text = proto_text();
+    let rows: [(&str, &[(&str, u32)]); 8] = [
+        (
+            "FetchCaptureCommand",
+            &[
+                ("plan_id", 1),
+                ("capture_id", 2),
+                ("start_offset", 3),
+                ("transfer_id", 4),
+                ("max_chunk_bytes", 5),
+            ],
+        ),
+        (
+            "FetchCaptureResult",
+            &[
+                ("capture_id", 1),
+                ("transfer_id", 2),
+                ("total_bytes", 3),
+                ("digest", 4),
+                ("chunk_bytes", 5),
+            ],
+        ),
+        (
+            "UploadCaptureRequest",
+            &[("open", 1), ("chunk", 2), ("end", 3)],
+        ),
+        (
+            "UploadCaptureOpen",
+            &[
+                ("transfer_id", 1),
+                ("session_token", 2),
+                ("capture_id", 3),
+                ("start_offset", 4),
+            ],
+        ),
+        ("CaptureChunk", &[("offset", 1), ("data", 2)]),
+        ("CaptureEnd", &[("total_bytes", 1), ("digest", 2)]),
+        (
+            "UploadCaptureResponse",
+            &[("received_offset", 1), ("verified", 2)],
+        ),
+        ("SessionResponse", &[("fetch_capture", 9)]),
+    ];
+    for (name, expected) in rows {
+        let fields = message_fields(&text, name);
+        for (field, number) in expected {
+            assert!(
+                fields.contains(&((*field).to_owned(), *number)),
+                "{name}.{field} = {number} is not in agent.proto"
+            );
+        }
+    }
+    let result = message_fields(&text, "CommandResult");
+    assert!(result.contains(&("fetch_capture".to_owned(), 9)));
+}
+
+#[test]
+fn capture_download_messages_round_trip() {
+    use fps_agent::pb;
+    let digest = format!("sha256:{}", "ab".repeat(32));
+    round_trip(&pb::FetchCaptureCommand {
+        plan_id: "run-0001/a".into(),
+        capture_id: "cap-1".into(),
+        start_offset: 262_144,
+        transfer_id: "t-0001".into(),
+        max_chunk_bytes: 65_536,
+    });
+    round_trip(&pb::FetchCaptureResult {
+        capture_id: "cap-1".into(),
+        transfer_id: "t-0001".into(),
+        total_bytes: 1_000_000,
+        digest: digest.clone(),
+        chunk_bytes: 65_536,
+    });
+    let open = pb::UploadCaptureRequest {
+        body: Some(pb::upload_capture_request::Body::Open(
+            pb::UploadCaptureOpen {
+                transfer_id: "t-0001".into(),
+                session_token: "token-1".into(),
+                capture_id: "cap-1".into(),
+                start_offset: 262_144,
+            },
+        )),
+    };
+    let chunk = pb::UploadCaptureRequest {
+        body: Some(pb::upload_capture_request::Body::Chunk(pb::CaptureChunk {
+            offset: 262_144,
+            data: vec![0xa5; 262_144],
+        })),
+    };
+    let end = pb::UploadCaptureRequest {
+        body: Some(pb::upload_capture_request::Body::End(pb::CaptureEnd {
+            total_bytes: 1_000_000,
+            digest,
+        })),
+    };
+    for m in [&open, &chunk, &end] {
+        round_trip(m);
+    }
+    round_trip(&pb::UploadCaptureResponse {
+        received_offset: 1_000_000,
+        verified: true,
+    });
+    // The command and its result ride the Session envelopes in arm 9.
+    round_trip(&pb::SessionResponse {
+        command_id: 7,
+        body: Some(pb::session_response::Body::FetchCapture(
+            pb::FetchCaptureCommand {
+                plan_id: "p".into(),
+                capture_id: "c".into(),
+                transfer_id: "t".into(),
+                ..Default::default()
+            },
+        )),
+    });
+    round_trip(&pb::CommandResult {
+        command_id: 7,
+        error: None,
+        result: Some(pb::command_result::Result::FetchCapture(
+            pb::FetchCaptureResult {
+                capture_id: "c".into(),
+                transfer_id: "t".into(),
+                total_bytes: 1,
+                digest: format!("sha256:{}", "00".repeat(32)),
+                chunk_bytes: 262_144,
+            },
+        )),
+    });
+}
+
 #[test]
 fn engine_api_matches_the_proto_contract_version() {
     let header = format!("contract version {}.", fps_agent::capabilities::ENGINE_API);

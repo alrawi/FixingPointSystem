@@ -7,7 +7,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 | File | Contract |
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.2.0 |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.1, unreleased |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.2, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.3 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.1.0 |
@@ -39,7 +39,7 @@ CON-05 adds three commands and the signature fields of module references. Every 
 |---|---|---|
 | `UpdateRatesCommand` | Gives the new steady state target of the whole agent for each named mix entry. The agent splits it over its workers in proportion to their current rates, applies all updates or none, and accepts the command in the running state only | AGT-05, CTL-12 |
 | `StartCaptureCommand` and `StopCaptureCommand` | A controller chosen `capture_id` names the capture. The start command takes an optional port, a pcap-filter expression, a snap length, and byte and time limits, and the stop command is idempotent | AGT-05 |
-| `StopCaptureResult` | Packets, bytes, dropped packets, and a `sha256:` digest of the pcapng file. The protocol does not yet say how the controller fetches the file | AGT-05 |
+| `StopCaptureResult` | Packets, bytes, dropped packets, and a `sha256:` digest of the pcapng file. [CON-13](#capture-download-over-the-agent-connection) defines how the controller fetches the file | AGT-05 |
 | `ModuleRef.signature` and `ModuleRef.signature_key_id` | An Ed25519 signature over the UTF-8 bytes of the digest, and the name of the registry key that made it. Both are empty for an unsigned module | CTL-11, AGT-04 |
 
 CON-11 adds `ModuleRef.settings` (field 6) in version 0.2.1, described under [Module settings in the agent protocol](#module-settings-in-the-agent-protocol). The new commands use the existing error codes, so the error code list is unchanged.
@@ -84,6 +84,18 @@ python3 tools/contracts/validate.py
 CON-11 adds `ModuleRef.settings` (field 6, `google.protobuf.Struct`) and moves the protocol from 0.2.0 to 0.2.1. The field carries `modules.<name>.settings` of the test configuration, which the compiler has already validated against the settings schema of the module manifest. In a plan file it appears as `modules[].settings`, an object, and it is left out when the test sets nothing. It is not part of the module tree, so no digest changes.
 
 The change takes a patch number because it adds one field and no command. The controller admits agents by the major and minor part of `engine_api`, so 0.3.0 would have locked out every agent until `DefaultEngineAPIs` changed. An agent of 0.2.0 skips the field and would run without the settings, so the controller sends a plan with module settings only to an agent that reports 0.2.1 or later. The Rust agent carries the settings through its plan parser and its conversions to and from the generated types. AGT-07 applies them. The entry `contracts/changes/CON-11.md` lists the compatibility checks.
+
+## Capture download over the agent connection
+
+CON-13 moves the protocol from 0.2.1 to 0.2.2 and lets the controller fetch a finished capture file, which stays on the agent after `StopCaptureResult`. The owner chose to stream it over the existing mutually authenticated connection. The agent dials the controller, so the transfer starts from the agent: the controller sends the command `fetch_capture` on `Session`, and the agent opens the new client streaming call `UploadCapture` on the same connection. The entry `contracts/changes/CON-13.md` records the decision and the compatibility checks.
+
+| Message | Rule | Read by |
+|---|---|---|
+| `FetchCaptureCommand` | Names the plan, the finished capture, a `start_offset`, a single use `transfer_id` chosen by the controller, and an optional `max_chunk_bytes`. The agent answers at once with `FetchCaptureResult` (total size, digest, chunk size) and then uploads | CTL-14, AGT-09 |
+| `UploadCaptureRequest` | A stream of one `open` (transfer id and session token), `CaptureChunk` messages with an `offset` and 1 to 262144 bytes in ascending order from `start_offset`, and one `end` with `total_bytes` and the `sha256:` digest of the whole file, which equals the digest of `StopCaptureResult` | CTL-14, AGT-09 |
+| `UploadCaptureResponse` | `received_offset` and `verified`, sent once after `end` | CTL-14 |
+
+The upload is a separate HTTP/2 stream, so its flow control does not hold up heartbeats on `Session`, and the contract defines no credit messages. A chunk is at most 256 KiB. To resume, the controller keeps the bytes it received and sends a new command with a new `transfer_id` and the offset it holds. The file is immutable, so the digest covers the bytes of every attempt together. The new RPC and command are additive, `buf breaking` reports nothing, and the version takes a patch number so that the controller, which admits agents by major and minor, keeps accepting every agent. The controller sends `fetch_capture` only to an agent that reports 0.2.2 or later. The Rust agent reports 0.2.2 and answers `ERROR_CODE_UNIMPLEMENTED` until AGT-09, and `controller/internal/agents/agentpb` needs the regen workflow.
 
 ## Metric catalog views, reasons, and side label
 
