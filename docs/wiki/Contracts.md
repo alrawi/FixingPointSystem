@@ -6,7 +6,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 
 | File | Contract |
 |---|---|
-| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.2.0 |
+| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.5.0 |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.2, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.3 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
@@ -143,3 +143,18 @@ The specification example lives at `contracts/examples/modules/http1/scenarios-p
 CON-12 adds the optional query parameter `side` to `GET /v1/runs/{id}/metrics` and to `GET /v1/runs/{id}/metrics:stream`, and moves the controller API from 0.3.0 to 0.4.0. The values are `client` and `server`, and the default is `client`, so a request without the parameter gets the answer that it got before. Any other value answers 400. On the stream, one `side` applies to every requested view.
 
 The change takes a minor number because it adds a parameter that a reader can see in the document, as CON-07 did for its fields. The REST version has no admission rule like the `engine_api` rule that made CON-11 choose a patch number. A response does not echo the side, and no value selects both sides, because a total over both counts each session twice. The server side holds values only for the metrics that carry the `side` label of CON-08. The controller serves it from `Window.Side` and `Aggregator.LatestSide` of CTL-23. The entry `contracts/changes/CON-12.md` records the change, and `api.gen.go` is regenerated with `go generate ./internal/api`.
+
+## Signature headers and calibration history
+
+CON-14 documents two behaviors of the controller that the REST contract did not name, and moves the controller API from 0.4.0 to 0.5.0. The change is additive, and the entry `contracts/changes/CON-14.md` records it.
+
+| Field or response | Rule |
+|---|---|
+| `installModule` header `X-Module-Signature-Key-Id` | Optional. The id of the trust store key that made the signature |
+| `installModule` header `X-Module-Signature` | Optional. The 64 byte Ed25519 signature over the module tree digest, in standard base64. A request sends both headers or neither |
+| `installModule` 400 | Only one header, a signature that is not base64, or a broken archive |
+| `installModule` 403 | A refused signature, which includes a missing signature when the controller has a trust store and does not allow unsigned modules, or a token scope that is too low. The problem detail gives the reason |
+| `Run.calibration` | Optional array of at most 256 `CalibrationStep` objects, oldest first, for a run with a `throughput_bps` objective. Absent while the factor stays at one |
+| `CalibrationStep` | `time`, `factor`, `target`, and `sessions_per_second`, plus the optional `entries` (`id`, `bytes_per_session`, `measured`) and `multipliers` (byte mix multiplier by mix entry id) |
+
+The Go struct of a step has no JSON tags, so `runs.ToAPI` produces the contract names. The controller keeps the newest 256 steps of a run. The generated Go code is regenerated with `go generate ./internal/api`, and the Python SDK and the UI schema follow the document.

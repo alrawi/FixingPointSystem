@@ -30,7 +30,10 @@ export interface paths {
         };
         get: operations["listModules"];
         put?: never;
-        /** Install a signed module archive. */
+        /**
+         * Install a signed module archive.
+         * @description Installs the module archive in the request body. A controller with a module trust store verifies the detached Ed25519 signature over the module tree digest before it unpacks the archive. The signature is not part of the archive, so it travels in the two optional headers. A request must send both headers or neither.
+         */
         post: operations["installModule"];
         delete?: never;
         options?: never;
@@ -412,6 +415,49 @@ export interface components {
             };
             summary?: components["schemas"]["RunSummary"];
             verdict?: components["schemas"]["RunVerdict"];
+            /** @description The changes of the calibration factor of a run with a throughput_bps objective, oldest first. Absent for any other objective and while the factor stays at one. The controller keeps the newest 256 steps of a run. */
+            calibration?: components["schemas"]["CalibrationStep"][];
+        };
+        /** @description One change of the calibration factor of a run. */
+        CalibrationStep: {
+            /**
+             * Format: date-time
+             * @description Controller clock time of the step.
+             */
+            time: string;
+            /**
+             * Format: double
+             * @description Scales every compiled session rate of the run from this step on.
+             */
+            factor: number;
+            /**
+             * Format: double
+             * @description The factor that the estimates called for before the bounds of the step limited the move.
+             */
+            target: number;
+            /**
+             * Format: double
+             * @description The total session rate across the mix that the factor implies.
+             */
+            sessions_per_second: number;
+            /** @description The bytes per session estimate of each mix entry. */
+            entries?: components["schemas"]["CalibrationEntry"][];
+            /** @description The byte mix multiplier of each mix entry by mix entry id, which scales the rate of the entry beside the factor. Absent for a run without byte weighted mix control, such as a run whose profile basis is not bytes. */
+            multipliers?: {
+                [key: string]: number;
+            };
+        };
+        /** @description The calibration estimate of one mix entry. */
+        CalibrationEntry: {
+            /** @description Mix entry id. */
+            id: string;
+            /**
+             * Format: double
+             * @description The estimate of application bytes per session that the next rates rest on.
+             */
+            bytes_per_session: number;
+            /** @description True when the estimate comes from measurements and not from the manifest estimate. */
+            measured: boolean;
         };
         /** @description Outcome of the pass and fail criteria of the test configuration. */
         RunVerdict: {
@@ -779,7 +825,12 @@ export interface operations {
     installModule: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Id of the trust store key that made the signature, for example ed25519:fe812c12f3ab4ce6ac5db69ac352f906. Sent together with X-Module-Signature, or not at all. */
+                "X-Module-Signature-Key-Id"?: string;
+                /** @description The 64 byte Ed25519 signature over the module tree digest, in standard base64 with padding. Sent together with X-Module-Signature-Key-Id, or not at all. A module without a signature installs only when the controller allows unsigned modules. */
+                "X-Module-Signature"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -796,6 +847,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModuleSummary"];
+                };
+            };
+            /** @description Only one of the two signature headers is present, the signature is not standard base64, or the archive is broken. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The controller refused the signature, or the token scope is too low. A signature is refused when the archive was modified, the key is unknown, revoked, or expired, the key id does not match, or the signature is truncated, and when the module has no signature while the controller has a trust store and does not allow unsigned modules. The problem detail names the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             default: components["responses"]["Problem"];

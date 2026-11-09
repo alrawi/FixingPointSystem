@@ -62,7 +62,7 @@ func (Unimplemented) ListModules(w http.ResponseWriter, r *http.Request, _ ListM
 }
 
 // InstallModule answers installModule with a 501 problem.
-func (Unimplemented) InstallModule(w http.ResponseWriter, r *http.Request) {
+func (Unimplemented) InstallModule(w http.ResponseWriter, r *http.Request, _ InstallModuleParams) {
 	notImplemented(w, r, "installModule")
 }
 
