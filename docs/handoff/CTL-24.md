@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #232 |
 | Branch | `wp/CTL-24` |
-| Pull request | none yet |
+| Pull request | #269 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-6555a2, lease until 2026-11-09T05:23:25Z |
 | Last verified commit | none |
 
@@ -16,23 +16,23 @@ For a `throughput_bps` objective, the orchestrator builds a `calibrate.State` fr
 
 ## Plan
 
-- [ ] 1. Claim commit and handoff
-- [ ] 2. Calibration loop in `controller/internal/runs/calibration.go`
-- [ ] 3. Wire it into the run loop and the run record
-- [ ] 4. E2E test with a fake agent that reacts to `UpdateRates`
+- [x] 1. Claim commit and handoff
+- [x] 2. Calibration loop in `controller/internal/runs/calibration.go`
+- [x] 3. Wire it into the run loop and the run record
+- [x] 4. E2E test with a fake agent that reacts to `UpdateRates`
 - [ ] 5. Wiki page, log entry, checks, PR
 
 ## Done and verified
 
-Nothing yet.
+Steps 1 to 4: `calibration.go`, wiring in `orchestrator.go`, unit and end to end tests, `mk/ctl.mk` targets, Controller page and log entry. Verification is by CI only, because Go modules cannot be downloaded in the sandbox.
 
 ## Remaining
 
-Everything after the claim.
+CI result of the PR, and fixes to the tests if CI finds any.
 
 ## Next action
 
-Write `calibration.go`.
+Poll the CI of PR #269 and fix failures inside `controller/internal/runs/`.
 
 ## Blockers and open questions
 
@@ -40,7 +40,9 @@ Write `calibration.go`.
 
 ## Decisions taken in this package
 
-None yet.
+- The orchestrator reaches `UpdateRates` through the optional interface `RateUpdater`, because `agents.Manager` has no such method and `internal/agents/` is outside the paths of this package. The log entry holds the method for CTL-06.
+- A mix entry maps to the `scenario` label of the client side counters, since the catalog has no mix entry label. Entries that share a scenario split its counters by weight.
+- Per agent the command carries the sum of the compiled worker rates times the factor, so each command is absolute and a retry is harmless.
 
 ## Pitfalls
 
@@ -57,3 +59,4 @@ cd controller && go test -race ./internal/runs/...
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09 | claude-6555a2 | claim | none | Claimed #232 |
+| 2026-11-09 | claude-6555a2 | checkpoint | 5e41c1d | Code and tests pushed, PR #269 opened |

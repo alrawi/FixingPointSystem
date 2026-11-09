@@ -812,7 +812,7 @@ Bug #128 gave run ids their own prefix. The run orchestrator used `store.RandomI
 
 ## Throughput rate calibration
 
-The package `internal/runs/calibrate/` (CTL-21) applies decision D12 item 10. The compiler turns a `throughput_bps` objective into session rates with the `expected_bytes` estimate of the module manifest, so a session rate is `objective / (8 * mean bytes per session)` (see `splitRates` in `internal/compiler/`). When the estimate is wrong, the run misses the objective by the same ratio. The calibration measures the real bytes per session during the run and returns a `Factor` that scales every compiled session rate. The package uses only the standard library, reads no clock, and uses no random source, and the orchestrator does not call it yet.
+The package `internal/runs/calibrate/` (CTL-21) applies decision D12 item 10. The compiler turns a `throughput_bps` objective into session rates with the `expected_bytes` estimate of the module manifest, so a session rate is `objective / (8 * mean bytes per session)` (see `splitRates` in `internal/compiler/`). When the estimate is wrong, the run misses the objective by the same ratio. The calibration measures the real bytes per session during the run and returns a `Factor` that scales every compiled session rate. The package uses only the standard library, reads no clock, and uses no random source. CTL-24 wired it into the run loop, which [Throughput calibration in the run loop](#throughput-calibration-in-the-run-loop) describes.
 
 ### Interface
 
@@ -836,13 +836,47 @@ The calibration estimates a property of the traffic, the bytes per session, and 
 | `MinSessions` | 20 | A window with few sessions does not replace the manifest estimate |
 | `Forget` | 0.97 | The effective window is about 33 updates, which damps noise and still follows a slow change of the mix |
 
-### What the orchestrator must do
+### What the orchestrator does
 
-The orchestrator calls `calibrate.New` when a run with a `throughput_bps` objective starts, with the entries and `ExpectedBytes` values that it passed to the compiler. The compiler already normalizes weights, and the package normalizes again. After each measurement window, for example every 5 to 10 seconds while the run is in its steady phase, it builds one `Sample` per mix entry from the metric deltas of that window and calls `Update`. We suggest the client side counters of the scenario view, which are `bytes.tx` plus `bytes.rx` and `sessions.succeeded`, so that each payload byte counts once. When `Result.Changed` is true, it multiplies every `SessionsPerSecond` of the compiled worker rates of that entry by `Result.Factor` and sends the new rates to the agents. That message is `UpdateRates` of CON-05, which is in progress, and the agent handler is AGT-05. Concurrency objectives and `sessions_per_second` objectives need no calibration.
+[Throughput calibration in the run loop](#throughput-calibration-in-the-run-loop) describes how the orchestrator calls the package. Concurrency objectives and `sessions_per_second` objectives need no calibration.
 
 ### Tests
 
 `calibrate_test.go` simulates the closed loop with noisy sessions (a standard deviation of 40 percent per session and 5 percent per window) for estimates of 0.25, 0.5, 1, 2, and 4 times the true bytes per session, over 40 seeds each. Every run stays within 5 percent of the objective from update 25 on, every step stays within the bound, settled steps stay within 5 percent, and direction reversals stay few. A noise free run moves monotonically, a step test checks the exact 1.5x sequence, and further tests cover mixes of entries with unnormalized weights, the factor bound, the dead band, the minimum session count, immutability of the state, and every validation error.
+
+## Throughput calibration in the run loop
+
+CTL-24 wired `calibrate` into `internal/runs/` (`calibration.go`). A run whose objective is `throughput_bps` corrects its session rates while it runs. Runs with any other objective never start the loop.
+
+### Flow
+
+| Step | What happens |
+|---|---|
+| Create | `Orchestrator.Create` keeps the scenario catalog that it passed to the compiler. For a `throughput_bps` plan it builds `calibrate.State` with the objective (the sum of `load.objective_value` over the plans), each mix entry of the plan with its normalized weight, and the `BytesPerSession` of its scenario, which is the manifest `expected_bytes` that the compiler used |
+| Running | After every agent started, the loop ticks once per window. It stops before the run leaves `running`, because an agent accepts `UpdateRates` only while it runs |
+| Each window | The loop sums the newest client side counters of every agent. A mix entry has no label of its own in the metrics catalog, so the entry maps to the `scenario` label, and the `side` label must be `client`, so each payload byte counts once. Bytes are `bytes.tx` plus `bytes.rx`, and sessions are `sessions.succeeded`. The sample of the window is the difference to the last counted window. Two mix entries that run one scenario share its counters, and the window splits by their weights, which keeps the bytes per session. A scenario without a completed session leaves its bytes for the next window that has one, and a counter that fell, as after an agent restart, starts the difference again |
+| Update | `State.Update` returns the factor. A change is a `CalibrationStep` in `Run.Calibration` (time, factor, unbounded target, implied total session rate, bytes per session of each entry, at most 256 steps) and one log line `throughput calibration step` |
+| Send | Every running agent whose applied factor differs from the current one gets `UpdateRates`. The command holds, for each mix entry, the whole agent total, which is the sum of the compiled `sessions_per_second` of its workers times the factor. The agent divides it among its workers, so the compiled split between workers stays. An agent without a client rate (a `--side server` agent) gets nothing |
+
+An agent that fails to apply the command is tried again in the next window, and the log reports the failure once per factor, so a lost command costs one window. Agents apply the whole command or nothing.
+
+### Agent versions
+
+The orchestrator reads `engine_api` from the capabilities of the agent when it sends. An agent below 0.2.0 never receives the command, and the log line `agent has no UpdateRates, so its rates stay uncalibrated` names it once. The run still starts and ends as usual, and that agent keeps its compiled rates, so the total throughput of a mixed fleet is off by the share of the old agents.
+
+### Configuration
+
+| Field | Meaning |
+|---|---|
+| `runs.Config.Calibration.Window` | Length of a window in real time. Zero means 5 s (`DefaultCalibrationWindow`), and a negative value turns the calibration off. Decision D12 asks for 5 to 10 s |
+| `runs.Config.Calibration.Tuning` | `MaxStep`, `DeadBand`, `MinSessions`, `Forget`, and `MaxFactor` of `calibrate.Config`. Zero fields take the defaults of the package |
+| `runs.RateUpdater` | The optional interface `UpdateRates(ctx, agentID, *agentpb.UpdateRatesCommand)` that `Config.Agents` must also implement. Without it, the log says `throughput calibration is off: the agent manager cannot send UpdateRates` and the run keeps its compiled rates |
+
+`agents.Manager` has no `UpdateRates` method yet, because `internal/agents/` belongs to CTL-06. It needs a method that sends `SessionResponse_UpdateRates` through `command`, like `Start` does, before the loop works on a real controller. The log entry of CTL-24 has the code. `Run.Calibration` is not part of the REST API, because the OpenAPI document of the run has no field for it.
+
+### Tests
+
+`calibration_test.go` is the end to end test. A simulated agent runs the compiled rate in simulated time at 100 times the real speed, reports the counters of sessions that carry 40 kB each against a manifest estimate of 10 kB, and applies `UpdateRates` to its own rate, so the loop between orchestrator and agent closes. It checks that an 8 Mbit/s objective, which the compiled rate overshoots fourfold, ends within 5 percent after the factor falls to 0.25 in steps of at most 1.5x, that the log and `Run.Calibration` agree, and that no command arrives after the run ended. Further tests check that an agent with engine 0.1.0 gets no command and is logged once, that a `sessions_per_second` objective and a switched off calibration send nothing, and that a manager without `RateUpdater` leaves the rates alone. `calibration_internal_test.go` covers the window arithmetic, the command builder, and the version check. The test delivers `UpdateRates` through a wrapper of the agent manager, because neither `agents.Manager` nor `fakeagent` handles the command. `make lint-ctl-runs test-ctl-runs` runs the package alone.
 
 ## Mutual TLS
 
