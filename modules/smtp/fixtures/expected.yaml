@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of smtp.pcapng, which capture.sh records in the QA-01 harness.
+# Every session of the fixture is SMTP on TCP port 25 for the relay scenarios
+# or on port 587 for the submission scenarios, and nDPI must classify at least
+# 99% of them as SMTP from payload alone. realism/schema/labels.schema.json
+# defines the format.
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: smtp
+    match: {transport: tcp, server_port: 25}
+  - application: smtp
+    match: {transport: tcp, server_port: 587}
+applications:
+  smtp: {ndpi: [SMTP]}

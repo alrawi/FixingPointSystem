@@ -187,8 +187,16 @@ func splitNames(list string) []string {
 	return out
 }
 
-// version returns the module version that the Go toolchain stamped into the binary.
-func version() string {
+// version is the release version. The release workflow sets it with
+// -ldflags "-X main.version=..."; a build without the flag leaves it empty.
+var version = ""
+
+// buildVersion returns the stamped version when set. Otherwise it returns the
+// module version that the Go toolchain stamped into the binary, or "(devel)".
+func buildVersion() string {
+	if version != "" {
+		return version
+	}
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
 		return info.Main.Version
 	}
@@ -210,7 +218,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if o.version {
-		_, _ = fmt.Fprintln(stdout, "fps-controller", version())
+		_, _ = fmt.Fprintln(stdout, "fps-controller", buildVersion())
 		return exitOK
 	}
 	cfg, err := loadConfig(o)
@@ -223,7 +231,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "fps-controller:", err)
 		return exitUsage
 	}
-	logger.Info("controller starting", "version", version(), "config", o.configPath)
+	logger.Info("controller starting", "version", buildVersion(), "config", o.configPath)
 
 	if err := serve(ctx, cfg, logger); err != nil {
 		logger.Error("controller failed", "error", err)

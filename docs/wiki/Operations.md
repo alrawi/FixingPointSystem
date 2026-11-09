@@ -68,7 +68,7 @@ The workflow `.github/workflows/release.yml` builds the versioned artifacts of a
 | File | Built as |
 |---|---|
 | `fps-agent-<version>-linux-x86_64` | `cargo build --release --locked --target x86_64-unknown-linux-musl -p fps-agent`, stripped, and checked with `file` to be static |
-| `fps-controller-<version>-linux-amd64` | `go build -trimpath -ldflags '-s -w'` with `CGO_ENABLED=0`, checked to be static, and started with `-version` |
+| `fps-controller-<version>-linux-amd64` | `go build -trimpath -ldflags "-s -w -X main.version=<version>"` with `CGO_ENABLED=0`, checked to be static, and started with `-version`, which must print the stamped version |
 | `fps-module-<name>-<module version>.tar.gz` | One archive for each module under `modules/` that has a `manifest.yaml`, with the tree under `<name>/` and without build output. The module version comes from the manifest. The archive is reproducible for one commit |
 | `fixingpoint-<version>.tar.gz` and `fixingpoint-<version>-py3-none-any.whl` | `python -m build` in `sdk/python/`. The version is the one in `pyproject.toml`, and the job warns when it differs from the tag |
 | `SHA256SUMS` | `sha256sum` of every file above, checked with `sha256sum -c` before upload |

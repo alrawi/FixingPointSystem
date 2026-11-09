@@ -49,9 +49,13 @@ func (o *Orchestrator) attachByteMix(id string, cfg compiler.Config, c *calibrat
 }
 
 // newByteMix builds the mixcontrol state of a run from the compiled mix and the
-// bytes per session estimates of the catalog. The compiler normalizes the mix
-// by sessions whatever the basis, so the weight of a compiled entry is both its
-// byte weight and the session weight that its rate carries.
+// bytes per session estimates of the catalog. For the basis bytes the compiler
+// has turned the byte weights of the test into session shares (weight over
+// bytes per session), so the weight of a compiled entry is its session weight
+// and the byte weight that mixcontrol converges to is that weight times the
+// estimate, which gives back the configured byte weight. The run therefore
+// starts at the compiled session shares, which are right when the estimates
+// are, and mixcontrol corrects only what the measurements disagree with.
 func newByteMix(tuning mixcontrol.Config, plans []compiler.Plan, scenarios []compiler.Scenario) (mixcontrol.State, error) {
 	if len(plans) == 0 {
 		return mixcontrol.State{}, fmt.Errorf("%w: no plans", mixcontrol.ErrConfig)
@@ -67,7 +71,7 @@ func newByteMix(tuning mixcontrol.Config, plans []compiler.Plan, scenarios []com
 		if !ok {
 			return mixcontrol.State{}, fmt.Errorf("mix entry %s: scenario %s is not in the catalog", m.ID, m.Scenario)
 		}
-		tuning.Entries = append(tuning.Entries, mixcontrol.Entry{ID: m.ID, ByteWeight: m.Weight, SessionWeight: m.Weight, ExpectedBytes: bytes})
+		tuning.Entries = append(tuning.Entries, mixcontrol.Entry{ID: m.ID, ByteWeight: m.Weight * bytes, SessionWeight: m.Weight, ExpectedBytes: bytes})
 	}
 	return mixcontrol.New(tuning)
 }

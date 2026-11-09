@@ -1,0 +1,47 @@
+scenario: text_only
+description: A short plain text message to one recipient on port 25, without an attachment. The message is a single text part, so Zeek logs the message and one body entity.
+vars:
+  server_port: 25
+  client_name: mail-gw.example.test
+  server_name: mx.example.test
+  body_size: 900
+flows:
+  - id: text_only
+    module: smtp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "EHLO {{ vars.client_name }}\r\n"
+      - expect: { pattern: "\r\n250 ", timeout_ms: 5000 }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { sid: "{{ rand_int(1, 2000000000) }}" }
+      - set:
+          subject: "Ticket TKT-{{ rand_int(100000, 999999) }} update"
+          text: "{{ content.email(size=vars.body_size) }}"
+      - send: "MAIL FROM:<{{ smtp.address(vars.sid, 0) }}>\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.rcpt_to(vars.sid, 1, 1) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "DATA\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.data(smtp.message(smtp.address(vars.sid, 0), smtp.address(vars.sid, 1), vars.subject, vars.text)) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - send: "QUIT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "220 {{ vars.server_name }} ESMTP Postfix\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.ehlo_reply(vars.server_name, vars.client_name) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "250 2.1.0 Ok\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "250 2.1.5 Ok\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "354 End data with <CR><LF>.<CR><LF>\r\n"
+      - expect: { pattern: "\r\n.\r\n", timeout_ms: 30000 }
+      - send: "250 2.0.0 Ok: queued as {{ rand_int(100000, 999999) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "221 2.0.0 Bye\r\n"
+      - close: fin

@@ -75,7 +75,9 @@ type ScenarioSource struct {
 	Digest string `json:"digest,omitempty"`
 }
 
-// MixEntry is one resolved entry of the profile mix with its normalized weight.
+// MixEntry is one resolved entry of the profile mix. Its weight is the session
+// share of the entry, normalized to a sum of one: for the basis bytes the
+// compiler has converted the byte weights of the test into session shares.
 type MixEntry struct {
 	ID         string         `json:"id,omitempty"`
 	Scenario   string         `json:"scenario,omitempty"`

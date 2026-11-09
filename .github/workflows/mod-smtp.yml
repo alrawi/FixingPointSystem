@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Workflow of the smtp module under modules/smtp/. The rust job of ci.yml runs
+# its Rust tests. The module job validates the manifest and scenarios, runs the
+# tests of the Zeek check, and scores the committed fixture with nDPI and tshark
+# and checks it with Zeek, so smtp.log holds every message, files.log holds
+# every attachment, and weird.log holds no smtp entry. The realism workflow
+# records a fresh capture of the module in the QA-01 namespace harness and runs
+# the same Zeek check on it, because capture.sh calls zeek_check.py.
+name: mod-smtp
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - modules/smtp/**
+      - modules/content/manifest.yaml
+      - realism/**
+      - tools/contracts/**
+      - contracts/schemas/**
+      - mk/mod-smtp.mk
+      - .github/workflows/mod-smtp.yml
+  pull_request:
+    paths:
+      - modules/smtp/**
+      - modules/content/manifest.yaml
+      - realism/**
+      - tools/contracts/**
+      - contracts/schemas/**
+      - mk/mod-smtp.mk
+      - .github/workflows/mod-smtp.yml
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+
+jobs:
+  module:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install nDPI, tshark, and Zeek, which the checks call out of process
+        run: realism/ci/install-tools.sh
+      - run: python -m pip install -r tools/contracts/requirements.txt
+      - run: make lint-mod-smtp PYTHON=python
+      - name: Test the Zeek check
+        run: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s modules/smtp/fixtures
+      - name: Score the committed fixture
+        run: |
+          python -m realism score --pcap modules/smtp/fixtures/smtp.pcapng \
+            --labels modules/smtp/fixtures/expected.yaml --parsers tshark,zeek --output report.json
+          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c["applications"] for c in r["checks"]], indent=2))'
+      - name: Check smtp.log, files.log, and weird.log of the committed fixture
+        run: |
+          python modules/smtp/fixtures/zeek_check.py modules/smtp/fixtures/smtp.pcapng \
+            --messages 64 --attachments 56

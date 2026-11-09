@@ -467,3 +467,39 @@ func (b *lockedBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// TestVersionStamp builds the command with -ldflags -X main.version and checks
+// that -version prints the stamped value.
+func TestVersionStamp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the binary")
+	}
+	const stamp = "1.2.3-test"
+	bin := filepath.Join(t.TempDir(), "fps-controller")
+	build := exec.Command("go", "build", "-ldflags", "-X main.version="+stamp, "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	out, err := exec.Command(bin, "-version").Output()
+	if err != nil {
+		t.Fatalf("-version: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(out)), "fps-controller "+stamp; got != want {
+		t.Fatalf("-version printed %q, want %q", got, want)
+	}
+}
+
+// TestBuildVersionFallback checks that an empty stamp falls back to the build
+// information and that a set stamp wins.
+func TestBuildVersionFallback(t *testing.T) {
+	old := version
+	t.Cleanup(func() { version = old })
+	version = ""
+	if got := buildVersion(); got == "" {
+		t.Fatal("buildVersion is empty without a stamp")
+	}
+	version = "9.9.9"
+	if got := buildVersion(); got != "9.9.9" {
+		t.Fatalf("buildVersion = %q, want the stamp", got)
+	}
+}
