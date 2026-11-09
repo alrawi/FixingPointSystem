@@ -169,6 +169,8 @@ server_pool=$(pool servers)
 cat >"$work/controller.yaml" <<EOF
 listen: $rest
 grpc_listen: 0.0.0.0:$grpc_port
+# The agent has no TLS until AGT-08, so the gate uses the explicit plain mode.
+insecure_plain_grpc: true
 log_level: debug
 data_dir: $work/data
 tokens:

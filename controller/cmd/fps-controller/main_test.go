@@ -120,6 +120,14 @@ func TestRunExitCodes(t *testing.T) {
 		{"port out of range", []string{"-listen", "127.0.0.1:99999", "-log-level", "error"}, exitFailure, "", "controller failed"},
 		{"grpc port out of range", []string{"-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:99999", "-log-level", "error"}, exitFailure, "", "controller failed"},
 		{"grpc listen without port", []string{"-grpc-listen", "localhost"}, exitUsage, "", "grpc_listen"},
+		{"enroll listen without port", []string{"-enroll-listen", "localhost"}, exitUsage, "", "enroll_listen"},
+		{"enroll port out of range", []string{"-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:0", "-enroll-listen", "127.0.0.1:99999", "-log-level", "error"}, exitFailure, "", "controller failed"},
+		{"token without an agent id", []string{"token"}, exitUsage, "", "-agent-id is required"},
+		{"revoke without an agent id", []string{"revoke", "-admin-socket", "/nowhere.sock"}, exitUsage, "", "-agent-id is required"},
+		{"token without a socket", []string{"token", "-agent-id", "a"}, exitUsage, "", "no admin socket"},
+		{"token with a stray argument", []string{"token", "-agent-id", "a", "extra"}, exitUsage, "", `unexpected argument "extra"`},
+		{"token with no controller", []string{"token", "-agent-id", "a", "-admin-socket", filepath.Join(t.TempDir(), "absent.sock")}, exitFailure, "", "start the controller first"},
+		{"revoke with no controller", []string{"revoke", "-agent-id", "a", "-admin-socket", filepath.Join(t.TempDir(), "absent.sock")}, exitFailure, "", "start the controller first"},
 		{"missing token file", []string{"-config", tokenFile, "-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:0"}, exitUsage, "", "token ops"},
 	}
 	for _, tc := range tests {
@@ -144,7 +152,7 @@ func TestRunStopsWhenContextEnds(t *testing.T) {
 	var stderr lockedBuffer
 	done := make(chan int, 1)
 	go func() {
-		done <- run(ctx, []string{"-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:0"}, io.Discard, &stderr)
+		done <- run(ctx, []string{"-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:0", "-enroll-listen", "127.0.0.1:0"}, io.Discard, &stderr)
 	}()
 
 	addr := waitForListen(t, &stderr)
@@ -171,7 +179,7 @@ func startInProcess(t *testing.T, extra ...string) (string, *lockedBuffer) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var stderr lockedBuffer
 	done := make(chan int, 1)
-	args := append([]string{"-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:0"}, extra...)
+	args := append([]string{"-listen", "127.0.0.1:0", "-grpc-listen", "127.0.0.1:0", "-enroll-listen", "127.0.0.1:0"}, extra...)
 	go func() { done <- run(ctx, args, io.Discard, &stderr) }()
 	t.Cleanup(func() {
 		cancel()
@@ -296,7 +304,7 @@ func TestBinaryShutsDownOnSIGTERM(t *testing.T) {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 
-	cfg := writeConfig(t, "listen: 127.0.0.1:0\ngrpc_listen: 127.0.0.1:0\nshutdown_timeout: 5s\n")
+	cfg := writeConfig(t, "listen: 127.0.0.1:0\ngrpc_listen: 127.0.0.1:0\nenroll_listen: 127.0.0.1:0\nshutdown_timeout: 5s\n")
 	var stderr lockedBuffer
 	cmd := exec.Command(bin, "-config", cfg)
 	cmd.Stderr = &stderr
@@ -332,6 +340,7 @@ func TestBinaryShutsDownOnSIGTERM(t *testing.T) {
 	for _, want := range []string{
 		"controller starting", "controller listening", "controller shutting down", "controller stopped",
 		"agent service listening", "agent service shutting down", "agent service stopped",
+		"certificate authority open", "enrollment service listening",
 	} {
 		if !msgs[want] {
 			t.Errorf("logs lack %q:\n%s", want, stderr.String())

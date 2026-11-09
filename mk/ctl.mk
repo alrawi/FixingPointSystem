@@ -70,6 +70,21 @@ lint-ctl-registry:
 test-ctl-registry:
 	cd controller && $(GO) test -race -cover ./internal/registry/
 
+# CTL-27 mutual TLS in the controller. The targets above cover the packages
+# too, so these two give a fast loop for the TLS wiring alone: the settings, the
+# session end and expiry of the agent manager, the wiring of the authority, the
+# enrollment listener and the admin socket, and the binary with its token and
+# revoke subcommands. The tests open real TLS connections and a unix socket on
+# the local machine, and the end to end test builds the binary.
+.PHONY: lint-ctl-tls test-ctl-tls
+lint-ctl-tls:
+	@out="$$(cd controller && gofmt -l internal/app internal/agents internal/wiring cmd)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+	cd controller && $(GO) vet ./internal/app/ ./internal/agents/ ./internal/wiring/ ./cmd/...
+
+test-ctl-tls:
+	cd controller && $(GO) test -race ./internal/app/ ./internal/agents/ ./internal/wiring/ ./cmd/... -run 'TLS|Tls|Admin|Expired|EndSession|AutoEnroll|PlainMode|Secure|Config|ServerNames|PKI|ExitCodes|SIGTERM|EndToEnd'
+
 # CTL-11 module signing and the signed registry index. The package uses only the
 # standard library, and the targets above cover it too, so these two give a fast
 # loop for the package alone.

@@ -43,6 +43,8 @@ go run ./controller/cmd/fps-controller -version
 | `-log-level level` | `info` | `debug`, `info`, `warn`, or `error` |
 | `-version` | false | Print the module version and exit |
 
+The binary also has two subcommands for operators, `fps-controller token` and `fps-controller revoke`, which [Operators, tokens, and revocation](#operators-tokens-and-revocation) describes.
+
 Settings come from three layers, and a later layer wins. The layers are the built in defaults, the configuration file, and the flags that appear on the command line. The process exits with 0 after a clean shutdown, with 1 when it fails at run time, for example because the port is taken, and with 2 for invalid flags or configuration.
 
 ## Configuration file
@@ -404,7 +406,7 @@ The package `internal/agents/agentpb` holds the messages and the gRPC client and
 | The identity is enrolled with `POST /v1/agents`, or `Config.AutoEnroll` holds | `PERMISSION_DENIED` |
 | The major and minor version of `Capabilities.engine_api` is in `Config.EngineAPIs`, which defaults to 0.1 and 0.2 | `FAILED_PRECONDITION` |
 
-`PeerCertIdentity` takes the identity from the verified client certificate, first the common name and then the first DNS name. `ClaimedIdentity` trusts the request and serves tests and local development only. Each `Register` returns a new 256 bit session token and revokes the previous one. The first message of a session must be `open` with the latest token, and a newer session ends the older one with `ABORTED`. The manager answers every heartbeat with an acknowledgement, routes each command result to its caller by `command_id`, and drops a counter snapshot whose sequence is not newer than the last one of the same plan, so duplicates after a reconnection never reach the run.
+`PeerCertIdentity` takes the identity from the verified client certificate, first the common name and then the first DNS name. `ClaimedIdentity` trusts the request and serves tests and local development only. `EndSession(id)` ends the open session of one agent with `UNAUTHENTICATED`, marks it offline with the reason `identity revoked`, and forgets its session token. The authority calls it when an operator revokes the identity. A certificate is checked at the handshake only, so the manager also reads its end (`Config.Expiry`, by default `PeerCertExpiry`). `Register` and `Session` refuse a certificate that has expired, and `Sweep` ends the session of an agent whose certificate expired once the agent holds no plan, with the reason `certificate expired`. A running plan never loses its session to an expiry, and the agent dials again with its renewed certificate. Each `Register` returns a new 256 bit session token and revokes the previous one. The first message of a session must be `open` with the latest token, and a newer session ends the older one with `ABORTED`. The manager answers every heartbeat with an acknowledgement, routes each command result to its caller by `command_id`, and drops a counter snapshot whose sequence is not newer than the last one of the same plan, so duplicates after a reconnection never reach the run.
 
 ### Inventory and reservation
 
@@ -584,13 +586,13 @@ CTL-17 wired every package into `fps-controller`, so the binary serves the whole
 
 ### Settings of the binary
 
-The configuration file gained six keys, and the binary gained two flags. Every earlier key and flag keeps its meaning.
+The configuration file gained six keys, and the binary gained two flags. Every earlier key and flag keeps its meaning. CTL-27 added the keys of mutual TLS, which [Mutual TLS in the controller](#mutual-tls-in-the-controller) describes.
 
 ```yaml
 data_dir: /var/lib/fps          # module registry in data_dir/modules, store in data_dir/configs.db
 store_path: /var/lib/fps/db/configs.db   # optional, overrides the store file, or ":memory:"
-grpc_listen: localhost:8444     # host:port of the agent gRPC service, plain TCP until CTL-15
-agent_auto_enroll: false        # accept agents that no operator enrolled with POST /v1/agents
+grpc_listen: localhost:8444     # host:port of the agent gRPC service, mutual TLS (CTL-27)
+agent_auto_enroll: false        # admit a certificate holder that the inventory does not list
 tokens:
   - { name: ci, scope: run, token_file: /etc/fps/ci.token }
   - { name: ops, scope: admin, token: change-me-0123456789 }
@@ -600,13 +602,13 @@ tokens:
 |---|---|---|
 | `data_dir`, `-data-dir dir` | none | Directory of the module registry and the configuration store. Without it the store lives in memory and the registry in a temporary directory, so every configuration and module ends with the process, and the controller logs a warning |
 | `store_path` | `data_dir/configs.db`, or `:memory:` without `data_dir` | SQLite file of the configuration store. The controller creates its directory |
-| `grpc_listen`, `-grpc-listen address` | `localhost:8444` | TCP address of `ControllerService`, which agents dial |
-| `agent_auto_enroll` | false | Lets any agent identity register without an enrollment |
+| `grpc_listen`, `-grpc-listen address` | `localhost:8444` | TCP address of `ControllerService`, which agents dial. It requires mutual TLS unless `insecure_plain_grpc` is set |
+| `agent_auto_enroll` | false | Admits an agent whose identity the inventory does not list. With mutual TLS the identity comes from the client certificate, see [agent_auto_enroll](#agent_auto_enroll-with-certificates) |
 | `tokens` | none | Bearer tokens of the REST API, each with a `name`, a `scope` of `read`, `run`, or `admin`, and exactly one of `token` and `token_file` |
 
 A token holds at least 16 bytes. A `token_file` holds the token alone, and the controller trims the white space around it. Names must be unique, and two entries must not hold the same token. A token that breaks a rule, or a token file that the controller cannot read, ends the process with exit code 2. Without tokens every `/v1` operation answers 401, and the controller logs a warning at startup.
 
-The gRPC service speaks plain TCP and trusts the `agent_id` of each request, because mutual TLS arrives with CTL-15. The controller logs a warning that agent identities are not verified. We therefore bind `grpc_listen` to a loopback or a lab network until then. CTL-15 added the package that provides the certificates, and the [Mutual TLS](#mutual-tls) section lists the wiring that still has to follow.
+The gRPC service requires mutual TLS since CTL-27, and it reads the identity of an agent from its client certificate. Only the explicit setting `insecure_plain_grpc` serves plain TCP, where the service trusts the `agent_id` of each request, and the controller then logs warnings at start up and for every identity that it accepts. CTL-15 added the package that provides the certificates, and [Mutual TLS in the controller](#mutual-tls-in-the-controller) describes the wiring.
 
 ### Components
 
@@ -844,7 +846,7 @@ The orchestrator calls `calibrate.New` when a run with a `throughput_bps` object
 
 ## Mutual TLS
 
-CTL-15 added the package `internal/pki`. It gives the control channel between the controller and its agents mutual TLS, and it uses only the standard library (`crypto/x509`, `crypto/tls`, `crypto/ecdsa`). The package is not wired into the gRPC server or the agent yet, so the binary still speaks plain TCP. [What the wiring must change](#what-the-wiring-must-change) lists the rest.
+CTL-15 added the package `internal/pki`. It gives the control channel between the controller and its agents mutual TLS, and it uses only the standard library (`crypto/x509`, `crypto/tls`, `crypto/ecdsa`). CTL-27 wired the package into the controller, which [Mutual TLS in the controller](#mutual-tls-in-the-controller) describes. The Rust agent has no TLS yet, and [What the agent must change](#what-the-agent-must-change) lists its part (AGT-08).
 
 ```go
 pa, err := pki.Open(pki.Config{Dir: "/var/lib/fps/pki", OnRevoke: endSession}) // CA on first start
@@ -896,30 +898,68 @@ The authority keeps an allow list of the serial numbers that it issued, with the
 
 `ClientTLSConfig`, `KeyPair`, and `NewCSR` serve Go clients and tests.
 
-### What the wiring must change
+### Mutual TLS in the controller
 
-The controller wiring (`internal/app`, `internal/wiring`, and `cmd/fps-controller`, outside CTL-15) has to do six things.
+CTL-27 did the wiring of the controller. The owner chose the HTTPS enrollment endpoint, so the contracts did not change.
 
-1. Open the authority in `wiring.New` from a directory such as `data_dir/pki`, with new settings for the directory, the names for the server certificate, and the address of the enrollment listener.
-2. Build the gRPC server with `grpc.Creds(credentials.NewTLS(pa.ServerTLSConfig(names...)))` in place of plain TCP, serve `pa.Handler()` behind `pa.EnrollTLSConfig(names...)` on the second listener, and keep `agents.Config.Identity` at `PeerCertIdentity`, which is already the default. `ClaimedIdentity` and the startup warning then go away. `Register` already answers `UNAUTHENTICATED` when the identity differs from `agent_id`.
-3. Give the agent manager a method that ends the session of one agent and pass it as `Config.OnRevoke`. The manager should also end or refuse a session whose certificate expired, once the agent is idle, because Go checks the certificate at the handshake only.
-4. Give operators a way to create tokens and revoke identities. The OpenAPI contract has no operation for it, so this needs a contract change (for example an optional `enrollment_token` in the answer of `POST /v1/agents` and a revoke operation) or a subcommand of the binary. A subcommand must not write `state.json` while the controller runs, because the controller is the single writer.
-5. Decide what `agent_auto_enroll` means with certificates. We suggest that it only lets an identity with a valid certificate skip `POST /v1/agents`, and that it never replaces a certificate.
-6. Update the note in the image that says the controller and gRPC are plain until TLS lands, and have the image provisioning write the enrollment token for the agent the way it writes the REST token today.
+`wiring.New` opens the authority from `pki_dir`, which defaults to `data_dir/pki`, and builds the two server configurations for the names of the controller certificate. Without `pki_dir` and `data_dir` the CA lives in memory and ends with the process, which the controller logs as a warning. `Controller.Run` serves `ControllerService` with `grpc.Creds(credentials.NewTLS(...))` from `ServerTLSConfig`, and `agents.Config.Identity` stays at its default, `PeerCertIdentity`, so the identity of an agent is the common name of its verified certificate and `Register` answers `UNAUTHENTICATED` when it differs from `agent_id`. `Controller.RunPKI` serves `pa.Handler()` behind `EnrollTLSConfig` on the second listener, and it serves the admin socket described below. `Controller.PKI` exposes the authority.
 
-The Rust agent (`engine/fps-agent`, AGT) has to do the following.
+| Key or flag | Default | Meaning |
+|---|---|---|
+| `pki_dir`, `-pki-dir dir` | `data_dir/pki` | Directory of the CA and the PKI state. The controller must be its only writer |
+| `enroll_listen`, `-enroll-listen address` | `localhost:8445` | TCP address of the HTTPS service for `POST /enroll` and `POST /renew` |
+| `tls_names`, `-tls-names a,b` | see below | Host names and IP addresses in the controller certificate, which agents check against the address that they dial |
+| `admin_socket`, `-admin-socket path` | `pki_dir/admin.sock` | Unix socket of the admin API. None without a PKI directory |
+| `insecure_plain_grpc`, `-insecure-plain-grpc` | false | Serves the gRPC service without TLS, see [Plain mode](#plain-mode) |
+
+When `tls_names` is empty the certificate carries `localhost`, `127.0.0.1`, `::1`, and the host of `grpc_listen` and of `enroll_listen` when it names one address. A wildcard such as `0.0.0.0` adds nothing, so a controller that listens on every interface sets `tls_names` to the names that its agents dial. The controller logs `certificate authority open` with the names and the SHA-256 fingerprint of the CA, which an operator can compare with the file that the agent trusts. The socket path must stay below 100 bytes, which the limit of unix sockets forces.
+
+#### Operators, tokens, and revocation
+
+The OpenAPI contract has no operation for tokens and revocation, so an admin REST endpoint is out of scope. The controller also must stay the only writer of `state.json`. We chose the admin socket, which is simpler and safer than a command that opens the state on its own, because a second process would need a lock that the PKI package does not have, and it could not end the open session. The controller serves a small HTTP API on a unix socket, and two subcommands of the binary call it.
+
+```bash
+fps-controller token  -agent-id edge-1 -ttl 30m -config /etc/fps/controller.yaml > edge-1.token
+fps-controller revoke -agent-id edge-1 -config /etc/fps/controller.yaml
+```
+
+The subcommands find the socket from `-admin-socket`, `-pki-dir`, `-data-dir`, or the `-config` file, with the same layers as the controller. `token` prints the token alone on standard output so that a script can capture it, writes the expiry to standard error, and exits with 1 when no controller answers on the socket. The token is a secret that is valid once. Hand it to the agent through a file or the environment of the agent and never through a command line. `revoke` revokes every certificate and unused token of the identity and ends its open session at once. A token that the operator mints also adds the identity to the inventory when it is missing, because minting a token admits the agent. Revoking leaves the inventory entry, which `DELETE /v1/agents/{id}` removes.
+
+The socket has mode 0600 inside the PKI directory, which has mode 0700, so the file system is the credential, and the controller refuses a socket directory that everyone may write. The admin API has no other authentication and never listens on TCP. At start up the controller connects to an existing socket file. When a process answers, it refuses to start, because two controllers must not share one PKI directory, and when nothing answers, it replaces the stale file of a dead controller. A path that is not a socket stays untouched and fails the start.
+
+#### agent_auto_enroll with certificates
+
+A certificate proves who an agent is, and the inventory decides whether the controller accepts it. A valid certificate for an identity that the inventory does not list gets `PERMISSION_DENIED` unless `agent_auto_enroll` is true, in which case the agent joins the inventory. The setting never admits an agent without a valid certificate, and it never replaces one. Minting a token enrolls the identity, so the normal path needs no `POST /v1/agents`. The inventory lives in memory and the PKI state on disk, so after a restart of the controller every agent holds a valid certificate but no inventory entry. We therefore recommend `agent_auto_enroll: true` for a controller whose operators trust their own CA, and `false` where an operator should admit each agent by hand with `POST /v1/agents` after every restart. The default stays false.
+
+#### Plain mode
+
+`insecure_plain_grpc` (flag `-insecure-plain-grpc`) serves `ControllerService` on plain TCP, trusts the `agent_id` of each request, opens no authority, and serves neither the enrollment listener nor the admin socket. It exists for development and for tests until the Rust agent has TLS (AGT-08). The controller logs `INSECURE` warnings at start up, when the service starts listening, and for every identity that it accepts. The end to end test with the real agent (`engine/fps-agent/tests/controller_e2e.sh`), the Gate 1 script, and `TestEndToEnd` set it. The image does not, so the controller of the image refuses the agent of the image until AGT-08 and the image follow up land, and the log entry of CTL-27 describes the impact. Never set it on a shared network.
+
+#### What the agent must change
+
+The Rust agent (`engine/fps-agent`, AGT-08) has to do the following.
 
 1. Build the tonic channel with TLS. This needs the tonic `tls` feature with a rustls provider. The channel trusts the CA from a file or a pinned fingerprint, presents the client certificate and key, uses the `https://` scheme, and sets the server name to a name in the controller certificate. The check for `http://` addresses can stay for local tests.
 2. Enroll when it has no certificate. It generates an ECDSA P-256 key, writes it with mode 0600, builds a CSR with the common name set to its `--agent-id`, and sends the token and the CSR to the enrollment endpoint over TLS that trusts the CA. The token comes from a file or an environment variable, never from the command line, and the agent deletes it after the exchange. New flags are needed for the CA file, the token source, the enrollment address, and the directory that holds the key and the certificate.
 3. Renew. From `renew_at` on, and before the certificate expires, it calls `POST /renew` with its current certificate and a fresh CSR, writes the new files atomically, and uses them for the next dial. It should redial only while no plan runs, because D12 item 12 drops the plan on a lost session. When the certificate is expired or revoked it logs the reason and enrolls again only if a new token exists.
 4. Treat `UNAUTHENTICATED` and a handshake failure as permanent, because redialing cannot fix them, and follow the redial limit of D12 item 11.
 
-#### Is a contract change needed
+#### Contract choice
 
-Not for this package, and the first wiring can go ahead without one, because the enrollment endpoint is an HTTPS API that `pki` serves and that no proto file describes. The endpoint adds a new HTTP client to the agent (for example `hyper-util` or `reqwest` with rustls), which is the cost of this choice. The alternative is an `Enroll` and a `Renew` RPC in `fps.agent.v1`. The agent then reuses its tonic stubs and needs no HTTP client, and one listener can serve everything with `VerifyClientCertIfGiven`, since `PeerCertIdentity` already refuses a call without a certificate. That choice is a CON change with a regeneration of `agentpb` and the Rust stubs, and the owner approves contracts, so we did not make it. We recommend the RPC when the owner wants a single listener and one client stack, and the HTTP endpoint otherwise. The REST operations for tokens and revocation need a contract change in both cases, unless a subcommand serves them.
+The owner chose the HTTPS enrollment endpoint, which `pki` serves and which no proto file describes, so no contract changed. The endpoint adds an HTTP client to the agent (for example `hyper-util` or `reqwest` with rustls). The alternative that we did not take is an `Enroll` and a `Renew` RPC in `fps.agent.v1`, which would reuse the tonic stubs and let one listener serve everything. Tokens and revocation need no contract change, because the subcommands serve them.
 
 ### Tests
 
 The tests open real TLS connections on the loopback interface. `TestMutualTLSAdmitsOnlyValidCertificates` starts a TLS server with `ServerTLSConfig`, shows that a freshly enrolled certificate is accepted and that the server reads the agent identity from the certificate subject, and shows that these clients are rejected: no client certificate, a certificate of another CA, a certificate that the CA signed without a record, a revoked identity, and an expired certificate. The clock of the authority is settable, so the expiry test moves it past `NotAfter`. `TestTokens` covers reuse, expiry at the exact instant, wrong and unknown and malformed tokens, a CSR for another identity, an RSA key, the lifetime limits, and 16 concurrent exchanges of one token. `TestRotation` renews a certificate directly and checks that an expired, foreign, or revoked certificate cannot renew. `TestHandlerEnrollAndRenewOverTLS` drives both endpoints over TLS. Further tests check the file modes of the CA, the refusal of a loose key, a half CA, a mismatched pair, a damaged state, and an expired CA, that the state never holds a token secret, and that used tokens and revocations survive a restart.
 
 `make test-ctl-pki lint-ctl-pki` runs the package alone, and `make lint-ctl test-ctl` covers it with the rest of the module.
+
+### Tests of the wiring
+
+`make test-ctl-tls lint-ctl-tls` runs the CTL-27 tests, and `make lint-ctl test-ctl` covers them with the rest of the module.
+
+- `TestMutualTLSAdmitsOnlyAgentsWithAValidCertificate` in `internal/wiring` is the acceptance test at the level of the controller. A minted token enrolls an agent over HTTPS, a single use token fails on its second use, and the agent registers over mutual TLS. An agent without a certificate, with a certificate of another CA, with a valid certificate for another identity, or with a valid certificate that the inventory does not list cannot register, and `RevokeIdentity` ends the open session, keeps the agent out, and lets a new token enroll it again.
+- `TestAutoEnrollAdmitsCertificateHolders`, `TestSecureModeRefusesPlainClients`, and `TestPlainModeIsExplicit` cover `agent_auto_enroll` with certificates, a client without TLS, and the plain mode, where the PKI operations answer `ErrNoPKI`.
+- `TestExpiredCertificateEndsAnIdleAgentSession` moves the clock past the lifetime of a certificate, and the sweep ends the session of the idle agent. The agent manager tests in `internal/agents` show that a busy agent keeps its session, and that `EndSession` and the expiry give their reasons.
+- `TestAdminSocket`, `TestAdminSocketReplacesAStaleFile`, and `TestAdminHandlerValidatesRequests` cover the admin socket: mode 0600, the refusal of a live socket, the replacement of a stale one, and the validation of every request.
+- `TestEndToEndMutualTLS` in `cmd/fps-controller` builds the binary in its default mode and runs the path with a Go fake agent. It mints a token with the `token` subcommand, enrolls over HTTPS with the CA file from the PKI directory, registers over mutual TLS, shows that no certificate, a plain client, a certificate of another CA, and another identity cannot register, revokes with the `revoke` subcommand, and enrolls again with a new token. It checks that the token never reaches the logs. `TestEndToEnd` keeps its Go fake agent over the plain mode.
