@@ -1394,7 +1394,7 @@ Phase 2 · size S · workstream CLI
 - **Depends on.** CLI-02
 - **Paths.** `cli/`
 
-cli/e2e TestEndToEnd failed once and passed on re-run on 2026-11-09 with "fake agent state = AGENT_STATE_PREPARED, want RUNNING".
+TestEndToEnd failed once and passed on re-run on 2026-11-09 with "fake agent state = AGENT_STATE_PREPARED, want RUNNING". The test is controller/cmd/fps-controller/e2e_test.go, not cli/e2e; the coordinator fixed it there (the run turns running before Start reaches the agent).
 
 Deliverables.
 

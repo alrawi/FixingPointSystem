@@ -2868,8 +2868,9 @@ work_packages:
     depends_on: [CLI-02]
     paths: [cli/]
     summary: >-
-      cli/e2e TestEndToEnd failed once and passed on re-run on 2026-11-09 with "fake agent state =
-      AGENT_STATE_PREPARED, want RUNNING".
+      TestEndToEnd failed once and passed on re-run on 2026-11-09 with "fake agent state =
+      AGENT_STATE_PREPARED, want RUNNING". The test is controller/cmd/fps-controller/e2e_test.go, not
+      cli/e2e; the coordinator fixed it there (the run turns running before Start reaches the agent).
     deliverables:
       - Find and fix the race without adding sleeps, and explain the cause in the PR.
     acceptance:
