@@ -6,6 +6,12 @@
 # The management address comes from /run/fps/mgmt.env, which fps-mgmt-addr.service
 # writes. Without a controller URI the agent dials the controller on this VM.
 #
+# An https:// controller means mutual TLS (AGT-08): the agent keeps its key and
+# certificate in /var/lib/fps-agent/pki and trusts the controller CA from a file,
+# or from the fingerprint FPS_CA_SHA256. The one time token is never an argument:
+# the agent reads /var/lib/fps-agent/enroll.token, which fps-enroll-token writes.
+# An http:// URI is for a controller that runs in its plain development mode.
+#
 # When the agent profile isolated CPUs and the kernel runs that option
 # (/etc/fps/tune.applied has agent_cpus), the agent runs on those CPUs only.
 set -euo pipefail
@@ -14,6 +20,8 @@ FPS_AGENT_ID=local
 FPS_CONTROLLER_URI=""
 FPS_AGENT_LABELS="role=all-in-one"
 FPS_AGENT_EXTRA_ARGS=""
+FPS_CA_SHA256=""
+FPS_ENROLL_ADDRESS=""
 # shellcheck source=/dev/null
 . /etc/fps/agent.env
 if [[ -r /run/fps/role.env ]]; then
@@ -23,12 +31,28 @@ fi
 # shellcheck source=/dev/null
 . /run/fps/mgmt.env
 
-uri="${FPS_CONTROLLER_URI:-http://${FPS_MGMT_ADDR}:8444}"
+uri="${FPS_CONTROLLER_URI:-https://${FPS_MGMT_ADDR}:8444}"
 
 args=(connect --controller "$uri" --agent-id "$FPS_AGENT_ID" --modules /usr/share/fps/modules)
 for label in $FPS_AGENT_LABELS; do
 	args+=(--label "$label")
 done
+if [[ "$uri" == https://* ]]; then
+	args+=(--cert-dir /var/lib/fps-agent/pki --enroll-token-file /var/lib/fps-agent/enroll.token)
+	if [[ -n "$FPS_ENROLL_ADDRESS" ]]; then
+		args+=(--enroll-address "$FPS_ENROLL_ADDRESS")
+	elif [[ -z "$FPS_CONTROLLER_URI" ]]; then
+		args+=(--enroll-address "${FPS_MGMT_ADDR}:8445")
+	fi
+	if [[ -s /etc/fps/controller-ca.pem ]]; then
+		args+=(--tls-ca /etc/fps/controller-ca.pem)
+	elif [[ -n "$FPS_CA_SHA256" ]]; then
+		args+=(--tls-ca-sha256 "$FPS_CA_SHA256")
+	elif [[ -z "$FPS_CONTROLLER_URI" && -s /var/lib/fps/pki/ca.crt ]]; then
+		# The controller on this VM: its CA is a file that the agent may read as root.
+		args+=(--tls-ca /var/lib/fps/pki/ca.crt)
+	fi
+fi
 # The extra arguments are a word list on purpose, for example "--redial-limit 0".
 # shellcheck disable=SC2206
 args+=($FPS_AGENT_EXTRA_ARGS)

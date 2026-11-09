@@ -1,0 +1,80 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Runs as root before fps-agent.service (ExecStartPre=+). It puts the one time
+# enrollment token of the agent into /var/lib/fps-agent/enroll.token, which the agent
+# reads, uses, and deletes. A token is a secret: it never appears on a command line,
+# in a unit file, or in a log. The file is made with umask 077 and the token reaches
+# it only through a redirect.
+#
+#   1. A token that cloud-init wrote to /etc/fps/enroll.token (mode 0600) moves to the
+#      state directory. This is how an agent VM gets the token that the operator minted
+#      on the controller with `fps-controller token -agent-id ID`. It replaces an
+#      existing certificate, which is how an operator re-enrolls a revoked agent.
+#   2. Otherwise, on the all-in-one role, when the agent has neither a certificate nor
+#      a token file, the script waits up to 30 seconds for the admin socket of the
+#      controller on this VM and mints a token of 10 minutes through it.
+#   3. Otherwise it does nothing. An agent role without a token or a certificate then
+#      exits with code 2 and "no enrollment token is available", and systemd does not
+#      restart it.
+#
+# The paths and the controller command come from the environment so that the offline
+# test (image/tests/enroll-token-test.sh) can run the script without root.
+set -euo pipefail
+
+state_dir="${FPS_AGENT_STATE_DIR:-/var/lib/fps-agent}"
+staged="${FPS_STAGED_TOKEN:-/etc/fps/enroll.token}"
+role_env="${FPS_RUN_ROLE_ENV:-/run/fps/role.env}"
+agent_env="${FPS_AGENT_ENV:-/etc/fps/agent.env}"
+socket="${FPS_ADMIN_SOCKET:-/var/lib/fps/pki/admin.sock}"
+controller_cmd="${FPS_CONTROLLER_CMD:-/usr/bin/fps-controller}"
+controller_yaml="${FPS_CONTROLLER_YAML:-/etc/fps/controller.yaml}"
+wait_seconds="${FPS_SOCKET_WAIT:-30}"
+
+token="$state_dir/enroll.token"
+cert="$state_dir/pki/agent.crt"
+
+FPS_ROLE=all-in-one
+FPS_AGENT_ID=local
+# shellcheck source=/dev/null
+if [[ -r "$agent_env" ]]; then . "$agent_env"; fi
+# shellcheck source=/dev/null
+if [[ -r "$role_env" ]]; then . "$role_env"; fi
+
+umask 077
+mkdir -p "$state_dir"
+chmod 0700 "$state_dir"
+
+if [[ -s "$staged" ]]; then
+	cat "$staged" >"$token.tmp"
+	mv "$token.tmp" "$token"
+	rm -f "$staged"
+	echo "fps-enroll-token: moved the token of the cloud-init data to $token"
+	exit 0
+fi
+
+if [[ -e "$cert" || -s "$token" ]]; then
+	exit 0
+fi
+
+if [[ "$FPS_ROLE" != all-in-one ]]; then
+	echo "fps-enroll-token: no token and no certificate; write the token to $staged (see image/README.md)" >&2
+	exit 0
+fi
+
+for ((i = 0; i < wait_seconds; i++)); do
+	if [[ -S "$socket" ]]; then break; fi
+	sleep 1
+done
+if [[ ! -S "$socket" ]]; then
+	echo "fps-enroll-token: the admin socket $socket did not appear within ${wait_seconds}s" >&2
+	exit 1
+fi
+# Standard output is the token and goes to the file only. Standard error holds the expiry.
+if ! "$controller_cmd" token -agent-id "$FPS_AGENT_ID" -ttl 10m -config "$controller_yaml" >"$token.tmp"; then
+	rm -f "$token.tmp"
+	echo "fps-enroll-token: fps-controller token failed" >&2
+	exit 1
+fi
+mv "$token.tmp" "$token"
+echo "fps-enroll-token: minted an enrollment token for $FPS_AGENT_ID into $token"

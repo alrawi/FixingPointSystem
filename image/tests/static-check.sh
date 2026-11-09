@@ -54,7 +54,7 @@ else
 fi
 
 # 2c. The offline tests of the role selector and the tuning profiles.
-for t in role-test tune-test; do
+for t in role-test tune-test enroll-token-test; do
 	if out="$("$img/tests/$t.sh" 2>&1)"; then
 		pass "$t.sh: $(grep -c '^PASS' <<<"$out") checks pass"
 	else
@@ -64,7 +64,7 @@ for t in role-test tune-test; do
 done
 
 # 3. The management ports agree between the units and the rules.
-for port in 8443 8444; do
+for port in 8443 8444 8445; do
 	if grep -q ":$port" "$img/files/etc/systemd/system/fps-controller.service" && grep -q "$port" "$img/files/etc/fps/isolation.nft"; then
 		pass "port $port appears in the controller unit and in the rules"
 	else
@@ -75,10 +75,40 @@ done
 # 4. The controller listens on the management address, never on a wildcard or the loopback.
 # shellcheck disable=SC2016 # the unit text holds a literal ${FPS_MGMT_ADDR}
 if grep -q -- '-listen ${FPS_MGMT_ADDR}:8443' "$img/files/etc/systemd/system/fps-controller.service" &&
-	grep -q -- '-grpc-listen ${FPS_MGMT_ADDR}:8444' "$img/files/etc/systemd/system/fps-controller.service"; then
-	pass "the controller unit binds both listeners to FPS_MGMT_ADDR"
+	grep -q -- '-grpc-listen ${FPS_MGMT_ADDR}:8444' "$img/files/etc/systemd/system/fps-controller.service" &&
+	grep -q -- '-enroll-listen ${FPS_MGMT_ADDR}:8445' "$img/files/etc/systemd/system/fps-controller.service"; then
+	pass "the controller unit binds the gRPC and enrollment listeners to FPS_MGMT_ADDR"
 else
-	fail "the controller unit binds both listeners to FPS_MGMT_ADDR"
+	fail "the controller unit binds the gRPC and enrollment listeners to FPS_MGMT_ADDR"
+fi
+
+# 4b. Mutual TLS (IMG-06): no plain gRPC, https by default, the AGT-08 flags, no token on a command line.
+if ! grep -rq 'insecure_plain_grpc\|insecure-plain-grpc' "$img/files"; then
+	pass "nothing under image/files mentions insecure_plain_grpc"
+else
+	fail "nothing under image/files mentions insecure_plain_grpc"
+fi
+start="$img/files/usr/libexec/fps/fps-agent-start"
+# shellcheck disable=SC2016 # the script text holds a literal ${FPS_MGMT_ADDR}
+if grep -q 'https://${FPS_MGMT_ADDR}:8444' "$start" && ! grep -q 'http://${FPS_MGMT_ADDR}' "$start" &&
+	grep -q -- '--cert-dir /var/lib/fps-agent/pki' "$start" && grep -q -- '--enroll-token-file /var/lib/fps-agent/enroll.token' "$start" &&
+	grep -q -- '--tls-ca ' "$start" && grep -q -- '--tls-ca-sha256' "$start" && grep -q -- '--enroll-address' "$start"; then
+	pass "fps-agent-start dials https:// and passes the AGT-08 flags"
+else
+	fail "fps-agent-start dials https:// and passes the AGT-08 flags"
+fi
+if grep -q '^StateDirectory=fps-agent' "$img/files/etc/systemd/system/fps-agent.service" &&
+	grep -q '^StateDirectoryMode=0700' "$img/files/etc/systemd/system/fps-agent.service" &&
+	grep -q '^ExecStartPre=+/usr/libexec/fps/fps-enroll-token' "$img/files/etc/systemd/system/fps-agent.service"; then
+	pass "fps-agent.service has a private state directory and runs fps-enroll-token first"
+else
+	fail "fps-agent.service has a private state directory and runs fps-enroll-token first"
+fi
+# A token is a secret. Nothing may pass one as an argument or an environment value of a unit.
+if ! grep -rEq -- '--enroll-token[ =]|ENROLL_TOKEN=|enroll-token-env' "$img/files/etc" "$img/seed-example"; then
+	pass "no unit or configuration file carries a token argument or variable"
+else
+	fail "no unit or configuration file carries a token argument or variable"
 fi
 
 # 5. The rules drop forwarding on mgmt0 in both directions, and sysctl keeps it off.

@@ -29,6 +29,15 @@
 #   FPS_TEST_SMP         CPUs of the VM    (default 2, and 4 for the agent role)
 #   FPS_TEST_MEM         MiB of the VM     (default 2048, and 4096 for the agent role)
 #   FPS_ALLOW_TCG=1      use software emulation when /dev/kvm is missing (slow)
+#   FPS_TEST_CONTROLLER_BIN  path of an fps-controller binary for the agent role (IMG-06).
+#                        The script runs it on the host, mints an enrollment token with
+#                        `fps-controller token` into a file, seeds the token and the CA
+#                        through NoCloud, and checks over the host API that the agent
+#                        registered over mutual TLS. Without it, the agent role seeds a
+#                        placeholder token and a fingerprint, and checks only that the
+#                        agent runs against https:// and redials the absent controller.
+#   FPS_TEST_HOST_GRPC_PORT / FPS_TEST_HOST_ENROLL_PORT / FPS_TEST_HOST_API_PORT
+#                        host loopback ports of that controller (18444, 18445, 18446)
 set -euo pipefail
 
 self="${BASH_SOURCE[0]}"
@@ -144,9 +153,11 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/fps-boot-test.XXXXXX")"
 pidfile="$work/qemu.pid"
 serial="$work/serial.log"
 
+host_ctl_pid=""
 # shellcheck disable=SC2329 # runs through the EXIT trap
 cleanup() {
 	local status=$?
+	if [[ -n "$host_ctl_pid" ]]; then kill "$host_ctl_pid" 2>/dev/null || true; fi
 	if [[ -f "$pidfile" ]]; then
 		local pid
 		pid="$(cat "$pidfile" 2>/dev/null || true)"
@@ -191,16 +202,63 @@ controller)
 EOF
 	;;
 agent)
-	# 10.0.2.2 is the host in user networking. Nothing needs to answer there: the test
-	# looks at what the agent role starts and tunes, and the agent redials without limit.
-	cat >>"$work/user-data" <<EOF
+	# 10.0.2.2 is the host in user networking. The agent dials https:// and enrolls with
+	# a token that the cloud-init data writes to /etc/fps/enroll.token (mode 0600), and it
+	# trusts the CA from /etc/fps/controller-ca.pem or from the fingerprint in role.env.
+	# The token is a file in the seed, never an argument or a role.env value.
+	grpc_port="${FPS_TEST_HOST_GRPC_PORT:-18444}"
+	enroll_port="${FPS_TEST_HOST_ENROLL_PORT:-18445}"
+	host_api_port="${FPS_TEST_HOST_API_PORT:-18446}"
+	if [[ -n "${FPS_TEST_CONTROLLER_BIN:-}" ]]; then
+		ctl="$(readlink -f "$FPS_TEST_CONTROLLER_BIN")"
+		mkdir -p "$work/ctl"
+		printf '%s' "$token" >"$work/ctl/admin.token"
+		cat >"$work/ctl/controller.yaml" <<EOF
+log_level: info
+data_dir: $work/ctl/data
+agent_auto_enroll: true
+tokens:
+  - { name: admin, scope: admin, token_file: $work/ctl/admin.token }
+EOF
+		"$ctl" -config "$work/ctl/controller.yaml" -listen "127.0.0.1:$host_api_port" \
+			-grpc-listen "127.0.0.1:$grpc_port" -enroll-listen "127.0.0.1:$enroll_port" \
+			-tls-names 10.0.2.2,127.0.0.1 >"$work/ctl/controller.log" 2>&1 &
+		host_ctl_pid=$!
+		for _ in $(seq 1 30); do
+			[[ -S "$work/ctl/data/pki/admin.sock" ]] && break
+			sleep 1
+		done
+		# The token goes from standard output into a file. It is on no command line.
+		(umask 077 && "$ctl" token -agent-id edge-1 -ttl 30m -config "$work/ctl/controller.yaml" >"$work/ctl/enroll.token")
+		token_body="$(cat "$work/ctl/enroll.token")"
+		ca_block="  - path: /etc/fps/controller-ca.pem
+    permissions: \"0644\"
+    content: |
+$(sed 's/^/      /' "$work/ctl/data/pki/ca.crt")"
+		sha_line=""
+	else
+		token_body="placeholder-token-not-minted-by-any-controller"
+		ca_block=""
+		sha_line="FPS_CA_SHA256=$(openssl rand -hex 32)"
+	fi
+	{
+		echo "  - path: /etc/fps/enroll.token"
+		echo '    owner: root:root'
+		echo '    permissions: "0600"'
+		echo "    content: $token_body"
+		if [[ -n "$ca_block" ]]; then echo "$ca_block"; fi
+		cat <<EOF
   - path: /etc/fps/role.env
     permissions: "0644"
     content: |
       FPS_ROLE=agent
-      FPS_CONTROLLER_URI=http://10.0.2.2:8444
+      FPS_CONTROLLER_URI=https://10.0.2.2:$grpc_port
+      FPS_ENROLL_ADDRESS=10.0.2.2:$enroll_port
+      FPS_AGENT_ID=edge-1
       FPS_AGENT_EXTRA_ARGS=--redial-limit 0
 EOF
+		if [[ -n "$sha_line" ]]; then echo "      $sha_line"; fi
+	} >>"$work/user-data"
 	;;
 esac
 echo "NOTE role $role, $vm_smp CPUs, $vm_mem MiB"
@@ -294,6 +352,31 @@ if [[ "$role" == agent ]]; then
 		pass "agent role: nothing answers on the forwarded management API port (HTTP status $code)"
 	else
 		fail "agent role: nothing answers on the forwarded management API port" "HTTP status $code"
+	fi
+fi
+if [[ "$role" == agent && -n "$host_ctl_pid" ]]; then
+	# The agent role proves mutual TLS: the controller on the host lists edge-1 as online,
+	# and only a session with a certificate that the controller issued makes it online.
+	registered=no
+	deadline=$((SECONDS + boot_wait))
+	while ((SECONDS < deadline)); do
+		agents="$(curl -s -m 5 -H "Authorization: Bearer $token" "http://127.0.0.1:${FPS_TEST_HOST_API_PORT:-18446}/v1/agents" || true)"
+		if grep -q '"edge-1"' <<<"$agents" && grep -Eq '"state": ?"(online|reserved|busy)"' <<<"$agents"; then
+			registered=yes
+			break
+		fi
+		sleep 3
+	done
+	if [[ "$registered" == yes ]]; then
+		pass "agent role: edge-1 registered with the controller over mutual TLS (GET /v1/agents shows it online)"
+	else
+		fail "agent role: edge-1 registered with the controller over mutual TLS" "log: $(tail -n 5 "$work/ctl/controller.log" 2>/dev/null | tr '
+' ' ')"
+	fi
+	if grep -q 'enroll' "$work/ctl/controller.log" && ! grep -q INSECURE "$work/ctl/controller.log"; then
+		pass "agent role: the controller log shows an enrollment and no INSECURE line"
+	else
+		fail "agent role: the controller log shows an enrollment and no INSECURE line"
 	fi
 fi
 if [[ "$ssh_ok" == yes ]]; then

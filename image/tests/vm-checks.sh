@@ -59,19 +59,19 @@ check "the VM has at least one test interface" test "$tests_found" -ge 1
 
 # The controller listens on the management address and nowhere else. The agent
 # role has no controller, so nothing listens on those ports.
-listeners="$(ss -H -ltn 'sport = :8443 or sport = :8444' | awk '{print $4}' | sort -u)"
+listeners="$(ss -H -ltn 'sport = :8443 or sport = :8444 or sport = :8445' | awk '{print $4}' | sort -u)"
 if [[ "$role" == agent ]]; then
 	if [[ -z "$listeners" ]]; then
-		pass "nothing listens on ports 8443 and 8444 in the agent role"
+		pass "nothing listens on ports 8443, 8444, and 8445 in the agent role"
 	else
-		fail "nothing listens on ports 8443 and 8444 in the agent role" "found: $(echo "$listeners" | tr '\n' ' ')"
+		fail "nothing listens on ports 8443, 8444, and 8445 in the agent role" "found: $(echo "$listeners" | tr '\n' ' ')"
 	fi
 else
-	expected="$(printf '%s:8443\n%s:8444\n' "$mgmt_addr" "$mgmt_addr" | sort -u)"
+	expected="$(printf '%s:8443\n%s:8444\n%s:8445\n' "$mgmt_addr" "$mgmt_addr" "$mgmt_addr" | sort -u)"
 	if [[ "$listeners" == "$expected" ]]; then
-		pass "ports 8443 and 8444 listen on $mgmt_addr only"
+		pass "ports 8443, 8444, and 8445 listen on $mgmt_addr only"
 	else
-		fail "ports 8443 and 8444 listen on $mgmt_addr only" "found: $(echo "$listeners" | tr '\n' ' ')"
+		fail "ports 8443, 8444, and 8445 listen on $mgmt_addr only" "found: $(echo "$listeners" | tr '\n' ' ')"
 	fi
 	check "the loopback does not answer on port 8443" bash -c '! curl -s -m 3 -o /dev/null http://127.0.0.1:8443/healthz'
 	check "the management address answers GET /healthz" curl -sf -m 5 "http://$mgmt_addr:8443/healthz"
@@ -104,14 +104,44 @@ else
 fi
 if [[ "$role" == all-in-one ]]; then
 	registered=no
-	for _ in $(seq 1 30); do
-		if curl -s -m 5 -H "Authorization: Bearer $token" "http://$mgmt_addr:8443/v1/agents" | grep -q '"local"'; then
+	for _ in $(seq 1 60); do
+		# Minting a token also lists the agent, so the check wants the state online: only
+		# a session over mutual TLS makes the agent online.
+		agents="$(curl -s -m 5 -H "Authorization: Bearer $token" "http://$mgmt_addr:8443/v1/agents")"
+		if grep -q '"local"' <<<"$agents" && grep -Eq '"state": ?"(online|reserved|busy)"' <<<"$agents"; then
 			registered=yes
 			break
 		fi
 		sleep 1
 	done
-	check "the local agent registered with the controller" test "$registered" = yes
+	check "the local agent registered with the controller over mutual TLS (state online)" test "$registered" = yes
+fi
+
+# Mutual TLS (IMG-06). The agent dials https://, passes the AGT-08 flags, and carries
+# no token on its command line. The controller has no plain gRPC listener.
+agent_cmdline() { tr '\0' ' ' <"/proc/$(pgrep -x fps-agent | head -n 1)/cmdline"; }
+cmdline_has() { [[ "$(agent_cmdline)" == *"$1"* ]]; }
+cmdline_has_no_token() {
+	local tok
+	tok="$(cat /var/lib/fps-agent/enroll.token 2>/dev/null || true)"
+	[[ -z "$tok" ]] || ! grep -qF -- "$tok" <<<"$(agent_cmdline)"
+}
+no_insecure_in_log() { ! journalctl -u fps-controller.service --no-pager 2>/dev/null | grep -q INSECURE; }
+if [[ "$role" != agent ]]; then
+	check "controller.yaml has no insecure_plain_grpc" bash -c '! grep -q insecure_plain_grpc /etc/fps/controller.yaml'
+	check "the controller log does not say INSECURE" no_insecure_in_log
+fi
+if [[ "$role" != controller ]]; then
+	check "the agent dials an https:// controller" cmdline_has '--controller https://'
+	check "the agent has --cert-dir /var/lib/fps-agent/pki" cmdline_has '--cert-dir /var/lib/fps-agent/pki'
+	check "the agent has a trust anchor (--tls-ca or --tls-ca-sha256)" bash -c "$(declare -f agent_cmdline); c=\"\$(agent_cmdline)\"; [[ \$c == *--tls-ca* ]]"
+	check "no enrollment token is on the agent command line" cmdline_has_no_token
+	check "no unit file of fps-agent names a token value" bash -c '! grep -rEq -- "--enroll-token[ =]|ENROLL_TOKEN=" /etc/systemd/system /usr/libexec/fps/fps-agent-start'
+fi
+if [[ "$role" == all-in-one ]]; then
+	check "all-in-one: the agent enrolled (agent.crt exists) and the token file is gone" bash -c 'test -s /var/lib/fps-agent/pki/agent.crt && test ! -e /var/lib/fps-agent/enroll.token'
+	agent_key_mode() { [[ "$(stat -c %a /var/lib/fps-agent/pki/agent.key)" == 600 ]]; }
+	check "all-in-one: the agent key has mode 0600" agent_key_mode
 fi
 
 # Forwarding is off, and the rules are loaded.

@@ -14,12 +14,18 @@ ConditionPathExists=!/run/fps/tune-reboot
 Type=simple
 # The agent moves test interfaces into network namespaces and binds pool
 # addresses, so it runs as root.
+# The plus sign runs the token step as root. It never puts a token on a command line.
+ExecStartPre=+/usr/libexec/fps/fps-enroll-token
 ExecStart=/usr/libexec/fps/fps-agent-start
+# The key, the certificate, and the enrollment token of the agent (mutual TLS).
+StateDirectory=fps-agent
+StateDirectoryMode=0700
 Restart=always
 LimitNOFILE=4194304
 RestartSec=5
-# Exit code 2 is a usage error or a kernel before Linux 6.3, which a restart
-# cannot fix.
+# Exit code 2 is a usage error, a kernel before Linux 6.3, or a failure of mutual
+# TLS that redialing cannot fix (a wrong CA, a refused token, no token), which a
+# restart cannot fix either. Write a new token and restart the unit.
 RestartPreventExitStatus=2
 NoNewPrivileges=yes
 ProtectHome=yes

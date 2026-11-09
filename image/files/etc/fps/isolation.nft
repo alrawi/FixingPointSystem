@@ -28,7 +28,7 @@ table inet fps_isolation {
 	# Management services: sshd, the REST API, and the agent gRPC service.
 	set mgmt_tcp_ports {
 		type inet_service
-		elements = { 22, 8443, 8444 }
+		elements = { 22, 8443, 8444, 8445 }
 	}
 
 	chain forward {

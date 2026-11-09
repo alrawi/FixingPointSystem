@@ -18,7 +18,7 @@ Group=fps
 EnvironmentFile=/run/fps/mgmt.env
 # The plus sign runs the token step as root.
 ExecStartPre=+/usr/libexec/fps/fps-init-token
-ExecStart=/usr/bin/fps-controller -config /etc/fps/controller.yaml -listen ${FPS_MGMT_ADDR}:8443 -grpc-listen ${FPS_MGMT_ADDR}:8444
+ExecStart=/usr/bin/fps-controller -config /etc/fps/controller.yaml -listen ${FPS_MGMT_ADDR}:8443 -grpc-listen ${FPS_MGMT_ADDR}:8444 -enroll-listen ${FPS_MGMT_ADDR}:8445
 StateDirectory=fps
 StateDirectoryMode=0750
 Restart=on-failure

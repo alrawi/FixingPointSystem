@@ -6,7 +6,7 @@ This directory builds the qcow2 appliance of work package IMG-01 and holds the r
 
 | Part | Where | Notes |
 |---|---|---|
-| Controller | `/usr/bin/fps-controller`, `fps-controller.service` | Runs as user `fps`. Listens on the management address only: REST on 8443, agent gRPC on 8444 |
+| Controller | `/usr/bin/fps-controller`, `fps-controller.service` | Runs as user `fps`. Listens on the management address only: REST on 8443, agent gRPC with mutual TLS on 8444, agent enrollment (HTTPS) on 8445 |
 | Agent | `/usr/bin/fps-agent`, `fps-agent.service` | Runs as root, dials the controller on the management address with agent id `local` |
 | Modules | `/usr/share/fps/modules/{http1,dns}` | The module trees that the agent loads |
 | Management interface | `fps-mgmt-net.service`, `/etc/systemd/network/10-fps-mgmt.network` | The first NIC (lowest PCI address) becomes `mgmt0` and takes DHCP. Every other NIC is a test NIC without any address |
@@ -91,7 +91,13 @@ write_files:
     permissions: "0644"
     content: |
       FPS_ROLE=agent
-      FPS_CONTROLLER_URI=http://192.0.2.10:8444
+      FPS_CONTROLLER_URI=https://192.0.2.10:8444
+      FPS_CA_SHA256=<64 hex digits, the ca_sha256 that the controller logs>
+  # The token that `fps-controller token -agent-id <id>` printed on the controller.
+  - path: /etc/fps/enroll.token
+    owner: root:root
+    permissions: "0600"
+    content: <the token>
 ```
 
 | Role | Services | Tuning |
@@ -100,7 +106,7 @@ write_files:
 | `controller` | `fps-controller` only | None |
 | `agent` | `fps-agent` only, dialing `FPS_CONTROLLER_URI` (required) | CPU isolation, hugepages, the agent sysctls, the notrack table, and one reboot on the first boot |
 
-The keys of `role.env` are `FPS_ROLE`, `FPS_CONTROLLER_URI`, and optionally `FPS_AGENT_ID` (default: the host name in the agent role), `FPS_AGENT_LABELS` (default `role=agent`), and `FPS_AGENT_EXTRA_ARGS`. The script reads them with a parser and never sources the file. An invalid file fails `fps-role.service` and starts neither service.
+The keys of `role.env` are `FPS_ROLE`, `FPS_CONTROLLER_URI`, and optionally `FPS_AGENT_ID` (default: the host name in the agent role), `FPS_AGENT_LABELS` (default `role=agent`), and `FPS_AGENT_EXTRA_ARGS`, plus the two keys of mutual TLS below. The script reads them with a parser and never sources the file. An invalid file fails `fps-role.service` and starts neither service.
 
 How it works at every boot: `fps-role.service` (after cloud-init) writes a marker `/run/fps/role.d/<unit>` for each unit of the role, enables those units and disables the others, and records the result in `/etc/fps/role.applied`. The two service units hold `ConditionPathExists` on their marker, so a unit outside the role stays inactive even before the enable and disable take effect. `fps-tune.service` then applies the profile of the role.
 
@@ -119,6 +125,22 @@ The kernel options go into `/etc/default/grub.d/60-fps-tune.cfg`, and `update-gr
 `/etc/fps/tune.applied` records what happened: `role`, `status` (`none`, `active`, `reboot-pending`, or `failed`), the CPU and memory sizes, the CPU lists, `hugepages_wanted` and `hugepages_allocated`, the options, `sysctl`, `notrack`, and the time. Restart `fps-tune.service` after a firewall or container tool loads `nf_conntrack` later, so that the notrack table follows.
 
 Test the logic without a VM with `make test-img`, which runs `image/tests/role-test.sh` and `image/tests/tune-test.sh`.
+
+### Mutual TLS and enrollment
+
+The controller and its agents talk over mutual TLS (IMG-06). The controller keeps its CA in `/var/lib/fps/pki`, serves gRPC on 8444 and the HTTPS enrollment endpoint on 8445, both on the management address, and `/etc/fps/controller.yaml` has no `insecure_plain_grpc`. An agent holds a certificate that the CA signed after the agent showed a one time token. The key and the certificate live in `/var/lib/fps-agent/pki` (mode 0700), and the agent renews the certificate on its own.
+
+- **all-in-one.** At the start of `fps-agent.service`, `/usr/libexec/fps/fps-enroll-token` checks the agent state. When the agent has neither a certificate nor a token file, it waits up to 30 seconds for the admin socket `/var/lib/fps/pki/admin.sock` and runs `fps-controller token -agent-id <id> -ttl 10m` as root, with the output redirected into `/var/lib/fps-agent/enroll.token` (umask 077). The agent trusts `/var/lib/fps/pki/ca.crt`, enrolls at `<mgmt address>:8445`, and deletes the token file, so a reboot does not enroll again. Nothing to configure.
+- **agent.** The seed carries the token and the trust anchor of the controller. Mint the token on the controller VM: `sudo fps-controller token -agent-id <id> -ttl 30m -config /etc/fps/controller.yaml`. It prints the token alone on standard output (the expiry goes to standard error), and the token is valid once. Read the CA from `/var/lib/fps/pki/ca.crt` on the controller or use its fingerprint from the line `certificate authority open` in the controller log (`ca_sha256`).
+
+| Seed data | Where | Meaning |
+|---|---|---|
+| `/etc/fps/enroll.token` | `write_files`, mode 0600 | The one time token. `fps-enroll-token` moves it to `/var/lib/fps-agent/enroll.token` and removes the original. A token that exists replaces a valid certificate, which re-enrolls a revoked agent |
+| `/etc/fps/controller-ca.pem` | `write_files`, mode 0644 | The CA certificate of the controller, passed as `--tls-ca` |
+| `FPS_CA_SHA256` | `role.env` | The SHA-256 fingerprint of the CA, passed as `--tls-ca-sha256`, used when no CA file is present. The first exchange then has the weaker trust that [Agent](../docs/wiki/Agent.md#trust) describes |
+| `FPS_ENROLL_ADDRESS` | `role.env`, optional | `host:port` of the enrollment endpoint. The default is the controller host on port 8445 |
+
+A token is never written into `role.env` (every user can read it, and `fps-role` refuses a `FPS_ENROLL_TOKEN` key), never given on a command line, and never put in a unit file or log. A controller URI with a DNS name or another address than the management address needs `tls_names` in `/etc/fps/controller.yaml`, because the controller certificate names the management address only. A bad CA or a refused token makes the agent exit with code 2, and systemd does not restart it: write a new token and run `systemctl restart fps-agent`. An `http://` controller URI still works against a controller in its plain development mode and gets no TLS flags.
 
 ## Boot test
 
@@ -140,9 +162,9 @@ Each check prints `PASS <what>` or `FAIL <what>`, and the last line is `RESULT: 
 | ssh as `fps-admin` with the seed key works | cloud-init NoCloud applied the seed |
 | Kernel is Linux 6.3 or newer | The AGT-06 requirement holds |
 | `mgmt0` has an IPv4 address, and the test NIC has none | The first NIC is the management interface and the other stays bare |
-| Ports 8443 and 8444 listen on the management address only | The controller does not listen on the loopback, a wildcard, or a test NIC |
+| Ports 8443, 8444, and 8445 listen on the management address only | The controller does not listen on the loopback, a wildcard, or a test NIC |
 | The loopback does not answer on 8443, and the management address answers `/healthz` | Same, from inside |
-| `fps-controller.service` and `fps-agent.service` are active, and the local agent registered | Both services start and talk over the management interface |
+| `fps-controller.service` and `fps-agent.service` are active, and the local agent is online (it registered over mutual TLS) | Both services start and talk over the management interface |
 | `net.ipv4.ip_forward` and `net.ipv6.conf.all.forwarding` are 0 | Forwarding is off |
 | Table `inet fps_isolation` is loaded and `fps-firewall.service` is active | The rules apply at boot |
 | Namespace test: the router forwards without rules (control), and after the shipped rules load, pings and port 8443 between `mgmt0` and a test interface are dropped, while the management side still answers | The shipped `/etc/fps/isolation.nft` blocks routing between the management and test interfaces |
@@ -153,7 +175,11 @@ The table above is the all-in-one role. Its checks run in every role, except tha
 |---|---|
 | all-in-one | Both services run with a process. `role.applied` and `tune.applied` name the role. No kernel option of the profile on `/proc/cmdline`, no grub drop-in, status `none`, and the agent sysctls hold |
 | controller | `fps-controller` runs. `fps-agent` is inactive, disabled, and has no process. Nothing of the tuning is present: no kernel option, no hugepages, no sysctl file, the default `somaxconn`, no notrack table |
-| agent | `fps-agent` runs and `fps-controller` is inactive, disabled, and has no process. Nothing listens on 8443 or 8444, and the forwarded API port answers nothing. `/proc/cmdline` holds the options of `fps-tune plan`, `/sys/devices/system/cpu/isolated` and `nohz_full` show `1-3`, `nr_hugepages` and `HugePages_Total` show 512, the agent is pinned to `1-3`, the sysctls and the agent file limit hold, the notrack table exists when `nf_conntrack` is loaded, and a second `fps-tune apply` changes nothing and does not reboot |
+| agent | `fps-agent` runs and `fps-controller` is inactive, disabled, and has no process. Nothing listens on 8443, 8444, or 8445, and the forwarded API port answers nothing. `/proc/cmdline` holds the options of `fps-tune plan`, `/sys/devices/system/cpu/isolated` and `nohz_full` show `1-3`, `nr_hugepages` and `HugePages_Total` show 512, the agent is pinned to `1-3`, the sysctls and the agent file limit hold, the notrack table exists when `nf_conntrack` is loaded, and a second `fps-tune apply` changes nothing and does not reboot |
+
+Mutual TLS adds these checks (IMG-06). In the controller and all-in-one roles, `controller.yaml` has no `insecure_plain_grpc` and the controller log has no `INSECURE` line. In the agent and all-in-one roles, the agent command line has `--controller https://`, `--cert-dir`, and a trust anchor, and holds no token. In the all-in-one role, `agent.crt` exists, the token file is gone, the key has mode 0600, and `GET /v1/agents` shows `local` with the state `online`.
+
+The agent role has no controller in its VM. With `FPS_TEST_CONTROLLER_BIN=/path/to/fps-controller image/boot-test.sh --role agent`, the script runs that controller on the host (ports 18444, 18445, and 18446 on the loopback, reached from the VM as 10.0.2.2), mints a token into a file with `fps-controller token`, seeds the token and the CA, and checks that `GET /v1/agents` on the host shows `edge-1` online and that the controller log shows an enrollment and no `INSECURE`. Without the variable, the seed carries a placeholder token and a fingerprint, and the check proves only that the agent runs against `https://` and keeps redialing the absent controller.
 
 The namespace test is `image/tests/isolation-netns.sh`. It builds a router with interfaces named `mgmt0` and `test0` in network namespaces inside the VM, and it can also run on any Linux host as root: `sudo image/tests/isolation-netns.sh`.
 

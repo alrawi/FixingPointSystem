@@ -115,4 +115,26 @@ FPS_ROLE_FILE="$dir/role.env" FPS_RUN_DIR="$dir/run" FPS_ROLE_APPLIED="$dir/appl
 	FPS_SYSTEMCTL="$work/systemctl" FPS_TEST_CALLS="$dir/calls" "$script" >/dev/null 2>&1 || rc=$?
 if [[ $rc != 0 && -z "$(markers)" ]]; then pass "a failed run removes the markers of the run before"; else fail "a failed run removes the markers of the run before"; fi
 
+
+run tls-keys $'FPS_ROLE=agent\nFPS_CONTROLLER_URI=https://192.0.2.10:8444\nFPS_CA_SHA256=sha256:AA:BB\n'
+if [[ $rc != 0 ]]; then pass "a fingerprint that is not 64 hex digits fails"; else fail "a fingerprint that is not 64 hex digits fails"; fi
+
+sha="$(printf 'ab%.0s' $(seq 1 32))"
+run tls-ok "$(printf 'FPS_ROLE=agent\nFPS_CONTROLLER_URI=https://192.0.2.10:8444\nFPS_CA_SHA256=sha256:%s\nFPS_ENROLL_ADDRESS=192.0.2.10:8445\n' "$sha")"
+if [[ $rc == 0 ]] && grep -qx "FPS_CA_SHA256=$sha" "$dir/run/role.env" && grep -q 'FPS_ENROLL_ADDRESS=192.0.2.10:8445' "$dir/run/role.env"; then
+	pass "FPS_CA_SHA256 and FPS_ENROLL_ADDRESS reach role.env, and the fingerprint prefix is stripped"
+else
+	fail "FPS_CA_SHA256 and FPS_ENROLL_ADDRESS reach role.env, and the fingerprint prefix is stripped (rc $rc: $(cat "$dir/out") $(cat "$dir/run/role.env" 2>/dev/null))"
+fi
+
+run token-in-role $'FPS_ROLE=agent\nFPS_CONTROLLER_URI=https://192.0.2.10:8444\nFPS_ENROLL_TOKEN=hunter2-secret\n'
+if [[ $rc != 0 && -z "$(markers)" ]] && ! grep -q 'hunter2' "$dir/out" && [[ ! -e "$dir/run/role.env" ]]; then
+	pass "a token inside role.env is refused, and its value is not printed"
+else
+	fail "a token inside role.env is refused, and its value is not printed"
+fi
+
+run bad-enroll-addr $'FPS_ROLE=agent\nFPS_CONTROLLER_URI=https://192.0.2.10:8444\nFPS_ENROLL_ADDRESS=nonsense\n'
+if [[ $rc != 0 ]]; then pass "an enrollment address without a port fails"; else fail "an enrollment address without a port fails"; fi
+
 ((fails == 0))
