@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #262 |
 | Branch | `wp/CTL-28` |
-| Pull request | not yet opened |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #268 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-c28a91, lease until 2026-11-09T05:22:59Z |
-| Last verified commit | none |
+| Last verified commit | 3e6cf97 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,21 +22,21 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 - [x] 2. Store the signature in the index entry; HTTP headers and error mapping
 - [x] 3. Compiler: ModuleRef and PlanModule carry the signature
 - [x] 4. Settings in `controller/internal/app` config, the wiring that uses them, and tests
-- [ ] 5. Wiki (Controller page, log entry), make targets, PR
+- [x] 5. Wiki (Controller page, log entry), make targets, PR
 
 ## Done and verified
 
 - `gofmt -l` on registry, compiler, app, and wiring is clean.
 - `python3 tools/plan/plan.py check`, `render --check`, and `lint` pass.
-- Go tests have not run locally (modules cannot be downloaded); the PR CI is the build and test loop.
+- CI on 3e6cf97 passed: gofmt, go vet, golangci-lint, and `go test -race` in the ctl workflow, plus every other check run.
 
 ## Remaining
 
-Open the PR, wait for CI, fix failures.
+none
 
 ## Next action
 
-Open the PR and poll CI.
+The coordinator reviews and merges PR #268.
 
 ## Blockers and open questions
 
@@ -68,3 +68,4 @@ cd controller && go test ./internal/registry/... ./internal/compiler/... ./inter
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-08T23:55Z | claude-c28a91 | claim | none | claimed issue 262 |
+| 2026-11-09T00:30Z | claude-c28a91 | ready for review | 3e6cf97 | PR #268, CI green |
