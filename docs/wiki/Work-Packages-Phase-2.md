@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 93 work packages. Packages marked critical path gate the phase.
+This page lists 98 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -104,6 +104,11 @@ flowchart LR
   CTL_36["CTL-36<br/>Serve stopCapture, capture files, and labeled criteria"]
   AGT_14["AGT-14<br/>TLS profiles, TLS key export, and labeled criteria in the agent"]
   MOD_20["MOD-20<br/>STARTTLS scenarios for smtp and imap"]
+  CLI_03["CLI-03<br/>Stabilize the CLI end to end test"]
+  AGT_15["AGT-15<br/>Stabilize the agent enrollment test"]
+  ENG_21["ENG-21<br/>Extension seams found by AGT-11"]
+  CTL_37["CTL-37<br/>Serve listConfigs and the controller version"]
+  ENG_22["ENG-22<br/>Refuse tls_upgrade on UDP in the flow loader"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -212,6 +217,12 @@ flowchart LR
   CON_17 --> MOD_20
   AGT_14 --> MOD_20
   MOD_08 --> MOD_20
+  CLI_02 --> CLI_03
+  AGT_10 --> AGT_15
+  AGT_11 --> ENG_21
+  CON_16 --> CTL_37
+  CTL_33 --> CTL_37
+  CON_17 --> ENG_22
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -313,6 +324,11 @@ flowchart LR
 | [CTL-36](#ctl-36-serve-stopcapture-capture-files-and-labeled-criteria) | Serve stopCapture, capture files, and labeled criteria | S | CON-15 |  |
 | [AGT-14](#agt-14-tls-profiles-tls-key-export-and-labeled-criteria-in-the-agent) | TLS profiles, TLS key export, and labeled criteria in the agent | M | ENG-20, CON-15, AGT-13 |  |
 | [MOD-20](#mod-20-starttls-scenarios-for-smtp-and-imap) | STARTTLS scenarios for smtp and imap | S | CON-17, AGT-14, MOD-08 |  |
+| [CLI-03](#cli-03-stabilize-the-cli-end-to-end-test) | Stabilize the CLI end to end test | S | CLI-02 |  |
+| [AGT-15](#agt-15-stabilize-the-agent-enrollment-test) | Stabilize the agent enrollment test | S | AGT-10 |  |
+| [ENG-21](#eng-21-extension-seams-found-by-agt-11) | Extension seams found by AGT-11 | S | AGT-11 |  |
+| [CTL-37](#ctl-37-serve-listconfigs-and-the-controller-version) | Serve listConfigs and the controller version | S | CON-16, CTL-33 |  |
+| [ENG-22](#eng-22-refuse-tls_upgrade-on-udp-in-the-flow-loader) | Refuse tls_upgrade on UDP in the flow loader | S | CON-17 |  |
 
 ## CON Contracts
 
@@ -678,6 +694,40 @@ Acceptance.
 
 - [ ] A loopback test runs an SMTP STARTTLS exchange whose second half is TLS, and the key log decrypts it.
 
+### ENG-21 Extension seams found by AGT-11
+
+Phase 2 · size S · workstream ENG
+
+- **Depends on.** AGT-11
+- **Paths.** `engine/fps-runtime/`
+
+fps_runtime::extension::close_reason is crate private, so the agent repeats the mapping; SessionExtensions::open tells every extension its transport is tcp; and the loader reads extension.wasm again after the tree digest, so a writer could swap it in between.
+
+Deliverables.
+
+- Export close_reason, add the transport to SessionKey, and load the extension from the bytes that were digested.
+
+Acceptance.
+
+- [ ] A UDP session's extension sees transport udp, and a test shows the extension bytes are the digested bytes.
+
+### ENG-22 Refuse tls_upgrade on UDP in the flow loader
+
+Phase 2 · size S · workstream ENG
+
+- **Depends on.** CON-17
+- **Paths.** `engine/fps-flow/`
+
+validate.py refuses tls_upgrade in a UDP flow since CON-17, but fps-flow's check_action accepts it and the runtime fails the session with internal.
+
+Deliverables.
+
+- A LoadError kind TlsUpgradeOnUdp and a verdicts.yaml case, so both validators agree.
+
+Acceptance.
+
+- [ ] The fps-flow parity fixtures pass with the new case.
+
 ## TRN Transport backends
 
 ### TRN-04 TLS transport module
@@ -896,6 +946,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A controller e2e run with an SMTP STARTTLS scenario passes through the real agent, and a capture of it decrypts with the exported keys; a server side criterion counts the server series.
+
+### AGT-15 Stabilize the agent enrollment test
+
+Phase 2 · size S · workstream AGT
+
+- **Depends on.** AGT-10
+- **Paths.** `engine/fps-agent/`
+
+tests/mtls.rs an_agent_enrolls_with_a_token_registers_and_renews failed once at its line 550 assertion and passed on re-run on 2026-11-09.
+
+Deliverables.
+
+- Find and fix the race without adding sleeps, and explain the cause in the PR.
+
+Acceptance.
+
+- [ ] The test passes 200 times in a row locally and in a temporary CI step, which is then removed.
 
 ## CTL Controller
 
@@ -1267,6 +1334,23 @@ Acceptance.
 
 - [ ] Contract tests for stopCapture and Capture.files pass against fake agents, and stopCapture leaves the pending operations list.
 
+### CTL-37 Serve listConfigs and the controller version
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CON-16, CTL-33
+- **Paths.** `controller/internal/store/`, `controller/internal/api/`, `controller/cmd/fps-controller/`
+
+CON-16 added listConfigs and Capabilities.controller_version; the controller answers listConfigs with 501 and leaves controller_version empty.
+
+Deliverables.
+
+- listConfigs with the contract's paging, newest first, and controller_version from the version stamp of CTL-33; fps config list in the CLI uses listConfigs when the controller serves it.
+
+Acceptance.
+
+- [ ] Contract tests of listConfigs pass, listConfigs leaves the pending operations list, and GET /v1/capabilities reports the stamped version.
+
 ## CLI Python SDK and command line client
 
 ### CLI-01 Python SDK
@@ -1302,6 +1386,23 @@ Deliverables.
 Acceptance.
 
 - [ ] End to end tests run against the controller with fake agents.
+
+### CLI-03 Stabilize the CLI end to end test
+
+Phase 2 · size S · workstream CLI
+
+- **Depends on.** CLI-02
+- **Paths.** `cli/`
+
+cli/e2e TestEndToEnd failed once and passed on re-run on 2026-11-09 with "fake agent state = AGENT_STATE_PREPARED, want RUNNING".
+
+Deliverables.
+
+- Find and fix the race without adding sleeps, and explain the cause in the PR.
+
+Acceptance.
+
+- [ ] The test passes 100 times in a row in a temporary CI step, which is then removed.
 
 ## MOD Application and content modules
 
