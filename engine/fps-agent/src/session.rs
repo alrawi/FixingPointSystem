@@ -19,6 +19,9 @@
 //! | `stop` | `PREPARED` | Releases the plan and moves to `IDLE` |
 //! | `stop` | `RUNNING`, `STOPPING` | Ramps down through `STOPPING`, or aborts, and answers with the final snapshot once the workers end |
 //! | `stop` | `STOPPED` | Answers with the final snapshot of the run |
+//! | `update_rates` | `RUNNING` | Sets the target of the whole agent for each named mix entry, completely or not at all |
+//! | `start_capture` | `RUNNING` | Starts a capture of the sessions that begin from now on |
+//! | `stop_capture` | any state that holds the plan | Ends the capture, joins its ring into one pcapng file, and answers with its digest |
 //!
 //! Any other command state pair fails with `ERROR_CODE_FAILED_PRECONDITION`,
 //! and a `plan_id` that does not name the loaded plan fails with
@@ -37,12 +40,14 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
+use fps_sched::Objective;
 use fps_stats::{Snapshot, SnapshotMeta, Timestamp};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Endpoint;
 
 use crate::assemble::Sides;
+use crate::control::{CaptureError, CaptureSettings, Captures, Rates, RatesError};
 use crate::convert::{self, plan_from_pb, snapshot_to_pb};
 use crate::modules::ModuleError;
 use crate::pb::{self, AgentState, ErrorCode};
@@ -205,6 +210,9 @@ pub struct Config {
     /// How long a run with server workers only keeps them after the load
     /// phases end.
     pub linger: Duration,
+    /// Where `StartCapture` writes its files and how large a capture ring
+    /// grows.
+    pub captures: CaptureSettings,
 }
 
 impl Config {
@@ -221,6 +229,7 @@ impl Config {
             redial_limit: Some(DEFAULT_REDIAL_LIMIT),
             jitter_seed: 0,
             linger: Duration::from_secs(5),
+            captures: CaptureSettings::default(),
         }
     }
 }
@@ -321,12 +330,26 @@ struct Core {
     start_waiter: Option<Reply>,
     last_heard: Option<Instant>,
     timeout: Duration,
+    /// What the run time commands need to know about the started plan.
+    live: Option<Live>,
+}
+
+/// The started plan, as far as `UpdateRates` and `StartCapture` need it.
+#[derive(Debug)]
+struct Live {
+    /// The names of the port bindings of the plan.
+    ports: Vec<String>,
+    /// The seed of the plan, which seeds the capture.
+    seed: u64,
+    /// The rate registries, once the workers run.
+    rates: Option<Rates>,
 }
 
 struct Shared {
     cfg: Config,
     core: Mutex<Core>,
     events: mpsc::UnboundedSender<Event>,
+    captures: Captures,
 }
 
 fn state_name(s: AgentState) -> &'static str {
@@ -371,6 +394,17 @@ fn code_of(e: &RunError) -> ErrorCode {
         RunError::Runtime(_) | RunError::Udp(_) | RunError::Stats(_) | RunError::Output(_) => {
             ErrorCode::Internal
         }
+    }
+}
+
+/// Maps a capture error to the error code of the contract.
+fn capture_code(e: &CaptureError) -> ErrorCode {
+    match e {
+        CaptureError::Invalid(_) => ErrorCode::InvalidArgument,
+        CaptureError::Precondition(_) => ErrorCode::FailedPrecondition,
+        CaptureError::Unimplemented(_) => ErrorCode::Unimplemented,
+        // A full or unwritable disk is not a failure of the run.
+        CaptureError::Io(_) => ErrorCode::ResourceExhausted,
     }
 }
 
@@ -431,14 +465,188 @@ impl Shared {
             Some(Body::Prepare(cmd)) => self.prepare(reply, cmd),
             Some(Body::Start(cmd)) => self.start(reply, &cmd),
             Some(Body::Stop(cmd)) => self.stop(reply, &cmd),
-            // Contract 0.2.0 commands that a later package implements.
-            Some(Body::UpdateRates(_) | Body::StartCapture(_) | Body::StopCapture(_)) => {
-                Some(error(
+            Some(Body::UpdateRates(cmd)) => Some(self.update_rates(reply, &cmd)),
+            Some(Body::StartCapture(cmd)) => Some(self.start_capture(reply, &cmd)),
+            Some(Body::StopCapture(cmd)) => self.stop_capture(reply, &cmd),
+        }
+    }
+
+    /// Serves `UpdateRates`, which sets the target of the whole agent for
+    /// each named mix entry. The registries check everything before they store
+    /// anything, so a refused command changes no rate.
+    fn update_rates(&self, reply: Reply, cmd: &pb::UpdateRatesCommand) -> pb::CommandResult {
+        let rates = {
+            let core = self.lock();
+            if core.state != AgentState::Running {
+                return error(
                     reply,
-                    ErrorCode::Unimplemented,
-                    "this agent does not implement the command yet".into(),
-                ))
+                    ErrorCode::FailedPrecondition,
+                    format!("update_rates is not allowed in {}", state_name(core.state)),
+                );
             }
+            if cmd.plan_id != core.plan_id {
+                return error(
+                    reply,
+                    ErrorCode::NotFound,
+                    format!("plan {} is not loaded", cmd.plan_id),
+                );
+            }
+            match core.live.as_ref().and_then(|l| l.rates.clone()) {
+                Some(r) => r,
+                None => {
+                    return error(
+                        reply,
+                        ErrorCode::FailedPrecondition,
+                        "the workers of the plan have not started yet".into(),
+                    )
+                }
+            }
+        };
+        let mut updates = Vec::with_capacity(cmd.rates.len());
+        for u in &cmd.rates {
+            let target = match u.target {
+                Some(pb::rate_update::Target::SessionsPerSecond(r)) => {
+                    Objective::SessionsPerSecond(r)
+                }
+                Some(pb::rate_update::Target::ConcurrentSessions(n)) => {
+                    Objective::ConcurrentSessions(n)
+                }
+                None => {
+                    return error(
+                        reply,
+                        ErrorCode::InvalidArgument,
+                        format!("mix entry {:?} has no target", u.mix_entry),
+                    )
+                }
+            };
+            updates.push((u.mix_entry.clone(), target));
+        }
+        match rates.update(&updates) {
+            Ok(()) => {
+                tracing::info!(plan_id = %cmd.plan_id, entries = updates.len(), "rates updated");
+                success(
+                    reply,
+                    pb::command_result::Result::UpdateRates(pb::UpdateRatesResult {
+                        applied_at: Some(convert::timestamp(SystemTime::now())),
+                    }),
+                )
+            }
+            Err(e @ RatesError::Internal(_)) => error(reply, ErrorCode::Internal, e.to_string()),
+            Err(e) => error(reply, ErrorCode::InvalidArgument, e.to_string()),
+        }
+    }
+
+    /// Serves `StartCapture`. The core lock stays held while the capture
+    /// starts, so a run that ends at this moment cannot miss the capture when
+    /// it ends the captures.
+    fn start_capture(&self, reply: Reply, cmd: &pb::StartCaptureCommand) -> pb::CommandResult {
+        let core = self.lock();
+        if core.state != AgentState::Running {
+            return error(
+                reply,
+                ErrorCode::FailedPrecondition,
+                format!("start_capture is not allowed in {}", state_name(core.state)),
+            );
+        }
+        if cmd.plan_id != core.plan_id {
+            return error(
+                reply,
+                ErrorCode::NotFound,
+                format!("plan {} is not loaded", cmd.plan_id),
+            );
+        }
+        let max_duration = match cmd.max_duration.as_ref() {
+            None => None,
+            Some(d) => match convert::duration("max_duration", Some(d)) {
+                Ok(d) => (!d.is_zero()).then_some(d),
+                Err(e) => return error(reply, ErrorCode::InvalidArgument, e.to_string()),
+            },
+        };
+        let (ports, seed) = core
+            .live
+            .as_ref()
+            .map_or((Vec::new(), 0), |l| (l.ports.clone(), l.seed));
+        let started = self.captures.start(
+            &cmd.plan_id,
+            &cmd.capture_id,
+            &cmd.port,
+            &cmd.filter,
+            cmd.snap_length,
+            cmd.max_bytes,
+            max_duration,
+            &ports,
+            seed,
+        );
+        drop(core);
+        match started {
+            Ok(entry) => {
+                tracing::info!(plan_id = %cmd.plan_id, capture_id = %cmd.capture_id, "capture started");
+                success(
+                    reply,
+                    pb::command_result::Result::StartCapture(pb::StartCaptureResult {
+                        capture_id: cmd.capture_id.clone(),
+                        started_at: Some(convert::timestamp(entry.started_at())),
+                    }),
+                )
+            }
+            Err(e) => error(reply, capture_code(&e), e.to_string()),
+        }
+    }
+
+    /// Serves `StopCapture`. Ending a capture joins its ring files, which can
+    /// take a while, so a thread does it and answers later. The command is
+    /// idempotent, because a capture that ended at a limit or at the end of
+    /// the run answers with what it left.
+    fn stop_capture(
+        self: &Arc<Self>,
+        reply: Reply,
+        cmd: &pb::StopCaptureCommand,
+    ) -> Option<pb::CommandResult> {
+        if cmd.plan_id != self.lock().plan_id {
+            return Some(error(
+                reply,
+                ErrorCode::NotFound,
+                format!("plan {} is not loaded", cmd.plan_id),
+            ));
+        }
+        let Some(entry) = self.captures.find(&cmd.plan_id, &cmd.capture_id) else {
+            return Some(error(
+                reply,
+                ErrorCode::NotFound,
+                format!(
+                    "capture {:?} is not known in plan {}",
+                    cmd.capture_id, cmd.plan_id
+                ),
+            ));
+        };
+        let shared = Arc::clone(self);
+        let id = cmd.capture_id.clone();
+        let spawned = std::thread::Builder::new()
+            .name("fps-agent-capture".into())
+            .spawn(move || {
+                let result = match shared.captures.finish(&entry) {
+                    Ok(d) => success(
+                        reply,
+                        pb::command_result::Result::StopCapture(pb::StopCaptureResult {
+                            capture_id: id,
+                            packets: d.packets,
+                            bytes: d.bytes,
+                            dropped: d.dropped,
+                            digest: d.digest,
+                        }),
+                    ),
+                    // Not INTERNAL, which would move a healthy run to FAILED.
+                    Err(message) => error(reply, ErrorCode::ResourceExhausted, message),
+                };
+                shared.emit(Event::Result(reply.session, result));
+            });
+        match spawned {
+            Ok(_) => None,
+            Err(e) => Some(error(
+                reply,
+                ErrorCode::ResourceExhausted,
+                format!("spawn the capture thread: {e}"),
+            )),
         }
     }
 
@@ -511,6 +719,8 @@ impl Shared {
                         core.state = AgentState::Prepared;
                         core.prepared = Some((p, RunParams { interval }));
                         core.last_final = None;
+                        core.live = None;
+                        shared.captures.reset(&plan.plan_id);
                         success(
                             reply,
                             pb::command_result::Result::Prepare(pb::PrepareResult {
@@ -601,6 +811,16 @@ impl Shared {
             self.emit(Event::StateChanged);
             return Some(error(reply, ErrorCode::Internal, message));
         };
+        core.live = Some(Live {
+            ports: prepared
+                .plan()
+                .ports
+                .iter()
+                .map(|p| p.name.clone())
+                .collect(),
+            seed: prepared.plan().seed,
+            rates: None,
+        });
         let start_at = cmd
             .start_at
             .as_ref()
@@ -724,7 +944,7 @@ impl Shared {
 
     /// Runs a started plan on the run driver thread.
     fn drive(
-        &self,
+        self: &Arc<Self>,
         generation: u64,
         prepared: Prepared,
         params: RunParams,
@@ -758,13 +978,21 @@ impl Shared {
                 return;
             }
         }
-        let mut active = match prepared.start(params.interval) {
+        let mut active = match prepared.start_with(params.interval, self.captures.cell()) {
             Ok(a) => a,
             Err(e) => {
                 self.failed(generation, format!("start the workers: {}", chain(&e)));
                 return;
             }
         };
+        {
+            let mut core = self.lock();
+            if core.generation == generation {
+                if let Some(live) = core.live.as_mut() {
+                    live.rates = Some(active.rates());
+                }
+            }
+        }
         if let Some(reply) = self.lock().start_waiter.take() {
             self.emit(Event::Result(
                 reply.session,
@@ -794,6 +1022,7 @@ impl Shared {
             if let Some(message) = active.enforce_grace() {
                 tracing::warn!(plan_id = %plan_id, "{message}");
             }
+            self.end_captures_over_limit();
             let now = Instant::now();
             if now < next {
                 std::thread::sleep((next - now).min(Duration::from_millis(20)));
@@ -846,6 +1075,22 @@ impl Shared {
         }
     }
 
+    /// Ends the captures that reached their byte or time limit. A thread joins
+    /// the ring, so the run driver keeps its snapshot interval.
+    fn end_captures_over_limit(self: &Arc<Self>) {
+        for entry in self.captures.over_limit() {
+            let shared = Arc::clone(self);
+            let spawned = std::thread::Builder::new()
+                .name("fps-agent-capture".into())
+                .spawn(move || {
+                    let _ = shared.captures.finish(&entry);
+                });
+            if let Err(e) = spawned {
+                tracing::warn!(error = %e, "could not end a capture at its limit, the run end ends it");
+            }
+        }
+    }
+
     fn meta(&self, plan_id: &str, sequence: u64, phase: String) -> SnapshotMeta {
         SnapshotMeta {
             plan_id: plan_id.to_owned(),
@@ -861,9 +1106,12 @@ impl Shared {
     fn finished(&self, generation: u64, last: Option<pb::CounterSnapshot>) {
         let mut core = self.lock();
         if core.generation != generation {
+            drop(core);
+            self.captures.finish_all();
             return;
         }
         core.state = AgentState::Stopped;
+        core.live = None;
         core.phase.clear();
         core.last_final.clone_from(&last);
         let waiters = std::mem::take(&mut core.stop_waiters);
@@ -900,15 +1148,22 @@ impl Shared {
             ));
         }
         self.emit(Event::StateChanged);
+        // The workers have ended, so every session reached the ring. A
+        // StartCapture that came before the state change is in the book by
+        // now, and one that comes later finds the state STOPPED and fails.
+        self.captures.finish_all();
     }
 
     /// Moves to `FAILED` with `message` and fails the commands that wait.
     fn failed(&self, generation: u64, message: String) {
         let mut core = self.lock();
         if core.generation != generation {
+            drop(core);
+            self.captures.finish_all();
             return;
         }
         core.state = AgentState::Failed;
+        core.live = None;
         core.phase.clear();
         core.message.clone_from(&message);
         let mut waiters = std::mem::take(&mut core.stop_waiters);
@@ -922,6 +1177,7 @@ impl Shared {
             ));
         }
         self.emit(Event::StateChanged);
+        self.captures.finish_all();
     }
 
     /// Aborts any run, releases the plan, and moves to `IDLE`, because the
@@ -935,6 +1191,7 @@ impl Shared {
         core.phase.clear();
         core.message.clear();
         core.prepared = None;
+        core.live = None;
         core.stop_waiters.clear();
         core.start_waiter = None;
         if let Some(d) = &core.driver {
@@ -1128,8 +1385,10 @@ where
             start_waiter: None,
             last_heard: None,
             timeout: DEFAULT_HEARTBEAT_TIMEOUT,
+            live: None,
         }),
         events: tx,
+        captures: Captures::new(cfg.captures.clone()),
         cfg,
     });
     let dog = tokio::spawn(watchdog(Arc::clone(&shared)));

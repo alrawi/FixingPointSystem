@@ -26,10 +26,11 @@ use fps_sched::LoadProfile;
 use fps_stats::{metric, Snapshot, SnapshotMeta, StatsError, Timestamp};
 
 use crate::assemble::{assemble, load_profile, Sides};
+use crate::control::{CaptureCell, Rates};
 use crate::criteria::{evaluate, CriterionResult};
 use crate::modules::{self, ModuleError};
 use crate::plan::{Plan, PlanError};
-use crate::udp::{UdpError, UdpRuntime};
+use crate::udp::{UdpError, UdpHooks, UdpRuntime};
 
 /// How long server workers let open sessions finish after the stop.
 pub const SERVER_RAMP_DOWN: Duration = Duration::from_secs(2);
@@ -137,6 +138,7 @@ impl SideRun {
         interval: Duration,
         tcp: Vec<fps_runtime::WorkerConfig>,
         udp: Vec<fps_runtime::WorkerConfig>,
+        hooks: UdpHooks,
     ) -> Result<Self, RunError> {
         let tcp = if tcp.is_empty() {
             None
@@ -148,7 +150,7 @@ impl SideRun {
         let udp = if udp.is_empty() {
             None
         } else {
-            Some(UdpRuntime::start(seed, interval, udp)?)
+            Some(UdpRuntime::start_with(seed, interval, udp, hooks)?)
         };
         Ok(Self { tcp, udp })
     }
@@ -275,6 +277,15 @@ impl Prepared {
     /// Starts the server workers and then the client workers, which take
     /// cumulative snapshots every `interval`.
     pub fn start(self, interval: Duration) -> Result<Active, RunError> {
+        self.start_with(interval, CaptureCell::new())
+    }
+
+    /// Like [`Prepared::start`], and the UDP workers tap the sessions that
+    /// begin while `capture` holds a capture.
+    ///
+    /// The TCP workers of `fps-runtime` do not read the cell yet, see the
+    /// Agent page.
+    pub fn start_with(self, interval: Duration, capture: CaptureCell) -> Result<Active, RunError> {
         let Prepared {
             plan,
             assembly,
@@ -282,17 +293,26 @@ impl Prepared {
             reports,
             ..
         } = self;
+        // A client session holds both directions of its conversation, so a
+        // process that runs clients taps those and not its server sessions.
+        let tap_servers = !assembly.has_clients();
+        let hooks = UdpHooks {
+            capture,
+            tap_servers,
+        };
         let servers = SideRun::start(
             plan.seed,
             interval,
             assembly.tcp_servers,
             assembly.udp_servers,
+            hooks.clone(),
         )?;
         let clients = match SideRun::start(
             plan.seed,
             interval,
             assembly.tcp_clients,
             assembly.udp_clients,
+            hooks,
         ) {
             Ok(c) => c,
             Err(e) => {
@@ -358,6 +378,17 @@ impl Active {
     /// Returns the plan.
     pub fn plan(&self) -> &Plan {
         &self.plan
+    }
+
+    /// Returns the rate registries of the client workers, which
+    /// `UpdateRates` drives. A mix entry that no client worker of this process
+    /// serves is not in them.
+    pub fn rates(&self) -> Rates {
+        Rates::new(
+            self.clients.tcp.as_ref().map(RuntimeHandle::rate_control),
+            self.clients.udp.as_ref().map(UdpRuntime::rate_control),
+            self.plan.mix.iter().map(|e| e.id.clone()).collect(),
+        )
     }
 
     /// Returns the time since the start.
