@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Build context of Dockerfile.agent. The agent build needs the Cargo workspace
+# (every member manifest, even for `-p fps-agent`), the contracts, and the modules.
+.git
+**/target
+**/target-*
+**/node_modules
+image/output
+image/.cache
+image/build
+docs
+ui
+capture
+realism
+bench

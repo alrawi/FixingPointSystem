@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Test configuration of the container lab (IMG-05). run-test.sh replaces the @NAME@
+# markers and stores the result twice through POST /v1/configs: once for the client
+# agent (agent1, which runs with --side client) and once for the server agent (agent2,
+# --side server), as the Gate 1 suite does. Both plans carry both pools, and each
+# agent runs its own side only.
+#
+# The pools use the container addresses, so the agents need no capability and no
+# route. A pool of /31 holds one usable host, and the host is network + 1:
+#   clients 172.30.77.10/31 -> 172.30.77.11, the address of agent1
+#   servers 172.30.77.12/31 -> 172.30.77.13, the address of agent2
+# The agent does not configure addresses (docs/wiki/Agent.md), so a pool address
+# must already belong to the container.
+#
+# The scenarios listen above port 1024, so the server needs no NET_BIND_SERVICE.
+# Two mix entries must not listen on the same transport and port.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: container_lab_@ROLE@
+  description: HTTP/1.1 and DNS between two agent containers, run by the @ROLE@ agent.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: @AGENT@/eth0 }
+    - { name: server0, location: @AGENT@/eth0 }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 172.30.77.10/31, count: 1 }
+    - { name: servers, port: server0, role: server, ipv4: 172.30.77.12/31, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: http1/single_fetch, weight: 0.6, params: { server_port: 18080, body_size: 4096 } }
+    - { scenario: dns/lookup_a, weight: 0.4, params: { server_port: 15353 } }
+load:
+  objective: { type: sessions_per_second, value: @RATE@ }
+  phases:
+    - { name: ramp_up, duration_s: 2, shape: linear }
+    - { name: steady, duration_s: @STEADY_S@, shape: hold }
+timeline: { seed: 7 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "<=", value: 0.01 }

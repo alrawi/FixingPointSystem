@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Build context of Dockerfile.controller. The controller build needs controller/,
+# the lab files of image/containers, and the module trees for the tools target.
+.git
+**/target
+**/target-*
+**/node_modules
+image/output
+image/.cache
+image/build
+docs
+ui
+capture
+realism
+bench
+engine
+spikes
