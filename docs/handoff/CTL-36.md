@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #323 |
 | Branch | `wp/CTL-36` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps, CI pending) |
+| Pull request | #327 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-c7a1e4, lease until 2026-11-09T21:23:49Z |
-| Last verified commit | none |
+| Last verified commit | 985b89f (ctl job green), 50b8a3a removes the temporary workflow |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -25,15 +25,15 @@ The controller serves `stopCapture`, fills `Capture.files` from the per agent re
 
 ## Done and verified
 
-Code, tests, docs, and log entry written. gofmt, plan.py check, render --check, and lint pass locally. Go tests cannot run here, so CI is the first run.
+Code, tests, docs, and log entry written. The ctl job of CI is green on 985b89f. A temporary stress workflow ran the flaky test 200 times under load with -race: the old fake agent failed once (attempt 2 starts at offset 400, the controller held 500), the fixed one passed 200 of 200 and the whole captures package passed 20 times. The workflow is removed in 50b8a3a.
 
 ## Remaining
 
-CI result; remove `.github/workflows/tmp-ctl-36-stress.yml` before review.
+Review.
 
 ## Next action
 
-Open the PR, read CI, fix failures.
+Review PR #327.
 
 ## Blockers and open questions
 
@@ -60,3 +60,4 @@ cd controller && GOWORK=off go test -race ./internal/captures/ ./internal/compil
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T20:53Z | claude-c7a1e4 | claim | - | claimed #323 |
+| 2026-11-09T20:10Z | claude-c7a1e4 | finish | 50b8a3a | PR #327, ctl green |
