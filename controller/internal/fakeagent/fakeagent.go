@@ -10,6 +10,11 @@
 //	dial := fakeagent.Serve(t, mgr)
 //	a, err := fakeagent.Start(ctx, fakeagent.Options{ID: "agent-a", Dial: dial})
 //
+// A fake agent also takes UpdateRates in AGENT_STATE_RUNNING, all entries or
+// none, and keeps the session rate that it runs (Agent.Rates). With
+// Options.Traffic it simulates sessions at that rate and reports their bytes,
+// so a calibration loop closes against a real Manager.
+//
 // The fake agent reads the wall clock only for its agent_time fields and for
 // automatic heartbeats, which Options.AutoHeartbeat turns on.
 package fakeagent
@@ -80,6 +85,10 @@ type Options struct {
 	// OnCommand runs before the agent applies a command. A non-nil error
 	// answers the command with it and leaves the state unchanged.
 	OnCommand func(*agentpb.SessionResponse) *agentpb.CommandError
+	// Traffic turns on the traffic simulation, which reports counters while the
+	// agent runs and follows UpdateRates. Without it, the agent reports no
+	// counters of its own.
+	Traffic *Traffic
 }
 
 // Errors of the fake agent.
@@ -112,6 +121,7 @@ type Agent struct {
 	resp     *agentpb.RegisterResponse
 	done     chan struct{}
 	endErr   error
+	sim      trafficSim
 
 	sendMu sync.Mutex
 }
@@ -412,6 +422,7 @@ func (a *Agent) Finish() error {
 		return ErrNotRunning
 	}
 	a.mu.Unlock()
+	a.StopTraffic()
 	snap := a.nextSnapshot(true, nil)
 	a.setState(agentpb.AgentState_AGENT_STATE_STOPPED, "", "")
 	if err := a.send(stream, &agentpb.SessionRequest{Body: &agentpb.SessionRequest_Snapshot{Snapshot: snap}}); err != nil {
@@ -508,6 +519,7 @@ func (a *Agent) apply(cmd *agentpb.SessionResponse) *agentpb.CommandResult {
 		a.mu.Lock()
 		a.state, a.planID, a.phase, a.message, a.snapSeq = agentpb.AgentState_AGENT_STATE_PREPARED, id, "", "", 0
 		a.mu.Unlock()
+		a.sim.load(body.Prepare.GetPlan())
 		_ = a.notify()
 		res.Result = &agentpb.CommandResult_Prepare{Prepare: &agentpb.PrepareResult{PlanId: id, State: agentpb.AgentState_AGENT_STATE_PREPARED}}
 	case *agentpb.SessionResponse_Start:
@@ -518,6 +530,7 @@ func (a *Agent) apply(cmd *agentpb.SessionResponse) *agentpb.CommandResult {
 			return fail(agentpb.ErrorCode_ERROR_CODE_NOT_FOUND, "plan %s is not loaded", body.Start.GetPlanId())
 		}
 		a.setState(agentpb.AgentState_AGENT_STATE_RUNNING, "steady", "")
+		a.startTraffic()
 		_ = a.notify()
 		res.Result = &agentpb.CommandResult_Start{Start: &agentpb.StartResult{StartedAt: timestamppb.Now()}}
 	case *agentpb.SessionResponse_Stop:
@@ -532,6 +545,7 @@ func (a *Agent) apply(cmd *agentpb.SessionResponse) *agentpb.CommandResult {
 			a.mu.Unlock()
 			stop.State = agentpb.AgentState_AGENT_STATE_IDLE
 		case agentpb.AgentState_AGENT_STATE_RUNNING, agentpb.AgentState_AGENT_STATE_STOPPING:
+			a.StopTraffic()
 			stop.FinalSnapshot = a.nextSnapshot(true, nil)
 			a.setState(agentpb.AgentState_AGENT_STATE_STOPPED, "", "")
 			stop.State = agentpb.AgentState_AGENT_STATE_STOPPED
@@ -542,6 +556,17 @@ func (a *Agent) apply(cmd *agentpb.SessionResponse) *agentpb.CommandResult {
 		}
 		_ = a.notify()
 		res.Result = &agentpb.CommandResult_Stop{Stop: stop}
+	case *agentpb.SessionResponse_UpdateRates:
+		if state != agentpb.AgentState_AGENT_STATE_RUNNING {
+			return fail(agentpb.ErrorCode_ERROR_CODE_FAILED_PRECONDITION, "update rates in state %s", state)
+		}
+		if body.UpdateRates.GetPlanId() != plan {
+			return fail(agentpb.ErrorCode_ERROR_CODE_NOT_FOUND, "plan %s is not loaded", body.UpdateRates.GetPlanId())
+		}
+		if err := a.sim.update(body.UpdateRates); err != nil {
+			return fail(agentpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "update rates: %v", err)
+		}
+		res.Result = &agentpb.CommandResult_UpdateRates{UpdateRates: &agentpb.UpdateRatesResult{AppliedAt: timestamppb.Now()}}
 	default:
 		return fail(agentpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "command %d has no body", cmd.GetCommandId())
 	}
