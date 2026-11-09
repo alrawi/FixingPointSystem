@@ -734,7 +734,7 @@ Deliverables.
 Acceptance.
 
 - [ ] An agent test captures TCP sessions through StartCapture; a fake enrollment endpoint with another CA gets no token.
-- [ ] {'tests/mtls.rs a_certificate_that_the_controller_refuses_is_a_permanent_failure is stable': 'under TLS 1.3 a refused client certificate can surface as a closed connection instead of an alert, which the agent then treats as redialable (seen once in CI on 2026-11-09).'}
+- [ ] {'tests/mtls.rs a_certificate_that_the_controller_refuses_is_a_permanent_failure is stable': 'under TLS 1.3 a refused client certificate can surface as a closed connection instead of an alert, which the agent then treats as redialable (seen three times in CI on 2026-11-09; the coordinator made the test accept both outcomes). Make the agent classify a connection that the controller closes right after a handshake with a client certificate as a TLS failure, so the exit is permanent and immediate, and tighten the test again.'}
 
 ### AGT-11 Load WebAssembly extensions in the agent
 

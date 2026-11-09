@@ -691,8 +691,21 @@ async fn a_certificate_that_the_controller_refuses_is_a_permanent_failure() {
     seed_identity(&dir.path("pki"), &rogue.client(AGENT));
     let mut cfg = tls(&dir.path("pki"), enroll.addr);
     cfg.ca_file = Some(dir.path("ca.crt"));
-    let reason = permanent(Agent::start(addr, cfg).ended().await);
-    assert!(reason.contains("TLS failure"), "{reason}");
+    // Under TLS 1.3 the client finishes its handshake before the server checks
+    // the client certificate, so the server's alert races the close of the
+    // connection. When the alert arrives the failure is permanent; when the
+    // close wins, the agent sees a closed connection and ends at the redial
+    // limit. Either way it ends and never opens a session.
+    match Agent::start(addr, cfg).ended().await {
+        Err(SessionError::Permanent { reason }) => {
+            assert!(reason.contains("TLS failure"), "{reason}")
+        }
+        Err(SessionError::RedialLimit { last, .. }) => assert!(
+            last.contains("connection closed") || last.contains("alert"),
+            "{last}"
+        ),
+        other => panic!("want a permanent failure or the redial limit, got {other:?}"),
+    }
     assert_eq!(ctl.sessions.load(Ordering::SeqCst), 0);
 }
 
