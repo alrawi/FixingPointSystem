@@ -21,6 +21,8 @@
 FROM golang:1.24.7-bookworm@sha256:b8bae5bd9ba9b1f89b635c91c24cc75cea335a16fb5076310f38566fc674b1ec AS build
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 WORKDIR /src/controller
+# controller/go.mod replaces the golden test helper module with ../tests/golden/go.
+COPY tests/golden/go /src/tests/golden/go
 COPY controller/go.mod controller/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     GOWORK=off GOTOOLCHAIN=local go mod download
