@@ -1,0 +1,21 @@
+220 (vsFTPd 3.0.5)
+331 Please specify the password.
+230 Login successful.
+215 UNIX Type: L8
+211-Features:
+ EPRT
+ EPSV
+ MDTM
+ PASV
+ REST STREAM
+ SIZE
+ TVFS
+ UTF8
+211 End
+257 "/srv/ftp" is the current directory
+250 Directory successfully changed.
+200 Switching to ASCII mode.
+227 Entering Passive Mode (192,0,2,10,198,115).
+150 Here comes the directory listing.
+226 Directory send OK.
+221 Goodbye.

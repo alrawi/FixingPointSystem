@@ -1,0 +1,12 @@
+220 (vsFTPd 3.0.5)
+331 Please specify the password.
+230 Login successful.
+215 UNIX Type: L8
+257 "/srv/ftp" is the current directory
+250 Directory successfully changed.
+200 Switching to Binary mode.
+213 702
+229 Entering Extended Passive Mode (|||50571|).
+150 Opening BINARY mode data connection for steizuvain_klimer-202609.pdf (702 bytes).
+226 Transfer complete.
+221 Goodbye.
