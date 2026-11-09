@@ -32,11 +32,13 @@ use fps_agent::capabilities::{AfXdpSupport, HostCapabilities};
 use fps_agent::identity::{parse_fingerprint, TlsConfig, TokenSource, DEFAULT_ENROLL_PORT};
 use fps_agent::session::Config;
 use fps_agent::session::SessionError;
+use fps_agent::trust::{ModulePolicy, TrustStore};
 use fps_agent::{detect, require_kernel, Outcome, RunOptions, SystemRoot};
 
 const USAGE: &str = "usage: fps-agent capabilities [--root DIR]
-       fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS]
+       fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS] [--module-trust-store FILE] [--dev-modules]
        fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--label KEY=VALUE]... [--redial-limit SECONDS] [--capture-dir DIR] [--capture-retention SECONDS]
+                          [--module-trust-store FILE] [--dev-modules]
                           [--cert-dir DIR [--tls-ca FILE] [--tls-ca-sha256 HEX] [--enroll-address HOST:PORT]
                            [--enroll-token-file FILE | --enroll-token-env NAME]]   (https:// controllers)";
 
@@ -206,10 +208,16 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
     let mut capture_dir = None;
     let mut retention = Some(fps_agent::control::DEFAULT_CAPTURE_RETENTION);
     let mut tls = TlsFlags::default();
+    let mut signing = SigningFlags::default();
     let mut it = args.iter();
     while let Some(flag) = it.next() {
+        if flag == "--dev-modules" {
+            signing.dev_modules = true;
+            continue;
+        }
         let value = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
+            "--module-trust-store" => signing.store = Some(PathBuf::from(value)),
             "--controller" => controller = Some(value.clone()),
             "--agent-id" => id = Some(value.clone()),
             "--modules" => modules = Some(PathBuf::from(value)),
@@ -267,6 +275,7 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
         modules.ok_or("missing --modules")?,
     );
     cfg.tls = tls;
+    cfg.policy = signing.policy()?;
     cfg.sides = sides;
     cfg.capabilities.labels = labels;
     cfg.redial_limit = redial_limit;
@@ -275,6 +284,33 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
         cfg.captures.dir = dir;
     }
     Ok((cfg, root))
+}
+
+/// The module signature flags of `run` and `connect` (AGT-04).
+#[derive(Default)]
+struct SigningFlags {
+    store: Option<PathBuf>,
+    dev_modules: bool,
+}
+
+impl SigningFlags {
+    /// Reads the trust store file, so a malformed file stops the agent at
+    /// startup and not at the first plan. Without a file the policy asks for
+    /// no signature, like a controller without a trust store.
+    fn policy(self) -> Result<ModulePolicy, String> {
+        let store = match self.store {
+            Some(path) => Some(
+                TrustStore::load(&path)
+                    .map_err(|e| format!("--module-trust-store: {}", chain(&e)))?,
+            ),
+            None => None,
+        };
+        Ok(ModulePolicy {
+            store,
+            dev_modules: self.dev_modules,
+            ..ModulePolicy::default()
+        })
+    }
 }
 
 /// The TLS flags of `connect`, before they meet the controller address.
@@ -351,10 +387,16 @@ fn chain(e: &dyn std::error::Error) -> String {
 
 fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
     let (mut plan, mut modules, mut sides, mut linger) = (None, None, Sides::Both, None);
+    let mut signing = SigningFlags::default();
     let mut it = args.iter();
     while let Some(flag) = it.next() {
+        if flag == "--dev-modules" {
+            signing.dev_modules = true;
+            continue;
+        }
         let value = it.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
+            "--module-trust-store" => signing.store = Some(PathBuf::from(value)),
             "--plan" => plan = Some(PathBuf::from(value)),
             "--modules" => modules = Some(PathBuf::from(value)),
             "--side" => {
@@ -376,6 +418,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
         modules.ok_or("missing --modules")?,
     );
     opts.sides = sides;
+    opts.policy = signing.policy()?;
     if let Some(l) = linger {
         opts.linger = l;
     }

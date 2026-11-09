@@ -305,6 +305,8 @@ pub fn plan_from_pb(p: &pb::Plan) -> Result<Plan, PlanError> {
                     name: m.name.clone(),
                     version: m.version.clone(),
                     digest: m.digest.clone(),
+                    signature: m.signature.clone(),
+                    signature_key_id: m.signature_key_id.clone(),
                     settings: m
                         .settings
                         .as_ref()
@@ -472,9 +474,9 @@ pub fn plan_to_pb(p: &Plan) -> pb::Plan {
                 name: m.name.clone(),
                 version: m.version.clone(),
                 digest: m.digest.clone(),
+                signature: m.signature.clone(),
+                signature_key_id: m.signature_key_id.clone(),
                 settings: json_to_struct(&m.settings),
-                // The plan mirror has no signature yet, which AGT-04 adds.
-                ..Default::default()
             })
             .collect(),
         scenarios: p

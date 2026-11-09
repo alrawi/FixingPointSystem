@@ -15,6 +15,8 @@
 //!    functions, [`assemble`] turns the plan into engine workers, `fps-runtime`
 //!    runs the TCP flows, [`udp`] runs the UDP flows over the datagram
 //!    openers, and [`criteria`] evaluates the pass and fail rules.
+//!    [`trust`] verifies the signature of every module digest against the
+//!    trust store of the agent (AGT-04).
 //! 3. The controller session. [`session::serve`] dials the controller,
 //!    registers, and serves `prepare`, `start`, and `stop` on the session
 //!    stream with the run path of the standalone mode. [`pb`] holds the
@@ -37,6 +39,7 @@ pub mod proto;
 pub mod run;
 pub mod session;
 pub mod sysroot;
+pub mod trust;
 pub mod udp;
 
 pub use capabilities::{detect, require_kernel, HostCapabilities};

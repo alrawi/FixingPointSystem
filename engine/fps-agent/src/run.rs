@@ -32,6 +32,7 @@ use crate::control::{CaptureCell, Rates};
 use crate::criteria::{evaluate_for, CriterionResult};
 use crate::modules::{self, ModuleError};
 use crate::plan::{Plan, PlanError};
+use crate::trust::ModulePolicy;
 use crate::udp::{UdpError, UdpHooks, UdpRuntime};
 
 /// How long server workers let open sessions finish after the stop.
@@ -55,6 +56,9 @@ pub struct RunOptions {
     /// How long a process with server workers only keeps them after the load
     /// phases end.
     pub linger: Duration,
+    /// What the agent requires of the module signatures. The default asks for
+    /// none.
+    pub policy: ModulePolicy,
 }
 
 impl RunOptions {
@@ -67,6 +71,7 @@ impl RunOptions {
             sides: Sides::Both,
             interval: Duration::from_secs(1),
             linger: Duration::from_secs(5),
+            policy: ModulePolicy::default(),
         }
     }
 }
@@ -235,6 +240,7 @@ pub struct Prepared {
     profile: LoadProfile,
     reports: Side,
     notes: Vec<String>,
+    warnings: Vec<String>,
     summary: String,
 }
 
@@ -247,11 +253,16 @@ impl std::fmt::Debug for Prepared {
     }
 }
 
-/// Checks `plan`, loads its modules from `modules_dir`, and assembles the
-/// workers of `sides`.
-pub fn prepare(plan: Plan, modules_dir: &Path, sides: Sides) -> Result<Prepared, RunError> {
+/// Checks `plan`, loads its modules from `modules_dir` under `policy`, and
+/// assembles the workers of `sides`.
+pub fn prepare(
+    plan: Plan,
+    modules_dir: &Path,
+    sides: Sides,
+    policy: &ModulePolicy,
+) -> Result<Prepared, RunError> {
     plan.check()?;
-    let loaded = modules::load(&plan, modules_dir)?;
+    let loaded = modules::load(&plan, modules_dir, policy)?;
     let assembly = assemble(&plan, &loaded, sides)?;
     let profile = load_profile(&plan)?;
     let reports = if assembly.has_clients() {
@@ -275,6 +286,7 @@ pub fn prepare(plan: Plan, modules_dir: &Path, sides: Sides) -> Result<Prepared,
         profile,
         reports,
         notes: loaded.notes,
+        warnings: loaded.warnings,
         summary,
     })
 }
@@ -283,6 +295,12 @@ impl Prepared {
     /// Returns the plan.
     pub fn plan(&self) -> &Plan {
         &self.plan
+    }
+
+    /// Returns the warnings of module loading: the modules that the agent
+    /// accepted without a valid signature, and the missing trust store.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
     }
 
     /// Returns the notes of module loading, such as a module that runs
@@ -567,7 +585,10 @@ pub fn run(
     log: &mut dyn Write,
 ) -> Result<RunSummary, RunError> {
     let plan = Plan::load(&opts.plan)?;
-    let prepared = prepare(plan, &opts.modules, opts.sides)?;
+    let prepared = prepare(plan, &opts.modules, opts.sides, &opts.policy)?;
+    for warning in prepared.warnings() {
+        writeln!(log, "fps-agent: warning: {warning}")?;
+    }
     for note in prepared.notes() {
         writeln!(log, "fps-agent: {note}")?;
     }
