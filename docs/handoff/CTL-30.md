@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #274 |
 | Branch | `wp/CTL-30` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (4 of 4 plan steps written, CI pending) |
+| Pull request | #280 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-c30a7e, lease until 2026-11-09T14:07:22Z |
 | Last verified commit | none |
 
@@ -23,15 +23,15 @@
 
 ## Done and verified
 
-Steps 1 to 4 written. `gofmt -l controller` is clean, and `plan.py check`, `render --check`, and `lint` pass. Go cannot build in the sandbox, so CI is the first compile and test run.
+Steps 1 to 4 done; CI green (all 11 check runs). `gofmt -l controller` is clean, and `plan.py check`, `render --check`, and `lint` pass. Go cannot build in the sandbox, so CI is the first compile and test run.
 
 ## Remaining
 
-CI result; fix compile or test failures in the package paths.
+Nothing; CI is green on the PR.
 
 ## Next action
 
-Open the PR and poll CI.
+Review and merge PR #280.
 
 ## Blockers and open questions
 
