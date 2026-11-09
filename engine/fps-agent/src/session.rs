@@ -22,6 +22,7 @@
 //! | `update_rates` | `RUNNING` | Sets the target of the whole agent for each named mix entry, completely or not at all |
 //! | `start_capture` | `RUNNING` | Starts a capture of the sessions that begin from now on |
 //! | `stop_capture` | any state that holds the plan | Ends the capture, joins its ring into one pcapng file, and answers with its digest |
+//! | `fetch_capture` | any state that holds the plan | Answers with the size, digest, and chunk size of a finished capture file, then uploads it with `UploadCapture` from `start_offset` |
 //!
 //! Any other command state pair fails with `ERROR_CODE_FAILED_PRECONDITION`,
 //! and a `plan_id` that does not name the loaded plan fails with
@@ -47,7 +48,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Endpoint;
 
 use crate::assemble::Sides;
-use crate::control::{CaptureError, CaptureSettings, Captures, Rates, RatesError};
+use crate::control::{CaptureError, CaptureSettings, Captures, Rates, RatesError, Transfer};
 use crate::convert::{self, plan_from_pb, snapshot_to_pb};
 use crate::identity::{self, Identity, IdentityError, TlsConfig};
 use crate::modules::ModuleError;
@@ -66,6 +67,8 @@ pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 const WATCHDOG_TICK: Duration = Duration::from_millis(100);
 /// How long a dial may take before it counts as failed.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// The largest chunk of a capture upload, 256 KiB (CON-13).
+pub const MAX_CHUNK_BYTES: u32 = 262_144;
 
 /// The exponential backoff between two dials.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -460,7 +463,115 @@ fn capture_code(e: &CaptureError) -> ErrorCode {
         CaptureError::Precondition(_) => ErrorCode::FailedPrecondition,
         CaptureError::Unimplemented(_) => ErrorCode::Unimplemented,
         // A full or unwritable disk is not a failure of the run.
-        CaptureError::Io(_) => ErrorCode::ResourceExhausted,
+        CaptureError::Io(_) | CaptureError::Busy(_) => ErrorCode::ResourceExhausted,
+        CaptureError::NotFound(_) => ErrorCode::NotFound,
+    }
+}
+
+/// One capture upload that the session starts after it answered
+/// `FetchCapture`.
+struct Upload {
+    transfer: Arc<Transfer>,
+    transfer_id: String,
+    capture_id: String,
+    chunk_bytes: usize,
+}
+
+type Client = pb::controller_service_client::ControllerServiceClient<tonic::transport::Channel>;
+
+/// Aborts its task when dropped, so an upload ends with its session and
+/// releases the file.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Opens `UploadCapture` on the connection of the session and sends the file
+/// from the start offset of the transfer: the open message, chunks in
+/// ascending order, and the end message. The call is its own HTTP/2 stream, so
+/// a controller that reads slowly stalls this task and not the `Session`.
+async fn upload_capture(mut client: Client, token: String, up: Upload) {
+    let (tx, rx) = mpsc::channel::<pb::UploadCaptureRequest>(2);
+    let call = client.upload_capture(ReceiverStream::new(rx));
+    let transfer = Arc::clone(&up.transfer);
+    let start = transfer.start_offset();
+    let total = transfer.total_bytes();
+    let (transfer_id, capture_id, want) = (
+        up.transfer_id.clone(),
+        up.capture_id.clone(),
+        up.chunk_bytes,
+    );
+    let producer = async move {
+        let send = |body| {
+            let tx = tx.clone();
+            async move {
+                tx.send(pb::UploadCaptureRequest { body: Some(body) })
+                    .await
+                    .map_err(|_| "the call ended".to_owned())
+            }
+        };
+        send(pb::upload_capture_request::Body::Open(
+            pb::UploadCaptureOpen {
+                transfer_id,
+                session_token: token,
+                capture_id,
+                start_offset: start,
+            },
+        ))
+        .await?;
+        let mut offset = start;
+        while offset < total {
+            let t = Arc::clone(&transfer);
+            let at = offset;
+            let data = tokio::task::spawn_blocking(move || t.read_at(at, want))
+                .await
+                .map_err(|e| format!("read task: {e}"))?
+                .map_err(|e| format!("read the capture file at {offset}: {e}"))?;
+            if data.is_empty() {
+                return Err(format!("the capture file ends at {offset}, before {total}"));
+            }
+            let len = data.len() as u64;
+            send(pb::upload_capture_request::Body::Chunk(pb::CaptureChunk {
+                offset,
+                data: data.into(),
+            }))
+            .await?;
+            offset += len;
+        }
+        send(pb::upload_capture_request::Body::End(pb::CaptureEnd {
+            total_bytes: total,
+            digest: transfer.digest().to_owned(),
+        }))
+        .await
+    };
+    tokio::pin!(call, producer);
+    let mut sent = false;
+    loop {
+        tokio::select! {
+            biased;
+            r = &mut call => {
+                match r {
+                    Ok(resp) => {
+                        let r = resp.into_inner();
+                        tracing::info!(capture_id = %up.capture_id, transfer_id = %up.transfer_id, received_offset = r.received_offset, verified = r.verified, "capture upload finished");
+                    }
+                    Err(status) => tracing::warn!(capture_id = %up.capture_id, transfer_id = %up.transfer_id, error = %status, "capture upload refused or broken"),
+                }
+                return;
+            }
+            r = &mut producer, if !sent => match r {
+                Ok(()) => sent = true,
+                Err(e) => {
+                    // Dropping the call resets the stream, so the controller
+                    // sees a broken transfer and resumes with a new one.
+                    tracing::warn!(capture_id = %up.capture_id, transfer_id = %up.transfer_id, error = %e, "capture upload broke");
+                    return;
+                }
+            },
+        }
     }
 }
 
@@ -524,13 +635,83 @@ impl Shared {
             Some(Body::UpdateRates(cmd)) => Some(self.update_rates(reply, &cmd)),
             Some(Body::StartCapture(cmd)) => Some(self.start_capture(reply, &cmd)),
             Some(Body::StopCapture(cmd)) => self.stop_capture(reply, &cmd),
-            // AGT-09 serves the capture download of CON-13.
+            // The session loop serves it, because the answer must reach the
+            // controller before the upload call opens.
             Some(Body::FetchCapture(_)) => Some(error(
                 reply,
                 ErrorCode::Unimplemented,
-                "the agent does not serve capture downloads yet".into(),
+                "fetch_capture is served by the session loop".into(),
             )),
         }
+    }
+
+    /// Serves `FetchCapture`: checks the command, opens the file, and returns
+    /// the answer together with the upload that the session starts once the
+    /// answer is sent. Every refusal comes with no upload.
+    fn fetch_capture(
+        &self,
+        reply: Reply,
+        cmd: &pb::FetchCaptureCommand,
+    ) -> (pb::CommandResult, Option<Upload>) {
+        let refuse = |code, message: String| (error(reply, code, message), None);
+        if cmd.plan_id != self.lock().plan_id {
+            return refuse(
+                ErrorCode::NotFound,
+                format!("plan {} is not loaded", cmd.plan_id),
+            );
+        }
+        let id = &cmd.transfer_id;
+        if id.is_empty()
+            || id.len() > 128
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        {
+            return refuse(
+                ErrorCode::InvalidArgument,
+                format!(
+                    "transfer_id {id:?} must have 1 to 128 characters of letters, digits, dots, underscores, and hyphens"
+                ),
+            );
+        }
+        let transfer =
+            match self
+                .captures
+                .open_transfer(&cmd.plan_id, &cmd.capture_id, cmd.start_offset)
+            {
+                Ok(t) => Arc::new(t),
+                Err(e) => return refuse(capture_code(&e), e.to_string()),
+            };
+        let chunk_bytes = match cmd.max_chunk_bytes {
+            0 => MAX_CHUNK_BYTES,
+            n => n.min(MAX_CHUNK_BYTES),
+        };
+        tracing::info!(
+            plan_id = %cmd.plan_id,
+            capture_id = %cmd.capture_id,
+            transfer_id = %cmd.transfer_id,
+            start_offset = cmd.start_offset,
+            total_bytes = transfer.total_bytes(),
+            chunk_bytes,
+            "capture download accepted"
+        );
+        let result = success(
+            reply,
+            pb::command_result::Result::FetchCapture(pb::FetchCaptureResult {
+                capture_id: cmd.capture_id.clone(),
+                transfer_id: cmd.transfer_id.clone(),
+                total_bytes: transfer.total_bytes(),
+                digest: transfer.digest().to_owned(),
+                chunk_bytes,
+            }),
+        );
+        let upload = Upload {
+            transfer,
+            transfer_id: cmd.transfer_id.clone(),
+            capture_id: cmd.capture_id.clone(),
+            chunk_bytes: chunk_bytes as usize,
+        };
+        (result, Some(upload))
     }
 
     /// Serves `UpdateRates`, which sets the target of the whole agent for
@@ -1278,6 +1459,18 @@ impl Shared {
     }
 }
 
+/// Deletes the capture files that outlived `retention`, a few times within
+/// the retention.
+async fn sweep_captures(shared: Arc<Shared>, retention: Duration) {
+    let tick = (retention / 4).clamp(Duration::from_millis(50), Duration::from_secs(60));
+    loop {
+        tokio::time::sleep(tick).await;
+        let shared = Arc::clone(&shared);
+        // Removing a file is a blocking call.
+        let _ = tokio::task::spawn_blocking(move || shared.captures.sweep()).await;
+    }
+}
+
 /// Fires once per silence of the controller.
 async fn watchdog(shared: Arc<Shared>) {
     loop {
@@ -1329,6 +1522,8 @@ where
         c = endpoint.connect() => c.map_err(Lost::Transport)?,
     };
     let mut client = pb::controller_service_client::ControllerServiceClient::new(channel);
+    // The upload of a capture, which dies with this session.
+    let mut _upload: Option<AbortOnDrop> = None;
     let (state, plan_id) = {
         let core = shared.lock();
         (core.state, core.plan_id.clone())
@@ -1389,7 +1584,21 @@ where
             msg = inbound.message() => match msg {
                 Ok(Some(resp)) => {
                     shared.heard();
-                    if let Some(result) = shared.command(number, resp) {
+                    if let Some(pb::session_response::Body::FetchCapture(cmd)) = &resp.body {
+                        let reply = Reply { session: number, command_id: resp.command_id };
+                        let (result, start) = shared.fetch_capture(reply, cmd);
+                        send(pb::SessionRequest { body: Some(pb::session_request::Body::Result(result)) }).await?;
+                        if let Some(up) = start {
+                            // The answer is queued first, so the upload call
+                            // cannot overtake it. The task is its own stream
+                            // and never waits for this loop.
+                            _upload = Some(AbortOnDrop(tokio::spawn(upload_capture(
+                                client.clone(),
+                                reg.session_token.clone(),
+                                up,
+                            ))));
+                        }
+                    } else if let Some(result) = shared.command(number, resp) {
                         send(pb::SessionRequest { body: Some(pb::session_request::Body::Result(result)) }).await?;
                     }
                 }
@@ -1482,6 +1691,11 @@ where
         cfg,
     });
     let dog = tokio::spawn(watchdog(Arc::clone(&shared)));
+    let sweeper = shared
+        .cfg
+        .captures
+        .retention
+        .map(|r| tokio::spawn(sweep_captures(Arc::clone(&shared), r)));
     let renewer = shared
         .identity
         .clone()
@@ -1528,6 +1742,9 @@ where
         }
     }
     dog.abort();
+    if let Some(s) = sweeper {
+        s.abort();
+    }
     if let Some(r) = renewer {
         r.abort();
     }

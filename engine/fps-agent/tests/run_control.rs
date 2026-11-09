@@ -79,6 +79,22 @@ struct Shared {
     sessions: Mutex<u64>,
     /// While true, the fake neither acknowledges heartbeats nor reads.
     silent: AtomicBool,
+    /// When set, an upload call ends with `UNAVAILABLE` once it received this
+    /// many bytes, like a controller that loses its connection.
+    cut_upload_after: Mutex<Option<u64>>,
+    /// What every `UploadCapture` call received, in the order they ended.
+    uploads: Mutex<Vec<Uploaded>>,
+}
+
+/// One `UploadCapture` call as the fake controller saw it.
+#[derive(Debug, Default)]
+struct Uploaded {
+    open: Option<pb::UploadCaptureOpen>,
+    /// The chunks in arrival order.
+    chunks: Vec<(u64, Vec<u8>)>,
+    end: Option<pb::CaptureEnd>,
+    /// Set when the call ended with a status because the fake cut it.
+    cut: bool,
 }
 
 #[derive(Clone)]
@@ -111,11 +127,49 @@ impl ControllerService for Fake {
 
     async fn upload_capture(
         &self,
-        _req: Request<Streaming<pb::UploadCaptureRequest>>,
+        req: Request<Streaming<pb::UploadCaptureRequest>>,
     ) -> Result<Response<pb::UploadCaptureResponse>, Status> {
-        Err(Status::unimplemented(
-            "the fake controller takes no uploads",
-        ))
+        let mut stream = req.into_inner();
+        let mut up = Uploaded::default();
+        let cut_after = *self.0.cut_upload_after.lock().unwrap();
+        let mut received = 0u64;
+        let mut next = None;
+        while let Some(msg) = stream.message().await? {
+            match msg.body {
+                Some(pb::upload_capture_request::Body::Open(o)) if up.open.is_none() => {
+                    let token = format!("token-{}", self.0.registrations.lock().unwrap().len());
+                    if o.session_token != token {
+                        return Err(Status::unauthenticated("another session token"));
+                    }
+                    next = Some(o.start_offset);
+                    up.open = Some(o);
+                }
+                Some(pb::upload_capture_request::Body::Chunk(c)) if up.open.is_some() => {
+                    assert_eq!(Some(c.offset), next, "chunks are in ascending order");
+                    assert!(!c.data.is_empty() && c.data.len() <= 262_144);
+                    next = Some(c.offset + c.data.len() as u64);
+                    received += c.data.len() as u64;
+                    up.chunks.push((c.offset, c.data.to_vec()));
+                    if cut_after.is_some_and(|n| received >= n) {
+                        up.cut = true;
+                        self.0.uploads.lock().unwrap().push(up);
+                        return Err(Status::unavailable("the connection broke"));
+                    }
+                }
+                Some(pb::upload_capture_request::Body::End(e)) if up.end.is_none() => {
+                    up.end = Some(e);
+                    break;
+                }
+                other => return Err(Status::invalid_argument(format!("unexpected {other:?}"))),
+            }
+        }
+        let received_offset = next.unwrap_or(0);
+        let verified = up.end.is_some();
+        self.0.uploads.lock().unwrap().push(up);
+        Ok(Response::new(pb::UploadCaptureResponse {
+            received_offset,
+            verified,
+        }))
     }
 
     type SessionStream =
@@ -314,6 +368,39 @@ fn stop(plan_id: &str, mode: pb::StopMode, drain_secs: i64) -> session_response:
             nanos: 0,
         }),
     })
+}
+
+fn fetch(
+    plan_id: &str,
+    capture_id: &str,
+    start_offset: u64,
+    transfer_id: &str,
+    max_chunk_bytes: u32,
+) -> session_response::Body {
+    session_response::Body::FetchCapture(pb::FetchCaptureCommand {
+        plan_id: plan_id.into(),
+        capture_id: capture_id.into(),
+        start_offset,
+        transfer_id: transfer_id.into(),
+        max_chunk_bytes,
+    })
+}
+
+/// Waits until the fake controller saw `n` upload calls and returns the
+/// last one.
+async fn wait_upload(h: &mut Harness, n: usize) -> Uploaded {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        {
+            let mut ups = h.shared.uploads.lock().unwrap();
+            if ups.len() >= n {
+                return std::mem::take(&mut ups[n - 1]);
+            }
+        }
+        assert!(Instant::now() < deadline, "no upload call {n}");
+        // Keep the session served while the upload runs.
+        let _ = tokio::time::timeout(Duration::from_millis(50), h.recv()).await;
+    }
 }
 
 fn error_code(r: &pb::CommandResult) -> Option<ErrorCode> {
@@ -612,6 +699,9 @@ async fn a_fake_controller_changes_rates_and_reads_a_capture() {
         );
     }
     advance(&mut h, 4).await;
+    // A capture that still runs cannot be downloaded.
+    let r = h.command(fetch(&id, "cap-1", 0, "t-run", 0)).await;
+    assert_eq!(error_code(&r), Some(ErrorCode::FailedPrecondition), "{r:?}");
     let r = h.command(stop_capture(&id, "nope")).await;
     assert_eq!(error_code(&r), Some(ErrorCode::NotFound), "{r:?}");
     let r = h.command(stop_capture("run-0001/other", "cap-1")).await;
@@ -682,18 +772,146 @@ async fn a_fake_controller_changes_rates_and_reads_a_capture() {
     let r = h.command(capture(start_capture(&id, "late"))).await;
     assert_eq!(error_code(&r), Some(ErrorCode::FailedPrecondition), "{r:?}");
 
-    // The capture download of CON-13 is not served until AGT-09.
-    let r = h
-        .command(session_response::Body::FetchCapture(
-            pb::FetchCaptureCommand {
-                plan_id: id.clone(),
-                capture_id: "cap-3".into(),
-                transfer_id: "t-1".into(),
-                ..Default::default()
-            },
-        ))
-        .await;
-    assert_eq!(error_code(&r), Some(ErrorCode::Unimplemented), "{r:?}");
+    // The capture download of CON-13. The refusals come first. Every one of
+    // them answers at once and starts no upload.
+    let cap3 = std::fs::read(fps_agent::control::capture_path(&dir, &id, "cap-3")).unwrap();
+    let size = cap3.len() as u64;
+    for (cmd, code, why) in [
+        (
+            fetch(&id, "nope", 0, "t-x", 0),
+            ErrorCode::NotFound,
+            "an unknown capture",
+        ),
+        (
+            fetch("run-0001/other", "cap-3", 0, "t-x", 0),
+            ErrorCode::NotFound,
+            "an unknown plan",
+        ),
+        (
+            fetch(&id, "cap-3", size + 1, "t-x", 0),
+            ErrorCode::InvalidArgument,
+            "an offset beyond the size",
+        ),
+        (
+            fetch(&id, "cap-3", 0, "", 0),
+            ErrorCode::InvalidArgument,
+            "no transfer id",
+        ),
+        (
+            fetch(&id, "cap-3", 0, "has space", 0),
+            ErrorCode::InvalidArgument,
+            "a bad transfer id",
+        ),
+        (
+            fetch(&id, "cap-3", 0, &"t".repeat(129), 0),
+            ErrorCode::InvalidArgument,
+            "a long transfer id",
+        ),
+    ] {
+        let r = h.command(cmd).await;
+        assert_eq!(error_code(&r), Some(code), "{why}: {r:?}");
+    }
+    assert!(
+        h.shared.uploads.lock().unwrap().is_empty(),
+        "a refusal started an upload"
+    );
+
+    // The controller loses its connection after the first chunks, and the
+    // download resumes at the offset that it holds with a new transfer id.
+    *h.shared.cut_upload_after.lock().unwrap() = Some(size / 3);
+    let r = h.command(fetch(&id, "cap-3", 0, "t-1", 64)).await;
+    let Some(pb::command_result::Result::FetchCapture(f)) = r.result else {
+        panic!("fetch_capture result {r:?}")
+    };
+    assert_eq!(f.capture_id, "cap-3");
+    assert_eq!(f.transfer_id, "t-1");
+    assert_eq!(f.total_bytes, third.bytes);
+    assert_eq!(f.digest, third.digest);
+    assert_eq!(f.chunk_bytes, 64, "the agent honors a smaller chunk size");
+    let first_part = wait_upload(&mut h, 1).await;
+    assert!(first_part.cut);
+    let open = first_part.open.as_ref().expect("an open message");
+    assert_eq!(
+        (
+            open.transfer_id.as_str(),
+            open.capture_id.as_str(),
+            open.start_offset
+        ),
+        ("t-1", "cap-3", 0)
+    );
+    let mut held: Vec<u8> = first_part.chunks.iter().flat_map(|c| c.1.clone()).collect();
+    assert!(
+        !held.is_empty() && (held.len() as u64) < size,
+        "{} of {size}",
+        held.len()
+    );
+    assert_eq!(held, cap3[..held.len()]);
+    assert!(first_part.chunks.iter().all(|c| c.1.len() <= 64));
+
+    *h.shared.cut_upload_after.lock().unwrap() = None;
+    let resume_at = held.len() as u64;
+    // The slot of the broken transfer is free as soon as its task ended, which
+    // a controller that resumes at once may beat by a moment.
+    let deadline = Instant::now() + WAIT;
+    let f = loop {
+        let r = h.command(fetch(&id, "cap-3", resume_at, "t-2", 0)).await;
+        match error_code(&r) {
+            None => {
+                let Some(pb::command_result::Result::FetchCapture(f)) = r.result else {
+                    panic!("fetch_capture result {r:?}")
+                };
+                break f;
+            }
+            Some(ErrorCode::ResourceExhausted) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            _ => panic!("the resumed fetch_capture failed: {r:?}"),
+        }
+    };
+    assert_eq!(
+        (f.total_bytes, f.digest.as_str()),
+        (third.bytes, third.digest.as_str())
+    );
+    assert_eq!(
+        f.chunk_bytes, 262_144,
+        "zero asks for the default chunk size"
+    );
+    let second_part = wait_upload(&mut h, 2).await;
+    assert!(!second_part.cut);
+    let open = second_part.open.as_ref().expect("an open message");
+    assert_eq!(
+        (open.transfer_id.as_str(), open.start_offset),
+        ("t-2", resume_at)
+    );
+    assert_eq!(
+        second_part.chunks[0].0, resume_at,
+        "the first chunk starts at the offset"
+    );
+    held.extend(second_part.chunks.iter().flat_map(|c| c.1.clone()));
+    let end = second_part.end.as_ref().expect("an end message");
+    assert_eq!(end.total_bytes, third.bytes);
+    assert_eq!(
+        end.digest, third.digest,
+        "the end digest covers the whole file"
+    );
+    assert_eq!(held, cap3, "the two parts join into the file");
+    assert_eq!(sha256_digest(&held), third.digest);
+
+    // An offset equal to the size sends no chunk and still ends the call.
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let r = h.command(fetch(&id, "cap-3", size, "t-3", 0)).await;
+        match error_code(&r) {
+            None => break,
+            Some(ErrorCode::ResourceExhausted) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            _ => panic!("fetch at the end of the file failed: {r:?}"),
+        }
+    }
+    let empty = wait_upload(&mut h, 3).await;
+    assert!(empty.chunks.is_empty());
+    assert_eq!(empty.end.as_ref().map(|e| e.total_bytes), Some(size));
     h.shutdown().await;
     let _ = std::fs::remove_dir_all(&dir);
 }
