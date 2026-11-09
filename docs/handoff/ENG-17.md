@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #231 |
 | Branch | `wp/ENG-17` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Pull request | #284 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-e17a3b, lease until 2026-11-09T14:07:00Z |
-| Last verified commit | none |
+| Last verified commit | b6dbd8c |
 
 ## Goal
 
@@ -20,7 +20,7 @@ The runtime compiles a module's extension.wasm once and instantiates it per sess
 - [x] 2. FailureKind::reason maps WasmFailure to extension_error
 - [x] 3. Runtime loads and compiles extension.wasm once; per-session Host
 - [x] 4. WAT fixture tests including looping extension
-- [ ] 5. Wiki page, log entry, checks, PR
+- [x] 5. Wiki page, log entry, checks, PR
 
 ## Done and verified
 
@@ -61,3 +61,4 @@ cargo test -p fps-runtime -p fps-interp -p fps-wasm
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09 | claude-e17a3b | claim | none | claimed #231 |
+| 2026-11-09 | claude-e17a3b | finish | b6dbd8c | PR #284, CI green, ready for review |
