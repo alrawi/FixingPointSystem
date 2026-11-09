@@ -172,6 +172,12 @@ pub enum LoadError {
         /// Location of the error.
         at: Box<Location>,
     },
+    /// `tls_upgrade` appears in a UDP flow.
+    #[error("{}tls_upgrade applies only to TCP flows", prefix(.at))]
+    TlsUpgradeOnUdp {
+        /// Location of the error.
+        at: Box<Location>,
+    },
     /// An `expect` of a UDP flow cannot fit one datagram.
     #[error("{}{field} {size} exceeds the datagram limit of {limit} bytes", prefix(.at))]
     DatagramLimit {
@@ -262,6 +268,7 @@ impl LoadError {
             | LoadError::UniformRange { at }
             | LoadError::ReservedAction { at, .. }
             | LoadError::MaxDatagramOnTcp { at }
+            | LoadError::TlsUpgradeOnUdp { at }
             | LoadError::DatagramLimit { at, .. }
             | LoadError::LastWithoutExpect { at }
             | LoadError::ForeignModule { at, .. }
@@ -292,6 +299,7 @@ impl LoadError {
             LoadError::UniformRange { .. } => "UniformRange",
             LoadError::ReservedAction { .. } => "ReservedAction",
             LoadError::MaxDatagramOnTcp { .. } => "MaxDatagramOnTcp",
+            LoadError::TlsUpgradeOnUdp { .. } => "TlsUpgradeOnUdp",
             LoadError::DatagramLimit { .. } => "DatagramLimit",
             LoadError::LastWithoutExpect { .. } => "LastWithoutExpect",
             LoadError::ForeignModule { .. } => "ForeignModule",
@@ -320,6 +328,7 @@ impl LoadError {
             | LoadError::UniformRange { at }
             | LoadError::ReservedAction { at, .. }
             | LoadError::MaxDatagramOnTcp { at }
+            | LoadError::TlsUpgradeOnUdp { at }
             | LoadError::DatagramLimit { at, .. }
             | LoadError::LastWithoutExpect { at }
             | LoadError::ForeignModule { at, .. }

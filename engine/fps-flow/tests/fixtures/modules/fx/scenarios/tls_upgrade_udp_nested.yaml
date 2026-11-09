@@ -1,0 +1,15 @@
+scenario: tls_upgrade_udp_nested
+flows:
+  - id: a
+    module: fx
+    l4: udp
+    client:
+      - connect: { port: 53 }
+      - loop:
+          count: 2
+          do:
+            - branch:
+                - p: 0.5
+                  do:
+                    - tls_upgrade: { profile: strict }
+                - { p: 0.5, do: [ { send: "q" } ] }

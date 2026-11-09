@@ -10,7 +10,7 @@
 | Branch | `wp/ENG-22` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 3 plan steps) |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-e22a7c, lease until 2026-11-10T00:39:09Z |
 | Last verified commit | none |
 
@@ -24,21 +24,23 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Add the LoadError kind and the check
-- [ ] 2. Add fixtures (flat and nested) and verdicts; run Rust and Python parity tests
-- [ ] 3. Update docs/wiki/Engine.md and the log entry; open the PR
+- [x] 1. Add the LoadError kind and the check
+- [x] 2. Add fixtures (flat and nested) and verdicts; run Rust and Python parity tests
+- [x] 3. Update docs/wiki/Engine.md and the log entry; open the PR
 
 ## Done and verified
 
-Nothing yet.
+- `cargo test -p fps-flow` and `cargo clippy -p fps-flow --all-targets -D warnings`, `cargo fmt --check`: pass.
+- `python3 -m pytest -q engine/fps-flow/tests`: 49 passed.
+- plan.py check, render --check, lint: ok.
 
 ## Remaining
 
-Everything.
+Pull request and CI.
 
 ## Next action
 
-Implement step 1 in engine/fps-flow/src/check.rs and error.rs.
+Open the PR and wait for CI.
 
 ## Blockers and open questions
 
@@ -46,7 +48,7 @@ none
 
 ## Decisions taken in this package
 
-none yet
+The check is a match arm in `check_action`, so every action that `walk` visits is covered, as in validate.py. The nested fixture needs two branch arms because the schema requires at least two.
 
 ## Pitfalls
 

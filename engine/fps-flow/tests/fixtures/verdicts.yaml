@@ -39,6 +39,9 @@ cases:
   - scenario: st/scenarios/raw_ok.yaml
     verdict: accept
     about: "A strike module may use raw."
+  - scenario: fx/scenarios/tls_upgrade_tcp.yaml
+    verdict: accept
+    about: "tls_upgrade in a TCP flow, at the top level of both sides and inside a loop."
   - scenario: fx/scenarios/duplicate_flow.yaml
     verdict: reject
     error: DuplicateFlow
@@ -193,3 +196,13 @@ cases:
     error: Template
     pointer: /flows/0/client/1/send
     about: "An opening brace pair without a closing one."
+  - scenario: fx/scenarios/tls_upgrade_udp.yaml
+    verdict: reject
+    error: TlsUpgradeOnUdp
+    pointer: /flows/0/client/2/tls_upgrade
+    about: "tls_upgrade in a UDP flow."
+  - scenario: fx/scenarios/tls_upgrade_udp_nested.yaml
+    verdict: reject
+    error: TlsUpgradeOnUdp
+    pointer: /flows/0/client/1/loop/do/0/branch/0/do/0/tls_upgrade
+    about: "tls_upgrade in a branch arm inside a loop of a UDP flow."
