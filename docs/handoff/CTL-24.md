@@ -5,10 +5,10 @@
 | Issue | #232 |
 | Branch | `wp/CTL-24` |
 | Pull request | #269 |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-6555a2, lease until 2026-11-09T05:23:25Z |
-| Last verified commit | none |
+| Last verified commit | 9c9d3dc |
 
 ## Goal
 
@@ -20,19 +20,19 @@ For a `throughput_bps` objective, the orchestrator builds a `calibrate.State` fr
 - [x] 2. Calibration loop in `controller/internal/runs/calibration.go`
 - [x] 3. Wire it into the run loop and the run record
 - [x] 4. E2E test with a fake agent that reacts to `UpdateRates`
-- [ ] 5. Wiki page, log entry, checks, PR
+- [x] 5. Wiki page, log entry, checks, PR
 
 ## Done and verified
 
-Steps 1 to 4: `calibration.go`, wiring in `orchestrator.go`, unit and end to end tests, `mk/ctl.mk` targets, Controller page and log entry. Verification is by CI only, because Go modules cannot be downloaded in the sandbox.
+Steps 1 to 4: `calibration.go`, wiring in `orchestrator.go`, unit and end to end tests, `mk/ctl.mk` targets, Controller page and log entry. CI on 9c9d3dc is green: workflow `ctl` ran golangci-lint and `go test -race ./...` (`internal/runs` ok). Go modules cannot be downloaded in the sandbox, so nothing ran locally.
 
 ## Remaining
 
-CI result of the PR, and fixes to the tests if CI finds any.
+Review. The coordinator adds `UpdateRates` to `agents.Manager` and `fakeagent` (CTL-06 paths, text in the log entry), or the calibration stays off on a real controller.
 
 ## Next action
 
-Poll the CI of PR #269 and fix failures inside `controller/internal/runs/`.
+Review PR #269.
 
 ## Blockers and open questions
 
@@ -60,3 +60,4 @@ cd controller && go test -race ./internal/runs/...
 |---|---|---|---|---|
 | 2026-11-09 | claude-6555a2 | claim | none | Claimed #232 |
 | 2026-11-09 | claude-6555a2 | checkpoint | 5e41c1d | Code and tests pushed, PR #269 opened |
+| 2026-11-09 | claude-6555a2 | finish | 9c9d3dc | CI green, ready for review |
