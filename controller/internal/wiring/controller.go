@@ -32,6 +32,7 @@ import (
 	"github.com/alrawi/FixingPointSystem/controller/internal/app"
 	"github.com/alrawi/FixingPointSystem/controller/internal/registry"
 	"github.com/alrawi/FixingPointSystem/controller/internal/report"
+	"github.com/alrawi/FixingPointSystem/controller/internal/report/html"
 	"github.com/alrawi/FixingPointSystem/controller/internal/runs"
 	"github.com/alrawi/FixingPointSystem/controller/internal/store"
 )
@@ -156,7 +157,7 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 		Configs:      configs,
 		Modules:      registry.NewAPI(c.Registry, logger),
 		Runs:         runs.NewAPI(c.Runs),
-		Report:       report.NewAPI(c.Evaluator, c.Runs, nil),
+		Report:       c.htmlReport(report.NewAPI(c.Evaluator, c.Runs, nil)),
 	})
 	return c, nil
 }
@@ -210,7 +211,20 @@ func (c *Controller) SetMetrics(h MetricsHandler) {
 // New routes it to a report.API without merged metrics, and the binary
 // replaces that handler with one that reads the metrics aggregator.
 func (c *Controller) SetReport(h ReportHandler) {
+	if a, ok := h.(*report.API); ok {
+		c.htmlReport(a)
+	}
 	c.API.report = h
+}
+
+// htmlReport makes a serve format=html. It sets the page renderer of
+// report/html and the objective source over the stored test configurations.
+func (c *Controller) htmlReport(a *report.API) *report.API {
+	a.UseHTML(html.Renderer)
+	if c.Store != nil {
+		a.UseObjectives(report.ConfigObjectives{Store: c.Store})
+	}
+	return a
 }
 
 // Mount registers the REST API on m with the token check of the settings.

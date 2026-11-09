@@ -6,7 +6,7 @@
 | Branch | `wp/CTL-26` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 3 plan steps) |
+| Progress | 90% (3 of 3 plan steps, CI pending) |
 | Current holder | claude-c26a7e, lease until 2026-11-09T04:07:27Z |
 | Last verified commit | none |
 
@@ -16,21 +16,21 @@
 
 ## Plan
 
-- [ ] 1. report.API gets a sample source, an objective source, and an HTML renderer hook (report imports no html because html imports report); html provides the renderer.
-- [ ] 2. API test in package html (reuses the unexported no external requests checker), 404 test, wiring of the renderer and the configuration store.
-- [ ] 3. Controller wiki page, log entry, checks, PR, CI.
+- [x] 1. report.API gets a sample source, an objective source, and an HTML renderer hook (report imports no html because html imports report); html provides the renderer.
+- [x] 2. API test in package html (reuses the unexported no external requests checker), 404 test, wiring of the renderer and the configuration store.
+- [x] 3. Controller wiki page, log entry, checks, PR, CI.
 
 ## Done and verified
 
-Nothing yet.
+Code, tests, wiring, wiki page, and log entry written; gofmt clean. Not built locally (no Go modules). CI is the verification.
 
 ## Remaining
 
-All steps.
+Wait for CI; fix failures inside controller/internal/report/ and the wiring call.
 
 ## Next action
 
-Implement step 1 in `controller/internal/report/rest.go`.
+Open the PR and poll CI.
 
 ## Blockers and open questions
 

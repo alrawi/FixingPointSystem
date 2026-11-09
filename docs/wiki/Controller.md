@@ -613,7 +613,7 @@ The evaluator decides the run state as the report decides the report. It reads t
 |---|---|
 | `json`, the default | The `RunReport` schema, with the summary filled from the run totals, every criterion in the verdict with its `reason`, `observed` and `passed` only for compared criteria, `reason` of the run when it failed or aborted, and an empty `realism` list |
 | `csv` | One table with the columns `kind,name,op,threshold,value,result,detail`, with rows of kind `run` for the run fields, `criterion` for each criterion, and `metric` for each run total in catalog order |
-| `html` | 501 until the handler calls `internal/report/html` (see [HTML report](#html-report)) |
+| `html` | The page of `internal/report/html`, served as `text/html; charset=utf-8` with `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` (see [HTML report](#html-report)). 501 when the `API` has no renderer |
 
 The CSV report writes numbers in plain decimal notation and prefixes text cells that start with `=`, `+`, `-`, or `@` with an apostrophe, so spreadsheets do not run them as formulas.
 
@@ -660,9 +660,21 @@ The charts are inline SVG that `chart.go` draws: one line chart per per second s
 
 ### Serving
 
-The package does not touch the REST API. `GET /v1/runs/{id}/report?format=html` already exists in `contracts/openapi/fps-api-v1.yaml` and answers 501 from `report.API.GetRunReport`. The follow up replaces that branch: it builds the report as for JSON, reads the samples from the aggregator (the `API` needs a `SamplesSource` next to its `TotalsSource`), calls `FromReport` and `Render`, and writes the body with `html.ContentType`. Because the page carries no external request, the handler may add `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` without breaking it.
+CTL-26 serves the page. `GET /v1/runs/{id}/report?format=html` builds the report exactly as for JSON, then adds what the report model lacks and renders the page. `report` cannot import `report/html`, which imports `report`, so `report.API` holds a function, `report.HTMLRenderer`, and `html.Renderer` is that function. It calls `FromReport` and `Render`.
+
+| Part | Source |
+|---|---|
+| Samples | `report.SampleSource`, which `*metrics.Aggregator` satisfies. `NewAPI` sets it when its totals source is one, and `UseSamples` sets it otherwise. The handler asks for `Samples(id, api.MetricViewApplication, metrics.Window{})`. A run that the source does not know gets a page without charts, and any other error answers 500 |
+| Objective | `report.ObjectiveSource`, set with `UseObjectives`. `report.ConfigObjectives{Store}` parses the stored configuration of `run.ConfigID` and returns its `load.objective`. A configuration that is gone or unreadable gives a page without objective |
+| Renderer | `UseHTML(html.Renderer)`. Without it the format answers 501 as before |
+
+The response has the status 200, `Content-Type: text/html; charset=utf-8`, `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` (`report.HTMLContentSecurityPolicy`), `Cache-Control: no-store`, and `X-Content-Type-Options: nosniff`. A run that does not exist answers the same 404 problem as the JSON format, because the handler looks the run up before it renders anything.
+
+In the binary, `wiring.Controller` sets the renderer and the objective source over its configuration store on the `report.API` that `New` builds and on the one that `SetReport` receives, so `mountMetrics` needs no change and the aggregator is the sample source.
 
 ### Tests
+
+`TestServesHTMLReportOfFinishedRun` fetches the HTML report of a finished run through the real router and token check, checks the four headers, the objective, the verdict, and a chart, and runs the `violations` checker of `TestNoExternalRequests` on the served body. `TestHTMLReportOfUnknownRunIsTheJSONNotFound` compares the 404 of the html format with the 404 of JSON. Further tests cover a run without samples, a run without configuration, a failing sample source, and the 501 without a renderer. The tests live in `controller/internal/report/html/serve_test.go` because they reuse the unexported checker.
 
 `TestGoldenPages` renders the report goldens `pass`, `fail`, `degraded`, and `labeled` of `controller/internal/report/testdata/` and compares the pages with `controller/internal/report/html/testdata/<name>.html`. The goldens carry a deterministic ramp as the per second series, because the JSON goldens hold no samples. `go test ./internal/report/html/ -update` rewrites them. `TestNoExternalRequests` parses each page and fails on any `src`, `href`, `srcset`, `action`, or similar attribute with an `http`, `https`, or protocol relative URL, on any `<script>` element, on a `<link rel=stylesheet>`, on `<img>`, `<iframe>`, and similar elements, and on `@import` or `url()` in the style, and `TestViolationsFindsExternalReferences` shows that the check catches each case. `TestEscapesReportStrings` puts markup in a criterion reason, and `TestEscapesEveryField` and `TestNoExternalRequestsWithHostileStrings` put a script, an image, and a link in every text field of the page. `TestFromReport`, `TestFromReportVerdicts`, and `TestChartsFromSamples` cover the conversion, and further tests cover the chart geometry, the number format, and an empty page. The targets `make lint-ctl-report-html test-ctl-report-html` run the package alone, and `lint-ctl` and `test-ctl` cover it too.
 
