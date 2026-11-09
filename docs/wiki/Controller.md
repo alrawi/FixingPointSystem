@@ -14,6 +14,7 @@ The module has two packages after CTL-01.
 | `internal/compiler/` | Compiles a test configuration and an agent inventory into per agent plans (CTL-05) |
 | `internal/store/` | Stores and validates test configurations and serves the /v1/configs operations (CTL-03) |
 | `internal/registry/` | The local module registry, manifest checks, tree digests, and the /v1/modules operations (CTL-04) |
+| `internal/registry/signing/` | Ed25519 signatures for module archives and the registry index, key ids, and the trust store with rotation (CTL-11) |
 | `internal/agents/` | The agent manager with Register and Session, the inventory, and /v1/agents (CTL-06) |
 | `internal/fakeagent/` | Fake agents for controller tests (CTL-06) |
 | `internal/runs/` | The run state machine, the orchestrator, and the run operations of /v1/runs (CTL-07) |
@@ -281,6 +282,102 @@ Well known incompatible licenses, such as GPL-2.0-only, EPL-2.0, CDDL-1.0, SSPL-
 |---|---|---|
 | `github.com/santhosh-tekuri/jsonschema/v6` v6.0.2 | Apache-2.0 | Validates JSON Schema 2020-12, which the manifest contract uses |
 | `github.com/dlclark/regexp2` v1.11.5 | MIT | Runs ECMA-262 patterns with lookahead, which `regexp` cannot express |
+## Module signing and signed index
+
+CTL-11 added the package `internal/registry/signing`. It signs module archives and the registry index with Ed25519, and it uses only the standard library (`crypto/ed25519`, `crypto/x509`, `archive/tar`). Nothing calls it yet: the install path, the compiler, and the agent are outside CTL-11, so [Where the other packages use it](#where-the-other-packages-use-it) lists what each of them must do.
+
+```go
+s, _ := signing.GenerateSigner(rand.Reader)                  // key pair; keep s.MarshalPEM() secret
+digest, sig, _ := s.SignArchive(archive, signing.Limits{})   // sig.KeyID and sig.Bytes fill ModuleRef
+ts := signing.NewTrustStore()
+ts.Add(s.PublicKey())                                        // or signing.ParseTrustStore(file)
+v := signing.NewVerifier(ts, nil)                            // nil clock means time.Now
+_, err := v.VerifyArchive(archive, sig, signing.Limits{})    // errors.Is(err, signing.ErrBadSignature)
+```
+
+### Archive signatures
+
+A module is identified by its tree digest, the `sha256:` string of plan rule 1. The signature of a module is an Ed25519 signature over the UTF-8 bytes of that digest string, which is what `ModuleRef.signature` and `ModuleRef.signature_key_id` carry (CON-05). The signature is outside the module tree, so signing changes no digest.
+
+`ArchiveDigest` computes the digest from a tar archive, optionally gzip compressed, in one pass and without writing to disk. It applies the entry rules of registry install: directories and regular files only, relpath characters, no `.` or `..` segment, no duplicates, and the same size and file limits. A test checks that the digest of an archive equals `registry.TreeDigest` of the unpacked tree, so the two copies of the rule cannot drift. The digest covers file names and contents. File modes, times, owners, and empty directories are not signed, which matches the digest that plans carry.
+
+`Signer.SignArchive` returns the digest and the `Signature` (key id and 64 bytes). `Verifier.VerifyArchive` digests the archive, checks the signature, and returns the digest so that the caller can compare it with the digest of the index or the plan. A modified, added, removed, renamed, or truncated file changes the digest, and verification fails with `ErrBadSignature`.
+
+### Key ids
+
+The id of a key is `ed25519:` and the hex of the first 16 bytes of the SHA-256 of the 32 byte public key, so it has 40 characters and needs no registry to assign it. An id cannot name any key other than the one it came from. A signature that carries the id of another trusted key fails with `ErrBadSignature`, and an id that names no key fails with `ErrUnknownKey`.
+
+### Trust store
+
+A `TrustStore` holds the public keys that a verifier accepts. Each key has one of three standings.
+
+| Standing | Verifies | How it gets there |
+|---|---|---|
+| active | At any time. A store may hold several active keys. | `Add` |
+| retired | Strictly before its cutoff, never at or after it (`ErrKeyExpired`) | `Retire(id, cutoff)`, which may be called again to move the cutoff |
+| revoked | Never (`ErrKeyRevoked`) | `Revoke(id)`; the standing is final, `Retire` and `Add` refuse the key afterwards |
+
+Signatures carry no time, so the cutoff applies to the time of the verification, which the verifier reads from its injected clock. The store is a JSON file of public keys only (`Encode`, `ParseTrustStore`), meant to be reviewed and kept in version control. The parser refuses unknown fields, a key id that is not derived from its public key, a retired key without an RFC 3339 `retired_after`, a cutoff on another standing, and duplicates.
+
+```json
+{
+  "version": 1,
+  "keys": [
+    {"key_id": "ed25519:fe812c12f3ab4ce6ac5db69ac352f906", "public_key": "<base64>", "status": "active"},
+    {"key_id": "ed25519:...", "public_key": "<base64>", "status": "retired", "retired_after": "2027-03-01T00:00:00Z"},
+    {"key_id": "ed25519:...", "public_key": "<base64>", "status": "revoked"}
+  ]
+}
+```
+
+The verifier checks in a fixed order, so the error names the first thing that is wrong: no signature (`ErrNoSignature`, which the caller may accept in developer mode), a signature that is not 64 bytes (`ErrSignatureLength`), an unknown key id, a revoked key, a retired key past its cutoff, and last the signature itself.
+
+### Signed index
+
+The index lists every module version with its digest, and the signed form lets a client trust the list. `Index` has a format name (`fps-registry-index/1`), a `serial`, and the modules with name, version, and digest. Summaries and scenario names stay out, because a client reads them from the manifest after it verified the digest. The registry's own `index.json` is a different file for local use and stays as it is; the publisher builds an `Index` from `Registry.List`.
+
+The canonical form is the byte string that the signature covers.
+
+- JSON with no whitespace. The object has the keys `format`, `modules`, and `serial`, in that order.
+- `modules` is an array of objects with the keys `digest`, `name`, and `version`, in that order, sorted by name and then by version as bytes (so `0.10.0` sorts before `0.2.0`, and `1.0.0` before `1.0.0-rc.1`). A name and version pair appears once.
+- Names match the manifest identifier pattern, versions the manifest semver pattern, and digests are `sha256:` and 64 lowercase hex digits. These patterns allow no character that JSON escapes, so the form has no escapes and any language can produce the same bytes. `serial` is an unsigned decimal integer with no leading zero.
+
+```
+{"format":"fps-registry-index/1","modules":[{"digest":"sha256:...","name":"dns","version":"0.1.0"}],"serial":3}
+```
+
+`SignedIndex` is the published file: `index` (the same fields), `key_id`, and `signature` in base64. `Verifier.VerifyIndex` canonicalizes the parsed index and checks the signature over those bytes, so the layout of the file does not matter and every value does. `ParseSignedIndex` rejects unknown fields and trailing data, so nothing unsigned rides along. Changing a digest, a version, a name, the serial, or the list, or flipping a signature bit fails with `ErrBadSignature`. An archive signature and an index signature never verify as each other, because an archive signature covers text that starts with `sha256:` and an index signature covers text that starts with `{`.
+
+The `serial` guards against replay. A client that remembers the highest serial it verified refuses a lower one, and the publisher increments it with every new index. The package does not store serials.
+
+Golden vectors in `golden_test.go` pin the key id, a digest signature, the canonical index, and its signature for a fixed key, and a second implementation (Python `cryptography`) produced the same signature and key id. The agent can test its verifier against them.
+
+### Key rotation
+
+Rotation never leaves a time when a module cannot verify, because the new key is trusted before it signs and the old key is retired with a cutoff, not removed.
+
+1. **Generate** the new key pair on the publisher (`GenerateSigner`) and keep the private PEM out of the repository and out of the registry.
+2. **Trust** the new public key in every trust store (`Add`) and roll the store out to controllers and agents. Until a verifier has the new key, it rejects what the new key signed with `ErrUnknownKey`, so this step comes before signing.
+3. **Sign** new modules and each new index with the new key. Both keys are active now.
+4. **Re-sign** the modules and the index that the old key signed. A signature is detached, so re-signing changes no digest. Plans that carry the old signature stay valid until the cutoff.
+5. **Retire** the old key with a cutoff that leaves time for step 4 and for the agents to update (`Retire`, for example 30 days ahead). Modules signed by the old key keep verifying until the cutoff.
+6. **Remove** the old key from the store file after the cutoff, or keep it as retired for the audit trail. A retired key past its cutoff already fails.
+
+If a private key leaks, skip the grace period: `Revoke` the key at once, roll out the store, and re-sign everything with a new key. A revoked key fails at any time, including for signatures made before the leak, so installed modules need re-signing before they can be installed again. An index signed by a revoked key fails too, which is the signal to publish a new index with a higher serial.
+
+Private keys carry the same risk as the CA key of [Mutual TLS](#mutual-tls). Keep them outside the registry root, readable by the publisher only, and use one key per environment.
+
+### Where the other packages use it
+
+- **Install.** `Registry.Install` has the archive bytes, so it should call `VerifyArchive` before it unpacks when a signature accompanies the archive, and refuse the install on any error except `ErrNoSignature`. The registry's trust policy then decides what `ErrNoSignature` means: refuse it by default, and accept it only when the operator turns on a development setting. After the digest check the registry should record the signature and key id next to the index entry, so that a later plan can fill them without re-reading the archive. When a signed index is the source of modules, check `VerifyIndex` first, require a serial at least as high as the last one seen, and require that the digest of each downloaded archive equals the `Find` result for its name and version.
+- **Compiler.** For each module of a plan, the compiler copies the digest into `ModuleRef.digest` as it does today, the 64 signature bytes into `ModuleRef.signature`, and the key id into `ModuleRef.signature_key_id`, taking both from the stored signature of the install. The fields stay empty for an unsigned module. The compiler signs nothing itself, because the controller holds no private key.
+- **Agent (AGT-04).** The agent holds a trust store file and calls `VerifyDigest(ref.digest, Signature{ref.signature_key_id, ref.signature})` for each module after it checks the tree digest, and refuses a failure unless developer mode is on. The agent is Rust, so it implements the same checks with an Ed25519 library: verify 64 bytes over the digest text under the key that the id names, with the same retired, revoked, and cutoff rules. The golden vectors are its test input.
+- **Publisher tooling.** There is no command line tool yet. Generating keys, signing an archive, and writing the index file need a small command, which is a follow up.
+
+### Tests
+
+`make test-ctl-signing` and `make lint-ctl-signing` run the package alone. The tests cover the original and each modification of an archive and of an index, an unknown, revoked, retired, and wrong key, a truncated and a long signature, the lifecycle of the trust store with its file, the canonical form, and the golden vectors.
+
 ## Agent manager
 
 The package `internal/agents` is the agent manager of the controller. CTL-06 added it. It serves the controller side of `ControllerService` from [`agent.proto`](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/proto/fps/agent/v1/agent.proto), keeps the agent inventory, and serves the four `/v1/agents` operations. Agents dial the controller, call `Register`, and hold one `Session` stream open, as the [agent control protocol](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/README.md#agent-control-protocol) describes.
