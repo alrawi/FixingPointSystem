@@ -3,7 +3,7 @@
 #
 # Boots the qcow2 appliance under QEMU and checks it from the host and from inside.
 #
-#   image/boot-test.sh [--role ROLE] [IMAGE]
+#   image/boot-test.sh [--role ROLE] [--run] [IMAGE]
 #
 #   IMAGE defaults to image/output/fps-base.qcow2.
 #   ROLE is all-in-one (the default, and the behavior of IMG-01), controller,
@@ -13,6 +13,9 @@
 #   agent role boots with 4 CPUs and 4 GiB, so that CPU isolation and hugepages
 #   apply, and the VM reboots once by itself to apply the kernel options. The
 #   script waits for that reboot.
+#   --run adds a short HTTP and DNS run inside the all-in-one VM (IMG-04), through
+#   the controller REST API with the agent `local`, which image/tests/vm-run.sh
+#   does. The other roles ignore it.
 #
 # The VM gets two NICs. The first is the management NIC on user networking, with a
 # host port forward to the controller API (127.0.0.1:$FPS_TEST_API_PORT) and to ssh
@@ -29,6 +32,9 @@
 #   FPS_TEST_SMP         CPUs of the VM    (default 2, and 4 for the agent role)
 #   FPS_TEST_MEM         MiB of the VM     (default 2048, and 4096 for the agent role)
 #   FPS_ALLOW_TCG=1      use software emulation when /dev/kvm is missing (slow)
+#   FPS_TEST_ARTIFACT_DIR  directory that receives the serial console log, the output of
+#                        the checks inside the VM, and the files of --run (CI uploads it)
+#   FPS_RUN_RATE / FPS_RUN_STEADY_S / FPS_RUN_WAIT_S  settings of the --run (vm-run.sh)
 #   FPS_TEST_CONTROLLER_BIN  path of an fps-controller binary for the agent role (IMG-06).
 #                        The script runs it on the host, mints an enrollment token with
 #                        `fps-controller token` into a file, seeds the token and the CA
@@ -43,6 +49,7 @@ set -euo pipefail
 self="${BASH_SOURCE[0]}"
 root="$(cd "$(dirname "$self")/.." && pwd)"
 role=all-in-one
+run_short=0
 image_arg=""
 while (($# > 0)); do
 	case "$1" in
@@ -58,8 +65,12 @@ while (($# > 0)); do
 		role="${1#--role=}"
 		shift
 		;;
+	--run)
+		run_short=1
+		shift
+		;;
 	-h | --help)
-		sed -n '4,22p' "$self"
+		sed -n '4,26p' "$self"
 		exit 0
 		;;
 	-*)
@@ -83,6 +94,7 @@ image="${image_arg:-$root/image/output/fps-base.qcow2}"
 api_port="${FPS_TEST_API_PORT:-18443}"
 ssh_port="${FPS_TEST_SSH_PORT:-12222}"
 boot_wait="${FPS_TEST_BOOT_WAIT:-300}"
+artifact_dir="${FPS_TEST_ARTIFACT_DIR:-}"
 token="boot-test-$(openssl rand -hex 16)"
 
 fails=0
@@ -117,7 +129,9 @@ if [[ "$role" == all ]]; then
 	summary=()
 	for r in all-in-one controller agent; do
 		echo "=== role $r"
-		if "$self" --role "$r" "$image"; then
+		run_arg=()
+		if [[ "$r" == all-in-one && "$run_short" == 1 ]]; then run_arg=(--run); fi
+		if "$self" --role "$r" "${run_arg[@]}" "$image"; then
 			summary+=("PASS role $r")
 		else
 			summary+=("FAIL role $r")
@@ -174,6 +188,11 @@ cleanup() {
 		echo "---- last 80 lines of the VM serial console ----"
 		tail -n 80 "$serial" || true
 		echo "---- end of serial console ----"
+	fi
+	if [[ -n "$artifact_dir" ]]; then
+		mkdir -p "$artifact_dir"
+		cp "$serial" "$artifact_dir/serial-$role.log" 2>/dev/null || true
+		cp "$work/vm-checks.out" "$artifact_dir/vm-checks-$role.out" 2>/dev/null || true
 	fi
 	rm -rf "$work"
 }
@@ -400,6 +419,41 @@ if [[ "$ssh_ok" == yes ]]; then
 	done <"$vm_out"
 	if ! grep -q '^PASS\|^FAIL' "$vm_out"; then
 		fail "the checks inside the VM ran" "no PASS or FAIL line came back"
+	fi
+	# IMG-04: the short HTTP and DNS run through the controller and the local agent.
+	if [[ "$run_short" == 1 && "$role" == all-in-one ]]; then
+		echo "NOTE the short HTTP and DNS run inside the VM"
+		run_out="$work/vm-run.out"
+		: >"$run_out"
+		run_env=()
+		for v in FPS_RUN_RATE FPS_RUN_STEADY_S FPS_RUN_WAIT_S; do
+			if [[ -n "${!v:-}" ]]; then run_env+=("$v=${!v}"); fi
+		done
+		if scp "${scp_opts[@]}" "$root/image/tests/vm-run.sh" fps-admin@127.0.0.1:/tmp/ &&
+			ssh "${ssh_opts[@]}" fps-admin@127.0.0.1 'chmod +x /tmp/vm-run.sh'; then
+			# shellcheck disable=SC2029 # run_env holds names and numbers that we set
+			ssh "${ssh_opts[@]}" fps-admin@127.0.0.1 "sudo env ${run_env[*]:-} /tmp/vm-run.sh /tmp/fps-run" >"$run_out" 2>&1 || true
+		fi
+		while IFS= read -r line; do
+			echo "$line"
+			case "$line" in
+			PASS*) checks=$((checks + 1)) ;;
+			FAIL*)
+				checks=$((checks + 1))
+				fails=$((fails + 1))
+				;;
+			esac
+		done <"$run_out"
+		if ! grep -q '^PASS\|^FAIL' "$run_out"; then
+			fail "the short HTTP and DNS run inside the VM ran" "no PASS or FAIL line came back"
+		fi
+		if [[ -n "$artifact_dir" ]]; then
+			mkdir -p "$artifact_dir/run"
+			cp "$run_out" "$artifact_dir/vm-run.out" 2>/dev/null || true
+			# The files are owned by root in the VM, so copy through sudo tar.
+			ssh "${ssh_opts[@]}" fps-admin@127.0.0.1 'sudo tar -C /tmp/fps-run -cf - .' 2>/dev/null |
+				tar -C "$artifact_dir/run" -xf - 2>/dev/null || true
+		fi
 	fi
 else
 	fail "ssh as fps-admin with the seed key works"

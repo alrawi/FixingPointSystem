@@ -17,6 +17,7 @@
 #   FPS_ACCEL          QEMU accelerator for the build: kvm or tcg  (default kvm)
 #   FPS_ALLOW_TCG=1    let the build fall back to tcg without /dev/kvm (very slow)
 #   FPS_PACKER_LOG=1   print the Packer debug log
+#   FPS_SSH_TIMEOUT    how long Packer waits for ssh in the build VM  (default 20m, set 60m for tcg)
 #   FPS_BASE_IMAGE_URL, FPS_BASE_IMAGE_CHECKSUM   pin another Ubuntu cloud image
 set -euo pipefail
 
@@ -144,6 +145,7 @@ vars=(
 	-var "ssh_password=$ssh_password"
 	-var "accelerator=$accel"
 )
+[[ -n "${FPS_SSH_TIMEOUT:-}" ]] && vars+=(-var "ssh_timeout=$FPS_SSH_TIMEOUT")
 [[ -n "${FPS_BASE_IMAGE_URL:-}" ]] && vars+=(-var "base_image_url=$FPS_BASE_IMAGE_URL")
 [[ -n "${FPS_BASE_IMAGE_CHECKSUM:-}" ]] && vars+=(-var "base_image_checksum=$FPS_BASE_IMAGE_CHECKSUM")
 

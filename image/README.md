@@ -149,6 +149,7 @@ image/boot-test.sh                   # the all-in-one role, the default
 image/boot-test.sh --role controller
 image/boot-test.sh --role agent      # boots with 4 CPUs and 4 GiB and waits for the tuning reboot
 image/boot-test.sh --role all        # the three roles, one after the other
+image/boot-test.sh --run              # all-in-one, then a short HTTP and DNS run inside the VM (IMG-04)
 ```
 
 The script boots a throwaway overlay of `image/output/fps-base.qcow2` under QEMU/KVM with two NICs. The first is the management NIC on user networking, with host port forwards `127.0.0.1:18443` to the controller API and `127.0.0.1:12222` to ssh. The second is a test NIC on a separate user network without outside access. A generated NoCloud seed supplies an ssh key for `fps-admin` and a known API token. The script waits up to 300 seconds for the API, then runs the checks, kills the VM, and deletes its temporary files. The image file stays unchanged. The `--role` option seeds the role through the NoCloud data (see [Roles and tuning](#roles-and-tuning)), and the checks that follow depend on it. The agent role needs about twice the time, because the VM reboots once by itself to apply the kernel options, and the test waits until `fps-tune` records `status=active`. Change the CPUs and memory with `FPS_TEST_SMP` and `FPS_TEST_MEM`, the ports with `FPS_TEST_API_PORT` and `FPS_TEST_SSH_PORT` when they are in use, and the wait with `FPS_TEST_BOOT_WAIT`.
