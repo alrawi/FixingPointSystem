@@ -245,17 +245,22 @@ The Rust agent of 0.2.3 refuses a plan with a labeled criterion until AGT-14 app
 
 ## Configuration store
 
-The package `internal/store` keeps test configurations and validates them. CTL-03 added it. It serves three operations of the REST contract through the type `store.Handler`, which embeds `api.Unimplemented`, so every other operation still answers 501.
+The package `internal/store` keeps test configurations and validates them. CTL-03 added it. It serves four operations of the REST contract through the type `store.Handler`, which embeds `api.Unimplemented`, so every other operation still answers 501. CTL-37 added `listConfigs`.
 
 | Operation | Scope | Result |
 |---|---|---|
+| `GET /v1/configs` | read | 200 with `{items, next_page_token}`, the `ConfigRef` of every stored configuration newest first, or 400 for a bad parameter |
 | `POST /v1/configs` | run | 201 with a `ConfigRef` and a `Location` header, or 422 with a problem whose `errors` name each failing field |
 | `GET /v1/configs/{id}` | read | 200 with the stored configuration as canonical JSON, or 404 |
 | `POST /v1/configs/{id}:validate` | run | 200 with a `ValidationReport`, or 404 |
 
 ### Storage
 
-The interface `store.Repository` has the methods `Create` and `Get` and the sentinel errors `ErrConfigNotFound` and `ErrConfigExists`. `store.Open` implements it on a SQLite file with the pure Go driver `modernc.org/sqlite`, so the controller still builds without cgo. The store keeps one connection, turns on WAL for files, and migrates the table layout with `PRAGMA user_version`. The path `:memory:` opens a private database for tests. Each record holds the id, `metadata.name`, the body, and the creation time in UTC. The handler takes its clock and its id generator from `store.Options`, and the default ids are `cfg_` with 24 random hex digits.
+The interface `store.Repository` has the methods `Create`, `Get`, and `List` and the sentinel errors `ErrConfigNotFound` and `ErrConfigExists`. `store.Open` implements it on a SQLite file with the pure Go driver `modernc.org/sqlite`, so the controller still builds without cgo. The store keeps one connection, turns on WAL for files, and migrates the table layout with `PRAGMA user_version`. The path `:memory:` opens a private database for tests. Each record holds the creation sequence `seq`, the id, `metadata.name`, the body, and the creation time in UTC. Schema version 2 (CTL-37) added `seq` as `INTEGER PRIMARY KEY AUTOINCREMENT`, so the number is never reused and survives `VACUUM`, and the migration copies the rows of version 1 in rowid order, which keeps their creation order. The handler takes its clock and its id generator from `store.Options`, and the default ids are `cfg_` with 24 random hex digits.
+
+### Listing
+
+`GET /v1/configs` (`listConfigs`, CTL-37) lists the stored configurations newest first, with `page_size` from 1 to 500 (default 50) and `page_token`, and answers `{items, next_page_token}` where each item is the `ConfigRef` of `createConfig`. It follows the design of `listRuns` (CTL-35). The order is the creation sequence `seq` and not the clock, so it is total even when two configurations share a timestamp. The page token is the opaque sequence of the last item of the page (`base64url("c" + seq)`), and the next page holds the configurations below it. A configuration stored between two requests gets a higher sequence, so it never shifts or repeats an item of a later page. `next_page_token` is absent on the last page, also when the last page is full, because the query reads one row more than the page holds. A `page_size` outside the range or a token that `listConfigs` did not return is a 400 problem. Unlike the run store, the configuration store is a file, so a token stays valid across a restart of the controller. The listing reads the summary columns only and never the bodies.
 
 ### Bodies
 
@@ -276,6 +281,8 @@ The validate operation runs five checks on the stored document and returns every
 A nil catalog or inventory skips its check and adds an info finding, so the operation works before CTL-04 and CTL-06 land. A failing catalog or inventory answers 500. Server errors are logged with `log/slog` and never reach the client.
 
 ### Tests of the store
+
+The listing tests store configurations through the handler and validate every `listConfigs` response, and each request that is meant to be valid, against `contracts/openapi/fps-api-v1.yaml` with kin-openapi. They cover the empty list, the order, a walk by pages of two, a page that ends exactly at the oldest configuration, a configuration stored between two pages, the 400 problems, and the read scope. The SQLite tests check the order against a clock that runs backwards, the order after a reopen of the file, and the migration of a version 1 file.
 
 The three examples in `contracts/examples/tests-pending/` validate without findings against the fakes, and a bad `zone_file` gives an error at `/modules/dns/settings`. Every example under `contracts/examples/tests/` stores as YAML and as JSON, reads back unchanged, and validates without findings against fakes of the catalog and the inventory. Each fixture in `internal/store/testdata/invalid/` breaks the schema and names the expected pointer on its first line, as in `# want: /network/ports/0/location`, and the create test expects a 422 problem with an error at that pointer. Each fixture in `internal/store/testdata/unresolved/` passes the schema and must fail validation at its pointer. Coverage of the package is 93.5%.
 
@@ -650,6 +657,8 @@ Fake agents from `internal/fakeagent` (`capture.go`) answer the three commands, 
 | `ModuleLister` | `ModuleSummaries(ctx)` returns `[]api.ModuleSummary` | `Registry.List` with the summary of each entry |
 | `AgentInventory` | `AgentCapabilities(ctx)` returns `[]api.AgentCapability` | `Manager.List` with `agents.ToAPI` and every backend of the latest registration |
 
+`controller_version` (REST 0.7.0, CTL-37) is the version of the controller build, the same string that `fps-controller -version` prints, and it is not `api_version`. `NewCapabilitiesAPI` takes it through the option `api.WithControllerVersion`, `wiring.Options.Version` carries it, and `serve` in `cmd/fps-controller/main.go` passes `buildVersion()`: the value of `-ldflags "-X main.version=..."`, else the module version of the Go build information, else `(devel)`. An empty version leaves the field out, as the contract says for a build without one. The end to end test of the binary builds it with a stamp and checks that `GET /v1/capabilities` reports it.
+
 An `AgentCapability` carries the `Agent` schema and every backend that the agent supports, because the schema names only one backend. The response holds four parts.
 
 | Field | Value |
@@ -774,7 +783,7 @@ Two adapter types connect the registry and the agent manager to the interfaces t
 |---|---|
 | `/v1/agents` and its actions | `agents.API` |
 | `GET /v1/capabilities` | `api.CapabilitiesAPI` |
-| `/v1/configs` and `:validate` | `store.Handler` |
+| `GET /v1/configs`, `POST /v1/configs`, `GET /v1/configs/{id}`, and `:validate` | `store.Handler` |
 | `/v1/modules` | `registry.API` |
 | `GET /v1/runs`, `POST /v1/runs`, `GET /v1/runs/{id}`, `POST /v1/runs/{id}:stop` | `runs.API` |
 | `GET /v1/runs/{id}/metrics` and `:stream` | The `MetricsHandler` of `Controller.SetMetrics`, or 501 |
@@ -787,7 +796,7 @@ The metrics package of CTL-08 joins the binary in three calls in `serve` of `cmd
 
 ### Tests of the wiring
 
-`TestServerRoutesEveryOperation` walks every operation of the OpenAPI contract with an admin token and checks that exactly the two pending operations (`getRunMetrics` and `streamRunMetrics`, since CTL-36 serves `stopCapture`) answer 501, each with a detail that names it, so every other operation reaches the package that implements it. `TestPendingExamplesValidateThroughTheAPI` stores the three examples of `contracts/examples/tests-pending/` through the REST API, registers fake agents `agent-a` with `eth1` and `eth2` and `local` with `lo`, installs the example modules, and expects every validation to pass the dry run, and `TestCatalogReportsSettingsSchema` expects the `dns` scenarios to carry the settings schema with `zone_file`. Other tests in `internal/wiring` cover the token scopes, the metrics hook, the catalog with two versions of `http1`, the inventory filters, and a gRPC round trip with a fake agent and the observer.
+`TestServerRoutesEveryOperation` walks every operation of the OpenAPI contract with an admin token and checks that exactly the two pending operations (`getRunMetrics` and `streamRunMetrics`, since CTL-36 serves `stopCapture` and CTL-37 serves `listConfigs`) answer 501, each with a detail that names it, so every other operation reaches the package that implements it. `TestPendingExamplesValidateThroughTheAPI` stores the three examples of `contracts/examples/tests-pending/` through the REST API, registers fake agents `agent-a` with `eth1` and `eth2` and `local` with `lo`, installs the example modules, and expects every validation to pass the dry run, and `TestCatalogReportsSettingsSchema` expects the `dns` scenarios to carry the settings schema with `zone_file`. `TestVersionReachesCapabilities` starts the controller with `Options.Version` and expects it as `controller_version`, and expects `GET /v1/configs` to answer 200. Other tests in `internal/wiring` cover the token scopes, the metrics hook, the catalog with two versions of `http1`, the inventory filters, and a gRPC round trip with a fake agent and the observer.
 
 `TestEndToEnd` in `cmd/fps-controller` builds the binary and starts it with a temporary configuration that holds an admin token, a run token in a token file, a read token, and a data directory. It runs eleven steps.
 

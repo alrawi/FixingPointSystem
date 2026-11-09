@@ -213,12 +213,18 @@ type failingRepo struct{ err error }
 
 func (f failingRepo) Create(context.Context, Record) error        { return f.err }
 func (f failingRepo) Get(context.Context, string) (Record, error) { return Record{}, f.err }
+func (f failingRepo) List(context.Context, ListOptions) (Page, error) {
+	return Page{}, f.err
+}
 
 // fixedRepo serves one record for every id.
 type fixedRepo struct{ rec Record }
 
 func (f fixedRepo) Create(context.Context, Record) error        { return nil }
 func (f fixedRepo) Get(context.Context, string) (Record, error) { return f.rec, nil }
+func (f fixedRepo) List(context.Context, ListOptions) (Page, error) {
+	return Page{}, nil
+}
 
 func TestServerErrorsHideTheirCause(t *testing.T) {
 	smoke := exampleNamed(t, "enterprise_mix_10g")
@@ -230,6 +236,7 @@ func TestServerErrorsHideTheirCause(t *testing.T) {
 		path   string
 	}{
 		{"create", newTestHandler(t, failingRepo{cause}, Options{}), http.MethodPost, "/v1/configs"},
+		{"list", newTestHandler(t, failingRepo{cause}, Options{}), http.MethodGet, "/v1/configs"},
 		{"get", newTestHandler(t, failingRepo{cause}, Options{}), http.MethodGet, "/v1/configs/x"},
 		{"id", newTestHandler(t, openMemory(t), Options{NewID: func() (string, error) { return "", cause }}), http.MethodPost, "/v1/configs"},
 		{"catalog", newTestHandler(t, fixedRepo{Record{ID: "x", Body: mustCanonical(t, smoke.data)}}, Options{Modules: fakeCatalog{err: cause}}), http.MethodPost, "/v1/configs/x:validate"},

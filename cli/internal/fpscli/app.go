@@ -227,7 +227,7 @@ Usage:
 Commands:
   config validate [--id ID] [FILE|-]   upload a test configuration and validate it, or validate a stored one
   config upload FILE|-                 store a test configuration
-  config list                          list the configurations uploaded from this machine
+  config list                          list the stored configurations, newest first
   config show ID                       print a stored configuration
   run start CONFIG_ID                  start a run
   run list                             list runs, newest first
