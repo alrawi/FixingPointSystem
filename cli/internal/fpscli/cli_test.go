@@ -457,7 +457,7 @@ func sse(w http.ResponseWriter, parts ...string) {
 	w.WriteHeader(200)
 	for _, p := range parts {
 		_, _ = io.WriteString(w, p)
-		http.NewResponseController(w).Flush() //nolint:errcheck // a closed client ends the test stream
+		_ = http.NewResponseController(w).Flush()
 		time.Sleep(5 * time.Millisecond)
 	}
 }
