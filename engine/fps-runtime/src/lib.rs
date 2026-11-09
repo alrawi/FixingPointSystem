@@ -21,7 +21,7 @@
 //! session its own instance, see [`FlowRef::extensions`].
 //!
 //! A flow that upgrades its transport with `tls_upgrade` resolves the profile of
-//! the action in [`FlowRef::tls`], see [`TlsProfiles`]. The upgrade wraps the
+//! the action in [`RuntimeConfig::tls`], see [`TlsProfiles`]. The upgrade wraps the
 //! session in TLS below the interpreter and above the capture tap, so a capture
 //! records the encrypted bytes.
 //!

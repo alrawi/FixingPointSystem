@@ -505,7 +505,7 @@ impl<'a> Session<'a> {
                 },
                 Op::Spawn(flow) => self.spawn(flow)?,
                 Op::UpgradeTls(upgrade) => match wire {
-                    Wire::Swap(io) => self.upgrade_tls(*io, upgrade).await?,
+                    Wire::Swap(io) => self.upgrade_tls(io, upgrade).await?,
                     Wire::Datagram(_) => {
                         return Err(FailureKind::Invalid(
                             "tls_upgrade does not apply to UDP flows".into(),

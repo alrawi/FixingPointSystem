@@ -46,10 +46,6 @@ pub struct FlowRef {
     /// call to a module of the set runs in an instance that the session owns,
     /// and a call to any other module goes to [`FlowRef::functions`].
     pub extensions: Option<Arc<ExtensionSet>>,
-    /// The TLS profiles that the `tls_upgrade` actions of the flow name, shared
-    /// by every worker, or `None` for a flow without such actions. A session
-    /// whose flow upgrades without profiles fails with reason `internal`.
-    pub tls: Option<Arc<TlsProfiles>>,
 }
 
 impl FlowRef {
@@ -63,7 +59,6 @@ impl FlowRef {
             limits: Limits::default(),
             entry: None,
             extensions: None,
-            tls: None,
         }
     }
 
@@ -87,7 +82,6 @@ impl fmt::Debug for FlowRef {
             .field("scenario", &self.scenario.name)
             .field("entry", &self.entry)
             .field("extensions", &self.extensions)
-            .field("tls", &self.tls)
             .field("flow", &self.flow)
             .field("limits", &self.limits)
             .finish_non_exhaustive()
@@ -174,6 +168,10 @@ pub struct RuntimeConfig {
     /// [`crate::RuntimeHandle::capture_cell`], to start a capture in the
     /// middle of the run with [`CaptureCell::set`].
     pub capture: CaptureCell,
+    /// The TLS profiles that the `tls_upgrade` actions of the flows name,
+    /// shared by every worker, or `None` for a run without such actions. A
+    /// session that upgrades without profiles fails with reason `internal`.
+    pub tls: Option<Arc<TlsProfiles>>,
 }
 
 impl RuntimeConfig {
@@ -184,7 +182,16 @@ impl RuntimeConfig {
             snapshot_interval: Duration::from_secs(1),
             workers,
             capture: CaptureCell::new(),
+            tls: None,
         }
+    }
+
+    /// Returns the configuration with `tls` as the profiles that the
+    /// `tls_upgrade` actions of its flows resolve.
+    #[must_use]
+    pub fn with_tls(mut self, tls: Arc<TlsProfiles>) -> Self {
+        self.tls = Some(tls);
+        self
     }
 
     /// Returns the configuration with `capture` as the cell that the workers

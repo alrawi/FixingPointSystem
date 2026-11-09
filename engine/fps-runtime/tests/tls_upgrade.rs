@@ -133,18 +133,16 @@ fn start_server(
     ip: IpAddr,
     tls: Arc<TlsProfiles>,
 ) -> fps_runtime::RuntimeHandle {
-    let mut flow = FlowRef::new(Arc::clone(scenario), 0);
-    flow.tls = Some(tls);
     let worker = WorkerConfig {
         id: 10,
         core: None,
         role: Role::Server(ServerConfig {
-            flow,
+            flow: FlowRef::new(Arc::clone(scenario), 0),
             listen: vec![SocketAddr::new(ip, 0)],
             config: ListenConfig::default(),
         }),
     };
-    Runtime::start(RuntimeConfig::new(SEED, vec![worker])).unwrap()
+    Runtime::start(RuntimeConfig::new(SEED, vec![worker]).with_tls(tls)).unwrap()
 }
 
 /// A client worker that starts [`SESSIONS`] sessions in about a second, from
@@ -176,13 +174,11 @@ fn client_config(
         ScheduleConfig::new(Objective::SessionsPerSecond(SESSIONS as f64), profile, SEED);
     schedule.arrival = Arrival::Constant;
     schedule.stream = stream_id(0, 0);
-    let mut flow = FlowRef::new(Arc::clone(scenario), 0);
-    flow.tls = tls;
     let worker = WorkerConfig {
         id: 0,
         core: None,
         role: Role::Client(Box::new(ClientConfig {
-            flow,
+            flow: FlowRef::new(Arc::clone(scenario), 0),
             schedule,
             servers: vec![server.ip()],
             port: Some(server.port()),
@@ -197,6 +193,7 @@ fn client_config(
     };
     let mut config = RuntimeConfig::new(SEED, vec![worker]);
     config.snapshot_interval = Duration::from_millis(100);
+    config.tls = tls;
     config
 }
 
