@@ -97,6 +97,18 @@ lint-ctl-signing:
 test-ctl-signing:
 	cd controller && $(GO) test -race -cover ./internal/registry/signing/
 
+# CTL-24 throughput calibration in the run loop. The targets above cover the
+# package too, so these two give a fast loop for the run orchestrator alone. The
+# end to end tests simulate agents and run for a few seconds.
+.PHONY: lint-ctl-runs test-ctl-runs
+lint-ctl-runs:
+	@out="$$(cd controller && gofmt -l internal/runs)"; \
+	if [ -n "$$out" ]; then echo "gofmt needed on:"; echo "$$out"; exit 1; fi
+	cd controller && $(GO) vet ./internal/runs/...
+
+test-ctl-runs:
+	cd controller && $(GO) test -race -cover ./internal/runs/...
+
 # CTL-28 signature checks at install and in plans. The targets above cover these
 # packages too, so this one gives a fast loop for the registry, the compiler, and
 # the signing settings of the app configuration.

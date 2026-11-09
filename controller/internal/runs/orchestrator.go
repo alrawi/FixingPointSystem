@@ -120,6 +120,9 @@ type Config struct {
 	CommandTimeout time.Duration
 	// DrainTimeout bounds the ramp down of a graceful stop.
 	DrainTimeout time.Duration
+	// Calibration configures the correction of throughput_bps objectives
+	// during a run. It needs an Agents value that implements RateUpdater.
+	Calibration CalibrationConfig
 	// Logger receives structured logs. The default discards them.
 	Logger *slog.Logger
 }
@@ -161,6 +164,10 @@ type Run struct {
 	// It is set for every run that ends as failed or aborted, and empty in
 	// any other state.
 	Reason string
+	// Calibration lists the changes of the calibration factor of a run with
+	// a throughput_bps objective, oldest first. It is empty for any other
+	// objective and while the factor stays at one.
+	Calibration []CalibrationStep
 	// Totals, Series, and Verdict are set when the run stopped and its
 	// criteria were evaluated. Series holds the counters of the agents with
 	// their labels, which a report merges with the metrics aggregator.
@@ -202,6 +209,14 @@ type runAgent struct {
 	seq      uint64
 	counters map[string]float64
 	series   map[string]Series
+	// The calibration of the run keeps its state of the agent here. calSent
+	// says that an UpdateRates succeeded and calApplied holds the factor that
+	// it set, calFailed holds the factor of the last failed attempt that the
+	// log reported, and calSkip leaves the agent out of the calibration.
+	calSent    bool
+	calApplied float64
+	calFailed  float64
+	calSkip    bool
 }
 
 // absorb takes the counters of snap when it is newer than every earlier
@@ -239,6 +254,8 @@ type run struct {
 	criteria []Criterion
 	agents   map[string]*runAgent
 	stop     stopRequest
+	// cal is the throughput calibration, or nil for another objective.
+	cal *calibrator
 
 	// force ends when a forced stop arrives or the orchestrator closes, and
 	// cancels the commands that a forced stop skips.
@@ -352,12 +369,18 @@ func (o *Orchestrator) Create(ctx context.Context, req StartRequest) (Run, error
 	if err != nil {
 		return Run{}, fmt.Errorf("start run %s: %w", id, err)
 	}
-	plans, err := o.compile(ctx, id, cfg, reserved)
+	plans, scenarios, err := o.compile(ctx, id, cfg, reserved)
 	if err != nil {
 		o.release(id, reserved)
 		return Run{}, fmt.Errorf("start run %s: %w", id, err)
 	}
 	r := o.newRun(id, req, cfg, reserved, plans)
+	cal, err := newCalibrator(o.cfg.Calibration, plans, scenarios)
+	if err != nil {
+		// The run still meets its objective with the compiled rates.
+		o.log.Warn("throughput calibration is off", "run_id", id, "error", err)
+	}
+	r.cal = cal
 
 	o.mu.Lock()
 	if o.closed {
@@ -463,7 +486,7 @@ var backendNames = map[agentpb.Backend]string{
 
 // compile builds the compiler request from the reserved agents and the
 // catalog and compiles it.
-func (o *Orchestrator) compile(ctx context.Context, id string, cfg compiler.Config, rs []reserved) ([]compiler.Plan, error) {
+func (o *Orchestrator) compile(ctx context.Context, id string, cfg compiler.Config, rs []reserved) ([]compiler.Plan, []compiler.Scenario, error) {
 	inv := make([]compiler.Agent, 0, len(rs))
 	for _, r := range rs {
 		c := r.agent.Capabilities
@@ -483,28 +506,28 @@ func (o *Orchestrator) compile(ctx context.Context, id string, cfg compiler.Conf
 	if o.cfg.Catalog != nil {
 		var err error
 		if scenarios, err = o.cfg.Catalog.Scenarios(ctx); err != nil {
-			return nil, fmt.Errorf("scenario catalog: %w", err)
+			return nil, nil, fmt.Errorf("scenario catalog: %w", err)
 		}
 	}
 	plans, err := o.cfg.Compiler.Compile(compiler.Request{RunID: id, Seed: o.requestSeed(), Config: cfg, Agents: inv, Scenarios: scenarios})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		return nil, nil, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 	byAgent := map[string]bool{}
 	for _, p := range plans {
 		// Every plan of a run carries the seed of the run, and the run
 		// record takes it from the plans, so it is never 0.
 		if p.Seed == 0 {
-			return nil, fmt.Errorf("compiler returned plan %s without a seed", p.PlanID)
+			return nil, nil, fmt.Errorf("compiler returned plan %s without a seed", p.PlanID)
 		}
 		byAgent[p.AgentID] = true
 	}
 	for _, r := range rs {
 		if !byAgent[r.agent.ID] {
-			return nil, fmt.Errorf("compiler returned no plan for agent %s", r.agent.ID)
+			return nil, nil, fmt.Errorf("compiler returned no plan for agent %s", r.agent.ID)
 		}
 	}
-	return plans, nil
+	return plans, scenarios, nil
 }
 
 // requestSeed returns the seed that the configuration of the orchestrator
@@ -560,6 +583,7 @@ func (r *run) copy() Run {
 	out.ModuleVersions = maps.Clone(r.ModuleVersions)
 	out.Agents = slices.Clone(r.Agents)
 	out.FailedAgents = slices.Clone(r.FailedAgents)
+	out.Calibration = slices.Clone(r.Calibration)
 	out.Totals = maps.Clone(r.Totals)
 	out.Series = slices.Clone(r.Series)
 	if r.Verdict != nil {
@@ -759,16 +783,22 @@ func (o *Orchestrator) drive(r *run) {
 	// From here on, a forced stop ends the run with the reason "stopped by
 	// request", and before it, with a reason that names the phase.
 	o.log.Info("run started on every agent", "run_id", r.ID)
+	// The calibration must end before the run leaves the running state,
+	// because an agent accepts UpdateRates only while it runs.
+	stopCalibration := o.startCalibration(r)
 	for {
 		stop, active, failed := o.progress(r)
 		switch {
 		case stop == stopForce:
+			stopCalibration()
 			o.abort(r, o.abortReason("stopped by request"))
 			return
 		case active == 0 && failed == len(r.agents):
+			stopCalibration()
 			o.finish(r, Failed, "every agent failed")
 			return
 		case stop == stopGraceful || active == 0:
+			stopCalibration()
 			o.stopping(r)
 			return
 		}
