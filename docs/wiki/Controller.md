@@ -186,7 +186,7 @@ To verify the bytes that it later unpacks, the registry first copies the archive
 
 ### Passing the signature
 
-The signature is not part of the module tree, so it travels beside the archive. The Go call is `Install(ctx, archive, registry.WithSignature(sig))`. The REST operation `installModule` reads two request headers, which the OpenAPI contract does not name yet.
+The signature is not part of the module tree, so it travels beside the archive. The Go call is `Install(ctx, archive, registry.WithSignature(sig))`. The REST operation `installModule` reads two request headers, `X-Module-Signature-Key-Id` and `X-Module-Signature`, which the OpenAPI contract names since 0.5.0 (CON-14).
 
 | Header | Value |
 |---|---|

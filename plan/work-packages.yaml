@@ -2734,3 +2734,63 @@ work_packages:
       - For basis bytes the compiler turns byte weights into session shares with each scenario's expected bytes per session, and newByteMix in runs/bytemix.go starts from those compiled weights.
     acceptance:
       - A golden plan for basis bytes shows the converted session shares; the CTL-12 convergence test shows byte shares within 2 points from the first window.
+
+  # Batch 18 follow-ups (2026-11-09).
+
+  - id: AGT-13
+    title: First party native modules in the agent
+    phase: 2
+    workstream: AGT
+    size: S
+    depends_on: [MOD-07, AGT-11]
+    paths: [engine/fps-agent/]
+    summary: >-
+      NativeFunctions in the agent dispatches only http1 and dns, so an smtp plan, or any plan that
+      calls content functions, fails in the agent (MOD-07 finding).
+    deliverables:
+      - The agent dispatches the native functions of every first party module crate (smtp and content as well as http1 and dns) through one registry, so a new module needs one line.
+    acceptance:
+      - The controller e2e test runs an smtp plan through the real agent, and an agent test shows each first party module's functions resolve.
+
+  - id: ENG-20
+    title: Upgrade a running flow to TLS
+    phase: 2
+    workstream: ENG
+    size: M
+    depends_on: [TRN-04, MOD-07]
+    paths: [engine/fps-runtime/, engine/fps-flow/, engine/fps-interp/]
+    summary: >-
+      A flow binds its transport once, so STARTTLS (SMTP, IMAP, POP3, FTP, LDAP) cannot be expressed
+      (MOD-07 finding).
+    deliverables:
+      - A flow action that upgrades the session's transport to TLS in place with a role per side, using the TRN-04 TLS module, and the scenario contract text for it if the contract must name it (report a needed CON change instead of making it).
+    acceptance:
+      - A loopback test runs an SMTP STARTTLS exchange whose second half is TLS, and the key log decrypts it.
+
+  - id: CTL-35
+    title: List runs
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CTL-07]
+    paths: [controller/internal/runs/, controller/internal/api/]
+    summary: >-
+      listRuns answers 501, so fps run list cannot work (CLI-02 finding).
+    deliverables:
+      - listRuns as the contract defines it, with its paging and filters.
+    acceptance:
+      - Contract tests of listRuns pass, and the CLI e2e test expects exit 0 from fps run list.
+
+  - id: CON-16
+    title: Controller version, configuration listing, and REST breaking check
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [CON-15]
+    paths: [contracts/, .github/workflows/openapi-breaking.yml]
+    summary: >-
+      Findings from CTL-33, CLI-02, CON-14, and CTL-34. Needs owner approval as a contract change.
+    deliverables:
+      - An optional controller_version in Capabilities; GET /configs to list stored configurations; the MixEntry.weight comment says session share; an oasdiff breaking check for the OpenAPI document in a new workflow openapi-breaking.yml on a hosted runner. All additive, with contracts/changes/CON-16.md.
+    acceptance:
+      - The OpenAPI and proto checks pass, and the new breaking check passes on this change and fails on a deliberately breaking fixture.

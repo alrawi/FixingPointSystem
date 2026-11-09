@@ -40,6 +40,7 @@ A new agent reads four pages in order before claiming work.
 | [Gates](Gates.md) | The gate acceptance suites, starting with the Gate 1 suite of QA-04, and how to run and read them |
 | [Image](Image.md) | The qcow2 base image of IMG-01: how to build it with Packer, boot test it under KVM, and its management interface isolation |
 | [SDK](SDK.md) | The Python SDK of CLI-01: the generated client, its currency check, and the start, wait, and report helpers |
+| [CLI](CLI.md) | The `fps` command line client of CLI-02: configurations, runs, live metrics, reports, authentication, and exit codes |
 | [Controller](Controller.md) | The controller module, its flags, configuration file, logging, health endpoint, REST layer, test compiler, configuration store, module registry, agent manager, and checks |
 | [Engine](Engine.md) | Engine crates, the `SessionIo` seam, and the scenario and template compiler |
 | [Transport](Transport.md) | Transport backends, starting with the kernel TCP backend, its socket options, and its loopback tests, and the TLS module of TRN-04 |
@@ -50,6 +51,7 @@ A new agent reads four pages in order before claiming work.
 | [Benchmarks](Benchmarks.md) | Benchmark result and baseline format, the comparison tool, and baseline refresh |
 | [Web UI](Web-UI.md) | The accepted web UI stack (D11) and the UI packages |
 | [Realism](Realism.md) | The realism runner, its conformance and parser error checks, and the report seam |
+| [Capture](Capture.md) | Capture analysis of CAP-01: the pcap and pcapng reader, TCP reassembly, UDP flows, and the session JSON schema |
 | [Operations](Operations.md) | Repository operations, including the Project board status sync and its owner setup |
 
 ### Raw sources in the repository
@@ -65,4 +67,4 @@ A new agent reads four pages in order before claiming work.
 
 ## Status
 
-Phases 0 and 1 are complete, and the owner signed off Gate 1 on 2026-11-05. Phase 2 has delivered TLS, content generators, the WebAssembly host, session capture, run time rate changes, profiles and distributions, the qcow2 image (built and boot tested on the owner host), the HTML report, the Python SDK, and the contract changes CON-05, CON-10, CON-11, and CON-12. Batch 17 merged capture downloads served by the agent AGT-09, capture file retention CTL-32, byte weighted mix control CTL-12, and the release workflow OPS-05. Image format conversion IMG-03 passed the owner host test on the real 8 GiB image (raw, VHDX, fixed VHD, OVA). Batch 16 delivered mutual TLS in the image IMG-06, the captures API CTL-14, live throughput calibration CTL-30, the CA in the TLS chain CTL-31, module settings in the agent AGT-07, and WebAssembly extensions in sessions ENG-17. The coordinator updates this line after each batch.
+Phases 0 and 1 are complete, and the owner signed off Gate 1 on 2026-11-05. Phase 2 has delivered TLS, content generators, the WebAssembly host, session capture, run time rate changes, profiles and distributions, the qcow2 image (built and boot tested on the owner host), the HTML report, the Python SDK, and the contract changes CON-05, CON-10, CON-11, and CON-12. Batch 18 merged the REST contract 0.5.0 with signature headers and calibration history CON-14, the shared capture cell and pinned enrollment check in the agent AGT-10, a version stamp in the controller CTL-33, byte weights in the compiler CTL-34, the `fps` command line client CLI-02, the SMTP module MOD-07, and capture session extraction CAP-01. Batch 17 delivered capture downloads from the agent AGT-09, capture retention CTL-32, byte weighted mix control CTL-12, the release workflow OPS-05, and image format conversion IMG-03. The coordinator updates this line after each batch.

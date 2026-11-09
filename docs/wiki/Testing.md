@@ -65,6 +65,8 @@ The targets that exist today are listed below.
 | `test-ops` | the plan and wiki tool tests and the Cargo workspace probe |
 | `test-spk` | the Rust spike crates and the S4 translator tests |
 | `test-capture` (workflow `eng-capture`) | `FPS_REQUIRE_CAPTURE_TOOLS=1 cargo test -p fps-capture --test capture`: tshark parses the synthesized pcapng streams and decrypts TLS sessions from the embedded secrets and from the sidecar key log; the workflow also runs `cargo test -p fps-runtime --test capture`, which captures real TCP sessions of the runtime (ENG-19) |
+| `lint-cap`, `test-cap` (workflow `cap`) | ruff, `mypy --strict`, and pytest for the capture session extraction of CAP-01 on captures the tests write themselves; no root and no external tools |
+| `lint-cli`, `test-cli` (workflow `cli-go`) | gofmt, vet, golangci-lint, and `go test -race` for the `fps` client of CLI-02; `cli/e2e` builds `fps-controller` and the test helper `fps-fakeagent` and drives every command against them, so it needs the Go module proxy |
 | workflow `cli-sdk` | `cd sdk/python && python -m pytest -q` against a stub server built from the OpenAPI document, `python scripts/generate_client.py --check` for the currency check, plus ruff and `mypy --strict`, on Python 3.10 and 3.12 |
 | `test-mod-content` | `cargo test -p fps-module-content`, including the duplicate ratio over 10,000 bodies per generator type |
 | `lint-qa` | gofmt, go vet, and golangci-lint on the Go golden file helper, and ruff and `mypy --strict` on the Python one, each skipped with a notice when its tool is missing |

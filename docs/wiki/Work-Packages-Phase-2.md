@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 85 work packages. Packages marked critical path gate the phase.
+This page lists 89 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -96,6 +96,10 @@ flowchart LR
   AGT_12["AGT-12<br/>Port filter for captures and a real end to end capture"]
   CTL_33["CTL-33<br/>Version stamp in fps-controller"]
   CTL_34["CTL-34<br/>Byte weights in the compiler"]
+  AGT_13["AGT-13<br/>First party native modules in the agent"]
+  ENG_20["ENG-20<br/>Upgrade a running flow to TLS"]
+  CTL_35["CTL-35<br/>List runs"]
+  CON_16["CON-16<br/>Controller version, configuration listing, and REST breaking check"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -191,6 +195,11 @@ flowchart LR
   AGT_10 --> AGT_12
   OPS_05 --> CTL_33
   CTL_12 --> CTL_34
+  MOD_07 --> AGT_13
+  AGT_11 --> AGT_13
+  TRN_04 --> ENG_20
+  MOD_07 --> ENG_20
+  CON_15 --> CON_16
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -284,6 +293,10 @@ flowchart LR
 | [AGT-12](#agt-12-port-filter-for-captures-and-a-real-end-to-end-capture) | Port filter for captures and a real end to end capture | S | AGT-09, AGT-10 |  |
 | [CTL-33](#ctl-33-version-stamp-in-fps-controller) | Version stamp in fps-controller | S | OPS-05 |  |
 | [CTL-34](#ctl-34-byte-weights-in-the-compiler) | Byte weights in the compiler | S | CTL-12 |  |
+| [AGT-13](#agt-13-first-party-native-modules-in-the-agent) | First party native modules in the agent | S | MOD-07, AGT-11 |  |
+| [ENG-20](#eng-20-upgrade-a-running-flow-to-tls) | Upgrade a running flow to TLS | M | TRN-04, MOD-07 |  |
+| [CTL-35](#ctl-35-list-runs) | List runs | S | CTL-07 |  |
+| [CON-16](#con-16-controller-version-configuration-listing-and-rest-breaking-check) | Controller version, configuration listing, and REST breaking check | S | CON-15 |  |
 
 ## CON Contracts
 
@@ -414,6 +427,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The OpenAPI and proto checks pass, buf breaking reports no breaking change, and the example validates.
+
+### CON-16 Controller version, configuration listing, and REST breaking check
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CON-15
+- **Paths.** `contracts/`, `.github/workflows/openapi-breaking.yml`
+
+Findings from CTL-33, CLI-02, CON-14, and CTL-34. Needs owner approval as a contract change.
+
+Deliverables.
+
+- An optional controller_version in Capabilities; GET /configs to list stored configurations; the MixEntry.weight comment says session share; an oasdiff breaking check for the OpenAPI document in a new workflow openapi-breaking.yml on a hosted runner. All additive, with contracts/changes/CON-16.md.
+
+Acceptance.
+
+- [ ] The OpenAPI and proto checks pass, and the new breaking check passes on this change and fails on a deliberately breaking fixture.
 
 ## OPS Repository and swarm tooling
 
@@ -598,6 +628,23 @@ Acceptance.
 
 - [ ] A runtime test starts a capture mid run and finds the sampled TCP sessions in the ring, and tshark parses them where it is installed.
 
+### ENG-20 Upgrade a running flow to TLS
+
+Phase 2 · size M · workstream ENG
+
+- **Depends on.** TRN-04, MOD-07
+- **Paths.** `engine/fps-runtime/`, `engine/fps-flow/`, `engine/fps-interp/`
+
+A flow binds its transport once, so STARTTLS (SMTP, IMAP, POP3, FTP, LDAP) cannot be expressed (MOD-07 finding).
+
+Deliverables.
+
+- A flow action that upgrades the session's transport to TLS in place with a role per side, using the TRN-04 TLS module, and the scenario contract text for it if the contract must name it (report a needed CON change instead of making it).
+
+Acceptance.
+
+- [ ] A loopback test runs an SMTP STARTTLS exchange whose second half is TLS, and the key log decrypts it.
+
 ## TRN Transport backends
 
 ### TRN-04 TLS transport module
@@ -781,6 +828,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The controller e2e job downloads a capture from the real agent over mutual TLS and tshark (when installed) or the fps-capture reader parses it; agent tests show a port filter that skips other sessions.
+
+### AGT-13 First party native modules in the agent
+
+Phase 2 · size S · workstream AGT
+
+- **Depends on.** MOD-07, AGT-11
+- **Paths.** `engine/fps-agent/`
+
+NativeFunctions in the agent dispatches only http1 and dns, so an smtp plan, or any plan that calls content functions, fails in the agent (MOD-07 finding).
+
+Deliverables.
+
+- The agent dispatches the native functions of every first party module crate (smtp and content as well as http1 and dns) through one registry, so a new module needs one line.
+
+Acceptance.
+
+- [ ] The controller e2e test runs an smtp plan through the real agent, and an agent test shows each first party module's functions resolve.
 
 ## CTL Controller
 
@@ -1116,6 +1180,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A golden plan for basis bytes shows the converted session shares; the CTL-12 convergence test shows byte shares within 2 points from the first window.
+
+### CTL-35 List runs
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CTL-07
+- **Paths.** `controller/internal/runs/`, `controller/internal/api/`
+
+listRuns answers 501, so fps run list cannot work (CLI-02 finding).
+
+Deliverables.
+
+- listRuns as the contract defines it, with its paging and filters.
+
+Acceptance.
+
+- [ ] Contract tests of listRuns pass, and the CLI e2e test expects exit 0 from fps run list.
 
 ## CLI Python SDK and command line client
 
