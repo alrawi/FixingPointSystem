@@ -1,0 +1,50 @@
+EHLO laptop-18.example.test
+AUTH LOGIN
+YnJvcmFpcy5sb2dlbUBleGFtcGxlLnRlc3Q=
+VHN0LU5vdXRyb3VrOTc5Nw==
+MAIL FROM:<brorais.logem@example.test>
+RCPT TO:<drezoulir.soutraipais@example.test>
+RCPT TO:<trege.touter@example.test>
+DATA
+From: brorais.logem@example.test
+To: drezoulir.soutraipais@example.test
+Cc: trege.touter@example.test
+Subject: Photos 8962
+Date: Sat, 25 Jul 2026 17:57:51 +0000
+Message-ID: <9d715c64c929d952da354132@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_2cb0989b731f78ba5ea9"
+
+This is a multi-part message in MIME format.
+--=_fps_2cb0989b731f78ba5ea9
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Naelo,
+
+The morning market keeps the records in order with great care. The quiet
+river plans a careful survey every second Tuesday. A small workshop opens
+the doors at dawn in the early evening. The old bridge measures the water
+each week.
+
+Ref: INV-683077
+
+Kind regards,
+Ilobru Zinqua
+Support desk
+ilobru.zinqua@example.test
+--=_fps_2cb0989b731f78ba5ea9
+Content-Type: image/jpeg; name="photo.jpg"
+Content-Disposition: attachment; filename="photo.jpg"
+Content-Transfer-Encoding: base64
+
+/9j/4AAQSkZJRgABAQAAAQABAAD//gEiMYe2zTUDU1AlDoRzBYyW+cRL8vbJopMWXVyTmKCramps
+hvs0/F2szNUkfSZ4Z6U/g107vFaw1qjst+uUsEPGm4GjxC4da8ATgM/cakORzXT99jhURWchwGAF
+OJ1Op34dKXdicN9qM1olQfEXGk9KWvlifSL8uR3hzcB2rN+MWVRCtp06mnTdFuJZ7Ny6d/1PfLwE
+SjuF1LGKujc1LmHcgMN67YQ7YBmdZQxlD8IPe3vRft6yCiitlws1HyrV5v/bhf9E+Zh3g8aS28TF
+VWkZd+JcBshDg979qb0WlEujTebuJAUZJgFOQLbqTfkpF9J0rvlxNC0CFqzpsb2Pcm/Mjjax6Kah
+XmGfUADWXvM+2avlYqXM5RQsM4SPv0L2u7oR/9k=
+--=_fps_2cb0989b731f78ba5ea9--
+.
+QUIT

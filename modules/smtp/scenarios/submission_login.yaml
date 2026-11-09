@@ -1,0 +1,69 @@
+scenario: submission_login
+description: Message submission on port 587 with AUTH LOGIN. The server asks for the user name and the password with the 334 challenges of the LOGIN mechanism, and the client answers each with base64 text. The credentials are synthetic values of the smtp module and no real secret. The message has a JPEG attachment and one recipient in To and one in Cc. The scenario has no STARTTLS step, as submission_plain explains.
+vars:
+  server_port: 587
+  client_name: laptop-18.example.test
+  server_name: submit.example.test
+  body_size: 1200
+  attachment_min: 24000
+  attachment_max: 160000
+flows:
+  - id: submission_login
+    module: smtp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "EHLO {{ vars.client_name }}\r\n"
+      - expect: { pattern: "\r\n250 ", timeout_ms: 5000 }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set:
+          login: "{{ smtp.credential('user') }}"
+          secret: "{{ smtp.credential('password') }}"
+      - send: "AUTH LOGIN\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.base64(vars.login) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.base64(vars.secret) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { sid: "{{ rand_int(1, 2000000000) }}" }
+      - set:
+          subject: "Photos {{ rand_int(1000, 9999) }}"
+          text: "{{ content.email(size=vars.body_size) }}"
+      - send: "MAIL FROM:<{{ vars.login }}>\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.rcpt_to(vars.sid, 1, 1) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.rcpt_to(vars.sid, 1, 2) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "DATA\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.data(smtp.message(vars.login, smtp.address(vars.sid, 1), vars.subject, vars.text, cc=smtp.address(vars.sid, 2), attachment=content.binary(kind='jpeg', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='photo.jpg', content_type='image/jpeg')) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - send: "QUIT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "220 {{ vars.server_name }} ESMTP ready\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.ehlo_reply(vars.server_name, vars.client_name, auth='LOGIN PLAIN') }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "334 VXNlcm5hbWU6\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "334 UGFzc3dvcmQ6\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "235 2.7.0 Authentication successful\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "250 2.1.0 Ok\r\n"
+      - loop:
+          count: 2
+          do:
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - send: "250 2.1.5 Ok\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "354 End data with <CR><LF>.<CR><LF>\r\n"
+      - expect: { pattern: "\r\n.\r\n", timeout_ms: 30000 }
+      - send: "250 2.0.0 Ok: queued as {{ rand_int(100000, 999999) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "221 2.0.0 Bye\r\n"
+      - close: fin

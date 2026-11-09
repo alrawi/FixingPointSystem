@@ -1,0 +1,102 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: smtp
+version: 0.1.0
+type: app
+summary: SMTP clients and servers for relay and authenticated submission with EHLO, AUTH PLAIN and LOGIN, pipelining, and MIME messages with base64 attachments.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: smtp, transport: tcp, port: 25 }
+  - { protocol: smtp, transport: tcp, port: 587 }
+requires:
+  - { module: content, version: ">=0.1" }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 25, description: TCP port of the server side. The submission scenarios default to 587. }
+    client_name: { type: string, minLength: 1, default: mail-gw.example.test, description: Name that the client gives in EHLO. }
+    server_name: { type: string, minLength: 1, default: mx.example.test, description: Name that the server gives in its greeting and its EHLO reply. }
+    body_size: { type: integer, minimum: 0, maximum: 1048576, default: 1800, description: Size of the text part of a message in bytes. }
+    attachment_min: { type: integer, minimum: 1, maximum: 16777216, default: 24000, description: Smallest attachment in bytes. Each message draws its attachment size between attachment_min and attachment_max. }
+    attachment_max: { type: integer, minimum: 1, maximum: 16777216, default: 160000, description: Largest attachment in bytes. }
+    recipients: { type: integer, minimum: 1, maximum: 1000, default: 4, description: Recipients of each message in the pipelined and batch scenarios. }
+    messages: { type: integer, minimum: 1, maximum: 1000, default: 3, description: Messages that the batch scenario sends on one authenticated connection. }
+functions:
+  - name: credential
+    summary: Synthetic user name (an address under example.test) or password (it starts with Tst-). A seed of zero or more fixes the value, and -1 draws from the session generator.
+    params:
+      - { name: field, type: text }
+      - { name: seed, type: int, default: -1 }
+  - name: address
+    summary: Synthetic mailbox address of the form first.last@domain. The same seed and index always give the same address.
+    params:
+      - { name: seed, type: int }
+      - { name: index, type: int, default: 1 }
+      - { name: domain, type: text, default: example.test }
+  - name: recipients
+    summary: The addresses 1 to count of a seed, separated by a comma and a space, for a To header.
+    params:
+      - { name: seed, type: int }
+      - { name: count, type: int }
+      - { name: domain, type: text, default: example.test }
+  - name: rcpt_to
+    summary: RCPT TO command lines, one per address from start to start plus count minus one, each ending in CRLF.
+    params:
+      - { name: seed, type: int }
+      - { name: count, type: int, default: 1 }
+      - { name: start, type: int, default: 1 }
+      - { name: domain, type: text, default: example.test }
+  - name: auth_plain
+    summary: Base64 token of an AUTH PLAIN initial response as RFC 4616 defines it, without the line break.
+    params:
+      - { name: user, type: text }
+      - { name: password, type: text }
+      - { name: authzid, type: text, default: "" }
+  - name: base64
+    summary: Base64 text of the data. A wrap above zero, a multiple of 4, ends each line after that many characters, with CRLF between lines.
+    params:
+      - { name: data, type: bytes }
+      - { name: wrap, type: int, default: 0 }
+  - name: message
+    summary: RFC 5322 message with CRLF line breaks, a text part, and an optional base64 attachment in a multipart/mixed structure. The boundary, the date, and the message id come from the session generator.
+    params:
+      - { name: sender, type: bytes }
+      - { name: to, type: bytes }
+      - { name: subject, type: text }
+      - { name: body, type: bytes }
+      - { name: cc, type: bytes, default: "" }
+      - { name: attachment, type: bytes, default: "" }
+      - { name: filename, type: text, default: attachment.bin }
+      - { name: content_type, type: text, default: application/octet-stream }
+      - { name: mailer, type: text, default: FixingPointSystem Mail 0.1 }
+  - name: data
+    summary: Payload of the DATA command with dot stuffing, a final line break, and the line that holds one dot.
+    params:
+      - { name: message, type: bytes }
+  - name: ehlo_reply
+    summary: Multi line 250 reply to EHLO that advertises PIPELINING, SIZE, ETRN, AUTH, 8BITMIME, ENHANCEDSTATUSCODES, and SMTPUTF8. An empty auth leaves out the AUTH line.
+    params:
+      - { name: domain, type: text }
+      - { name: client, type: text }
+      - { name: auth, type: text, default: "" }
+      - { name: pipelining, type: boolean, default: true }
+      - { name: size, type: int, default: 35882577 }
+  - name: repeat_line
+    summary: The line written count times, each with a CRLF, for the answers to a pipelined batch of commands.
+    params:
+      - { name: line, type: text }
+      - { name: count, type: int }
+scenarios:
+  - scenarios/relay.yaml
+  - scenarios/relay_pipelined.yaml
+  - scenarios/text_only.yaml
+  - scenarios/submission_plain.yaml
+  - scenarios/submission_login.yaml
+  - scenarios/submission_batch.yaml
+fixtures:
+  - { capture: fixtures/smtp.pcapng, expect: { ndpi: [SMTP], zeek: [smtp] } }
+provenance:
+  source: synthetic
+  notes: Dialogues follow RFC 5321 for the commands and replies, RFC 4954 for AUTH, RFC 2920 for pipelining, RFC 5322 and RFC 2045 to 2047 for messages, and RFC 4616 for the PLAIN token. Message bodies and attachments come from the content module, and every user name, password, address, and host name is synthetic and lies under the reserved .test domain.

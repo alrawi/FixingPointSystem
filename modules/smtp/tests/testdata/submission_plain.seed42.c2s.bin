@@ -1,0 +1,50 @@
+EHLO laptop-17.example.test
+AUTH PLAIN AGJyb3JhaXMubG9nZW1AZXhhbXBsZS50ZXN0AFRzdC1Ob3V0cm91azk3OTc=
+MAIL FROM:<brorais.logem@example.test>
+RCPT TO:<drezoulir.soutraipais@example.test>
+RCPT TO:<trege.touter@example.test>
+DATA
+From: brorais.logem@example.test
+To: drezoulir.soutraipais@example.test, trege.touter@example.test
+Subject: Archive 8962 for review
+Date: Sat, 25 Jul 2026 17:57:51 +0000
+Message-ID: <9d715c64c929d952da354132@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_2cb0989b731f78ba5ea9"
+
+This is a multi-part message in MIME format.
+--=_fps_2cb0989b731f78ba5ea9
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Naelo,
+
+The morning market keeps the records in order with great care. The quiet
+river plans a careful survey every second Tuesday. A small workshop opens
+the doors at dawn in the early evening. The old bridge measures the water
+each week.
+
+Ref: INV-683077
+
+Kind regards,
+Ilobru Zinqua
+Support desk
+ilobru.zinqua@example.test
+
+..
+The line above holds a single dot.
+--=_fps_2cb0989b731f78ba5ea9
+Content-Type: application/zip; name="archive.zip"
+Content-Disposition: attachment; filename="archive.zip"
+Content-Transfer-Encoding: base64
+
+UEsDBBQAAAAAAAAAIVpCQx+lsgAAALIAAAATAAAAcmVwb3J0LTVjNzcxMGRlLnR4dFRoZSBxdWll
+dCByaXZlciBzaGFyZXMgdGhlIHJlc3VsdHMgd2l0aCB0aGUgZ3JvdXAgbmVhciB0aGUgaGFyYm91
+ci4gT3VyIG5ldyBsaWJyYXJ5IHdlbGNvbWVzIGV2ZXJ5IHZpc2l0b3Igd2l0aG91dCBhbnkgZGVs
+YXkuIEEgc21hbGwgd29ya3Nob3Agd2VsY29tZXMgZXZlcnkgdmlzaXRvci4KCkEgcGF0aWVudCBQ
+SwECFAAUAAAAAAAAACFaQkMfpbIAAACyAAAAEwAAAAAAAAAAAAAAAAAAAAAAcmVwb3J0LTVjNzcx
+MGRlLnR4dFBLBQYAAAAAAQABAEEAAADjAAAAAAA=
+--=_fps_2cb0989b731f78ba5ea9--
+.
+QUIT

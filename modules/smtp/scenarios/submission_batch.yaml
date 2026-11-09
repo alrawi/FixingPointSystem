@@ -1,0 +1,67 @@
+scenario: submission_batch
+description: Message submission on port 587 that authenticates once with AUTH PLAIN and then submits several messages on the same connection. Each message pipelines MAIL FROM, its RCPT TO lines, and DATA in one write, carries a gzip attachment of its own size, and waits for its own answers. The credentials are synthetic values of the smtp module and no real secret. The scenario has no STARTTLS step, as submission_plain explains.
+vars:
+  server_port: 587
+  client_name: laptop-19.example.test
+  server_name: submit.example.test
+  body_size: 1200
+  attachment_min: 24000
+  attachment_max: 160000
+  recipients: 3
+  messages: 3
+flows:
+  - id: submission_batch
+    module: smtp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "EHLO {{ vars.client_name }}\r\n"
+      - expect: { pattern: "\r\n250 ", timeout_ms: 5000 }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set:
+          login: "{{ smtp.credential('user') }}"
+          secret: "{{ smtp.credential('password') }}"
+      - send: "AUTH PLAIN {{ smtp.auth_plain(vars.login, vars.secret) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - loop:
+          count: "{{ vars.messages }}"
+          do:
+            - set: { sid: "{{ rand_int(1, 2000000000) }}" }
+            - set:
+                subject: "Export {{ rand_int(1000, 9999) }}"
+                text: "{{ content.email(size=vars.body_size) }}\n.\nThe line above holds a single dot.\n"
+            - send: "MAIL FROM:<{{ vars.login }}>\r\n{{ smtp.rcpt_to(vars.sid, vars.recipients) }}DATA\r\n"
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - loop:
+                count: "{{ vars.recipients }}"
+                do:
+                  - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - send: "{{ smtp.data(smtp.message(vars.login, smtp.recipients(vars.sid, vars.recipients), vars.subject, vars.text, attachment=content.binary(kind='gzip', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='export.csv.gz', content_type='application/gzip')) }}"
+            - expect: { pattern: "\r\n", timeout_ms: 30000 }
+            - delay: { dist: exponential, mean_ms: 100 }
+      - send: "QUIT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "220 {{ vars.server_name }} ESMTP ready\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.ehlo_reply(vars.server_name, vars.client_name, auth='PLAIN LOGIN') }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "235 2.7.0 Authentication successful\r\n"
+      - loop:
+          count: "{{ vars.messages }}"
+          do:
+            - expect: { pattern: "\r\n", timeout_ms: 30000 }
+            - loop:
+                count: "{{ vars.recipients }}"
+                do:
+                  - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - send: "250 2.1.0 Ok\r\n{{ smtp.repeat_line('250 2.1.5 Ok', vars.recipients) }}354 End data with <CR><LF>.<CR><LF>\r\n"
+            - expect: { pattern: "\r\n.\r\n", timeout_ms: 30000 }
+            - send: "250 2.0.0 Ok: queued as {{ rand_int(100000, 999999) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - send: "221 2.0.0 Bye\r\n"
+      - close: fin
