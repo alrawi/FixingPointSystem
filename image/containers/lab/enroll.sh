@@ -45,6 +45,8 @@ for id in agent1 agent2; do
 	if ! fps-controller token -agent-id "$id" -ttl 10m -config "$config" >"$out.tmp"; then
 		rm -f "$out.tmp"
 		echo "enroll: fps-controller token failed for $id" >&2
+		echo "enroll: $(id)" >&2
+		ls -ld /ca /enroll/agent1 /enroll/agent2 /var/lib/fps /var/lib/fps/pki >&2 || true
 		exit 1
 	fi
 	mv "$out.tmp" "$out"

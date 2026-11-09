@@ -35,17 +35,23 @@ RUN --mount=type=cache,target=/go/pkg/mod \
  && go version -m /out/fps-controller | grep -q 'CGO_ENABLED=0' \
  && /out/fps-controller -version
 
-# The files of the empty root. A scratch image cannot run mkdir or chown, so the
-# stage prepares them and the final stage copies them with explicit owners. The
-# image has no /tmp: the compose file mounts a tmpfs there when a process needs one.
+# The tree of the empty root. A scratch image cannot run mkdir or chown, so this stage
+# builds the tree with its owners and modes, and the final stage copies the whole tree,
+# which keeps them. The image has no /tmp: the compose file mounts a tmpfs there when a
+# process needs one. The directories /var/lib/fps and /secrets are mount points of
+# volumes. Docker copies the owner and the mode of a mount point into a new volume, and
+# compose may create the containers of a lab in any order, so every image that mounts a
+# volume must describe its directory the same way (see Dockerfile.agent).
 FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f AS rootfs
-RUN mkdir -p /rootfs/etc /rootfs/data \
+RUN mkdir -p /rootfs/etc /rootfs/var/lib/fps /rootfs/secrets \
  && printf 'fps:x:10001:10001:fps controller:/var/lib/fps:/sbin/nologin\n' >/rootfs/etc/passwd \
- && printf 'fps:x:10001:\n' >/rootfs/etc/group
+ && printf 'fps:x:10001:\n' >/rootfs/etc/group \
+ && chown 10001:10001 /rootfs/var/lib/fps /rootfs/secrets \
+ && chmod 0750 /rootfs/var/lib/fps \
+ && chmod 0700 /rootfs/secrets
 
 FROM scratch AS controller
-COPY --from=rootfs /rootfs/etc/passwd /rootfs/etc/group /etc/
-COPY --from=rootfs --chown=10001:10001 --chmod=0750 /rootfs/data /var/lib/fps
+COPY --from=rootfs /rootfs/ /
 COPY --from=build /out/fps-controller /usr/bin/fps-controller
 COPY image/containers/controller.yaml /etc/fps/controller.yaml
 USER 10001:10001

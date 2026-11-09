@@ -34,18 +34,30 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
  && strip /out/fps-agent \
  && ! readelf -lW /out/fps-agent | grep -q INTERP
 
+# The tree of the empty root, built here because a scratch image cannot run chown. The
+# final stage copies the whole tree, which keeps owners and modes.
+#   /var/lib/fps-agent  the key (mode 0600) and the certificate of the agent. A volume
+#                       mounts over it
+#   /enroll             the directory of the one time enrollment token, which a volume
+#                       mounts over. The lab step "enroll" (user 10001) writes the token
+#                       and the agent (group 10002) deletes it after it enrolled
+#   /ca                 the mount point of the public CA certificate (read only)
+# Docker copies the owner and the mode of a mount point into a new volume, and compose
+# may create the containers of a lab in any order, so /enroll and /ca match the lab
+# tools image (Dockerfile.controller) exactly.
 FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f AS rootfs
-RUN mkdir -p /rootfs/etc /rootfs/state /rootfs/enroll \
+RUN mkdir -p /rootfs/etc /rootfs/var/lib/fps-agent /rootfs/enroll /rootfs/ca \
  && printf 'fps-agent:x:10002:10002:fps agent:/var/lib/fps-agent:/sbin/nologin\n' >/rootfs/etc/passwd \
- && printf 'fps-agent:x:10002:\n' >/rootfs/etc/group
+ && printf 'fps-agent:x:10002:\n' >/rootfs/etc/group \
+ && chown 10002:10002 /rootfs/var/lib/fps-agent \
+ && chown 10001:10002 /rootfs/enroll \
+ && chown 10001:10001 /rootfs/ca \
+ && chmod 0700 /rootfs/var/lib/fps-agent \
+ && chmod 0770 /rootfs/enroll \
+ && chmod 0755 /rootfs/ca
 
 FROM scratch AS agent
-COPY --from=rootfs /rootfs/etc/passwd /rootfs/etc/group /etc/
-# The state directory holds the key (mode 0600) and the certificate of the agent.
-COPY --from=rootfs --chown=10002:10002 --chmod=0700 /rootfs/state /var/lib/fps-agent
-# The directory of the one time enrollment token, which a volume mounts over. The
-# agent deletes the token after it enrolled.
-COPY --from=rootfs --chown=10002:10002 --chmod=0770 /rootfs/enroll /enroll
+COPY --from=rootfs /rootfs/ /
 COPY --from=build /out/fps-agent /usr/bin/fps-agent
 COPY --from=build /src/modules/http1 /usr/share/fps/modules/http1
 COPY --from=build /src/modules/dns /usr/share/fps/modules/dns
