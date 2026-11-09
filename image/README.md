@@ -183,6 +183,23 @@ The agent role has no controller in its VM. With `FPS_TEST_CONTROLLER_BIN=/path/
 
 The namespace test is `image/tests/isolation-netns.sh`. It builds a router with interfaces named `mgmt0` and `test0` in network namespaces inside the VM, and it can also run on any Linux host as root: `sudo image/tests/isolation-netns.sh`.
 
+## Convert the image
+
+`image/convert.sh` converts the built qcow2 into raw, VHDX, a fixed VHD for Azure, and an OVA (OVF 1.0 with a streamOptimized VMDK), and writes `SHA256SUMS`. It needs `qemu-img` (package `qemu-utils`).
+
+```bash
+image/convert.sh                                   # image/output/fps-base.qcow2 into image/output/
+image/convert.sh -o /data/fps-formats              # another output directory
+image/convert.sh -f vhd,ova                        # only these formats; the raw disk is not kept
+image/convert.sh -f vhd --keep-raw                 # keep the raw disk that the VHD needs
+image/convert.sh --cpus 8 --memory-mb 16384 --nics 1   # OVF hardware
+image/convert.sh --help
+```
+
+Formats: `raw`, `vhdx`, `vhd`, `ova` (default: all four). The script rounds the virtual size up to a multiple of 1 MiB, converts to raw, and builds the VHD from that raw disk with `-o subformat=fixed,force_size=on`. It then checks that the VHD size minus the 512 byte footer is a multiple of 1 MiB, which Azure demands, and prints a `PASS vhd alignment:` line. The OVA holds `<name>.ovf`, `<name>.vmdk`, and `<name>.mf` in this order. The OVF describes 4 vCPUs, 8192 MiB, one disk, and two E1000 NICs (management first, then a test NIC). `qemu-img check` runs on the qcow2, the VHDX, and the VMDK, and `qemu-img info` on raw and VHD. A format that does not fit into the free space is skipped with a warning when you did not name it with `-f`, and fails when you did. Verify the files later with `cd <out dir> && sha256sum -c SHA256SUMS`.
+
+Test it without a built image: `image/tests/convert-test.sh` (part of `make test-img`) converts a tiny qcow2. It skips with a message when `qemu-img` is missing, and fails then when `FPS_REQUIRE_IMAGE_TOOLS=1`.
+
 ## Run the image by hand
 
 ```bash
@@ -206,13 +223,13 @@ Without a seed the VM has no login, because the image ships no password. The fir
 | Path | Purpose |
 |---|---|
 | `fps.pkr.hcl` | The Packer template with the QEMU builder |
-| `build.sh`, `boot-test.sh` | The build and the boot test |
+| `build.sh`, `boot-test.sh`, `convert.sh` | The build, the boot test, and the format conversion |
 | `files/` | Files that land in the image, laid out as `/` |
 | `final/` | Files that the last build step installs, laid out as `/` |
 | `scripts/provision.sh`, `scripts/cleanup.sh` | The steps that run inside the build VM |
 | `cloud-init/build-user-data.tftpl` | Seed of the build VM, with a random one time password |
 | `seed-example/` | Example NoCloud seed for a VM |
-| `tests/` | The static checks, the offline tests of the role selector and the tuning (`role-test.sh`, `tune-test.sh`), the namespace test, and the checks that run inside the VM |
+| `tests/` | The static checks, the offline tests of the role selector and the tuning (`role-test.sh`, `tune-test.sh`), the conversion test (`convert-test.sh`), the namespace test, and the checks that run inside the VM |
 
 Run the checks that need no KVM with `make lint-img test-img`, and the namespace test with `sudo make e2e-img`. `nft -c` needs root on many hosts, so `make test-img` prints a NOTE and skips that one check without root. Run `sudo make test-img` to include it.
 
