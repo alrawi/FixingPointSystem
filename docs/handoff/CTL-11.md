@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #163 |
 | Branch | `wp/CTL-11` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #256 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-ctl11-a7c3e1, lease until 2026-11-09T04:07:11Z |
 | Last verified commit | none |
 
@@ -27,7 +27,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Claim, branch, handoff
 - [x] 2. Keys, trust store, digest signing and archive digest, with tests
 - [x] 3. Canonical index and its signature, with tests; make targets
-- [ ] 4. Controller page, log entry, checks, PR, CI
+- [x] 4. Controller page, log entry, checks, PR, CI
 
 ## Done and verified
 
@@ -36,11 +36,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Step 4: CI on the pull request. Install, compiler, and agent wiring are outside this package and are listed in the Controller page and the log entry.
+CI passed on commit 3f379f9 (workflow ctl and ci). Install, compiler, and agent wiring are outside this package and are listed in the Controller page and the log entry.
 
 ## Next action
 
-Open the pull request and wait for CI.
+Review.
 
 ## Blockers and open questions
 
@@ -71,3 +71,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-08T22:40Z | claude-ctl11-a7c3e1 | claim | none | Claimed issue #163, branch from origin/main 82a5953 |
 | 2026-11-08T23:50Z | claude-ctl11-a7c3e1 | checkpoint | see branch | Package, tests, Controller page, log entry written; checks pass locally |
+| 2026-11-09T02:40Z | claude-ctl11-a7c3e1 | ready for review | 3f379f9 | PR #256, CI green |
