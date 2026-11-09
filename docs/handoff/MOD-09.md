@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #176 |
 | Branch | `wp/MOD-09` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 80% (3 of 4 plan steps) |
+| Pull request | #333 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-406366, lease until 2026-11-09T21:23:56Z |
-| Last verified commit | none |
+| Last verified commit | 2353c87 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -27,7 +27,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Native crate and manifest
 - [x] 2. Scenarios, tests, golden transcripts
 - [x] 3. Fixture, capture.sh, mk and workflow
-- [ ] 4. Docs, log entry, PR and CI
+- [x] 4. Docs, log entry, PR and CI
 
 ## Done and verified
 
@@ -37,11 +37,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Open the PR, wait for CI (the module workflow and the realism job give the real nDPI ratio), delete `target-MOD-09`.
+none. CI on 2353c87 is green, including the realism job module (pop3) and the mod-pop3 workflow.
 
 ## Next action
 
-Open the pull request `[MOD-09] POP3 module` and poll its check runs.
+Coordinator review and merge of PR #333.
 
 ## Blockers and open questions
 
