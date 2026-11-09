@@ -137,9 +137,20 @@ func (m *messageHandler) WithGroup(string) slog.Handler      { return m }
 // aborts.
 func TestEveryFailedRunHasAReason(t *testing.T) {
 	t.Run("every agent failed", func(t *testing.T) {
-		h := newHarness(t, nil)
+		// Crash the agent only after the orchestrator has seen the answer to
+		// its start command; a crash before that ends the run with a start
+		// reason instead (see "forced stop" below).
+		started := make(chan struct{})
+		h := newHarness(t, func(c *runs.Config) {
+			c.Logger = slog.New(&messageHandler{message: "run started on every agent", seen: started})
+		})
 		a := h.agent(t, "agent-a", nil)
 		run := h.start(t, a)
+		select {
+		case <-started:
+		case <-testContext(t).Done():
+			t.Fatal("the orchestrator did not finish starting the agents")
+		}
 		a.Crash()
 		end := h.wait(t, run.ID)
 		if end.State != runs.Failed || end.Reason != "every agent failed" {
