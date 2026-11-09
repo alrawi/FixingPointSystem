@@ -64,13 +64,9 @@ collect() {
 	fi
 }
 
-# shellcheck disable=SC2329 # runs through the EXIT trap
-cleanup() {
-	if [[ "$keep" == 0 ]]; then
-		"${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
-	fi
-}
-trap cleanup EXIT
+# Single quotes on purpose: the trap expands the variables when it runs.
+# shellcheck disable=SC2016
+trap '[[ "$keep" == 0 ]] && "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1' EXIT
 
 echo "== Start from a clean lab"
 "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true

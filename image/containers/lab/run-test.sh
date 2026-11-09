@@ -70,9 +70,9 @@ wait_for() {
 	done
 }
 
-# shellcheck disable=SC2329 # called through wait_for
+# shellcheck disable=SC2317,SC2329 # called through wait_for
 rest_up() { curl -sS -m 5 -o /dev/null --fail "$base/healthz"; }
-# shellcheck disable=SC2329 # called through wait_for
+# shellcheck disable=SC2317,SC2329 # called through wait_for
 agent_online() { [ "$(call GET /v1/agents | jq -r --arg id "$1" '.[] | select(.id == $id) | .state')" = online ]; }
 
 wait_for "the controller answers on $base" rest_up
