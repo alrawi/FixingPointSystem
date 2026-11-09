@@ -1,0 +1,9 @@
+USER brorais.logem@example.test
+PASS Tst-Noutrouk9797
+STAT
+LIST
+TOP 1 6
+TOP 2 6
+UIDL 1
+RETR 1
+QUIT

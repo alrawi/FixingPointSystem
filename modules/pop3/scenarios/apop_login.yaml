@@ -1,0 +1,63 @@
+scenario: apop_login
+description: A mail client on port 110 that logs in with APOP, so the password never crosses the wire. The server greeting carries a timestamp banner <pid.clock@host>, and the client reads it, computes the MD5 digest of the banner followed by the secret, and sends APOP user digest. The secret is a synthetic value with the prefix Tst-, and the digest is the one that RFC 1939 specifies. The client then asks for STAT, for the full LIST and UIDL, for LIST 1 and UIDL 1 in their single line form, and downloads message 1 with RETR, a dot stuffed MIME message with a PDF attachment. The scenario ends with QUIT. The server never checks the digest, because a flow cannot branch on what it reads.
+vars:
+  server_port: 110
+  server_name: pop3.example.test
+  messages: 6
+  body_size: 1800
+  attachment_min: 24000
+  attachment_max: 160000
+flows:
+  - id: apop_login
+    module: pop3
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set:
+          greeting: "{{ last }}"
+          login: "{{ pop3.credential('user') }}"
+          secret: "{{ pop3.credential('password') }}"
+      - send: "APOP {{ vars.login }} {{ pop3.apop_digest(vars.greeting, vars.secret) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "STAT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "LIST\r\n"
+      - expect: { pattern: "\r\n.\r\n", timeout_ms: 5000 }
+      - send: "UIDL\r\n"
+      - expect: { pattern: "\r\n.\r\n", timeout_ms: 5000 }
+      - send: "LIST 1\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "UIDL 1\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "RETR 1\r\n"
+      - expect: { pattern: "\r\n.\r\n", timeout_ms: 30000 }
+      - delay: { dist: exponential, mean_ms: 80 }
+      - send: "QUIT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - set: { box: "{{ rand_int(1, 2000000000) }}" }
+      - send: "+OK Dovecot ready. {{ pop3.banner(vars.server_name) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "+OK Logged in.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ pop3.stat_reply(vars.messages, vars.box) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ pop3.list_reply(last, vars.messages, vars.box) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ pop3.uidl_reply(last, vars.messages, vars.box) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ pop3.list_reply(last, vars.messages, vars.box) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ pop3.uidl_reply(last, vars.messages, vars.box) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { sid: "{{ rand_int(1, 2000000000) }}" }
+      - set:
+          subject: "Statement {{ rand_int(1000, 9999) }}"
+          text: "{{ content.email(size=vars.body_size) }}"
+      - set: { msg: "{{ pop3.message(pop3.address(vars.sid, 1), pop3.address(vars.sid, 2), vars.subject, vars.text, cc=pop3.address(vars.sid, 3), attachment=content.binary(kind='pdf', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='statement.pdf', content_type='application/pdf') }}" }
+      - send: "{{ pop3.retr_reply(last, vars.msg, vars.messages) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - send: "+OK Logging out.\r\n"
+      - close: fin

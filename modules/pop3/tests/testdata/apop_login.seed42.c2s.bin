@@ -1,0 +1,8 @@
+APOP brorais.logem@example.test 4f12364396d481969378e503dad2d78e
+STAT
+LIST
+UIDL
+LIST 1
+UIDL 1
+RETR 1
+QUIT

@@ -10,7 +10,7 @@
 | Branch | `wp/MOD-09` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 80% (3 of 4 plan steps) |
 | Current holder | claude-406366, lease until 2026-11-09T21:23:56Z |
 | Last verified commit | none |
 
@@ -24,39 +24,43 @@ Ship the pop3 module under modules/pop3/: scenarios for USER and PASS login and 
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Native crate and manifest
-- [ ] 2. Scenarios, tests, golden transcripts
-- [ ] 3. Fixture, capture.sh, mk and workflow
+- [x] 1. Native crate and manifest
+- [x] 2. Scenarios, tests, golden transcripts
+- [x] 3. Fixture, capture.sh, mk and workflow
 - [ ] 4. Docs, log entry, PR and CI
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Steps 1 to 3: `cargo test -p fps-module-pop3` passes (40 unit tests, 2 catalog, 7 scenario, 2 transcript tests), `cargo clippy -p fps-module-pop3 --all-targets -- -D warnings` and `cargo fmt --check` are clean, `make lint-mod-pop3` reports 0 errors.
+- Fixture `modules/pop3/fixtures/pop3.pcapng` recorded on loopback with dumpcap: 40 sessions, 1168 packets. tshark reports no malformed packet and no warning. A Python port of nDPI 4.2 `mail_pop.c` classifies 40 of 40 as POP3 (24 at packet 4, 8 at 6, 8 at 7).
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Open the PR, wait for CI (the module workflow and the realism job give the real nDPI ratio), delete `target-MOD-09`.
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Open the pull request `[MOD-09] POP3 module` and poll its check runs.
 
 ## Blockers and open questions
 
-Write "none" or name each blocker with a link to its issue.
+none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- MD5 is implemented in the crate (no dependency), checked against RFC 1321 and the RFC 1939 APOP example.
+- No STLS scenario and no STLS in CAPA, because a flow binds its transport once (ENG-20 adds the action).
+- `apop_login` starts with APOP, STAT, LIST so the fourth +OK (payload packet 7) comes before any command that nDPI 4.2 does not list (QUIT, TOP, RSET).
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+`ss` is missing in this sandbox, so the readiness loop of capture.sh is useless here and the client started late, which desynchronised the session pairs. Background `dumpcap` ignores SIGINT in a script, use SIGTERM.
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+cargo test -p fps-module-pop3   # all green
+make lint-mod-pop3              # 0 errors
 ```
 
 ## Session log
