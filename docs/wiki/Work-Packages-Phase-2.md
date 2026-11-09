@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 98 work packages. Packages marked critical path gate the phase.
+This page lists 101 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -109,6 +109,9 @@ flowchart LR
   ENG_21["ENG-21<br/>Extension seams found by AGT-11"]
   CTL_37["CTL-37<br/>Serve listConfigs and the controller version"]
   ENG_22["ENG-22<br/>Refuse tls_upgrade on UDP in the flow loader"]
+  ENG_23["ENG-23<br/>Multi flow scenario instances in the runtime"]
+  AGT_16["AGT-16<br/>Multi flow scenarios and digested extension bytes in the agent"]
+  CON_18["CON-18<br/>Decide the transport keyword of the scenario contract"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -223,6 +226,11 @@ flowchart LR
   CON_16 --> CTL_37
   CTL_33 --> CTL_37
   CON_17 --> ENG_22
+  AGT_13 --> ENG_23
+  ENG_23 --> AGT_16
+  ENG_21 --> AGT_16
+  AGT_14 --> AGT_16
+  ENG_20 --> CON_18
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -329,6 +337,9 @@ flowchart LR
 | [ENG-21](#eng-21-extension-seams-found-by-agt-11) | Extension seams found by AGT-11 | S | AGT-11 |  |
 | [CTL-37](#ctl-37-serve-listconfigs-and-the-controller-version) | Serve listConfigs and the controller version | S | CON-16, CTL-33 |  |
 | [ENG-22](#eng-22-refuse-tls_upgrade-on-udp-in-the-flow-loader) | Refuse tls_upgrade on UDP in the flow loader | S | CON-17 |  |
+| [ENG-23](#eng-23-multi-flow-scenario-instances-in-the-runtime) | Multi flow scenario instances in the runtime | M | ENG-07, AGT-13 |  |
+| [AGT-16](#agt-16-multi-flow-scenarios-and-digested-extension-bytes-in-the-agent) | Multi flow scenarios and digested extension bytes in the agent | S | ENG-23, ENG-21, AGT-14 |  |
+| [CON-18](#con-18-decide-the-transport-keyword-of-the-scenario-contract) | Decide the transport keyword of the scenario contract | S | ENG-20 |  |
 
 ## CON Contracts
 
@@ -493,6 +504,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The contract checks pass, a scenario with tls_upgrade validates, and one in a UDP flow fails.
+
+### CON-18 Decide the transport keyword of the scenario contract
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** ENG-20
+- **Paths.** `contracts/`
+
+The schema's transport (module tls with a profile) is rejected by the engine loader and ignored by the validator, so MOD-04 used tls_upgrade as each flow's first action instead. Needs owner approval as a contract change.
+
+Deliverables.
+
+- Either remove the transport keyword or define it as sugar for a leading tls_upgrade; contracts/changes/CON-18.md with the scenario contract version.
+
+Acceptance.
+
+- [ ] The contract checks pass, and the loader and the validator agree on the keyword.
 
 ## OPS Repository and swarm tooling
 
@@ -728,6 +756,24 @@ Acceptance.
 
 - [ ] The fps-flow parity fixtures pass with the new case.
 
+### ENG-23 Multi flow scenario instances in the runtime
+
+Phase 2 · size M · workstream ENG
+
+- **Depends on.** ENG-07, AGT-13
+- **Paths.** `engine/fps-runtime/`
+
+fps-interp has ScenarioInstance and spawn, but fps-runtime has no worker that drives an instance, so the agent refuses scenarios with more than one flow and the FTP module cannot run through it (AGT-13 finding). SIP with spawned RTP flows needs the same.
+
+Deliverables.
+
+- A worker that runs the flows of an instance through a FlowEnv of the kernel backend, with session ids, metric series, and capture for every flow.
+- A stream opener that binds a spawned data port on accept and tolerates a connect that arrives before the listener.
+
+Acceptance.
+
+- [ ] A loopback runtime test runs modules/ftp mixed_session end to end with one data connection per transfer.
+
 ## TRN Transport backends
 
 ### TRN-04 TLS transport module
@@ -942,6 +988,7 @@ Deliverables.
 
 - The agent builds the TLS profiles a plan names and sets RuntimeConfig::tls, with a key log that the capture download ships when export_tls_keys is set.
 - Criterion.labels apply, at least side.
+- From MOD-04 - one TLS connector per client session (a shared connector resumes and changes the JA4 from the second handshake on), and the server profiles server-tls13 and server-tls12 (single version, ALPN http/1.1, a certificate for www.example.test) besides the browser profiles; modules/http1/tests/common/tls.rs is the reference registry.
 
 Acceptance.
 
@@ -963,6 +1010,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The test passes 200 times in a row locally and in a temporary CI step, which is then removed.
+
+### AGT-16 Multi flow scenarios and digested extension bytes in the agent
+
+Phase 2 · size S · workstream AGT
+
+- **Depends on.** ENG-23, ENG-21, AGT-14
+- **Paths.** `engine/fps-agent/`
+
+Lift the one flow check in assemble.rs once ENG-23 lands, and load extension.wasm from the bytes that were digested (ENG-21 added ExtensionSet::load_module_bytes).
+
+Deliverables.
+
+- The agent runs multi flow scenarios through the ENG-23 worker, and modules.rs reads extension.wasm once, digests those bytes with the module tree, and compiles the same bytes.
+
+Acceptance.
+
+- [ ] The controller e2e test runs an ftp plan through the real agent, and a test shows a swapped extension.wasm after the digest is never compiled.
 
 ## CTL Controller
 
