@@ -5,10 +5,10 @@
 | Issue | #252 |
 | Branch | `wp/AGT-08` |
 | Pull request | #272 |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-a8c3f1, lease until 2026-11-09T05:38Z |
-| Last verified commit | 259c5b1 |
+| Last verified commit | 05ae73d (CI green) |
 
 ## Goal
 
@@ -20,7 +20,7 @@ The agent dials the controller over mutual TLS (rustls), enrolls with a one time
 - [x] 2. TLS channel in the session, permanent errors for `UNAUTHENTICATED` and handshake failures, renewal task, flags in `main.rs`.
 - [x] 3. Rust tests (fake enrollment server and fake controller over mutual TLS, permanent errors, exit codes).
 - [x] 4. `controller_e2e.sh` over mutual TLS with a token, plus a handshake failure case.
-- [ ] 5. Wiki page `Agent.md`, log entry, checks, pull request.
+- [x] 5. Wiki page `Agent.md`, log entry, checks, pull request.
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ The agent dials the controller over mutual TLS (rustls), enrolls with a one time
 
 ## Remaining
 
-Step 5: open the PR and wait for CI. The e2e script cannot run here, because Go modules cannot be downloaded, so CI is its test loop.
+None. The e2e script cannot run here, because Go modules cannot be downloaded, so CI is its test loop.
 
 ## Next action
 
-Open the pull request and poll CI.
+Review pull request #272.
 
 ## Blockers and open questions
 
@@ -65,3 +65,4 @@ CARGO_TARGET_DIR=$PWD/target-AGT-08 cargo test -p fps-agent
 | 2026-11-09T03:52Z | claude-a8c3f1 | claim | none | Claimed #252 |
 | 2026-11-09T04:10Z | claude-a8c3f1 | checkpoint | 259c5b1 | Identity module, session wiring, flags, 13 mtls tests |
 | 2026-11-09T04:30Z | claude-a8c3f1 | checkpoint | see branch | e2e script over mutual TLS, docs, log entry |
+| 2026-11-09T05:00Z | claude-a8c3f1 | review | 05ae73d | PR #272, CI green |
