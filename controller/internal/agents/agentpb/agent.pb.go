@@ -3848,7 +3848,9 @@ type MixEntry struct {
 	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	// scenario is the ref of a ScenarioSource in the same plan.
 	Scenario string `protobuf:"bytes,2,opt,name=scenario,proto3" json:"scenario,omitempty"`
-	// weight is the normalized weight within the basis, between 0 and 1.
+	// weight is the session share of the entry, between 0 and 1. The shares of
+	// a plan sum to 1. For the bytes basis the compiler has already converted
+	// the byte weights into session shares, and the agent uses the field as it is.
 	Weight float64 `protobuf:"fixed64,3,opt,name=weight,proto3" json:"weight,omitempty"`
 	// params holds the effective scenario variables after test overrides.
 	Params *structpb.Struct `protobuf:"bytes,4,opt,name=params,proto3" json:"params,omitempty"`
