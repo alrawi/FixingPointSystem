@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents/agentpb"
 	"github.com/alrawi/FixingPointSystem/controller/internal/compiler"
+	"github.com/alrawi/FixingPointSystem/controller/internal/mixcontrol"
 	"github.com/alrawi/FixingPointSystem/controller/internal/runs/calibrate"
 )
 
@@ -56,6 +58,15 @@ type CalibrationConfig struct {
 	// and MaxFactor of calibrate.Config, and zero fields take the defaults of
 	// that package. The orchestrator fills the objective and the entries.
 	Tuning calibrate.Config
+	// ByteMixOff turns the byte weighted mix control (CTL-12, bytemix.go) off.
+	// Without it, a run whose test sets profile.basis to bytes and whose
+	// objective is throughput_bps keeps the byte share of every mix entry at its
+	// weight, in the same loop and with the same UpdateRates command.
+	ByteMixOff bool
+	// MixTuning sets the tuning fields MaxStep, DeadBand, MinSessions, and
+	// Forget of mixcontrol.Config. Zero fields take the defaults of that
+	// package. The orchestrator fills the entries.
+	MixTuning mixcontrol.Config
 }
 
 // CalibrationStep records one change of the calibration factor.
@@ -72,6 +83,10 @@ type CalibrationStep struct {
 	SessionsPerSecond float64
 	// Entries holds the bytes per session estimate of each mix entry.
 	Entries []calibrate.EntryResult
+	// Multipliers holds the byte mix multiplier of each mix entry by id, which
+	// scales its rate beside Factor. It is nil for a run without byte weighted
+	// mix control.
+	Multipliers map[string]float64
 }
 
 // calEntry is one mix entry of a calibration.
@@ -99,6 +114,17 @@ type calibrator struct {
 	// last holds the cumulative totals of the windows that were counted, by
 	// scenario name.
 	last map[string]calTotals
+
+	// The byte weighted mix control (CTL-12) of the run, or nothing when mixOn
+	// is false. mult holds the multiplier of each mix entry that the agents
+	// should run with, and rev counts its changes. applied holds the revision
+	// that each agent runs with, by agent id, and the orchestrator lock guards
+	// it.
+	mixOn   bool
+	mix     mixcontrol.State
+	mult    map[string]float64
+	rev     uint64
+	applied map[string]uint64
 }
 
 // newCalibrator returns the calibration of a run, or nil when the run needs
@@ -200,6 +226,12 @@ func engineAtLeast(v string, major, minor int) bool {
 // of the compiled rates of its workers. It returns nil for an agent without a
 // session rate, for example an agent that runs the server side only.
 func ratesCommand(a *runAgent, entries []calEntry, factor float64) *agentpb.UpdateRatesCommand {
+	return ratesCommandScaled(a, entries, factor, nil)
+}
+
+// ratesCommandScaled is ratesCommand with a multiplier per mix entry on top of
+// the factor. An entry that scale does not name keeps a multiplier of one.
+func ratesCommandScaled(a *runAgent, entries []calEntry, factor float64, scale map[string]float64) *agentpb.UpdateRatesCommand {
 	sum := map[string]float64{}
 	for _, w := range a.plan.Workers {
 		for _, wr := range w.Rates {
@@ -211,9 +243,13 @@ func ratesCommand(a *runAgent, entries []calEntry, factor float64) *agentpb.Upda
 	var rates []*agentpb.RateUpdate
 	for _, e := range entries {
 		if s := sum[e.id]; s > 0 {
+			m := 1.0
+			if v, ok := scale[e.id]; ok {
+				m = v
+			}
 			rates = append(rates, &agentpb.RateUpdate{
 				MixEntry: e.id,
-				Target:   &agentpb.RateUpdate_SessionsPerSecond{SessionsPerSecond: s * factor},
+				Target:   &agentpb.RateUpdate_SessionsPerSecond{SessionsPerSecond: s * factor * m},
 			})
 		}
 	}
@@ -300,16 +336,19 @@ func (o *Orchestrator) clientTotals(r *run, scenarios map[string]bool) map[strin
 // calibrateOnce folds the window that just ended into the calibration, records
 // a change of the factor, and brings every agent to the factor.
 func (o *Orchestrator) calibrateOnce(ctx context.Context, r *run, c *calibrator) {
-	next, res, err := c.state.Update(c.sample(o.clientTotals(r, c.scenarios)))
+	samples := c.sample(o.clientTotals(r, c.scenarios))
+	next, res, err := c.state.Update(samples)
 	if err != nil {
 		o.log.Warn("throughput calibration skipped a window", "run_id", r.ID, "error", err)
 		return
 	}
 	c.state = next
-	if res.Changed {
+	mixChanged := o.updateByteMix(r, c, samples)
+	if res.Changed || mixChanged {
 		step := CalibrationStep{
 			Time: o.cfg.Clock.Now().UTC(), Factor: res.Factor, Target: res.Target,
 			SessionsPerSecond: res.SessionsPerSecond, Entries: slices.Clone(res.Entries),
+			Multipliers: maps.Clone(c.mult),
 		}
 		o.mu.Lock()
 		r.Calibration = append(r.Calibration, step)
@@ -338,7 +377,8 @@ func bytesPerSession(es []calibrate.EntryResult) string {
 func (o *Orchestrator) pushRates(ctx context.Context, r *run, c *calibrator, factor float64) {
 	// forEachIn calls keep with the orchestrator lock held.
 	stale := func(a *runAgent) bool {
-		return a.status == agentActive && a.started && !a.calSkip && a.appliedFactor() != factor
+		return a.status == agentActive && a.started && !a.calSkip &&
+			(a.appliedFactor() != factor || c.applied[a.id] != c.rev)
 	}
 	send := func(ctx context.Context, a *runAgent) error { return o.sendRates(ctx, r, c, a, factor) }
 	_ = o.forEachIn(ctx, r, stale, send)
@@ -347,7 +387,7 @@ func (o *Orchestrator) pushRates(ctx context.Context, r *run, c *calibrator, fac
 // sendRates brings agent a to factor. An agent with an engine contract older
 // than 0.2.0 never receives the command, and the orchestrator logs that once.
 func (o *Orchestrator) sendRates(ctx context.Context, r *run, c *calibrator, a *runAgent, factor float64) error {
-	cmd := ratesCommand(a, c.entries, factor)
+	cmd := ratesCommandScaled(a, c.entries, factor, c.mult)
 	if cmd == nil {
 		o.skipCalibration(a)
 		return nil
@@ -374,6 +414,9 @@ func (o *Orchestrator) sendRates(ctx context.Context, r *run, c *calibrator, a *
 	}
 	o.mu.Lock()
 	a.calSent, a.calApplied, a.calFailed = true, factor, 0
+	if c.mixOn {
+		c.applied[a.id] = c.rev
+	}
 	o.mu.Unlock()
 	o.log.Info("rates updated", "run_id", r.ID, "agent_id", a.id, "factor", factor)
 	return nil
