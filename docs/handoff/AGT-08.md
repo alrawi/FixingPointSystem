@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #252 |
 | Branch | `wp/AGT-08` |
-| Pull request | none yet |
+| Pull request | #272 |
 | Status | in progress |
 | Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-a8c3f1, lease until 2026-11-09T05:38Z |
