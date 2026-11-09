@@ -114,6 +114,14 @@ type Config struct {
 	// endpoint open. The setting takes a file and not the secret itself, so
 	// the token never appears in the configuration, in flags, or in logs.
 	MetricsTokenFile string `yaml:"metrics_token_file"`
+	// TrustStoreFile names the JSON trust store of module signing keys that
+	// the registry verifies signatures against at install. Empty means no trust
+	// store, so the registry does not require signatures and logs a warning.
+	TrustStoreFile string `yaml:"trust_store_file"`
+	// AllowUnsignedModules is the development setting that lets the registry
+	// install a module without a signature when a trust store is configured.
+	// A module whose signature fails is refused either way.
+	AllowUnsignedModules bool `yaml:"allow_unsigned_modules"`
 }
 
 // Token is one bearer token of the REST API. Exactly one of Token and

@@ -6,7 +6,7 @@
 | Branch | `wp/CTL-28` |
 | Pull request | not yet opened |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-c28a91, lease until 2026-11-09T05:22:59Z |
 | Last verified commit | none |
 
@@ -18,23 +18,25 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Plan
 
-- [ ] 1. Registry trust policy, signature options, and verification in Install and InstallDir
-- [ ] 2. Store the signature in the index entry; HTTP headers and error mapping
-- [ ] 3. Compiler: ModuleRef and PlanModule carry the signature
-- [ ] 4. Settings in `controller/internal/app` config, the wiring that uses them, and tests
+- [x] 1. Registry trust policy, signature options, and verification in Install and InstallDir
+- [x] 2. Store the signature in the index entry; HTTP headers and error mapping
+- [x] 3. Compiler: ModuleRef and PlanModule carry the signature
+- [x] 4. Settings in `controller/internal/app` config, the wiring that uses them, and tests
 - [ ] 5. Wiki (Controller page, log entry), make targets, PR
 
 ## Done and verified
 
-Nothing yet.
+- `gofmt -l` on registry, compiler, app, and wiring is clean.
+- `python3 tools/plan/plan.py check`, `render --check`, and `lint` pass.
+- Go tests have not run locally (modules cannot be downloaded); the PR CI is the build and test loop.
 
 ## Remaining
 
-Everything above.
+Open the PR, wait for CI, fix failures.
 
 ## Next action
 
-Write the trust policy in `controller/internal/registry/trust.go`.
+Open the PR and poll CI.
 
 ## Blockers and open questions
 
@@ -42,7 +44,13 @@ none
 
 ## Decisions taken in this package
 
-To be filled as the work proceeds.
+- No trust store means signatures are not required, and the registry logs a warning. A signature supplied without a trust store is ignored and not stored, because a stored signature means verified.
+- The development setting `allow_unsigned_modules` only matters with a trust store. A bad signature is refused even with it.
+- The trust store file is re-read at every install, so a revocation applies without a restart. A broken file fails the install closed.
+- The signature travels in the headers `X-Module-Signature` and `X-Module-Signature-Key-Id` (the contract does not name them yet) and as `registry.WithSignature` in Go.
+- The archive is spooled to a staging file so the verified bytes are the unpacked bytes.
+- `compiler.ModuleRef.Signature` is a base64 string so the struct stays comparable; the plan JSON then matches proto3 JSON for bytes.
+- Edits outside the catalog paths: `app/config.go` (two keys), `wiring/controller.go` and `wiring/adapters.go` (one line each). Without them the settings and the plan fields would be inert.
 
 ## Pitfalls
 

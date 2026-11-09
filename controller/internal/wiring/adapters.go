@@ -66,7 +66,7 @@ func (c Catalog) Scenarios(ctx context.Context) ([]compiler.Scenario, error) {
 				return nil, fmt.Errorf("scenario catalog: module %s %s: read scenario %s: %w", e.Name, e.Version, rel, err)
 			}
 			out = append(out, compiler.Scenario{
-				Module:         compiler.ModuleRef{Name: e.Name, Version: e.Version, Digest: e.Digest},
+				Module:         compiler.ModuleRef{Name: e.Name, Version: e.Version, Digest: e.Digest, Signature: e.Signature, SignatureKeyID: e.SignatureKeyID},
 				Name:           e.Scenarios[i],
 				Source:         string(src),
 				SettingsSchema: schema,
