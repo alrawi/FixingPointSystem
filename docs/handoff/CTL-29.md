@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #263 |
 | Branch | `wp/CTL-29` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #267 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-c29a7e, lease until 2026-11-09T05:22:21Z |
-| Last verified commit | none |
+| Last verified commit | 2328e18 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -27,7 +27,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. pki: Authority.ValidIdentities lists the identities with a live certificate
 - [x] 2. agents: Manager.Seed adds identities to the inventory
 - [x] 3. Tests: unit tests plus restart acceptance test; one-line call in wiring/controller.go
-- [ ] 4. Docs: Controller.md, log entry; PR and CI
+- [x] 4. Docs: Controller.md, log entry; PR and CI
 
 ## Done and verified
 
@@ -67,3 +67,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-08 | claude-c29a7e | claim | none | Claimed #263 |
 | 2026-11-08 | claude-c29a7e | checkpoint | pending | Code, tests, docs written |
+| 2026-11-08 | claude-c29a7e | finish | 2328e18 | PR #267, CI green (ctl: gofmt, vet, golangci-lint, go test -race) |
