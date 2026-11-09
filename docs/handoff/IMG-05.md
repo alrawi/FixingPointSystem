@@ -9,10 +9,10 @@
 | Issue | #201 |
 | Branch | `wp/IMG-05` |
 | Pull request | #330 |
-| Status | in progress |
-| Progress | 95% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-4643a2, lease until 2026-11-09T21:25:35Z |
-| Last verified commit | none |
+| Last verified commit | defa0d8 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -28,20 +28,21 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 2. Compose lab, init scripts, and the test
 - [x] 3. Workflow containers.yml
 - [x] 4. Docs (Image.md Containers section), log entry
-- [ ] 5. PR and green CI
+- [x] 5. PR and green CI
 
 ## Done and verified
 
+- Final CI of defa0d8: workflow run 42695515905 passed (`RESULT PASS the compose lab ran a short test between two agent containers: ... verdict passed; http1 client=1808 server=1805 dns client=791 server=791`), and every other workflow of the PR is green.
 - Steps 1 to 4: workflow run 42694450920 (commit before the summary-line fix) passed: static checks, Hadolint, image builds, and the lab with `RESULT PASS ... http1 client=1808 server=1801 dns client=791 server=791`.
 - `python3 tools/plan/plan.py check`, `render --check`, `lint`, and `make lint-img test-img` pass locally.
 
 ## Remaining
 
-CI of the last commit, then `fps_swarm.py review 201 --pr 330`. The coordinator applies the shared page notes of the log entry (mk/img.mk, Operations, Testing).
+Nothing. The coordinator applies the shared page notes of the log entry (mk/img.mk, Operations, Testing).
 
 ## Next action
 
-Wait for CI of the PR, then request review.
+Review the PR.
 
 ## Blockers and open questions
 
@@ -73,3 +74,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T21:00Z | claude-4643a2 | claim | - | claimed #201 |
+| 2026-11-09T22:12Z | claude-4643a2 | review | defa0d8 | CI green, review requested |
