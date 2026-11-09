@@ -63,6 +63,10 @@ func TestParseConfigRejectsBadInput(t *testing.T) {
 		{"token with two secrets", "tokens: [{name: a, scope: read, token: " + longToken + ", token_file: x}]\n", "both set", true},
 		{"short token", "tokens: [{name: a, scope: read, token: short}]\n", "shorter than 16", true},
 		{"repeated token name", "tokens: [{name: a, scope: read, token: " + longToken + "}, {name: a, scope: run, token_file: x}]\n", "tokens[1]: name \"a\" repeats", true},
+		{"enroll listen without port", "enroll_listen: localhost\n", "enroll_listen", true},
+		{"empty tls name", "tls_names: [\"\"]\n", "tls_names[0]", true},
+		{"tls name with a slash", "tls_names: [a/b]\n", "tls_names[0]", true},
+		{"admin socket too long", "admin_socket: " + strings.Repeat("x", 101) + "\n", "admin socket path", true},
 		{"unknown token key", "tokens: [{name: a, scope: read, secret: x}]\n", "field secret not found", false},
 	}
 	for _, tc := range tests {
@@ -94,6 +98,10 @@ func TestLoadConfigFileReadsExample(t *testing.T) {
 		DataDir:           "/var/lib/fps",
 		StorePath:         "/var/lib/fps/store/configs.db",
 		GRPCListen:        "127.0.0.1:8444",
+		EnrollListen:      "127.0.0.1:8445",
+		PKIDir:            "/var/lib/fps/pki",
+		TLSNames:          []string{"ctl.lab.example", "10.0.0.5"},
+		AdminSocket:       "/run/fps/admin.sock",
 		AgentAutoEnroll:   true,
 		Tokens: []Token{
 			{Name: "ci", Scope: "run", Token: "example-run-token-0123456789"},
@@ -216,6 +224,53 @@ func TestLoadTokensReadsFiles(t *testing.T) {
 			c := Config{Tokens: []Token{{Name: "ops", Scope: "admin", TokenFile: file}, tok}}
 			if _, err := c.LoadTokens(); err == nil {
 				t.Fatal("LoadTokens error = nil, want an error")
+			}
+		})
+	}
+}
+
+func TestPKIPathsFollowTheDataDir(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        Config
+		wantPKI    string
+		wantSocket string
+	}{
+		{"nothing set", Config{}, "", ""},
+		{"data dir", Config{DataDir: "/d"}, "/d/pki", "/d/pki/admin.sock"},
+		{"pki dir wins", Config{DataDir: "/d", PKIDir: "/p"}, "/p", "/p/admin.sock"},
+		{"socket wins", Config{DataDir: "/d", AdminSocket: "/run/a.sock"}, "/d/pki", "/run/a.sock"},
+		{"socket without a pki dir", Config{AdminSocket: "/run/a.sock"}, "", "/run/a.sock"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.ResolvedPKIDir(); got != tc.wantPKI {
+				t.Errorf("ResolvedPKIDir = %q, want %q", got, tc.wantPKI)
+			}
+			if got := tc.cfg.ResolvedAdminSocket(); got != tc.wantSocket {
+				t.Errorf("ResolvedAdminSocket = %q, want %q", got, tc.wantSocket)
+			}
+		})
+	}
+}
+
+func TestServerNames(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want []string
+	}{
+		{"defaults", DefaultConfig(), []string{"localhost", "127.0.0.1", "::1"}},
+		{"specific address", Config{GRPCListen: "10.0.0.5:8444", EnrollListen: "10.0.0.5:8445"}, []string{"localhost", "127.0.0.1", "::1", "10.0.0.5"}},
+		{"two hosts", Config{GRPCListen: "ctl.lab:8444", EnrollListen: "10.0.0.5:8445"}, []string{"localhost", "127.0.0.1", "::1", "ctl.lab", "10.0.0.5"}},
+		{"wildcards add nothing", Config{GRPCListen: "0.0.0.0:8444", EnrollListen: "[::]:8445"}, []string{"localhost", "127.0.0.1", "::1"}},
+		{"empty host adds nothing", Config{GRPCListen: ":8444", EnrollListen: ":8445"}, []string{"localhost", "127.0.0.1", "::1"}},
+		{"explicit names win", Config{GRPCListen: "10.0.0.5:8444", TLSNames: []string{"a.example"}}, []string{"a.example"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.ServerNames(); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ServerNames = %v, want %v", got, tc.want)
 			}
 		})
 	}

@@ -227,6 +227,42 @@ func (e RunState) Valid() bool {
 	}
 }
 
+// Defines values for GetRunMetricsParamsSide.
+const (
+	GetRunMetricsParamsSideClient GetRunMetricsParamsSide = "client"
+	GetRunMetricsParamsSideServer GetRunMetricsParamsSide = "server"
+)
+
+// Valid indicates whether the value is a known member of the GetRunMetricsParamsSide enum.
+func (e GetRunMetricsParamsSide) Valid() bool {
+	switch e {
+	case GetRunMetricsParamsSideClient:
+		return true
+	case GetRunMetricsParamsSideServer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StreamRunMetricsParamsSide.
+const (
+	StreamRunMetricsParamsSideClient StreamRunMetricsParamsSide = "client"
+	StreamRunMetricsParamsSideServer StreamRunMetricsParamsSide = "server"
+)
+
+// Valid indicates whether the value is a known member of the StreamRunMetricsParamsSide enum.
+func (e StreamRunMetricsParamsSide) Valid() bool {
+	switch e {
+	case StreamRunMetricsParamsSideClient:
+		return true
+	case StreamRunMetricsParamsSideServer:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetRunReportParamsFormat.
 const (
 	GetRunReportParamsFormatCsv  GetRunReportParamsFormat = "csv"
@@ -503,12 +539,24 @@ type GetRunMetricsParams struct {
 	From  *time.Time `form:"from,omitempty" json:"from,omitempty"`
 	To    *time.Time `form:"to,omitempty" json:"to,omitempty"`
 	StepS *int       `form:"step_s,omitempty" json:"step_s,omitempty"`
+
+	// Side Side of the sessions that the series count, client or server. Omitted, it is client, as before the parameter existed.
+	Side *GetRunMetricsParamsSide `form:"side,omitempty" json:"side,omitempty"`
 }
+
+// GetRunMetricsParamsSide defines parameters for GetRunMetrics.
+type GetRunMetricsParamsSide string
 
 // StreamRunMetricsParams defines parameters for StreamRunMetrics.
 type StreamRunMetricsParams struct {
 	View *[]MetricView `form:"view,omitempty" json:"view,omitempty"`
+
+	// Side Side of the sessions that every requested view counts, client or server. Omitted, it is client, as before the parameter existed.
+	Side *StreamRunMetricsParamsSide `form:"side,omitempty" json:"side,omitempty"`
 }
+
+// StreamRunMetricsParamsSide defines parameters for StreamRunMetrics.
+type StreamRunMetricsParamsSide string
 
 // GetRunReportParams defines parameters for GetRunReport.
 type GetRunReportParams struct {
@@ -1235,6 +1283,14 @@ func (siw *ServerInterfaceWrapper) GetRunMetrics(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// ------------- Optional query parameter "side" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "side", r.URL.Query(), &params.Side, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "side", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetRunMetrics(w, r, id, params)
 	}))
@@ -1274,6 +1330,14 @@ func (siw *ServerInterfaceWrapper) StreamRunMetrics(w http.ResponseWriter, r *ht
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "view", r.URL.Query(), &params.View, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "view", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "side" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "side", r.URL.Query(), &params.Side, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "side", Err: err})
 		return
 	}
 

@@ -241,6 +241,8 @@ pub fn assemble(plan: &Plan, loaded: &LoadedModules, sides: Sides) -> Result<Ass
     let flow_ref = |i: usize| {
         let mut f = FlowRef::new(Arc::clone(&flows[i].0), 0);
         f.functions = Arc::clone(&functions);
+        // UpdateRates names mix entries, and two entries may share a scenario.
+        f.entry = Some(plan.mix[i].id.clone());
         f
     };
     let external: Vec<IpAddr> = plan

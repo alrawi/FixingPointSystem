@@ -1044,6 +1044,8 @@ export interface operations {
                 from?: string;
                 to?: string;
                 step_s?: number;
+                /** @description Side of the sessions that the series count, client or server. Omitted, it is client, as before the parameter existed. */
+                side?: "client" | "server";
             };
             header?: never;
             path: {
@@ -1069,6 +1071,8 @@ export interface operations {
         parameters: {
             query?: {
                 view?: components["schemas"]["MetricView"][];
+                /** @description Side of the sessions that every requested view counts, client or server. Omitted, it is client, as before the parameter existed. */
+                side?: "client" | "server";
             };
             header?: never;
             path: {

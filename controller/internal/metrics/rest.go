@@ -60,13 +60,22 @@ func (a *API) lookup(w http.ResponseWriter, r *http.Request, id string) bool {
 
 // GetRunMetrics answers GET /v1/runs/{id}/metrics with the samples of one
 // view over a time window. Without from and to, the window covers the whole
-// run, and step_s keeps the newest sample of every step.
+// run, and step_s keeps the newest sample of every step. The side parameter
+// selects the client side, which is the default, or the server side (CON-12).
 func (a *API) GetRunMetrics(w http.ResponseWriter, r *http.Request, id api.Id, params api.GetRunMetricsParams) {
 	if !ValidView(params.View) {
 		api.WriteProblem(w, r, api.Problemf(http.StatusBadRequest, "view %q is not one of %v", params.View, Views))
 		return
 	}
-	win := Window{Step: time.Second}
+	side := ""
+	if params.Side != nil {
+		side = string(*params.Side)
+	}
+	if !ValidSide(side) {
+		api.WriteProblem(w, r, api.Problemf(http.StatusBadRequest, "side %q is not client or server", side))
+		return
+	}
+	win := Window{Step: time.Second, Side: side}
 	if params.StepS != nil {
 		if *params.StepS < 1 {
 			api.WriteProblem(w, r, api.Problemf(http.StatusBadRequest, "step_s %d is below 1", *params.StepS))
@@ -102,7 +111,8 @@ func (a *API) GetRunMetrics(w http.ResponseWriter, r *http.Request, id api.Id, p
 // Events. Once per stream interval it sends one event per sample of every
 // requested view, all views when the request names none. Each event carries
 // a MetricSample as JSON in its data field and the tick number as its id.
-// When the run ends, the stream sends the final samples and an event named
+// The side parameter selects the client side, which is the default, or the
+// server side for every view (CON-12). When the run ends, the stream sends the final samples and an event named
 // end whose data holds the run state, and closes.
 func (a *API) StreamRunMetrics(w http.ResponseWriter, r *http.Request, id api.Id, params api.StreamRunMetricsParams) {
 	views := Views
@@ -114,6 +124,14 @@ func (a *API) StreamRunMetrics(w http.ResponseWriter, r *http.Request, id api.Id
 				return
 			}
 		}
+	}
+	side := ""
+	if params.Side != nil {
+		side = string(*params.Side)
+	}
+	if !ValidSide(side) {
+		api.WriteProblem(w, r, api.Problemf(http.StatusBadRequest, "side %q is not client or server", side))
+		return
 	}
 	if !a.lookup(w, r, id) {
 		return
@@ -137,7 +155,7 @@ func (a *API) StreamRunMetrics(w http.ResponseWriter, r *http.Request, id api.Id
 	for {
 		tick++
 		final, state := a.runState(id)
-		if err := a.emit(w, id, views, tick); err != nil {
+		if err := a.emit(w, id, views, side, tick); err != nil {
 			return
 		}
 		if final {
@@ -169,9 +187,9 @@ func (a *API) runState(id string) (bool, string) {
 }
 
 // emit writes one event per current sample of every view.
-func (a *API) emit(w http.ResponseWriter, id string, views []api.MetricView, tick uint64) error {
+func (a *API) emit(w http.ResponseWriter, id string, views []api.MetricView, side string, tick uint64) error {
 	for _, v := range views {
-		samples, err := a.agg.Latest(id, v)
+		samples, err := a.agg.LatestSide(id, v, side)
 		if err != nil && !errors.Is(err, ErrRunUnknown) {
 			return err
 		}

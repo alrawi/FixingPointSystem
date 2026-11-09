@@ -14,6 +14,7 @@ The module has two packages after CTL-01.
 | `internal/compiler/` | Compiles a test configuration and an agent inventory into per agent plans (CTL-05) |
 | `internal/store/` | Stores and validates test configurations and serves the /v1/configs operations (CTL-03) |
 | `internal/registry/` | The local module registry, manifest checks, tree digests, and the /v1/modules operations (CTL-04) |
+| `internal/registry/signing/` | Ed25519 signatures for module archives and the registry index, key ids, and the trust store with rotation (CTL-11) |
 | `internal/agents/` | The agent manager with Register and Session, the inventory, and /v1/agents (CTL-06) |
 | `internal/fakeagent/` | Fake agents for controller tests (CTL-06) |
 | `internal/runs/` | The run state machine, the orchestrator, and the run operations of /v1/runs (CTL-07) |
@@ -41,6 +42,8 @@ go run ./controller/cmd/fps-controller -version
 | `-listen address` | `localhost:8443` | TCP address of the HTTP server, as host:port |
 | `-log-level level` | `info` | `debug`, `info`, `warn`, or `error` |
 | `-version` | false | Print the module version and exit |
+
+The binary also has two subcommands for operators, `fps-controller token` and `fps-controller revoke`, which [Operators, tokens, and revocation](#operators-tokens-and-revocation) describes.
 
 Settings come from three layers, and a later layer wins. The layers are the built in defaults, the configuration file, and the flags that appear on the command line. The process exits with 0 after a clean shutdown, with 1 when it fails at run time, for example because the port is taken, and with 2 for invalid flags or configuration.
 
@@ -281,6 +284,102 @@ Well known incompatible licenses, such as GPL-2.0-only, EPL-2.0, CDDL-1.0, SSPL-
 |---|---|---|
 | `github.com/santhosh-tekuri/jsonschema/v6` v6.0.2 | Apache-2.0 | Validates JSON Schema 2020-12, which the manifest contract uses |
 | `github.com/dlclark/regexp2` v1.11.5 | MIT | Runs ECMA-262 patterns with lookahead, which `regexp` cannot express |
+## Module signing and signed index
+
+CTL-11 added the package `internal/registry/signing`. It signs module archives and the registry index with Ed25519, and it uses only the standard library (`crypto/ed25519`, `crypto/x509`, `archive/tar`). Nothing calls it yet: the install path, the compiler, and the agent are outside CTL-11, so [Where the other packages use it](#where-the-other-packages-use-it) lists what each of them must do.
+
+```go
+s, _ := signing.GenerateSigner(rand.Reader)                  // key pair; keep s.MarshalPEM() secret
+digest, sig, _ := s.SignArchive(archive, signing.Limits{})   // sig.KeyID and sig.Bytes fill ModuleRef
+ts := signing.NewTrustStore()
+ts.Add(s.PublicKey())                                        // or signing.ParseTrustStore(file)
+v := signing.NewVerifier(ts, nil)                            // nil clock means time.Now
+_, err := v.VerifyArchive(archive, sig, signing.Limits{})    // errors.Is(err, signing.ErrBadSignature)
+```
+
+### Archive signatures
+
+A module is identified by its tree digest, the `sha256:` string of plan rule 1. The signature of a module is an Ed25519 signature over the UTF-8 bytes of that digest string, which is what `ModuleRef.signature` and `ModuleRef.signature_key_id` carry (CON-05). The signature is outside the module tree, so signing changes no digest.
+
+`ArchiveDigest` computes the digest from a tar archive, optionally gzip compressed, in one pass and without writing to disk. It applies the entry rules of registry install: directories and regular files only, relpath characters, no `.` or `..` segment, no duplicates, and the same size and file limits. A test checks that the digest of an archive equals `registry.TreeDigest` of the unpacked tree, so the two copies of the rule cannot drift. The digest covers file names and contents. File modes, times, owners, and empty directories are not signed, which matches the digest that plans carry.
+
+`Signer.SignArchive` returns the digest and the `Signature` (key id and 64 bytes). `Verifier.VerifyArchive` digests the archive, checks the signature, and returns the digest so that the caller can compare it with the digest of the index or the plan. A modified, added, removed, renamed, or truncated file changes the digest, and verification fails with `ErrBadSignature`.
+
+### Key ids
+
+The id of a key is `ed25519:` and the hex of the first 16 bytes of the SHA-256 of the 32 byte public key, so it has 40 characters and needs no registry to assign it. An id cannot name any key other than the one it came from. A signature that carries the id of another trusted key fails with `ErrBadSignature`, and an id that names no key fails with `ErrUnknownKey`.
+
+### Trust store
+
+A `TrustStore` holds the public keys that a verifier accepts. Each key has one of three standings.
+
+| Standing | Verifies | How it gets there |
+|---|---|---|
+| active | At any time. A store may hold several active keys. | `Add` |
+| retired | Strictly before its cutoff, never at or after it (`ErrKeyExpired`) | `Retire(id, cutoff)`, which may be called again to move the cutoff |
+| revoked | Never (`ErrKeyRevoked`) | `Revoke(id)`; the standing is final, `Retire` and `Add` refuse the key afterwards |
+
+Signatures carry no time, so the cutoff applies to the time of the verification, which the verifier reads from its injected clock. The store is a JSON file of public keys only (`Encode`, `ParseTrustStore`), meant to be reviewed and kept in version control. The parser refuses unknown fields, a key id that is not derived from its public key, a retired key without an RFC 3339 `retired_after`, a cutoff on another standing, and duplicates.
+
+```json
+{
+  "version": 1,
+  "keys": [
+    {"key_id": "ed25519:fe812c12f3ab4ce6ac5db69ac352f906", "public_key": "<base64>", "status": "active"},
+    {"key_id": "ed25519:...", "public_key": "<base64>", "status": "retired", "retired_after": "2027-03-01T00:00:00Z"},
+    {"key_id": "ed25519:...", "public_key": "<base64>", "status": "revoked"}
+  ]
+}
+```
+
+The verifier checks in a fixed order, so the error names the first thing that is wrong: no signature (`ErrNoSignature`, which the caller may accept in developer mode), a signature that is not 64 bytes (`ErrSignatureLength`), an unknown key id, a revoked key, a retired key past its cutoff, and last the signature itself.
+
+### Signed index
+
+The index lists every module version with its digest, and the signed form lets a client trust the list. `Index` has a format name (`fps-registry-index/1`), a `serial`, and the modules with name, version, and digest. Summaries and scenario names stay out, because a client reads them from the manifest after it verified the digest. The registry's own `index.json` is a different file for local use and stays as it is; the publisher builds an `Index` from `Registry.List`.
+
+The canonical form is the byte string that the signature covers.
+
+- JSON with no whitespace. The object has the keys `format`, `modules`, and `serial`, in that order.
+- `modules` is an array of objects with the keys `digest`, `name`, and `version`, in that order, sorted by name and then by version as bytes (so `0.10.0` sorts before `0.2.0`, and `1.0.0` before `1.0.0-rc.1`). A name and version pair appears once.
+- Names match the manifest identifier pattern, versions the manifest semver pattern, and digests are `sha256:` and 64 lowercase hex digits. These patterns allow no character that JSON escapes, so the form has no escapes and any language can produce the same bytes. `serial` is an unsigned decimal integer with no leading zero.
+
+```
+{"format":"fps-registry-index/1","modules":[{"digest":"sha256:...","name":"dns","version":"0.1.0"}],"serial":3}
+```
+
+`SignedIndex` is the published file: `index` (the same fields), `key_id`, and `signature` in base64. `Verifier.VerifyIndex` canonicalizes the parsed index and checks the signature over those bytes, so the layout of the file does not matter and every value does. `ParseSignedIndex` rejects unknown fields and trailing data, so nothing unsigned rides along. Changing a digest, a version, a name, the serial, or the list, or flipping a signature bit fails with `ErrBadSignature`. An archive signature and an index signature never verify as each other, because an archive signature covers text that starts with `sha256:` and an index signature covers text that starts with `{`.
+
+The `serial` guards against replay. A client that remembers the highest serial it verified refuses a lower one, and the publisher increments it with every new index. The package does not store serials.
+
+Golden vectors in `golden_test.go` pin the key id, a digest signature, the canonical index, and its signature for a fixed key, and a second implementation (Python `cryptography`) produced the same signature and key id. The agent can test its verifier against them.
+
+### Key rotation
+
+Rotation never leaves a time when a module cannot verify, because the new key is trusted before it signs and the old key is retired with a cutoff, not removed.
+
+1. **Generate** the new key pair on the publisher (`GenerateSigner`) and keep the private PEM out of the repository and out of the registry.
+2. **Trust** the new public key in every trust store (`Add`) and roll the store out to controllers and agents. Until a verifier has the new key, it rejects what the new key signed with `ErrUnknownKey`, so this step comes before signing.
+3. **Sign** new modules and each new index with the new key. Both keys are active now.
+4. **Re-sign** the modules and the index that the old key signed. A signature is detached, so re-signing changes no digest. Plans that carry the old signature stay valid until the cutoff.
+5. **Retire** the old key with a cutoff that leaves time for step 4 and for the agents to update (`Retire`, for example 30 days ahead). Modules signed by the old key keep verifying until the cutoff.
+6. **Remove** the old key from the store file after the cutoff, or keep it as retired for the audit trail. A retired key past its cutoff already fails.
+
+If a private key leaks, skip the grace period: `Revoke` the key at once, roll out the store, and re-sign everything with a new key. A revoked key fails at any time, including for signatures made before the leak, so installed modules need re-signing before they can be installed again. An index signed by a revoked key fails too, which is the signal to publish a new index with a higher serial.
+
+Private keys carry the same risk as the CA key of [Mutual TLS](#mutual-tls). Keep them outside the registry root, readable by the publisher only, and use one key per environment.
+
+### Where the other packages use it
+
+- **Install.** `Registry.Install` has the archive bytes, so it should call `VerifyArchive` before it unpacks when a signature accompanies the archive, and refuse the install on any error except `ErrNoSignature`. The registry's trust policy then decides what `ErrNoSignature` means: refuse it by default, and accept it only when the operator turns on a development setting. After the digest check the registry should record the signature and key id next to the index entry, so that a later plan can fill them without re-reading the archive. When a signed index is the source of modules, check `VerifyIndex` first, require a serial at least as high as the last one seen, and require that the digest of each downloaded archive equals the `Find` result for its name and version.
+- **Compiler.** For each module of a plan, the compiler copies the digest into `ModuleRef.digest` as it does today, the 64 signature bytes into `ModuleRef.signature`, and the key id into `ModuleRef.signature_key_id`, taking both from the stored signature of the install. The fields stay empty for an unsigned module. The compiler signs nothing itself, because the controller holds no private key.
+- **Agent (AGT-04).** The agent holds a trust store file and calls `VerifyDigest(ref.digest, Signature{ref.signature_key_id, ref.signature})` for each module after it checks the tree digest, and refuses a failure unless developer mode is on. The agent is Rust, so it implements the same checks with an Ed25519 library: verify 64 bytes over the digest text under the key that the id names, with the same retired, revoked, and cutoff rules. The golden vectors are its test input.
+- **Publisher tooling.** There is no command line tool yet. Generating keys, signing an archive, and writing the index file need a small command, which is a follow up.
+
+### Tests
+
+`make test-ctl-signing` and `make lint-ctl-signing` run the package alone. The tests cover the original and each modification of an archive and of an index, an unknown, revoked, retired, and wrong key, a truncated and a long signature, the lifecycle of the trust store with its file, the canonical form, and the golden vectors.
+
 ## Agent manager
 
 The package `internal/agents` is the agent manager of the controller. CTL-06 added it. It serves the controller side of `ControllerService` from [`agent.proto`](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/proto/fps/agent/v1/agent.proto), keeps the agent inventory, and serves the four `/v1/agents` operations. Agents dial the controller, call `Register`, and hold one `Session` stream open, as the [agent control protocol](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/README.md#agent-control-protocol) describes.
@@ -307,7 +406,7 @@ The package `internal/agents/agentpb` holds the messages and the gRPC client and
 | The identity is enrolled with `POST /v1/agents`, or `Config.AutoEnroll` holds | `PERMISSION_DENIED` |
 | The major and minor version of `Capabilities.engine_api` is in `Config.EngineAPIs`, which defaults to 0.1 and 0.2 | `FAILED_PRECONDITION` |
 
-`PeerCertIdentity` takes the identity from the verified client certificate, first the common name and then the first DNS name. `ClaimedIdentity` trusts the request and serves tests and local development only. Each `Register` returns a new 256 bit session token and revokes the previous one. The first message of a session must be `open` with the latest token, and a newer session ends the older one with `ABORTED`. The manager answers every heartbeat with an acknowledgement, routes each command result to its caller by `command_id`, and drops a counter snapshot whose sequence is not newer than the last one of the same plan, so duplicates after a reconnection never reach the run.
+`PeerCertIdentity` takes the identity from the verified client certificate, first the common name and then the first DNS name. `ClaimedIdentity` trusts the request and serves tests and local development only. `EndSession(id)` ends the open session of one agent with `UNAUTHENTICATED`, marks it offline with the reason `identity revoked`, and forgets its session token. The authority calls it when an operator revokes the identity. A certificate is checked at the handshake only, so the manager also reads its end (`Config.Expiry`, by default `PeerCertExpiry`). `Register` and `Session` refuse a certificate that has expired, and `Sweep` ends the session of an agent whose certificate expired once the agent holds no plan, with the reason `certificate expired`. A running plan never loses its session to an expiry, and the agent dials again with its renewed certificate. Each `Register` returns a new 256 bit session token and revokes the previous one. The first message of a session must be `open` with the latest token, and a newer session ends the older one with `ABORTED`. The manager answers every heartbeat with an acknowledgement, routes each command result to its caller by `command_id`, and drops a counter snapshot whose sequence is not newer than the last one of the same plan, so duplicates after a reconnection never reach the run.
 
 ### Inventory and reservation
 
@@ -487,13 +586,13 @@ CTL-17 wired every package into `fps-controller`, so the binary serves the whole
 
 ### Settings of the binary
 
-The configuration file gained six keys, and the binary gained two flags. Every earlier key and flag keeps its meaning.
+The configuration file gained six keys, and the binary gained two flags. Every earlier key and flag keeps its meaning. CTL-27 added the keys of mutual TLS, which [Mutual TLS in the controller](#mutual-tls-in-the-controller) describes.
 
 ```yaml
 data_dir: /var/lib/fps          # module registry in data_dir/modules, store in data_dir/configs.db
 store_path: /var/lib/fps/db/configs.db   # optional, overrides the store file, or ":memory:"
-grpc_listen: localhost:8444     # host:port of the agent gRPC service, plain TCP until CTL-15
-agent_auto_enroll: false        # accept agents that no operator enrolled with POST /v1/agents
+grpc_listen: localhost:8444     # host:port of the agent gRPC service, mutual TLS (CTL-27)
+agent_auto_enroll: false        # admit a certificate holder that the inventory does not list
 tokens:
   - { name: ci, scope: run, token_file: /etc/fps/ci.token }
   - { name: ops, scope: admin, token: change-me-0123456789 }
@@ -503,13 +602,13 @@ tokens:
 |---|---|---|
 | `data_dir`, `-data-dir dir` | none | Directory of the module registry and the configuration store. Without it the store lives in memory and the registry in a temporary directory, so every configuration and module ends with the process, and the controller logs a warning |
 | `store_path` | `data_dir/configs.db`, or `:memory:` without `data_dir` | SQLite file of the configuration store. The controller creates its directory |
-| `grpc_listen`, `-grpc-listen address` | `localhost:8444` | TCP address of `ControllerService`, which agents dial |
-| `agent_auto_enroll` | false | Lets any agent identity register without an enrollment |
+| `grpc_listen`, `-grpc-listen address` | `localhost:8444` | TCP address of `ControllerService`, which agents dial. It requires mutual TLS unless `insecure_plain_grpc` is set |
+| `agent_auto_enroll` | false | Admits an agent whose identity the inventory does not list. With mutual TLS the identity comes from the client certificate, see [agent_auto_enroll](#agent_auto_enroll-with-certificates) |
 | `tokens` | none | Bearer tokens of the REST API, each with a `name`, a `scope` of `read`, `run`, or `admin`, and exactly one of `token` and `token_file` |
 
 A token holds at least 16 bytes. A `token_file` holds the token alone, and the controller trims the white space around it. Names must be unique, and two entries must not hold the same token. A token that breaks a rule, or a token file that the controller cannot read, ends the process with exit code 2. Without tokens every `/v1` operation answers 401, and the controller logs a warning at startup.
 
-The gRPC service speaks plain TCP and trusts the `agent_id` of each request, because mutual TLS arrives with CTL-15. The controller logs a warning that agent identities are not verified. We therefore bind `grpc_listen` to a loopback or a lab network until then. CTL-15 added the package that provides the certificates, and the [Mutual TLS](#mutual-tls) section lists the wiring that still has to follow.
+The gRPC service requires mutual TLS since CTL-27, and it reads the identity of an agent from its client certificate. Only the explicit setting `insecure_plain_grpc` serves plain TCP, where the service trusts the `agent_id` of each request, and the controller then logs warnings at start up and for every identity that it accepts. CTL-15 added the package that provides the certificates, and [Mutual TLS in the controller](#mutual-tls-in-the-controller) describes the wiring.
 
 ### Components
 
@@ -613,7 +712,7 @@ The evaluator decides the run state as the report decides the report. It reads t
 |---|---|
 | `json`, the default | The `RunReport` schema, with the summary filled from the run totals, every criterion in the verdict with its `reason`, `observed` and `passed` only for compared criteria, `reason` of the run when it failed or aborted, and an empty `realism` list |
 | `csv` | One table with the columns `kind,name,op,threshold,value,result,detail`, with rows of kind `run` for the run fields, `criterion` for each criterion, and `metric` for each run total in catalog order |
-| `html` | 501 until the handler calls `internal/report/html` (see [HTML report](#html-report)) |
+| `html` | The page of `internal/report/html`, served as `text/html; charset=utf-8` with `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` (see [HTML report](#html-report)). 501 when the `API` has no renderer |
 
 The CSV report writes numbers in plain decimal notation and prefixes text cells that start with `=`, `+`, `-`, or `@` with an apostrophe, so spreadsheets do not run them as formulas.
 
@@ -660,9 +759,21 @@ The charts are inline SVG that `chart.go` draws: one line chart per per second s
 
 ### Serving
 
-The package does not touch the REST API. `GET /v1/runs/{id}/report?format=html` already exists in `contracts/openapi/fps-api-v1.yaml` and answers 501 from `report.API.GetRunReport`. The follow up replaces that branch: it builds the report as for JSON, reads the samples from the aggregator (the `API` needs a `SamplesSource` next to its `TotalsSource`), calls `FromReport` and `Render`, and writes the body with `html.ContentType`. Because the page carries no external request, the handler may add `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` without breaking it.
+CTL-26 serves the page. `GET /v1/runs/{id}/report?format=html` builds the report exactly as for JSON, then adds what the report model lacks and renders the page. `report` cannot import `report/html`, which imports `report`, so `report.API` holds a function, `report.HTMLRenderer`, and `html.Renderer` is that function. It calls `FromReport` and `Render`.
+
+| Part | Source |
+|---|---|
+| Samples | `report.SampleSource`, which `*metrics.Aggregator` satisfies. `NewAPI` sets it when its totals source is one, and `UseSamples` sets it otherwise. The handler asks for `Samples(id, api.MetricViewApplication, metrics.Window{})`. A run that the source does not know gets a page without charts, and any other error answers 500 |
+| Objective | `report.ObjectiveSource`, set with `UseObjectives`. `report.ConfigObjectives{Store}` parses the stored configuration of `run.ConfigID` and returns its `load.objective`. A configuration that is gone or unreadable gives a page without objective |
+| Renderer | `UseHTML(html.Renderer)`. Without it the format answers 501 as before |
+
+The response has the status 200, `Content-Type: text/html; charset=utf-8`, `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` (`report.HTMLContentSecurityPolicy`), `Cache-Control: no-store`, and `X-Content-Type-Options: nosniff`. A run that does not exist answers the same 404 problem as the JSON format, because the handler looks the run up before it renders anything.
+
+In the binary, `wiring.Controller` sets the renderer and the objective source over its configuration store on the `report.API` that `New` builds and on the one that `SetReport` receives, so `mountMetrics` needs no change and the aggregator is the sample source.
 
 ### Tests
+
+`TestServesHTMLReportOfFinishedRun` fetches the HTML report of a finished run through the real router and token check, checks the four headers, the objective, the verdict, and a chart, and runs the `violations` checker of `TestNoExternalRequests` on the served body. `TestHTMLReportOfUnknownRunIsTheJSONNotFound` compares the 404 of the html format with the 404 of JSON. Further tests cover a run without samples, a run without configuration, a failing sample source, and the 501 without a renderer. The tests live in `controller/internal/report/html/serve_test.go` because they reuse the unexported checker.
 
 `TestGoldenPages` renders the report goldens `pass`, `fail`, `degraded`, and `labeled` of `controller/internal/report/testdata/` and compares the pages with `controller/internal/report/html/testdata/<name>.html`. The goldens carry a deterministic ramp as the per second series, because the JSON goldens hold no samples. `go test ./internal/report/html/ -update` rewrites them. `TestNoExternalRequests` parses each page and fails on any `src`, `href`, `srcset`, `action`, or similar attribute with an `http`, `https`, or protocol relative URL, on any `<script>` element, on a `<link rel=stylesheet>`, on `<img>`, `<iframe>`, and similar elements, and on `@import` or `url()` in the style, and `TestViolationsFindsExternalReferences` shows that the check catches each case. `TestEscapesReportStrings` puts markup in a criterion reason, and `TestEscapesEveryField` and `TestNoExternalRequestsWithHostileStrings` put a script, an image, and a link in every text field of the page. `TestFromReport`, `TestFromReportVerdicts`, and `TestChartsFromSamples` cover the conversion, and further tests cover the chart geometry, the number format, and an empty page. The targets `make lint-ctl-report-html test-ctl-report-html` run the package alone, and `lint-ctl` and `test-ctl` cover it too.
 
@@ -735,7 +846,7 @@ The orchestrator calls `calibrate.New` when a run with a `throughput_bps` object
 
 ## Mutual TLS
 
-CTL-15 added the package `internal/pki`. It gives the control channel between the controller and its agents mutual TLS, and it uses only the standard library (`crypto/x509`, `crypto/tls`, `crypto/ecdsa`). The package is not wired into the gRPC server or the agent yet, so the binary still speaks plain TCP. [What the wiring must change](#what-the-wiring-must-change) lists the rest.
+CTL-15 added the package `internal/pki`. It gives the control channel between the controller and its agents mutual TLS, and it uses only the standard library (`crypto/x509`, `crypto/tls`, `crypto/ecdsa`). CTL-27 wired the package into the controller, which [Mutual TLS in the controller](#mutual-tls-in-the-controller) describes. The Rust agent has no TLS yet, and [What the agent must change](#what-the-agent-must-change) lists its part (AGT-08).
 
 ```go
 pa, err := pki.Open(pki.Config{Dir: "/var/lib/fps/pki", OnRevoke: endSession}) // CA on first start
@@ -787,30 +898,68 @@ The authority keeps an allow list of the serial numbers that it issued, with the
 
 `ClientTLSConfig`, `KeyPair`, and `NewCSR` serve Go clients and tests.
 
-### What the wiring must change
+### Mutual TLS in the controller
 
-The controller wiring (`internal/app`, `internal/wiring`, and `cmd/fps-controller`, outside CTL-15) has to do six things.
+CTL-27 did the wiring of the controller. The owner chose the HTTPS enrollment endpoint, so the contracts did not change.
 
-1. Open the authority in `wiring.New` from a directory such as `data_dir/pki`, with new settings for the directory, the names for the server certificate, and the address of the enrollment listener.
-2. Build the gRPC server with `grpc.Creds(credentials.NewTLS(pa.ServerTLSConfig(names...)))` in place of plain TCP, serve `pa.Handler()` behind `pa.EnrollTLSConfig(names...)` on the second listener, and keep `agents.Config.Identity` at `PeerCertIdentity`, which is already the default. `ClaimedIdentity` and the startup warning then go away. `Register` already answers `UNAUTHENTICATED` when the identity differs from `agent_id`.
-3. Give the agent manager a method that ends the session of one agent and pass it as `Config.OnRevoke`. The manager should also end or refuse a session whose certificate expired, once the agent is idle, because Go checks the certificate at the handshake only.
-4. Give operators a way to create tokens and revoke identities. The OpenAPI contract has no operation for it, so this needs a contract change (for example an optional `enrollment_token` in the answer of `POST /v1/agents` and a revoke operation) or a subcommand of the binary. A subcommand must not write `state.json` while the controller runs, because the controller is the single writer.
-5. Decide what `agent_auto_enroll` means with certificates. We suggest that it only lets an identity with a valid certificate skip `POST /v1/agents`, and that it never replaces a certificate.
-6. Update the note in the image that says the controller and gRPC are plain until TLS lands, and have the image provisioning write the enrollment token for the agent the way it writes the REST token today.
+`wiring.New` opens the authority from `pki_dir`, which defaults to `data_dir/pki`, and builds the two server configurations for the names of the controller certificate. Without `pki_dir` and `data_dir` the CA lives in memory and ends with the process, which the controller logs as a warning. `Controller.Run` serves `ControllerService` with `grpc.Creds(credentials.NewTLS(...))` from `ServerTLSConfig`, and `agents.Config.Identity` stays at its default, `PeerCertIdentity`, so the identity of an agent is the common name of its verified certificate and `Register` answers `UNAUTHENTICATED` when it differs from `agent_id`. `Controller.RunPKI` serves `pa.Handler()` behind `EnrollTLSConfig` on the second listener, and it serves the admin socket described below. `Controller.PKI` exposes the authority.
 
-The Rust agent (`engine/fps-agent`, AGT) has to do the following.
+| Key or flag | Default | Meaning |
+|---|---|---|
+| `pki_dir`, `-pki-dir dir` | `data_dir/pki` | Directory of the CA and the PKI state. The controller must be its only writer |
+| `enroll_listen`, `-enroll-listen address` | `localhost:8445` | TCP address of the HTTPS service for `POST /enroll` and `POST /renew` |
+| `tls_names`, `-tls-names a,b` | see below | Host names and IP addresses in the controller certificate, which agents check against the address that they dial |
+| `admin_socket`, `-admin-socket path` | `pki_dir/admin.sock` | Unix socket of the admin API. None without a PKI directory |
+| `insecure_plain_grpc`, `-insecure-plain-grpc` | false | Serves the gRPC service without TLS, see [Plain mode](#plain-mode) |
+
+When `tls_names` is empty the certificate carries `localhost`, `127.0.0.1`, `::1`, and the host of `grpc_listen` and of `enroll_listen` when it names one address. A wildcard such as `0.0.0.0` adds nothing, so a controller that listens on every interface sets `tls_names` to the names that its agents dial. The controller logs `certificate authority open` with the names and the SHA-256 fingerprint of the CA, which an operator can compare with the file that the agent trusts. The socket path must stay below 100 bytes, which the limit of unix sockets forces.
+
+#### Operators, tokens, and revocation
+
+The OpenAPI contract has no operation for tokens and revocation, so an admin REST endpoint is out of scope. The controller also must stay the only writer of `state.json`. We chose the admin socket, which is simpler and safer than a command that opens the state on its own, because a second process would need a lock that the PKI package does not have, and it could not end the open session. The controller serves a small HTTP API on a unix socket, and two subcommands of the binary call it.
+
+```bash
+fps-controller token  -agent-id edge-1 -ttl 30m -config /etc/fps/controller.yaml > edge-1.token
+fps-controller revoke -agent-id edge-1 -config /etc/fps/controller.yaml
+```
+
+The subcommands find the socket from `-admin-socket`, `-pki-dir`, `-data-dir`, or the `-config` file, with the same layers as the controller. `token` prints the token alone on standard output so that a script can capture it, writes the expiry to standard error, and exits with 1 when no controller answers on the socket. The token is a secret that is valid once. Hand it to the agent through a file or the environment of the agent and never through a command line. `revoke` revokes every certificate and unused token of the identity and ends its open session at once. A token that the operator mints also adds the identity to the inventory when it is missing, because minting a token admits the agent. Revoking leaves the inventory entry, which `DELETE /v1/agents/{id}` removes.
+
+The socket has mode 0600 inside the PKI directory, which has mode 0700, so the file system is the credential, and the controller refuses a socket directory that everyone may write. The admin API has no other authentication and never listens on TCP. At start up the controller connects to an existing socket file. When a process answers, it refuses to start, because two controllers must not share one PKI directory, and when nothing answers, it replaces the stale file of a dead controller. A path that is not a socket stays untouched and fails the start.
+
+#### agent_auto_enroll with certificates
+
+A certificate proves who an agent is, and the inventory decides whether the controller accepts it. A valid certificate for an identity that the inventory does not list gets `PERMISSION_DENIED` unless `agent_auto_enroll` is true, in which case the agent joins the inventory. The setting never admits an agent without a valid certificate, and it never replaces one. Minting a token enrolls the identity, so the normal path needs no `POST /v1/agents`. The inventory lives in memory and the PKI state on disk, so after a restart of the controller every agent holds a valid certificate but no inventory entry. We therefore recommend `agent_auto_enroll: true` for a controller whose operators trust their own CA, and `false` where an operator should admit each agent by hand with `POST /v1/agents` after every restart. The default stays false.
+
+#### Plain mode
+
+`insecure_plain_grpc` (flag `-insecure-plain-grpc`) serves `ControllerService` on plain TCP, trusts the `agent_id` of each request, opens no authority, and serves neither the enrollment listener nor the admin socket. It exists for development and for tests until the Rust agent has TLS (AGT-08). The controller logs `INSECURE` warnings at start up, when the service starts listening, and for every identity that it accepts. The end to end test with the real agent (`engine/fps-agent/tests/controller_e2e.sh`), the Gate 1 script, and `TestEndToEnd` set it. The image does not, so the controller of the image refuses the agent of the image until AGT-08 and the image follow up land, and the log entry of CTL-27 describes the impact. Never set it on a shared network.
+
+#### What the agent must change
+
+The Rust agent (`engine/fps-agent`, AGT-08) has to do the following.
 
 1. Build the tonic channel with TLS. This needs the tonic `tls` feature with a rustls provider. The channel trusts the CA from a file or a pinned fingerprint, presents the client certificate and key, uses the `https://` scheme, and sets the server name to a name in the controller certificate. The check for `http://` addresses can stay for local tests.
 2. Enroll when it has no certificate. It generates an ECDSA P-256 key, writes it with mode 0600, builds a CSR with the common name set to its `--agent-id`, and sends the token and the CSR to the enrollment endpoint over TLS that trusts the CA. The token comes from a file or an environment variable, never from the command line, and the agent deletes it after the exchange. New flags are needed for the CA file, the token source, the enrollment address, and the directory that holds the key and the certificate.
 3. Renew. From `renew_at` on, and before the certificate expires, it calls `POST /renew` with its current certificate and a fresh CSR, writes the new files atomically, and uses them for the next dial. It should redial only while no plan runs, because D12 item 12 drops the plan on a lost session. When the certificate is expired or revoked it logs the reason and enrolls again only if a new token exists.
 4. Treat `UNAUTHENTICATED` and a handshake failure as permanent, because redialing cannot fix them, and follow the redial limit of D12 item 11.
 
-#### Is a contract change needed
+#### Contract choice
 
-Not for this package, and the first wiring can go ahead without one, because the enrollment endpoint is an HTTPS API that `pki` serves and that no proto file describes. The endpoint adds a new HTTP client to the agent (for example `hyper-util` or `reqwest` with rustls), which is the cost of this choice. The alternative is an `Enroll` and a `Renew` RPC in `fps.agent.v1`. The agent then reuses its tonic stubs and needs no HTTP client, and one listener can serve everything with `VerifyClientCertIfGiven`, since `PeerCertIdentity` already refuses a call without a certificate. That choice is a CON change with a regeneration of `agentpb` and the Rust stubs, and the owner approves contracts, so we did not make it. We recommend the RPC when the owner wants a single listener and one client stack, and the HTTP endpoint otherwise. The REST operations for tokens and revocation need a contract change in both cases, unless a subcommand serves them.
+The owner chose the HTTPS enrollment endpoint, which `pki` serves and which no proto file describes, so no contract changed. The endpoint adds an HTTP client to the agent (for example `hyper-util` or `reqwest` with rustls). The alternative that we did not take is an `Enroll` and a `Renew` RPC in `fps.agent.v1`, which would reuse the tonic stubs and let one listener serve everything. Tokens and revocation need no contract change, because the subcommands serve them.
 
 ### Tests
 
 The tests open real TLS connections on the loopback interface. `TestMutualTLSAdmitsOnlyValidCertificates` starts a TLS server with `ServerTLSConfig`, shows that a freshly enrolled certificate is accepted and that the server reads the agent identity from the certificate subject, and shows that these clients are rejected: no client certificate, a certificate of another CA, a certificate that the CA signed without a record, a revoked identity, and an expired certificate. The clock of the authority is settable, so the expiry test moves it past `NotAfter`. `TestTokens` covers reuse, expiry at the exact instant, wrong and unknown and malformed tokens, a CSR for another identity, an RSA key, the lifetime limits, and 16 concurrent exchanges of one token. `TestRotation` renews a certificate directly and checks that an expired, foreign, or revoked certificate cannot renew. `TestHandlerEnrollAndRenewOverTLS` drives both endpoints over TLS. Further tests check the file modes of the CA, the refusal of a loose key, a half CA, a mismatched pair, a damaged state, and an expired CA, that the state never holds a token secret, and that used tokens and revocations survive a restart.
 
 `make test-ctl-pki lint-ctl-pki` runs the package alone, and `make lint-ctl test-ctl` covers it with the rest of the module.
+
+### Tests of the wiring
+
+`make test-ctl-tls lint-ctl-tls` runs the CTL-27 tests, and `make lint-ctl test-ctl` covers them with the rest of the module.
+
+- `TestMutualTLSAdmitsOnlyAgentsWithAValidCertificate` in `internal/wiring` is the acceptance test at the level of the controller. A minted token enrolls an agent over HTTPS, a single use token fails on its second use, and the agent registers over mutual TLS. An agent without a certificate, with a certificate of another CA, with a valid certificate for another identity, or with a valid certificate that the inventory does not list cannot register, and `RevokeIdentity` ends the open session, keeps the agent out, and lets a new token enroll it again.
+- `TestAutoEnrollAdmitsCertificateHolders`, `TestSecureModeRefusesPlainClients`, and `TestPlainModeIsExplicit` cover `agent_auto_enroll` with certificates, a client without TLS, and the plain mode, where the PKI operations answer `ErrNoPKI`.
+- `TestExpiredCertificateEndsAnIdleAgentSession` moves the clock past the lifetime of a certificate, and the sweep ends the session of the idle agent. The agent manager tests in `internal/agents` show that a busy agent keeps its session, and that `EndSession` and the expiry give their reasons.
+- `TestAdminSocket`, `TestAdminSocketReplacesAStaleFile`, and `TestAdminHandlerValidatesRequests` cover the admin socket: mode 0600, the refusal of a live socket, the replacement of a stale one, and the validation of every request.
+- `TestEndToEndMutualTLS` in `cmd/fps-controller` builds the binary in its default mode and runs the path with a Go fake agent. It mints a token with the `token` subcommand, enrolls over HTTPS with the CA file from the PKI directory, registers over mutual TLS, shows that no certificate, a plain client, a certificate of another CA, and another identity cannot register, revokes with the `revoke` subcommand, and enrolls again with a new token. It checks that the token never reaches the logs. `TestEndToEnd` keeps its Go fake agent over the plain mode.

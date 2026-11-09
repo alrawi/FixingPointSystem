@@ -25,6 +25,7 @@
 
 pub mod assemble;
 pub mod capabilities;
+pub mod control;
 pub mod convert;
 pub mod criteria;
 pub mod error;

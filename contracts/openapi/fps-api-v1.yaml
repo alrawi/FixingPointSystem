@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FixingPointSystem Controller API
-  version: 0.3.0
+  version: 0.4.0
   summary: Contract v0.2 for the controller REST API.
   description: >
     The controller stores test configurations, installs modules, starts runs on
@@ -241,6 +241,10 @@ paths:
         - { name: from, in: query, schema: { type: string, format: date-time } }
         - { name: to, in: query, schema: { type: string, format: date-time } }
         - { name: step_s, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - name: side
+          in: query
+          description: Side of the sessions that the series count, client or server. Omitted, it is client, as before the parameter existed.
+          schema: { type: string, enum: [client, server], default: client }
       responses:
         "200":
           description: Metric series for the view and window.
@@ -258,6 +262,10 @@ paths:
       x-required-scope: read
       parameters:
         - { name: view, in: query, schema: { type: array, items: { $ref: "#/components/schemas/MetricView" } }, style: form, explode: true }
+        - name: side
+          in: query
+          description: Side of the sessions that every requested view counts, client or server. Omitted, it is client, as before the parameter existed.
+          schema: { type: string, enum: [client, server], default: client }
       responses:
         "200":
           description: Event stream. Each event's data field is a MetricSample encoded as JSON.

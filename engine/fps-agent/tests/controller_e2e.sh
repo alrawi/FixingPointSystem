@@ -41,6 +41,8 @@ fail() {
 cat >"$work/controller.yaml" <<EOF
 listen: 127.0.0.1:0
 grpc_listen: 127.0.0.1:0
+# The agent has no TLS until AGT-08, so this test uses the explicit plain mode.
+insecure_plain_grpc: true
 log_level: debug
 data_dir: $work/data
 tokens:

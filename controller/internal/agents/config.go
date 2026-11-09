@@ -76,6 +76,24 @@ func certIdentity(c *x509.Certificate) string {
 	return ""
 }
 
+// ExpiryFunc returns the time at which the credential behind a call stops
+// being valid, or the zero time when it does not expire.
+type ExpiryFunc func(ctx context.Context) time.Time
+
+// PeerCertExpiry returns the NotAfter time of the verified client certificate
+// of the connection, or the zero time when the connection carries none.
+func PeerCertExpiry(ctx context.Context) time.Time {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return time.Time{}
+	}
+	info, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok || len(info.State.VerifiedChains) == 0 || len(info.State.VerifiedChains[0]) == 0 {
+		return time.Time{}
+	}
+	return info.State.VerifiedChains[0][0].NotAfter
+}
+
 // ClaimedIdentity trusts the agent_id of the request. It serves tests and
 // local development without TLS and must not run in production.
 func ClaimedIdentity(_ context.Context, claimed string) (string, error) {
@@ -99,6 +117,11 @@ type Config struct {
 	// Identity returns the identity of the agent behind a call. The default
 	// is PeerCertIdentity.
 	Identity IdentityFunc
+	// Expiry returns the time at which the credential of a call expires. The
+	// manager refuses a call after that time and ends the session of an idle
+	// agent once it passes, because TLS checks a certificate only during the
+	// handshake. The default is PeerCertExpiry.
+	Expiry ExpiryFunc
 	// Clock tells the time. The default is SystemClock.
 	Clock Clock
 	// Logger receives structured logs. The default discards them.
