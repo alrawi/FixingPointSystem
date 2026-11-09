@@ -154,7 +154,9 @@ rm -r "$modules/dns/native" "$modules/dns/tests"
 cp -r "$here/../../../modules/content" "$modules/content"
 rm -r "$modules/content/native" "$modules/content/tests"
 cp -r "$here/../../../modules/smtp" "$modules/smtp"
-rm -r "$modules/smtp/native" "$modules/smtp/tests" "$modules/smtp/fixtures"
+# The manifest names fixtures/smtp.pcapng, and the registry checks that the
+# tree holds every file that the manifest names, so the fixtures stay.
+rm -r "$modules/smtp/native" "$modules/smtp/tests"
 cat >"$modules/dns/zones/e2e.test.zone" <<'EOF'
 $ORIGIN e2e.test.
 $TTL 60
