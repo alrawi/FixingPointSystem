@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #161 |
 | Branch | `wp/AGT-04` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #319 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-d88d9e, lease until 2026-11-09T19:41:39Z |
-| Last verified commit | none |
+| Last verified commit | f0c44f0 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -27,7 +27,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Trust store parser and verifier in src/trust.rs with the CTL-11 golden vectors
 - [x] 2. Plan mirror and conversion carry the signature; policy in modules::load
 - [x] 3. Flags --module-trust-store and --dev-modules for run and connect
-- [ ] 4. Tests, Agent.md, log entry, PR
+- [x] 4. Tests, Agent.md, log entry, PR
 
 ## Done and verified
 
@@ -35,11 +35,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Clippy, the PR, and CI.
+Nothing. CI is green on f0c44f0.
 
 ## Next action
 
-Run `cargo clippy -p fps-agent --all-targets -- -D warnings`, push, open the PR.
+The coordinator reviews and merges PR #319.
 
 ## Blockers and open questions
 
