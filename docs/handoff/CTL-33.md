@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #298 |
 | Branch | `wp/CTL-33` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 60% (2 of 3 plan steps) |
+| Pull request | #302 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-c33a1f |
-| Last verified commit | none |
+| Last verified commit | 437f3d4 |
 
 ## Goal
 
@@ -18,7 +18,7 @@
 
 - [x] 1. `var version` and `buildVersion()` in `cmd/fps-controller/main.go`, tests, release.yml stamp and check.
 - [x] 2. Wiki: Controller.md, Operations.md, log entry.
-- [ ] 3. CI green and a release dry run on `wp/CTL-33`.
+- [x] 3. CI green and a release dry run on `wp/CTL-33`.
 
 ## Done and verified
 
