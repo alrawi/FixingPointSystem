@@ -15,6 +15,13 @@
 # that the run counted succeeded sessions and that the agent went back to
 # online.
 #
+# A second test (AGT-07) follows the shape of contracts/examples/tests/
+# dns_zone.yaml. It sets the module setting zone_file of the first party dns
+# module to a zone file that the script adds to the module directory, and the
+# lookups ask for a name that only that zone holds. The run passes only when
+# the agent applied the setting, and the same test without the setting, which
+# the shipped zone cannot answer, fails its criteria.
+#
 # The tail of the script checks the handshake failures. An agent that trusts
 # another CA ends with exit code 2 and a TLS error before it spends its
 # token. After `fps-controller revoke`, the running agent ends with exit code
@@ -29,6 +36,7 @@ agent=${2:?usage: controller_e2e.sh FPS_CONTROLLER FPS_AGENT}
 here=$(cd "$(dirname "$0")" && pwd)
 examples=$(cd "$here/../../../contracts/examples" && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/fps-agent-e2e.XXXXXX")
+modules=$work/modules
 admin=e2e-admin-0123456789
 runner=e2e-run-0123456789
 pids=()
@@ -120,12 +128,30 @@ mint_token() {
 # start_agent starts the agent with the token file $work/token, the CA file
 # of the controller, and the enrollment address, and sets agent_pid.
 start_agent() {
-  "$agent" connect --controller "https://$grpc" --agent-id local --modules "$examples/modules" \
+  "$agent" connect --controller "https://$grpc" --agent-id local --modules "$modules" \
     --cert-dir "$work/agent-pki" --tls-ca "$ca" --enroll-address "$enroll" \
     --enroll-token-file "$work/token" 2>>"$work/agent.log" &
   agent_pid=$!
   pids+=("$agent_pid")
 }
+
+# The agent loads its modules from $modules. http1 is the example module. dns
+# is the first party module, because its native functions read the zone_file
+# setting, with the native crate and the tests left out, plus a zone file for
+# the name www.e2e.test that the shipped zone lacks. The agent and the
+# controller see the same trees, so their digests agree.
+mkdir -p "$modules"
+cp -r "$examples/modules/http1" "$modules/http1"
+cp -r "$here/../../../modules/dns" "$modules/dns"
+rm -r "$modules/dns/native" "$modules/dns/tests"
+cat >"$modules/dns/zones/e2e.test.zone" <<'EOF'
+$ORIGIN e2e.test.
+$TTL 60
+@   IN SOA ns1 hostmaster 1 7200 3600 1209600 60
+@   IN NS  ns1
+ns1 IN A   192.0.2.53
+www IN A   192.0.2.77
+EOF
 
 mint_token
 start_agent
@@ -141,7 +167,7 @@ done
 [[ $(stat -c %a "$work/agent-pki/agent.key") == 600 ]] || fail "the agent key is not mode 0600"
 
 for name in http1 dns; do
-  (cd "$examples/modules/$name" && tar -czf "$work/$name.tar.gz" -- *)
+  (cd "$modules/$name" && tar -czf "$work/$name.tar.gz" -- *)
   call POST /v1/modules "$admin" -H 'Content-Type: application/gzip' --data-binary "@$work/$name.tar.gz" >/dev/null
 done
 
@@ -178,11 +204,6 @@ criteria:
   - { metric: sessions.failed_ratio, op: "<=", value: 0.05 }
 EOF
 
-config=$(call POST /v1/configs "$runner" -H 'Content-Type: application/yaml' --data-binary "@$work/test.yaml" | json_field id)
-report=$(call POST "/v1/configs/$config:validate" "$runner")
-[[ $(json_field valid <<<"$report") == True ]] || fail "the configuration is not valid: $report"
-run=$(call POST /v1/runs "$runner" -H 'Content-Type: application/json' -d "{\"config_id\":\"$config\",\"agents\":[\"local\"]}" | json_field id)
-
 wait_run() {
   local want=$1 got=""
   for _ in $(seq 300); do
@@ -194,17 +215,36 @@ wait_run() {
   fail "run $run is $got, want $want"
 }
 
-wait_run running
-sleep 3
-call POST "/v1/runs/$run:stop" "$runner" -H 'Content-Type: application/json' -d '{}' >/dev/null
-wait_run completed
+# run_test FILE [STATE] stores the test configuration FILE, validates it, runs
+# it for three seconds on the agent `local`, and waits for the run to reach
+# STATE, which is completed by default. A run whose criteria fail ends in the
+# state failed. It sets run, summary, and metrics, which holds the application
+# view of the metrics.
+run_test() {
+  local config report
+  config=$(call POST /v1/configs "$runner" -H 'Content-Type: application/yaml' --data-binary "@$1" | json_field id)
+  report=$(call POST "/v1/configs/$config:validate" "$runner")
+  [[ $(json_field valid <<<"$report") == True ]] || fail "the configuration $1 is not valid: $report"
+  run=$(call POST /v1/runs "$runner" -H 'Content-Type: application/json' -d "{\"config_id\":\"$config\",\"agents\":[\"local\"]}" | json_field id)
+  wait_run running
+  sleep 3
+  call POST "/v1/runs/$run:stop" "$runner" -H 'Content-Type: application/json' -d '{}' >/dev/null
+  wait_run "${2:-completed}"
+  summary=$(call GET "/v1/runs/$run" "$runner")
+  metrics=$(call GET "/v1/runs/$run/metrics?view=application" "$runner")
+}
 
-summary=$(call GET "/v1/runs/$run" "$runner")
-[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "run $run did not pass: $summary"
-metrics=$(call GET "/v1/runs/$run/metrics?view=application" "$runner")
-succeeded=$(python3 -I -c 'import json, sys
+# succeeded_of APPLICATION prints the succeeded sessions of the application
+# view in $metrics.
+succeeded_of() {
+  python3 -I -c 'import json, sys
 s = json.load(sys.stdin)
-print(int(sum(x["values"].get("sessions.succeeded", 0) for x in s.get("samples", []) if x.get("key") == "http1")))' <<<"$metrics")
+print(int(sum(x["values"].get("sessions.succeeded", 0) for x in s.get("samples", []) if x.get("key") == sys.argv[1])))' "$1" <<<"$metrics"
+}
+
+run_test "$work/test.yaml"
+[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "run $run did not pass: $summary"
+succeeded=$(succeeded_of http1)
 [[ $succeeded -gt 0 ]] || fail "run $run counted no succeeded sessions: $metrics"
 
 state=""
@@ -216,6 +256,63 @@ done
 [[ $state == online ]] || fail "after the run the agent is $state, want online"
 echo "controller_e2e: run $run completed with $succeeded succeeded sessions, verdict passed"
 
+# The dns zone test of AGT-07, in the shape of contracts/examples/tests/
+# dns_zone.yaml, with loopback pools and the lookup_a scenario of the first
+# party dns module. The lookups ask for www.e2e.test, a name that only the
+# zone file of the setting holds, and the server refuses names outside its
+# zone.
+dns_test() {
+  local settings=$1
+  cat <<EOF
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: dns_zone
+  description: DNS lookups that the server answers from a configured zone file.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/$iface }
+    - { name: server0, location: local/$iface }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 127.93.0.0/24, count: 16 }
+    - { name: servers, port: server0, role: server, ipv4: 127.94.0.0/24, count: 1 }
+$settings
+profile:
+  basis: sessions
+  mix:
+    - { scenario: dns/lookup_a, weight: 1, params: { host: www.e2e.test, server_port: 18681 } }
+load:
+  objective: { type: sessions_per_second, value: 40 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: 3 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "==", value: 0 }
+  - { metric: sessions.succeeded, op: ">", value: 0 }
+EOF
+}
+
+dns_test 'modules:
+  dns:
+    settings:
+      zone_file: zones/e2e.test.zone' >"$work/dns_zone.yaml"
+run_test "$work/dns_zone.yaml"
+[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the dns zone run $run did not pass: $summary"
+dns_succeeded=$(succeeded_of dns)
+[[ $dns_succeeded -gt 0 ]] || fail "the dns zone run $run counted no succeeded sessions: $metrics"
+echo "controller_e2e: run $run answered from the configured zone with $dns_succeeded succeeded dns sessions, verdict passed"
+
+# Without the setting the server answers from the shipped zone, which has no
+# name under e2e.test, so the lookups fail and the run ends in the state
+# failed, with the criteria as its reason.
+dns_test '' >"$work/dns_default.yaml"
+run_test "$work/dns_default.yaml" failed
+[[ $(json_field verdict.passed <<<"$summary") != True ]] || fail "the dns run $run without the setting passed, so the zone file made no difference: $summary"
+grep -q "\"run_id\":\"$run\".*criteria failed" "$work/controller.log" || fail "the dns run $run without the setting did not fail its criteria"
+[[ $(succeeded_of dns) == 0 ]] || fail "the dns run $run without the setting counted succeeded sessions: $metrics"
+echo "controller_e2e: run $run without zone_file ended failed on its criteria, as the shipped zone lacks www.e2e.test"
+
 # A CA that is not the controller CA. The agent checks the enrollment endpoint
 # against it, so the handshake fails before the token leaves the agent.
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 \
@@ -223,7 +320,7 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 
   fail "openssl could not make a CA"
 echo "unused.token" >"$work/unused-token"
 set +e
-"$agent" connect --controller "https://$grpc" --agent-id other --modules "$examples/modules" \
+"$agent" connect --controller "https://$grpc" --agent-id other --modules "$modules" \
   --cert-dir "$work/other-pki" --tls-ca "$work/wrong-ca.pem" --enroll-address "$enroll" \
   --enroll-token-file "$work/unused-token" 2>"$work/wrong-ca.log"
 code=$?
