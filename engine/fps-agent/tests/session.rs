@@ -109,6 +109,15 @@ impl ControllerService for Fake {
         }))
     }
 
+    async fn upload_capture(
+        &self,
+        _req: Request<Streaming<pb::UploadCaptureRequest>>,
+    ) -> Result<Response<pb::UploadCaptureResponse>, Status> {
+        Err(Status::unimplemented(
+            "the fake controller takes no uploads",
+        ))
+    }
+
     type SessionStream =
         Pin<Box<dyn Stream<Item = Result<pb::SessionResponse, Status>> + Send + 'static>>;
 

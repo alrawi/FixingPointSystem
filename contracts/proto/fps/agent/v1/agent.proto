@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Agent control protocol, contract version 0.2.1.
+// Agent control protocol, contract version 0.2.2.
 //
 // The controller compiles a test configuration into one Plan per agent. Each
 // agent dials the controller, so an agent behind NAT or in a cloud needs no
@@ -23,6 +23,12 @@
 // only adds a field. An agent of version 0.2.0 ignores the field, so the
 // controller sends a plan with module settings only to an agent whose
 // Capabilities.engine_api is 0.2.1 or later.
+//
+// Version 0.2.2 adds the download of a finished capture file: the
+// FetchCapture command on the Session stream and the UploadCapture RPC, which
+// the agent opens on its own connection when the controller asks. It only adds
+// a command, an RPC, and messages. The controller sends FetchCapture only to
+// an agent whose Capabilities.engine_api is 0.2.2 or later.
 
 syntax = "proto3";
 
@@ -50,6 +56,20 @@ service ControllerService {
   // counter snapshots. At most one session per agent is open. A new session
   // for the same agent ends the older one with ABORTED.
   rpc Session(stream SessionRequest) returns (stream SessionResponse);
+
+  // UploadCapture carries the bytes of one finished capture file from the
+  // agent to the controller. The controller cannot call the agent, so the
+  // agent starts this call itself, on the connection that carries Session,
+  // after it answered a FetchCaptureCommand. The call is a separate HTTP/2
+  // stream, so its flow control does not hold up heartbeats on Session. The
+  // first request is open, the next requests are chunks in ascending offset
+  // order, and the last request is end. The controller answers once, after
+  // it read end. The agent identity comes from the client certificate, as for
+  // Session. A call whose transfer_id the controller did not issue, or
+  // already served, ends with NOT_FOUND, and a second concurrent call with one
+  // transfer_id ends with ALREADY_EXISTS. A transfer ends with ABORTED when its
+  // session ends.
+  rpc UploadCapture(stream UploadCaptureRequest) returns (UploadCaptureResponse);
 }
 
 // AgentState is the position of the agent in its state machine.
@@ -275,6 +295,8 @@ message SessionResponse {
     StartCaptureCommand start_capture = 7;
     // stop_capture ends one packet capture.
     StopCaptureCommand stop_capture = 8;
+    // fetch_capture asks the agent to upload a finished capture file.
+    FetchCaptureCommand fetch_capture = 9;
   }
 }
 
@@ -417,6 +439,120 @@ message StopCaptureCommand {
   string capture_id = 2;
 }
 
+// FetchCaptureCommand asks the agent to upload the file of a finished capture
+// with UploadCapture, from start_offset on. A capture is finished once its
+// StopCaptureResult exists, whether StopCaptureCommand, a limit, or the end of
+// the run ended it. The agent answers at once with FetchCaptureResult, without
+// waiting for the transfer, and then opens UploadCapture with the same
+// transfer_id. An unknown plan_id or capture_id, or a file that the agent
+// removed, fails with ERROR_CODE_NOT_FOUND. A capture that has not ended fails
+// with ERROR_CODE_FAILED_PRECONDITION, a start_offset above the size of the
+// file or a malformed transfer_id fails with ERROR_CODE_INVALID_ARGUMENT, and
+// an agent that already serves a transfer fails with
+// ERROR_CODE_RESOURCE_EXHAUSTED. An agent without the transfer fails with
+// ERROR_CODE_UNIMPLEMENTED. The command is valid in every agent state that
+// holds the plan, and it leaves the agent state unchanged. The controller
+// repeats the command with a new transfer_id and the offset it holds to resume
+// an interrupted transfer. The file stays the same, so the digest of
+// StopCaptureResult covers the whole file for every attempt.
+message FetchCaptureCommand {
+  // plan_id names the plan of the capture.
+  string plan_id = 1;
+  // capture_id names the finished capture.
+  string capture_id = 2;
+  // start_offset is the offset of the first byte to send. It is zero for a
+  // whole file, and it equals the number of bytes that the controller holds
+  // to resume. An offset equal to the size of the file sends no chunk.
+  uint64 start_offset = 3;
+  // transfer_id is chosen by the controller, is used once, and authorizes one
+  // UploadCapture call. It has 1 to 128 letters, digits, dots, underscores,
+  // and hyphens.
+  string transfer_id = 4;
+  // max_chunk_bytes is the largest chunk that the controller accepts, or zero
+  // for the default of 262144 bytes. The agent sends chunks of at most
+  // min(max_chunk_bytes, 262144) bytes, so no chunk exceeds 256 KiB.
+  uint32 max_chunk_bytes = 5;
+}
+
+// FetchCaptureResult confirms that the agent will upload the capture.
+message FetchCaptureResult {
+  // capture_id echoes the capture identifier.
+  string capture_id = 1;
+  // transfer_id echoes the transfer identifier, which the agent now uses in
+  // UploadCaptureOpen.
+  string transfer_id = 2;
+  // total_bytes is the size of the whole file, which equals
+  // StopCaptureResult.bytes.
+  uint64 total_bytes = 3;
+  // digest is the digest of the whole file, which equals
+  // StopCaptureResult.digest.
+  string digest = 4;
+  // chunk_bytes is the largest chunk that the agent will send, at most 262144.
+  uint32 chunk_bytes = 5;
+}
+
+// UploadCaptureRequest is one message of the UploadCapture stream.
+message UploadCaptureRequest {
+  // body holds exactly one message. The first request is open, the last is
+  // end, and every request between them is a chunk.
+  oneof body {
+    // open binds the call to one transfer and must be first.
+    UploadCaptureOpen open = 1;
+    // chunk carries a part of the file.
+    CaptureChunk chunk = 2;
+    // end closes the transfer and must be last.
+    CaptureEnd end = 3;
+  }
+}
+
+// UploadCaptureOpen binds an UploadCapture call to the command that asked for it.
+message UploadCaptureOpen {
+  // transfer_id is FetchCaptureCommand.transfer_id.
+  string transfer_id = 1;
+  // session_token is the token of the Session that carried the command.
+  string session_token = 2;
+  // capture_id echoes FetchCaptureCommand.capture_id.
+  string capture_id = 3;
+  // start_offset echoes FetchCaptureCommand.start_offset, which is the offset
+  // of the first chunk.
+  uint64 start_offset = 4;
+}
+
+// CaptureChunk is one part of a capture file. The agent sends at most 262144
+// bytes of data per chunk, and the chunks of a call cover the file from
+// start_offset to its end without gap or overlap.
+message CaptureChunk {
+  // offset is the position of the first byte of data in the file. The first
+  // chunk has offset equal to start_offset, and every later chunk has the
+  // offset of the previous chunk plus the length of its data.
+  uint64 offset = 1;
+  // data holds 1 to 262144 bytes of the file.
+  bytes data = 2;
+}
+
+// CaptureEnd closes a transfer. The controller checks it against what it
+// received.
+message CaptureEnd {
+  // total_bytes is the size of the whole file. The last chunk ends at this
+  // offset.
+  uint64 total_bytes = 1;
+  // digest is sha256:<64 lowercase hex> over the whole file, which equals
+  // StopCaptureResult.digest. It covers the file and not the bytes of this
+  // call, so a controller that resumed checks the bytes of every attempt
+  // together.
+  string digest = 2;
+}
+
+// UploadCaptureResponse is the controller answer to a finished transfer.
+message UploadCaptureResponse {
+  // received_offset is the offset after the last byte that the controller
+  // holds, which equals total_bytes when the file is complete.
+  uint64 received_offset = 1;
+  // verified is true when the controller holds the whole file and its digest
+  // equals CaptureEnd.digest.
+  bool verified = 2;
+}
+
 // CommandResult answers one command. Exactly one of error and result is set.
 message CommandResult {
   // command_id echoes SessionResponse.command_id.
@@ -438,6 +574,8 @@ message CommandResult {
     StartCaptureResult start_capture = 7;
     // stop_capture answers a StopCaptureCommand.
     StopCaptureResult stop_capture = 8;
+    // fetch_capture answers a FetchCaptureCommand.
+    FetchCaptureResult fetch_capture = 9;
   }
 }
 

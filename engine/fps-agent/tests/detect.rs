@@ -41,7 +41,7 @@ fn virtio_guest_reports_virtio_net_ports_and_af_xdp() {
     assert_eq!(caps.cores, 4);
     assert_eq!(caps.memory_bytes, 7 * GIB);
     assert_eq!(caps.backends, vec![Backend::Kernel, Backend::AfXdp]);
-    assert_eq!(caps.engine_api, "0.2.1");
+    assert_eq!(caps.engine_api, "0.2.2");
     assert_eq!(caps.agent_version, env!("CARGO_PKG_VERSION"));
     assert!(caps.modules.is_empty() && caps.labels.is_empty());
 
