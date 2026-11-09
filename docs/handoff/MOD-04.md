@@ -5,8 +5,8 @@
 | Issue | #171 |
 | Branch | `wp/MOD-04` |
 | Pull request | none yet |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-0c91ff, lease until 2026-11-10T00:38:53Z |
 | Last verified commit | none |
 
@@ -33,11 +33,11 @@ Add http1 scenarios over TLS 1.2 and TLS 1.3 that bind the tls transport with br
 
 ## Remaining
 
-Open the pull request and wait for CI.
+Pull request 346 is open. Every check passes except the jobs `module` and `harness` of the workflow `mod-http1`, which fail only in their print step, `[c["applications"] for c in r["checks"]]` (lines 58 and 77 of `mod-http1.yml`): the new encryption entry has no `applications` key. The scoring and `decrypted_check.py` pass in both jobs. The coordinator changes the two lines to `c.get("applications", c["check"])`, which is outside the paths of MOD-04.
 
 ## Next action
 
-Open the pull request against main and poll its checks.
+The coordinator reviews and merges.
 
 ## Blockers and open questions
 
