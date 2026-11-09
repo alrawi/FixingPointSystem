@@ -42,3 +42,7 @@ jobs:
         env:
           FPS_REQUIRE_CAPTURE_TOOLS: "1"
         run: cargo test -p fps-module-tls --test capture -- --nocapture
+      - name: Check the JA4 of the browser profiles with tshark (TRN-05)
+        env:
+          FPS_REQUIRE_CAPTURE_TOOLS: "1"
+        run: cargo test -p fps-module-tls --test ja4 -- --nocapture

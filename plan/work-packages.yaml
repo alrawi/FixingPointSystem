@@ -2857,3 +2857,81 @@ work_packages:
       - smtp submission on 587 with STARTTLS and imap with STARTTLS, offered in the capability lists.
     acceptance:
       - The realism job decrypts the fixture captures with the exported keys and Zeek logs the messages inside TLS.
+
+  # Batch 20 follow-ups (2026-11-09).
+
+  - id: CLI-03
+    title: Stabilize the CLI end to end test
+    phase: 2
+    workstream: CLI
+    size: S
+    depends_on: [CLI-02]
+    paths: [cli/]
+    summary: >-
+      cli/e2e TestEndToEnd failed once and passed on re-run on 2026-11-09 with "fake agent state =
+      AGENT_STATE_PREPARED, want RUNNING".
+    deliverables:
+      - Find and fix the race without adding sleeps, and explain the cause in the PR.
+    acceptance:
+      - The test passes 100 times in a row in a temporary CI step, which is then removed.
+
+  - id: AGT-15
+    title: Stabilize the agent enrollment test
+    phase: 2
+    workstream: AGT
+    size: S
+    depends_on: [AGT-10]
+    paths: [engine/fps-agent/]
+    summary: >-
+      tests/mtls.rs an_agent_enrolls_with_a_token_registers_and_renews failed once at its line 550
+      assertion and passed on re-run on 2026-11-09.
+    deliverables:
+      - Find and fix the race without adding sleeps, and explain the cause in the PR.
+    acceptance:
+      - The test passes 200 times in a row locally and in a temporary CI step, which is then removed.
+
+  - id: ENG-21
+    title: Extension seams found by AGT-11
+    phase: 2
+    workstream: ENG
+    size: S
+    depends_on: [AGT-11]
+    paths: [engine/fps-runtime/]
+    summary: >-
+      fps_runtime::extension::close_reason is crate private, so the agent repeats the mapping;
+      SessionExtensions::open tells every extension its transport is tcp; and the loader reads
+      extension.wasm again after the tree digest, so a writer could swap it in between.
+    deliverables:
+      - Export close_reason, add the transport to SessionKey, and load the extension from the bytes that were digested.
+    acceptance:
+      - A UDP session's extension sees transport udp, and a test shows the extension bytes are the digested bytes.
+
+  - id: CTL-37
+    title: Serve listConfigs and the controller version
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CON-16, CTL-33]
+    paths: [controller/internal/store/, controller/internal/api/, controller/cmd/fps-controller/]
+    summary: >-
+      CON-16 added listConfigs and Capabilities.controller_version; the controller answers listConfigs
+      with 501 and leaves controller_version empty.
+    deliverables:
+      - listConfigs with the contract's paging, newest first, and controller_version from the version stamp of CTL-33; fps config list in the CLI uses listConfigs when the controller serves it.
+    acceptance:
+      - Contract tests of listConfigs pass, listConfigs leaves the pending operations list, and GET /v1/capabilities reports the stamped version.
+
+  - id: ENG-22
+    title: Refuse tls_upgrade on UDP in the flow loader
+    phase: 2
+    workstream: ENG
+    size: S
+    depends_on: [CON-17]
+    paths: [engine/fps-flow/]
+    summary: >-
+      validate.py refuses tls_upgrade in a UDP flow since CON-17, but fps-flow's check_action accepts it
+      and the runtime fails the session with internal.
+    deliverables:
+      - A LoadError kind TlsUpgradeOnUdp and a verdicts.yaml case, so both validators agree.
+    acceptance:
+      - The fps-flow parity fixtures pass with the new case.
