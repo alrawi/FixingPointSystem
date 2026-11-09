@@ -121,6 +121,11 @@ def main(argv: list[str] | None = None) -> int:
         f"zeek_check: ftp.log {len(logs['ftp'])} rows ({listings} of them list a directory), "
         f"files.log {len(logs['files'])} rows, weird.log {len(logs['weird'])} rows"
     )
+    for command in ("PASV", "EPSV", "RETR", "STOR"):
+        sample = next((r for r in logs["ftp"] if r.get("command") == command), None)
+        print(f"zeek_check: first {command} row {json.dumps(sample, sort_keys=True)}")
+    sample_file = next((f for f in logs["files"] if "FTP_DATA" in as_list(f.get("source"))), None)
+    print(f"zeek_check: first FTP_DATA file {json.dumps(sample_file, sort_keys=True)}")
     for e in errors:
         print(f"zeek_check: FAIL {e}", file=sys.stderr)
     return 1 if errors else 0
