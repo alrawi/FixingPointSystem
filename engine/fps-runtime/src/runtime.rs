@@ -79,6 +79,7 @@ impl Runtime {
                 snapshots: snap_tx.clone(),
                 ready: ready_tx.clone(),
                 capture: config.capture.clone(),
+                tls: config.tls.clone(),
             };
             match std::thread::Builder::new()
                 .name(format!("fps-worker-{id}"))

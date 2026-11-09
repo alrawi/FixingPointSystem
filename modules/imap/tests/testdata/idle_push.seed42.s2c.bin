@@ -1,0 +1,60 @@
+* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN] imap.example.test Dovecot ready.
+* CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN
+A001 OK Pre-login capabilities listed, post-login capabilities have more (0.005 + 0.002 secs).
+A002 OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT UIDPLUS MOVE NAMESPACE CHILDREN] Logged in
+* FLAGS (\Answered \Flagged \Deleted \Seen \Draft)
+* OK [PERMANENTFLAGS (\Answered \Flagged \Deleted \Seen \Draft \*)] Flags permitted.
+* 3 EXISTS
+* 0 RECENT
+* OK [UNSEEN 1] First unseen.
+* OK [UIDVALIDITY 1380189741] UIDs valid
+* OK [UIDNEXT 1004] Predicted next UID
+A003 OK [READ-WRITE] Select completed (0.002 + 0.003 secs).
++ idling
+* 4 EXISTS
+* 1 RECENT
+A004 OK Idle completed (0.006 + 0.003 secs).
+* 4 FETCH (UID 1004 FLAGS (\Seen) BODY[] {1500}
+From: noklizer.geiliduk@example.test
+To: stihusou.mahi@example.test
+Subject: New message 8891
+Date: Fri, 18 Sep 2026 01:00:00 +0000
+Message-ID: <5c6da77f22dc80359b8ce912@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_ba530013436cd50a054c"
+
+This is a multi-part message in MIME format.
+--=_fps_ba530013436cd50a054c
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Dunae,
+
+A patient teacher shares the results with the group before the winter begins
+(9671). The old bridge repairs the broken clocks. A small workshop shares
+the results with the group near the harbour (4525).
+
+Ref: CASE-470268
+
+Kind regards,
+Iloquapel Orara
+Support desk
+iloquapel.orara@example.test
+--=_fps_ba530013436cd50a054c
+Content-Type: image/jpeg; name="scan.jpg"
+Content-Disposition: attachment; filename="scan.jpg"
+Content-Transfer-Encoding: base64
+
+/9j/4AAQSkZJRgABAQAAAQABAAD//gFei8VTKkqLCxsS4sIJa3T1I80RB5Gy94aeu+MxBF+V8bYR
++9cuoZOqLS0a0KeNGEXl54bY2VywPXmUs/lZkddg3/XQ88+1eELl+sg5fG7uyjakcMmRhGP8qpgR
+tIdxJluWzh7oLSbI7YO5FVenFphi9Fek3me4yKkyUj5jH4R/Ze+HWGvbHr3Gle/0rTZ8r/Me15II
+a5CwwG5FVdNjpNkfutj/EslUZp9RvFC5trSP9l+YNBLIegJAVNLmfTrRTgV8PNU7Xuk2Fw8DWFZ9
+Gc7UMx/8VekcVS4B+YmZwtegyloSHuazpXD4jVXlcrSCwzBKw5BoeyL6i6q6oFfNKLf8ctrwA8Hg
+YidItP/ZS+wnEtb0cedUbkr1klmktuql4OzqdLPUTCtMPhcxIUghI094bRFQEogcBmqFRXRnSFzV
+zz1N7QIUB4cmGdiKMhGA0uCY4xvdpLkXkRMK2H1V/9k=
+--=_fps_ba530013436cd50a054c--
+)
+A005 OK Fetch completed (0.008 + 0.001 secs).
+* BYE Logging out
+A006 OK Logout completed (0.006 + 0.001 secs).

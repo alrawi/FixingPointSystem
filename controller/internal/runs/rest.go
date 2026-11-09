@@ -4,6 +4,7 @@ package runs
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"maps"
 	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents"
 	"github.com/alrawi/FixingPointSystem/controller/internal/api"
@@ -20,7 +22,7 @@ import (
 // maxBody bounds the request bodies of the run operations.
 const maxBody = 1 << 20
 
-// API serves POST /v1/runs, GET /v1/runs/{id}, and POST /v1/runs/{id}:stop
+// API serves GET and POST /v1/runs, GET /v1/runs/{id}, and POST /v1/runs/{id}:stop
 // from an Orchestrator and answers every other operation with the 501
 // problem of api.Unimplemented.
 type API struct {
@@ -65,6 +67,68 @@ func (a *API) GetRun(w http.ResponseWriter, r *http.Request, id api.Id) {
 		return
 	}
 	writeJSON(w, http.StatusOK, ToAPI(run))
+}
+
+// Page sizes of listRuns, from the PageSize parameter of the contract.
+const (
+	defaultPageSize = 50
+	maxPageSize     = 500
+)
+
+// ListRuns answers GET /v1/runs with the runs newest first. The page token is
+// opaque and names the last run of the previous page, so pages stay stable
+// when runs start between two requests.
+func (a *API) ListRuns(w http.ResponseWriter, r *http.Request, params api.ListRunsParams) {
+	opt := ListOptions{Limit: defaultPageSize}
+	if params.State != nil {
+		if !params.State.Valid() {
+			api.WriteProblem(w, r, api.Problemf(http.StatusBadRequest, "state %q is not a run state", string(*params.State)))
+			return
+		}
+		opt.State = *params.State
+	}
+	if params.PageSize != nil {
+		if *params.PageSize < 1 || *params.PageSize > maxPageSize {
+			api.WriteProblem(w, r, api.Problemf(http.StatusBadRequest, "page_size must be between 1 and %d", maxPageSize))
+			return
+		}
+		opt.Limit = *params.PageSize
+	}
+	if params.PageToken != nil && *params.PageToken != "" {
+		after, ok := decodePageToken(*params.PageToken)
+		if !ok {
+			api.WriteProblem(w, r, api.NewProblem(http.StatusBadRequest, "page_token is not a token that listRuns returned"))
+			return
+		}
+		opt.After = after
+	}
+	page := a.o.List(opt)
+	out := struct {
+		Items         []api.Run `json:"items"`
+		NextPageToken *string   `json:"next_page_token,omitempty"`
+	}{Items: make([]api.Run, len(page.Runs))}
+	for i, rn := range page.Runs {
+		out.Items[i] = ToAPI(rn)
+	}
+	if page.Next != 0 {
+		out.NextPageToken = ptr(encodePageToken(page.Next))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// encodePageToken returns the opaque token for the creation sequence seq.
+func encodePageToken(seq uint64) string {
+	return base64.RawURLEncoding.EncodeToString([]byte("r" + strconv.FormatUint(seq, 10)))
+}
+
+// decodePageToken returns the sequence that tok names.
+func decodePageToken(tok string) (uint64, bool) {
+	b, err := base64.RawURLEncoding.DecodeString(tok)
+	if err != nil || len(b) < 2 || b[0] != 'r' {
+		return 0, false
+	}
+	seq, err := strconv.ParseUint(string(b[1:]), 10, 64)
+	return seq, err == nil && seq != 0
 }
 
 // StopRun answers POST /v1/runs/{id}:stop. Without force the run ramps down,

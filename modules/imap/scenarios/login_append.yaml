@@ -1,0 +1,66 @@
+scenario: login_append
+description: A mail client on port 143 that sends data to the server in literals. It skips CAPABILITY, as some clients do, and logs in with the password as a synchronizing literal, so the command line ends in {n}, the server answers with a + continuation request, and the client sends the password. It then files a copy of a MIME message in the folder Sent with APPEND, which announces the message as a literal of its exact size and sends it after the second continuation request. The server reads each literal with the size that literal_size takes from the command line, and its APPEND completion carries an APPENDUID code. The client chooses the folder with STATUS before it appends, and the scenario ends with LOGOUT.
+vars:
+  server_port: 143
+  server_name: imap.example.test
+  messages: 6
+  body_size: 1500
+  attachment_min: 24000
+  attachment_max: 160000
+  tag: A000
+flows:
+  - id: login_append
+    module: imap
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set:
+          login: "{{ imap.credential('user') }}"
+          secret: "{{ imap.credential('password') }}"
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} LOGIN \"{{ vars.login }}\" {{ imap.literal_marker(vars.secret) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ vars.secret }}\r\n"
+      - expect: { pattern: " Logged in\r\n", timeout_ms: 5000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} STATUS \"Sent\" (MESSAGES UIDNEXT)\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - set: { sid: "{{ rand_int(1, 2000000000) }}" }
+      - set:
+          subject: "Re: Proposal {{ rand_int(1000, 9999) }}"
+          text: "{{ content.email(size=vars.body_size) }}"
+      - set: { copy: "{{ imap.message(imap.address(vars.sid, 1), imap.address(vars.sid, 2), vars.subject, vars.text, cc=imap.address(vars.sid, 3), attachment=content.binary(kind='pdf', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='proposal.pdf', content_type='application/pdf') }}" }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} APPEND \"Sent\" (\\Seen) {{ imap.literal_marker(vars.copy) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ vars.copy }}\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 30000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} LOGOUT\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN] {{ vars.server_name }} Dovecot ready.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set:
+          login_cmd: "{{ last }}"
+          secret_len: "{{ imap.literal_size(last) }}"
+      - send: "+ Ready for literal data\r\n"
+      - expect: { bytes: "{{ vars.secret_len }}", timeout_ms: 5000 }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ imap.tagged(vars.login_cmd, code='CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT UIDPLUS MOVE NAMESPACE CHILDREN', text='Logged in') }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "* STATUS \"Sent\" (MESSAGES {{ vars.messages }} UIDNEXT {{ imap.next(vars.messages, 1001) }})\r\n{{ imap.tagged(last, text='Status completed', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set:
+          append_cmd: "{{ last }}"
+          copy_len: "{{ imap.literal_size(last) }}"
+          appenduid: "APPENDUID {{ rand_int(1000000000, 1900000000) }} {{ imap.next(vars.messages, 1001) }}"
+      - send: "+ Ready for literal data\r\n"
+      - expect: { bytes: "{{ vars.copy_len }}", timeout_ms: 30000 }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ imap.tagged(vars.append_cmd, code=vars.appenduid, text='Append completed', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "* BYE Logging out\r\n{{ imap.tagged(last, text='Logout completed', timing=true) }}"
+      - close: fin

@@ -94,6 +94,10 @@
         {
           "if": {"properties": {"check": {"const": "parser_errors"}}, "required": ["check"]},
           "then": {"$ref": "#/$defs/parser_errors"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "encryption"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/encryption"}
         }
       ]
     },
@@ -306,6 +310,103 @@
           }
         },
         "errors_total": {"type": "integer", "minimum": 0}
+      }
+    },
+    "encryption": {
+      "description": "Decryption and JA4 check of a sample of TLS sessions. The check passes when at least min_decrypted of the sampled sessions decrypt with the exported keys and every sampled ClientHello has a JA4 fingerprint that its client profile lists. failures names each reason in words.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "tool", "keys", "labelled_sessions", "sample_limit",
+        "sampled_sessions", "decrypted_sessions", "decrypted_ratio", "min_decrypted",
+        "ja4_matched_sessions", "ja4_mismatched_sessions", "profiles", "failures", "sessions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "encryption"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "Empty until the metric catalog defines metrics for the decrypted and JA4 matched shares.",
+          "type": "array",
+          "maxItems": 0
+        },
+        "tool": {
+          "description": "The program that decrypted the sample, or null when none ran.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["tool", "version"],
+              "additionalProperties": false,
+              "properties": {
+                "tool": {"enum": ["tshark", "stub"]},
+                "version": {"type": "string"}
+              }
+            },
+            {"type": "null"}
+          ]
+        },
+        "keys": {
+          "type": "object",
+          "required": ["embedded", "sidecar"],
+          "additionalProperties": false,
+          "properties": {
+            "embedded": {"type": "boolean", "description": "True when the capture holds a decryption secrets block."},
+            "sidecar": {"type": ["string", "null"], "description": "Base name of the key log file that the run passed, or null."}
+          }
+        },
+        "labelled_sessions": {"type": "integer", "minimum": 0, "description": "Sessions whose rule names a tls_profile."},
+        "sample_limit": {"type": "integer", "minimum": 1},
+        "sampled_sessions": {"type": "integer", "minimum": 0},
+        "decrypted_sessions": {"type": "integer", "minimum": 0},
+        "decrypted_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "min_decrypted": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "ja4_matched_sessions": {"type": "integer", "minimum": 0},
+        "ja4_mismatched_sessions": {"type": "integer", "minimum": 0},
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["profile", "expected_ja4", "sessions", "matched", "decrypted"],
+            "additionalProperties": false,
+            "properties": {
+              "profile": {"type": "string", "minLength": 1},
+              "expected_ja4": {"type": "array", "items": {"type": "string"}},
+              "sessions": {"type": "integer", "minimum": 1},
+              "matched": {"type": "integer", "minimum": 0},
+              "decrypted": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "failures": {
+          "description": "One sentence for each reason that the check failed. Empty when it passed.",
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "sessions": {
+          "description": "The first 100 sampled sessions.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "session", "profile", "client", "server", "server_name", "decrypted", "ja4",
+              "tshark_ja4", "expected_ja4", "ja4_matched", "reasons"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "session": {"type": "integer", "minimum": 1},
+              "profile": {"type": "string", "minLength": 1},
+              "client": {"$ref": "#/$defs/endpoint"},
+              "server": {"$ref": "#/$defs/endpoint"},
+              "server_name": {"type": ["string", "null"]},
+              "decrypted": {"type": "boolean"},
+              "ja4": {"type": ["string", "null"]},
+              "tshark_ja4": {"type": ["string", "null"]},
+              "expected_ja4": {"type": "array", "items": {"type": "string"}},
+              "ja4_matched": {"type": "boolean"},
+              "reasons": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
       }
     }
   }

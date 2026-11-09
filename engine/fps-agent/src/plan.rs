@@ -110,6 +110,12 @@ pub struct ModuleRef {
     pub version: String,
     /// `sha256:<hex>` over the module tree.
     pub digest: String,
+    /// The Ed25519 signature over the digest text, which the canonical JSON
+    /// mapping writes as base64, or empty for an unsigned module.
+    #[serde(deserialize_with = "base64_bytes")]
+    pub signature: Vec<u8>,
+    /// The id of the key that made the signature, or empty.
+    pub signature_key_id: String,
     /// The module settings of the test, a JSON object that conforms to the
     /// settings schema of the module manifest. The agent carries them and
     /// applies none yet.
@@ -577,6 +583,21 @@ impl Plan {
             )))
         })
     }
+}
+
+/// Reads a `bytes` field, which the canonical mapping writes as base64. A
+/// proto3 JSON parser accepts the standard and the URL safe alphabet, with or
+/// without padding.
+fn base64_bytes<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+    use base64::Engine as _;
+    let text = String::deserialize(d)?;
+    let text = text.trim_end_matches('=');
+    let standard = base64::engine::general_purpose::STANDARD_NO_PAD;
+    let url = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    standard
+        .decode(text)
+        .or_else(|_| url.decode(text))
+        .map_err(|e| de::Error::custom(format!("invalid base64: {e}")))
 }
 
 /// Reads a `uint64`, which the canonical mapping writes as a string and

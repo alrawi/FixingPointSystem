@@ -401,12 +401,14 @@ func TestEndToEnd(t *testing.T) {
 	if show["state"] != "completed" || show["id"] != runID {
 		t.Errorf("run show = %v", show)
 	}
-	if l := f.fps(t, "", "run", "list"); l.code == 0 {
-		if !strings.Contains(l.stdout, runID) {
-			t.Errorf("run list lacks %s:\n%s", runID, l.stdout)
-		}
-	} else if l.code != 5 { // 5 means the controller has no listRuns yet.
-		t.Errorf("run list: exit %d, stderr %q", l.code, l.stderr)
+	if l := f.fps(t, "", "run", "list").expect(t, "run list", 0); !strings.Contains(l.stdout, runID) {
+		t.Errorf("run list lacks %s:\n%s", runID, l.stdout)
+	}
+	if l := f.fps(t, "", "run", "list", "--state", "completed").expect(t, "run list --state completed", 0); !strings.Contains(l.stdout, runID) {
+		t.Errorf("run list --state completed lacks %s:\n%s", runID, l.stdout)
+	}
+	if l := f.fps(t, "", "run", "list", "--state", "pending").expect(t, "run list --state pending", 0); strings.Contains(l.stdout, runID) {
+		t.Errorf("run list --state pending shows the completed run %s:\n%s", runID, l.stdout)
 	}
 
 	text := f.fps(t, "", "report", runID).expect(t, "report", 0)

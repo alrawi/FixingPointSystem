@@ -1,0 +1,45 @@
+* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN] imap.example.test Dovecot ready.
+* CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN
+A001 OK Pre-login capabilities listed, post-login capabilities have more (0.005 + 0.002 secs).
+A002 OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT UIDPLUS MOVE NAMESPACE CHILDREN] Logged in
+* FLAGS (\Answered \Flagged \Deleted \Seen \Draft)
+* OK [PERMANENTFLAGS (\Answered \Flagged \Deleted \Seen \Draft \*)] Flags permitted.
+* 3 EXISTS
+* 0 RECENT
+* OK [UNSEEN 1] First unseen.
+* OK [UIDVALIDITY 1380189741] UIDs valid
+* OK [UIDNEXT 1004] Predicted next UID
+A003 OK [READ-WRITE] Select completed (0.002 + 0.003 secs).
+* 1 FETCH (UID 1001 FLAGS (\Seen) RFC822.SIZE 21580)
+* 2 FETCH (UID 1002 FLAGS (\Answered \Seen) RFC822.SIZE 66223)
+* 3 FETCH (UID 1003 FLAGS (\Seen) RFC822.SIZE 107918)
+A004 OK Fetch completed (0.003 + 0.001 secs).
+* 1 FETCH (UID 1001 FLAGS (\Seen) BODY[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID)] {190}
+From: stoubrain.dedraihek@example.test
+To: pouvozis.fobair@example.test
+Subject: Report 9731
+Date: Fri, 18 Sep 2026 01:00:00 +0000
+Message-ID: <5c6da77f22dc80359b8ce912@example.test>
+
+)
+A005 OK Fetch completed (0.008 + 0.001 secs).
+* 2 FETCH (UID 1002 FLAGS (\Answered \Seen) BODY[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID)] {189}
+From: beitrarou.nezas@example.test
+To: tourair.haiteibeis@example.test
+Subject: Report 8865
+Date: Fri, 18 Dec 2026 04:20:53 +0000
+Message-ID: <ff600f3dcac917ea9dbd9dba@example.test>
+
+)
+A006 OK Fetch completed (0.006 + 0.003 secs).
+* 3 FETCH (UID 1003 FLAGS (\Seen) BODY[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID)] {184}
+From: bradrasu.vidul@example.test
+To: trufadim.hihum@example.test
+Subject: Report 1004
+Date: Mon, 15 Jun 2026 11:39:46 +0000
+Message-ID: <3b01b9bdf64dbd27069545b2@example.test>
+
+)
+A007 OK Fetch completed (0.004 + 0.002 secs).
+* BYE Logging out
+A008 OK Logout completed (0.008 + 0.002 secs).

@@ -54,7 +54,7 @@ type Handlers struct {
 	Configs *store.Handler
 	// Modules serves /v1/modules.
 	Modules *registry.API
-	// Runs serves POST /v1/runs, GET /v1/runs/{id}, and POST /v1/runs/{id}:stop.
+	// Runs serves GET and POST /v1/runs, GET /v1/runs/{id}, and POST /v1/runs/{id}:stop.
 	Runs *runs.API
 	// Metrics serves the two metrics operations of a run. Nil answers them
 	// with 501 until the metrics package of CTL-08 is wired.
@@ -114,11 +114,6 @@ type pending struct {
 	metrics  MetricsHandler
 	report   ReportHandler
 	captures CaptureHandler
-}
-
-// ListRuns answers listRuns with a 501 problem.
-func (pending) ListRuns(w http.ResponseWriter, r *http.Request, params api.ListRunsParams) {
-	api.Unimplemented{}.ListRuns(w, r, params)
 }
 
 // ListCaptures forwards listCaptures to the capture handler, or answers 501.

@@ -54,6 +54,7 @@ use crate::identity::{self, Identity, IdentityError, TlsConfig};
 use crate::modules::ModuleError;
 use crate::pb::{self, AgentState, ErrorCode};
 use crate::run::{self, Prepared, RunError, SERVER_RAMP_DOWN};
+use crate::trust::ModulePolicy;
 
 /// The heartbeat interval when `RegisterResponse` carries none.
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
@@ -221,6 +222,8 @@ pub struct Config {
     /// controller and refused for an `http://` one, which needs a controller
     /// that runs with `insecure_plain_grpc`.
     pub tls: Option<TlsConfig>,
+    /// What the agent requires of the module signatures of a plan (AGT-04).
+    pub policy: ModulePolicy,
 }
 
 impl Config {
@@ -239,6 +242,7 @@ impl Config {
             linger: Duration::from_secs(5),
             captures: CaptureSettings::default(),
             tls: None,
+            policy: ModulePolicy::default(),
         }
     }
 }
@@ -451,6 +455,7 @@ fn code_of(e: &RunError) -> ErrorCode {
         RunError::Plan(_) => ErrorCode::InvalidArgument,
         RunError::Module(m) => match m {
             ModuleError::Digest { .. }
+            | ModuleError::Untrusted { .. }
             | ModuleError::Mismatch { .. }
             | ModuleError::Read { .. }
             | ModuleError::Forbidden { .. }
@@ -1034,8 +1039,11 @@ impl Shared {
                 ),
             ));
         }
-        let prepared = run::prepare(plan, &self.cfg.modules, self.cfg.sides)
+        let prepared = run::prepare(plan, &self.cfg.modules, self.cfg.sides, &self.cfg.policy)
             .map_err(|e| (code_of(&e), chain(&e)))?;
+        for warning in prepared.warnings() {
+            tracing::warn!(warning = %warning, "module signature");
+        }
         for note in prepared.notes() {
             tracing::info!(note = %note, "module note");
         }

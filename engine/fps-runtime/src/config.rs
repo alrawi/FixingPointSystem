@@ -15,7 +15,7 @@ use fps_hosts::{HostPool, HostSelector};
 use fps_interp::Limits;
 use fps_sched::ScheduleConfig;
 
-use crate::{ExtensionSet, RuntimeError};
+use crate::{ExtensionSet, RuntimeError, TlsProfiles};
 
 /// Builds the module functions of one session.
 ///
@@ -168,6 +168,10 @@ pub struct RuntimeConfig {
     /// [`crate::RuntimeHandle::capture_cell`], to start a capture in the
     /// middle of the run with [`CaptureCell::set`].
     pub capture: CaptureCell,
+    /// The TLS profiles that the `tls_upgrade` actions of the flows name,
+    /// shared by every worker, or `None` for a run without such actions. A
+    /// session that upgrades without profiles fails with reason `internal`.
+    pub tls: Option<Arc<TlsProfiles>>,
 }
 
 impl RuntimeConfig {
@@ -178,7 +182,16 @@ impl RuntimeConfig {
             snapshot_interval: Duration::from_secs(1),
             workers,
             capture: CaptureCell::new(),
+            tls: None,
         }
+    }
+
+    /// Returns the configuration with `tls` as the profiles that the
+    /// `tls_upgrade` actions of its flows resolve.
+    #[must_use]
+    pub fn with_tls(mut self, tls: Arc<TlsProfiles>) -> Self {
+        self.tls = Some(tls);
+        self
     }
 
     /// Returns the configuration with `capture` as the cell that the workers

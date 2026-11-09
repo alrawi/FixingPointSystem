@@ -31,6 +31,43 @@
         }
       }
     },
+    "tls": {
+      "description": "Expected TLS clients. The encryption check samples the sessions whose rule names a tls_profile, decrypts them, and compares the JA4 of each ClientHello with the profile.",
+      "type": "object",
+      "required": ["profiles"],
+      "additionalProperties": false,
+      "properties": {
+        "profiles": {
+          "description": "Configured client profiles by name, each with the JA4 fingerprint or fingerprints that its ClientHello has.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["ja4"],
+            "additionalProperties": false,
+            "properties": {
+              "ja4": {
+                "oneOf": [
+                  {"$ref": "#/$defs/ja4"},
+                  {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/ja4"}}
+                ]
+              }
+            }
+          }
+        },
+        "sample": {
+          "description": "Most sessions that the check samples. The default is 100.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_decrypted": {
+          "description": "Share of sampled sessions that must decrypt. The default is 1.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      }
+    },
     "sessions": {
       "type": "array",
       "items": {
@@ -39,6 +76,11 @@
         "additionalProperties": false,
         "properties": {
           "application": {"type": "string", "minLength": 1},
+          "tls_profile": {
+            "description": "Name of a profile of the tls section, for sessions of a TLS client.",
+            "type": "string",
+            "minLength": 1
+          },
           "match": {
             "type": "object",
             "additionalProperties": false,
@@ -52,6 +94,13 @@
           }
         }
       }
+    }
+  },
+  "$defs": {
+    "ja4": {
+      "description": "A JA4 fingerprint in the form a_b_c.",
+      "type": "string",
+      "pattern": "^[a-z0-9]{10}_[0-9a-f]{12}_[0-9a-f]{12}$"
     }
   }
 }

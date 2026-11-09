@@ -15,6 +15,7 @@
 package runs
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -251,6 +252,9 @@ func (a *runAgent) absorb(snap *agentpb.CounterSnapshot) bool {
 // except the channels and the cancel function, which are set at creation.
 type run struct {
 	Run
+	// seq orders the runs by creation. The orchestrator assigns it under its
+	// lock, starting at one, so it is unique and never changes.
+	seq      uint64
 	criteria []Criterion
 	agents   map[string]*runAgent
 	stop     stopRequest
@@ -277,6 +281,7 @@ type Orchestrator struct {
 	mu      sync.Mutex
 	runs    map[string]*run
 	byAgent map[string]*run
+	lastSeq uint64
 	closed  bool
 }
 
@@ -389,6 +394,8 @@ func (o *Orchestrator) Create(ctx context.Context, req StartRequest) (Run, error
 		o.release(id, reserved)
 		return Run{}, ErrClosed
 	}
+	o.lastSeq++
+	r.seq = o.lastSeq
 	o.runs[id] = r
 	for aid := range r.agents {
 		o.byAgent[aid] = r
@@ -604,6 +611,56 @@ func (o *Orchestrator) Get(id string) (Run, error) {
 		return Run{}, fmt.Errorf("get run %s: %w", id, ErrRunNotFound)
 	}
 	return r.copy(), nil
+}
+
+// ListOptions selects the runs that List returns.
+type ListOptions struct {
+	// State keeps only the runs in this state. Empty keeps every run.
+	State State
+	// Limit is the page size. List returns every match when it is not positive.
+	Limit int
+	// After is the Next value of the previous page, and zero starts at the
+	// newest run.
+	After uint64
+}
+
+// RunPage is one page of List.
+type RunPage struct {
+	// Runs are copies of the matching runs, newest first.
+	Runs []Run
+	// Next is the After value of the following page, or zero on the last page.
+	Next uint64
+}
+
+// List returns the runs newest first. The order follows the creation sequence
+// of the orchestrator and not the clock, so it is total and stable. A page
+// continues below the last sequence of the page before it, so a run created
+// between two requests, which gets a higher sequence, never shifts or repeats
+// an item of a later page.
+func (o *Orchestrator) List(opt ListOptions) RunPage {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	match := make([]*run, 0, len(o.runs))
+	for _, r := range o.runs {
+		if opt.State != "" && r.State != opt.State {
+			continue
+		}
+		if opt.After != 0 && r.seq >= opt.After {
+			continue
+		}
+		match = append(match, r)
+	}
+	slices.SortFunc(match, func(a, b *run) int { return cmp.Compare(b.seq, a.seq) })
+	var page RunPage
+	if opt.Limit > 0 && len(match) > opt.Limit {
+		match = match[:opt.Limit]
+		page.Next = match[len(match)-1].seq
+	}
+	page.Runs = make([]Run, len(match))
+	for i, r := range match {
+		page.Runs[i] = r.copy()
+	}
+	return page
 }
 
 // Wait blocks until the run with id ends or ctx ends, and returns the run.

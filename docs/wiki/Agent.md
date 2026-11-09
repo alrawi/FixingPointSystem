@@ -1,6 +1,6 @@
 # Agent
 
-This page describes the agent of the AGT workstream. The crate [`fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent) holds the agent binary. AGT-03 added capability detection, which [Implementation Plan](Implementation-Plan.md) describes, and AGT-01 adds the standalone mode, which runs a plan without a controller. AGT-02 added the client loop that dials the controller, which the section [Controller session](#controller-session) describes, and AGT-06 added the kernel requirement and the redial policy, which the sections [Kernel requirement](#kernel-requirement) and [Redial policy](#redial-policy) describe. AGT-05 added the handlers of the v0.2 commands `UpdateRates`, `StartCapture`, and `StopCapture`, which the section [Run time rates and captures](#run-time-rates-and-captures) describes. AGT-08 added mutual TLS, enrollment, and renewal, which the section [Mutual TLS and enrollment](#mutual-tls-and-enrollment) describes. AGT-07 applies module settings and reports every session series with the `side` label, which the sections [Module settings](#module-settings), [Snapshot lines](#snapshot-lines), and [Criteria](#criteria) describe. AGT-09 serves the capture download of CON-13, which the section [Capture download](#capture-download) describes. AGT-10 shares one capture cell between the TCP and UDP workers and checks a pinned fingerprint during the enrollment handshake, which the sections [Run time rates and captures](#run-time-rates-and-captures) and [Trust](#trust) describe, and it classifies a close right after the handshake, which the section [Permanent failures](#permanent-failures) describes.
+This page describes the agent of the AGT workstream. The crate [`fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent) holds the agent binary. AGT-03 added capability detection, which [Implementation Plan](Implementation-Plan.md) describes, and AGT-01 adds the standalone mode, which runs a plan without a controller. AGT-02 added the client loop that dials the controller, which the section [Controller session](#controller-session) describes, and AGT-06 added the kernel requirement and the redial policy, which the sections [Kernel requirement](#kernel-requirement) and [Redial policy](#redial-policy) describe. AGT-05 added the handlers of the v0.2 commands `UpdateRates`, `StartCapture`, and `StopCapture`, which the section [Run time rates and captures](#run-time-rates-and-captures) describes. AGT-08 added mutual TLS, enrollment, and renewal, which the section [Mutual TLS and enrollment](#mutual-tls-and-enrollment) describes. AGT-07 applies module settings and reports every session series with the `side` label, which the sections [Module settings](#module-settings), [Snapshot lines](#snapshot-lines), and [Criteria](#criteria) describe. AGT-09 serves the capture download of CON-13, which the section [Capture download](#capture-download) describes. AGT-04 verifies module signatures against a trust store, which the section [Signed modules](#signed-modules) describes. AGT-10 shares one capture cell between the TCP and UDP workers and checks a pinned fingerprint during the enrollment handshake, which the sections [Run time rates and captures](#run-time-rates-and-captures) and [Trust](#trust) describe, and it classifies a close right after the handshake, which the section [Permanent failures](#permanent-failures) describes.
 
 ## Standalone mode
 
@@ -8,7 +8,8 @@ The command below runs one plan file and exits with the verdict of its criteria.
 
 ```bash
 fps-agent run --plan contracts/examples/plans/http_dns_smoke.json \
-  --modules contracts/examples/modules [--side both|client|server] [--linger SECONDS]
+  --modules contracts/examples/modules [--side both|client|server] [--linger SECONDS] \
+  [--module-trust-store FILE] [--dev-modules]
 ```
 
 | Exit code | Meaning |
@@ -54,6 +55,32 @@ A setting path may not leave the module directory. The contract does not allow p
 
 The agent refuses settings that it cannot apply, and never skips them in silence, because a run that ignores them measures another test. That covers a module that has no native functions in this agent, such as a module whose manifest catalog differs from its crate, and a module whose native functions take no settings, such as `http1`. A module without settings behaves as before.
 
+### Signed modules
+
+AGT-04 makes the agent verify the signature of every module before it loads the module, with the check that the controller applies at install (CTL-11, CTL-28, [Controller](Controller.md#signature-checks-at-install-and-in-plans)). The code is `src/trust.rs`, and `modules::load` calls it for each module of a plan, in the standalone mode and for a `prepare` command alike.
+
+```
+fps-agent run     ... [--module-trust-store FILE] [--dev-modules]
+fps-agent connect ... [--module-trust-store FILE] [--dev-modules]
+```
+
+**What is signed.** The signature of a module is an Ed25519 signature over the UTF-8 bytes of its tree digest, the `sha256:` string of rule 1 of `contracts/README.md`. The plan carries it in `ModuleRef.signature` (base64 in the canonical JSON) and `ModuleRef.signature_key_id` (CON-05). The agent computes the tree digest of the module directory with `modules::tree_digest`, which is the same rule as `registry.TreeDigest` and `signing.ArchiveDigest` of the controller, and requires it to equal the digest of the plan. The signature then covers the bytes that the agent runs. The agent never reads an archive, because the controller installs archives and the agent reads trees under `--modules`. A key id is `ed25519:` and the hex of the first 16 bytes of the SHA-256 of the public key. The signature check is Ed25519 of `ring`, which the lock already held through rustls, so the agent adds no package.
+
+**The trust store.** `--module-trust-store FILE` names a file in the format of the controller's `trust_store_file`: `version` 1 and a list of keys with `key_id`, `public_key` (base64), `status`, and for a retired key `retired_after` (RFC 3339). The parser refuses what the Go parser refuses, which are unknown fields, trailing data, a key id that its key does not derive, a retired key without a cutoff, a cutoff on another standing, and a key twice. The agent reads the file at startup, so a malformed file ends the process with exit code 2 before it dials. A rotation that adds a key means copying the new file to the agents and restarting them. An active key verifies at any time, a retired key strictly before its cutoff, and a revoked key never. The checks run in the order of the Go verifier, so the error names the first fault: no signature, a signature that is not 64 bytes, an unknown key, a revoked key, a retired key past its cutoff, and last the signature.
+
+| Case | Without `--dev-modules` | With `--dev-modules` |
+|---|---|---|
+| Valid signature of an active key, or of a retired key before its cutoff | Loads | Loads, no warning |
+| No signature, a signature of the wrong length, an unknown key, a revoked key, a retired key past its cutoff, or a signature that does not verify | `prepare` fails with `ERROR_CODE_FAILED_PRECONDITION`, and `run` ends with exit code 2 | Loads, and a `warn` log line names the module and the reason |
+| Tree digest differs from the plan digest | Fails | Fails, because the digest check of AGT-02 is not a signature check |
+| No `--module-trust-store` | Loads and ignores any signature, with one warning that signatures are not required | The same |
+
+With no trust store the agent behaves like a controller without `trust_store_file`: it requires no signature and checks none, and it logs one warning per plan (`no --module-trust-store: ...`). A signature that comes with a module cannot be checked without keys, so the agent ignores it. This default keeps the example modules and the controller end to end test working, which install unsigned modules. A fleet that wants signatures sets the flag on every agent. `--dev-modules` is for developers: with a trust store it lets a module through that fails the signature check and warns for each, and it changes nothing when there is no trust store.
+
+The plan JSON reader of the standalone mode accepts `signature` and `signatureKeyId` on a module. It read neither before, and its strict reader refused a plan that carried them.
+
+**Tests.** `tests/signing.rs` runs the module loader on the example modules. The golden test builds a small tree, requires the tree digest that Python computed from rule 1, and signs it with the key of seed 0x07, the key of the CTL-11 vectors, and requires the signature and key id of Python and of `golden_test.go`. The other tests cover a valid signature, a changed tree (digest error in both modes), a tree whose plan digest was rewritten (bad signature, accepted with a warning in developer mode), an unknown key, an unsigned module, a revoked key, a retired key on both sides of its cutoff with an injected clock, a plan in the canonical JSON with base64 signatures, and the default without a trust store. The unit tests of `src/trust.rs` pin the key ids and the signature of the vectors, the order of the checks, and the parser rules.
+
 ### Snapshot lines
 
 Each line is the proto3 JSON mapping of an aggregate `CounterSnapshot` with `planId`, `sequence` from 1, `time`, the `phase` at that moment, and the counters, gauges, and histograms of every side that the process runs. Catalog 0.2.0 gives every scenario and transport series the `side` label, so the client series and the server series of one session sit side by side in the line and do not add up. The UDP workers of the agent register their series through `fps_stats::SessionCounters`, as the TCP workers of `fps-runtime` do, so both transports label their series alike. A process that runs one side only, as with `--side client`, carries that side. A sum over every label of one line counts each session of a two sided process twice, so a reader selects `side` first. The counters are cumulative from the start of the run.
@@ -72,6 +99,7 @@ The agent evaluates every criterion over the series of one side, which is the cl
 |---|---|---|
 | Unit | `src/*.rs` | Plan parsing, durations, criteria on both sides of a snapshot, tree digests, native function registration with module settings and the path checks, and a UDP client and server over loopback whose series carry the side label |
 | Component | `tests/standalone.rs` | The example plan on loopback pools with high ports passes with sessions of both modules on both sides, and every series of a snapshot line carries the `side` label with the client and the server series next to each other. A failed criterion gives fail, a server only run reports the server side, and the criteria count the client side, which is half of a total over both sides. A changed digest, version, or backend is an error. A plan with the `zone_file` setting of a copy of the dns module passes because the zone answers its name, and the same plan without the setting fails. A setting with `..`, a path outside the module directory, or a missing file ends the run |
+| Component | `tests/signing.rs` | The signature check of module loading with the CTL-11 vectors, see [Signed modules](#signed-modules) |
 | End to end | `tests/netns_smoke.sh`, `make e2e-agt` | The example plan, unchanged, runs in the QA-01 harness with the server side in the server namespace and the client side in the client namespace |
 
 The end to end test routes the plan pools `16.0.0.0/24` and `48.0.0.0/24` through the routing namespace and adds a local route for each pool in its namespace. A local run with a debug build completed 38,107 sessions, 34,299 of `http1` and 3,808 of `dns`, on both sides without a failure, which matches the planned load. The workflow [`agt.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/.github/workflows/agt.yml) runs it as root on `ubuntu-24.04`.
@@ -83,7 +111,8 @@ AGT-02 added the agent side of the control protocol. The agent dials the control
 ```bash
 fps-agent connect --controller http://127.0.0.1:7443 --agent-id local \
   --modules contracts/examples/modules [--root DIR] [--side both|client|server] [--label site=lab] \
-  [--redial-limit SECONDS] [--capture-dir DIR] [--capture-retention SECONDS]
+  [--redial-limit SECONDS] [--capture-dir DIR] [--capture-retention SECONDS] \
+  [--module-trust-store FILE] [--dev-modules]
   [--cert-dir DIR [--tls-ca FILE] [--tls-ca-sha256 HEX] [--enroll-address HOST:PORT] \
    [--enroll-token-file FILE | --enroll-token-env NAME]]    # https:// controllers
 ```

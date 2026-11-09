@@ -1,0 +1,67 @@
+scenario: idle_push
+description: A mail client on port 143 that waits for new mail with IDLE as RFC 2177 defines it. After CAPABILITY, LOGIN, and SELECT the client sends IDLE and the server answers with a + continuation request. After a wait of a few hundred milliseconds the server pushes an untagged EXISTS and RECENT, which tells the client that one message arrived, and the client ends the idle state with DONE. The server then completes the IDLE command, which it kept in a variable, and the client fetches the new message, the number after the last one, with a UID and a literal that carries a MIME message, before it logs out.
+vars:
+  server_port: 143
+  server_name: imap.example.test
+  messages: 6
+  body_size: 1200
+  attachment_min: 24000
+  attachment_max: 160000
+  tag: A000
+flows:
+  - id: idle_push
+    module: imap
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} CAPABILITY\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - set:
+          login: "{{ imap.credential('user') }}"
+          secret: "{{ imap.credential('password') }}"
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} LOGIN \"{{ vars.login }}\" \"{{ vars.secret }}\"\r\n"
+      - expect: { pattern: " Logged in\r\n", timeout_ms: 5000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} SELECT \"INBOX\"\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} IDLE\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - expect: { pattern: " RECENT\r\n", timeout_ms: 30000 }
+      - send: "DONE\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} FETCH {{ imap.next(vars.messages) }} (UID FLAGS BODY.PEEK[])\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 30000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} LOGOUT\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN] {{ vars.server_name }} Dovecot ready.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "* CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE AUTH=PLAIN\r\n{{ imap.tagged(last, text='Pre-login capabilities listed, post-login capabilities have more', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ imap.tagged(last, code='CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT UIDPLUS MOVE NAMESPACE CHILDREN', text='Logged in') }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ imap.select_data(vars.messages, unseen=1) }}{{ imap.tagged(last, code='READ-WRITE', text='Select completed', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { idle_cmd: "{{ last }}" }
+      - send: "+ idling\r\n"
+      - delay: { dist: uniform, min_ms: 100, max_ms: 600 }
+      - send: "* {{ imap.next(vars.messages) }} EXISTS\r\n* 1 RECENT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - send: "{{ imap.tagged(vars.idle_cmd, text='Idle completed', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { sid: "{{ rand_int(1, 2000000000) }}" }
+      - set:
+          subject: "New message {{ rand_int(1000, 9999) }}"
+          text: "{{ content.email(size=vars.body_size) }}"
+      - set: { msg: "{{ imap.message(imap.address(vars.sid, 1), imap.address(vars.sid, 2), vars.subject, vars.text, attachment=content.binary(kind='jpeg', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='scan.jpg', content_type='image/jpeg') }}" }
+      - send: "{{ imap.fetch(last, vars.msg) }}{{ imap.tagged(last, text='Fetch completed', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "* BYE Logging out\r\n{{ imap.tagged(last, text='Logout completed', timing=true) }}"
+      - close: fin

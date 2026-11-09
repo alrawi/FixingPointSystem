@@ -36,7 +36,7 @@ fps report run_1 --format html -o report.html
 
 Flags and arguments mix freely, so `fps run stop r1 --force` and `fps run stop --force r1` both work. `fps help` prints the usage, and `fps <command> -h` prints the flags of one command.
 
-The contract has no operation that lists configurations, so `fps config list` shows the uploads of this machine, from `$XDG_STATE_HOME/fps/configs.json` or `~/.local/state/fps/configs.json` (mode 0600, no secret). A configuration stored by someone else does not appear. A contract change that adds `GET /configs` would let the command ask the controller. At the time of CLI-02 the controller also answers 501 to `listRuns`, and `fps run list` then exits with 5 and says that the controller does not implement the operation.
+The contract has no operation that lists configurations, so `fps config list` shows the uploads of this machine, from `$XDG_STATE_HOME/fps/configs.json` or `~/.local/state/fps/configs.json` (mode 0600, no secret). A configuration stored by someone else does not appear. A contract change that adds `GET /configs` would let the command ask the controller. The controller serves `listRuns` since CTL-35, so `fps run list` exits with 0 and the end to end test checks that it shows the runs that it started. Against a controller that still answers 501 the command exits with 5 and says that the controller does not implement the operation.
 
 ## Global flags and environment
 
