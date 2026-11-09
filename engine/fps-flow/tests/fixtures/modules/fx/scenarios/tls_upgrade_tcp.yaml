@@ -1,0 +1,16 @@
+scenario: tls_upgrade_tcp
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 25 }
+      - send: "STARTTLS"
+      - tls_upgrade: { profile: strict, server_name: mail.example.test }
+      - loop:
+          count: 2
+          do:
+            - tls_upgrade: { profile: strict }
+    server:
+      - accept: { port: 25 }
+      - expect: { bytes: 8 }
+      - tls_upgrade: { profile: strict, role: server }
