@@ -19,6 +19,7 @@ python3 -m realism score --pcap run.pcapng --labels expected.yaml --output repor
 | `--ndpi-reader PATH` | ndpiReader program; defaults to `FPS_NDPI_READER` and then to `ndpiReader` on the search path |
 | `--timeout S` | Seconds that ndpiReader and each parser may run, 300 by default |
 | `--parsers LIST` | `auto` by default, which runs every installed parser; `none`, which leaves out the parser error check; or a comma separated list of `tshark` and `zeek`, each of which must be installed |
+| `--max-duplicate-ratio R` | Largest share of duplicate payloads per application, from 0 to 1; adds the content variety check and overrides the labels file, whose default is 0.01 |
 | `--tshark PATH` | tshark program; defaults to `FPS_TSHARK` and then to `tshark` on the search path |
 | `--zeek PATH` | Zeek program; defaults to `FPS_ZEEK`, then to `zeek` on the search path, and then to `/opt/zeek/bin/zeek` |
 
@@ -94,13 +95,37 @@ sessions:
 
 Only sessions whose rule names a `tls_profile` take part. The check takes at most `sample` of them, spread evenly over the order of their first packet, and runs tshark once with the keys that a pcapng capture embeds in its decryption secrets blocks and with the key log that `--keylog FILE` names. A session counts as decrypted when tshark reads the Finished message of both sides, which TLS 1.2 and 1.3 encrypt. `realism/ja4.py` reads the ClientHello bytes of the session and computes JA4 from the FoxIO specification, and the entry also carries the fingerprint that tshark computes. A session fails when its JA4 is not one that its profile lists, or when tshark and the runner compute different values. The entry names every reason in `failures`, with the parts of the fingerprint that differ, for example `part a (version, SNI flag, cipher and extension counts, ALPN) is t13d1517h2, expected t13d1516h2`. The check also fails when no session carries a `tls_profile`, when tshark is missing, and when fewer than `min_decrypted` of the sample decrypt.
 
+## Content variety
+
+The content variety check reassembles the application payloads of every session, counts exact duplicates, and describes the size distribution. It runs when the labels file has a `content` section, which may be empty, or when `--max-duplicate-ratio` is given.
+
+```yaml
+content:
+  max_duplicate_ratio: 0.01   # default 0.01
+  ignore_headers: [x-nonce]   # on top of the built in list
+  sizes:                      # optional expected distribution per application
+    http1: {direction: server, median: 1200, cv: 0.8, tolerance: 0.25}
+```
+
+A payload unit is one HTTP/1 message (for an application whose name starts with `http`, or when the client stream starts with an HTTP method), one UDP datagram, or one whole TCP direction for any other protocol. The runner joins the TCP segments of each direction in sequence order, and a hole cuts the stream (`incomplete_directions`). The digest of a unit is the SHA-256 of its normalized form.
+
+| Protocol | What the digest covers |
+|---|---|
+| HTTP/1 | The start line, the headers in wire order with lower case names and trimmed values, and the body after the chunked framing is removed. The headers `date`, `expires`, `last-modified`, `age`, `etag`, `if-modified-since`, `if-none-match`, `set-cookie`, `cookie`, `x-request-id`, `request-id`, `x-trace-id`, `x-amzn-trace-id`, `traceparent`, `tracestate`, and `server-timing` are dropped, and `ignore_headers` adds more. `Content-Length` stays. A message without a body still counts. |
+| DNS (application `dns`) | The datagram without its 2 byte transaction identifier |
+| Other | The bytes as they are |
+
+The duplicate ratio of a group is `(units - distinct digests) / units`. A group is the units of one application in one direction, so a request is never a copy of a response, and an application is `unlabelled` when no rule names it. The check fails when the ratio of any application is above `max_duplicate_ratio`, and the entry names the most repeated payload with its size, copies, digest, and sessions. The entry reports the size of each unit in bytes on the stream, as count, minimum, maximum, mean, population standard deviation, coefficient of variation, and the quantiles p5, p25, p50, p75, p95, and p99, per application and per direction. With `sizes` in the labels, the observed median, and the observed coefficient of variation when `cv` is given, must lie within `tolerance` (default 0.25) of the expected values for the payloads of `direction` (`client`, `server`, or `both`), or the check fails. Without `sizes` the dispersion is reported and nothing fails on it.
+
+Sessions with a `tls_profile`, and sessions whose stream starts with a TLS record, are encrypted. The runner skips them and counts them in `skipped_encrypted_sessions`, because the encryption check decrypts only to find Finished messages and exposes no plaintext. An HTTP message that the end of the stream cuts short is dropped (`truncated_units`). The check fails when no payload at all could be analysed.
+
 ## Classifiers
 
 `realism/classifier.py` defines the `Classifier` protocol, which takes a capture and its sessions and returns a protocol name per session. `NdpiClassifier` runs ndpiReader and parses its CSV output by column name, so it reads nDPI 4.2 and later layouts. `StubClassifier` labels sessions with a function and serves the tests.
 
 ## Tests
 
-The tests build every capture in code with [`tests/pcapgen.py`](tests/pcapgen.py), so the repository holds no captured traffic. They replace ndpiReader, tshark, and Zeek with stubs or with fake programs that print fixed output. Three optional modules run the real tools and skip each tool that is not installed. `tests/test_ndpi_reader.py` runs ndpiReader, `tests/test_parser_tools.py` runs tshark and Zeek on a capture with one malformed DNS message and on clean captures, and `tests/test_encryption.py` runs tshark on TLS captures that `tests/tlsgen.py` builds from real handshakes of the Python `ssl` module (with `openssl` for the certificate). `tests/test_ja4.py` checks the JA4 code against the worked example of the specification. The `rlm` workflow installs `libndpi-bin` and `tshark` from Ubuntu and `zeek-core` from the package repository of the Zeek project, so CI runs every optional test.
+The tests build every capture in code with [`tests/pcapgen.py`](tests/pcapgen.py), so the repository holds no captured traffic. They replace ndpiReader, tshark, and Zeek with stubs or with fake programs that print fixed output. Three optional modules run the real tools and skip each tool that is not installed. `tests/test_ndpi_reader.py` runs ndpiReader, `tests/test_parser_tools.py` runs tshark and Zeek on a capture with one malformed DNS message and on clean captures, and `tests/test_encryption.py` runs tshark on TLS captures that `tests/tlsgen.py` builds from real handshakes of the Python `ssl` module (with `openssl` for the certificate). `tests/test_content.py` builds every content capture in code, with repeated and with varied bodies, segmented and reordered TCP, and encrypted sessions. `tests/test_ja4.py` checks the JA4 code against the worked example of the specification. The `rlm` workflow installs `libndpi-bin` and `tshark` from Ubuntu and `zeek-core` from the package repository of the Zeek project, so CI runs every optional test.
 
 ```bash
 python3 -m pip install -r realism/requirements-dev.txt
