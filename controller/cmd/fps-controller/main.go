@@ -5,7 +5,12 @@
 // Usage:
 //
 //	fps-controller [-config file] [-listen host:port] [-grpc-listen host:port]
-//	               [-data-dir dir] [-metrics-token-file file] [-log-level level]
+//	               [-enroll-listen host:port] [-data-dir dir] [-pki-dir dir]
+//	               [-tls-names name,...] [-admin-socket path]
+//	               [-metrics-token-file file] [-log-level level]
+//	               [-insecure-plain-grpc]
+//	fps-controller token  -agent-id id [-ttl duration] [-config file | -data-dir dir | -admin-socket path]
+//	fps-controller revoke -agent-id id [-config file | -data-dir dir | -admin-socket path]
 //	fps-controller -version
 //
 // Settings come from three layers, where a later layer wins. The layers are the
@@ -13,7 +18,13 @@
 // the command line. The process logs JSON lines to standard error, serves
 // GET /healthz, the /v1 REST API, and the Prometheus exposition at
 // GET /metrics on the listen address, and serves the agent gRPC service on the
-// grpc_listen address. On SIGINT or SIGTERM it aborts the open runs, ends the
+// grpc_listen address. The gRPC service requires mutual TLS. The controller
+// opens its certificate authority from pki_dir (default data_dir/pki), serves
+// enrollment and renewal of agent certificates over HTTPS on enroll_listen, and
+// serves an admin socket for the token and revoke subcommands, which ask the
+// running controller to mint an enrollment token or to revoke an agent
+// identity. -insecure-plain-grpc serves the gRPC service without TLS for
+// development and tests. On SIGINT or SIGTERM it aborts the open runs, ends the
 // agent sessions, and drains in flight requests for up to shutdown_timeout
 // before it exits.
 //
@@ -28,9 +39,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"syscall"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/app"
@@ -58,7 +71,12 @@ type options struct {
 	configPath       string
 	listen           string
 	grpcListen       string
+	enrollListen     string
 	dataDir          string
+	pkiDir           string
+	tlsNames         string
+	adminSocket      string
+	insecurePlain    bool
 	metricsTokenFile string
 	logLevel         string
 	version          bool
@@ -74,7 +92,12 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.configPath, "config", "", "path of the YAML configuration `file`")
 	fs.StringVar(&o.listen, "listen", app.DefaultListen, "TCP `address` of the HTTP server")
 	fs.StringVar(&o.grpcListen, "grpc-listen", app.DefaultGRPCListen, "TCP `address` of the agent gRPC service")
+	fs.StringVar(&o.enrollListen, "enroll-listen", app.DefaultEnrollListen, "TCP `address` of the HTTPS enrollment and renewal service")
 	fs.StringVar(&o.dataDir, "data-dir", "", "`directory` of the module registry and the configuration store")
+	fs.StringVar(&o.pkiDir, "pki-dir", "", "`directory` of the controller CA; empty means data-dir/pki")
+	fs.StringVar(&o.tlsNames, "tls-names", "", "comma separated host names and IP addresses of the controller certificate")
+	fs.StringVar(&o.adminSocket, "admin-socket", "", "unix socket `path` of the admin API; empty means pki-dir/admin.sock")
+	fs.BoolVar(&o.insecurePlain, "insecure-plain-grpc", false, "serve the agent gRPC service without TLS and trust agent ids (development and tests only)")
 	fs.StringVar(&o.metricsTokenFile, "metrics-token-file", "", "`file` that holds the bearer token for GET /metrics; empty leaves the endpoint open")
 	fs.StringVar(&o.logLevel, "log-level", app.DefaultLogLevel, "log `level`: debug, info, warn, or error")
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
@@ -105,8 +128,23 @@ func loadConfig(o options) (app.Config, error) {
 	if o.set["grpc-listen"] {
 		cfg.GRPCListen = o.grpcListen
 	}
+	if o.set["enroll-listen"] {
+		cfg.EnrollListen = o.enrollListen
+	}
 	if o.set["data-dir"] {
 		cfg.DataDir = o.dataDir
+	}
+	if o.set["pki-dir"] {
+		cfg.PKIDir = o.pkiDir
+	}
+	if o.set["tls-names"] {
+		cfg.TLSNames = splitNames(o.tlsNames)
+	}
+	if o.set["admin-socket"] {
+		cfg.AdminSocket = o.adminSocket
+	}
+	if o.set["insecure-plain-grpc"] {
+		cfg.InsecurePlainGRPC = o.insecurePlain
 	}
 	if o.set["metrics-token-file"] {
 		cfg.MetricsTokenFile = o.metricsTokenFile
@@ -120,6 +158,17 @@ func loadConfig(o options) (app.Config, error) {
 	return cfg, nil
 }
 
+// splitNames splits a comma separated list and drops empty items.
+func splitNames(list string) []string {
+	var out []string
+	for _, n := range strings.Split(list, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // version returns the module version that the Go toolchain stamped into the binary.
 func version() string {
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
@@ -131,6 +180,9 @@ func version() string {
 // run is the testable body of main. It returns the process exit code and stops
 // the controller when ctx ends.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && (args[0] == cmdToken || args[0] == cmdRevoke) {
+		return runAdmin(ctx, args[0], args[1:], stdout, stderr)
+	}
 	o, err := parseFlags(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return exitOK
@@ -188,6 +240,14 @@ func serve(ctx context.Context, cfg app.Config, logger *slog.Logger) (err error)
 	if err != nil {
 		return errors.Join(err, ln.Close())
 	}
+	eln, err := ctl.ListenEnroll(ctx)
+	if err != nil {
+		return errors.Join(err, ln.Close(), gln.Close())
+	}
+	aln, err := ctl.ListenAdmin(ctx)
+	if err != nil {
+		return errors.Join(err, ln.Close(), gln.Close(), closeListener(eln))
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -197,9 +257,30 @@ func serve(ctx context.Context, cfg app.Config, logger *slog.Logger) (err error)
 		cancel() // a failing agent service stops the REST server too
 		grpcDone <- err
 	}()
+	var pkiDone chan error
+	if eln != nil || aln != nil {
+		pkiDone = make(chan error, 1)
+		go func() {
+			err := ctl.RunPKI(runCtx, eln, aln)
+			cancel()
+			pkiDone <- err
+		}()
+	}
 	httpErr := a.Run(runCtx, ln)
 	cancel()
-	return errors.Join(httpErr, <-grpcDone)
+	err = errors.Join(httpErr, <-grpcDone)
+	if pkiDone != nil {
+		err = errors.Join(err, <-pkiDone)
+	}
+	return err
+}
+
+// closeListener closes ln when it is not nil.
+func closeListener(ln net.Listener) error {
+	if ln == nil {
+		return nil
+	}
+	return ln.Close()
 }
 
 // mountMetrics creates the metrics aggregator, feeds it every agent manager

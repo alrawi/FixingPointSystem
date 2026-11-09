@@ -33,6 +33,17 @@ const (
 	DefaultReadHeaderTimeout = 10 * time.Second
 	// DefaultGRPCListen is the TCP address of the agent gRPC service.
 	DefaultGRPCListen = "localhost:8444"
+	// DefaultEnrollListen is the TCP address of the HTTPS enrollment and
+	// renewal service for agent certificates.
+	DefaultEnrollListen = "localhost:8445"
+	// PKIDirName is the name of the certificate authority state under DataDir.
+	PKIDirName = "pki"
+	// AdminSocketFile is the name of the local admin socket under the PKI
+	// directory.
+	AdminSocketFile = "admin.sock"
+	// maxSocketPath is the longest unix socket path that every supported
+	// system accepts, which is the limit of sockaddr_un on macOS and BSD.
+	maxSocketPath = 100
 	// MemoryStorePath keeps the configuration store in memory.
 	MemoryStorePath = ":memory:"
 	// StoreFile is the name of the configuration store under DataDir.
@@ -67,10 +78,33 @@ type Config struct {
 	// Empty means DataDir/configs.db, or ":memory:" without DataDir.
 	StorePath string `yaml:"store_path"`
 	// GRPCListen is the TCP address of the agent gRPC service, as host:port.
-	// It speaks plain TCP until mutual TLS arrives with CTL-15.
+	// The service requires mutual TLS unless InsecurePlainGRPC is set.
 	GRPCListen string `yaml:"grpc_listen"`
-	// AgentAutoEnroll accepts agents that no operator enrolled with
-	// POST /v1/agents.
+	// EnrollListen is the TCP address of the HTTPS service where agents
+	// exchange an enrollment token for a certificate and renew it, as
+	// host:port. It is unused with InsecurePlainGRPC.
+	EnrollListen string `yaml:"enroll_listen"`
+	// PKIDir holds the controller CA and the PKI state. Empty means
+	// DataDir/pki, or an in memory CA that ends with the process when DataDir
+	// is empty too.
+	PKIDir string `yaml:"pki_dir"`
+	// TLSNames lists the host names and IP addresses that the controller
+	// certificate carries, which agents check against the address they dial.
+	// Empty means localhost, 127.0.0.1, ::1, and the specific hosts of
+	// grpc_listen and enroll_listen. See ServerNames.
+	TLSNames []string `yaml:"tls_names"`
+	// AdminSocket is the unix socket where the token and revoke subcommands
+	// reach the running controller. Empty means PKIDir/admin.sock, or no
+	// socket when the PKI directory is empty.
+	AdminSocket string `yaml:"admin_socket"`
+	// InsecurePlainGRPC serves the agent gRPC service without TLS and trusts
+	// the agent_id of each request. It exists for development and tests until
+	// every agent speaks mutual TLS, and the controller logs a warning at
+	// start up and on every registration. Never set it on a shared network.
+	InsecurePlainGRPC bool `yaml:"insecure_plain_grpc"`
+	// AgentAutoEnroll admits an agent whose identity is not in the inventory,
+	// which POST /v1/agents or a minted enrollment token fills. With mutual TLS
+	// the identity is the one in the client certificate.
 	AgentAutoEnroll bool `yaml:"agent_auto_enroll"`
 	// Tokens lists the bearer tokens of the REST API. Without tokens every
 	// /v1 operation answers 401.
@@ -127,6 +161,7 @@ func DefaultConfig() Config {
 		ShutdownTimeout:   Duration(DefaultShutdownTimeout),
 		ReadHeaderTimeout: Duration(DefaultReadHeaderTimeout),
 		GRPCListen:        DefaultGRPCListen,
+		EnrollListen:      DefaultEnrollListen,
 	}
 }
 
@@ -177,6 +212,17 @@ func (c Config) Validate() error {
 	}
 	if _, _, err := net.SplitHostPort(c.GRPCListen); err != nil {
 		return fmt.Errorf("%w: grpc_listen %q: %w", ErrInvalidConfig, c.GRPCListen, err)
+	}
+	if _, _, err := net.SplitHostPort(c.EnrollListen); err != nil {
+		return fmt.Errorf("%w: enroll_listen %q: %w", ErrInvalidConfig, c.EnrollListen, err)
+	}
+	for i, n := range c.TLSNames {
+		if strings.TrimSpace(n) == "" || strings.ContainsAny(n, " /\t") {
+			return fmt.Errorf("%w: tls_names[%d] %q is not a host name or an IP address", ErrInvalidConfig, i, n)
+		}
+	}
+	if sock := c.ResolvedAdminSocket(); len(sock) > maxSocketPath {
+		return fmt.Errorf("%w: admin socket path %q is longer than %d bytes; set admin_socket to a shorter path", ErrInvalidConfig, sock, maxSocketPath)
 	}
 	names := make(map[string]bool, len(c.Tokens))
 	for i, t := range c.Tokens {
@@ -229,6 +275,59 @@ func (c Config) RegistryDir() string {
 		return ""
 	}
 	return filepath.Join(c.DataDir, ModulesDir)
+}
+
+// ResolvedPKIDir returns the directory of the controller CA, or an empty string
+// for an in memory CA.
+func (c Config) ResolvedPKIDir() string {
+	switch {
+	case c.PKIDir != "":
+		return c.PKIDir
+	case c.DataDir != "":
+		return filepath.Join(c.DataDir, PKIDirName)
+	default:
+		return ""
+	}
+}
+
+// ResolvedAdminSocket returns the path of the admin socket, or an empty string
+// when the controller serves none.
+func (c Config) ResolvedAdminSocket() string {
+	switch {
+	case c.AdminSocket != "":
+		return c.AdminSocket
+	case c.ResolvedPKIDir() != "":
+		return filepath.Join(c.ResolvedPKIDir(), AdminSocketFile)
+	default:
+		return ""
+	}
+}
+
+// ServerNames returns the host names and IP addresses of the controller
+// certificate. TLSNames wins when it is set. Otherwise the names are localhost,
+// 127.0.0.1, ::1, and the host of grpc_listen and of enroll_listen when it
+// names one address, so a controller that listens on 10.0.0.5 gets a
+// certificate for 10.0.0.5 without more settings. A wildcard host such as
+// 0.0.0.0 adds nothing, so a controller on every interface sets tls_names to
+// the names that agents dial.
+func (c Config) ServerNames() []string {
+	if len(c.TLSNames) > 0 {
+		return slices.Clone(c.TLSNames)
+	}
+	names := []string{"localhost", "127.0.0.1", "::1"}
+	for _, addr := range []string{c.GRPCListen, c.EnrollListen} {
+		host, _, err := net.SplitHostPort(addr)
+		if err != nil || host == "" {
+			continue
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+			continue
+		}
+		if !slices.Contains(names, host) {
+			names = append(names, host)
+		}
+	}
+	return names
 }
 
 // LoadTokens returns every API token with its scope name, reading each

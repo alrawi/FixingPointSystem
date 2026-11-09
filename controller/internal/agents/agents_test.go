@@ -710,3 +710,105 @@ func TestEnrollAndLookupErrors(t *testing.T) {
 		t.Fatalf("EventSnapshot.String() = %q", got)
 	}
 }
+
+// TestEndSessionEndsTheOpenSession covers the revocation hook: the session
+// of the identity ends with UNAUTHENTICATED, the agent goes offline, and the
+// observer sees the reason.
+func TestEndSessionEndsTheOpenSession(t *testing.T) {
+	h := newHarness(t, func(c *agents.Config) { c.AutoEnroll = true })
+	a := h.start(t, fakeagent.Options{ID: "agent-a"})
+	b := h.start(t, fakeagent.Options{ID: "agent-b"})
+	waitState(t, h, "agent-a", agents.StateOnline)
+
+	if h.mgr.EndSession("nobody") {
+		t.Error("EndSession of an unknown identity = true, want false")
+	}
+	if !h.mgr.EndSession("agent-a") {
+		t.Fatal("EndSession of an online agent = false, want true")
+	}
+	waitDone(t, a)
+	if got := status.Code(a.Err()); got != codes.Unauthenticated {
+		t.Errorf("session error code = %v (%v), want Unauthenticated", got, a.Err())
+	}
+	waitState(t, h, "agent-a", agents.StateOffline)
+	waitEvents(t, h, agents.EventOffline, "agent-a", 1)
+	if off := h.events.of(agents.EventOffline, "agent-a"); off[0].Reason != agents.ReasonRevoked {
+		t.Errorf("offline reason = %q, want %q", off[0].Reason, agents.ReasonRevoked)
+	}
+	if h.mgr.EndSession("agent-a") {
+		t.Error("a second EndSession = true, want false")
+	}
+	wantState(t, h, "agent-b", agents.StateOnline)
+	select {
+	case <-b.Done():
+		t.Error("the session of another agent ended")
+	default:
+	}
+}
+
+// TestExpiredCertificateEndsAnIdleSession shows that a session outlives the
+// handshake check only while the certificate lasts: a busy agent keeps its
+// session past the expiry, and the sweep ends it once the agent is idle.
+func TestExpiredCertificateEndsAnIdleSession(t *testing.T) {
+	var expiry time.Time
+	h := newHarness(t, func(c *agents.Config) {
+		c.AutoEnroll = true
+		expiry = c.Clock.Now().Add(10 * time.Minute)
+		c.Expiry = func(context.Context) time.Time { return expiry }
+	})
+	ctx := testContext(t)
+	a := h.start(t, fakeagent.Options{ID: "agent-a"})
+	heartbeat := func() {
+		t.Helper()
+		if err := a.Heartbeat(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	h.clock.Advance(9 * time.Minute)
+	heartbeat()
+	if ids := h.mgr.Sweep(); len(ids) != 0 {
+		t.Fatalf("Sweep before the expiry ended %v", ids)
+	}
+	if _, err := h.mgr.Prepare(ctx, "agent-a", plan("p")); err != nil {
+		t.Fatal(err)
+	}
+	h.clock.Advance(2 * time.Minute)
+	heartbeat()
+	if ids := h.mgr.Sweep(); len(ids) != 0 {
+		t.Fatalf("Sweep ended %v while the agent holds a plan", ids)
+	}
+	wantState(t, h, "agent-a", agents.StateBusy)
+	if _, err := h.mgr.Stop(ctx, "agent-a", &agentpb.StopCommand{PlanId: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	heartbeat()
+	if ids := h.mgr.Sweep(); !slices.Equal(ids, []string{"agent-a"}) {
+		t.Fatalf("Sweep of an idle agent with an expired certificate ended %v, want agent-a", ids)
+	}
+	waitDone(t, a)
+	if got := status.Code(a.Err()); got != codes.Unauthenticated {
+		t.Errorf("session error code = %v (%v), want Unauthenticated", got, a.Err())
+	}
+	waitEvents(t, h, agents.EventOffline, "agent-a", 1)
+	if off := h.events.of(agents.EventOffline, "agent-a"); off[0].Reason != agents.ReasonCertExpired {
+		t.Errorf("offline reason = %q, want %q", off[0].Reason, agents.ReasonCertExpired)
+	}
+}
+
+// TestExpiredCertificateIsRefused shows that Register refuses a certificate
+// whose end has passed, even when the TLS layer let it through.
+func TestExpiredCertificateIsRefused(t *testing.T) {
+	h := newHarness(t, func(c *agents.Config) {
+		c.AutoEnroll = true
+		past := c.Clock.Now().Add(-time.Second)
+		c.Expiry = func(context.Context) time.Time { return past }
+	})
+	_, err := fakeagent.Start(testContext(t), fakeagent.Options{ID: "agent-a", Dial: h.dial})
+	if got := status.Code(err); got != codes.Unauthenticated {
+		t.Fatalf("Register with an expired certificate = %v, want Unauthenticated", err)
+	}
+	if _, err := h.mgr.Get("agent-a"); !errors.Is(err, agents.ErrUnknownAgent) {
+		t.Errorf("the refused agent entered the inventory: %v", err)
+	}
+}

@@ -137,6 +137,8 @@ const (
 	ReasonReplaced         = "replaced by a newer session"
 	ReasonShutdown         = "controller shutdown"
 	ReasonProtocol         = "protocol violation"
+	ReasonRevoked          = "identity revoked"
+	ReasonCertExpired      = "certificate expired"
 )
 
 // record is the inventory entry of one agent. The manager lock guards it.
@@ -253,6 +255,9 @@ func New(cfg Config) (*Manager, error) {
 	}
 	if cfg.Identity == nil {
 		cfg.Identity = PeerCertIdentity
+	}
+	if cfg.Expiry == nil {
+		cfg.Expiry = PeerCertExpiry
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = SystemClock{}
@@ -372,28 +377,57 @@ func (m *Manager) Release(id, holder string) (Agent, error) {
 	return r.snapshot(), nil
 }
 
-// Sweep marks every agent offline whose latest heartbeat is older than the
-// heartbeat timeout, ends its session with DEADLINE_EXCEEDED, and returns
-// the identities it marked. A reservation stays, so its holder decides what
-// to do.
+// Sweep ends two kinds of session and returns the identities it marked
+// offline. A session whose latest heartbeat is older than the heartbeat
+// timeout ends with DEADLINE_EXCEEDED. A session whose certificate expired
+// ends with UNAUTHENTICATED once its agent holds no plan, so the agent dials
+// again with a renewed certificate, and a running plan never loses its
+// session to an expiry. A reservation stays, so its holder decides what to do.
 func (m *Manager) Sweep() []string {
 	now := m.cfg.Clock.Now()
-	var expired []*session
+	type ending struct {
+		s      *session
+		reason string
+		err    error
+	}
+	var ends []ending
 	m.mu.Lock()
 	for _, id := range slices.Sorted(maps.Keys(m.agents)) {
 		r := m.agents[id]
-		if r.sess != nil && now.Sub(r.lastBeat) > m.cfg.HeartbeatTimeout {
-			expired = append(expired, r.sess)
+		switch {
+		case r.sess == nil:
+		case now.Sub(r.lastBeat) > m.cfg.HeartbeatTimeout:
+			ends = append(ends, ending{r.sess, ReasonHeartbeatTimeout, status.Error(codes.DeadlineExceeded, "no heartbeat within the heartbeat timeout")})
+		case !r.sess.expiry.IsZero() && !now.Before(r.sess.expiry) && !holdsPlan(r.agentState):
+			ends = append(ends, ending{r.sess, ReasonCertExpired, status.Error(codes.Unauthenticated, "the client certificate expired; renew it and connect again")})
 		}
 	}
 	m.mu.Unlock()
-	ids := make([]string, 0, len(expired))
-	for _, s := range expired {
-		if m.detach(s, ReasonHeartbeatTimeout, status.Error(codes.DeadlineExceeded, "no heartbeat within the heartbeat timeout")) {
-			ids = append(ids, s.agentID)
+	ids := make([]string, 0, len(ends))
+	for _, e := range ends {
+		if m.detach(e.s, e.reason, e.err) {
+			ids = append(ids, e.s.agentID)
 		}
 	}
 	return ids
+}
+
+// EndSession ends the open session of agent id with UNAUTHENTICATED, marks the
+// agent offline, and forgets its session token, so the agent has to register
+// again. The certificate authority calls it when an operator revokes the
+// identity. It reports whether a session was open.
+func (m *Manager) EndSession(id string) bool {
+	m.mu.Lock()
+	r := m.agents[id]
+	var s *session
+	if r != nil {
+		s, r.token = r.sess, ""
+	}
+	m.mu.Unlock()
+	if s == nil {
+		return false
+	}
+	return m.detach(s, ReasonRevoked, status.Error(codes.Unauthenticated, "the agent identity was revoked"))
 }
 
 // Run calls Sweep once per heartbeat interval until ctx ends. It is the only

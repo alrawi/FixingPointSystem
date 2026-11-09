@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -36,6 +37,9 @@ func (m *Manager) Register(ctx context.Context, req *agentpb.RegisterRequest) (*
 	}
 	if identity != id {
 		return nil, status.Errorf(codes.Unauthenticated, "agent_id %s differs from the certificate identity %s", id, identity)
+	}
+	if err := m.checkExpiry(m.cfg.Expiry(ctx)); err != nil {
+		return nil, err
 	}
 	token, err := m.newToken()
 	if err != nil {
@@ -92,6 +96,9 @@ type session struct {
 	mu      sync.Mutex
 	nextCmd uint64
 	pending map[uint64]chan *agentpb.CommandResult
+
+	// expiry is the end of the client certificate, or the zero time.
+	expiry time.Time
 
 	done    chan struct{}
 	endOnce sync.Once
@@ -205,6 +212,15 @@ func (m *Manager) Session(stream grpc.BidiStreamingServer[agentpb.SessionRequest
 	}
 }
 
+// checkExpiry refuses a credential that expired at expiry. The zero time never
+// expires.
+func (m *Manager) checkExpiry(expiry time.Time) error {
+	if !expiry.IsZero() && !m.cfg.Clock.Now().Before(expiry) {
+		return status.Errorf(codes.Unauthenticated, "the client certificate expired at %s", expiry.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
 // open checks the open message and makes the session current for its agent.
 func (m *Manager) open(ctx context.Context, stream grpc.BidiStreamingServer[agentpb.SessionRequest, agentpb.SessionResponse], first *agentpb.SessionRequest) (*session, error) {
 	open := first.GetOpen()
@@ -218,6 +234,10 @@ func (m *Manager) open(ctx context.Context, stream grpc.BidiStreamingServer[agen
 	}
 	if identity != id {
 		return nil, status.Errorf(codes.Unauthenticated, "agent_id %s differs from the certificate identity %s", id, identity)
+	}
+	expiry := m.cfg.Expiry(ctx)
+	if err := m.checkExpiry(expiry); err != nil {
+		return nil, err
 	}
 	addr := ""
 	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
@@ -240,6 +260,7 @@ func (m *Manager) open(ctx context.Context, stream grpc.BidiStreamingServer[agen
 		stream:  stream,
 		slot:    make(chan struct{}, 1),
 		pending: map[uint64]chan *agentpb.CommandResult{},
+		expiry:  expiry,
 		done:    make(chan struct{}),
 	}
 	old := r.sess

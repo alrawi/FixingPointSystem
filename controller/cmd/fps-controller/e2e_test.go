@@ -134,8 +134,8 @@ func (p *controllerProcess) postJSON(t *testing.T, path, token, body string, wan
 	return p.call(t, http.MethodPost, path, token, "application/json", strings.NewReader(body), want, out)
 }
 
-// TestEndToEnd builds the binary, starts it with a temporary configuration,
-// registers a fake agent over gRPC, installs and lists the example modules,
+// TestEndToEnd builds the binary, starts it with a temporary configuration in
+// the explicit plain gRPC mode, registers a fake agent over gRPC, installs and lists the example modules,
 // stores and validates a configuration, starts a run over REST, reads a
 // snapshot of the fake agent from the run metrics and from GET /metrics, stops
 // the run, reads its criteria results from the run and from the JSON and CSV
@@ -160,6 +160,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 	cfgPath := writeConfig(t, fmt.Sprintf(`listen: 127.0.0.1:0
 grpc_listen: 127.0.0.1:0
+insecure_plain_grpc: true
 log_level: debug
 shutdown_timeout: 10s
 data_dir: %s

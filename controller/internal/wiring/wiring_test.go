@@ -57,6 +57,9 @@ func testConfig(t *testing.T, dataDir string) app.Config {
 	cfg := app.DefaultConfig()
 	cfg.DataDir = dataDir
 	cfg.GRPCListen = "127.0.0.1:0"
+	// The tests that dial the gRPC service with the plain fake agent need the
+	// explicit plain mode. pki_test.go covers mutual TLS.
+	cfg.InsecurePlainGRPC = true
 	cfg.ShutdownTimeout = app.Duration(5 * time.Second)
 	cfg.Tokens = []app.Token{
 		{Name: "admin", Scope: "admin", Token: adminToken},

@@ -10,11 +10,22 @@
 //	ctl.Mount(a)                 // a is the *app.App
 //	gln, err := ctl.ListenGRPC(ctx)
 //	go ctl.Run(ctx, gln)         // agent gRPC service and heartbeat sweeps
+//	eln, err := ctl.ListenEnroll(ctx)
+//	aln, err := ctl.ListenAdmin(ctx)
+//	go ctl.RunPKI(ctx, eln, aln) // enrollment service and admin socket
 //	a.Run(ctx, ln)               // REST API
+//
+// The agent gRPC service requires mutual TLS. New opens the certificate
+// authority of internal/pki from the PKI directory, and the enrollment
+// service lets an agent exchange a one time token for a certificate. Only the
+// controller process writes the PKI state: operators mint tokens and revoke
+// identities through the admin socket, see AdminHandler. Options.Config sets
+// InsecurePlainGRPC to serve plain gRPC for development and tests.
 package wiring
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -25,11 +36,13 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents"
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents/agentpb"
 	"github.com/alrawi/FixingPointSystem/controller/internal/api"
 	"github.com/alrawi/FixingPointSystem/controller/internal/app"
+	"github.com/alrawi/FixingPointSystem/controller/internal/pki"
 	"github.com/alrawi/FixingPointSystem/controller/internal/registry"
 	"github.com/alrawi/FixingPointSystem/controller/internal/report"
 	"github.com/alrawi/FixingPointSystem/controller/internal/runs"
@@ -45,6 +58,15 @@ type Options struct {
 	Config app.Config
 	// Logger receives structured logs. Nil discards them.
 	Logger *slog.Logger
+	// Clock tells the time to the agent manager and the certificate
+	// authority. Nil reads the wall clock. Tests move it to expire
+	// certificates.
+	Clock agents.Clock
+	// HeartbeatInterval and HeartbeatTimeout override the heartbeat settings
+	// of the agent manager. Zero keeps the defaults. Tests set long values to
+	// keep the sweep of the heartbeat timeout out of the way.
+	HeartbeatInterval time.Duration
+	HeartbeatTimeout  time.Duration
 }
 
 // Controller owns every component of one controller process. Its exported
@@ -65,12 +87,17 @@ type Controller struct {
 	Evaluator *report.Evaluator
 	// API is the combined REST server.
 	API *Server
+	// PKI is the certificate authority. It is nil with InsecurePlainGRPC.
+	PKI *pki.Authority
 
 	cfg     app.Config
 	logger  *slog.Logger
 	auth    api.Authenticator
 	grpc    *grpc.Server
 	tempDir string
+
+	grpcTLS   *tls.Config
+	enrollTLS *tls.Config
 
 	mu        sync.RWMutex
 	observers []func(agents.Event)
@@ -118,14 +145,29 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 		return nil, err
 	}
 
-	// The gRPC service speaks plain TCP until CTL-15 adds mutual TLS, so no
-	// certificate proves an agent identity yet.
+	var clock agents.Clock = agents.SystemClock{}
+	if opts.Clock != nil {
+		clock = opts.Clock
+	}
+	// With mutual TLS the identity of an agent is the common name of its
+	// verified client certificate, which is the default of the manager. Only
+	// the explicit plain mode trusts the agent_id of the request.
+	var identity agents.IdentityFunc
+	if cfg.InsecurePlainGRPC {
+		logger.Warn("insecure_plain_grpc is set: the agent service has no TLS and trusts the agent_id of every request; use it only for development and tests")
+		identity = c.claimedIdentity
+	} else if err = c.openPKI(clock); err != nil {
+		return nil, err
+	}
 	if c.Agents, err = agents.New(agents.Config{
-		ControllerID: ControllerID,
-		AutoEnroll:   cfg.AgentAutoEnroll,
-		Identity:     agents.ClaimedIdentity,
-		Logger:       logger,
-		Observer:     c.observe,
+		ControllerID:      ControllerID,
+		HeartbeatInterval: opts.HeartbeatInterval,
+		HeartbeatTimeout:  opts.HeartbeatTimeout,
+		AutoEnroll:        cfg.AgentAutoEnroll,
+		Identity:          identity,
+		Clock:             clock,
+		Logger:            logger,
+		Observer:          c.observe,
 	}); err != nil {
 		return nil, fmt.Errorf("create agent manager: %w", err)
 	}
@@ -159,6 +201,44 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 		Report:       report.NewAPI(c.Evaluator, c.Runs, nil),
 	})
 	return c, nil
+}
+
+// claimedIdentity trusts the agent_id of the request, and logs every use of
+// it, so that nobody mistakes the plain mode for a secured one.
+func (c *Controller) claimedIdentity(ctx context.Context, claimed string) (string, error) {
+	c.logger.Warn("INSECURE: accepted an unverified agent identity", "agent_id", claimed, "setting", "insecure_plain_grpc")
+	return agents.ClaimedIdentity(ctx, claimed)
+}
+
+// openPKI opens the certificate authority and builds the two server TLS
+// configurations. The authority calls endSession when an operator revokes an
+// identity.
+func (c *Controller) openPKI(clock agents.Clock) error {
+	dir := c.cfg.ResolvedPKIDir()
+	if dir == "" {
+		c.logger.Warn("neither pki_dir nor data_dir is set, so the certificate authority ends with the process and every agent must enroll again")
+	}
+	pa, err := pki.Open(pki.Config{Dir: dir, Now: clock.Now, OnRevoke: c.endSession})
+	if err != nil {
+		return fmt.Errorf("open certificate authority: %w", err)
+	}
+	names := c.cfg.ServerNames()
+	if c.grpcTLS, err = pa.ServerTLSConfig(names...); err != nil {
+		return fmt.Errorf("agent service TLS: %w", err)
+	}
+	if c.enrollTLS, err = pa.EnrollTLSConfig(names...); err != nil {
+		return fmt.Errorf("enrollment service TLS: %w", err)
+	}
+	c.PKI = pa
+	c.logger.Info("certificate authority open", "dir", dir, "ca_sha256", pa.CAFingerprint(), "names", names)
+	return nil
+}
+
+// endSession ends the open session of a revoked identity.
+func (c *Controller) endSession(agentID string) {
+	if c.Agents != nil && c.Agents.EndSession(agentID) {
+		c.logger.Warn("ended the session of a revoked agent", "agent_id", agentID)
+	}
 }
 
 // authenticator builds the token check from the token settings.
@@ -235,7 +315,11 @@ func (c *Controller) ListenGRPC(ctx context.Context) (net.Listener, error) {
 // ends. Then it aborts the open runs, ends every agent session, and stops the
 // gRPC server within the shutdown timeout. It closes ln in every case.
 func (c *Controller) Run(ctx context.Context, ln net.Listener) error {
-	c.grpc = grpc.NewServer()
+	var opts []grpc.ServerOption
+	if c.grpcTLS != nil {
+		opts = append(opts, grpc.Creds(credentials.NewTLS(c.grpcTLS)))
+	}
+	c.grpc = grpc.NewServer(opts...)
 	agentpb.RegisterControllerServiceServer(c.grpc, c.Agents)
 
 	serveErr := make(chan error, 1)
@@ -246,8 +330,12 @@ func (c *Controller) Run(ctx context.Context, ln net.Listener) error {
 		defer close(sweepDone)
 		_ = c.Agents.Run(sweepCtx)
 	}()
-	c.logger.Info("agent service listening", "addr", ln.Addr().String(), "transport", "plain tcp")
-	c.logger.Warn("the agent service has no TLS, so agent identities are not verified")
+	if c.grpcTLS != nil {
+		c.logger.Info("agent service listening", "addr", ln.Addr().String(), "transport", "mutual tls")
+	} else {
+		c.logger.Info("agent service listening", "addr", ln.Addr().String(), "transport", "plain tcp")
+		c.logger.Warn("INSECURE: the agent service has no TLS, so agent identities are not verified")
+	}
 
 	var err error
 	select {
