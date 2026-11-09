@@ -6,7 +6,7 @@
 | Branch | `wp/CON-14` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-c14a7e, lease until 2026-11-09T17:42:09Z |
 | Last verified commit | none |
 

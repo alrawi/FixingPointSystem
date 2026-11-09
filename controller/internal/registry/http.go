@@ -18,7 +18,9 @@ import (
 // The signature is not part of the module tree, so it cannot travel inside the
 // archive. The value of SignatureHeader is the standard base64 encoding of the
 // 64 byte Ed25519 signature over the module tree digest, and the value of
-// SignatureKeyHeader is the key id. The contract does not name the headers yet.
+// SignatureKeyHeader is the key id. The contract names them as the header parameters of installModule (CON-14),
+// and the handler reads them from the request, so a present but empty header
+// counts as set.
 const (
 	SignatureHeader    = "X-Module-Signature"
 	SignatureKeyHeader = "X-Module-Signature-Key-Id"
@@ -103,7 +105,7 @@ func (a *API) ListModules(w http.ResponseWriter, r *http.Request, params api.Lis
 // signature headers carry the detached signature, which the registry verifies
 // when it has a trust store. A request with only one of the two headers, or a
 // signature that is not base64, is a 400.
-func (a *API) InstallModule(w http.ResponseWriter, r *http.Request) {
+func (a *API) InstallModule(w http.ResponseWriter, r *http.Request, _ api.InstallModuleParams) {
 	var opts []InstallOption
 	keyID, sigText := r.Header.Get(SignatureKeyHeader), r.Header.Get(SignatureHeader)
 	if keyID != "" || sigText != "" {

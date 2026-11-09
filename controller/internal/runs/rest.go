@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 
@@ -174,6 +175,9 @@ func ToAPI(run Run) api.Run {
 	if run.Reason != "" && (run.State == Failed || run.State == Aborted) {
 		out.Reason = ptr(run.Reason)
 	}
+	if len(run.Calibration) > 0 {
+		out.Calibration = ptr(calibration(run.Calibration))
+	}
 	if run.Totals != nil {
 		out.Summary = summary(run.Totals)
 	}
@@ -193,6 +197,30 @@ func ToAPI(run Run) api.Run {
 			}
 		}
 		out.Verdict.Criteria = &cs
+	}
+	return out
+}
+
+// calibration maps the factor history of a run to the CalibrationStep schema.
+// The field names follow the contract and not the Go struct, which has no
+// JSON tags.
+func calibration(steps []CalibrationStep) []api.CalibrationStep {
+	out := make([]api.CalibrationStep, len(steps))
+	for i, s := range steps {
+		o := api.CalibrationStep{
+			Time: s.Time, Factor: s.Factor, Target: s.Target, SessionsPerSecond: s.SessionsPerSecond,
+		}
+		if len(s.Entries) > 0 {
+			es := make([]api.CalibrationEntry, len(s.Entries))
+			for j, e := range s.Entries {
+				es[j] = api.CalibrationEntry{Id: e.ID, BytesPerSession: e.BytesPerSession, Measured: e.Measured}
+			}
+			o.Entries = &es
+		}
+		if len(s.Multipliers) > 0 {
+			o.Multipliers = ptr(maps.Clone(s.Multipliers))
+		}
+		out[i] = o
 	}
 	return out
 }
