@@ -20,7 +20,6 @@ name: release
 
 on:
   push:
-    branches: [wp/OPS-05] # TEMPORARY: registers the workflow for the dry run, removed before review
     tags:
       - "v*"
   workflow_dispatch:

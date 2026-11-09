@@ -6,7 +6,7 @@
 | Branch | `wp/OPS-05` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 50% (2 of 4 plan steps) |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-7a6ec6, lease until 2026-11-09T15:12:20Z |
 | Last verified commit | none |
 
@@ -18,20 +18,20 @@ A tag triggered workflow builds the agent, controller, module archives, and Pyth
 
 - [x] 1. Write `.github/workflows/release.yml` and lint it with actionlint
 - [x] 2. Document it in `docs/wiki/Operations.md` with the manual image attachment
-- [ ] 3. Dry run on the branch through workflow_dispatch and check the artifact list
+- [x] 3. Dry run on the branch (push run 42628407496, dispatch run 42629459202)
 - [ ] 4. Open the PR and wait for CI
 
 ## Done and verified
 
-- actionlint passes. The release notes script ran locally against the repository.
+- actionlint passes. Dry run 42628407496 built agent, controller, 3 module archives, sdist and wheel, SHA256SUMS (all OK), notes; publish job skipped.
 
 ## Remaining
 
-Dry run, PR, CI.
+PR and CI.
 
 ## Next action
 
-Dispatch the workflow on `wp/OPS-05` with `dry_run` true and list its artifacts.
+Open the PR, wait for CI, then run fps_swarm.py review.
 
 ## Blockers and open questions
 
@@ -58,3 +58,5 @@ actionlint .github/workflows/release.yml
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09 | claude-7a6ec6 | claim and first push | none | workflow and docs written |
+
+A workflow_dispatch workflow is unknown to the REST dispatch until a run exists. The dispatch 404ed until a temporary `push: branches` trigger registered it; that trigger is removed again.
