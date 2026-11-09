@@ -4,9 +4,10 @@
 |---|---|
 | Issue | #287 |
 | Branch | `wp/AGT-11` |
-| Pull request | none yet |
+| Pull request | - The fps-wasm test component refuses session id 13 in `on-open`, which is engine worker 0 local session 13, so the test plan uses plan workers 1 and 2.
+- Builds: first cold build of fps-agent takes about 5 minutes with one job. |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-a11b3c |
 | Last verified commit | none |
 
@@ -18,22 +19,23 @@ The agent loads `extension.wasm` of each plan module through `ExtensionSet::load
 
 ## Plan
 
-- [ ] 1. modules::load builds the ExtensionSet; assemble sets FlowRef::extensions; bad extension refuses the plan
-- [ ] 2. UDP session loop wraps functions and calls finish
-- [ ] 3. Agent tests over TCP and UDP with the WAT extension, looping extension fails only its sessions
+- [x] 1. modules::load builds the ExtensionSet; assemble sets FlowRef::extensions; bad extension refuses the plan
+- [x] 2. UDP session loop wraps functions and calls finish
+- [x] 3. Agent tests over TCP and UDP with the WAT extension, looping extension fails only its sessions
 - [ ] 4. Agent wiki page, log entry, checks, PR, CI
 
 ## Done and verified
 
-Nothing yet.
+- Steps 1 to 3: `CARGO_PROFILE_DEV_DEBUG=0 cargo test -p fps-agent` passes (all suites, including the new `tests/extensions.rs` with 5 tests), `cargo clippy -p fps-agent --all-targets -- -D warnings` is clean, `cargo fmt` applied.
+- The acceptance test `a_looping_extension_fails_only_its_own_sessions_over_tcp_and_udp` runs a plan over loopback with TCP and UDP scenarios of the WAT extension: good sessions succeed on both sides, looping sessions fail with `extension_error` and no other reason.
 
 ## Remaining
 
-Everything.
+PR and CI.
 
 ## Next action
 
-Step 1.
+Open the PR, wait for CI.
 
 ## Blockers and open questions
 
@@ -41,11 +43,15 @@ none
 
 ## Decisions taken in this package
 
-none yet
+- Extension limits are `Limits::default()`; no plan setting exists.
+- Missing `extension.wasm` is detected with one `exists()` call, so the engine starts only at the first extension.
+- The UDP worker repeats `close_reason` from fps-runtime, which is `pub(crate)` (finding for ENG).
+- A module with an extension drops the "no native functions" note, replaced by "runs its WebAssembly extension".
 
 ## Pitfalls
 
-none yet
+- The fps-wasm test component refuses session id 13 in `on-open`, which is engine worker 0 local session 13, so the test plan uses plan workers 1 and 2.
+- Builds: first cold build of fps-agent takes about 5 minutes with one job.
 
 ## Verify the current state
 

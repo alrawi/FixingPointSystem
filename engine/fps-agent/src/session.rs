@@ -459,6 +459,7 @@ fn code_of(e: &RunError) -> ErrorCode {
             | ModuleError::Mismatch { .. }
             | ModuleError::Read { .. }
             | ModuleError::Forbidden { .. }
+            | ModuleError::Extension { .. }
             | ModuleError::Manifest { .. } => ErrorCode::FailedPrecondition,
             ModuleError::ScenarioDigest { .. }
             | ModuleError::Scenario { .. }

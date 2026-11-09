@@ -826,6 +826,7 @@ dependencies = [
  "fps-runtime",
  "fps-sched",
  "fps-stats",
+ "fps-wasm",
  "hdrhistogram",
  "http-body-util",
  "hyper",
@@ -852,6 +853,9 @@ dependencies = [
  "tonic-prost-build",
  "tracing",
  "tracing-subscriber",
+ "wat",
+ "wit-component",
+ "wit-parser",
 ]
 
 [[package]]
