@@ -1,0 +1,113 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: pop3
+version: 0.1.0
+type: app
+summary: POP3 clients and servers with USER and PASS login, APOP with the timestamp banner, STAT, LIST, UIDL, RETR with dot stuffed multi line responses, TOP, DELE, RSET, and QUIT.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: pop3, transport: tcp, port: 110 }
+requires:
+  - { module: content, version: ">=0.1" }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 110, description: TCP port of the server side. }
+    server_name: { type: string, minLength: 1, default: pop3.example.test, description: Host name that the server gives in the timestamp banner of its greeting. }
+    messages: { type: integer, minimum: 1, maximum: 1000, default: 6, description: Messages in the maildrop, which STAT and LIST report and the client walks through. }
+    fetches: { type: integer, minimum: 1, maximum: 1000, default: 3, description: Messages that the retrieve_all and fetch_delete scenarios download, and that top_preview previews. It must not exceed messages. }
+    preview_lines: { type: integer, minimum: 0, maximum: 1000, default: 10, description: Lines of the body that the TOP command of the top_preview scenario asks for. }
+    body_size: { type: integer, minimum: 0, maximum: 1048576, default: 1800, description: Size of the text part of a message in bytes. }
+    attachment_min: { type: integer, minimum: 1, maximum: 16777216, default: 24000, description: Smallest attachment in bytes. Each message draws its attachment size between attachment_min and attachment_max. }
+    attachment_max: { type: integer, minimum: 1, maximum: 16777216, default: 160000, description: Largest attachment in bytes. }
+functions:
+  - name: credential
+    summary: Synthetic user name (an address under example.test) or password (it starts with Tst-). A seed of zero or more fixes the value, and -1 draws from the session generator.
+    params:
+      - { name: field, type: text }
+      - { name: seed, type: int, default: -1 }
+  - name: address
+    summary: Synthetic mailbox address of the form first.last@domain. The same seed and index always give the same address.
+    params:
+      - { name: seed, type: int }
+      - { name: index, type: int, default: 1 }
+      - { name: domain, type: text, default: example.test }
+  - name: message
+    summary: RFC 5322 message with CRLF line breaks, a text part, and an optional base64 attachment in a multipart/mixed structure. The boundary, the date, and the message id come from the session generator.
+    params:
+      - { name: sender, type: bytes }
+      - { name: to, type: bytes }
+      - { name: subject, type: text }
+      - { name: body, type: bytes }
+      - { name: cc, type: bytes, default: "" }
+      - { name: attachment, type: bytes, default: "" }
+      - { name: filename, type: text, default: attachment.bin }
+      - { name: content_type, type: text, default: application/octet-stream }
+      - { name: mailer, type: text, default: FixingPointSystem Mail 0.1 }
+  - name: next
+    summary: The number that follows the value by step, as text. A loop uses it to walk through the message numbers.
+    params:
+      - { name: value, type: any }
+      - { name: step, type: int, default: 1 }
+  - name: banner
+    summary: Timestamp banner of the form <pid.clock@host> that the server puts in its greeting, as RFC 1939 section 7 defines it. A seed of zero or more fixes the value, and -1 draws from the session generator.
+    params:
+      - { name: host, type: text }
+      - { name: seed, type: int, default: -1 }
+  - name: apop_digest
+    summary: Digest of the APOP command, the MD5 of the timestamp banner in the greeting line followed by the secret, in lower case hexadecimal. The greeting is a value of last.
+    params:
+      - { name: greeting, type: bytes }
+      - { name: secret, type: text }
+  - name: dot_stuff
+    summary: The data as the multi line payload of RFC 1939, with CRLF line breaks, a second dot before every line that starts with a dot, and the closing line with a single dot.
+    params:
+      - { name: data, type: bytes }
+  - name: stat_reply
+    summary: Answer to STAT, the +OK line with the number of messages and their total size in octets. The mailbox number box fixes the sizes, so STAT and LIST agree.
+    params:
+      - { name: count, type: int }
+      - { name: box, type: int }
+  - name: list_reply
+    summary: Answer to the LIST or LIST n command in command (a value of last). The listing has one line per message and the closing dot line, and a message that is not in the maildrop gets -ERR.
+    params:
+      - { name: command, type: bytes }
+      - { name: count, type: int }
+      - { name: box, type: int }
+  - name: uidl_reply
+    summary: Answer to the UIDL or UIDL n command in command (a value of last), with unique identifiers in the format of Dovecot, the UID and the UID validity as two groups of eight hex digits.
+    params:
+      - { name: command, type: bytes }
+      - { name: count, type: int }
+      - { name: box, type: int }
+  - name: retr_reply
+    summary: Answer to the RETR n command in command (a value of last). It is the +OK line with the size of message in octets, followed by the dot stuffed message and the closing dot line.
+    params:
+      - { name: command, type: bytes }
+      - { name: message, type: bytes }
+      - { name: count, type: int }
+  - name: top_reply
+    summary: Answer to the TOP n lines command in command (a value of last). It is the headers, the blank line, and the first lines of the body of message, dot stuffed and closed by the dot line.
+    params:
+      - { name: command, type: bytes }
+      - { name: message, type: bytes }
+      - { name: count, type: int }
+  - name: dele_reply
+    summary: Answer to the DELE n command in command (a value of last), the +OK line for a message of the maildrop and -ERR for another number.
+    params:
+      - { name: command, type: bytes }
+      - { name: count, type: int }
+scenarios:
+  - scenarios/retrieve_all.yaml
+  - scenarios/apop_login.yaml
+  - scenarios/apop_fallback.yaml
+  - scenarios/top_preview.yaml
+  - scenarios/fetch_delete.yaml
+  - scenarios/poll_new_mail.yaml
+fixtures:
+  - { capture: fixtures/pop3.pcapng, expect: { ndpi: [POP3] } }
+provenance:
+  source: synthetic
+  notes: Dialogues follow RFC 1939 for the commands, the responses, and the dot stuffing, RFC 2449 for CAPA and the response codes, and RFC 5322 and RFC 2045 to 2047 for messages. The greeting, the capability list, and the status texts imitate what Dovecot writes. Message bodies and attachments come from the content module, and every user name, password, address, and host name is synthetic and lies under the reserved .test domain. The APOP digest is the MD5 of a synthetic banner and a synthetic secret, as RFC 1939 specifies.

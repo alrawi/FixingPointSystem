@@ -30,6 +30,9 @@ fps-module-http1 = { path = "../../modules/http1/native" }
 fps-runtime = { path = "../fps-runtime" }
 fps-sched = { path = "../fps-sched" }
 fps-stats = { path = "../fps-stats" }
+# CloseReason of the extension sessions that the UDP workers close, and the
+# limits of the extensions that the agent loads (AGT-11).
+fps-wasm = { path = "../fps-wasm" }
 # The histogram type of fps-stats snapshots, for criteria over percentiles.
 hdrhistogram = { version = "7", default-features = false }
 # RngCore appears in the signature of the TemplateFn trait.
@@ -90,3 +93,8 @@ time = { version = "0.3", default-features = false, features = ["formatting", "p
 tokio-stream = { version = "0.1", features = ["net"] }
 # A session generator for the native function tests.
 rand_pcg = "0.3"
+# tests/extensions.rs builds the extension component of fps-wasm from WAT, as
+# the tests of fps-runtime do. Apache-2.0 WITH LLVM-exception.
+wat = "1"
+wit-component = "0.254"
+wit-parser = { version = "0.254", default-features = false, features = ["std"] }

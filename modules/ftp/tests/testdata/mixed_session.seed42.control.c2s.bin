@@ -1,0 +1,17 @@
+USER droufa.tagaizoum
+PASS Tst-Noutrouk9797
+SYST
+FEAT
+PWD
+CWD /srv/ftp/exports
+TYPE A
+EPSV
+LIST
+TYPE I
+SIZE traitres_hovobai-202608.gz
+PASV
+RETR traitres_hovobai-202608.gz
+ALLO 324
+EPSV
+STOR stabra_gairuku-202602.png
+QUIT

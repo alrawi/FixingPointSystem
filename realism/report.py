@@ -15,14 +15,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from realism import __version__, conformance, encryption, parser_errors
+from realism import __version__, conformance, content, encryption, parser_errors
 from realism.capture import summarize
 from realism.classifier import Classifier
 from realism.labels import load
 from realism.parsers import ParserRunner
 
 REPORT_FORMAT = "fps-realism-report"
-REPORT_VERSION = "0.4.0"
+REPORT_VERSION = "0.5.0"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "realism-report.schema.json"
 LABELS_SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "labels.schema.json"
 
@@ -75,6 +75,7 @@ def score(
     skip_reasons: Mapping[str, str] | None = None,
     tls_probe: encryption.TlsProbe | None = None,
     keylog: Path | None = None,
+    max_duplicate_ratio: float | None = None,
 ) -> Report:
     """Score a capture against its labels and return the realism report.
 
@@ -87,6 +88,10 @@ def score(
     Labels with a ``tls`` section add the encryption check, which runs tshark as
     ``tls_probe`` (by default the tshark of the search path) with the keys of the
     capture and with ``keylog``, a key log in the NSS format.
+
+    Labels with a ``content`` section, or a ``max_duplicate_ratio`` argument, add the
+    content variety check. The argument overrides the ratio of the labels, which
+    defaults to 0.01.
     """
     labels = load(labels_path)
     summary = summarize(pcap)
@@ -104,6 +109,8 @@ def score(
     if labels.tls is not None:
         probe = tls_probe if tls_probe is not None else encryption.TsharkTlsProbe()
         checks.append(encryption.check(pcap, summary.sessions, labels, probe, keylog).to_dict())
+    if labels.content is not None or max_duplicate_ratio is not None:
+        checks.append(content.check(pcap, summary.sessions, labels, max_duplicate_ratio).to_dict())
     return Report(
         capture={
             "file": pcap.name,

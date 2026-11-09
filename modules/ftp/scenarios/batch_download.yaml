@@ -1,0 +1,97 @@
+scenario: batch_download
+description: A client that fetches several files on one control connection, the variable files (default 4). The loop sends SIZE, PASV, and RETR for each file, and the server spawns the same data flow again before every 227 reply and the client after every RETR, so the k-th spawn of the client meets the k-th spawn of the server. The session has one control connection and one data connection per file, and each data connection carries a ZIP file from the content module with its own size and its own passive port.
+vars:
+  server_port: 21
+  server_ip: 192.0.2.10
+  data_port_min: 50000
+  data_port_max: 50999
+  server_banner: (vsFTPd 3.0.5)
+  login_dir: /srv/ftp
+  work_dir: /srv/ftp/exports
+  file_min: 40000
+  file_max: 400000
+  files: 4
+flows:
+  - id: control
+    module: ftp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "USER {{ ftp.credential('user') }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "PASS {{ ftp.credential('password') }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "SYST\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "PWD\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "CWD {{ vars.work_dir }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "TYPE I\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - loop:
+          count: "{{ vars.files }}"
+          do:
+            - delay: { dist: uniform, min_ms: 20, max_ms: 150 }
+            - set: { file: "{{ ftp.file_name(rand_int(1, 2000000000), ext='zip') }}" }
+            - send: "SIZE {{ vars.file }}\r\n"
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - set: { file_size: "{{ ftp.number(last) }}" }
+            - send: "PASV\r\n"
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - set: { data_port: "{{ ftp.pasv_port(last) }}" }
+            - send: "RETR {{ vars.file }}\r\n"
+            - spawn: { flow: data }
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - send: "QUIT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "220 {{ vars.server_banner }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "331 Please specify the password.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "230 Login successful.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "215 UNIX Type: L8\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "257 \"{{ vars.login_dir }}\" is the current directory\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "250 Directory successfully changed.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "200 Switching to Binary mode.\r\n"
+      - loop:
+          count: "{{ vars.files }}"
+          do:
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - set:
+                file_seed: "{{ rand_int(1, 2000000000) }}"
+                want: "{{ rand_int(vars.file_min, vars.file_max) }}"
+            - set: { file_size: "{{ ftp.length(content.binary(kind='zip', size=vars.want, seed=vars.file_seed)) }}" }
+            - send: "213 {{ vars.file_size }}\r\n"
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - set: { data_port: "{{ rand_int(vars.data_port_min, vars.data_port_max) }}" }
+            - spawn: { flow: data }
+            - delay: { dist: uniform, min_ms: 1, max_ms: 3 }
+            - send: "{{ ftp.pasv_reply(vars.server_ip, vars.data_port) }}"
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - send: "150 Opening BINARY mode data connection for {{ ftp.arg(last) }} ({{ vars.file_size }} bytes).\r\n"
+            - delay: { dist: uniform, min_ms: 10, max_ms: 40 }
+            - send: "226 Transfer complete.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "221 Goodbye.\r\n"
+      - close: fin
+  - id: data
+    module: ftp
+    spawned: true
+    client:
+      - connect: { port: "{{ vars.data_port }}" }
+      - expect: { bytes: "{{ vars.file_size }}", timeout_ms: 30000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.data_port }}" }
+      - delay: { dist: uniform, min_ms: 1, max_ms: 4 }
+      - send: "{{ content.binary(kind='zip', size=vars.want, seed=vars.file_seed) }}"
+      - close: fin

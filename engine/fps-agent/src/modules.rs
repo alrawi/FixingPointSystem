@@ -21,6 +21,8 @@ use std::sync::Arc;
 use fps_flow::function::NoFunctions;
 use fps_flow::manifest::Catalog;
 use fps_flow::{FnCall, FnError, Manifest, ModuleSet, Scenario, TemplateFn, Value, ValueType};
+use fps_runtime::{ExtensionError, ExtensionSet};
+use fps_wasm::Limits as WasmLimits;
 use rand::RngCore;
 use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
@@ -92,6 +94,18 @@ pub enum ModuleError {
         /// Why the signature is refused.
         #[source]
         source: TrustError,
+    },
+    /// The `extension.wasm` of a module does not compile, or its catalog
+    /// differs from the manifest (AGT-11). The plan is refused, because a run
+    /// without the extension would measure another test than the one
+    /// configured.
+    #[error("module {module}: {source}")]
+    Extension {
+        /// The module name.
+        module: String,
+        /// The cause.
+        #[source]
+        source: ExtensionError,
     },
     /// A scenario source digest differs from the plan.
     #[error("scenario {scenario}: digest {actual} differs from the plan digest {want}")]
@@ -224,6 +238,10 @@ pub struct LoadedModules {
     pub scenarios: HashMap<String, Scenario>,
     /// The native template functions of the session.
     pub functions: NativeFunctions,
+    /// The compiled WebAssembly extensions of the plan modules that ship an
+    /// `extension.wasm`, or `None` when no module does. Every flow of the
+    /// plan shares the set through `FlowRef::extensions`.
+    pub extensions: Option<Arc<ExtensionSet>>,
     /// Notes for the operator, such as a module without native functions.
     pub notes: Vec<String>,
     /// Warnings about modules that the agent loaded without a valid
@@ -237,10 +255,16 @@ pub struct LoadedModules {
 /// Every module passes two checks before anything of it is compiled or
 /// registered. The tree digest of its directory must equal the plan digest,
 /// which no setting waives, and `policy` judges the signature of the plan
-/// over that digest (AGT-04).
+/// over that digest (AGT-04). The `extension.wasm` of a module is part of its
+/// tree, so both checks cover it. Only after they pass does the agent compile
+/// the extension (AGT-11), and an extension that does not compile or whose
+/// catalog differs from the manifest refuses the plan. A plan whose modules
+/// ship no extension never starts a WebAssembly engine.
 pub fn load(plan: &Plan, dir: &Path, policy: &ModulePolicy) -> Result<LoadedModules, ModuleError> {
     let mut set = ModuleSet::default();
     let mut warnings = Vec::new();
+    let mut extensions: Option<ExtensionSet> = None;
+    let mut extended: Vec<String> = Vec::new();
     for m in &plan.modules {
         let manifest = load_module(m, dir)?;
         // The digest of the directory equals m.digest here, so the signature
@@ -252,6 +276,9 @@ pub fn load(plan: &Plan, dir: &Path, policy: &ModulePolicy) -> Result<LoadedModu
                 source,
             })?;
         warnings.extend(verdict);
+        if load_extension(m, &manifest, dir, &mut extensions)? {
+            extended.push(m.name.clone());
+        }
         set.insert(manifest);
     }
     if policy.store.is_none() && !plan.modules.is_empty() {
@@ -262,6 +289,14 @@ pub fn load(plan: &Plan, dir: &Path, policy: &ModulePolicy) -> Result<LoadedModu
     }
     let mut notes = Vec::new();
     let functions = NativeFunctions::for_modules(&set, &plan.modules, dir, &mut notes)?;
+    for name in &extended {
+        // The extension serves the calls of the module, so the note that the
+        // module has no native functions would mislead.
+        let missing = no_native_functions(name);
+        notes.retain(|n| *n != missing);
+        notes.push(format!("module {name} runs its WebAssembly extension"));
+    }
+    notes.sort();
     let mut scenarios = HashMap::new();
     for s in &plan.scenarios {
         scenarios.insert(s.r#ref.clone(), compile(s, &set)?);
@@ -270,9 +305,44 @@ pub fn load(plan: &Plan, dir: &Path, policy: &ModulePolicy) -> Result<LoadedModu
         set,
         scenarios,
         functions,
+        extensions: extensions.map(Arc::new),
         notes,
         warnings,
     })
+}
+
+/// Compiles the `extension.wasm` of module `m` into `set` when its directory
+/// holds one, and creates the set at the first extension. Returns whether the
+/// module has an extension.
+fn load_extension(
+    m: &ModuleRef,
+    manifest: &Manifest,
+    dir: &Path,
+    set: &mut Option<ExtensionSet>,
+) -> Result<bool, ModuleError> {
+    let root = dir.join(&m.name);
+    // A module without an extension costs one stat call.
+    if !root.join(fps_runtime::EXTENSION_FILE).exists() {
+        return Ok(false);
+    }
+    let fail = |source| ModuleError::Extension {
+        module: m.name.clone(),
+        source,
+    };
+    if set.is_none() {
+        *set = Some(ExtensionSet::new().map_err(fail)?);
+    }
+    let Some(set) = set.as_mut() else {
+        return Ok(false);
+    };
+    set.load_module_dir(manifest, &root, WasmLimits::default())
+        .map_err(fail)
+}
+
+/// The note of a module whose template calls fail for lack of native
+/// functions.
+fn no_native_functions(name: &str) -> String {
+    format!("module {name} has no native functions in this agent, so its template calls fail")
 }
 
 fn load_module(m: &ModuleRef, dir: &Path) -> Result<Manifest, ModuleError> {
@@ -510,9 +580,7 @@ impl NativeFunctions {
                 _ => {
                     refuse_settings(name, given, "it has no native functions here")?;
                     if !manifest.functions.is_empty() {
-                        notes.push(format!(
-                            "module {name} has no native functions in this agent, so its template calls fail"
-                        ));
+                        notes.push(no_native_functions(name));
                     }
                 }
             }

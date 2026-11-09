@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of ftp.pcapng, which capture.sh records in the QA-01 harness.
+# Every control connection of the fixture is FTP on TCP port 21, and nDPI must
+# classify at least 99% of them as FTP_CONTROL from payload alone. The passive
+# data connections go to a port that the 227 or 229 reply announced and carry a
+# listing, a PDF, a ZIP, a gzip file, or a PNG file without a protocol of their
+# own, so no rule labels them and they do not count. The structure check of
+# modules/ftp/fixtures/structure_check.py covers them instead.
+# realism/schema/labels.schema.json defines the format.
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: ftp
+    match: {transport: tcp, server_port: 21}
+applications:
+  ftp: {ndpi: [FTP_CONTROL]}

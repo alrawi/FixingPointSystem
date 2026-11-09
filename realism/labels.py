@@ -14,7 +14,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from realism.capture import Session
 from realism.ja4 import split as ja4_split
@@ -36,7 +36,21 @@ _MATCH_FIELDS = {
     "server_ip": str,
     "server_port": int,
 }
-_TOP_LEVEL = {"labels", "version", "threshold", "applications", "sessions", "default", "tls"}
+_TOP_LEVEL = {
+    "labels",
+    "version",
+    "threshold",
+    "applications",
+    "sessions",
+    "default",
+    "tls",
+    "content",
+}
+_CONTENT_FIELDS = {"max_duplicate_ratio", "ignore_headers", "sizes"}
+_SIZE_FIELDS = {"direction", "median", "cv", "tolerance"}
+DIRECTIONS = ("client", "server", "both")
+DEFAULT_MAX_DUPLICATE_RATIO = 0.01
+DEFAULT_SIZE_TOLERANCE = 0.25
 _TLS_FIELDS = {"profiles", "sample", "min_decrypted"}
 DEFAULT_TLS_SAMPLE = 100
 DEFAULT_MIN_DECRYPTED = 1.0
@@ -74,6 +88,38 @@ class TlsLabels:
     min_decrypted: float = DEFAULT_MIN_DECRYPTED
 
 
+@dataclass(frozen=True)
+class SizeExpectation:
+    """The expected payload size distribution of one application.
+
+    ``median`` is the expected median payload size in bytes and ``cv`` the expected
+    coefficient of variation, which is absent when the labels do not give one. The
+    observed values must lie within ``tolerance`` of them, as a share of the expected
+    value. ``direction`` selects the payloads that count: ``client``, ``server``, or
+    ``both``.
+    """
+
+    direction: str
+    median: float
+    cv: float | None = None
+    tolerance: float = DEFAULT_SIZE_TOLERANCE
+
+
+@dataclass(frozen=True)
+class ContentLabels:
+    """Settings of the content variety check.
+
+    ``max_duplicate_ratio`` is the largest share of duplicate payloads that an
+    application may have, ``ignore_headers`` lists HTTP header names that the check
+    drops on top of its built in list, and ``sizes`` maps an application to its
+    expected size distribution.
+    """
+
+    max_duplicate_ratio: float = DEFAULT_MAX_DUPLICATE_RATIO
+    ignore_headers: tuple[str, ...] = ()
+    sizes: Mapping[str, SizeExpectation] = field(default_factory=dict)
+
+
 @dataclass
 class Labels:
     """The expected labels of one capture."""
@@ -83,6 +129,7 @@ class Labels:
     threshold: float | None = None
     applications: dict[str, dict[str, tuple[str, ...]]] = field(default_factory=dict)
     tls: TlsLabels | None = None
+    content: ContentLabels | None = None
 
     def tls_profile_of(self, session: Session) -> str | None:
         """Return the client profile of a session from its first matching rule, or None."""
@@ -176,6 +223,55 @@ def parse(doc: Any, source: str = "<labels>") -> Labels:
         threshold=float(threshold) if threshold is not None else None,
         applications=applications,
         tls=tls,
+        content=_content(doc["content"], where) if "content" in doc else None,
+    )
+
+
+def _number(value: Any) -> TypeGuard[int | float]:
+    return not isinstance(value, bool) and isinstance(value, int | float)
+
+
+def _content(value: Any, where: str) -> ContentLabels:
+    """Validate the content section of the content variety check."""
+    if not isinstance(value, dict) or set(value) - _CONTENT_FIELDS:
+        raise LabelsError(f"{where} content: must be a mapping with only {sorted(_CONTENT_FIELDS)}")
+    ratio = value.get("max_duplicate_ratio", DEFAULT_MAX_DUPLICATE_RATIO)
+    if not _number(ratio) or not 0 <= ratio <= 1:
+        raise LabelsError(f"{where} content.max_duplicate_ratio: must be a number from 0 to 1")
+    headers = value.get("ignore_headers", [])
+    if not isinstance(headers, list) or not all(isinstance(h, str) and h.strip() for h in headers):
+        raise LabelsError(f"{where} content.ignore_headers: must be a list of header names")
+    raw = value.get("sizes", {})
+    if not isinstance(raw, dict):
+        raise LabelsError(f"{where} content.sizes: must be a mapping from application to sizes")
+    sizes: dict[str, SizeExpectation] = {}
+    for name, entry in raw.items():
+        here = f"{where} content.sizes.{name}"
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(entry, dict)
+            or set(entry) - _SIZE_FIELDS
+        ):
+            raise LabelsError(f"{here}: must be a mapping with only {sorted(_SIZE_FIELDS)}")
+        direction = entry.get("direction", "both")
+        median, cv = entry.get("median"), entry.get("cv")
+        tolerance = entry.get("tolerance", DEFAULT_SIZE_TOLERANCE)
+        if direction not in DIRECTIONS:
+            raise LabelsError(f"{here}.direction: must be one of {', '.join(DIRECTIONS)}")
+        if not _number(median) or median <= 0:
+            raise LabelsError(f"{here}.median: must be a number above 0")
+        if cv is not None and (not _number(cv) or cv < 0):
+            raise LabelsError(f"{here}.cv: must be a number of 0 or more")
+        if not _number(tolerance) or not 0 < tolerance <= 10:
+            raise LabelsError(f"{here}.tolerance: must be a number above 0 and up to 10")
+        sizes[name] = SizeExpectation(
+            direction, float(median), None if cv is None else float(cv), float(tolerance)
+        )
+    return ContentLabels(
+        max_duplicate_ratio=float(ratio),
+        ignore_headers=tuple(h.strip().lower() for h in headers),
+        sizes=sizes,
     )
 
 

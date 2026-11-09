@@ -1,0 +1,87 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: ftp
+version: 0.1.0
+type: app
+summary: FTP clients and servers with a control channel on port 21, passive mode data connections (PASV and EPSV) that a spawned flow opens for every LIST, RETR, and STOR, and files from the content module.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: ftp, transport: tcp, port: 21 }
+requires:
+  - { module: content, version: ">=0.1" }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 21, description: TCP port of the control channel on the server side. }
+    server_ip: { type: string, minLength: 7, default: 192.0.2.10, description: Dotted IPv4 address of the server that a 227 reply announces. Set it to the address of the server pool for a run on which Zeek or a client must find the data connection at the announced address. The 229 reply of EPSV names no address. }
+    data_port_min: { type: integer, minimum: 1024, maximum: 65535, default: 50000, description: Lowest passive data port that the server draws. }
+    data_port_max: { type: integer, minimum: 1024, maximum: 65535, default: 50999, description: Highest passive data port that the server draws. }
+    server_banner: { type: string, minLength: 1, default: (vsFTPd 3.0.5), description: Text after the 220 code in the greeting. }
+    login_dir: { type: string, minLength: 1, default: /srv/ftp, description: Directory that PWD reports after the login. }
+    work_dir: { type: string, minLength: 1, default: /srv/ftp/exports, description: Directory that the client enters with CWD. }
+    list_entries: { type: integer, minimum: 1, maximum: 500, default: 24, description: Lines of every directory listing. }
+    file_min: { type: integer, minimum: 1, maximum: 33554432, default: 40000, description: Smallest file that RETR or STOR transfers, in bytes. Each transfer draws its size between file_min and file_max. }
+    file_max: { type: integer, minimum: 1, maximum: 33554432, default: 400000, description: Largest file that RETR or STOR transfers, in bytes. }
+    files: { type: integer, minimum: 1, maximum: 200, default: 4, description: Files that the batch_download scenario retrieves on one control connection. }
+functions:
+  - name: credential
+    summary: Synthetic user name (two invented words joined by a dot) or password (it starts with Tst-). A seed of zero or more fixes the value, and -1 draws from the session generator.
+    params:
+      - { name: field, type: text }
+      - { name: seed, type: int, default: -1 }
+  - name: file_name
+    summary: Synthetic file name of the form word_word-2026MM.ext. The same seed and extension always give the same name.
+    params:
+      - { name: seed, type: int }
+      - { name: ext, type: text, default: bin }
+  - name: listing
+    summary: Count lines of a LIST reply in the ls -l format, each ending in CRLF, with files and directories. The same seed and count always give the same text.
+    params:
+      - { name: seed, type: int }
+      - { name: count, type: int }
+  - name: length
+    summary: The number of bytes of the data as a decimal number, for a SIZE reply and an ALLO command.
+    params:
+      - { name: data, type: bytes }
+  - name: number
+    summary: The last run of decimal digits in a command line or a reply, as a decimal number. It reads the size out of ALLO and 213 lines.
+    params:
+      - { name: line, type: bytes }
+  - name: arg
+    summary: The text after the first space of a command line, without the line break, which a server echoes in its 150 reply. The argument must be printable ASCII.
+    params:
+      - { name: line, type: bytes }
+  - name: pasv_reply
+    summary: The 227 reply Entering Passive Mode with the address and the port as six decimal numbers, ending in CRLF.
+    params:
+      - { name: host, type: text }
+      - { name: port, type: int }
+  - name: pasv_port
+    summary: The data port that a 227 reply announces, as a decimal number.
+    params:
+      - { name: reply, type: bytes }
+  - name: epsv_reply
+    summary: The 229 reply Entering Extended Passive Mode with the port between three vertical bars, ending in CRLF.
+    params:
+      - { name: port, type: int }
+  - name: epsv_port
+    summary: The data port that a 229 reply announces, as a decimal number.
+    params:
+      - { name: reply, type: bytes }
+  - name: feat_reply
+    summary: Multi line 211 reply to FEAT that lists EPRT, EPSV, MDTM, PASV, REST STREAM, SIZE, TVFS, and UTF8, with the last two lines as RFC 2389 shows them.
+    params:
+      - { name: utf8, type: boolean, default: true }
+scenarios:
+  - scenarios/list_pasv.yaml
+  - scenarios/retr_epsv.yaml
+  - scenarios/stor_pasv.yaml
+  - scenarios/mixed_session.yaml
+  - scenarios/batch_download.yaml
+fixtures:
+  - { capture: fixtures/ftp.pcapng, expect: { ndpi: [FTP_CONTROL], zeek: [ftp, ftp-data] } }
+provenance:
+  source: synthetic
+  notes: Dialogues follow RFC 959 for the commands and replies, RFC 2389 for FEAT, RFC 2428 for EPSV, and RFC 3659 for SIZE, with the replies of vsftpd 3.0 as the model for the wording. Files come from the content module, and every user name, password, file name, and listing entry is synthetic. The server address of the 227 reply lies in the documentation range of RFC 5737 unless the run sets another one.

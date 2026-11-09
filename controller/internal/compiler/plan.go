@@ -163,6 +163,9 @@ type Criterion struct {
 	Metric string  `json:"metric,omitempty"`
 	Op     string  `json:"op,omitempty"`
 	Value  float64 `json:"value,omitempty"`
+	// Labels is the where filter of the test configuration. A series counts
+	// when its labels equal every entry. Agent protocol 0.2.3 added it.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // Duration is a google.protobuf.Duration in its JSON form, such as "30s" or

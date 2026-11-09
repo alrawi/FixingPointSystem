@@ -498,7 +498,7 @@ func (o *Orchestrator) compile(ctx context.Context, id string, cfg compiler.Conf
 	inv := make([]compiler.Agent, 0, len(rs))
 	for _, r := range rs {
 		c := r.agent.Capabilities
-		ca := compiler.Agent{ID: r.agent.ID, Cores: c.GetCores()}
+		ca := compiler.Agent{ID: r.agent.ID, Cores: c.GetCores(), EngineAPI: c.GetEngineApi()}
 		for _, b := range c.GetBackends() {
 			if name, ok := backendNames[b]; ok {
 				ca.Backend = name

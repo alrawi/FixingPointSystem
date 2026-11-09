@@ -1,0 +1,10 @@
+USER droufa.tagaizoum
+PASS Tst-Noutrouk9797
+SYST
+FEAT
+PWD
+CWD /srv/ftp/exports
+TYPE A
+PASV
+LIST
+QUIT
