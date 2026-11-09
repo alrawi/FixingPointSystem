@@ -79,6 +79,7 @@ The controller has its own make targets and CI workflow.
 | `make lint-ctl` | `gofmt -l`, `go vet ./...`, and `golangci-lint run`, which it skips with a notice when the binary is missing |
 | `make test-ctl` | `go test -race ./...` in `controller/` |
 | `make lint-ctl-registry`, `make test-ctl-registry` | The same checks for `internal/registry` alone (CTL-25) |
+| `make lint-ctl-captures`, `make test-ctl-captures` | The same checks for `internal/captures`, the upload path of `internal/agents`, and `internal/fakeagent` (CTL-14) |
 
 The workflow [`.github/workflows/controller.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/.github/workflows/controller.yml) runs the same checks, with golangci-lint v2.12.2 through `golangci/golangci-lint-action` pinned by commit. [`controller/.golangci.yml`](https://github.com/alrawi/FixingPointSystem/blob/main/controller/.golangci.yml) enables errcheck, errorlint, gosec, govet, ineffassign, revive, staticcheck, and unused, and checks formatting with gofmt and goimports. Its one exclusion allows gosec G204 in test files, because the integration test builds the binary and starts it.
 
@@ -172,6 +173,8 @@ allow_unsigned_modules: false           # development setting, only meaningful w
 |---|---|---|
 | `trust_store_file` | none | JSON file that `signing.TrustStore.Encode` writes. The registry reads it when it opens and again at every install, so a key that an operator revokes in the file stops verifying without a restart. A missing or malformed file stops the controller at start, and an install fails closed when the file goes bad later |
 | `allow_unsigned_modules` | `false` | Lets the registry install a module that has no signature, and logs a warning for each. A signature that fails is refused in every case |
+
+CTL-31 added the flag forms `-trust-store-file file` and `-allow-unsigned-modules`. They follow the usual layering, so a flag that appears on the command line overrides the configuration file, and `-allow-unsigned-modules=false` switches the file setting off.
 
 The rules, in the order that `Install` applies them:
 
@@ -474,7 +477,7 @@ Each agent has one of the four states of the REST contract.
 
 ### Fake agents
 
-The package `internal/fakeagent` gives other controller packages agents that dial a `ControllerService` in tests. `fakeagent.Serve(t, mgr)` serves the manager on an in-memory listener, and `fakeagent.Start` registers an agent and opens its session. A fake agent answers prepare, start, and stop by the agent state machine and sends a heartbeat after each state change. A test drives it with six methods.
+The package `internal/fakeagent` gives other controller packages agents that dial a `ControllerService` in tests. `fakeagent.Serve(t, mgr)` serves the manager on an in-memory listener, and `fakeagent.Start` registers an agent and opens its session. A fake agent answers prepare, start, and stop by the agent state machine and sends a heartbeat after each state change. A test drives it with six methods. A fake agent also takes `UpdateRates` (CON-05) in the running state: it validates every entry of the command against the mix of its plan, applies all of them or none, and keeps the session rate that it runs (`Agent.Rates`). With `Options.Traffic` it simulates sessions at that rate, each with `BytesPerSession` bytes, and sends the client side counters in a snapshot per tick, so the bytes that it reports follow the rate. `Agent.TrafficTotals` and `Agent.StopTraffic` serve tests.
 
 | Method | Effect |
 |---|---|
@@ -559,6 +562,50 @@ Every criterion of the verdict carries `observed`, `passed`, and `reason` throug
 ### Tests of the orchestrator
 
 `seed_test.go` checks that the run record takes its seed from the compiled plans, which is the seed of the configuration, then `Config.Seed`, and otherwise one that the compiler draws, and that a plan without a seed fails `Create`. `state_test.go` checks all 49 pairs of states against the allowed table. `reasons_test.go` checks the reason of every way that a run fails or aborts, the client side totals over labeled counters of both sides, the aborted failures of a crashed agent, and the criterion fields of `GET /v1/runs/{id}`. The orchestrator tests use the real agent manager, fake agents, the real compiler, an in memory store, and a fake clock. `TestFailingAgentEndsRunByCriteria` lets one of two agents fail or crash under way and checks that a failure ratio of 0.5% completes the degraded run and a ratio of 30% fails it against the criterion of 10%. Other tests cover finishing agents, missed heartbeats, a graceful stop, forced stops while preparing, running, and ramping down, a prepare error, operator reservations, create errors, and `Close`. The REST tests validate every exchange against the OpenAPI document.
+## Captures
+
+The package `internal/captures` starts packet captures on the agents of a run and serves the pcapng files. CTL-14 added it. `captures.API` embeds `api.Unimplemented` and implements `listCaptures`, `startCapture`, and `downloadCapture`, and `wiring.New` builds a `captures.Service` over the agent manager and the orchestrator and hands the API to the combined server.
+
+### Start and state
+
+`POST /v1/runs/{id}/captures` needs a run in the `running` state and answers 409 otherwise. The service chooses one capture id (`cap-` and 16 hex digits) and sends `start_capture` to every working agent of the run in parallel, with the plan id `<run id>/<agent id>` that the compiler gives each plan. The body maps to the command: `port` to `port`, `bpf` to `filter`, and `max_bytes` (default 104857600) to the byte limit of each agent. An agent that refuses stays out of the capture and the service records why. The request fails and keeps nothing when no agent starts: 422 when every agent answered `INVALID_ARGUMENT`, such as an unknown port or a filter that does not compile, 501 when none supports captures, and 409 otherwise. The answer is 202 with the `Capture` schema, a `Location` header, and the state `running`.
+
+The state of a capture lives in memory next to the state of the runs, and the files live below the capture directory. A capture is `running` while an agent that started it has not reported an end, `completed` once every such agent reported one, and `failed` when no agent could report one, for example because every agent went offline after the run ended. `bytes` appears in the completed state and is the sum of the file sizes. `GET /v1/runs/{id}/captures` lists the captures in the order that they started, and for a run that ended it first sends `stop_capture`, which is idempotent, to the agents that still run a capture, so that the list reports the final state.
+
+Two settings of the request have no effect yet. The agent has no flag for `export_tls_keys` and writes the key log lines of TLS sessions into the file whenever it has them, so a capture of TLS sessions is as sensitive as a private key and the capture directory has mode 0700. The agent keeps whole sessions, so it refuses a snap length, which the service never sets.
+
+### Download
+
+`GET /v1/runs/{id}/captures/{capture_id}` answers with `application/vnd.tcpdump.pcap`, `Content-Disposition: attachment`, and `Content-Length`. The contract has no operation that stops a capture, so a download ends a capture that still runs: the service sends `stop_capture` to each agent, which answers with the packet count, the size, and the SHA-256 digest of its file. It then fetches the file of each agent that the service does not hold yet and serves the files one after the other, in agent order, which is a valid pcapng file because every file is a complete section. Later downloads read the stored files and ask no agent. `X-FPS-Capture-Agents` lists the agents whose files the body holds and `X-FPS-Capture-Missing` the agents that could not deliver theirs. The answer is 502 when no agent delivered a file, 501 when the reason is that no agent can serve it, and 404 for an unknown run or capture.
+
+### Transfer
+
+The transfer follows CON-13. `agents.Manager.FetchCapture` chooses a single use transfer id, sends `fetch_capture` with a chunk limit of 256 KiB, and waits for the answer. The agent then opens the client streaming call `UploadCapture` on the same connection, and the manager passes the chunks to a `CaptureSink`. `Manager.UploadCapture` in `internal/agents/capture.go` checks the call before it reads a byte:
+
+| Check | Answer |
+|---|---|
+| The transfer id was not issued, was used, or has ended | `NOT_FOUND` |
+| Another call serves the transfer | `ALREADY_EXISTS` |
+| The session token of `open` is not the token of the session that carried the command | `UNAUTHENTICATED` |
+| The client certificate names another agent than the one that received the command | `NOT_FOUND`, the answer for an unknown id, so an agent learns nothing about the transfers of another |
+| The session of the command ended | `ABORTED` |
+| `open` names another capture or offset than the command | `INVALID_ARGUMENT` |
+| A chunk has a gap or overlap, 0 or more than 262144 bytes, or ends beyond the file size; or `end` disagrees with the bytes received | `INVALID_ARGUMENT` |
+
+A transfer ends with the call, so a broken call is final, and the next attempt has a new id. An agent that does not open the call within the heartbeat timeout after its answer fails the transfer with `ErrTransferTimeout`, and the end of the session fails it with `ErrSessionLost`. A call that arrives before the manager has read the answer waits for it, because the two travel on different streams.
+
+The manager sends `fetch_capture` only to an agent that reports `engine_api` 0.2.2 or later, and `start_capture` and `stop_capture` only to 0.2.0 or later. Below that, and when the agent answers `UNIMPLEMENTED`, the call fails with `agents.ErrCaptureUnsupported`, which the service treats as "this agent cannot serve the file" and not as a protocol fault. The Rust agent answers `UNIMPLEMENTED` until AGT-09.
+
+### Storage, resume, and verification
+
+The capture directory is `<data_dir>/captures`, or a temporary directory that ends with the process when no data directory is set. A file lives at `<run id>/<capture id>/<agent id>.pcapng`, and a transfer in progress at the same path with the suffix `.part`. Nothing deletes a file yet, because no retention policy exists.
+
+When a transfer breaks, the service reads the size of the part file and sends a new `fetch_capture` with a new transfer id and a `start_offset` equal to that size, up to five times. The agent keeps the file unchanged, so the resumed bytes continue the same file. The sink appends and, at `end`, hashes the whole part file, the bytes of every attempt together, and accepts it only when the size and the digest equal both the end message and what `stop_capture` reported. A file that fails is removed, the agent receives `verified: false`, and the next attempt starts at offset zero. A file that fails every attempt is never served, and the download answers 502 with the mismatch in its detail. A part file that is already complete is verified without a transfer. A file larger than 8 GiB per agent is refused.
+
+### Tests of the captures
+
+Fake agents from `internal/fakeagent` (`capture.go`) answer the three commands, store a deterministic file per capture, and upload it in chunks, with options to break an attempt after a number of bytes, to corrupt an upload, to answer `UNIMPLEMENTED`, or never to open the call. `internal/captures` tests every operation behind the real router and token check and validate each JSON exchange against the contract: a start, a list, and a download; a download that resumes after two interrupted uploads, each time at the offset that the controller held and with a new transfer id; a digest mismatch that is rejected and never stored, and one that the next attempt repairs; an agent that cannot serve its file; an agent of engine api 0.2.1 that never receives `fetch_capture`; two agents in one download; the errors of the start; and a lost agent. `internal/agents/capture_test.go` covers the checks of the upload call in the table above.
+
 ## Capabilities endpoint
 
 `controller/internal/api/capabilities.go` serves `GET /v1/capabilities` with the read scope. The type `CapabilitiesAPI` embeds `api.Unimplemented`, so it answers every other operation with the 501 problem, and the binary composes it with the other handlers. The package imports neither `internal/registry` nor `internal/agents`, because `internal/agents` already imports `internal/api`. It reads two narrow interfaces that it defines itself, and the binary adapts the registry and the agent manager to them when it wires the controller, which follow up #102 tracks.
@@ -696,7 +743,8 @@ Two adapter types connect the registry and the agent manager to the interfaces t
 | `POST /v1/runs`, `GET /v1/runs/{id}`, `POST /v1/runs/{id}:stop` | `runs.API` |
 | `GET /v1/runs/{id}/metrics` and `:stream` | The `MetricsHandler` of `Controller.SetMetrics`, or 501 |
 | `getRunReport` | The `ReportHandler` of `Controller.SetReport`, which defaults to `report.API` |
-| `listRuns` and captures | `pending`, which answers 501 |
+| `listCaptures`, `startCapture`, `downloadCapture` | The `CaptureHandler` of `Handlers.Captures`, which `New` sets to `captures.API` (CTL-14) |
+| `listRuns` | `pending`, which answers 501 |
 
 ### Hook for run metrics
 
@@ -704,7 +752,7 @@ The metrics package of CTL-08 joins the binary in three calls in `serve` of `cmd
 
 ### Tests of the wiring
 
-`TestServerRoutesEveryOperation` walks every operation of the OpenAPI contract with an admin token and checks that exactly the six pending operations answer 501, each with a detail that names it, so every other operation reaches the package that implements it. `TestPendingExamplesValidateThroughTheAPI` stores the three examples of `contracts/examples/tests-pending/` through the REST API, registers fake agents `agent-a` with `eth1` and `eth2` and `local` with `lo`, installs the example modules, and expects every validation to pass the dry run, and `TestCatalogReportsSettingsSchema` expects the `dns` scenarios to carry the settings schema with `zone_file`. Other tests in `internal/wiring` cover the token scopes, the metrics hook, the catalog with two versions of `http1`, the inventory filters, and a gRPC round trip with a fake agent and the observer.
+`TestServerRoutesEveryOperation` walks every operation of the OpenAPI contract with an admin token and checks that exactly the three pending operations answer 501, each with a detail that names it, so every other operation reaches the package that implements it. `TestPendingExamplesValidateThroughTheAPI` stores the three examples of `contracts/examples/tests-pending/` through the REST API, registers fake agents `agent-a` with `eth1` and `eth2` and `local` with `lo`, installs the example modules, and expects every validation to pass the dry run, and `TestCatalogReportsSettingsSchema` expects the `dns` scenarios to carry the settings schema with `zone_file`. Other tests in `internal/wiring` cover the token scopes, the metrics hook, the catalog with two versions of `http1`, the inventory filters, and a gRPC round trip with a fake agent and the observer.
 
 `TestEndToEnd` in `cmd/fps-controller` builds the binary and starts it with a temporary configuration that holds an admin token, a run token in a token file, a read token, and a data directory. It runs eleven steps.
 
@@ -921,11 +969,11 @@ The orchestrator reads `engine_api` from the capabilities of the agent when it s
 | `runs.Config.Calibration.Tuning` | `MaxStep`, `DeadBand`, `MinSessions`, `Forget`, and `MaxFactor` of `calibrate.Config`. Zero fields take the defaults of the package |
 | `runs.RateUpdater` | The optional interface `UpdateRates(ctx, agentID, *agentpb.UpdateRatesCommand)` that `Config.Agents` must also implement. Without it, the log says `throughput calibration is off: the agent manager cannot send UpdateRates` and the run keeps its compiled rates |
 
-`agents.Manager` has no `UpdateRates` method yet, because `internal/agents/` belongs to CTL-06. It needs a method that sends `SessionResponse_UpdateRates` through `command`, like `Start` does, before the loop works on a real controller. The log entry of CTL-24 has the code. `Run.Calibration` is not part of the REST API, because the OpenAPI document of the run has no field for it.
+`agents.Manager.UpdateRates` (CTL-30, `internal/agents/updaterates.go`) sends `SessionResponse_UpdateRates` through `command`, like `Start` does, and returns the `UpdateRatesResult`. The manager therefore implements `runs.RateUpdater`, and `internal/wiring` passes it to the orchestrator as `Config.Agents`, so the calibration runs on a real controller. A refusal of the agent comes back as a `*agents.CommandError`. `Run.Calibration` is not part of the REST API, because the OpenAPI document of the run has no field for it.
 
 ### Tests
 
-`calibration_test.go` is the end to end test. A simulated agent runs the compiled rate in simulated time at 100 times the real speed, reports the counters of sessions that carry 40 kB each against a manifest estimate of 10 kB, and applies `UpdateRates` to its own rate, so the loop between orchestrator and agent closes. It checks that an 8 Mbit/s objective, which the compiled rate overshoots fourfold, ends within 5 percent after the factor falls to 0.25 in steps of at most 1.5x, that the log and `Run.Calibration` agree, and that no command arrives after the run ended. Further tests check that an agent with engine 0.1.0 gets no command and is logged once, that a `sessions_per_second` objective and a switched off calibration send nothing, and that a manager without `RateUpdater` leaves the rates alone. `calibration_internal_test.go` covers the window arithmetic, the command builder, and the version check. The test delivers `UpdateRates` through a wrapper of the agent manager, because neither `agents.Manager` nor `fakeagent` handles the command. `make lint-ctl-runs test-ctl-runs` runs the package alone.
+`calibration_test.go` is the end to end test. The orchestrator runs on the real `agents.Manager`, and fake agents with `fakeagent.Options.Traffic` run the compiled rate in simulated time at 100 times the real speed, report the counters of sessions that carry 40 kB each against a manifest estimate of 10 kB, and take `UpdateRates` into their own rate, so the loop between orchestrator, manager, and agent closes. It checks that an 8 Mbit/s objective, which the compiled rate overshoots fourfold, ends within 5 percent after the factor falls to 0.25 in steps of at most 1.5x, that the log and `Run.Calibration` agree, and that no command arrives after the run ended. Further tests check that an agent with engine 0.1.0 gets no command and is logged once, that a `sessions_per_second` objective and a switched off calibration send nothing, and that a manager without `RateUpdater` leaves the rates alone. `calibration_internal_test.go` covers the window arithmetic, the command builder, and the version check.  `internal/agents/updaterates_test.go` checks the manager method against the fake agent, including the all or nothing rule and the running state requirement. `make lint-ctl-runs test-ctl-runs` runs the package alone.
 
 ## Mutual TLS
 
@@ -945,7 +993,7 @@ pa.Revoke("agent-a")                                       // ends the identity 
 
 `Open` generates the CA on the first start and loads it afterwards. The directory holds three files. `ca.key` has mode 0600 and the directory has mode 0700, `ca.crt` is public, and `state.json` has mode 0600 and holds the enrollment state. The CA is an ECDSA P-256 key with a 10 year certificate that may sign only end entity certificates (`MaxPathLen` 0). `Open` refuses to start when `ca.key` is readable by group or others, when only one of the two files exists, when the certificate does not match the key, when the CA expired, or when `state.json` is damaged, because each case means that the trust anchor is not what the controller wrote. An empty `Dir` keeps everything in memory for tests. `CAFingerprint` returns the SHA-256 digest of the CA certificate, which an operator can pin on the agent. The controller must be the only writer of the directory.
 
-The controller server certificate comes from the same CA. The authority creates it in memory for the host names and addresses that agents dial, which become its subject alternative names, lets it live for 30 days, and replaces it when a third of its life remains.
+The controller server certificate comes from the same CA. The authority creates it in memory for the host names and addresses that agents dial, which become its subject alternative names, lets it live for 30 days, and replaces it when a third of its life remains. Both listeners send the chain `[leaf, CA]` in the handshake (CTL-31), so an agent that pins the SHA-256 fingerprint of the CA finds the CA in the presented chain and can authenticate the enrollment endpoint before it sends its token. An agent that trusts a CA file verifies the same chain as before, because the extra certificate is the root that it already trusts.
 
 ### Enrollment tokens
 

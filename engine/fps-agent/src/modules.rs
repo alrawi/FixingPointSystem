@@ -109,6 +109,14 @@ pub enum ModuleError {
         /// The name in the source.
         name: String,
     },
+    /// The settings of a module cannot be applied.
+    #[error("module {module}: settings: {reason}")]
+    Settings {
+        /// The module name.
+        module: String,
+        /// What is wrong.
+        reason: String,
+    },
     /// A mix parameter cannot become a scenario variable.
     #[error("mix entry {entry}: parameter {name}: {reason}")]
     Param {
@@ -217,7 +225,7 @@ pub fn load(plan: &Plan, dir: &Path) -> Result<LoadedModules, ModuleError> {
         set.insert(load_module(m, dir)?);
     }
     let mut notes = Vec::new();
-    let functions = NativeFunctions::for_modules(&set, &mut notes);
+    let functions = NativeFunctions::for_modules(&set, &plan.modules, dir, &mut notes)?;
     let mut scenarios = HashMap::new();
     for s in &plan.scenarios {
         scenarios.insert(s.r#ref.clone(), compile(s, &set)?);
@@ -384,11 +392,26 @@ pub struct NativeFunctions {
 
 impl NativeFunctions {
     /// Registers the native functions of every module in `set` whose
-    /// manifest catalog equals the catalog of its crate. Each module that
-    /// stays without native functions adds a note.
-    pub fn for_modules(set: &ModuleSet, notes: &mut Vec<String>) -> Self {
+    /// manifest catalog equals the catalog of its crate, configured with the
+    /// settings of the matching entry of `refs`. A relative path setting
+    /// resolves against the directory of the module under `dir` and may not
+    /// leave it. Each module that stays without native functions adds a
+    /// note.
+    ///
+    /// Settings that the agent cannot apply are an error, because a run that
+    /// ignores them would measure another test than the one configured. That
+    /// covers a module without native functions and a module whose native
+    /// functions take no settings.
+    pub fn for_modules(
+        set: &ModuleSet,
+        refs: &[ModuleRef],
+        dir: &Path,
+        notes: &mut Vec<String>,
+    ) -> Result<Self, ModuleError> {
         let mut out = Self::default();
+        let settings = |name: &str| refs.iter().find(|m| m.name == name).map(|m| &m.settings);
         for (name, manifest) in &set.manifests {
+            let given = settings(name).filter(|s| !s.is_empty());
             match name.as_str() {
                 fps_module_http1::MODULE_NAME => {
                     let native: Vec<NativeSig> = fps_module_http1::FUNCTIONS
@@ -404,8 +427,14 @@ impl NativeFunctions {
                         })
                         .collect();
                     match catalog_diff(&manifest.functions, &native) {
-                        None => out.http1 = Some(fps_module_http1::Http1),
-                        Some(d) => notes.push(no_native(name, &d)),
+                        None => {
+                            refuse_settings(name, given, "its native functions take none")?;
+                            out.http1 = Some(fps_module_http1::Http1);
+                        }
+                        Some(d) => {
+                            refuse_settings(name, given, "it has no native functions here")?;
+                            notes.push(no_native(name, &d));
+                        }
                     }
                 }
                 fps_module_dns::MODULE_NAME => {
@@ -422,23 +451,36 @@ impl NativeFunctions {
                         })
                         .collect();
                     match catalog_diff(&manifest.functions, &native) {
-                        None => match fps_module_dns::Dns::bundled() {
+                        None => match dns_functions(dir, given) {
                             Ok(d) => out.dns = Some(d),
-                            Err(e) => notes.push(format!(
+                            Err(DnsLoad::Settings(reason)) => {
+                                return Err(ModuleError::Settings {
+                                    module: name.clone(),
+                                    reason,
+                                })
+                            }
+                            Err(DnsLoad::Bundled(e)) => notes.push(format!(
                                 "module dns has no native functions: bundled zone: {e}"
                             )),
                         },
-                        Some(d) => notes.push(no_native(name, &d)),
+                        Some(d) => {
+                            refuse_settings(name, given, "it has no native functions here")?;
+                            notes.push(no_native(name, &d));
+                        }
                     }
                 }
-                _ if manifest.functions.is_empty() => {}
-                _ => notes.push(format!(
-                    "module {name} has no native functions in this agent, so its template calls fail"
-                )),
+                _ => {
+                    refuse_settings(name, given, "it has no native functions here")?;
+                    if !manifest.functions.is_empty() {
+                        notes.push(format!(
+                            "module {name} has no native functions in this agent, so its template calls fail"
+                        ));
+                    }
+                }
             }
         }
         notes.sort();
-        out
+        Ok(out)
     }
 
     /// Returns the modules that have native functions.
@@ -472,6 +514,93 @@ impl TemplateFn for NativeFunctions {
             (fps_module_dns::MODULE_NAME, _, Some(d)) => d.render(call, rng, out),
             _ => NoFunctions.render(call, rng, out),
         }
+    }
+}
+
+/// Fails when a module that cannot apply settings got some.
+fn refuse_settings(
+    module: &str,
+    given: Option<&serde_json::Map<String, Json>>,
+    why: &str,
+) -> Result<(), ModuleError> {
+    match given {
+        None => Ok(()),
+        Some(_) => Err(ModuleError::Settings {
+            module: module.to_owned(),
+            reason: format!("the plan gives settings, but {why}"),
+        }),
+    }
+}
+
+/// Why the dns functions could not be built.
+enum DnsLoad {
+    /// The settings are invalid.
+    Settings(String),
+    /// The shipped zone does not parse.
+    Bundled(fps_module_dns::ZoneError),
+}
+
+/// Builds the dns functions from the plan settings, or from the shipped zone
+/// when the plan gives none. The module directory of dns is `dir/dns`.
+fn dns_functions(
+    dir: &Path,
+    given: Option<&serde_json::Map<String, Json>>,
+) -> Result<fps_module_dns::Dns, DnsLoad> {
+    let Some(given) = given else {
+        return fps_module_dns::Dns::bundled().map_err(DnsLoad::Bundled);
+    };
+    let root = dir.join(fps_module_dns::MODULE_NAME);
+    let mut value = given.clone();
+    // The module resolves a relative zone_file against its base, which would
+    // let `..` or an absolute path leave the module directory, so the agent
+    // resolves and checks the path first and hands over the result.
+    if let Some(Json::String(file)) = value.get("zone_file") {
+        if !file.is_empty() {
+            let path =
+                confined(&root, file).map_err(|e| DnsLoad::Settings(format!("zone_file: {e}")))?;
+            let text = path
+                .to_str()
+                .ok_or_else(|| DnsLoad::Settings("zone_file: the path is not UTF-8".to_owned()))?
+                .to_owned();
+            value.insert("zone_file".to_owned(), Json::String(text));
+        }
+    }
+    fps_module_dns::Dns::from_settings(&Json::Object(value), &root)
+        .map_err(|e| DnsLoad::Settings(e.to_string()))
+}
+
+/// Resolves the setting path `file` against the module directory `root` and
+/// returns the canonical path of an existing file inside `root`.
+///
+/// A path with a `..` component is refused without touching the disk. An
+/// absolute path is accepted only when its canonical form lies inside `root`,
+/// which also catches a symbolic link that leaves `root`, although a
+/// module tree holds none after the digest check.
+pub fn confined(root: &Path, file: &str) -> Result<PathBuf, String> {
+    use std::path::Component;
+    let given = Path::new(file);
+    if given
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
+        return Err(format!(
+            "{file:?} has a .. component, which could leave the module directory"
+        ));
+    }
+    let outside = || format!("{file:?} lies outside the module directory");
+    let base = root
+        .canonicalize()
+        .map_err(|e| format!("module directory {}: {e}", root.display()))?;
+    let path = if given.is_absolute() {
+        given.to_path_buf()
+    } else {
+        base.join(given)
+    };
+    let real = path.canonicalize().map_err(|e| format!("{file:?}: {e}"))?;
+    if real.starts_with(&base) {
+        Ok(real)
+    } else {
+        Err(outside())
     }
 }
 
@@ -530,7 +659,7 @@ mod tests {
             set.insert(Manifest::load(&root.join(m).join("manifest.yaml")).unwrap());
         }
         let mut notes = Vec::new();
-        let f = NativeFunctions::for_modules(&set, &mut notes);
+        let f = NativeFunctions::for_modules(&set, &[], &root, &mut notes).unwrap();
         assert_eq!(f.modules(), ["http1", "dns"], "{notes:?}");
         assert!(notes.is_empty(), "{notes:?}");
 
@@ -538,7 +667,7 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/examples/modules");
         let mut set = ModuleSet::default();
         set.insert(Manifest::load(&root.join("dns/manifest.yaml")).unwrap());
-        let f = NativeFunctions::for_modules(&set, &mut notes);
+        let f = NativeFunctions::for_modules(&set, &[], &root, &mut notes).unwrap();
         assert!(f.modules().is_empty());
         assert_eq!(notes.len(), 1, "{notes:?}");
     }
@@ -550,7 +679,7 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
         let mut set = ModuleSet::default();
         set.insert(Manifest::load(&root.join("http1/manifest.yaml")).unwrap());
-        let mut f = NativeFunctions::for_modules(&set, &mut Vec::new());
+        let mut f = NativeFunctions::for_modules(&set, &[], &root, &mut Vec::new()).unwrap();
         let named = [NamedArg {
             name: "status",
             value: ArgValue::Int(204),
@@ -576,6 +705,217 @@ mod tests {
             ..call
         };
         assert!(f.render(&dns, &mut rng, &mut Vec::new()).is_err());
+    }
+
+    /// A fresh module directory with a `dns` subdirectory that holds the zone
+    /// files of `zones`, and the first party manifests of dns and http1.
+    fn settings_dir(tag: &str, zones: &[(&str, &str)]) -> (PathBuf, ModuleSet) {
+        let dir =
+            std::env::temp_dir().join(format!("fps-agent-settings-{}-{tag}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dns/zones")).unwrap();
+        for (name, text) in zones {
+            fs::write(dir.join("dns").join(name), text).unwrap();
+        }
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
+        let mut set = ModuleSet::default();
+        for m in ["http1", "dns"] {
+            set.insert(Manifest::load(&root.join(m).join("manifest.yaml")).unwrap());
+        }
+        (dir, set)
+    }
+
+    fn with_settings(name: &str, settings: Json) -> ModuleRef {
+        let Json::Object(settings) = settings else {
+            panic!("settings must be an object");
+        };
+        ModuleRef {
+            name: name.into(),
+            settings,
+            ..ModuleRef::default()
+        }
+    }
+
+    const CUSTOM_ZONE: &str = "$ORIGIN corp.test.\n$TTL 60\n@ IN SOA ns hostmaster 1 7200 3600 1209600 60\n@ IN NS ns\nns IN A 192.0.2.7\nwww IN A 192.0.2.99\n";
+
+    /// The first A address that dns answers for `name`, or the rcode.
+    fn lookup(f: &mut NativeFunctions, name: &str) -> String {
+        use fps_flow::function::NamedArg;
+        use fps_flow::{ArgValue, CallArgs};
+        let mut rng = rand_pcg::Pcg64Mcg::new(1);
+        let mut query = Vec::new();
+        let named = [NamedArg {
+            name: "name",
+            value: ArgValue::Text(name),
+        }];
+        f.render(
+            &FnCall {
+                module: "dns",
+                function: "query",
+                args: CallArgs {
+                    positional: &[],
+                    named: &named,
+                },
+            },
+            &mut rng,
+            &mut query,
+        )
+        .unwrap();
+        let mut response = Vec::new();
+        f.render(
+            &FnCall {
+                module: "dns",
+                function: "response",
+                args: CallArgs {
+                    positional: &[ArgValue::Bytes(&query)],
+                    named: &[],
+                },
+            },
+            &mut rng,
+            &mut response,
+        )
+        .unwrap();
+        let mut address = Vec::new();
+        let answer = f.render(
+            &FnCall {
+                module: "dns",
+                function: "answer_ip",
+                args: CallArgs {
+                    positional: &[ArgValue::Bytes(&response)],
+                    named: &[],
+                },
+            },
+            &mut rng,
+            &mut address,
+        );
+        match answer {
+            Ok(()) => String::from_utf8_lossy(&address).into_owned(),
+            Err(e) => format!("error: {e}"),
+        }
+    }
+
+    #[test]
+    fn the_dns_zone_file_setting_selects_the_zone() {
+        let (dir, set) = settings_dir("zone", &[("zones/corp.zone", CUSTOM_ZONE)]);
+        let refs = [with_settings(
+            "dns",
+            serde_json::json!({"zone_file": "zones/corp.zone"}),
+        )];
+        let mut f = NativeFunctions::for_modules(&set, &refs, &dir, &mut Vec::new()).unwrap();
+        assert_eq!(lookup(&mut f, "www.corp.test"), "192.0.2.99");
+        // The shipped zone answers www.example.test, so the setting replaced it.
+        assert_ne!(lookup(&mut f, "www.example.test"), "192.0.2.1");
+
+        let mut bundled = NativeFunctions::for_modules(&set, &[], &dir, &mut Vec::new()).unwrap();
+        assert_eq!(lookup(&mut bundled, "www.example.test"), "192.0.2.1");
+        // Empty settings behave like none.
+        let empty = [with_settings("dns", serde_json::json!({}))];
+        let mut same = NativeFunctions::for_modules(&set, &empty, &dir, &mut Vec::new()).unwrap();
+        assert_eq!(lookup(&mut same, "www.example.test"), "192.0.2.1");
+        // An absolute path inside the module directory is fine.
+        let inside = dir.join("dns/zones/corp.zone");
+        let abs = [with_settings(
+            "dns",
+            serde_json::json!({"zone_file": inside.to_str().unwrap()}),
+        )];
+        let mut f = NativeFunctions::for_modules(&set, &abs, &dir, &mut Vec::new()).unwrap();
+        assert_eq!(lookup(&mut f, "www.corp.test"), "192.0.2.99");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_setting_path_cannot_leave_the_module_directory() {
+        let (dir, set) = settings_dir("escape", &[("zones/corp.zone", CUSTOM_ZONE)]);
+        fs::write(dir.join("outside.zone"), CUSTOM_ZONE).unwrap();
+        let outside = dir.join("outside.zone");
+        for path in [
+            "../outside.zone",
+            "zones/../../outside.zone",
+            "zones/../zones/corp.zone",
+            outside.to_str().unwrap(),
+            "/etc/hostname",
+        ] {
+            let refs = [with_settings(
+                "dns",
+                serde_json::json!({ "zone_file": path }),
+            )];
+            let e = NativeFunctions::for_modules(&set, &refs, &dir, &mut Vec::new()).unwrap_err();
+            let text = e.to_string();
+            assert!(matches!(e, ModuleError::Settings { .. }), "{path}: {text}");
+            assert!(
+                text.contains("zone_file") && (text.contains("..") || text.contains("outside")),
+                "{path}: {text}"
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_that_leaves_the_module_directory_is_refused() {
+        let (dir, set) = settings_dir("link", &[]);
+        fs::write(dir.join("outside.zone"), CUSTOM_ZONE).unwrap();
+        std::os::unix::fs::symlink(dir.join("outside.zone"), dir.join("dns/zones/link.zone"))
+            .unwrap();
+        let refs = [with_settings(
+            "dns",
+            serde_json::json!({"zone_file": "zones/link.zone"}),
+        )];
+        let e = NativeFunctions::for_modules(&set, &refs, &dir, &mut Vec::new()).unwrap_err();
+        assert!(
+            e.to_string().contains("outside the module directory"),
+            "{e}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_settings_are_errors_that_name_the_module() {
+        let (dir, set) = settings_dir("invalid", &[("zones/bad.zone", "not a zone")]);
+        for (module, settings, want) in [
+            (
+                "dns",
+                serde_json::json!({"zone_file": "zones/missing.zone"}),
+                "missing.zone",
+            ),
+            (
+                "dns",
+                serde_json::json!({"zone_file": "zones/bad.zone"}),
+                "bad.zone",
+            ),
+            (
+                "dns",
+                serde_json::json!({"zone_file": 3}),
+                "non empty string",
+            ),
+            (
+                "dns",
+                serde_json::json!({"zone": "x"}),
+                "unknown dns setting",
+            ),
+            ("http1", serde_json::json!({"x": 1}), "settings, but"),
+        ] {
+            let refs = [with_settings(module, settings.clone())];
+            let e = NativeFunctions::for_modules(&set, &refs, &dir, &mut Vec::new()).unwrap_err();
+            let text = e.to_string();
+            assert!(
+                text.starts_with(&format!("module {module}: settings: ")),
+                "{text}"
+            );
+            assert!(text.contains(want), "{settings}: {text}");
+        }
+        // A module whose manifest catalog differs from the crate cannot apply
+        // settings, so the agent refuses them instead of ignoring them.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contracts/examples/modules");
+        let mut example = ModuleSet::default();
+        example.insert(Manifest::load(&root.join("dns/manifest.yaml")).unwrap());
+        let refs = [with_settings(
+            "dns",
+            serde_json::json!({"zone_file": "zones/example.test.zone"}),
+        )];
+        let e = NativeFunctions::for_modules(&example, &refs, &dir, &mut Vec::new()).unwrap_err();
+        assert!(e.to_string().contains("no native functions"), "{e}");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -221,6 +221,9 @@ type Manager struct {
 	agents map[string]*record
 	nextID uint64
 	closed bool
+
+	// xfers holds the live capture transfers, see capture.go.
+	xfers transfers
 }
 
 var _ agentpb.ControllerServiceServer = (*Manager)(nil)

@@ -5,16 +5,18 @@
 //! checks the modules, starts the server workers and then the client
 //! workers, and writes one counter snapshot per snapshot interval to its
 //! output as a JSON line. Each line is the proto3 JSON mapping of an
-//! aggregate `CounterSnapshot` of the side that the process reports, which
-//! is the client side when the process runs client workers and the server
-//! side otherwise, because the catalog has no side label and the two sides
-//! of one session must not add up. The last line carries `isFinal`.
+//! aggregate `CounterSnapshot` of every side that the process runs. Every
+//! scenario and transport series carries the `side` label (CON-08), so the
+//! client and the server series of one session sit side by side and do not
+//! add up. The last line carries `isFinal`.
 //!
 //! The client workers end when their schedules end and their sessions
 //! close. A process with server workers only stops them when the load
 //! phases end plus the linger time. Server workers then drain for
-//! [`SERVER_RAMP_DOWN`]. The criteria of the plan decide the [`Outcome`],
-//! and every error before or during the run is a [`RunError`].
+//! [`SERVER_RAMP_DOWN`]. The criteria of the plan decide the [`Outcome`], and
+//! they count the client side, or the server side in a process that runs no
+//! client workers, see [`crate::criteria`]. Every error before or during the
+//! run is a [`RunError`].
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -27,7 +29,7 @@ use fps_stats::{metric, Snapshot, SnapshotMeta, StatsError, Timestamp};
 
 use crate::assemble::{assemble, load_profile, Sides};
 use crate::control::{CaptureCell, Rates};
-use crate::criteria::{evaluate, CriterionResult};
+use crate::criteria::{evaluate_for, CriterionResult};
 use crate::modules::{self, ModuleError};
 use crate::plan::{Plan, PlanError};
 use crate::udp::{UdpError, UdpHooks, UdpRuntime};
@@ -205,6 +207,24 @@ impl SideRun {
     }
 }
 
+/// Returns the side that the `side` label names for a side of the engine.
+fn stats_side(side: Side) -> fps_stats::Side {
+    match side {
+        Side::Client => fps_stats::Side::Client,
+        Side::Server => fps_stats::Side::Server,
+    }
+}
+
+/// Merges the totals of the two sides into one snapshot. A side that the
+/// process does not run has an empty total. The `side` label keeps the series
+/// of the sides apart.
+fn both_sides(client: &Snapshot, server: &Snapshot) -> Result<Snapshot, StatsError> {
+    let mut out = Snapshot::aggregate();
+    out.merge(client)?;
+    out.merge(server)?;
+    Ok(out)
+}
+
 /// A plan that passed its checks, with its modules loaded and its workers
 /// assembled, which waits for [`Prepared::start`].
 pub struct Prepared {
@@ -346,7 +366,7 @@ pub struct Active {
     servers: SideRun,
     clients: SideRun,
     start: Instant,
-    baseline: Option<(Snapshot, Snapshot)>,
+    baseline: Option<Snapshot>,
     reset: bool,
 }
 
@@ -362,13 +382,17 @@ impl std::fmt::Debug for Active {
 /// The totals of a finished run.
 #[derive(Debug)]
 pub struct Finished {
-    /// The totals of the side that the process reports.
+    /// The final totals of every side that the process ran, in one snapshot
+    /// whose series carry the `side` label.
     pub shown: Snapshot,
+    /// The side that the criteria count by default, which is the client side
+    /// unless the process ran no client workers.
+    pub criteria_side: fps_stats::Side,
     /// The final client side totals, when the process ran client workers.
     pub client: Option<Snapshot>,
     /// The final server side totals, when the process ran server workers.
     pub server: Option<Snapshot>,
-    /// The totals of the reported side at the end of the warmup.
+    /// The totals of every side at the end of the warmup.
     pub baseline: Option<Snapshot>,
     /// The time from the start to the end of the run.
     pub elapsed: Duration,
@@ -438,16 +462,23 @@ impl Active {
         ))
     }
 
-    /// Returns the cumulative totals of the reported side and records the
-    /// warmup baseline once the warmup has passed.
+    /// Returns the cumulative totals of every side that the process runs, in
+    /// one snapshot, and records the warmup baseline once the warmup has
+    /// passed.
     pub fn sample(&mut self) -> Result<Snapshot, RunError> {
         let elapsed = self.start.elapsed();
         let c = self.clients.total(Side::Client)?;
         let s = self.servers.total(Side::Server)?;
+        let both = both_sides(&c, &s)?;
         if self.baseline.is_none() && !self.plan.warmup.is_zero() && elapsed >= self.plan.warmup {
-            self.baseline = Some((c.clone(), s.clone()));
+            self.baseline = Some(both.clone());
         }
-        Ok(if self.reports == Side::Client { c } else { s })
+        Ok(both)
+    }
+
+    /// Returns the side that the criteria count by default.
+    pub fn criteria_side(&self) -> fps_stats::Side {
+        stats_side(self.reports)
     }
 
     /// Stops new client sessions and lets open sessions finish within
@@ -476,19 +507,13 @@ impl Active {
         servers.stop(server_ramp_down);
         let server_total = servers.join(Side::Server);
         let (client_total, server_total) = (client_total?, server_total?);
-        let shown = if reports == Side::Client {
-            client_total.clone()
-        } else {
-            server_total.clone()
-        };
+        let shown = both_sides(&client_total, &server_total)?;
         Ok(Finished {
             shown,
+            criteria_side: stats_side(reports),
             client: has_clients.then_some(client_total),
             server: has_servers.then_some(server_total),
-            baseline: baseline.map(|(c, s)| match reports {
-                Side::Client => c,
-                Side::Server => s,
-            }),
+            baseline,
             elapsed: start.elapsed(),
         })
     }
@@ -574,7 +599,12 @@ pub fn run(
     printer.line(&finished.shown, phase_end, true)?;
     let lines = printer.sequence;
 
-    let criteria = evaluate(&criteria_plan, &finished.shown, finished.baseline.as_ref())?;
+    let criteria = evaluate_for(
+        &criteria_plan,
+        &finished.shown,
+        finished.baseline.as_ref(),
+        finished.criteria_side,
+    )?;
     for side in [("client", &finished.client), ("server", &finished.server)] {
         if let (name, Some(total)) = side {
             writeln!(

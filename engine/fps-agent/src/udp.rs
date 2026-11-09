@@ -37,7 +37,8 @@ use fps_runtime::{
     TokioClock, WorkerConfig, WorkerSnapshot,
 };
 use fps_sched::{RateControl, Schedule};
-use fps_stats::{metric, CounterId, GaugeId, HistogramId, Shard, StatsError};
+use fps_stats::Side as StatsSide;
+use fps_stats::{FailureReason, SessionCounters, Shard, StatsError};
 use tokio::sync::{watch, Notify};
 use tokio::task::LocalSet;
 use tokio::time::{interval_at, sleep_until, Instant, MissedTickBehavior};
@@ -296,65 +297,68 @@ fn run_thread(start: Start) -> Result<(), UdpError> {
     LocalSet::new().block_on(&rt, run_worker(start))
 }
 
-/// The series that a worker records for every session, as `fps-runtime`
-/// registers them.
+/// The series that a worker records for every session.
+///
+/// They are the series of [`SessionCounters`], which `fps-runtime` registers
+/// for its TCP workers too, so every series carries the `side` label of the
+/// worker and the two sides of one UDP session never add up.
 struct Metrics {
-    attempted: CounterId,
-    established: CounterId,
-    succeeded: CounterId,
-    failed: Vec<CounterId>,
-    bytes_tx: CounterId,
-    bytes_rx: CounterId,
-    concurrent: GaugeId,
-    duration: HistogramId,
+    counters: SessionCounters,
+}
+
+/// Maps the side of the interpreter to the `side` label value.
+fn stats_side(side: Side) -> StatsSide {
+    match side {
+        Side::Client => StatsSide::Client,
+        Side::Server => StatsSide::Server,
+    }
+}
+
+/// Maps a failure reason of the interpreter to its `reason` label value.
+fn stats_reason(reason: Reason) -> FailureReason {
+    match reason {
+        Reason::ConnectTimeout => FailureReason::ConnectTimeout,
+        Reason::ConnectRefused => FailureReason::ConnectRefused,
+        Reason::ExpectTimeout => FailureReason::ExpectTimeout,
+        Reason::PatternMismatch => FailureReason::PatternMismatch,
+        Reason::UnexpectedReset => FailureReason::UnexpectedReset,
+        Reason::PeerClosed => FailureReason::PeerClosed,
+        Reason::TlsFailure => FailureReason::TlsFailure,
+        Reason::Aborted => FailureReason::Aborted,
+        Reason::Internal => FailureReason::Internal,
+        Reason::DatagramRejected => FailureReason::DatagramRejected,
+        Reason::TemplateError => FailureReason::TemplateError,
+        Reason::ExtensionError => FailureReason::ExtensionError,
+    }
 }
 
 impl Metrics {
-    fn register(shard: &mut Shard, application: &str, scenario: &str) -> Result<Self, StatsError> {
-        let labels = [("application", application), ("scenario", scenario)];
-        let mut failed = Vec::with_capacity(Reason::ALL.len());
-        for reason in Reason::ALL {
-            let l = [
-                ("application", application),
-                ("scenario", scenario),
-                ("reason", reason.as_str()),
-            ];
-            failed.push(shard.counter(metric::SESSIONS_FAILED, &l)?);
-        }
+    fn register(
+        shard: &mut Shard,
+        application: &str,
+        scenario: &str,
+        side: Side,
+    ) -> Result<Self, StatsError> {
         Ok(Self {
-            attempted: shard.counter(metric::SESSIONS_ATTEMPTED, &labels)?,
-            established: shard.counter(metric::SESSIONS_ESTABLISHED, &labels)?,
-            succeeded: shard.counter(metric::SESSIONS_SUCCEEDED, &labels)?,
-            failed,
-            bytes_tx: shard.counter(metric::BYTES_TX, &labels)?,
-            bytes_rx: shard.counter(metric::BYTES_RX, &labels)?,
-            concurrent: shard.gauge(metric::SESSIONS_CONCURRENT, &labels)?,
-            duration: shard.histogram(metric::SESSIONS_DURATION, &labels)?,
+            counters: SessionCounters::register(shard, application, scenario, stats_side(side))?,
         })
     }
 
     fn started(&self, shard: &mut Shard) {
-        shard.inc(self.attempted);
-        shard.adjust(self.concurrent, 1.0);
+        self.counters.started(shard);
     }
 
     fn ended(&self, shard: &mut Shard, stats: SideStats, outcome: &Result<(), Failure>, us: u64) {
         if stats.established {
-            shard.inc(self.established);
+            self.counters.established(shard);
         }
         match outcome {
-            Ok(()) => shard.inc(self.succeeded),
-            Err(f) => {
-                let i = Reason::ALL.iter().position(|r| *r == f.reason).unwrap_or(0);
-                if let Some(id) = self.failed.get(i) {
-                    shard.inc(*id);
-                }
-            }
+            Ok(()) => self.counters.succeeded(shard),
+            Err(f) => self.counters.failed(shard, stats_reason(f.reason)),
         }
-        shard.add(self.bytes_tx, stats.bytes_tx);
-        shard.add(self.bytes_rx, stats.bytes_rx);
-        shard.adjust(self.concurrent, -1.0);
-        shard.record(self.duration, us);
+        self.counters
+            .add_bytes(shard, stats.bytes_tx, stats.bytes_rx);
+        self.counters.ended(shard, us);
     }
 }
 
@@ -387,7 +391,7 @@ impl Worker {
                 detail: format!("scenario {} has no flow {}", flow.scenario.name, flow.flow),
             })?;
         let mut shard = Shard::new(id);
-        let metrics = Metrics::register(&mut shard, &f.module, &flow.scenario.name)
+        let metrics = Metrics::register(&mut shard, &f.module, &flow.scenario.name, side)
             .map_err(|source| UdpError::Stats { worker: id, source })?;
         Ok(Self {
             id,
@@ -848,6 +852,7 @@ mod tests {
     use fps_flow::Scenario;
     use fps_hosts::{HostPool, HostSelector, PoolSpec, Selection};
     use fps_sched::{Arrival, LoadProfile, Objective, Phase, ScheduleConfig, Shape};
+    use fps_stats::{metric, SeriesValue};
 
     use super::*;
 
@@ -920,5 +925,31 @@ mod tests {
         assert_eq!(srv.counter_total(metric::SESSIONS_SUCCEEDED), 20);
         assert_eq!(c.counter_total(metric::BYTES_TX), 40);
         assert_eq!(c.counter_total(metric::BYTES_RX), 80);
+        // Every series carries the side label of its worker, and the two
+        // sides sit in different series.
+        for (snapshot, side) in [(&c, "client"), (&srv, "server")] {
+            assert!(!snapshot.is_empty());
+            for (key, _) in snapshot.iter() {
+                assert!(
+                    key.labels().contains(&("side", side.to_owned())),
+                    "{:?} lacks side {side}",
+                    key.labels()
+                );
+            }
+        }
+        let mut both = fps_stats::Snapshot::aggregate();
+        both.merge(&c).unwrap();
+        both.merge(&srv).unwrap();
+        assert_eq!(both.counter_total(metric::SESSIONS_SUCCEEDED), 40);
+        let on = |side: &str| {
+            both.iter()
+                .filter(|(k, v)| {
+                    k.metric() == metric::SESSIONS_SUCCEEDED
+                        && k.labels().contains(&("side", side.to_owned()))
+                        && matches!(v, SeriesValue::Count(20))
+                })
+                .count()
+        };
+        assert_eq!((on("client"), on("server")), (1, 1));
     }
 }

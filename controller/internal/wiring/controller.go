@@ -42,6 +42,7 @@ import (
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents/agentpb"
 	"github.com/alrawi/FixingPointSystem/controller/internal/api"
 	"github.com/alrawi/FixingPointSystem/controller/internal/app"
+	"github.com/alrawi/FixingPointSystem/controller/internal/captures"
 	"github.com/alrawi/FixingPointSystem/controller/internal/pki"
 	"github.com/alrawi/FixingPointSystem/controller/internal/registry"
 	"github.com/alrawi/FixingPointSystem/controller/internal/report"
@@ -198,6 +199,10 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("create config handler: %w", err)
 	}
+	caps, err := captures.New(captures.Config{Agents: c.Agents, Runs: c.Runs, Dir: c.captureDir(), Logger: logger})
+	if err != nil {
+		return nil, fmt.Errorf("create captures service: %w", err)
+	}
 	c.API = NewServer(Handlers{
 		Agents:       agents.NewAPI(c.Agents),
 		Capabilities: api.NewCapabilitiesAPI(catalog, inventory),
@@ -205,8 +210,19 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 		Modules:      registry.NewAPI(c.Registry, logger),
 		Runs:         runs.NewAPI(c.Runs),
 		Report:       c.htmlReport(report.NewAPI(c.Evaluator, c.Runs, nil)),
+		Captures:     captures.NewAPI(caps),
 	})
 	return c, nil
+}
+
+// captureDir returns the directory of the capture files: captures under the
+// data directory, or under the temporary directory that ends with the process
+// when no data directory is set.
+func (c *Controller) captureDir() string {
+	if c.cfg.DataDir != "" {
+		return filepath.Join(c.cfg.DataDir, "captures")
+	}
+	return filepath.Join(c.tempDir, "captures")
 }
 
 // claimedIdentity trusts the agent_id of the request, and logs every use of
