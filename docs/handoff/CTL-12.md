@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #164 |
 | Branch | `wp/CTL-12` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 80% (3 of 4 plan steps) |
+| Pull request | #292 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-c12a7e |
-| Last verified commit | none |
+| Last verified commit | 3ce489a |
 
 ## Goal
 
@@ -19,19 +19,19 @@ For a test with `profile.basis: bytes`, correct the per entry session rates ever
 - [x] 1. Claim commit, handoff, and the pure package `controller/internal/mixcontrol/` with unit tests (local `go test` works, the package uses only the standard library)
 - [x] 2. Compose with the CTL-24 calibration loop in `controller/internal/runs/calibration.go` (additive), per scenario bytes in `fakeagent.Traffic` (additive)
 - [x] 3. End to end test, `mk/ctl.mk` targets
-- [ ] 4. Controller wiki page, log entry, checks, PR
+- [x] 4. Controller wiki page, log entry, checks, PR
 
 ## Done and verified
 
-Steps 2 and 3 are written but only CI can build `internal/runs` (modules do not download here). Step 1: `go test -race -cover ./internal/mixcontrol/` passes locally with 100 percent coverage.
+CI on 3ce489a is green (golangci-lint, `go test -race ./...` including `internal/runs` bytemix tests; one run hit the unrelated flaky `pki` TestTokens and passed on rerun). Step 1: `go test -race -cover ./internal/mixcontrol/` passes locally with 100 percent coverage.
 
 ## Remaining
 
-Step 4: open the PR and get CI green.
+Review PR #292.
 
 ## Next action
 
-Open the PR, wait for CI, fix failures in `internal/runs/bytemix*.go`.
+Review PR #292.
 
 ## Blockers and open questions
 
@@ -58,3 +58,4 @@ cd controller && GOWORK=off GOFLAGS=-mod=mod go test -race -cover ./internal/mix
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T15:12Z | claude-c12a7e | claim | none | Claimed #164 |
+| 2026-11-09T15:30Z | claude-c12a7e | finish | 3ce489a | PR #292, CI green, ready for review |
