@@ -34,6 +34,10 @@ name = "catalog"
 path = "../tests/catalog.rs"
 
 [[test]]
+name = "fixture"
+path = "../tests/fixture.rs"
+
+[[test]]
 name = "https"
 path = "../tests/https.rs"
 

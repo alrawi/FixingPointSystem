@@ -178,9 +178,9 @@ pub struct Run {
 /// True when a side of the first flow upgrades its transport to TLS.
 pub fn uses_tls(s: &Scenario) -> bool {
     let upgrades = |ops: &[Op]| ops.iter().any(|op| matches!(op, Op::UpgradeTls(_)));
-    s.flows.iter().any(|f| {
-        upgrades(&f.client.ops) || f.server.as_ref().is_some_and(|p| upgrades(&p.ops))
-    })
+    s.flows
+        .iter()
+        .any(|f| upgrades(&f.client.ops) || f.server.as_ref().is_some_and(|p| upgrades(&p.ops)))
 }
 
 type Taps = Arc<Mutex<Vec<(TlsRole, Arc<Mutex<Vec<u8>>>)>>>;

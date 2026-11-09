@@ -1,13 +1,47 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Expected labels of http1.pcapng, which capture.sh records in the QA-01 harness.
-# Every session of the fixture is HTTP on TCP port 8080, and nDPI must classify
-# at least 99% of them as HTTP from payload alone. realism/schema/labels.schema.json
-# defines the format.
+# realism/schema/labels.schema.json defines the format.
+#
+# Plain HTTP runs on TCP port 8080. nDPI must classify at least 99% of those
+# sessions as HTTP from payload alone.
+#
+# HTTPS (MOD-04) runs on TCP ports 8443 to 8446, one port and one browser
+# profile per scenario. nDPI cannot read inside TLS, so on the capture it
+# classifies these sessions as TLS, and the encryption check decrypts them with
+# the keys that the capture embeds and compares the JA4 of every ClientHello
+# with the expected value of its profile. The HTTP inside the TLS sessions is
+# measured on the decrypted capture by decrypted_check.py, see the README.
+#
+# The ja4 values are the expected_ja4 of the browser profiles in
+# modules/tls/native/src/browser.rs, which the tests of the TLS module and
+# modules/http1/tests/https.rs check against real ClientHello bytes. Chrome,
+# Edge, and Safari share one value, because rustls cannot send what separates
+# them, see the Transport wiki page.
 labels: fps-realism-labels
 version: 1
 threshold: 0.99
+tls:
+  min_decrypted: 1
+  profiles:
+    chrome-136: {ja4: t13d1011h2_61a7ad8aa9b6_6d021c4c45cd}
+    firefox-139: {ja4: t13d1011h2_61a7ad8aa9b6_f674693fb0dc}
+    safari-18.5: {ja4: t13d1011h2_61a7ad8aa9b6_6d021c4c45cd}
+    edge-134: {ja4: t13d1011h2_61a7ad8aa9b6_6d021c4c45cd}
 sessions:
   - application: http1
     match: {transport: tcp, server_port: 8080}
+  - application: https
+    tls_profile: chrome-136
+    match: {transport: tcp, server_port: 8443}
+  - application: https
+    tls_profile: firefox-139
+    match: {transport: tcp, server_port: 8444}
+  - application: https
+    tls_profile: safari-18.5
+    match: {transport: tcp, server_port: 8445}
+  - application: https
+    tls_profile: edge-134
+    match: {transport: tcp, server_port: 8446}
 applications:
   http1: {ndpi: [HTTP]}
+  https: {ndpi: [TLS]}

@@ -125,7 +125,10 @@ async fn every_scenario_binds_its_profile_and_port() {
         // The upgrade is the first action after the connection opens, so the
         // handshake is the first thing on the wire.
         assert!(matches!(flow.client.ops[0], Op::UpgradeTls(_)));
-        assert!(matches!(flow.server.as_ref().expect("server").ops[0], Op::UpgradeTls(_)));
+        assert!(matches!(
+            flow.server.as_ref().expect("server").ops[0],
+            Op::UpgradeTls(_)
+        ));
     }
 }
 
@@ -150,10 +153,22 @@ async fn the_wire_is_encrypted_and_starts_with_the_client_hello() {
         let (r, tls) = run_tls(e.scenario, 1).await;
         // A handshake record, TLS 1.0 in the record version, with a ClientHello inside.
         assert_eq!(&tls.wire_c2s[..3], &[0x16, 0x03, 0x01], "{}", e.scenario);
-        assert_eq!(tls.wire_c2s[5], 0x01, "{} starts with a ClientHello", e.scenario);
+        assert_eq!(
+            tls.wire_c2s[5], 0x01,
+            "{} starts with a ClientHello",
+            e.scenario
+        );
         // The hello is the one place where the SNI and the ALPN ids are in the clear.
-        assert!(contains(&tls.wire_c2s, SERVER_NAME.as_bytes()), "{}", e.scenario);
-        assert!(contains(&tls.wire_c2s, b"\x02h2\x08http/1.1"), "{}", e.scenario);
+        assert!(
+            contains(&tls.wire_c2s, SERVER_NAME.as_bytes()),
+            "{}",
+            e.scenario
+        );
+        assert!(
+            contains(&tls.wire_c2s, b"\x02h2\x08http/1.1"),
+            "{}",
+            e.scenario
+        );
         for wire in [&tls.wire_c2s, &tls.wire_s2c] {
             assert!(!contains(wire, b"HTTP/1.1"), "{} leaks HTTP", e.scenario);
             assert!(!contains(wire, b"Host: "), "{} leaks a header", e.scenario);
@@ -190,7 +205,12 @@ async fn the_key_log_names_the_hello_and_holds_the_secrets() {
             .map(|line| {
                 let mut parts = line.split(' ');
                 let label = parts.next().expect("label");
-                assert_eq!(parts.next(), Some(random.as_str()), "{}: {line}", e.scenario);
+                assert_eq!(
+                    parts.next(),
+                    Some(random.as_str()),
+                    "{}: {line}",
+                    e.scenario
+                );
                 let secret = parts.next().expect("secret");
                 assert!(secret.len() >= 64 && secret.bytes().all(|b| b.is_ascii_hexdigit()));
                 label
