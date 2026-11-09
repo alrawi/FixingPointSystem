@@ -1,0 +1,80 @@
+scenario: fetch_delete
+description: A mail client on port 110 that moves its mail off the server. After USER, PASS, and STAT it downloads each of the variable fetches (default 3) messages with RETR n and marks it with DELE n as soon as the message is complete. Each message is a dot stuffed MIME message with a base64 attachment of a size between attachment_min and attachment_max, and its text part has a line with a single dot and a line that starts with two dots. The client then marks one more message with DELE, undoes all marks with RSET, and ends with QUIT. The server draws its messages from the content module.
+vars:
+  server_port: 110
+  server_name: pop3.example.test
+  messages: 6
+  fetches: 3
+  body_size: 1800
+  attachment_min: 24000
+  attachment_max: 160000
+  n: 0
+flows:
+  - id: fetch_delete
+    module: pop3
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set:
+          login: "{{ pop3.credential('user') }}"
+          secret: "{{ pop3.credential('password') }}"
+      - send: "USER {{ vars.login }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "PASS {{ vars.secret }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "STAT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - loop:
+          count: "{{ vars.fetches }}"
+          do:
+            - set: { n: "{{ pop3.next(vars.n) }}" }
+            - send: "RETR {{ vars.n }}\r\n"
+            - expect: { pattern: "\r\n.\r\n", timeout_ms: 30000 }
+            - send: "DELE {{ vars.n }}\r\n"
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - delay: { dist: exponential, mean_ms: 80 }
+      - send: "DELE {{ vars.messages }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "RSET\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "QUIT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "+OK Dovecot ready. {{ pop3.banner(vars.server_name) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "+OK\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "+OK Logged in.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { box: "{{ rand_int(1, 2000000000) }}" }
+      - send: "{{ pop3.stat_reply(vars.messages, vars.box) }}"
+      - loop:
+          count: "{{ vars.fetches }}"
+          do:
+            - expect: { pattern: "\r\n", timeout_ms: 30000 }
+            - set: { sid: "{{ rand_int(1, 2000000000) }}" }
+            - set:
+                subject: "Receipt {{ rand_int(1000, 9999) }}"
+                text: "{{ content.email(size=vars.body_size) }}\n.\n.. the receipt follows in the attachment\n"
+            - branch:
+                - p: 0.4
+                  do:
+                    - set: { msg: "{{ pop3.message(pop3.address(vars.sid, 1), pop3.address(vars.sid, 2), vars.subject, vars.text, cc=pop3.address(vars.sid, 3), attachment=content.binary(kind='pdf', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='receipt.pdf', content_type='application/pdf') }}" }
+                - p: 0.3
+                  do:
+                    - set: { msg: "{{ pop3.message(pop3.address(vars.sid, 1), pop3.address(vars.sid, 2), vars.subject, vars.text, attachment=content.binary(kind='jpeg', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='scan.jpg', content_type='image/jpeg') }}" }
+                - p: 0.3
+                  do:
+                    - set: { msg: "{{ pop3.message(pop3.address(vars.sid, 1), pop3.address(vars.sid, 2), vars.subject, vars.text, attachment=content.binary(kind='gzip', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='export.gz', content_type='application/gzip') }}" }
+            - send: "{{ pop3.retr_reply(last, vars.msg, vars.messages) }}"
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - send: "{{ pop3.dele_reply(last, vars.messages) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ pop3.dele_reply(last, vars.messages) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "+OK\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "+OK Logging out.\r\n"
+      - close: fin

@@ -61,7 +61,7 @@ type Handlers struct {
 	Metrics MetricsHandler
 	// Report serves GET /v1/runs/{id}/report. Nil answers it with 501.
 	Report ReportHandler
-	// Captures serves the three capture operations of a run. Nil answers them
+	// Captures serves the four capture operations of a run. Nil answers them
 	// with 501.
 	Captures CaptureHandler
 }
@@ -104,6 +104,8 @@ type CaptureHandler interface {
 	StartCapture(w http.ResponseWriter, r *http.Request, id api.Id)
 	// DownloadCapture serves GET /v1/runs/{id}/captures/{capture_id}.
 	DownloadCapture(w http.ResponseWriter, r *http.Request, id api.Id, captureID string)
+	// StopCapture serves POST /v1/runs/{id}/captures/{capture_id}:stop.
+	StopCapture(w http.ResponseWriter, r *http.Request, id api.Id, captureID string)
 }
 
 // pending answers the operations that no package implements yet. It forwards
@@ -150,14 +152,18 @@ func (p pending) ListConfigs(w http.ResponseWriter, r *http.Request, params api.
 	api.Unimplemented{}.ListConfigs(w, r, params)
 }
 
-// GetRunReport forwards getRunReport to the report handler, or answers 501.
-// StopCapture answers 501 until the captures package serves stopCapture
-// (CON-15). It resolves the method that every embedded handler inherits from
+// StopCapture forwards stopCapture to the capture handler, or answers 501. It
+// also resolves the method that every embedded handler inherits from
 // api.Unimplemented.
 func (p pending) StopCapture(w http.ResponseWriter, r *http.Request, id api.Id, captureID string) {
-	api.Unimplemented{}.StopCapture(w, r, id, captureID)
+	if p.captures == nil {
+		api.Unimplemented{}.StopCapture(w, r, id, captureID)
+		return
+	}
+	p.captures.StopCapture(w, r, id, captureID)
 }
 
+// GetRunReport forwards getRunReport to the report handler, or answers 501.
 func (p pending) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, params api.GetRunReportParams) {
 	if p.report == nil {
 		api.Unimplemented{}.GetRunReport(w, r, id, params)

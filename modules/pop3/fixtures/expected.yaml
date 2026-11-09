@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of pop3.pcapng, which capture.sh records in the QA-01 harness.
+# Every session of the fixture is POP3 on TCP port 110, and nDPI must classify
+# at least 99% of them as POP3 from payload alone. realism/schema/labels.schema.json
+# defines the format.
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: pop3
+    match: {transport: tcp, server_port: 110}
+applications:
+  pop3: {ndpi: [POP3]}

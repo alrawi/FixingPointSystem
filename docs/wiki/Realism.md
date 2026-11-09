@@ -1,6 +1,6 @@
 # Realism
 
-This page describes the realism runner under `realism/`, which the RLM workstream owns. The runner scores a capture against the applications that the traffic was meant to carry and writes a JSON realism report. RLM-01 created the runner with the conformance check, RLM-02 added the parser error check, and RLM-04 added the encryption check. The [runner README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md) gives the command, the options, and the report fields in full.
+This page describes the realism runner under `realism/`, which the RLM workstream owns. The runner scores a capture against the applications that the traffic was meant to carry and writes a JSON realism report. RLM-01 created the runner with the conformance check, RLM-02 added the parser error check, and RLM-04 added the encryption check, and RLM-05 added the content variety check. The [runner README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md) gives the command, the options, and the report fields in full.
 
 ## Checks
 
@@ -11,6 +11,7 @@ The [specification](https://github.com/alrawi/FixingPointSystem/blob/main/docs/s
 | `conformance` | nDPI through `ndpiReader -d` | At least 99% of the labelled sessions of every application carry the intended label | RLM-01 |
 | `parser_errors` | tshark expert information and Zeek `weird.log` | At least one parser ran and no parser reported an error | RLM-02 |
 | `encryption` | tshark with the exported TLS keys, and JA4 computed by the runner | Every sampled TLS session decrypts and every sampled ClientHello has the JA4 of its client profile | RLM-04 |
+| `content` | Payloads reassembled by the runner, no external tool | No application has more than 1% duplicate payloads, and the size distribution agrees with the labels where they give one | RLM-05 |
 
 Every tool runs as a separate process, so the runner links none of their code. We chose the counting rules of the parser error check for three reasons.
 
@@ -22,7 +23,7 @@ The parser error check leaves `metrics` empty, because the [metric catalog](http
 
 ## Report
 
-[`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) defines the report, which is the seam to the controller and the gate suites. A new check adds a definition under `$defs` and one `if` and `then` entry in `$defs.check.allOf`. The report format is at version 0.4.0. Version 0.2.0 added the `parser_errors` entry, version 0.3.0 added `skipped_parsers` to it, and version 0.4.0 added the `encryption` entry.
+[`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) defines the report, which is the seam to the controller and the gate suites. A new check adds a definition under `$defs` and one `if` and `then` entry in `$defs.check.allOf`. The report format is at version 0.5.0. Version 0.2.0 added the `parser_errors` entry, version 0.3.0 added `skipped_parsers` to it, version 0.4.0 added the `encryption` entry, and version 0.5.0 added the `content` entry.
 
 ## Seams for tests
 
@@ -50,6 +51,20 @@ The specification asks for real TLS handshakes with common browser fingerprints,
 **Verdict.** The check passes when at least `min_decrypted` of the sample decrypts and every sampled ClientHello has a JA4 that its profile lists. A mismatch fails with a reason such as `JA4 t13d1517h2_... is not the JA4 of profile chrome (...): part a (version, SNI flag, cipher and extension counts, ALPN) is t13d1517h2, expected t13d1516h2; cipher suite hash is ..., expected ...`. The check also fails when no session carries a `tls_profile`, and when tshark is missing, so a skipped tool never passes. The entry leaves `metrics` empty until the catalog has metrics for the two shares.
 
 **Tests.** [`realism/tests/tlsgen.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/tests/tlsgen.py) runs a TLS client and server of the Python `ssl` module against each other in memory, writes the flights as TCP segments, and keeps the client secrets as a key log, so no network, root, or dumpcap is needed. The tests cover a matching and a mismatched profile for TLS 1.2 and 1.3, embedded and sidecar keys, a capture without keys, wrong keys, a client without ALPN, and TLS on port 8443. The expected JA4 of the matching fixtures comes from tshark, because the ClientHello of the Python module depends on the installed OpenSSL. The tests skip without tshark or openssl, and the `rlm` workflow has both.
+
+## Content variety check
+
+Traffic that repeats one body, or that always sends the same size, does not look like the application it imitates. RLM-05 implements the check in [`realism/content.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/content.py). It runs when the labels have a `content` section or the command has `--max-duplicate-ratio`, so a labels file without either behaves as before.
+
+**Units.** The runner reassembles each direction of a TCP session itself, from the sequence numbers, the first copy of a byte winning, and it cuts the stream at a hole. It does not use the `capture/` extractor of CAP-01, as RLM-04 decided for the encryption check, so the realism runner stays independent of it. A unit is one HTTP/1 message when the application is HTTP (the name starts with `http`, or the client stream starts with a method), one UDP datagram, or one whole TCP direction otherwise.
+
+**What counts as the same payload.** The unit is hashed with SHA-256 after normalization. For HTTP the hash covers the start line, the headers in wire order with lower case names, and the body without chunked framing, and it leaves out the headers that change per message without changing the content, which are `Date`, `Expires`, `Last-Modified`, `Age`, `ETag`, the conditional headers, cookies, and trace identifiers. We keep the start line and the other headers in the hash because a message with an empty body, such as a GET, would otherwise have the same hash in every session. DNS ignores the transaction identifier. We chose these rules to flag a generator that replays one message, and not a client that asks twice for the same resource, which is why a labels file can drop more headers with `ignore_headers`.
+
+**Duplicate ratio.** For each application and direction, `(units - distinct hashes) / units`. The check fails when the ratio of any application is above `max_duplicate_ratio` (default 0.01, set in the labels or with `--max-duplicate-ratio`). We test each application and not the capture as a whole, so a varied application cannot hide a repeated one. The failure names the most repeated payload, its size and copies, and the sessions that carry it.
+
+**Sizes.** The entry reports count, minimum, maximum, mean, standard deviation, coefficient of variation, and the quantiles p5 to p99 of the unit sizes, per application and direction. A `sizes` entry in the labels gives the expected median and, optionally, the expected coefficient of variation with a relative tolerance (default 25%), and the check fails when the observed values are outside it. Fixed size traffic therefore fails an expected `cv`, and without an expectation the dispersion is only reported.
+
+**Encrypted sessions.** The runner skips sessions with a `tls_profile` and sessions whose stream starts with a TLS record, and it counts them in `skipped_encrypted_sessions`. The encryption check of RLM-04 reads only the Finished messages from tshark and does not expose plaintext, so there is nothing to reuse. The check also fails when no payload could be analysed, so a capture of only TLS sessions never passes. [`realism/tests/test_content.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/tests/test_content.py) builds repeated and varied captures, segmented and reordered TCP streams, and encrypted sessions in code, and the entry leaves `metrics` empty until the catalog has a duplicate ratio metric.
 
 ## Pinned Zeek and skipped parsers
 

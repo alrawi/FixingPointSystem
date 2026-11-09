@@ -1,0 +1,10 @@
+USER brorais.logem@example.test
+PASS Tst-Noutrouk9797
+STAT
+RETR 1
+DELE 1
+RETR 2
+DELE 2
+DELE 3
+RSET
+QUIT

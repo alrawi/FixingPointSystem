@@ -2,11 +2,11 @@
 //! Client and server profiles, which fix what each side puts on the wire.
 
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rustls::crypto::ring::{self, cipher_suite as cs, kx_group};
-use rustls::crypto::{CryptoProvider, SupportedKxGroup};
-use rustls::{KeyLog, SupportedCipherSuite, SupportedProtocolVersion};
+use rustls::crypto::{CryptoProvider, SupportedKxGroup, WebPkiSupportedAlgorithms};
+use rustls::{KeyLog, SignatureScheme, SupportedCipherSuite, SupportedProtocolVersion};
 
 use crate::error::TlsError;
 
@@ -193,6 +193,67 @@ impl FromStr for CipherSuite {
     }
 }
 
+/// A signature scheme that a client lists in its `signature_algorithms` extension.
+///
+/// The ring provider verifies exactly these nine schemes. A browser lists more
+/// (SHA-1 schemes, P-521, Ed448), which rustls cannot offer, so a browser profile
+/// lists the schemes of the browser that this enum can express, in the browser's order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SigScheme {
+    /// `ecdsa_secp256r1_sha256`, 0x0403.
+    EcdsaP256Sha256,
+    /// `ecdsa_secp384r1_sha384`, 0x0503.
+    EcdsaP384Sha384,
+    /// `ed25519`, 0x0807.
+    Ed25519,
+    /// `rsa_pss_rsae_sha256`, 0x0804.
+    RsaPssSha256,
+    /// `rsa_pss_rsae_sha384`, 0x0805.
+    RsaPssSha384,
+    /// `rsa_pss_rsae_sha512`, 0x0806.
+    RsaPssSha512,
+    /// `rsa_pkcs1_sha256`, 0x0401.
+    RsaPkcs1Sha256,
+    /// `rsa_pkcs1_sha384`, 0x0501.
+    RsaPkcs1Sha384,
+    /// `rsa_pkcs1_sha512`, 0x0601.
+    RsaPkcs1Sha512,
+}
+
+impl SigScheme {
+    /// The schemes of the ring provider, in its preference order.
+    pub const ALL: [SigScheme; 9] = [
+        SigScheme::EcdsaP384Sha384,
+        SigScheme::EcdsaP256Sha256,
+        SigScheme::Ed25519,
+        SigScheme::RsaPssSha512,
+        SigScheme::RsaPssSha384,
+        SigScheme::RsaPssSha256,
+        SigScheme::RsaPkcs1Sha512,
+        SigScheme::RsaPkcs1Sha384,
+        SigScheme::RsaPkcs1Sha256,
+    ];
+
+    fn rustls(self) -> SignatureScheme {
+        match self {
+            SigScheme::EcdsaP256Sha256 => SignatureScheme::ECDSA_NISTP256_SHA256,
+            SigScheme::EcdsaP384Sha384 => SignatureScheme::ECDSA_NISTP384_SHA384,
+            SigScheme::Ed25519 => SignatureScheme::ED25519,
+            SigScheme::RsaPssSha256 => SignatureScheme::RSA_PSS_SHA256,
+            SigScheme::RsaPssSha384 => SignatureScheme::RSA_PSS_SHA384,
+            SigScheme::RsaPssSha512 => SignatureScheme::RSA_PSS_SHA512,
+            SigScheme::RsaPkcs1Sha256 => SignatureScheme::RSA_PKCS1_SHA256,
+            SigScheme::RsaPkcs1Sha384 => SignatureScheme::RSA_PKCS1_SHA384,
+            SigScheme::RsaPkcs1Sha512 => SignatureScheme::RSA_PKCS1_SHA512,
+        }
+    }
+
+    /// Returns the code point of the scheme on the wire, for example `0x0403`.
+    pub fn code(self) -> u16 {
+        u16::from(self.rustls())
+    }
+}
+
 /// How a client keeps sessions for resumption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientResumption {
@@ -223,9 +284,14 @@ pub enum ServerResumption {
 ///
 /// The ClientHello lists the cipher suites in the order of `cipher_suites`
 /// (suites of a version that is not enabled drop out) and the groups in the
-/// order of `groups`. The first group also supplies the key share, so the
-/// handshake needs no retry when the server accepts it. An empty list selects
-/// the default of the ring provider.
+/// order of `groups`, and the signature schemes in the order of `sig_schemes`.
+/// The first group also supplies the key share, so the handshake needs no retry
+/// when the server accepts it. An empty list selects the default of the ring
+/// provider.
+///
+/// Rustls fixes the rest of the ClientHello: the set of extensions, their order
+/// (random per connection), and the absence of GREASE values. The browser
+/// profiles of [`crate::browser`] document what this costs in JA4 terms.
 #[derive(Debug, Clone)]
 pub struct ClientProfile {
     /// Name of the profile, for reports and logs.
@@ -241,6 +307,9 @@ pub struct ClientProfile {
     pub groups: Vec<Group>,
     /// Cipher suites in preference order.
     pub cipher_suites: Vec<CipherSuite>,
+    /// Signature schemes of the `signature_algorithms` extension, in preference
+    /// order. The list also limits what signatures the client accepts.
+    pub sig_schemes: Vec<SigScheme>,
     /// Session resumption of the connector.
     pub resumption: ClientResumption,
     /// Receives the secrets of every handshake, see [`crate::NssKeyLog`].
@@ -256,6 +325,7 @@ impl Default for ClientProfile {
             alpn: Vec::new(),
             groups: Vec::new(),
             cipher_suites: Vec::new(),
+            sig_schemes: Vec::new(),
             resumption: ClientResumption::InMemory { sessions: 256 },
             key_log: None,
         }
@@ -299,9 +369,49 @@ impl Default for ServerProfile {
     }
 }
 
-/// Builds the crypto provider with the suite and group order of a profile.
-pub(crate) fn provider(groups: &[Group], suites: &[CipherSuite]) -> Arc<CryptoProvider> {
+type SigCache = Vec<(Vec<SigScheme>, WebPkiSupportedAlgorithms)>;
+
+/// Returns the signature verification algorithms of the ring provider limited
+/// and ordered by `schemes`. The mapping slice lives as long as the process, and
+/// a cache keeps one per distinct list, so a run that builds many connectors with
+/// the same profile leaks only the first.
+fn sig_algorithms(schemes: &[SigScheme]) -> WebPkiSupportedAlgorithms {
+    static CACHE: Mutex<SigCache> = Mutex::new(Vec::new());
+    let base = ring::default_provider().signature_verification_algorithms;
+    let Ok(mut cache) = CACHE.lock() else {
+        return base;
+    };
+    if let Some((_, found)) = cache.iter().find(|(key, _)| key == schemes) {
+        return *found;
+    }
+    let mapping: Vec<_> = schemes
+        .iter()
+        .filter_map(|s| {
+            let want = s.rustls();
+            base.mapping
+                .iter()
+                .find(|(scheme, _)| *scheme == want)
+                .copied()
+        })
+        .collect();
+    let built = WebPkiSupportedAlgorithms {
+        all: base.all,
+        mapping: Box::leak(mapping.into_boxed_slice()),
+    };
+    cache.push((schemes.to_vec(), built));
+    built
+}
+
+/// Builds the crypto provider with the suite, group, and signature scheme order of a profile.
+pub(crate) fn provider(
+    groups: &[Group],
+    suites: &[CipherSuite],
+    schemes: &[SigScheme],
+) -> Arc<CryptoProvider> {
     let mut p = ring::default_provider();
+    if !schemes.is_empty() {
+        p.signature_verification_algorithms = sig_algorithms(schemes);
+    }
     if !suites.is_empty() {
         p.cipher_suites = suites.iter().map(|s| s.supported()).collect();
     }

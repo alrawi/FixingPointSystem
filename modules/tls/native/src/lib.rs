@@ -19,6 +19,7 @@
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod authority;
+pub mod browser;
 mod error;
 mod keylog;
 mod profile;
@@ -29,7 +30,7 @@ pub use error::{Side, TlsError};
 pub use keylog::NssKeyLog;
 pub use profile::{
     CipherSuite, ClientProfile, ClientResumption, Group, ServerProfile, ServerResumption,
-    TlsVersion,
+    SigScheme, TlsVersion,
 };
 pub use session::{HandshakeReport, TlsAcceptor, TlsConnector, TlsSession};
 

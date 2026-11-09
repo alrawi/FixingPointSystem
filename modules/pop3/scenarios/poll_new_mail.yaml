@@ -1,0 +1,41 @@
+scenario: poll_new_mail
+description: A mail client on port 110 that checks for new mail and downloads nothing. It logs in with USER and PASS, asks for STAT, lists the unique identifiers with UIDL to compare them with the ones that it knows, and leaves with QUIT. The server answers with the multi line UIDL response in the format of Dovecot. Polling sessions like this one are the most common POP3 traffic, and they are short.
+vars:
+  server_port: 110
+  server_name: pop3.example.test
+  messages: 6
+flows:
+  - id: poll_new_mail
+    module: pop3
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set:
+          login: "{{ pop3.credential('user') }}"
+          secret: "{{ pop3.credential('password') }}"
+      - send: "USER {{ vars.login }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "PASS {{ vars.secret }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "STAT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "UIDL\r\n"
+      - expect: { pattern: "\r\n.\r\n", timeout_ms: 5000 }
+      - send: "QUIT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - set: { box: "{{ rand_int(1, 2000000000) }}" }
+      - send: "+OK Dovecot ready. {{ pop3.banner(vars.server_name) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "+OK\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "+OK Logged in.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ pop3.stat_reply(vars.messages, vars.box) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ pop3.uidl_reply(last, vars.messages, vars.box) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "+OK Logging out.\r\n"
+      - close: fin
