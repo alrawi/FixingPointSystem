@@ -1,0 +1,23 @@
+scenario: https_fetch
+description: One HTTP/1.1 GET over TLS 1.3. Both sides upgrade the connection to TLS right after it opens, the client with the browser profile chrome-136 and the server with the profile server-tls13. The client sends the SNI www.example.test and offers h2 and http/1.1, the server selects http/1.1, and the response carries a length delimited body and Connection close.
+vars:
+  host: www.example.test
+  path: /index.html
+  server_port: 8443
+  body_size: 4096
+flows:
+  - id: fetch
+    module: http1
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - tls_upgrade: { profile: chrome-136, server_name: www.example.test }
+      - send: "{{ http1.request('GET', vars.path, vars.host, accept='text/html,application/xhtml+xml', connection='close', user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36') }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - expect: { bytes: "{{ vars.body_size }}", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - tls_upgrade: { profile: server-tls13 }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "{{ http1.response(200, body=fill(vars.body_size), content_type='text/html; charset=utf-8', connection='close') }}"
+      - close: fin

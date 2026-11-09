@@ -52,4 +52,4 @@ jobs:
         run: |
           python -m realism score --pcap modules/pop3/fixtures/pop3.pcapng \
             --labels modules/pop3/fixtures/expected.yaml --parsers tshark,zeek --output report.json
-          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c["applications"] for c in r["checks"]], indent=2))'
+          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))'

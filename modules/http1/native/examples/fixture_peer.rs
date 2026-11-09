@@ -9,27 +9,43 @@
 //! belongs to the n-th client session and both sides draw from the same
 //! session generators.
 //!
+//! The https scenarios upgrade their sessions to TLS (MOD-04). The agent builds
+//! no TLS profiles yet (AGT-14), so the peers build them with
+//! `tests/common/tls.rs`. The server generates a run authority, issues the
+//! certificate for `www.example.test`, and writes the authority certificate to
+//! the file of `--ca`. The client waits for that file, trusts only that
+//! authority, and appends the secrets of every handshake to the file of
+//! `--keylog` in the NSS format, which `capture.sh` injects into the capture.
+//!
 //! ```text
-//! fixture_peer server --listen 10.202.0.2 [options]
-//! fixture_peer client --connect 10.202.0.2 --source 10.201.0.2 [options]
+//! fixture_peer server --listen 10.202.0.2 --ca ca.pem [options]
+//! fixture_peer client --connect 10.202.0.2 --source 10.201.0.2 --ca ca.pem --keylog keys.log [options]
 //!
 //! options
 //!   --sessions N      sessions per scenario, default 10
 //!   --seed S          run seed, default 42
 //!   --var NAME=INT    replace an integer variable in every scenario that declares it
+//!   --ca FILE         the authority certificate in PEM form, which the server writes and the client reads
+//!   --keylog FILE     the key log of the client, default none (the secrets stay in memory)
 //! ```
 
 use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Duration;
 
 use fps_backend_kernel::{ConnectConfig, Connector, KernelListener, KernelStream, ListenConfig};
 use fps_flow::template::Filler;
 use fps_flow::{Manifest, ModuleSet, Scenario, Value};
 use fps_interp::{session_rng, Limits, OpenKind, OpenRequest, Opener, Session, SessionCtx, Side};
 use fps_module_http1::Http1;
+use fps_module_tls::NssKeyLog;
+
+#[path = "../../tests/common/tls.rs"]
+mod tls;
 
 /// Opens kernel TCP sessions for the interpreter. The listener binds on the
 /// first `accept` of each port and stays open for later sessions.
@@ -52,21 +68,29 @@ impl KernelOpener {
                     .map_err(to_io)
             }
             OpenKind::Accept => {
-                let addr = SocketAddr::new(self.server, port);
-                let i = match self.listeners.iter().position(|l| l.local_addr() == addr) {
-                    Some(i) => i,
-                    None => {
-                        let l =
-                            KernelListener::bind(addr, &ListenConfig::default()).map_err(to_io)?;
-                        self.listeners.push(l);
-                        self.listeners.len() - 1
-                    }
-                };
+                let i = self.listen(port)?;
                 self.listeners[i]
                     .accept()
                     .await
                     .map(|(s, _)| s)
                     .map_err(to_io)
+            }
+        }
+    }
+
+    /// Binds the listener of `port` unless it exists, and returns its index.
+    /// The server binds every port of every scenario before the first
+    /// session, because the client starts a scenario on its own port as soon as
+    /// the scenario before it ends, and the server may not have reached it yet.
+    fn listen(&mut self, port: u16) -> io::Result<usize> {
+        let to_io = |e: fps_backend_kernel::BackendError| io::Error::other(e.to_string());
+        let addr = SocketAddr::new(self.server, port);
+        match self.listeners.iter().position(|l| l.local_addr() == addr) {
+            Some(i) => Ok(i),
+            None => {
+                let l = KernelListener::bind(addr, &ListenConfig::default()).map_err(to_io)?;
+                self.listeners.push(l);
+                Ok(self.listeners.len() - 1)
             }
         }
     }
@@ -88,6 +112,8 @@ struct Options {
     sessions: u64,
     seed: u64,
     vars: Vec<(String, Value)>,
+    ca: Option<PathBuf>,
+    keylog: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Options, String> {
@@ -104,6 +130,8 @@ fn parse_args() -> Result<Options, String> {
         sessions: 10,
         seed: 42,
         vars: Vec::new(),
+        ca: None,
+        keylog: None,
     };
     let ip = |s: Option<String>| -> Result<IpAddr, String> {
         s.ok_or("missing address")?
@@ -132,6 +160,14 @@ fn parse_args() -> Result<Options, String> {
                 let v: i64 = v.parse().map_err(|e| format!("bad value of {k}: {e}"))?;
                 o.vars.push((k.to_string(), Value::Int(v)));
             }
+            "--ca" | "--keylog" => {
+                let path = PathBuf::from(args.next().ok_or("missing file name")?);
+                if flag == "--ca" {
+                    o.ca = Some(path);
+                } else {
+                    o.keylog = Some(path);
+                }
+            }
             other => return Err(format!("unknown option {other}")),
         }
     }
@@ -159,8 +195,52 @@ fn load(vars: &[(String, Value)]) -> Result<Vec<(String, Scenario)>, String> {
     Ok(out)
 }
 
+/// Builds the TLS profiles of this side, which the https scenarios name.
+async fn tls_profiles(o: &Options) -> Result<tls::Profiles, String> {
+    let profiles = tls::Profiles::default();
+    match o.side {
+        Side::Server => {
+            let authority = tls::authority().map_err(|e| e.to_string())?;
+            let identity = tls::identity(&authority).map_err(|e| e.to_string())?;
+            if let Some(ca) = &o.ca {
+                // Write and rename, so the client never reads half a certificate.
+                let partial = ca.with_extension("partial");
+                std::fs::write(&partial, authority.ca_pem())
+                    .and_then(|()| std::fs::rename(&partial, ca))
+                    .map_err(|e| format!("write {}: {e}", ca.display()))?;
+            }
+            profiles.with_servers(&identity).map_err(|e| e.to_string())
+        }
+        Side::Client => {
+            let ca =
+                o.ca.as_ref()
+                    .ok_or("the client needs --ca for the https scenarios")?;
+            let mut pem = None;
+            for _ in 0..100 {
+                if let Ok(bytes) = std::fs::read(ca) {
+                    pem = Some(bytes);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            let pem = pem.ok_or_else(|| format!("{} did not appear in 10 s", ca.display()))?;
+            let roots = tls::roots_from_pem(&pem)?;
+            let key_log = match &o.keylog {
+                Some(path) => {
+                    NssKeyLog::to_file(path).map_err(|e| format!("open {}: {e}", path.display()))?
+                }
+                None => NssKeyLog::in_memory(),
+            };
+            profiles
+                .with_clients(&roots, &Arc::new(key_log))
+                .map_err(|e| e.to_string())
+        }
+    }
+}
+
 async fn run(o: Options) -> Result<(), String> {
     let scenarios = load(&o.vars)?;
+    let profiles = tls_profiles(&o).await?;
     let filler = Filler::new(o.seed);
     let mut opener = KernelOpener {
         server: o.server,
@@ -168,6 +248,16 @@ async fn run(o: Options) -> Result<(), String> {
         connector: Connector::new(ConnectConfig::default()),
         listeners: Vec::new(),
     };
+    if o.side == Side::Server {
+        for (_, s) in &scenarios {
+            if let Some(Value::Int(port)) = s.vars.get("server_port") {
+                let port = u16::try_from(*port).map_err(|e| format!("server_port: {e}"))?;
+                opener
+                    .listen(port)
+                    .map_err(|e| format!("listen on {port}: {e}"))?;
+            }
+        }
+    }
     let mut session_id = 0;
     let mut failures = 0;
     for (name, s) in &scenarios {
@@ -189,6 +279,7 @@ async fn run(o: Options) -> Result<(), String> {
                 functions: &mut functions,
                 limits: Limits::default(),
             });
+            session.set_tls_upgrader(&profiles);
             if let Err(f) = session
                 .run_program(&mut opener, program, std::future::pending())
                 .await

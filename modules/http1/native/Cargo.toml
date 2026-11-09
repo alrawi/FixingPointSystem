@@ -18,7 +18,11 @@ fps-backend-kernel = { path = "../../../engine/fps-backend-kernel" }
 fps-golden = { path = "../../../tests/golden/rust" }
 fps-interp = { path = "../../../engine/fps-interp" }
 fps-io = { path = "../../../engine/fps-io" }
+# The https scenarios upgrade their sessions to TLS with the profiles of the TLS module (MOD-04).
+fps-module-tls = { path = "../../tls/native" }
 rand_pcg = "0.3"
+# Reads the CA certificate of the fixture peers, and names the root store type of the TLS module.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
 serde_yaml = { package = "serde_norway", version = "0.9" }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "test-util", "time"] }
@@ -28,6 +32,14 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "test-uti
 [[test]]
 name = "catalog"
 path = "../tests/catalog.rs"
+
+[[test]]
+name = "fixture"
+path = "../tests/fixture.rs"
+
+[[test]]
+name = "https"
+path = "../tests/https.rs"
 
 [[test]]
 name = "scenarios"

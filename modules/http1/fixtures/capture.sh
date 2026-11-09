@@ -7,13 +7,22 @@
 # own name prefix, runs the server side of every scenario in the server
 # namespace and the client side in the client namespace over kernel sockets,
 # captures the router's client arm, and scores the capture with the realism
-# runner. It needs root, ip, tcpdump, ss, ndpiReader, and tshark.
+# runner. It needs root, ip, tcpdump, ss, ndpiReader, tshark, and editcap.
 #
 #   sudo modules/http1/fixtures/capture.sh [OUTPUT_DIR]
 #
 # OUTPUT_DIR defaults to modules/http1/fixtures, where the capture lands as
 # http1.pcapng and the realism report as http1.report.json. The script exits
 # with the code of the realism runner, so a capture that fails a check fails.
+#
+# The four https scenarios (MOD-04) run over TLS. The client peer writes the
+# secrets of every handshake to a key log, and the script injects the key log
+# into the capture as a decryption secrets block, so the realism runner and
+# tshark decrypt the capture without a sidecar file. FPS_FIXTURE_KEYLOG names a
+# file that keeps the key log as well, for a reader that wants the sidecar. The
+# script then decrypts the capture with tshark and checks the HTTP inside TLS
+# with decrypted_check.py. FPS_FIXTURE_DECRYPTED_DIR keeps the decrypted view,
+# a capture of the plaintext streams, that the check feeds to nDPI.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -39,19 +48,28 @@ if [[ -z $peer ]]; then
   peer="${CARGO_TARGET_DIR:-$root/target}/debug/examples/fixture_peer"
 fi
 
+work=$(mktemp -d)
+ca="$work/ca.pem"
+keys=${FPS_FIXTURE_KEYLOG:-$work/keys.log}
+: > "$keys"
+
 export FPS_NETNS=${FPS_NETNS:-fpsh1fix}
 export FPS_STATE_DIR=${FPS_STATE_DIR:-/run/fps-netns-$FPS_NETNS}
 harness="$root/tests/harness/netns.sh"
 mkdir -p "$out"
 
-cleanup() { "$harness" down >/dev/null 2>&1 || true; }
+cleanup() {
+  "$harness" down >/dev/null 2>&1 || true
+  rm -rf "$work"
+}
 trap cleanup EXIT
 "$harness" up
 server_addr=$("$harness" info | sed -n 's/^SERVER_ADDR=//p')
 client_addr=$("$harness" info | sed -n 's/^CLIENT_ADDR=//p')
 
 "$harness" capture start "$out/http1.pcapng" client
-"$harness" exec server "$peer" server --listen "$server_addr" --sessions "$sessions" "${vars[@]}" &
+"$harness" exec server "$peer" server --listen "$server_addr" --sessions "$sessions" \
+  --ca "$ca" "${vars[@]}" &
 server_pid=$!
 for _ in $(seq 100); do
   if "$harness" exec server ss -Hltn "sport = :$port" | grep -q LISTEN; then
@@ -60,10 +78,19 @@ for _ in $(seq 100); do
   sleep 0.1
 done
 "$harness" exec client "$peer" client --connect "$server_addr" --source "$client_addr" \
-  --sessions "$sessions" "${vars[@]}"
+  --sessions "$sessions" --ca "$ca" --keylog "$keys" "${vars[@]}"
 wait "$server_pid"
 "$harness" capture stop
 
+# Embed the key log in the capture, so every reader finds the secrets with it.
+editcap --inject-secrets "tls,$keys" "$out/http1.pcapng" "$work/keyed.pcapng"
+mv "$work/keyed.pcapng" "$out/http1.pcapng"
+
 cd "$root"
+score_rc=0
 python3 -m realism score --pcap "$out/http1.pcapng" --labels "$here/expected.yaml" \
-  --parsers tshark --output "$out/http1.report.json"
+  --parsers tshark --output "$out/http1.report.json" || score_rc=$?
+check_rc=0
+python3 "$here/decrypted_check.py" "$out/http1.pcapng" --work "${FPS_FIXTURE_DECRYPTED_DIR:-$work}" \
+  --report "$out/http1.decrypted.json" || check_rc=$?
+exit $(( score_rc != 0 ? score_rc : check_rc ))

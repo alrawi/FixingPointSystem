@@ -1,22 +1,22 @@
 {
   "report": "fps-realism-report",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "generator": "fps-realism 0.1.0",
   "passed": true,
   "capture": {
     "file": "http1.pcapng",
-    "sha256": "bb415d34c55967781eb7b47db4fabf49982e1ebdf2a78ce61d953dfdc02377ce",
+    "sha256": "b501f54771cff9df7a8a58461f0ebaf1f8008731eba422e8344f80aa249842e6",
     "format": "pcapng",
     "link_types": [
       1
     ],
-    "frames": 1701,
+    "frames": 3176,
     "skipped_frames": 2,
-    "sessions": 120
+    "sessions": 200
   },
   "labels": {
     "file": "expected.yaml",
-    "sha256": "460015a6ba65adb5d8a004fe823ba659ba6e3441e30317fb042c709cf60034ec"
+    "sha256": "2050f46bff4a6ec0575e2290abdc01e9746e136d1a3293923505377bd66d524d"
   },
   "checks": [
     {
@@ -30,6 +30,14 @@
           "name": "realism.conformance_ratio",
           "labels": {
             "application": "http1",
+            "classifier": "ndpi"
+          },
+          "value": 1.0
+        },
+        {
+          "name": "realism.conformance_ratio",
+          "labels": {
+            "application": "https",
             "classifier": "ndpi"
           },
           "value": 1.0
@@ -48,6 +56,19 @@
           "observed": {
             "HTTP": 120
           }
+        },
+        {
+          "application": "https",
+          "accepted": [
+            "TLS"
+          ],
+          "sessions": 80,
+          "conforming": 80,
+          "ratio": 1.0,
+          "passed": true,
+          "observed": {
+            "TLS": 80
+          }
         }
       ],
       "unlabelled_sessions": 0,
@@ -65,10 +86,23 @@
         }
       ],
       "missing_parsers": [],
+      "skipped_parsers": [],
       "applications": [
         {
           "application": "http1",
           "sessions": 120,
+          "parser_errors": 0,
+          "malformed_packets": 0,
+          "by_parser": {
+            "tshark": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            }
+          }
+        },
+        {
+          "application": "https",
+          "sessions": 80,
           "parser_errors": 0,
           "malformed_packets": 0,
           "by_parser": {
@@ -87,6 +121,1748 @@
       },
       "errors": [],
       "errors_total": 0
+    },
+    {
+      "check": "encryption",
+      "metrics": [],
+      "passed": true,
+      "tool": {
+        "tool": "tshark",
+        "version": "4.2.2"
+      },
+      "keys": {
+        "embedded": true,
+        "sidecar": null
+      },
+      "labelled_sessions": 80,
+      "sample_limit": 100,
+      "sampled_sessions": 80,
+      "decrypted_sessions": 80,
+      "decrypted_ratio": 1.0,
+      "min_decrypted": 1.0,
+      "ja4_matched_sessions": 80,
+      "ja4_mismatched_sessions": 0,
+      "profiles": [
+        {
+          "profile": "chrome-136",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "sessions": 20,
+          "matched": 20,
+          "decrypted": 20
+        },
+        {
+          "profile": "edge-134",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "sessions": 20,
+          "matched": 20,
+          "decrypted": 20
+        },
+        {
+          "profile": "firefox-139",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "sessions": 20,
+          "matched": 20,
+          "decrypted": 20
+        },
+        {
+          "profile": "safari-18.5",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "sessions": 20,
+          "matched": 20,
+          "decrypted": 20
+        }
+      ],
+      "failures": [],
+      "sessions": [
+        {
+          "session": 121,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43712
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 122,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43724
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 123,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43726
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 124,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43730
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 125,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43744
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 126,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43758
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 127,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43766
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 128,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43770
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 129,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43774
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 130,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43786
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 131,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43788
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 132,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43794
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 133,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43798
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 134,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43808
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 135,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43822
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 136,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43834
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 137,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43846
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 138,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43850
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 139,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43852
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 140,
+          "profile": "chrome-136",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 43866
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8443
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 141,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50848
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 142,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50854
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 143,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50862
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 144,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50864
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 145,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50874
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 146,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50878
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 147,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50884
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 148,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50886
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 149,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50892
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 150,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50906
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 151,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50916
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 152,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50918
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 153,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50926
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 154,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50938
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 155,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50940
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 156,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50956
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 157,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50958
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 158,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50962
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 159,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50970
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 160,
+          "profile": "firefox-139",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 50974
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8444
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_f674693fb0dc",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_f674693fb0dc"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 161,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52572
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 162,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52582
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 163,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52598
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 164,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52612
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 165,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52618
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 166,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52634
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 167,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52648
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 168,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52650
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 169,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52664
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 170,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52674
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 171,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52686
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 172,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52702
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 173,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52714
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 174,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52722
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 175,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52736
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 176,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52746
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 177,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52750
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 178,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52760
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 179,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52776
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 180,
+          "profile": "safari-18.5",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 52790
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8445
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 181,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 34994
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 182,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 35008
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 183,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 35014
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 184,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 35024
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 185,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 35030
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 186,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 35044
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 187,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 35046
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 188,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 35062
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 189,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 35076
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 190,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 35078
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 191,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 51158
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 192,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 51160
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 193,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 51174
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 194,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 51178
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 195,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 51180
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 196,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 51194
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 197,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 51208
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 198,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 51220
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 199,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 51236
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        },
+        {
+          "session": 200,
+          "profile": "edge-134",
+          "client": {
+            "ip": "10.201.0.2",
+            "port": 51246
+          },
+          "server": {
+            "ip": "10.202.0.2",
+            "port": 8446
+          },
+          "server_name": "www.example.test",
+          "decrypted": true,
+          "ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "tshark_ja4": "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd",
+          "expected_ja4": [
+            "t13d1011h2_61a7ad8aa9b6_6d021c4c45cd"
+          ],
+          "ja4_matched": true,
+          "reasons": []
+        }
+      ]
     }
   ]
 }

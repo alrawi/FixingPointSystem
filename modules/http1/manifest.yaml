@@ -3,19 +3,21 @@ kind: Module
 name: http1
 version: 0.1.0
 type: app
-summary: HTTP/1.0 and HTTP/1.1 clients and servers for single fetches, keepalive browsing, and uploads with length delimited or chunked bodies.
+summary: HTTP/1.0 and HTTP/1.1 clients and servers for single fetches, keepalive browsing, and uploads with length delimited or chunked bodies, in the clear and over TLS 1.2 and 1.3 with browser profiles.
 engine_api: ">=0.2, <0.3"
 license: GPL-3.0-only
 provides:
   - { protocol: http, transport: tcp, port: 80 }
   - { protocol: http, transport: tcp, port: 8080 }
+  - { protocol: https, transport: tcp, port: 443 }
+  - { protocol: https, transport: tcp, port: 8443 }
 parameters:
   type: object
   additionalProperties: false
   properties:
     host: { type: string, minLength: 1, default: www.example.test, description: Host header value. }
     path: { type: string, minLength: 1, default: /index.html, description: Request target of single fetches. }
-    server_port: { type: integer, minimum: 1, maximum: 65535, default: 8080, description: TCP port of the server side. }
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 8080, description: "TCP port of the server side. The https scenarios default to 8443 to 8446, one port per scenario, so a capture tells them apart." }
     body_size: { type: integer, minimum: 0, maximum: 16777216, default: 4096, description: Response body size in bytes for single fetches. }
     page_size: { type: integer, minimum: 0, maximum: 16777216, default: 18000, description: Size of the chunked HTML page of a browsing session. }
     object_size: { type: integer, minimum: 0, maximum: 16777216, default: 12000, description: Size of each embedded object of a browsing session. }
@@ -55,8 +57,12 @@ scenarios:
   - scenarios/upload_chunked.yaml
   - scenarios/http10_fetch.yaml
   - scenarios/http10_keepalive.yaml
+  - scenarios/https_fetch.yaml
+  - scenarios/https_keepalive_browse.yaml
+  - scenarios/https_fetch_tls12.yaml
+  - scenarios/https_keepalive_browse_tls12.yaml
 fixtures:
-  - { capture: fixtures/http1.pcapng, expect: { ndpi: [HTTP] } }
+  - { capture: fixtures/http1.pcapng, expect: { ndpi: [HTTP, TLS] } }
 provenance:
   source: synthetic
   notes: Messages follow RFC 9110 and RFC 9112 for HTTP/1.1 and RFC 1945 for HTTP/1.0. Every body comes from the seeded fill() generator, and every host name lies under the reserved .test domain.
