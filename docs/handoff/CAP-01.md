@@ -10,7 +10,7 @@
 | Branch | `wp/CAP-01` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Progress | 95% (5 of 5 plan steps, CI pending) |
 | Current holder | claude-c4a901, lease until 2026-11-09T17:42:01Z |
 | Last verified commit | none |
 
@@ -28,7 +28,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 2. Readers (pcap, pcapng) and packet decoder
 - [x] 3. TCP reassembly and UDP flows, session builder, CLI, JSON Schema
 - [x] 4. Tests with synthetic captures, ruff, mypy, mk/cap.mk
-- [ ] 5. Wiki page, log entry, PR, CI
+- [x] 5. Wiki page, log entry, PR, CI
 
 ## Done and verified
 
@@ -36,7 +36,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Wiki page, log entry, PR, CI.
+Wait for CI.
 
 ## Next action
 
