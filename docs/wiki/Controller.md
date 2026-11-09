@@ -594,7 +594,7 @@ The transfer follows CON-13. `agents.Manager.FetchCapture` chooses a single use 
 
 A transfer ends with the call, so a broken call is final, and the next attempt has a new id. An agent that does not open the call within the heartbeat timeout after its answer fails the transfer with `ErrTransferTimeout`, and the end of the session fails it with `ErrSessionLost`. A call that arrives before the manager has read the answer waits for it, because the two travel on different streams.
 
-The manager sends `fetch_capture` only to an agent that reports `engine_api` 0.2.2 or later, and `start_capture` and `stop_capture` only to 0.2.0 or later. Below that, and when the agent answers `UNIMPLEMENTED`, the call fails with `agents.ErrCaptureUnsupported`, which the service treats as "this agent cannot serve the file" and not as a protocol fault. The Rust agent answers `UNIMPLEMENTED` until AGT-09.
+The manager sends `fetch_capture` only to an agent that reports `engine_api` 0.2.2 or later, and `start_capture` and `stop_capture` only to 0.2.0 or later. Below that, and when the agent answers `UNIMPLEMENTED`, the call fails with `agents.ErrCaptureUnsupported`, which the service treats as "this agent cannot serve the file" and not as a protocol fault. The Rust agent serves `fetch_capture` since AGT-09. Until AGT-12, `POST /v1/runs/{id}/captures` against the real agent answers 501, because the contract requires a `port` and the agent refuses any port.
 
 ### Storage, resume, and verification
 

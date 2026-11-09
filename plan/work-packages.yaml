@@ -2686,3 +2686,51 @@ work_packages:
       - contracts/examples/tests/dns_zone.yaml uses the first party dns/lookup_a scenario, so it runs against the agent. All additive, with contracts/changes/CON-15.md.
     acceptance:
       - The OpenAPI and proto checks pass, buf breaking reports no breaking change, and the example validates.
+
+  # Batch 17 follow-ups (2026-11-09).
+
+  - id: AGT-12
+    title: Port filter for captures and a real end to end capture
+    phase: 2
+    workstream: AGT
+    size: S
+    depends_on: [AGT-09, AGT-10]
+    paths: [engine/fps-agent/]
+    summary: >-
+      The REST contract requires a port when a capture starts, and the agent refuses any port, so
+      no capture starts through the controller against the real agent (AGT-09 finding).
+    deliverables:
+      - The agent accepts StartCapture with a port and records only sessions whose server port matches, for TCP (the shared cell of AGT-10) and UDP; an empty port keeps recording every session.
+      - engine/fps-agent/tests/controller_e2e.sh starts a capture on a dns run through POST /v1/runs/{id}/captures, stops it through the download, and checks the pcapng and its SHA-256.
+    acceptance:
+      - The controller e2e job downloads a capture from the real agent over mutual TLS and tshark (when installed) or the fps-capture reader parses it; agent tests show a port filter that skips other sessions.
+
+  - id: CTL-33
+    title: Version stamp in fps-controller
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [OPS-05]
+    paths: [controller/cmd/fps-controller/, .github/workflows/release.yml]
+    summary: >-
+      fps-controller -version reads only the Go build info, so the release workflow cannot stamp the
+      tag into the binary (OPS-05 finding).
+    deliverables:
+      - A version variable set with -ldflags -X that -version, the startup log, and GET /v1/capabilities report when set; the release workflow passes the tag version.
+    acceptance:
+      - A test builds with -X and reads the version back; a release dry run shows the stamped version.
+
+  - id: CTL-34
+    title: Byte weights in the compiler
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CTL-12]
+    paths: [controller/internal/compiler/, controller/internal/runs/]
+    summary: >-
+      For profile.basis bytes the compiler still treats weights as session shares, so a run starts at
+      session weighted byte shares and mixcontrol corrects it in the first seconds (CTL-12 finding).
+    deliverables:
+      - For basis bytes the compiler turns byte weights into session shares with each scenario's expected bytes per session, and newByteMix in runs/bytemix.go starts from those compiled weights.
+    acceptance:
+      - A golden plan for basis bytes shows the converted session shares; the CTL-12 convergence test shows byte shares within 2 points from the first window.
