@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #266 |
 | Branch | `wp/AGT-09` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #294 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-9c4e1a, lease until 2026-11-09T15:12:51Z |
-| Last verified commit | f8b08af |
+| Last verified commit | d887401 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Answer `fetch_capture` with the size, digest, and chunk size of the finished cap
 - [x] 1. Claim commit and this handoff.
 - [x] 2. Retention and transfer guard in `control.rs`, `fetch_capture` and the upload task in `session.rs`, the `--capture-retention` flag.
 - [x] 3. Tests: fake controller downloads in two parts, refusals, retention.
-- [ ] 4. `docs/wiki/Agent.md`, log entry, checks, pull request.
+- [x] 4. `docs/wiki/Agent.md`, log entry, checks, pull request.
 
 ## Done and verified
 
@@ -35,7 +35,7 @@ Pull request, CI, review hand-over. No real-controller e2e step: see Decisions.
 
 ## Next action
 
-Open the pull request and poll CI.
+Coordinator reviews and merges PR #294.
 
 ## Blockers and open questions
 
@@ -65,3 +65,4 @@ cargo test -p fps-agent
 |---|---|---|---|---|
 | 2026-11-09T14:45Z | claude-9c4e1a | claim | none | Claimed #266 |
 | 2026-11-09T15:10Z | claude-9c4e1a | checkpoint | f8b08af | Code, tests, docs done; opening the PR |
+| 2026-11-09T15:25Z | claude-9c4e1a | finish | d887401 | PR #294, CI green, ready for review |
