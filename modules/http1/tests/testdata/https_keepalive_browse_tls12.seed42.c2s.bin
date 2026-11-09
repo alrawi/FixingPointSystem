@@ -1,0 +1,15 @@
+GET / HTTP/1.1
+Host: www.example.test
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0
+Accept: text/html,application/xhtml+xml
+
+GET /static/img4380.png HTTP/1.1
+Host: www.example.test
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0
+Accept: image/avif,image/webp,image/png,*/*
+
+GET /static/img6940.png HTTP/1.1
+Host: www.example.test
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0
+Accept: image/avif,image/webp,image/png,*/*
+

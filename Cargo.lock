@@ -991,8 +991,10 @@ dependencies = [
  "fps-golden",
  "fps-interp",
  "fps-io",
+ "fps-module-tls",
  "rand 0.8.8",
  "rand_pcg",
+ "rustls",
  "serde_norway",
  "tokio",
 ]
