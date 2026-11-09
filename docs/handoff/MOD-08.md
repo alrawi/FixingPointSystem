@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #175 |
 | Branch | `wp/MOD-08` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (5 of 6 plan steps) |
+| Pull request | #318 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-a11910, lease until 2026-11-09T20:01:41Z |
-| Last verified commit | ad0f22c |
+| Last verified commit | 3784620 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -23,7 +23,7 @@ Ship the `imap` module under `modules/imap/`: client and server scenarios for CA
 - [x] 3. Scenario tests and golden transcripts
 - [x] 4. Fixture peer, capture.sh, expected.yaml, committed capture
 - [x] 5. mk file, workflow, README, Modules page, log entry
-- [ ] 6. Checks, pull request, CI
+- [x] 6. Checks, pull request, CI
 
 ## Done and verified
 
@@ -31,15 +31,16 @@ Ship the `imap` module under `modules/imap/`: client and server scenarios for CA
 - `cargo clippy -p fps-module-imap --all-targets -- -D warnings`, `cargo fmt --check`, and shellcheck are clean.
 - `make lint-mod-imap` (validate.py), `plan.py check`, `plan.py render --check`, and `plan.py lint` pass.
 - tshark 4.2.2 reads `fixtures/imap.pcapng` (40 sessions) with no malformed packet and no warning.
+- CI on 3784620 is green. The realism job recorded a fresh capture in the namespace harness and reported `40 of 40 sessions conform, observed {"IMAP": 40}` with nDPI 4.2, and the `mod-imap` job scored the committed capture with ratio 1.0 and `{"IMAP": 40}`.
 - A Python port of the nDPI 4.2 `mail_imap.c` loop classifies 40 of 40 sessions as IMAP at the fifth payload packet. The sandbox has no ndpiReader, so the realism job in CI gives the real ratio.
 
 ## Remaining
 
-Open the pull request, wait for CI, and fix failures inside the module paths.
+Nothing. The coordinator reviews and merges.
 
 ## Next action
 
-Open the pull request against main and poll the check runs.
+Review pull request #318.
 
 ## Blockers and open questions
 
@@ -75,4 +76,5 @@ python3 -m realism modules --format names
 | 2026-11-09T18:13Z | claude-a11910 | claim | none | Claimed #175 and created the branch |
 | 2026-11-09T18:25Z | claude-a11910 | checkpoint | 22c23a8 | Crate, manifest, scenarios, and tests |
 | 2026-11-09T18:34Z | claude-a11910 | checkpoint | ad0f22c | Fixture peer, capture, makefile, workflow |
-| 2026-11-09T18:45Z | claude-a11910 | checkpoint | pending | README, Modules page, log entry |
+| 2026-11-09T18:45Z | claude-a11910 | checkpoint | 3784620 | README, Modules page, log entry |
+| 2026-11-09T18:58Z | claude-a11910 | review | 3784620 | CI green, PR #318 ready for review |
