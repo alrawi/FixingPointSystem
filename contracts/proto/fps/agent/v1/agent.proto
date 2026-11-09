@@ -799,7 +799,9 @@ message MixEntry {
   string id = 1;
   // scenario is the ref of a ScenarioSource in the same plan.
   string scenario = 2;
-  // weight is the normalized weight within the basis, between 0 and 1.
+  // weight is the session share of the entry, between 0 and 1. The shares of
+  // a plan sum to 1. For the bytes basis the compiler has already converted
+  // the byte weights into session shares, and the agent uses the field as it is.
   double weight = 3;
   // params holds the effective scenario variables after test overrides.
   google.protobuf.Struct params = 4;

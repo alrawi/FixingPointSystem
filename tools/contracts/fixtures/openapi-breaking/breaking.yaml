@@ -1,0 +1,30 @@
+openapi: 3.0.3
+info: { title: Fixture API, version: 2.0.0 }
+# Deliberately breaking against base.yaml: it removes the path /items/{id},
+# adds a required query parameter, removes the response property name, and
+# changes the type of size.
+paths:
+  /items:
+    get:
+      operationId: listItems
+      parameters:
+        - { name: page_size, in: query, schema: { type: integer } }
+        - { name: owner, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Items.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Item" } }
+components:
+  schemas:
+    Item:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        size: { type: string }

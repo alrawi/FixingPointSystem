@@ -67,7 +67,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List stored configurations. */
+        get: operations["listConfigs"];
         put?: never;
         post: operations["createConfig"];
         delete?: never;
@@ -384,6 +385,11 @@ export interface components {
             engine_api: string;
             /** @example 0.1.0 */
             api_version?: string;
+            /**
+             * @description Version of the controller build, such as a release number or a commit, and absent when the build carries none. It is not the REST contract version, which `api_version` gives.
+             * @example 0.4.0
+             */
+            controller_version?: string;
             backends: ("kernel" | "af_xdp" | "dpdk")[];
             agents: components["schemas"]["Agent"][];
             modules: components["schemas"]["ModuleSummary"][];
@@ -954,6 +960,33 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listConfigs: {
+        parameters: {
+            query?: {
+                page_size?: components["parameters"]["PageSize"];
+                page_token?: components["parameters"]["PageToken"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stored configurations, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ConfigRef"][];
+                        next_page_token?: string;
+                    };
+                };
             };
             default: components["responses"]["Problem"];
         };

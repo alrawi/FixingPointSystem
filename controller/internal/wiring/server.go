@@ -143,6 +143,13 @@ func (p pending) DownloadCapture(w http.ResponseWriter, r *http.Request, id api.
 	p.captures.DownloadCapture(w, r, id, captureID)
 }
 
+// ListConfigs answers 501 until a package serves listConfigs (CON-16). It
+// resolves the method that every embedded handler inherits from
+// api.Unimplemented.
+func (p pending) ListConfigs(w http.ResponseWriter, r *http.Request, params api.ListConfigsParams) {
+	api.Unimplemented{}.ListConfigs(w, r, params)
+}
+
 // GetRunReport forwards getRunReport to the report handler, or answers 501.
 // StopCapture answers 501 until the captures package serves stopCapture
 // (CON-15). It resolves the method that every embedded handler inherits from
