@@ -154,7 +154,9 @@ impl ExtensionSet {
     /// describes, and checks the catalog against the manifest.
     ///
     /// Returns `Ok(false)` when the directory has no `extension.wasm`, which is
-    /// the case of a module without an extension.
+    /// the case of a module without an extension. The file is read here, after
+    /// any digest the caller took, so a caller that digests the module tree
+    /// reads the file itself and calls [`ExtensionSet::load_module_bytes`].
     pub fn load_module_dir(
         &mut self,
         manifest: &Manifest,
@@ -173,8 +175,25 @@ impl ExtensionSet {
                 })
             }
         };
-        self.load(&manifest.name, &bytes, limits, Some(&manifest.functions))?;
+        self.load_module_bytes(manifest, &bytes, limits)?;
         Ok(true)
+    }
+
+    /// Compiles `bytes` as the extension of the module that `manifest`
+    /// describes, and checks the catalog against the manifest.
+    ///
+    /// Use it when the caller has read `extension.wasm` itself, for example to
+    /// digest the module tree: the component that runs is then the very bytes
+    /// that were digested, and a writer cannot swap the file in between, which
+    /// [`ExtensionSet::load_module_dir`] cannot promise because it reads the
+    /// file again.
+    pub fn load_module_bytes(
+        &mut self,
+        manifest: &Manifest,
+        bytes: &[u8],
+        limits: WasmLimits,
+    ) -> Result<(), ExtensionError> {
+        self.load(&manifest.name, bytes, limits, Some(&manifest.functions))
     }
 
     /// Returns true when the set holds an extension for `module`.
@@ -263,6 +282,8 @@ pub struct SessionKey {
     pub scenario: Arc<Scenario>,
     /// The index of the session's flow in `scenario.flows`.
     pub flow: usize,
+    /// The transport of the session, which the extension sees at open.
+    pub transport: Transport,
 }
 
 /// The module functions of one session: extension modules through
@@ -311,7 +332,7 @@ impl SessionExtensions {
                 Side::Client => fps_wasm::Side::Client,
                 Side::Server => fps_wasm::Side::Server,
             },
-            transport: Transport::Tcp,
+            transport: self.key.transport,
             vars: &vars,
         };
         let host = SessionHost {
@@ -409,7 +430,10 @@ impl SessionExtensions {
 }
 
 /// Maps the outcome of a session to the close reason of its extensions.
-pub(crate) fn close_reason(outcome: &Result<(), fps_interp::Failure>) -> CloseReason {
+///
+/// Every runner that calls [`SessionExtensions::finish`] uses this mapping, so
+/// that the extension sees one close reason for one outcome on any transport.
+pub fn close_reason(outcome: &Result<(), fps_interp::Failure>) -> CloseReason {
     match outcome {
         Ok(()) => CloseReason::Finished,
         Err(f) => match f.reason {

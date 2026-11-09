@@ -1,0 +1,8 @@
+## [2026-11-10] ingest | ENG-21 extension seams found by AGT-11
+
+`fps-runtime` now closes the three seams that AGT-11 found. `fps_runtime::close_reason` is public, so a runner outside the crate maps a session outcome to a `CloseReason` with the same function as the worker. `SessionKey` has a `transport` field (`fps_runtime::Transport`, a re-export of `fps_wasm::Transport`), and `SessionExtensions::open` passes it to the extension, so a UDP session's extension sees `udp`; the worker sets `Transport::Tcp`. `ExtensionSet::load_module_bytes(&manifest, bytes, limits)` compiles bytes that the caller holds and checks the catalog against the manifest, and `load_module_dir` calls it, so existing callers are unchanged. The tests show that a test extension which refuses `udp` fails a UDP session and serves a TCP session, and that the compiled component is the passed bytes and not the file on disk. We updated the section on extensions in [Engine](Engine.md). The evidence is `docs/handoff/ENG-21.md`.
+
+## Shared page notes
+
+- Follow up for a later AGT package (`engine/fps-agent`, not edited here because AGT-13 edits it). In `udp.rs`, delete the private `close_reason` and call `fps_runtime::close_reason`. In the `SessionKey { .. }` literal of the UDP loop, add `transport: fps_runtime::Transport::Udp`. In `modules.rs`, read `extension.wasm` once, digest those bytes with the rest of the module tree, and call `ExtensionSet::load_module_bytes(manifest, &bytes, WasmLimits::default())` with the same bytes, instead of `load_module_dir`. A module without the file still loads no extension.
+- Any other `SessionKey { .. }` literal outside `fps-runtime` fails to compile until it sets `transport`. In this repository only the UDP loop of `fps-agent` builds one.

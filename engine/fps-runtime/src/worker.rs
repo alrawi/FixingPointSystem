@@ -26,7 +26,7 @@ use crate::extension::close_reason;
 use crate::metrics::SessionMetrics;
 use crate::opener::{global_session_id, Accepted, ClientOpener, Endpoints, TapOpener};
 use crate::runtime::WorkerExit;
-use crate::{RuntimeError, SessionKey, TlsProfiles};
+use crate::{RuntimeError, SessionKey, TlsProfiles, Transport};
 
 /// What a worker thread receives from the runtime.
 pub(crate) struct WorkerStart {
@@ -183,6 +183,8 @@ impl Worker {
                             side: self.side,
                             scenario: Arc::clone(&self.flow.scenario),
                             flow: self.flow.flow,
+                            // The worker runs stream sessions only.
+                            transport: Transport::Tcp,
                         },
                         native,
                     )),
