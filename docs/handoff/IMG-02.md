@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #198 |
 | Branch | `wp/IMG-02` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #258 |
+| Status | waiting for host test |
+| Progress | 95% (CI green, host test pending) |
 | Current holder | claude-55441d, lease until 2026-11-09T04:08:42Z |
 | Last verified commit | none |
 
@@ -53,3 +53,4 @@ Unverified on a real boot: whether `systemctl reboot` from `fps-tune.service` in
 |---|---|---|---|---|
 | 2026-11-08T14:00Z | claude-55441d | claim | see branch | |
 | 2026-11-08T16:00Z | claude-55441d | implement, tests, docs | see branch | Offline tests pass, waiting for PR CI |
+| 2026-11-08T16:20Z | claude-55441d | PR 258 opened, CI green | see branch | Waiting for host test, issue stays claimed |
