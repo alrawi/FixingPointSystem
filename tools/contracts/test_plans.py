@@ -157,7 +157,7 @@ def test_app_sim_needs_both_roles(plan: dict, tmp_path: Path) -> None:
     assert any("app_sim needs" in m for m in errors_for(doc, tmp_path))
 
 
-# Agent control protocol 0.2.1 on the CON-06 shape. Agents dial the controller, so the
+# Agent control protocol 0.2.2 on the CON-06 shape. Agents dial the controller, so the
 # controller serves the only service and the agent serves none.
 
 GRPC_CODES = {
@@ -211,6 +211,7 @@ def test_controller_messages_cover_the_commands() -> None:
         "update_rates": "UpdateRatesCommand",
         "start_capture": "StartCaptureCommand",
         "stop_capture": "StopCaptureCommand",
+        "fetch_capture": "FetchCaptureCommand",
     }
     assert _oneof("CommandResult", "result") == {
         "prepare": "PrepareResult",
@@ -219,7 +220,23 @@ def test_controller_messages_cover_the_commands() -> None:
         "update_rates": "UpdateRatesResult",
         "start_capture": "StartCaptureResult",
         "stop_capture": "StopCaptureResult",
+        "fetch_capture": "FetchCaptureResult",
     }
+
+
+def test_upload_capture_is_a_client_streaming_call_with_ordered_chunks() -> None:
+    svc = _file().services_by_name["ControllerService"]
+    assert list(svc.methods_by_name) == ["Register", "Session", "UploadCapture"]
+    upload = svc.methods_by_name["UploadCapture"]
+    assert upload.client_streaming and not upload.server_streaming
+    assert upload.input_type.name == "UploadCaptureRequest"
+    assert upload.output_type.name == "UploadCaptureResponse"
+    assert _oneof("UploadCaptureRequest", "body") == {
+        "open": "UploadCaptureOpen",
+        "chunk": "CaptureChunk",
+        "end": "CaptureEnd",
+    }
+    assert _numbers("CaptureChunk") == {"offset": 1, "data": 2}
 
 
 def _numbers(message: str) -> dict[str, int]:
@@ -228,7 +245,7 @@ def _numbers(message: str) -> dict[str, int]:
 
 
 def test_version_0_1_field_numbers_are_unchanged() -> None:
-    """Versions 0.2.0 and 0.2.1 only add fields, so every 0.1.0 number keeps its meaning."""
+    """Versions 0.2.0, 0.2.1, and 0.2.2 only add fields, so every 0.1.0 number keeps its meaning."""
     assert {k: v for k, v in _numbers("ModuleRef").items() if v <= 5} == {
         "name": 1,
         "version": 2,

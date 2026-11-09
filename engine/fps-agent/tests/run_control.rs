@@ -109,6 +109,15 @@ impl ControllerService for Fake {
         }))
     }
 
+    async fn upload_capture(
+        &self,
+        _req: Request<Streaming<pb::UploadCaptureRequest>>,
+    ) -> Result<Response<pb::UploadCaptureResponse>, Status> {
+        Err(Status::unimplemented(
+            "the fake controller takes no uploads",
+        ))
+    }
+
     type SessionStream =
         Pin<Box<dyn Stream<Item = Result<pb::SessionResponse, Status>> + Send + 'static>>;
 
@@ -650,6 +659,19 @@ async fn a_fake_controller_changes_rates_and_reads_a_capture() {
     assert_eq!(error_code(&r), Some(ErrorCode::FailedPrecondition), "{r:?}");
     let r = h.command(capture(start_capture(&id, "late"))).await;
     assert_eq!(error_code(&r), Some(ErrorCode::FailedPrecondition), "{r:?}");
+
+    // The capture download of CON-13 is not served until AGT-09.
+    let r = h
+        .command(session_response::Body::FetchCapture(
+            pb::FetchCaptureCommand {
+                plan_id: id.clone(),
+                capture_id: "cap-3".into(),
+                transfer_id: "t-1".into(),
+                ..Default::default()
+            },
+        ))
+        .await;
+    assert_eq!(error_code(&r), Some(ErrorCode::Unimplemented), "{r:?}");
     h.shutdown().await;
     let _ = std::fs::remove_dir_all(&dir);
 }

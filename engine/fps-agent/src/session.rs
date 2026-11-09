@@ -523,6 +523,12 @@ impl Shared {
             Some(Body::UpdateRates(cmd)) => Some(self.update_rates(reply, &cmd)),
             Some(Body::StartCapture(cmd)) => Some(self.start_capture(reply, &cmd)),
             Some(Body::StopCapture(cmd)) => self.stop_capture(reply, &cmd),
+            // AGT-09 serves the capture download of CON-13.
+            Some(Body::FetchCapture(_)) => Some(error(
+                reply,
+                ErrorCode::Unimplemented,
+                "the agent does not serve capture downloads yet".into(),
+            )),
         }
     }
 
