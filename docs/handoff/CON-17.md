@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #322 |
 | Branch | `wp/CON-17` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 3 plan steps, PR and CI pending) |
+| Pull request | #334 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-c17a4e |
-| Last verified commit | none |
+| Last verified commit | 1ed057b |
 
 ## Goal
 
@@ -26,7 +26,7 @@ Schema keyword, Go embedded copy, README row, validator rule, tests, CON-17 entr
 
 ## Remaining
 
-CI result. fps-flow check_action for UDP is an ENG change (reported).
+fps-flow check_action for UDP is an ENG change (reported).
 
 ## Next action
 
@@ -55,3 +55,4 @@ python3 -m pytest tools/contracts -q
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T21:10Z | claude-c17a4e | claim | none | Claimed #322 |
+| 2026-11-09T22:20Z | claude-c17a4e | finish | 1ed057b | CI green on PR #334, ready for review |
