@@ -6,9 +6,9 @@
 | Branch | `wp/AGT-05` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
-| Current holder | claude-a05c1d, lease until 2026-11-09T04:06:54Z |
-| Last verified commit | none |
+| Progress | 90% (3 of 4 plan steps) |
+| Current holder | claude-a05c1d, lease until 2026-11-09T04:21:27Z |
+| Last verified commit | f41f8df |
 
 ## Goal
 
@@ -16,22 +16,24 @@ Implement the CON-05 v0.2 commands UpdateRates, StartCapture, and StopCapture in
 
 ## Plan
 
-- [ ] 1. Rate handles: entry names in assemble.rs, UDP handles, UpdateRates handler
-- [ ] 2. Capture cell, UDP tap, StartCapture and StopCapture handlers
-- [ ] 3. Fake controller tests, controller-e2e check
-- [ ] 4. Agent.md, log entry, PR
+- [x] 1. Rate handles: entry names in assemble.rs, UDP handles, UpdateRates handler
+- [x] 2. Capture cell, UDP tap, StartCapture and StopCapture handlers
+- [x] 3. Fake controller tests (`tests/run_control.rs`), clippy, fmt
+- [ ] 4. Agent.md (written), log entry (written), open the PR and wait for CI
 
 ## Done and verified
 
-Nothing yet.
+- `cargo test -p fps-agent` passes, 31 unit tests and all component tests, including `tests/run_control.rs`.
+- `cargo clippy -p fps-agent --all-targets -- -D warnings` and `cargo fmt -p fps-agent --check` pass.
+- `plan.py check`, `render --check`, and `lint` pass.
 
 ## Remaining
 
-Everything.
+Open the PR, wait for CI (controller-e2e needs Go and runs in CI only), set ready for review.
 
 ## Next action
 
-Step 1.
+Open the PR with `gh api repos/$FPS_REPO/pulls`.
 
 ## Blockers and open questions
 
@@ -39,11 +41,16 @@ none
 
 ## Decisions taken in this package
 
-See the PR description and docs/wiki/Agent.md once written.
+- UDP entries are driven: the UDP workers register their schedule handles in `UdpRuntime::rate_control()`, and `control::Rates` joins that registry with the TCP one.
+- The digest covers one pcapng file made by concatenating the ring files oldest first.
+- CON-05 defines no transfer, so the file stays on the agent at `control::capture_path(dir, plan_id, capture_id)`.
+- Filters, named ports, and snap lengths are refused instead of ignored.
+- TCP sessions are not captured because `fps-runtime` has no tap hook (a gap for an ENG follow up).
+- Capture file errors use `ERROR_CODE_RESOURCE_EXHAUSTED`, because `INTERNAL` moves the agent to `FAILED`.
 
 ## Pitfalls
 
-The sandbox worktree guard refuses compound git commands. Run git alone per call.
+The sandbox worktree guard refuses compound git commands and long heredocs. Run git alone per call and write scripts with the editor.
 
 ## Verify the current state
 
@@ -56,3 +63,4 @@ CARGO_BUILD_JOBS=1 cargo test -p fps-agent
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-08 | claude-a05c1d | claim | | |
+| 2026-11-08 | claude-a05c1d | checkpoint | f41f8df | handlers and tests done |

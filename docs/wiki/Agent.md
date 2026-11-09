@@ -1,6 +1,6 @@
 # Agent
 
-This page describes the agent of the AGT workstream. The crate [`fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent) holds the agent binary. AGT-03 added capability detection, which [Implementation Plan](Implementation-Plan.md) describes, and AGT-01 adds the standalone mode, which runs a plan without a controller. AGT-02 added the client loop that dials the controller, which the section [Controller session](#controller-session) describes, and AGT-06 added the kernel requirement and the redial policy, which the sections [Kernel requirement](#kernel-requirement) and [Redial policy](#redial-policy) describe.
+This page describes the agent of the AGT workstream. The crate [`fps-agent`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-agent) holds the agent binary. AGT-03 added capability detection, which [Implementation Plan](Implementation-Plan.md) describes, and AGT-01 adds the standalone mode, which runs a plan without a controller. AGT-02 added the client loop that dials the controller, which the section [Controller session](#controller-session) describes, and AGT-06 added the kernel requirement and the redial policy, which the sections [Kernel requirement](#kernel-requirement) and [Redial policy](#redial-policy) describe. AGT-05 added the handlers of the v0.2 commands `UpdateRates`, `StartCapture`, and `StopCapture`, which the section [Run time rates and captures](#run-time-rates-and-captures) describes.
 
 ## Standalone mode
 
@@ -75,10 +75,10 @@ AGT-02 added the agent side of the control protocol. The agent dials the control
 ```bash
 fps-agent connect --controller http://127.0.0.1:7443 --agent-id local \
   --modules contracts/examples/modules [--root DIR] [--side both|client|server] [--label site=lab] \
-  [--redial-limit SECONDS]
+  [--redial-limit SECONDS] [--capture-dir DIR]
 ```
 
-The binary detects the host capabilities, adds the installed modules of `--modules` with their tree digests and the `--label` pairs, and calls `Register` with its state and plan. It then opens the `Session` stream with the token that `Register` returned, sends a heartbeat at the interval of the response and at once after every state change, and serves `prepare`, `start`, and `stop`. Logs are JSON lines on standard error from `tracing`. The controller speaks plain TCP until CTL-15 adds mutual TLS, so the agent dials `http://` addresses only.
+The binary detects the host capabilities, adds the installed modules of `--modules` with their tree digests and the `--label` pairs, and calls `Register` with its state and plan. It then opens the `Session` stream with the token that `Register` returned, sends a heartbeat at the interval of the response and at once after every state change, and serves `prepare`, `start`, `stop`, `update_rates`, `start_capture`, and `stop_capture`. Logs are JSON lines on standard error from `tracing`. The controller speaks plain TCP until CTL-15 adds mutual TLS, so the agent dials `http://` addresses only.
 
 ### Generated types
 
@@ -95,6 +95,9 @@ The module `fps_agent::session` keeps the agent state in one structure behind a 
 | `stop` | `PREPARED` | Releases the plan and answers with `IDLE` |
 | `stop` | `RUNNING`, `STOPPING` | A ramp down moves to `STOPPING`, an abort resets every session, and the answer carries the final snapshot once the workers end |
 | `stop` | `STOPPED` | Answers again with the final snapshot of the run |
+| `update_rates` | `RUNNING` | Sets the target of the whole agent for each named mix entry, see [Run time rates and captures](#run-time-rates-and-captures) |
+| `start_capture` | `RUNNING` | Starts a capture of the sessions that begin from now on |
+| `stop_capture` | Any state that holds the plan | Ends the capture and answers with the digest of its file |
 
 Any other pair fails with `ERROR_CODE_FAILED_PRECONDITION`, and a `plan_id` that does not name the loaded plan fails with `ERROR_CODE_NOT_FOUND`. A plan that breaks a rule or names another agent fails with `ERROR_CODE_INVALID_ARGUMENT`, a module digest, version, or tree that does not match fails with `ERROR_CODE_FAILED_PRECONDITION`, a plan with more workers than cores fails with `ERROR_CODE_RESOURCE_EXHAUSTED`, and a backend or flow kind that the run path lacks fails with `ERROR_CODE_UNIMPLEMENTED`. A failed command leaves the state unchanged. A worker that fails moves the agent to `FAILED`, and the next heartbeat carries the reason in `message`. A run that ends on its own moves to `STOPPED` and sends the final snapshot and a heartbeat.
 
@@ -136,12 +139,74 @@ Decision D12 item 11 says that an agent keeps redialing after an abort, with a b
 
 A supervisor such as systemd can restart on code 3 and treat code 2 as a configuration fault.
 
+### Run time rates and captures
+
+AGT-05 serves the commands that CON-05 added in protocol 0.2.0. The agent announces `engine_api` 0.2.1, so the controller may send them.
+
+#### UpdateRates
+
+The command is valid in `RUNNING` only, once the workers run. A `plan_id` that does not name the loaded plan fails with `ERROR_CODE_NOT_FOUND`. The handler turns every `RateUpdate` into one `fps_sched::RateControl::update` entry. The target is the rate or the concurrency of the whole agent for the mix entry, and each registry divides it among the workers of the entry in proportion to their current targets. A mix entry that the command does not name keeps its targets, a target of 0 pauses an entry, and a positive one resumes it.
+
+Mix entries run in two places. `fps-runtime` registers the rate handles of the TCP client workers, which `RuntimeHandle::rate_control()` returns, and `assemble.rs` now sets `FlowRef::entry` to the mix entry id, so two entries that share a scenario do not collide. The UDP workers of `src/udp.rs` build their schedules outside `fps-runtime`. They build the schedule before they report ready, register its handle in a registry of their own that `UdpRuntime::rate_control()` returns, and sleep at most 100 ms, so a paused or capped worker sees a new target within that time, as the TCP workers do. We chose to register the UDP handles, so `UpdateRates` accepts UDP entries too. `fps_agent::control::Rates` joins the two registries.
+
+The command applies completely or not at all. `Rates::update` checks every entry, kind, and value across both registries before it stores anything, and each refusal is `ERROR_CODE_INVALID_ARGUMENT` with a message that names the entry.
+
+| Refusal | Message names |
+|---|---|
+| The entry is not in the plan | `is not a mix entry of the plan` |
+| The plan has the entry, but no client worker of this agent runs it, as on a `--side server` agent | `has no client worker with a rate on this agent` |
+| One entry twice | `is named twice` |
+| `sessions_per_second` for a `concurrent_sessions` entry, or the reverse, or no target | `runs concurrent_sessions` or `runs sessions_per_second` |
+| A rate below 0 or not finite | `is not a finite number of at least 0` |
+
+`applied_at` is the agent time at which the registries took the targets. The workers apply them on their next tick, at most 100 ms later.
+
+#### StartCapture
+
+The command is valid in `RUNNING` only. The capture needs a `capture_id` of 1 to 128 letters, digits, dots, underscores, and hyphens that does not start with a dot, because the id names files, and a `capture_id` that is already in use in the plan fails with `ERROR_CODE_FAILED_PRECONDITION`. The agent runs one capture at a time, and a second `StartCapture` while one runs fails with `ERROR_CODE_FAILED_PRECONDITION` as well.
+
+The engine sees session bytes and no packets, so the agent captures sessions and not an interface. `fps-capture` samples every session (`EveryNth(1)`), synthesizes Ethernet, IP, and transport frames around the bytes, and writes them into a bounded ring. A capture that starts in the middle of a run reaches the workers through `fps_agent::control::CaptureCell`, a cell with one atomic flag and the current `Capture`. A worker reads it once per session, when the session opens, so a run without capture pays one atomic load per session, and a session that opens right after `StartCapture` is recorded. A session that was already open is not.
+
+| Field of the command | What the agent does |
+|---|---|
+| `port` | Empty only. A name that is not a port of the plan is `ERROR_CODE_INVALID_ARGUMENT`. A port of the plan is `ERROR_CODE_UNIMPLEMENTED`, because the engine cannot tell the ports of a plan apart |
+| `filter` | Empty only. The agent has no pcap-filter compiler, so any expression is `ERROR_CODE_INVALID_ARGUMENT`, the code that the contract gives for a filter that the agent cannot compile |
+| `snap_length` | 0 only. A positive value is `ERROR_CODE_UNIMPLEMENTED`, because the capture keeps whole sessions |
+| `max_bytes` | Ends the capture once the packets written hold this many bytes, without framing. 0 means no limit |
+| `max_duration` | Ends the capture after this time. Absent or 0 means no limit |
+
+The agent refuses what it cannot honor, so it never records more than the controller asked for. The ring holds at most `file_bytes * max_files` of packets, 64 MiB by 8 files, so the oldest sessions of a long capture leave the file. Sessions that the writer queue cannot take, or that do not fit a ring file, are dropped and counted.
+
+Both sides of a conversation are in one capture when the agent runs client workers, because a client session holds both directions. A process with server workers only, such as `--side server`, captures its server sessions. Key log lines go into the file as decryption secrets blocks, so a capture with TLS sessions is as sensitive as a private key. The agent creates its capture directory with mode 0700.
+
+#### StopCapture
+
+The command names the plan and the capture. It is valid in every state that holds the plan, and it is idempotent: a capture that ended at a limit, at the end of the run, or at an earlier `StopCapture` answers again with the same result. A `plan_id` or `capture_id` that the agent does not know fails with `ERROR_CODE_NOT_FOUND`. A thread ends the capture and answers when the file is ready, so a long join does not hold up the heartbeat. The run end ends every capture too, after the workers ended and every session reached the writer.
+
+**What the digest covers.** `StopCaptureResult` carries one digest, and the ring holds several files. The agent joins the ring files, oldest first, into one pcapng file by concatenating them, which the pcapng format allows because every ring file is a complete section. `bytes` is the size of that file, `digest` is `sha256:` and the lowercase hex SHA-256 of its bytes, and `packets` counts its enhanced packet blocks. The file is the deterministic result of the ring, so the digest does not depend on a tar header or a clock. A capture with no session is a valid file with a section header and an interface description. `dropped` counts sessions that the capture could not record, because the controller needs a number and the agent cannot know how many packets a dropped session held. Sessions that rotated out of a full ring are not in the file and not in `packets`. The ring files are removed once the joined file is written.
+
+**How the controller gets the file.** CON-05 does not define a transfer path, and `StopCaptureResult` has no path field, which the contract states as an open owner decision. The file stays on the agent at the path below, which the controller can compute from the plan id, the capture id, and the capture directory of the agent, and the agent logs the path, the packets, and the digest at `info` level (`capture file ready`). A later package adds the transfer. The directory is `--capture-dir`, which defaults to `fps-agent-captures` under the temporary directory of the process.
+
+```text
+<capture dir>/<plan id with each other byte as _>-<8 hex digits of sha256(plan id)>/<capture id>.pcapng
+```
+
+The function `fps_agent::control::capture_path` computes it. Starting a capture removes the files of an earlier capture with the same plan and capture id, so a reused id never mixes two captures.
+
+A failure to write the file is `ERROR_CODE_RESOURCE_EXHAUSTED`, never `ERROR_CODE_INTERNAL`, because the contract moves an agent to `FAILED` after `ERROR_CODE_INTERNAL`, and a full disk must not end a healthy run.
+
+#### TCP sessions are not captured yet
+
+The TCP workers belong to `fps-runtime`, which builds its openers with the kernel stream type and has no hook for a tap. The cell reaches the UDP workers of the agent only, so a capture of a plan with TCP flows holds its UDP flows, and a capture of a TCP only plan holds no session. A runtime change must read the cell when a client or server session opens and wrap its `KernelStream` with `Capture::tap`. This is the first open point of the Engine page, and the agent code that fills the cell is ready for it.
+
 ### Session tests
 
 | Level | Test | What it shows |
 |---|---|---|
 | Unit | `src/convert.rs` | The example plan survives the round trip through the generated types, and unknown enum numbers, negative durations, and list parameters are errors |
 | Component | `tests/session.rs` | An in process fake controller drives prepare, start, and stop over loopback and receives numbered cumulative snapshots and a final snapshot, out of order calls fail with their codes, a bad plan leaves the state unchanged, a run continues across a reconnection and stops on its own, and a silent controller makes the agent release the plan |
+| Component | `tests/run_control.rs` | A fake controller changes the rates of a TCP entry and a UDP entry of a running plan, and the new rates show in the snapshots, refused updates change nothing, a pause and a resume work, and the capture commands answer with the codes above. The controller starts a capture in the middle of the run, stops it, locates the file below the capture directory, reads it block by block, and checks the size, the SHA-256, and the packet count of the result. A second capture ends at its time limit with no `StopCapture`, and a third ends with the run and answers after it |
+| Unit | `src/control.rs` | An update spans both registries and keeps entries that it does not name, every refusal changes nothing, and plan ids with a separator map to flat, distinct directories |
 | Component | `tests/detect.rs`, `tests/redial.rs`, `tests/exit_codes.rs`, `make test-agt-redial` | A 5.4 kernel string gives an error that names `IP_LOCAL_PORT_RANGE`, and 6.3 and newer pass. The backoff doubles, restarts at 200 ms with jitter after an abort, and resets after a session that opened. Failed attempts end `serve` with `RedialLimit` at the limit, aborts alone reach the limit too, and the binary exits with 2 and 3 |
 | End to end | `tests/controller_e2e.sh FPS_CONTROLLER FPS_AGENT` | The real `fps-controller` enrolls the real agent, installs the example modules, and drives a loopback run over REST to `completed` with a passed verdict |
 
@@ -153,3 +218,4 @@ A local run of the end to end script with debug builds completed its run with 14
 - The agent does not bind ports during `prepare`. The workers bind their sockets when the run starts.
 - The redial limit counts time and not attempts, and a dial that hangs for its five second connect timeout can overshoot it by that much.
 - Mutual TLS waits for CTL-15 on the controller side.
+- TCP sessions are not captured until `fps-runtime` reads the capture cell, see [Run time rates and captures](#run-time-rates-and-captures). Filters, ports, and snap lengths are refused, and the capture file stays on the agent until a later package defines the transfer.
