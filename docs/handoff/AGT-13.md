@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #310 |
 | Branch | `wp/AGT-13` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Pull request | #345 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-a13e7c, lease until 2026-11-10T00:39:28Z |
 | Last verified commit | none |
 
@@ -25,7 +25,7 @@ The agent dispatches the native functions of every first party module crate (htt
 
 - Registry, dependencies, required-module registration: `cargo test -p fps-agent` passes (61 lib tests, `tests/first_party.rs`, all other agent tests). `cargo clippy -p fps-agent --all-targets -- -D warnings` and `cargo fmt --check` are clean.
 - `tests/first_party.rs` negative control: with `content` out of the registry the run fails every session.
-- `controller_e2e.sh` smtp run added; `bash -n` passes. It needs the Go controller, so CI is its first run.
+- `controller_e2e.sh` smtp run: the CI job `controller-e2e` on 94874da passed, with the line "relayed mail through the first party smtp and content modules with 100 succeeded sessions, verdict passed". The first CI run failed because the registry needs the smtp `fixtures/` in the module tree (a 422 on install); the Go job `test` failed once on a timing assertion of `TestEndToEnd` (fake agent PREPARED, want RUNNING) and passed on the rerun without Go changes.
 - `docs/wiki/Agent.md` and the log entry updated; `plan.py check`, `render --check` pass.
 
 ## Remaining
