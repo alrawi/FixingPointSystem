@@ -70,7 +70,7 @@ The boot test seeds the role through NoCloud and checks, per role, which units a
 
 ## Limits
 
-1. The controller serves plain HTTP and plain gRPC until the TLS and mutual TLS packages land, so the management network must be trusted.
+1. The controller serves plain HTTP, and plain gRPC through the explicit `insecure_plain_grpc: true` of `/etc/fps/controller.yaml`, so the management network must be trusted. CTL-27 made the controller require mutual TLS on gRPC by default, and the image keeps the plain listener as a stopgap until AGT-08 gives the agent mutual TLS and the image provisions its enrollment token.
 2. `agent_auto_enroll` is on in every role, so the controller role accepts agents from the management network without enrollment. The role selector does not change it, and the enrollment packages (CTL-27 and AGT-08) decide how it narrows.
 3. The agent runs as root, because the host setup moves interfaces into namespaces. The role selector does not narrow this.
 4. The DHCP address of `mgmt0` is read once at start. A changed lease needs a restart of `fps-mgmt-addr.service` and the two services.
