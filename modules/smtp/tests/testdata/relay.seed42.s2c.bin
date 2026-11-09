@@ -1,0 +1,15 @@
+220 mx.example.test ESMTP Postfix
+250-mx.example.test Hello mail-gw.example.test
+250-PIPELINING
+250-SIZE 35882577
+250-ETRN
+250-8BITMIME
+250-ENHANCEDSTATUSCODES
+250 SMTPUTF8
+250 2.1.0 Ok
+250 2.1.5 Ok
+250 2.1.5 Ok
+250 2.1.5 Ok
+354 End data with <CR><LF>.<CR><LF>
+250 2.0.0 Ok: queued as 822767
+221 2.0.0 Bye

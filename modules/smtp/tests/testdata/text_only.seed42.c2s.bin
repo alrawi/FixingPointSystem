@@ -1,0 +1,30 @@
+EHLO mail-gw.example.test
+MAIL FROM:<nounetrim.kleibrom@example.test>
+RCPT TO:<hostafar.vipis@example.test>
+DATA
+From: nounetrim.kleibrom@example.test
+To: hostafar.vipis@example.test
+Subject: Ticket TKT-953720 update
+Date: Tue, 29 Sep 2026 17:27:05 +0000
+Message-ID: <6620154f2a6da4e1c7c5a427@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Sanae,
+
+Our new library opens the doors at dawn without any delay. A patient teacher
+repairs the broken clocks in the early evening (1837). The local council
+keeps the records in order near the harbour.
+
+The local council carries a long list of notes every second Tuesday.
+
+Ref: INV-449242
+
+Kind regards,
+Lobruqua Bruka
+Support desk
+lobruqua.bruka@example.test
+.
+QUIT

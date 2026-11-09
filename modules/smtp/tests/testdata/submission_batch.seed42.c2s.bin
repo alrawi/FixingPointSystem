@@ -1,0 +1,99 @@
+EHLO laptop-19.example.test
+AUTH PLAIN AGJyb3JhaXMubG9nZW1AZXhhbXBsZS50ZXN0AFRzdC1Ob3V0cm91azk3OTc=
+MAIL FROM:<brorais.logem@example.test>
+RCPT TO:<drezoulir.soutraipais@example.test>
+RCPT TO:<trege.touter@example.test>
+DATA
+From: brorais.logem@example.test
+To: drezoulir.soutraipais@example.test, trege.touter@example.test
+Subject: Export 8962
+Date: Sat, 25 Jul 2026 17:57:51 +0000
+Message-ID: <9d715c64c929d952da354132@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_2cb0989b731f78ba5ea9"
+
+This is a multi-part message in MIME format.
+--=_fps_2cb0989b731f78ba5ea9
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Naelo,
+
+The morning market keeps the records in order with great care. The quiet
+river plans a careful survey every second Tuesday. A small workshop opens
+the doors at dawn in the early evening. The old bridge measures the water
+each week.
+
+Ref: INV-683077
+
+Kind regards,
+Ilobru Zinqua
+Support desk
+ilobru.zinqua@example.test
+
+..
+The line above holds a single dot.
+--=_fps_2cb0989b731f78ba5ea9
+Content-Type: application/gzip; name="export.csv.gz"
+Content-Disposition: attachment; filename="export.csv.gz"
+Content-Transfer-Encoding: base64
+
+H4sIAAAAAAAA/wEjAdz+VGhlIHF1aWV0IHJpdmVyIHNoYXJlcyB0aGUgcmVzdWx0cyB3aXRoIHRo
+ZSBncm91cCBuZWFyIHRoZSBoYXJib3VyLiBPdXIgbmV3IGxpYnJhcnkgd2VsY29tZXMgZXZlcnkg
+dmlzaXRvciB3aXRob3V0IGFueSBkZWxheS4gQSBzbWFsbCB3b3Jrc2hvcCB3ZWxjb21lcyBldmVy
+eSB2aXNpdG9yLgoKQSBwYXRpZW50IHRlYWNoZXIgc2hhcmVzIHRoZSByZXN1bHRzIHdpdGggdGhl
+IGdyb3VwIG5lYXIgdGhlIGhhcmJvdXIuIEEgcGF0aWVudCB0ZWFjaGVyIHBsYW5zIGEgY2FyZWZ1
+bCBzdXJ2ZXkuIFRoZSBvbGQgYnJpvnlYICMBAAA=
+--=_fps_2cb0989b731f78ba5ea9--
+.
+MAIL FROM:<brorais.logem@example.test>
+RCPT TO:<zoulik.faidupuk@example.test>
+RCPT TO:<brofouven.rasour@example.test>
+DATA
+From: brorais.logem@example.test
+To: zoulik.faidupuk@example.test, brofouven.rasour@example.test
+Subject: Export 5840
+Date: Sat, 13 Jun 2026 15:27:44 +0000
+Message-ID: <645279792e31c675a4627d17@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_1a140f79eb3cf573302f"
+
+This is a multi-part message in MIME format.
+--=_fps_1a140f79eb3cf573302f
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Kailovo,
+
+Our new library measures the water each week. A small workshop carries a
+long list of notes every second Tuesday. The local council opens the doors
+at dawn in the early evening.
+
+The old bridge carries a long list of notes.
+
+Ref: CASE-949281
+
+Kind regards,
+Kafen Bruvoqua
+Support desk
+kafen.bruvoqua@example.test
+
+..
+The line above holds a single dot.
+--=_fps_1a140f79eb3cf573302f
+Content-Type: application/gzip; name="export.csv.gz"
+Content-Disposition: attachment; filename="export.csv.gz"
+Content-Transfer-Encoding: base64
+
+H4sIAAAAAAAA/wFDAbz+VGhlIHF1aWV0IHJpdmVyIGNhcnJpZXMgYSBsb25nIGxpc3Qgb2Ygbm90
+ZXMuIEEgc21hbGwgd29ya3Nob3Agd2VsY29tZXMgZXZlcnkgdmlzaXRvciBiZWZvcmUgdGhlIHdp
+bnRlciBiZWdpbnMuIFRoZSBvbGQgYnJpZGdlIHNoYXJlcyB0aGUgcmVzdWx0cyB3aXRoIHRoZSBn
+cm91cCBldmVyeSBzZWNvbmQgVHVlc2RheS4gQSBwYXRpZW50IHRlYWNoZXIgb3BlbnMgdGhlIGRv
+b3JzIGF0IGRhd24gKDE4ODQpLiBPdXIgbmV3IGxpYnJhcnkgcmVwYWlycyB0aGUgYnJva2VuIGNs
+b2NrcyBldmVyeSBzZWNvbmQgVHVlc2RheS4gVGhlIG9sZCBicmlkZ2UgbWVhc3VyZXMgdGhlO/eQ
+QwEAAA==
+--=_fps_1a140f79eb3cf573302f--
+.
+QUIT
