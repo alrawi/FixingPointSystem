@@ -61,7 +61,7 @@ func problem(w http.ResponseWriter, status int, detail string, findings ...Findi
 func writeJSON(w http.ResponseWriter, status int, body string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_, _ = io.WriteString(w, body)
+	_, _ = io.WriteString(w, body) //nolint:gosec // G705: a JSON test body from the test itself, served as application/json
 }
 
 // stub is a recording API server.
