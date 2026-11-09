@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #261 |
 | Branch | `wp/ENG-19` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps, PR and CI pending) |
+| Pull request | #271 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-4e19a7, lease until 2026-11-09T05:22:58Z |
-| Last verified commit | none |
+| Last verified commit | 88300e6 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -35,11 +35,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Open the PR and wait for CI. tshark did not run locally.
+Nothing. CI green on 88300e6. tshark did not run locally and the eng-capture workflow does not run the runtime capture test (see PR).
 
 ## Next action
 
-Open the PR, wait for CI, then run fps_swarm.py review.
+Coordinator review and merge.
 
 ## Blockers and open questions
 
