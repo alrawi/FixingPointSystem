@@ -215,9 +215,11 @@ wait_run() {
   fail "run $run is $got, want $want"
 }
 
-# run_test FILE stores the test configuration FILE, validates it, runs it for
-# three seconds on the agent `local`, and waits for the completed run. It sets
-# run, summary, and metrics, which holds the application view of the metrics.
+# run_test FILE [STATE] stores the test configuration FILE, validates it, runs
+# it for three seconds on the agent `local`, and waits for the run to reach
+# STATE, which is completed by default. A run whose criteria fail ends in the
+# state failed. It sets run, summary, and metrics, which holds the application
+# view of the metrics.
 run_test() {
   local config report
   config=$(call POST /v1/configs "$runner" -H 'Content-Type: application/yaml' --data-binary "@$1" | json_field id)
@@ -227,7 +229,7 @@ run_test() {
   wait_run running
   sleep 3
   call POST "/v1/runs/$run:stop" "$runner" -H 'Content-Type: application/json' -d '{}' >/dev/null
-  wait_run completed
+  wait_run "${2:-completed}"
   summary=$(call GET "/v1/runs/$run" "$runner")
   metrics=$(call GET "/v1/runs/$run/metrics?view=application" "$runner")
 }
@@ -302,12 +304,14 @@ dns_succeeded=$(succeeded_of dns)
 echo "controller_e2e: run $run answered from the configured zone with $dns_succeeded succeeded dns sessions, verdict passed"
 
 # Without the setting the server answers from the shipped zone, which has no
-# name under e2e.test, so the lookups fail and so does the verdict.
+# name under e2e.test, so the lookups fail and the run ends in the state
+# failed, with the criteria as its reason.
 dns_test '' >"$work/dns_default.yaml"
-run_test "$work/dns_default.yaml"
-[[ $(json_field verdict.passed <<<"$summary") == False ]] || fail "the dns run $run without the setting passed, so the zone file made no difference: $summary"
+run_test "$work/dns_default.yaml" failed
+[[ $(json_field verdict.passed <<<"$summary") != True ]] || fail "the dns run $run without the setting passed, so the zone file made no difference: $summary"
+grep -q "\"run_id\":\"$run\".*criteria failed" "$work/controller.log" || fail "the dns run $run without the setting did not fail its criteria"
 [[ $(succeeded_of dns) == 0 ]] || fail "the dns run $run without the setting counted succeeded sessions: $metrics"
-echo "controller_e2e: run $run without zone_file failed its criteria, as the shipped zone lacks www.e2e.test"
+echo "controller_e2e: run $run without zone_file ended failed on its criteria, as the shipped zone lacks www.e2e.test"
 
 # A CA that is not the controller CA. The agent checks the enrollment endpoint
 # against it, so the handshake fails before the token leaves the agent.
