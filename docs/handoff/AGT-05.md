@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #162 |
 | Branch | `wp/AGT-05` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #259 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-a05c1d, lease until 2026-11-09T04:21:27Z |
-| Last verified commit | f41f8df |
+| Last verified commit | 1b8771d |
 
 ## Goal
 
@@ -19,7 +19,7 @@ Implement the CON-05 v0.2 commands UpdateRates, StartCapture, and StopCapture in
 - [x] 1. Rate handles: entry names in assemble.rs, UDP handles, UpdateRates handler
 - [x] 2. Capture cell, UDP tap, StartCapture and StopCapture handlers
 - [x] 3. Fake controller tests (`tests/run_control.rs`), clippy, fmt
-- [ ] 4. Agent.md (written), log entry (written), open the PR and wait for CI
+- [x] 4. Agent.md, log entry, PR #259, CI green
 
 ## Done and verified
 
@@ -29,11 +29,11 @@ Implement the CON-05 v0.2 commands UpdateRates, StartCapture, and StopCapture in
 
 ## Remaining
 
-Open the PR, wait for CI (controller-e2e needs Go and runs in CI only), set ready for review.
+Nothing. CI is green on 1b8771d, including controller-e2e. One Go test (pki TestTokens) failed once and passed on rerun, unrelated to this package.
 
 ## Next action
 
-Open the PR with `gh api repos/$FPS_REPO/pulls`.
+Review PR #259.
 
 ## Blockers and open questions
 
@@ -64,3 +64,4 @@ CARGO_BUILD_JOBS=1 cargo test -p fps-agent
 |---|---|---|---|---|
 | 2026-11-08 | claude-a05c1d | claim | | |
 | 2026-11-08 | claude-a05c1d | checkpoint | f41f8df | handlers and tests done |
+| 2026-11-08 | claude-a05c1d | ready for review | 1b8771d | PR 259, CI green |
