@@ -1,6 +1,6 @@
 # Realism runner
 
-The realism runner scores a capture against the applications that the traffic was meant to carry and writes a JSON realism report. It implements the protocol conformance criterion of the [specification](../docs/spec/specification.md#defining-realistic-traffic) with two checks. The conformance check passes when at least 99% of the sessions of every application are classified as that application, and the parser error check passes when no reference parser reports a parser error. nDPI is the classifier, and tshark and Zeek are the reference parsers. The runner calls each of them as a separate process and never links their code.
+The realism runner scores a capture against the applications that the traffic was meant to carry and writes a JSON realism report. It implements the protocol conformance criterion of the [specification](../docs/spec/specification.md#defining-realistic-traffic) with several checks. The conformance check passes when at least 99% of the sessions of every application are classified as that application, and the parser error check passes when no reference parser reports a parser error. nDPI is the classifier, and tshark and Zeek are the reference parsers. The runner calls each of them as a separate process and never links their code.
 
 ## Command
 
@@ -20,6 +20,7 @@ python3 -m realism score --pcap run.pcapng --labels expected.yaml --output repor
 | `--timeout S` | Seconds that ndpiReader and each parser may run, 300 by default |
 | `--parsers LIST` | `auto` by default, which runs every installed parser; `none`, which leaves out the parser error check; or a comma separated list of `tshark` and `zeek`, each of which must be installed |
 | `--max-duplicate-ratio R` | Largest share of duplicate payloads per application, from 0 to 1; adds the content variety check and overrides the labels file, whose default is 0.01 |
+| `--scenario FILE` | Scenario file whose flow graph the session structure check compares with the capture; repeat it for several scenarios; adds the check next to the `structure` section of the labels |
 | `--tshark PATH` | tshark program; defaults to `FPS_TSHARK` and then to `tshark` on the search path |
 | `--zeek PATH` | Zeek program; defaults to `FPS_ZEEK`, then to `zeek` on the search path, and then to `/opt/zeek/bin/zeek` |
 
@@ -119,13 +120,48 @@ The duplicate ratio of a group is `(units - distinct digests) / units`. A group 
 
 Sessions with a `tls_profile`, and sessions whose stream starts with a TLS record, are encrypted. The runner skips them and counts them in `skipped_encrypted_sessions`, because the encryption check decrypts only to find Finished messages and exposes no plaintext. An HTTP message that the end of the stream cuts short is dropped (`truncated_units`). The check fails when no payload at all could be analysed.
 
+## Session structure
+
+A scenario instance opens several connections, and a generator that drops one, repeats one, or runs them in the wrong order produces traffic that no real client makes. The session structure check reads the flow graph of a scenario file, rebuilds the connections of each instance from the capture, and compares both. It runs when the labels file has a `structure` section or the command has `--scenario`.
+
+```yaml
+structure:
+  scenarios:
+    - file: ../scenarios/web_browse.yaml   # relative to the labels file
+      vars: {server_port: 9090}            # optional, for a port that the run changed
+      match: {client_ip: 10.0.0.10}        # optional, limits the sessions it may claim
+      expected_instances: 40               # optional
+  max_gap_s: 30                            # optional, a silent client starts a new instance
+  tolerance_s: 0.002                       # optional slack for the ordering rules, default 0
+```
+
+[`examples/web_browse.labels.yaml`](examples/web_browse.labels.yaml) and [`examples/web_browse.scenario.yaml`](examples/web_browse.scenario.yaml) show a complete pair. This is the `web_browse` scenario of the specification, a DNS lookup flow followed by a page flow that runs `after` it.
+
+**Graph.** [`scenario_graph.py`](scenario_graph.py) reads the scenario with PyYAML and no template engine. A flow is one connection. A flow that is not spawned occurs once per instance. A spawned flow occurs as often as its parent spawns it, where a `spawn` in a `loop` repeats `count` times (a literal or `{{ vars.name }}`), a `spawn` in a `branch` may not happen, and a count that the file does not fix allows any number. The two sides of the parent both run `spawn` for the same child, and the check counts the child once. The edges are the `after` lists and the `spawn` actions.
+
+**Which connection is which flow.** A session is a flow when the transport equals `l4` and the server port equals the port of the flow, which the `accept` of the server program or the `connect` of the client program gives as a literal or a `{{ vars.name }}` reference. A flow without such a port, such as an FTP data connection that a reply announces, matches any session of its transport on a port that no other flow of the scenario fixes, and flows that cannot be told apart take the connections in the order in which the scenario spawns them.
+
+**Which connections form an instance.** The runner groups the sessions of a scenario by client address and walks them in order of their first packet. A session joins the open instance of its client while that instance has room for its flow, meaning fewer connections of the flow than the graph allows. Otherwise it opens a new instance, and so does a client that was silent for longer than `max_gap_s`. A session that matches no flow, or that no scenario entry may claim, counts in `sessions_unassigned` and is not judged. A session joins an instance by its flow and not by its position, so a page fetch that starts before its lookup still joins the instance of that lookup, and the ordering rule then names the broken edge.
+
+The grouping has limits.
+
+- One client address that runs several instances at the same time cannot be split. The extra connections open an instance of their own that lacks its other flows.
+- Clients behind one address look like one client.
+- A missing or repeated connection shifts the later connections of that client into other instances, so one fault can fail the next instance too. The failure of such an instance says that it opened because the instance before had no room.
+- Flows of one transport without a fixed port are interchangeable. The check counts them and checks them against the `spawn` edges, and it cannot tell which of them a connection is.
+- Scenarios that share a transport, a port, and a client address cannot be told apart in one capture, so give each its own `match`, or record one scenario per capture. The `ftp.pcapng` fixture mixes five scenarios on one address and one control port, so no single scenario file describes it.
+
+**Rules.** Per instance and flow, the number of connections must lie within what the graph allows. Per `after` edge, every connection of the later flow starts no earlier than every connection of the earlier flow completed. A session completes at its last packet with payload, FIN, or RST, and the closing ACK does not count, because the engine starts the next flow when the close action returns. Per `spawn` edge, every connection of the child starts between the first and the last packet of some connection of the parent. `tolerance_s` loosens both comparisons. The check also fails when a scenario matches no session, and when `expected_instances` disagrees with the number of instances.
+
+A failure names the scenario, the instance with its client address and first packet, and the broken edge with both sessions and their times relative to the instance, for example `scenario web_browse instance 1 (client 10.0.0.10, first packet 1700000000.001000): edge after lookup -> page violated: page (session 1, tcp 10.0.0.10:40001 -> 10.0.1.80:8080) starts at +0.000000 s, before lookup (session 2, udp 10.0.0.10:40000 -> 10.0.1.53:53) completes at +0.030999 s`. The entry lists the flows with their allowed and observed connection counts, the edges, the first 50 failed instances with their connections, and the first 50 failures (`failures_total` counts all). It leaves `metrics` empty until the catalog has a metric for it.
+
 ## Classifiers
 
 `realism/classifier.py` defines the `Classifier` protocol, which takes a capture and its sessions and returns a protocol name per session. `NdpiClassifier` runs ndpiReader and parses its CSV output by column name, so it reads nDPI 4.2 and later layouts. `StubClassifier` labels sessions with a function and serves the tests.
 
 ## Tests
 
-The tests build every capture in code with [`tests/pcapgen.py`](tests/pcapgen.py), so the repository holds no captured traffic. They replace ndpiReader, tshark, and Zeek with stubs or with fake programs that print fixed output. Three optional modules run the real tools and skip each tool that is not installed. `tests/test_ndpi_reader.py` runs ndpiReader, `tests/test_parser_tools.py` runs tshark and Zeek on a capture with one malformed DNS message and on clean captures, and `tests/test_encryption.py` runs tshark on TLS captures that `tests/tlsgen.py` builds from real handshakes of the Python `ssl` module (with `openssl` for the certificate). `tests/test_content.py` builds every content capture in code, with repeated and with varied bodies, segmented and reordered TCP, and encrypted sessions. `tests/test_ja4.py` checks the JA4 code against the worked example of the specification. The `rlm` workflow installs `libndpi-bin` and `tshark` from Ubuntu and `zeek-core` from the package repository of the Zeek project, so CI runs every optional test.
+The tests build every capture in code with [`tests/pcapgen.py`](tests/pcapgen.py), so the repository holds no captured traffic. They replace ndpiReader, tshark, and Zeek with stubs or with fake programs that print fixed output. Three optional modules run the real tools and skip each tool that is not installed. `tests/test_ndpi_reader.py` runs ndpiReader, `tests/test_parser_tools.py` runs tshark and Zeek on a capture with one malformed DNS message and on clean captures, and `tests/test_encryption.py` runs tshark on TLS captures that `tests/tlsgen.py` builds from real handshakes of the Python `ssl` module (with `openssl` for the certificate). `tests/test_content.py` builds every content capture in code, with repeated and with varied bodies, segmented and reordered TCP, and encrypted sessions. `tests/test_structure.py` builds web_browse, ftp, and dns captures in code and reads the first-party scenario files under `modules/`. `tests/test_ja4.py` checks the JA4 code against the worked example of the specification. The `rlm` workflow installs `libndpi-bin` and `tshark` from Ubuntu and `zeek-core` from the package repository of the Zeek project, so CI runs every optional test.
 
 ```bash
 python3 -m pip install -r realism/requirements-dev.txt

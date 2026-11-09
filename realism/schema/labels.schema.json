@@ -117,6 +117,57 @@
         }
       }
     },
+    "structure": {
+      "description": "Scenario files for the session structure check. The check rebuilds the connections of each scenario instance from the capture and compares their count and ordering with the flows, after edges, and spawn edges of the scenario. It runs when this section is present.",
+      "type": "object",
+      "required": ["scenarios"],
+      "additionalProperties": false,
+      "properties": {
+        "scenarios": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["file"],
+            "additionalProperties": false,
+            "properties": {
+              "file": {"description": "Scenario file, relative to the labels file.", "type": "string", "minLength": 1},
+              "vars": {
+                "description": "Scenario variables that replace the ones of the file, for example a port that the run changed.",
+                "type": "object"
+              },
+              "match": {
+                "description": "Limits the sessions that this scenario may claim, with the fields of a session rule.",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "transport": {"enum": ["tcp", "udp"]},
+                  "client_ip": {"type": "string"},
+                  "client_port": {"type": "integer", "minimum": 0, "maximum": 65535},
+                  "server_ip": {"type": "string"},
+                  "server_port": {"type": "integer", "minimum": 0, "maximum": 65535}
+                }
+              },
+              "expected_instances": {
+                "description": "Number of instances that the capture must hold. Left open when absent.",
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "max_gap_s": {
+          "description": "A client that is silent for longer than this many seconds opens a new instance with its next connection. No gap splits instances when absent.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "tolerance_s": {
+          "description": "Slack in seconds for the ordering comparisons. The default is 0.",
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
     "sessions": {
       "type": "array",
       "items": {

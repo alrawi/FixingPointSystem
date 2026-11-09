@@ -15,14 +15,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from realism import __version__, conformance, content, encryption, parser_errors
+from realism import __version__, conformance, content, encryption, parser_errors, structure
 from realism.capture import summarize
 from realism.classifier import Classifier
 from realism.labels import load
 from realism.parsers import ParserRunner
 
 REPORT_FORMAT = "fps-realism-report"
-REPORT_VERSION = "0.5.0"
+REPORT_VERSION = "0.6.0"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "realism-report.schema.json"
 LABELS_SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "labels.schema.json"
 
@@ -76,6 +76,7 @@ def score(
     tls_probe: encryption.TlsProbe | None = None,
     keylog: Path | None = None,
     max_duplicate_ratio: float | None = None,
+    scenario_files: Sequence[Path] = (),
 ) -> Report:
     """Score a capture against its labels and return the realism report.
 
@@ -92,6 +93,10 @@ def score(
     Labels with a ``content`` section, or a ``max_duplicate_ratio`` argument, add the
     content variety check. The argument overrides the ratio of the labels, which
     defaults to 0.01.
+
+    Labels with a ``structure`` section, or ``scenario_files`` (paths of scenario files),
+    add the session structure check, which compares the connections of each scenario
+    instance with the flow graph of the scenario.
     """
     labels = load(labels_path)
     summary = summarize(pcap)
@@ -111,6 +116,8 @@ def score(
         checks.append(encryption.check(pcap, summary.sessions, labels, probe, keylog).to_dict())
     if labels.content is not None or max_duplicate_ratio is not None:
         checks.append(content.check(pcap, summary.sessions, labels, max_duplicate_ratio).to_dict())
+    if labels.structure is not None or scenario_files:
+        checks.append(structure.check(pcap, summary.sessions, labels, scenario_files).to_dict())
     return Report(
         capture={
             "file": pcap.name,
