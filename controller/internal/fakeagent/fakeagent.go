@@ -567,6 +567,8 @@ func (a *Agent) apply(cmd *agentpb.SessionResponse) *agentpb.CommandResult {
 			return fail(agentpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "update rates: %v", err)
 		}
 		res.Result = &agentpb.CommandResult_UpdateRates{UpdateRates: &agentpb.UpdateRatesResult{AppliedAt: timestamppb.Now()}}
+	case *agentpb.SessionResponse_StartCapture, *agentpb.SessionResponse_StopCapture, *agentpb.SessionResponse_FetchCapture:
+		return a.applyCapture(cmd, res, state, plan) // see capture.go
 	default:
 		return fail(agentpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "command %d has no body", cmd.GetCommandId())
 	}
