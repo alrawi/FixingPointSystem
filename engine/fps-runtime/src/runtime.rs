@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use fps_capture::CaptureCell;
 use fps_interp::Side;
 use fps_sched::RateControl;
 use fps_stats::Snapshot;
@@ -65,6 +66,7 @@ impl Runtime {
             collector: Collector::new(),
             listen: BTreeMap::new(),
             rates: Arc::new(RateControl::new()),
+            capture: config.capture.clone(),
         };
         let mut failure = None;
         for w in config.workers.iter().cloned() {
@@ -76,6 +78,7 @@ impl Runtime {
                 control: control_rx.clone(),
                 snapshots: snap_tx.clone(),
                 ready: ready_tx.clone(),
+                capture: config.capture.clone(),
             };
             match std::thread::Builder::new()
                 .name(format!("fps-worker-{id}"))
@@ -132,6 +135,7 @@ pub struct RuntimeHandle {
     collector: Collector,
     listen: BTreeMap<u32, Vec<SocketAddr>>,
     rates: Arc<RateControl>,
+    capture: CaptureCell,
 }
 
 impl RuntimeHandle {
@@ -152,6 +156,17 @@ impl RuntimeHandle {
     /// sit at the cap, so a change takes effect within that time.
     pub fn rate_control(&self) -> Arc<RateControl> {
         Arc::clone(&self.rates)
+    }
+
+    /// Returns the cell that the workers read when a session opens, for the
+    /// agent to start and stop a capture in the middle of the run.
+    ///
+    /// [`CaptureCell::set`] taps every TCP session that opens from then on,
+    /// on a client worker and on a server worker, and [`CaptureCell::clear`]
+    /// ends it. Sessions that are already open are not tapped. While the cell
+    /// is empty a session pays one atomic load when it opens.
+    pub fn capture_cell(&self) -> CaptureCell {
+        self.capture.clone()
     }
 
     /// Stops new sessions and lets open sessions finish within `ramp_down`,

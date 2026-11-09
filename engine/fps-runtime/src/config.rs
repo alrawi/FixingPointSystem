@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fps_backend_kernel::{ConnectConfig, ListenConfig};
+use fps_capture::CaptureCell;
 use fps_flow::function::NoFunctions;
 use fps_flow::program::Flow;
 use fps_flow::{Scenario, TemplateFn};
@@ -155,6 +156,11 @@ pub struct RuntimeConfig {
     pub snapshot_interval: Duration,
     /// The workers.
     pub workers: Vec<WorkerConfig>,
+    /// The cell that workers read when a session opens. While it is empty no
+    /// session is tapped. Keep a clone, or take one from
+    /// [`crate::RuntimeHandle::capture_cell`], to start a capture in the
+    /// middle of the run with [`CaptureCell::set`].
+    pub capture: CaptureCell,
 }
 
 impl RuntimeConfig {
@@ -164,7 +170,16 @@ impl RuntimeConfig {
             seed,
             snapshot_interval: Duration::from_secs(1),
             workers,
+            capture: CaptureCell::new(),
         }
+    }
+
+    /// Returns the configuration with `capture` as the cell that the workers
+    /// read, for an owner that shares one cell across several runtimes.
+    #[must_use]
+    pub fn with_capture(mut self, capture: CaptureCell) -> Self {
+        self.capture = capture;
+        self
     }
 
     /// Checks worker ids, flows, and addresses before any thread starts.

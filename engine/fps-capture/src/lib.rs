@@ -29,6 +29,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod cell;
 mod frames;
 pub mod pcapng;
 mod ring;
@@ -44,6 +45,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use fps_io::{DatagramIo, SessionIo};
 
+pub use cell::CaptureCell;
 use frames::{Event, EventKind, Params};
 pub use frames::{FlowEndpoints, Side, Transport};
 pub use ring::{KeyLogMode, RingConfig};
