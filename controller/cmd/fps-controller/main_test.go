@@ -289,6 +289,35 @@ func TestLoadConfigLayersMetricsTokenFile(t *testing.T) {
 	}
 }
 
+func TestLoadConfigLayersTrustStoreSettings(t *testing.T) {
+	path := writeConfig(t, "trust_store_file: /from/file.json\nallow_unsigned_modules: true\n")
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		wantStore string
+		wantAllow bool
+	}{
+		{"defaults", nil, "", false},
+		{"file", []string{"-config", path}, "/from/file.json", true},
+		{"flags", []string{"-trust-store-file", "/from/flag.json", "-allow-unsigned-modules"}, "/from/flag.json", true},
+		{"flags over file", []string{"-config", path, "-trust-store-file", "/from/flag.json", "-allow-unsigned-modules=false"}, "/from/flag.json", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, err := parseFlags(tc.args, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := loadConfig(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.TrustStoreFile != tc.wantStore || cfg.AllowUnsignedModules != tc.wantAllow {
+				t.Errorf("config = %q %v, want %q %v", cfg.TrustStoreFile, cfg.AllowUnsignedModules, tc.wantStore, tc.wantAllow)
+			}
+		})
+	}
+}
+
 // TestBinaryShutsDownOnSIGTERM builds the real binary, starts it, checks the
 // health endpoint, sends SIGTERM, and expects exit code 0 with JSON logs.
 func TestBinaryShutsDownOnSIGTERM(t *testing.T) {

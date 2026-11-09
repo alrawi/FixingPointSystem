@@ -173,6 +173,8 @@ allow_unsigned_modules: false           # development setting, only meaningful w
 | `trust_store_file` | none | JSON file that `signing.TrustStore.Encode` writes. The registry reads it when it opens and again at every install, so a key that an operator revokes in the file stops verifying without a restart. A missing or malformed file stops the controller at start, and an install fails closed when the file goes bad later |
 | `allow_unsigned_modules` | `false` | Lets the registry install a module that has no signature, and logs a warning for each. A signature that fails is refused in every case |
 
+CTL-31 added the flag forms `-trust-store-file file` and `-allow-unsigned-modules`. They follow the usual layering, so a flag that appears on the command line overrides the configuration file, and `-allow-unsigned-modules=false` switches the file setting off.
+
 The rules, in the order that `Install` applies them:
 
 1. **No trust store.** The registry does not require signatures. It installs every module that passes validation and logs a warning, so a controller that nobody configured for signing and the example modules keep working. A signature that accompanies the module cannot be checked, so the registry ignores it and stores none, because a stored signature always means that the registry verified it.
@@ -945,7 +947,7 @@ pa.Revoke("agent-a")                                       // ends the identity 
 
 `Open` generates the CA on the first start and loads it afterwards. The directory holds three files. `ca.key` has mode 0600 and the directory has mode 0700, `ca.crt` is public, and `state.json` has mode 0600 and holds the enrollment state. The CA is an ECDSA P-256 key with a 10 year certificate that may sign only end entity certificates (`MaxPathLen` 0). `Open` refuses to start when `ca.key` is readable by group or others, when only one of the two files exists, when the certificate does not match the key, when the CA expired, or when `state.json` is damaged, because each case means that the trust anchor is not what the controller wrote. An empty `Dir` keeps everything in memory for tests. `CAFingerprint` returns the SHA-256 digest of the CA certificate, which an operator can pin on the agent. The controller must be the only writer of the directory.
 
-The controller server certificate comes from the same CA. The authority creates it in memory for the host names and addresses that agents dial, which become its subject alternative names, lets it live for 30 days, and replaces it when a third of its life remains.
+The controller server certificate comes from the same CA. The authority creates it in memory for the host names and addresses that agents dial, which become its subject alternative names, lets it live for 30 days, and replaces it when a third of its life remains. Both listeners send the chain `[leaf, CA]` in the handshake (CTL-31), so an agent that pins the SHA-256 fingerprint of the CA finds the CA in the presented chain and can authenticate the enrollment endpoint before it sends its token. An agent that trusts a CA file verifies the same chain as before, because the extra certificate is the root that it already trusts.
 
 ### Enrollment tokens
 
