@@ -111,7 +111,9 @@ if [[ "$test_code" == 0 ]]; then
 else
 	fail "the test between agent1 and agent2 ends with exit code $test_code"
 fi
-grep -E 'RESULT (PASS|FAIL)' "$out/lab-test.log" | tail -n 1 >"$out/lab-test.result" || true
+# The compose log prefixes every line with the service name and a timestamp. Strip them.
+grep -E 'RESULT (PASS|FAIL)' "$out/lab-test.log" | tail -n 1 |
+	sed -E 's/^.*(RESULT (PASS|FAIL))/\1/' >"$out/lab-test.result" || true
 
 echo "== Check that no token leaks"
 # The admin token is read from its volume by a throwaway container of the tools image.

@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #201 |
 | Branch | `wp/IMG-05` |
-| Pull request | #0 |
+| Pull request | #330 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 95% (4 of 5 plan steps) |
 | Current holder | claude-4643a2, lease until 2026-11-09T21:25:35Z |
 | Last verified commit | none |
 
@@ -24,23 +24,24 @@ Build controller and agent container images (Dockerfiles with non root users) an
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Dockerfiles for controller and agent
-- [ ] 2. Compose lab, init scripts, and the test
-- [ ] 3. Workflow containers.yml
-- [ ] 4. Docs (Image.md Containers section), log entry
+- [x] 1. Dockerfiles for controller and agent
+- [x] 2. Compose lab, init scripts, and the test
+- [x] 3. Workflow containers.yml
+- [x] 4. Docs (Image.md Containers section), log entry
 - [ ] 5. PR and green CI
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Steps 1 to 4: workflow run 42694450920 (commit before the summary-line fix) passed: static checks, Hadolint, image builds, and the lab with `RESULT PASS ... http1 client=1808 server=1801 dns client=791 server=791`.
+- `python3 tools/plan/plan.py check`, `render --check`, `lint`, and `make lint-img test-img` pass locally.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+CI of the last commit, then `fps_swarm.py review 201 --pr 330`. The coordinator applies the shared page notes of the log entry (mk/img.mk, Operations, Testing).
 
 ## Next action
 
-Write the Dockerfiles.
+Wait for CI of the PR, then request review.
 
 ## Blockers and open questions
 
@@ -48,16 +49,21 @@ none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- Final stages are `scratch` (no shell, no libc), with a tree built in an alpine stage so owners and modes survive. Distroless was not used because its digest could not be resolved from the worker sandbox.
+- The test runs as two runs (server run on agent2 with `--side server`, client run on agent1 with `--side client`), like Gate 1, because the compiler gives an agent only the pools of its own ports.
+- Pools are /30 networks of one host whose address is the container address, so no capability is needed (no NET_ADMIN, NET_RAW, IPC_LOCK, or NET_BIND_SERVICE).
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+- The agent counts network and broadcast out of every IPv4 pool, so /31 fails with `0 usable addresses`.
+- Docker copies the owner and mode of a mount point into a new volume, and compose creates containers in any order. Every image that mounts a volume must describe the mount point the same way.
+- `COPY --from=stage /rootfs/ /` keeps owners and modes, while `COPY --chown --chmod dir /dest` leaves the destination directory at 0755.
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+image/containers/static-check.sh   # RESULT PASS
+image/containers/run-lab.sh        # needs Docker; RESULT PASS
 ```
 
 ## Session log
