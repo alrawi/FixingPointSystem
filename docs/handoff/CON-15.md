@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #289 |
 | Branch | `wp/CON-15` |
-| Pull request | not yet |
-| Status | in progress |
-| Progress | 90% (3 of 3 plan steps, CI pending) |
+| Pull request | #317 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-c15a7e, lease 2026-11-09T19:41:43Z |
-| Last verified commit | none |
+| Last verified commit | 7594f86 |
 
 ## Goal
 
@@ -26,11 +26,11 @@ Contract files, generated code (Python SDK, UI schema), Rust mirrors, wiki and l
 
 ## Remaining
 
-CI result, Go regen by the coordinator.
+Go regen and Go test edits by the coordinator (the Go test job is red only for those).
 
 ## Next action
 
-Wait for CI.
+Coordinator: regenerate agentpb and api, apply the Go edits listed in the PR description, then merge.
 
 ## Blockers and open questions
 
