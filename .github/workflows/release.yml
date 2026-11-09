@@ -141,11 +141,11 @@ jobs:
           VERSION: ${{ needs.meta.outputs.version }}
         run: |
           set -euo pipefail
-          # The controller reports the module version that the Go toolchain stamps
-          # into the binary and has no variable for -ldflags -X to set. The version
-          # is in the file name and in SHA256SUMS instead.
+          # VERSION comes from the meta job, which accepted only a tag of the form
+          # vMAJOR.MINOR.PATCH[-suffix] or a fixed dry run string. It holds no
+          # space or quote, so it is safe inside the -X value.
           mkdir -p ../dist
-          go build -trimpath -ldflags '-s -w' -o "../dist/fps-controller-${VERSION}-linux-amd64" ./cmd/fps-controller
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "../dist/fps-controller-${VERSION}-linux-amd64" ./cmd/fps-controller
       - name: Check
         env:
           VERSION: ${{ needs.meta.outputs.version }}
@@ -154,7 +154,10 @@ jobs:
           bin="dist/fps-controller-${VERSION}-linux-amd64"
           file "$bin"
           file "$bin" | grep -q 'statically linked'
-          "$bin" -version
+          out="$("$bin" -version)"
+          echo "$out"
+          # The stamped version must be what -version reports.
+          [ "$out" = "fps-controller ${VERSION}" ]
       - uses: actions/upload-artifact@v4
         with:
           name: controller

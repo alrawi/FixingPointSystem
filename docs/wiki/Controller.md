@@ -41,7 +41,7 @@ go run ./controller/cmd/fps-controller -version
 | `-config file` | none | YAML configuration file |
 | `-listen address` | `localhost:8443` | TCP address of the HTTP server, as host:port |
 | `-log-level level` | `info` | `debug`, `info`, `warn`, or `error` |
-| `-version` | false | Print the module version and exit |
+| `-version` | false | Print the version and exit. The version is the value that `-ldflags "-X main.version=..."` stamped in, or the module version of the Go build information when the build has no stamp, or `(devel)`. The startup log line `controller starting` carries the same `version` field. `GET /v1/capabilities` does not report it, because the contract has no field for the controller version (`api_version` is the REST contract version) |
 
 The binary also has two subcommands for operators, `fps-controller token` and `fps-controller revoke`, which [Operators, tokens, and revocation](#operators-tokens-and-revocation) describes.
 
