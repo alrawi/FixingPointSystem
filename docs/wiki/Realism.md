@@ -1,6 +1,6 @@
 # Realism
 
-This page describes the realism runner under `realism/`, which the RLM workstream owns. The runner scores a capture against the applications that the traffic was meant to carry and writes a JSON realism report. RLM-01 created the runner with the conformance check, and RLM-02 added the parser error check. The [runner README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md) gives the command, the options, and the report fields in full.
+This page describes the realism runner under `realism/`, which the RLM workstream owns. The runner scores a capture against the applications that the traffic was meant to carry and writes a JSON realism report. RLM-01 created the runner with the conformance check, RLM-02 added the parser error check, and RLM-04 added the encryption check. The [runner README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md) gives the command, the options, and the report fields in full.
 
 ## Checks
 
@@ -10,6 +10,7 @@ The [specification](https://github.com/alrawi/FixingPointSystem/blob/main/docs/s
 |---|---|---|---|
 | `conformance` | nDPI through `ndpiReader -d` | At least 99% of the labelled sessions of every application carry the intended label | RLM-01 |
 | `parser_errors` | tshark expert information and Zeek `weird.log` | At least one parser ran and no parser reported an error | RLM-02 |
+| `encryption` | tshark with the exported TLS keys, and JA4 computed by the runner | Every sampled TLS session decrypts and every sampled ClientHello has the JA4 of its client profile | RLM-04 |
 
 Every tool runs as a separate process, so the runner links none of their code. We chose the counting rules of the parser error check for three reasons.
 
@@ -21,7 +22,7 @@ The parser error check leaves `metrics` empty, because the [metric catalog](http
 
 ## Report
 
-[`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) defines the report, which is the seam to the controller and the gate suites. A new check adds a definition under `$defs` and one `if` and `then` entry in `$defs.check.allOf`. The report format is at version 0.3.0. Version 0.2.0 added the `parser_errors` entry, and version 0.3.0 added `skipped_parsers` to it.
+[`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) defines the report, which is the seam to the controller and the gate suites. A new check adds a definition under `$defs` and one `if` and `then` entry in `$defs.check.allOf`. The report format is at version 0.4.0. Version 0.2.0 added the `parser_errors` entry, version 0.3.0 added `skipped_parsers` to it, and version 0.4.0 added the `encryption` entry.
 
 ## Seams for tests
 
@@ -33,6 +34,22 @@ Each tool sits behind a protocol with a stub, so unit tests never need the real 
 | `ParserRunner` in `parsers.py` | `TsharkRunner`, `ZeekRunner` | `StubParser` |
 
 Component tests replace each program with a small fake executable that prints fixed output, so they reach every error path of the process boundary. The modules `test_ndpi_reader.py` and `test_parser_tools.py` run the real tools and skip each tool that is not installed. Both workflows run [`realism/ci/install-tools.sh`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/ci/install-tools.sh), which installs nDPI and tshark from Ubuntu and one pinned Zeek version from the package repository of the Zeek project, so CI runs every optional test. We run the checks locally with `make lint-rlm test-rlm`.
+
+## Encryption check
+
+The specification asks for real TLS handshakes with common browser fingerprints, checked by decrypting with exported session keys and by computing JA4. RLM-04 implements both in [`realism/encryption.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/encryption.py) and [`realism/ja4.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/ja4.py).
+
+**Configured client profile.** A client profile of the [TLS module](Transport.md#tls-module) fixes the versions, cipher suite order, groups, ALPN, and SNI of a ClientHello, and it carries no fingerprint. The expected fingerprint therefore lives in the labels file, in a `tls` section that maps each profile name to its JA4 (one string or a list), and a session rule with `tls_profile` ties sessions to a profile. A browser profile of TRN-05 documents its JA4 and the labels file of a run copies it. The [runner README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md#encryption) shows the format.
+
+**Sample.** Only sessions whose rule names a `tls_profile` take part. The check takes at most `tls.sample` of them (default 100), spread evenly over the order of their first packet, so the result does not depend on which sessions come first.
+
+**Decryption.** The runner starts tshark once on the capture. tshark applies the keys that a pcapng capture carries in its decryption secrets blocks, which `fps-capture` embeds, and the key log in the NSS format that `--keylog` names, which the agent exports next to the capture. A session counts as decrypted when tshark reads the Finished message of both sides. TLS 1.2 and 1.3 both encrypt that message, and tshark shows it only with the right secrets, so a key log that lacks the handshake secrets, or belongs to other sessions, decrypts nothing. Two other signals do not work. The field `tls.app_data` exists without keys, and `tls.app_data_proto` is set without keys too. The entry reports the decrypted share against `tls.min_decrypted` (default 1) and says whether keys came from the capture, from a sidecar file, or from neither. A TLS 1.3 key log that holds the handshake secrets and lacks the application traffic secrets still counts as decrypted, which the check does not yet catch.
+
+**JA4.** `ja4.py` follows the [FoxIO specification](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md). It ignores GREASE values, takes the version from the highest entry of `supported_versions`, sets the SNI flag from extension 0x0000, counts ciphers and extensions up to 99, takes the first and last character of the first ALPN value (hex when either is not alphanumeric), hashes the sorted cipher suites, and hashes the sorted extensions without SNI and ALPN followed by the signature algorithms in wire order, each truncated to 12 hexadecimal characters of SHA-256. The unit test reproduces the worked example of the specification, `t13d1516h2_8daaf6152771_e5627efa2ab1`, from a ClientHello with GREASE values. The runner reads the ClientHello bytes of each session from tshark, which gives the TCP payload and the reassembled segment data of the frame, parses them itself, and compares its JA4 with the `tls.handshake.ja4` field of tshark 4.2. A disagreement fails the session, because one of the two misreads the hello.
+
+**Verdict.** The check passes when at least `min_decrypted` of the sample decrypts and every sampled ClientHello has a JA4 that its profile lists. A mismatch fails with a reason such as `JA4 t13d1517h2_... is not the JA4 of profile chrome (...): part a (version, SNI flag, cipher and extension counts, ALPN) is t13d1517h2, expected t13d1516h2; cipher suite hash is ..., expected ...`. The check also fails when no session carries a `tls_profile`, and when tshark is missing, so a skipped tool never passes. The entry leaves `metrics` empty until the catalog has metrics for the two shares.
+
+**Tests.** [`realism/tests/tlsgen.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/tests/tlsgen.py) runs a TLS client and server of the Python `ssl` module against each other in memory, writes the flights as TCP segments, and keeps the client secrets as a key log, so no network, root, or dumpcap is needed. The tests cover a matching and a mismatched profile for TLS 1.2 and 1.3, embedded and sidecar keys, a capture without keys, wrong keys, a client without ALPN, and TLS on port 8443. The expected JA4 of the matching fixtures comes from tshark, because the ClientHello of the Python module depends on the installed OpenSSL. The tests skip without tshark or openssl, and the `rlm` workflow has both.
 
 ## Pinned Zeek and skipped parsers
 

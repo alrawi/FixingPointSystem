@@ -18,6 +18,7 @@ from pathlib import Path
 
 from realism.capture import CaptureError
 from realism.classifier import DEFAULT_TIMEOUT_S, ClassifierError, NdpiClassifier
+from realism.encryption import TsharkTlsProbe
 from realism.labels import LabelsError
 from realism.modules import ModuleError, discover, matrix, select
 from realism.parsers import PARSER_NAMES, ParserError, not_found_reason, resolve
@@ -85,6 +86,12 @@ def _parser() -> argparse.ArgumentParser:
         help="auto (default) runs every installed parser, none skips the parser error "
         "check, and a list such as tshark,zeek requires each named parser",
     )
+    score_cmd.add_argument(
+        "--keylog",
+        type=Path,
+        help="TLS key log in the NSS format for the encryption check, in addition to the "
+        "keys that a pcapng capture embeds",
+    )
     score_cmd.add_argument("--tshark", help="path of tshark, defaults to FPS_TSHARK or the path")
     score_cmd.add_argument("--zeek", help="path of zeek, defaults to FPS_ZEEK or the path")
     modules_cmd = commands.add_parser(
@@ -136,6 +143,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "modules":
         return _modules(args)
+    if args.keylog is not None and not args.keylog.is_file():
+        print(f"realism score failed: key log {args.keylog} is not a file", file=sys.stderr)
+        return EXIT_ERROR
     classifier = NdpiClassifier(reader=args.ndpi_reader, timeout_s=args.timeout)
     try:
         parsers, missing = resolve(
@@ -156,6 +166,8 @@ def main(argv: list[str] | None = None) -> int:
             parsers=None if args.parsers == () else parsers,
             missing_parsers=missing,
             skip_reasons=reasons,
+            tls_probe=TsharkTlsProbe(args.tshark, args.timeout),
+            keylog=args.keylog,
         )
     except (CaptureError, LabelsError, ClassifierError, ParserError) as exc:
         print(f"realism score failed: {exc}", file=sys.stderr)

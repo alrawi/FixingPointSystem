@@ -170,9 +170,16 @@ class Capture:
         path.write_bytes(b"".join(out))
         return path
 
-    def write_pcapng(self, path: Path) -> Path:
-        """Write the frames as pcapng with one Ethernet interface at microseconds."""
+    def write_pcapng(self, path: Path, tls_keys: bytes | None = None) -> Path:
+        """Write the frames as pcapng with one Ethernet interface at microseconds.
+
+        ``tls_keys``, a TLS key log in the NSS format, goes into a decryption
+        secrets block after the section header, as fps-capture embeds it.
+        """
         out = [_block(0x0A0D0D0A, struct.pack("<IHHq", 0x1A2B3C4D, 1, 0, -1))]
+        if tls_keys is not None:
+            padded = tls_keys + b"\x00" * (-len(tls_keys) % 4)
+            out.append(_block(0x0A, struct.pack("<II", 0x544C534B, len(tls_keys)) + padded))
         out.append(_block(1, struct.pack("<HHI", 1, 0, 65535)))
         for ts, frame in self.frames:
             ticks = round(ts * 1_000_000)
