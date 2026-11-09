@@ -43,7 +43,7 @@ Tests use `fps_io::memory::duplex(capacity)`, which returns two connected `Memor
 3. Rendering takes any sized `rand::RngCore`, and the filler buffer comes from `rand_pcg::Pcg64Mcg`, which gives the same bytes on every platform. The spike used `SmallRng`, whose algorithm may change between platforms and releases.
 4. The contract test `tests/contract_examples.rs` compiles every scenario under `contracts/examples/modules/`, so a new example joins the check on its own.
 
-`Scenario::load` still rejects transport modules, spawned flows, and the `spawn` and `raw` actions with `LoadError::Unsupported`, while `Scenario::check` accepts them when the contract allows them.
+`Scenario::load` still rejects transport modules, spawned flows, and the `spawn` and `raw` actions with `LoadError::Unsupported`, while `Scenario::check` accepts them when the contract allows them. The action `tls_upgrade` of ENG-20 compiles in every mode to `Op::UpgradeTls`, see [TLS upgrade of a running session](#tls-upgrade-of-a-running-session).
 
 ## Templates
 
@@ -307,6 +307,33 @@ Every failure is a `Failure` with the flow id, the side, the catalog action inde
 
 `FailureKind::reason` reads the cause of `FailureKind::Render`. A `TemplateError::Function` means `extension_error`, and every other `TemplateError` means `template_error`. A failed module call also keeps its kind, and `Failure::extension_label` returns the label `extension_<kind>` that `contracts/extension/README.md` names. The contract test `tests/catalog.rs` reads `contracts/metrics/catalog.yaml` and checks that `Reason::ALL` equals the reason values in catalog order.
 
+### TLS upgrade of a running session
+
+A flow binds its transport once, at `connect` or `accept`, so STARTTLS in SMTP, IMAP, POP3, FTP, and LDAP could not be written (finding of MOD-07). ENG-20 adds the action `tls_upgrade`, which wraps the transport of the running session in TLS in place, so every later action runs over TLS.
+
+```yaml
+- tls_upgrade: { profile: mail, server_name: mx.example.test }
+```
+
+| Field | Meaning |
+|---|---|
+| `profile` | Required. The name of a TLS profile of the run, which the engine resolves, see [The worker runtime](#tls-upgrade-in-the-runtime) |
+| `role` | `client` or `server`. The default is the role of the side, so the client side starts the handshake and the server side accepts it |
+| `server_name` | The name that a client handshake verifies and sends as SNI. The engine chooses when it is missing |
+
+`fps-flow` compiles the action to `Op::UpgradeTls(TlsUpgrade)`. The interpreter has no TLS code. It calls a `TlsUpgrader`, a seam in [`engine/fps-interp/src/upgrade.rs`](https://github.com/alrawi/FixingPointSystem/blob/main/engine/fps-interp/src/upgrade.rs) that a runner sets with `Session::set_tls_upgrader`, like the spawn queue. A program that holds a `tls_upgrade` runs over a `Swappable` transport, a boxed `SessionIo` that the upgrade replaces by the secured transport, and every other program runs over its stream as before, so it pays nothing. The upgrader consumes the old transport and returns the new one with the old one below it. A capture tap on the old transport therefore keeps recording what crosses the wire, which is now encrypted.
+
+The interpreter checks three things before it calls the upgrader. The session must have an upgrader, and the read buffer must be empty, because bytes that the peer sent before the handshake would be plaintext in front of a ClientHello, which fails the session rather than hiding them. The flow must be a TCP flow, because the engine has no DTLS. The handshake runs under the open timeout of the session and under the `stop` future, which drops the transport. The failures map to the existing reasons.
+
+| Cause | Reason |
+|---|---|
+| The handshake fails, the peer sends an alert, the transport breaks during the handshake, or the handshake times out | `tls_failure` |
+| The session has no upgrader, the upgrader has no profile of that name for the role, bytes are buffered, or the flow is UDP | `internal` |
+
+The action type of both is `tls_upgrade`, and its action index is the position of the action in the document as for every action.
+
+`Scenario::parse` and `Scenario::parse_instance` accept the action in every mode. The contract file `contracts/schemas/scenario.schema.json` lists the action keywords and rejects unknown ones, so the schema and the Python validator reject `tls_upgrade` until a CON package adds it, see the follow up in the [log entry](log/2026-11-09T2000-ingest-eng-20-upgrade-a-running-flow-to-tls.md).
+
 ### Tests
 
 The tests run client and server programs against each other over the in memory duplex. They are listed below.
@@ -316,6 +343,7 @@ The tests run client and server programs against each other over the in memory d
 | `tests/sessions.rs` | Programs that complete, with byte counters, the opener requests, patterns split over one byte reads, the three stop rules and `last`, bytes past an `expect bytes` count, loops, branches, `set`, the five delay distributions on the paused clock, module functions, and the three close modes |
 | `tests/failures.rs` | One test for each of the twelve reasons except the datagram one, and a second trigger for `connect_timeout`, `expect_timeout`, `peer_closed`, and `internal`, each checking the reason, action index, and action type of both sides |
 | `tests/catalog.rs` | The reasons, sides, and action types against the metric catalog |
+| `tests/upgrade.rs` | `tls_upgrade` with a stand in upgrader that masks the bytes: the first half crosses in the clear and the second masked, each side takes the role of its side and the client passes the server name, a failed handshake is `tls_failure` at the action, an unknown profile, a missing upgrader, and bytes buffered before the handshake are `internal` |
 | unit tests | `session_rng` streams and bug #90, delay sample means and supports, and the action index mapping |
 
 ## The worker runtime
@@ -352,6 +380,12 @@ A worker wakes at least every 100 ms (`RATE_POLL`) to read its handle. The loop 
 ENG-19 lets the runtime tap its TCP sessions for `fps-capture`. `RuntimeConfig::capture` is a `fps_capture::CaptureCell`, empty by default, and `RuntimeConfig::with_capture` shares one cell that the owner already holds. `RuntimeHandle::capture_cell()` returns a clone, so the agent starts a capture in the middle of the run with `cell.set(capture)` and ends it with `cell.clear()`. A worker wraps the opener of every session in a `TapOpener`, which reads the cell once, when the session opens, and not again. While the cell is empty that is one atomic load and a `Tapped::Plain` wrapper, which forwards every read and write after one `match`, and the worker asks the socket for no address. While a capture runs, the opener takes the local and peer address of the opened `KernelStream`, orders them into client and server by the side of the worker, and calls `Capture::begin` with the run wide session id, so the sampler of the capture decides. A session that is already open when `set` runs is not recorded, and one that began with a recorder keeps it after `clear`.
 
 Both worker roles tap. A client session records the bytes of the client end and a server session those of the accepted end, so a run that holds both sides in one process and gives them one `Capture` records each connection twice, under two session ids. The agent has one role per process, so it does not meet this. The tap sits on the kernel stream, below any TLS that a module layers on top, so a capture holds what a packet capture would hold.
+
+### TLS upgrade in the runtime
+
+`RuntimeConfig::tls` holds the `TlsProfiles` of the run, shared by every worker, and `RuntimeConfig::with_tls` sets it. The registry maps names to `fps_module_tls::TlsConnector` values for the client role and to `TlsAcceptor` values for the server role, so one name may exist for both. It implements `TlsUpgrader`, and a worker passes it to every session with `Session::set_tls_upgrader`. A client upgrade calls `TlsConnector::connect` with the server name of the action, the name set with `TlsProfiles::with_server_name`, or `localhost`, in that order, and a server upgrade calls `TlsAcceptor::accept`. Both wrap the transport as `Box<dyn SessionIo>`, so the capture tap of ENG-19, which wraps the kernel stream in `TapOpener`, stays below the TLS layer and records the encrypted records. The session ends as before, and `close: fin` sends `close_notify` before the FIN.
+
+The key log is part of the profile. Give the client and server profiles of `fps-module-tls` the same `NssKeyLog` in `key_log`, and it receives the secrets of every handshake that runs through them. A capture of the run decrypts with that file, where a tool such as Wireshark reads it through `tls.keylog_file`. The runtime does not report the `tls.*` handshake metrics yet. `HandshakeReport` is available on the `TlsSession`, but the interpreter does not carry it, and the metrics need a step that reads it.
 
 ### WebAssembly extensions in sessions
 
@@ -407,6 +441,8 @@ The tests run over loopback addresses with the kernel backend and are listed bel
 | `tests/loopback.rs` setup | Pinning to an allowed core, a bind failure that fails the start, and the configuration checks |
 | `tests/capture.rs` mid run | A client runtime starts 20 `web_get` sessions per second for three seconds. One second in, the test sets a capture that samples every session into the cell of the handle. The ring holds only sessions that opened after that moment, between 10 and the number that started after it, and each is a complete `web_get` session that the independent reader reassembles: handshake, four requests and four responses, and two FINs. Where tshark is installed, it also finds every request and response, one conversation per session, and no checksum, malformed, retransmission, loss, or reordering finding. The tshark part skips without the tool and fails when `FPS_REQUIRE_CAPTURE_TOOLS` is `1` |
 | `tests/capture.rs` server and empty cell | A server worker whose cell holds a capture records all 20 sessions it accepts. A cell that was set and cleared before the start records no session |
+| `tests/tls_upgrade.rs` STARTTLS | An inline SMTP scenario runs EHLO, STARTTLS, `220`, a TLS 1.3 handshake, a second EHLO, `MAIL FROM`, and QUIT between a client runtime and a server runtime, and a capture records two sessions. On the wire, the client starts with the plaintext `EHLO` and `STARTTLS`, the server with its greeting, `250 STARTTLS`, and `220 2.0.0 Ready to start TLS`, and each direction continues with TLS records that begin with a handshake record. The mail transaction (`MAIL FROM`, the address, `AUTH PLAIN`, the replies, `QUIT`) appears nowhere on the wire. A decrypter of the test, built on `ring` and independent of the module, derives the record keys from the exported `NssKeyLog` and recovers exactly the second half of both directions, and a key log with flipped digits decrypts nothing |
+| `tests/tls_upgrade.rs` failures | A client that trusts another authority fails every session with `tls_failure`, and so does the server that receives the alert. A runtime without profiles fails the client with `internal` |
 | `tests/properties.rs` | Session ids stay unique across workers, and the collector total equals the sum of the newest snapshot of every worker in any arrival order |
 | unit tests | The clock on a paused Tokio clock, the bounded wake time, the stop state order, opener address selection, and the collector |
 ## UDP datagram sessions

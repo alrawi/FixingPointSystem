@@ -6,8 +6,8 @@
 | Branch | `wp/ENG-20` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
-| Current holder | claude-e20a7c, lease until 2026-11-09T18:53:00Z |
+| Progress | 90% (3 of 4 plan steps) |
+| Current holder | claude-e20a7c, lease until 2026-11-09T19:58:56Z |
 | Last verified commit | none |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
@@ -18,22 +18,23 @@ A flow action `tls_upgrade` wraps the existing transport of a running session in
 
 ## Plan
 
-- [ ] 1. Flow compiler: `Op::UpgradeTls` and the `tls_upgrade` action in `fps-flow`.
-- [ ] 2. Interpreter: the `TlsUpgrader` seam and the in place swap in `fps-interp`.
-- [ ] 3. Runtime: a TLS profile registry in `fps-runtime`, wired into each session, with the TRN-04 module as the upgrader.
+- [x] 1. Flow compiler: `Op::UpgradeTls` and the `tls_upgrade` action in `fps-flow`.
+- [x] 2. Interpreter: the `TlsUpgrader` seam and the in place swap in `fps-interp`.
+- [x] 3. Runtime: a TLS profile registry in `fps-runtime`, wired into each session, with the TRN-04 module as the upgrader.
 - [ ] 4. Loopback SMTP STARTTLS test with capture and key log, `docs/wiki/Engine.md`, log entry, checks, PR.
 
 ## Done and verified
 
-Nothing yet.
+- Steps 1 to 3: `cargo test -p fps-flow -p fps-interp -p fps-runtime` passes, including `fps-runtime/tests/tls_upgrade.rs`. `cargo clippy ... --all-targets -D warnings` passes.
+- Step 4 in progress: Engine.md and the log entry are written.
 
 ## Remaining
 
-Everything.
+Open the pull request, wait for CI, report the contract text of the log entry to the coordinator.
 
 ## Next action
 
-Add `Op::UpgradeTls` to `engine/fps-flow/src/program.rs`.
+Open the pull request and wait for CI.
 
 ## Blockers and open questions
 
@@ -41,11 +42,12 @@ none
 
 ## Decisions taken in this package
 
+- The TLS profiles live in `RuntimeConfig`, not in `FlowRef`, because one more field in `FlowRef` pushed `Role::Server` over the `large_enum_variant` limit of clippy.
 - The upgrade is an interpreter seam (`TlsUpgrader`), so `fps-interp` does not depend on rustls. The runtime supplies the implementation over `fps-module-tls`.
 
 ## Pitfalls
 
-none yet
+The disk of the sandbox filled up during a build. Delete `target/debug/incremental` if that happens.
 
 ## Verify the current state
 
