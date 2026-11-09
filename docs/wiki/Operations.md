@@ -52,3 +52,55 @@ Agents in sandboxed sessions cannot reach the GraphQL API, so they never run it.
 ## Benchmark runner
 
 The nightly benchmark of QA-08 runs on a self hosted runner on the owner's Linux server with the label `fps-bench`. The owner registers it with the steps in [`bench/README.md`, section Registering the owner host](https://github.com/alrawi/FixingPointSystem/blob/main/bench/README.md#registering-the-owner-host), and [Benchmarks](Benchmarks.md) explains the comparison.
+
+## Release workflow
+
+The workflow `.github/workflows/release.yml` builds the versioned artifacts of a release, writes `SHA256SUMS` and the release notes, and creates the GitHub release. Only the coordinator edits this file, as with every workflow.
+
+| Trigger | Result |
+|---|---|
+| A push of a tag `v*` | A real release. The tag must look like `v1.2.3` or `v1.2.3-rc.1`, and a tag with a suffix becomes a pre-release |
+| A manual run of **Run workflow** with `dry_run` set, which is the default | The same build on the chosen branch or tag. It keeps everything as the workflow artifact `release-<version>` and creates no release. A branch run is versioned `0.0.0-dryrun.<short sha>` |
+| A manual run on a tag with `dry_run` cleared | A real release, as for a pushed tag |
+
+### What a release holds
+
+| File | Built as |
+|---|---|
+| `fps-agent-<version>-linux-x86_64` | `cargo build --release --locked --target x86_64-unknown-linux-musl -p fps-agent`, stripped, and checked with `file` to be static |
+| `fps-controller-<version>-linux-amd64` | `go build -trimpath -ldflags '-s -w'` with `CGO_ENABLED=0`, checked to be static, and started with `-version` |
+| `fps-module-<name>-<module version>.tar.gz` | One archive for each module under `modules/` that has a `manifest.yaml`, with the tree under `<name>/` and without build output. The module version comes from the manifest. The archive is reproducible for one commit |
+| `fixingpoint-<version>.tar.gz` and `fixingpoint-<version>-py3-none-any.whl` | `python -m build` in `sdk/python/`. The version is the one in `pyproject.toml`, and the job warns when it differs from the tag |
+| `SHA256SUMS` | `sha256sum` of every file above, checked with `sha256sum -c` before upload |
+
+The release notes (`RELEASE_NOTES.md`) hold the sections of `contracts/CHANGELOG.md` that are newer than the previous `v*` tag (all of them for the first release, and the Unreleased section always), followed by the titles of the pull requests merged on the first parent history since that tag. The workflow runs no module signing. CTL-11 signs module archives in the registry when it publishes an index.
+
+The controller prints the module version that the Go toolchain stamps into the binary, and `controller/` has no variable that `-ldflags -X` could set. The version of a controller binary is therefore its file name and its line in `SHA256SUMS`. A later CTL package can add such a variable.
+
+### Rules that keep the release safe
+
+- Every job runs on `ubuntu-24.04` of GitHub. The repository is public, so no release job may use the self hosted `fps-bench` runner.
+- The workflow has no `pull_request` trigger. It holds `contents: read` everywhere except the `publish` job, which holds `contents: write`, runs no repository code, and only downloads the checked bundle and calls `gh release create`.
+- Tag names and pull request titles reach scripts through `env`, never inside `run:` text. The notes script shortens each title to one line and defuses `@` mentions.
+- It uses only `actions/*` and `dtolnay/rust-toolchain`, pinned like the other workflows. A third party action must be pinned by commit.
+
+### Cutting a release
+
+1. Check that `contracts/CHANGELOG.md` describes the contract changes, and bump `sdk/python/pyproject.toml` when the Python package should carry the release number.
+2. Run **Run workflow** for `release` on `main` with `dry_run` set, and download the artifact `release-<version>` to inspect it.
+3. Create and push an annotated tag, for example `git tag -a v0.1.0-rc.1 -m "Release candidate 1"` and `git push origin v0.1.0-rc.1`. The workflow creates the release.
+
+### Attaching the image by hand
+
+The workflow does not build the VM image, because the Packer build needs KVM on the owner host. After the release exists, the owner builds the image on that host with `image/build.sh` from the tagged commit (see [`image/README.md`](https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md)) and attaches it with its checksum.
+
+```bash
+git checkout v0.1.0
+image/build.sh                       # writes image/output/fps-base.qcow2 and fps-base.qcow2.sha256
+cd image/output
+mv fps-base.qcow2 fps-image-0.1.0-x86_64.qcow2
+sha256sum fps-image-0.1.0-x86_64.qcow2 > fps-image-0.1.0-x86_64.qcow2.sha256
+gh release upload v0.1.0 fps-image-0.1.0-x86_64.qcow2 fps-image-0.1.0-x86_64.qcow2.sha256
+```
+
+`SHA256SUMS` of the release stays the list of the workflow files. The `.sha256` file next to the image is the checksum of the image, and the owner may also append its line to `SHA256SUMS` and replace the release asset with `gh release upload --clobber`.
