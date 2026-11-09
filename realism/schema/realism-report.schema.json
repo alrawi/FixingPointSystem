@@ -98,6 +98,10 @@
         {
           "if": {"properties": {"check": {"const": "encryption"}}, "required": ["check"]},
           "then": {"$ref": "#/$defs/encryption"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "content"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/content"}
         }
       ]
     },
@@ -406,6 +410,177 @@
               "reasons": {"type": "array", "items": {"type": "string"}}
             }
           }
+        }
+      }
+    },
+    "size_distribution": {
+      "description": "Size distribution of payload units in bytes. cv is the population standard deviation over the mean, and the quantiles use linear interpolation.",
+      "type": "object",
+      "required": ["count", "min", "max", "mean", "stddev", "cv", "quantiles"],
+      "additionalProperties": false,
+      "properties": {
+        "count": {"type": "integer", "minimum": 1},
+        "min": {"type": "integer", "minimum": 0},
+        "max": {"type": "integer", "minimum": 0},
+        "mean": {"type": "number", "minimum": 0},
+        "stddev": {"type": "number", "minimum": 0},
+        "cv": {"type": "number", "minimum": 0},
+        "quantiles": {
+          "type": "object",
+          "required": ["p5", "p25", "p50", "p75", "p95", "p99"],
+          "additionalProperties": false,
+          "properties": {
+            "p5": {"type": "number", "minimum": 0},
+            "p25": {"type": "number", "minimum": 0},
+            "p50": {"type": "number", "minimum": 0},
+            "p75": {"type": "number", "minimum": 0},
+            "p95": {"type": "number", "minimum": 0},
+            "p99": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
+    "payload_group": {
+      "description": "Duplicate counts and size distribution of the payload units of one group.",
+      "type": "object",
+      "required": ["units", "distinct_units", "duplicate_units", "duplicate_ratio", "size"],
+      "additionalProperties": false,
+      "properties": {
+        "units": {"type": "integer", "minimum": 1},
+        "distinct_units": {"type": "integer", "minimum": 1},
+        "duplicate_units": {"type": "integer", "minimum": 0},
+        "duplicate_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "size": {"$ref": "#/$defs/size_distribution"}
+      }
+    },
+    "content": {
+      "description": "Content variety of the application payloads. Every application has at most max_duplicate_ratio of duplicate payloads, the observed size distribution agrees with expected_sizes where the labels give one, and at least one payload was analysed. failures names each reason in words.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "max_duplicate_ratio", "ignored_headers", "sessions_total",
+        "sessions_analysed", "skipped_encrypted_sessions", "sessions_without_payload",
+        "incomplete_directions", "truncated_units", "unparsed_tails", "units", "duplicate_units",
+        "duplicate_ratio", "applications", "expected_sizes", "duplicates", "failures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "content"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "Empty until the metric catalog defines a duplicate ratio metric.",
+          "type": "array",
+          "maxItems": 0
+        },
+        "max_duplicate_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "ignored_headers": {
+          "description": "HTTP header names that the check drops before it hashes a message.",
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "sessions_total": {"type": "integer", "minimum": 0},
+        "sessions_analysed": {"type": "integer", "minimum": 0},
+        "skipped_encrypted_sessions": {
+          "description": "TLS sessions, which the check does not read because it has no plaintext.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "sessions_without_payload": {"type": "integer", "minimum": 0},
+        "incomplete_directions": {
+          "description": "TCP directions with a hole in their sequence numbers, which the check cut at the hole.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated_units": {
+          "description": "HTTP messages that the end of the stream cut short and that the check dropped.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "unparsed_tails": {
+          "description": "TCP directions of an HTTP session whose end did not parse as a message.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "units": {"type": "integer", "minimum": 0},
+        "duplicate_units": {"type": "integer", "minimum": 0},
+        "duplicate_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "applications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "application", "units", "distinct_units", "duplicate_units", "duplicate_ratio",
+              "passed", "size", "directions"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "units": {"type": "integer", "minimum": 1},
+              "distinct_units": {"type": "integer", "minimum": 1},
+              "duplicate_units": {"type": "integer", "minimum": 0},
+              "duplicate_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+              "passed": {"type": "boolean"},
+              "size": {"$ref": "#/$defs/size_distribution"},
+              "directions": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "client": {"$ref": "#/$defs/payload_group"},
+                  "server": {"$ref": "#/$defs/payload_group"}
+                }
+              }
+            }
+          }
+        },
+        "expected_sizes": {
+          "description": "The comparison with the size distribution that the labels expect, one entry per application with an expectation.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "application", "direction", "units", "tolerance", "expected_median",
+              "observed_median", "expected_cv", "observed_cv", "passed"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "direction": {"enum": ["client", "server", "both"]},
+              "units": {"type": "integer", "minimum": 1},
+              "tolerance": {"type": "number", "exclusiveMinimum": 0},
+              "expected_median": {"type": "number"},
+              "observed_median": {"type": "number"},
+              "expected_cv": {"type": ["number", "null"]},
+              "observed_cv": {"type": "number"},
+              "passed": {"type": "boolean"}
+            }
+          }
+        },
+        "duplicates": {
+          "description": "The most repeated payloads, at most 20.",
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": ["application", "direction", "copies", "size", "sha256", "sessions"],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "direction": {"enum": ["client", "server"]},
+              "copies": {"type": "integer", "minimum": 2},
+              "size": {"type": "integer", "minimum": 0},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "sessions": {
+                "description": "The first 5 sessions that carry a copy.",
+                "type": "array",
+                "maxItems": 5,
+                "items": {"type": "integer", "minimum": 1}
+              }
+            }
+          }
+        },
+        "failures": {
+          "description": "One sentence for each reason that the check failed. Empty when it passed.",
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
         }
       }
     }

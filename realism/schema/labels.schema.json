@@ -68,6 +68,55 @@
         }
       }
     },
+    "content": {
+      "description": "Settings of the content variety check, which reports the duplicate payload ratio and the payload size distribution of each application. The check runs when this section is present.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_duplicate_ratio": {
+          "description": "Largest share of duplicate payloads that an application may have. The default is 0.01.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "ignore_headers": {
+          "description": "HTTP header names, in addition to the built in list, that the check drops before it hashes a message.",
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "sizes": {
+          "description": "Expected payload size distribution per application. The observed median, and the observed coefficient of variation when cv is given, must lie within tolerance of the expected value.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["median"],
+            "additionalProperties": false,
+            "properties": {
+              "direction": {
+                "description": "Payloads that count. The default is both.",
+                "enum": ["client", "server", "both"]
+              },
+              "median": {
+                "description": "Expected median payload size in bytes.",
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "cv": {
+                "description": "Expected coefficient of variation, the standard deviation over the mean.",
+                "type": "number",
+                "minimum": 0
+              },
+              "tolerance": {
+                "description": "Allowed relative deviation. The default is 0.25.",
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 10
+              }
+            }
+          }
+        }
+      }
+    },
     "sessions": {
       "type": "array",
       "items": {
