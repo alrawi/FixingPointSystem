@@ -195,6 +195,9 @@ impl Worker {
                     functions,
                     limits: self.flow.limits,
                 });
+                if let Some(profiles) = &self.flow.tls {
+                    session.set_tls_upgrader(&**profiles);
+                }
                 let outcome = session.run_program(&mut opener, program, stop).await;
                 let stats = session.stats();
                 drop(session);
