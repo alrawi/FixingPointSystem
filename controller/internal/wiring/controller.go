@@ -172,6 +172,9 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 	}); err != nil {
 		return nil, fmt.Errorf("create agent manager: %w", err)
 	}
+	if c.PKI != nil {
+		c.Agents.Seed(c.PKI.ValidIdentities())
+	}
 
 	if c.Evaluator, err = report.NewEvaluator(nil); err != nil {
 		return nil, fmt.Errorf("create criteria evaluator: %w", err)

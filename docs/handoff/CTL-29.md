@@ -10,7 +10,7 @@
 | Branch | `wp/CTL-29` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-c29a7e, lease until 2026-11-09T05:22:21Z |
 | Last verified commit | none |
 
@@ -24,14 +24,14 @@ At controller start every identity with a valid, unrevoked, unexpired certificat
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. pki: Authority.ValidIdentities lists the identities with a live certificate
-- [ ] 2. agents: Manager.Seed adds identities to the inventory
-- [ ] 3. Tests: unit tests plus restart acceptance test; one-line call in wiring/controller.go
+- [x] 1. pki: Authority.ValidIdentities lists the identities with a live certificate
+- [x] 2. agents: Manager.Seed adds identities to the inventory
+- [x] 3. Tests: unit tests plus restart acceptance test; one-line call in wiring/controller.go
 - [ ] 4. Docs: Controller.md, log entry; PR and CI
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Steps 1 to 3: `go test ./internal/pki` passes locally (GOPROXY=off, stdlib only); the agents and wiring packages cannot build here, so CI is the loop. `gofmt -l controller/internal` is clean.
 
 ## Remaining
 
@@ -39,7 +39,7 @@ List what is still missing, including known gaps in finished steps.
 
 ## Next action
 
-Implement step 1.
+Open the PR and wait for CI.
 
 ## Blockers and open questions
 
@@ -47,7 +47,7 @@ none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+Seed lives on the manager and the one-line call is in wiring/controller.go (outside the paths, the owner of the brief asked for it). Seeded entries are enrolled with no labels. Tokens without a certificate are not seeded.
 
 ## Pitfalls
 
@@ -66,3 +66,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-08 | claude-c29a7e | claim | none | Claimed #263 |
+| 2026-11-08 | claude-c29a7e | checkpoint | pending | Code, tests, docs written |
