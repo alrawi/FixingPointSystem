@@ -929,7 +929,7 @@ The orchestrator reads `engine_api` from the capabilities of the agent when it s
 
 ## Mutual TLS
 
-CTL-15 added the package `internal/pki`. It gives the control channel between the controller and its agents mutual TLS, and it uses only the standard library (`crypto/x509`, `crypto/tls`, `crypto/ecdsa`). CTL-27 wired the package into the controller, which [Mutual TLS in the controller](#mutual-tls-in-the-controller) describes. The Rust agent has no TLS yet, and [What the agent must change](#what-the-agent-must-change) lists its part (AGT-08).
+CTL-15 added the package `internal/pki`. It gives the control channel between the controller and its agents mutual TLS, and it uses only the standard library (`crypto/x509`, `crypto/tls`, `crypto/ecdsa`). CTL-27 wired the package into the controller, which [Mutual TLS in the controller](#mutual-tls-in-the-controller) describes. The Rust agent speaks mutual TLS and enrolls itself since AGT-08 (see [Agent](Agent.md)); [What the agent must change](#what-the-agent-must-change) is the list it implemented.
 
 ```go
 pa, err := pki.Open(pki.Config{Dir: "/var/lib/fps/pki", OnRevoke: endSession}) // CA on first start
@@ -1016,9 +1016,11 @@ A certificate proves who an agent is, and the inventory decides whether the cont
 
 #### Plain mode
 
-`insecure_plain_grpc` (flag `-insecure-plain-grpc`) serves `ControllerService` on plain TCP, trusts the `agent_id` of each request, opens no authority, and serves neither the enrollment listener nor the admin socket. It exists for development and for tests until the Rust agent has TLS (AGT-08). The controller logs `INSECURE` warnings at start up, when the service starts listening, and for every identity that it accepts. The end to end test with the real agent (`engine/fps-agent/tests/controller_e2e.sh`), the Gate 1 script, and `TestEndToEnd` set it. The image does not, so the controller of the image refuses the agent of the image until AGT-08 and the image follow up land, and the log entry of CTL-27 describes the impact. Never set it on a shared network.
+`insecure_plain_grpc` (flag `-insecure-plain-grpc`) serves `ControllerService` on plain TCP, trusts the `agent_id` of each request, opens no authority, and serves neither the enrollment listener nor the admin socket. It exists for development and for tests. The Rust agent has TLS since AGT-08, so only the image (until IMG-06) and `tests/gates/gate1/run.sh` still use it. The controller logs `INSECURE` warnings at start up, when the service starts listening, and for every identity that it accepts. The Gate 1 script and `TestEndToEnd` set it, and the image sets it as a stopgap until IMG-06. The end to end test with the real agent (`engine/fps-agent/tests/controller_e2e.sh`) uses mutual TLS since AGT-08. Never set it on a shared network.
 
 #### What the agent must change
+
+AGT-08 implemented this list; it stays as the reference for other agent implementations.
 
 The Rust agent (`engine/fps-agent`, AGT-08) has to do the following.
 
