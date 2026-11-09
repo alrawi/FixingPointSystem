@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #299 |
 | Branch | `wp/CTL-34` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #304 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-c34a7e, lease until 2026-11-09T17:41:45Z |
-| Last verified commit | none |
+| Last verified commit | 8f8b93e |
 
 ## Goal
 
@@ -19,19 +19,19 @@ For `profile.basis: bytes` the compiler turns byte weights into session shares w
 - [x] 1. Compiler conversion in `compile.go` (`bytesToSessions`), with `ErrNoByteEstimate` for a missing estimate; `newByteMix` rebuilds the byte weight as session weight times estimate
 - [x] 2. Golden of `enterprise_mix_10g` (basis bytes) regenerated, unit tests in `bytes_basis_test.go`, run tests adjusted, new exact estimates test
 - [x] 3. `docs/wiki/Controller.md` and the log entry
-- [ ] 4. PR, CI green, review
+- [x] 4. PR #304, CI green
 
 ## Done and verified
 
-Go modules cannot be downloaded in this sandbox, so nothing compiles locally. `gofmt -l` is clean. The golden was computed by a script that repeats the Go arithmetic in the same order; CI is the check.
+gofmt is clean. CI on 8f8b93e is green (all jobs); the scripted golden matched on the first run.
 
 ## Remaining
 
-CI result, and the golden if its last digits differ.
+Review.
 
 ## Next action
 
-Open the PR and poll CI.
+Review and merge.
 
 ## Blockers and open questions
 
