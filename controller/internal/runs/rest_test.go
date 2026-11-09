@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -48,6 +49,12 @@ func newRESTHarness(t *testing.T, o *runs.Orchestrator) *restHarness {
 // the response against the contract, and the request too when validReq holds.
 func (h *restHarness) call(t *testing.T, method, path string, params map[string]string, body string, validReq bool) *httptest.ResponseRecorder {
 	t.Helper()
+	return h.callQuery(t, method, path, params, "", body, validReq)
+}
+
+// callQuery is call with the raw query string of the request.
+func (h *restHarness) callQuery(t *testing.T, method, path string, params map[string]string, query, body string, validReq bool) *httptest.ResponseRecorder {
+	t.Helper()
 	item := h.doc.Paths.Value(path)
 	if item == nil || item.GetOperation(method) == nil {
 		t.Fatalf("the contract has no %s %s", method, path)
@@ -57,7 +64,11 @@ func (h *restHarness) call(t *testing.T, method, path string, params map[string]
 		url = strings.ReplaceAll(url, "{"+k+"}", v)
 	}
 	newReq := func() *http.Request {
-		r := httptest.NewRequest(method, api.BasePath+url, strings.NewReader(body))
+		target := api.BasePath + url
+		if query != "" {
+			target += "?" + query
+		}
+		r := httptest.NewRequest(method, target, strings.NewReader(body))
 		if body != "" {
 			r.Header.Set("Content-Type", "application/json")
 		}
@@ -214,8 +225,152 @@ func TestRESTErrors(t *testing.T) {
 func TestRESTOtherOperationsStayUnimplemented(t *testing.T) {
 	h := newHarness(t, nil)
 	rh := newRESTHarness(t, h.orch)
-	if rec := rh.call(t, http.MethodGet, "/runs", nil, "", true); rec.Code != http.StatusNotImplemented {
-		t.Fatalf("list runs: %d %s", rec.Code, rec.Body)
+	if rec := rh.call(t, http.MethodGet, "/runs/{id}/report", map[string]string{"id": "nope"}, "", true); rec.Code != http.StatusNotImplemented {
+		t.Fatalf("report: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// listPage is the body of listRuns.
+type listPage struct {
+	Items []api.Run `json:"items"`
+	Next  *string   `json:"next_page_token"`
+}
+
+func (h *restHarness) list(t *testing.T, query string) listPage {
+	t.Helper()
+	rec := h.callQuery(t, http.MethodGet, "/runs", nil, query, "", true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list %q: %d %s", query, rec.Code, rec.Body)
+	}
+	var page listPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode %s: %v", rec.Body, err)
+	}
+	if page.Items == nil {
+		t.Fatalf("list %q: items is absent in %s", query, rec.Body)
+	}
+	return page
+}
+
+func ids(items []api.Run) []string {
+	out := make([]string, len(items))
+	for i, r := range items {
+		out[i] = r.Id
+	}
+	return out
+}
+
+func TestRESTListRunsEmpty(t *testing.T) {
+	h := newHarness(t, nil)
+	rh := newRESTHarness(t, h.orch)
+	if page := rh.list(t, ""); len(page.Items) != 0 || page.Next != nil {
+		t.Fatalf("empty list = %+v", page)
+	}
+}
+
+func TestRESTListRunsOrderPagingAndFilter(t *testing.T) {
+	h := newHarness(t, nil)
+	rh := newRESTHarness(t, h.orch)
+	var started []string // oldest first
+	for _, id := range []string{"agent-a", "agent-b", "agent-c", "agent-d", "agent-e"} {
+		started = append(started, h.start(t, h.agent(t, id, nil)).ID)
+	}
+	newest := func(n int) []string {
+		var out []string
+		for i := len(started) - 1; i >= len(started)-n; i-- {
+			out = append(out, started[i])
+		}
+		return out
+	}
+
+	// Without parameters: every run, newest first, no further page.
+	page := rh.list(t, "")
+	if got := ids(page.Items); !slices.Equal(got, newest(5)) || page.Next != nil {
+		t.Fatalf("list = %v next %v, want %v and no next", got, page.Next, newest(5))
+	}
+
+	// Paging by two walks all runs once, newest first, and ends without a token.
+	var walked []string
+	query := "page_size=2"
+	for pages := 0; ; pages++ {
+		if pages > 5 {
+			t.Fatalf("paging does not end after %v", walked)
+		}
+		p := rh.list(t, query)
+		if len(p.Items) > 2 {
+			t.Fatalf("page of %d items, want at most 2", len(p.Items))
+		}
+		walked = append(walked, ids(p.Items)...)
+		if p.Next == nil {
+			break
+		}
+		if len(p.Items) != 2 {
+			t.Fatalf("a short page of %d carries a token", len(p.Items))
+		}
+		query = "page_size=2&page_token=" + *p.Next
+	}
+	if !slices.Equal(walked, newest(5)) {
+		t.Fatalf("paged walk = %v, want %v", walked, newest(5))
+	}
+
+	// A page that ends exactly at the last run has no token.
+	if p := rh.list(t, "page_size=5"); p.Next != nil || len(p.Items) != 5 {
+		t.Fatalf("page_size=5 = %v next %v", ids(p.Items), p.Next)
+	}
+
+	// A run that starts between two pages neither shifts nor repeats an item.
+	first := rh.list(t, "page_size=2")
+	extra := h.start(t, h.agent(t, "agent-f", nil)).ID
+	second := rh.list(t, "page_size=2&page_token="+*first.Next)
+	if want := []string{started[2], started[1]}; !slices.Equal(ids(second.Items), want) {
+		t.Fatalf("second page after a new run = %v, want %v", ids(second.Items), want)
+	}
+	if fresh := rh.list(t, "page_size=1"); len(fresh.Items) != 1 || fresh.Items[0].Id != extra {
+		t.Fatalf("newest run = %v, want %s", ids(fresh.Items), extra)
+	}
+
+	// The state filter keeps the matching runs, and pages them the same way.
+	if _, err := h.orch.Stop(started[0], true); err != nil {
+		t.Fatal(err)
+	}
+	h.wait(t, started[0])
+	if got := ids(rh.list(t, "state=aborted").Items); !slices.Equal(got, []string{started[0]}) {
+		t.Fatalf("state=aborted = %v, want %v", got, []string{started[0]})
+	}
+	running := rh.list(t, "state=running&page_size=2")
+	if len(running.Items) != 2 || running.Next == nil {
+		t.Fatalf("state=running page = %v next %v", ids(running.Items), running.Next)
+	}
+	for _, r := range running.Items {
+		if r.State != api.RunStateRunning {
+			t.Fatalf("state=running returned %s in state %s", r.Id, r.State)
+		}
+	}
+	rest := rh.list(t, "state=running&page_size=2&page_token="+*running.Next)
+	if got := len(running.Items) + len(rest.Items); got != 5 {
+		t.Fatalf("running runs = %d, want 5 (six started, one aborted)", got)
+	}
+	if got := rh.list(t, "state=completed"); len(got.Items) != 0 || got.Next != nil {
+		t.Fatalf("state=completed = %v", ids(got.Items))
+	}
+}
+
+func TestRESTListRunsRejectsBadParameters(t *testing.T) {
+	h := newHarness(t, nil)
+	rh := newRESTHarness(t, h.orch)
+	for _, query := range []string{
+		"page_size=0", "page_size=501", "page_size=-1", "page_size=many",
+		"state=sleeping", "page_token=%21%21", "page_token=cnVuXzE", "page_token=cjA",
+	} {
+		t.Run(query, func(t *testing.T) {
+			rec := rh.callQuery(t, http.MethodGet, "/runs", nil, query, "", false)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("%d %s, want 400", rec.Code, rec.Body)
+			}
+			if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+				t.Fatalf("content type %q, want a problem", ct)
+			}
+		})
 	}
 }
 

@@ -6,7 +6,7 @@
 | Branch | `wp/CTL-35` |
 | Pull request | not yet opened |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-c35a7e, lease until 2026-11-09T19:41:21Z |
 | Last verified commit | none |
 
@@ -18,22 +18,22 @@ Implement `listRuns` (`GET /v1/runs`) as the OpenAPI contract defines it: filter
 
 ## Plan
 
-- [ ] 1. Orchestrator.List with a stable order and a robust page token; API.ListRuns in `controller/internal/runs`.
-- [ ] 2. Wire it: drop the pending stub in `controller/internal/wiring/server.go` and `listRuns` from `pendingOps`; contract tests.
-- [ ] 3. CLI e2e test expects exit 0 from `fps run list` and the started runs.
+- [x] 1. Orchestrator.List with a stable order and a robust page token; API.ListRuns in `controller/internal/runs`.
+- [x] 2. Wire it: drop the pending stub in `controller/internal/wiring/server.go` and `listRuns` from `pendingOps`; contract tests.
+- [x] 3. CLI e2e test expects exit 0 from `fps run list` and the started runs.
 - [ ] 4. Docs (Controller.md, CLI.md), log entry, checks, pull request, CI.
 
 ## Done and verified
 
-Nothing yet.
+Steps 1 to 3 written. `gofmt -l`, `plan.py check`, `render --check`, and `lint` pass locally. Go cannot build here, so the PR CI is the build and test loop.
 
 ## Remaining
 
-Everything.
+Pull request, CI, fixes.
 
 ## Next action
 
-Implement Orchestrator.List.
+Open the PR and watch CI.
 
 ## Blockers and open questions
 

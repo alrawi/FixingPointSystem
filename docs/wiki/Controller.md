@@ -505,7 +505,7 @@ The grpc release needs Go 1.24.0, so `go mod tidy` writes `go 1.24.0` in place o
 
 ## Run orchestrator
 
-The package `internal/runs` drives test runs. It moves each run through the run state machine of the specification, reserves the agents of the run, compiles one plan per agent, sends the prepare, start, and stop commands, and contains agent faults. It serves `POST /v1/runs`, `GET /v1/runs/{id}`, and `POST /v1/runs/{id}:stop` as the type `runs.API`, which embeds `api.Unimplemented`, so every other run operation still answers 501.
+The package `internal/runs` drives test runs. It moves each run through the run state machine of the specification, reserves the agents of the run, compiles one plan per agent, sends the prepare, start, and stop commands, and contains agent faults. It serves `GET /v1/runs`, `POST /v1/runs`, `GET /v1/runs/{id}`, and `POST /v1/runs/{id}:stop` as the type `runs.API`, which embeds `api.Unimplemented`, so every other run operation still answers 501.
 
 ### State machine
 
@@ -542,6 +542,8 @@ When a run stops, the orchestrator keeps the newest value of every counter of ev
 A criterion is a `runs.Criterion`, the `compiler.CriterionConfig` and its `Where` filter. The compiler has no `where` field yet, so `criteriaOf` leaves `Where` empty until it gains one (see the note in the log entry of CTL-20).
 
 ### Reasons
+
+`GET /v1/runs` (`listRuns`, CTL-35) lists the runs newest first, with the optional filter `state`, `page_size` from 1 to 500 (default 50), and `page_token`, and answers `{items, next_page_token}`. `Orchestrator.List` orders the runs by a creation sequence that the orchestrator assigns under its lock, not by the clock, so the order is total even when two runs share a timestamp. The page token is the opaque sequence of the last run of the page, and the next page holds the runs below it. A run that starts between two requests gets a higher sequence, so it never shifts or repeats an item of a later page, and `next_page_token` is absent on the last page, also when the last page is full. An unknown `state`, a `page_size` outside the range, or a token that `listRuns` did not return is a 400 problem. The run store is in memory, so a token does not survive a restart of the controller.
 
 `Run.Reason` says in words why a run failed or was aborted, and `GET /v1/runs/{id}` serves it as `reason` in those two states and in no other. The orchestrator fills it at every end that is not a completion.
 
@@ -757,11 +759,10 @@ Two adapter types connect the registry and the agent manager to the interfaces t
 | `GET /v1/capabilities` | `api.CapabilitiesAPI` |
 | `/v1/configs` and `:validate` | `store.Handler` |
 | `/v1/modules` | `registry.API` |
-| `POST /v1/runs`, `GET /v1/runs/{id}`, `POST /v1/runs/{id}:stop` | `runs.API` |
+| `GET /v1/runs`, `POST /v1/runs`, `GET /v1/runs/{id}`, `POST /v1/runs/{id}:stop` | `runs.API` |
 | `GET /v1/runs/{id}/metrics` and `:stream` | The `MetricsHandler` of `Controller.SetMetrics`, or 501 |
 | `getRunReport` | The `ReportHandler` of `Controller.SetReport`, which defaults to `report.API` |
 | `listCaptures`, `startCapture`, `downloadCapture` | The `CaptureHandler` of `Handlers.Captures`, which `New` sets to `captures.API` (CTL-14) |
-| `listRuns` | `pending`, which answers 501 |
 
 ### Hook for run metrics
 
