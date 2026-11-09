@@ -567,7 +567,7 @@ The aggregator records the six views once per second of controller time and keep
 | `tls` | Transport metrics that start with `tls.` | `port` |
 | `realism` | The `realism.` gauges | `application` |
 
-`GET /v1/runs/{id}/metrics` returns the points between `from` and `to`, both inclusive, and `step_s` keeps the newest point of every step. A run that the orchestrator knows but that sent no snapshot yet answers with an empty sample list. The responses use the type `metrics.Sample` with float64 values in place of the generated float32, because a float32 holds integers exactly only up to 2^24, and the tests validate every response against the OpenAPI document.
+Both metrics endpoints take an optional `side` query parameter (CON-12, API 0.4.0): `client`, the default, or `server`; any other value is a 400. `GET /v1/runs/{id}/metrics` returns the points between `from` and `to`, both inclusive, and `step_s` keeps the newest point of every step. A run that the orchestrator knows but that sent no snapshot yet answers with an empty sample list. The responses use the type `metrics.Sample` with float64 values in place of the generated float32, because a float32 holds integers exactly only up to 2^24, and the tests validate every response against the OpenAPI document.
 
 ### Stream
 

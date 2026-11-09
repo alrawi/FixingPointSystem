@@ -2469,3 +2469,51 @@ work_packages:
       - A TLS channel that trusts the controller CA and presents the agent certificate; enrollment with a P-256 key and a token read from a file or the environment, never argv; renewal before expiry while idle; flags for the CA file, token source, enrollment address, and key directory.
     acceptance:
       - The controller e2e test enrolls an agent with a token and runs a plan over mutual TLS, and a handshake failure ends the agent with a clear error.
+
+  # Follow-ups found in Phase 2 batch 14 (AGT-05, CTL-11, CTL-27).
+
+  - id: ENG-19
+    title: Capture TCP sessions in the runtime
+    phase: 2
+    workstream: ENG
+    size: S
+    depends_on: [ENG-12, AGT-05]
+    paths: [engine/fps-runtime/, engine/fps-capture/]
+    summary: >-
+      AGT-05 serves StartCapture with a shared capture cell, but only the agent's UDP workers read
+      it, so a capture of TCP sessions is empty because fps-runtime has no tap hook.
+    deliverables:
+      - The capture cell moves into fps-capture, and fps-runtime reads it when a session opens and wraps the session with Capture::tap, at no cost when no capture runs.
+    acceptance:
+      - A runtime test starts a capture mid run and finds the sampled TCP sessions in the ring, and tshark parses them where it is installed.
+
+  - id: CTL-28
+    title: Verify module signatures at install and in plans
+    phase: 2
+    workstream: CTL
+    size: M
+    depends_on: [CTL-11]
+    paths: [controller/internal/registry/, controller/internal/compiler/]
+    summary: >-
+      CTL-11 built Ed25519 signing and a trust store, but install does not verify and plans carry
+      no signatures.
+    deliverables:
+      - Registry.Install verifies the archive signature against a configured trust store before unpacking, refuses any failure, accepts unsigned modules only with an explicit development setting, and stores the signature and key id with the module.
+      - The compiler fills ModuleRef.signature and signature_key_id from the stored signature.
+    acceptance:
+      - Install tests accept a signed module, refuse a modified archive and an unknown key, and refuse an unsigned module unless the development setting is on; a compiled plan carries the signature.
+
+  - id: CTL-29
+    title: Rebuild the agent inventory after a restart
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CTL-27]
+    paths: [controller/internal/agents/, controller/internal/pki/]
+    summary: >-
+      The agent inventory is in memory and the PKI state is on disk, so after a controller restart
+      agents hold valid certificates but no inventory entry unless agent_auto_enroll is on.
+    deliverables:
+      - At start the controller adds every identity with a valid, unrevoked certificate in the PKI state to the inventory.
+    acceptance:
+      - A test enrolls an agent, restarts the controller with agent_auto_enroll off, and the agent registers again; a revoked identity does not.
