@@ -1,0 +1,8 @@
+## [2026-11-09] ingest | CTL-30 send UpdateRates from the agent manager
+
+`agents.Manager.UpdateRates` (`controller/internal/agents/updaterates.go`) sends `UpdateRatesCommand` and returns `UpdateRatesResult`, like `Start`. The manager now implements `runs.RateUpdater`, and `internal/wiring` already hands the `*agents.Manager` to `runs.Config.Agents`, so the CTL-24 throughput calibration is live on a real controller with no wiring change. The fake agent (`controller/internal/fakeagent/rates.go`) takes `UpdateRates` in the running state, checks every entry against the mix of its plan, applies all of them or none (CON-05), and keeps the session rate it runs (`Agent.Rates`). With the new `Options.Traffic` it simulates sessions at that rate and reports the client side bytes and sessions, so the bytes follow the commands. The CTL-24 end to end test dropped its `rateManager` wrapper and its simulated agent: it runs on the real manager and the fake agent, and shows the calibration steps in `Run.Calibration` for an 8 Mbit/s `throughput_bps` objective. The [Controller](../Controller.md#throughput-calibration-in-the-run-loop) page no longer says that the calibration needs the manager method.
+
+### Shared page notes
+
+- [Testing](../Testing.md): `fakeagent.Options.Traffic` is a reusable traffic simulation for controller tests that need counters that follow the rate of the plan.
+- The fake agent still announces `engine_api` 0.1.0 by default and accepts `UpdateRates` anyway. The orchestrator gates the command on the announced version, so a test that wants the calibration sets `Capabilities.EngineApi` to 0.2.0 or later.
