@@ -26,6 +26,7 @@ use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
 
 use crate::plan::{ModuleRef, Plan, ScenarioSource};
+use crate::trust::{ModulePolicy, TrustError};
 
 /// Errors of module loading.
 #[derive(Debug, thiserror::Error)]
@@ -81,6 +82,16 @@ pub enum ModuleError {
         actual: String,
         /// The plan digest.
         want: String,
+    },
+    /// The signature of the module does not satisfy the trust store of the
+    /// agent (AGT-04). `--dev-modules` accepts it with a warning.
+    #[error("module {module}: {source}")]
+    Untrusted {
+        /// The module name.
+        module: String,
+        /// Why the signature is refused.
+        #[source]
+        source: TrustError,
     },
     /// A scenario source digest differs from the plan.
     #[error("scenario {scenario}: digest {actual} differs from the plan digest {want}")]
@@ -215,14 +226,39 @@ pub struct LoadedModules {
     pub functions: NativeFunctions,
     /// Notes for the operator, such as a module without native functions.
     pub notes: Vec<String>,
+    /// Warnings about modules that the agent loaded without a valid
+    /// signature, see [`ModulePolicy`].
+    pub warnings: Vec<String>,
 }
 
 /// Loads, checks, and compiles every module and scenario of `plan` from
 /// `dir`.
-pub fn load(plan: &Plan, dir: &Path) -> Result<LoadedModules, ModuleError> {
+///
+/// Every module passes two checks before anything of it is compiled or
+/// registered. The tree digest of its directory must equal the plan digest,
+/// which no setting waives, and `policy` judges the signature of the plan
+/// over that digest (AGT-04).
+pub fn load(plan: &Plan, dir: &Path, policy: &ModulePolicy) -> Result<LoadedModules, ModuleError> {
     let mut set = ModuleSet::default();
+    let mut warnings = Vec::new();
     for m in &plan.modules {
-        set.insert(load_module(m, dir)?);
+        let manifest = load_module(m, dir)?;
+        // The digest of the directory equals m.digest here, so the signature
+        // that covers m.digest covers the bytes that the agent runs.
+        let verdict = policy
+            .judge(&m.name, &m.digest, &m.signature_key_id, &m.signature)
+            .map_err(|source| ModuleError::Untrusted {
+                module: m.name.clone(),
+                source,
+            })?;
+        warnings.extend(verdict);
+        set.insert(manifest);
+    }
+    if policy.store.is_none() && !plan.modules.is_empty() {
+        warnings.push(format!(
+            "no --module-trust-store: the signatures of {} module(s) are not required and not checked",
+            plan.modules.len()
+        ));
     }
     let mut notes = Vec::new();
     let functions = NativeFunctions::for_modules(&set, &plan.modules, dir, &mut notes)?;
@@ -235,6 +271,7 @@ pub fn load(plan: &Plan, dir: &Path) -> Result<LoadedModules, ModuleError> {
         scenarios,
         functions,
         notes,
+        warnings,
     })
 }
 
@@ -299,6 +336,7 @@ pub fn installed(dir: &Path) -> Vec<ModuleRef> {
             name: manifest.name,
             digest,
             settings: serde_json::Map::new(),
+            ..Default::default()
         });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
