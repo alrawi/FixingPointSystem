@@ -2794,3 +2794,66 @@ work_packages:
       - An optional controller_version in Capabilities; GET /configs to list stored configurations; the MixEntry.weight comment says session share; an oasdiff breaking check for the OpenAPI document in a new workflow openapi-breaking.yml on a hosted runner. All additive, with contracts/changes/CON-16.md.
     acceptance:
       - The OpenAPI and proto checks pass, and the new breaking check passes on this change and fails on a deliberately breaking fixture.
+
+  # Batch 19 follow-ups (2026-11-09).
+
+  - id: CON-17
+    title: The tls_upgrade action in the scenario contract
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [ENG-20]
+    paths: [contracts/, tools/contracts/]
+    summary: >-
+      ENG-20 parses tls_upgrade in the engine, but the scenario schema refuses unknown action keywords.
+      Needs owner approval as a contract change.
+    deliverables:
+      - tls_upgrade in contracts/schemas/scenario.schema.json as the ENG-20 log entry gives it, the README action table row, the validator rule that tls_upgrade in a UDP flow is an error, and contracts/changes/CON-17.md with the scenario contract version bump.
+    acceptance:
+      - The contract checks pass, a scenario with tls_upgrade validates, and one in a UDP flow fails.
+
+  - id: CTL-36
+    title: Serve stopCapture, capture files, and labeled criteria
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CON-15]
+    paths: [controller/internal/captures/, controller/internal/compiler/, controller/internal/agents/]
+    summary: >-
+      CON-15 added stopCapture, Capture.files, StartCaptureCommand.export_tls_keys, and Criterion.labels.
+      The controller answers stopCapture with 501 and fills none of them.
+    deliverables:
+      - stopCapture ends the capture on every agent without a download; Capture.files lists the agent, packets, bytes, digest, and error of each file; export_tls_keys reaches the agents; labeled criteria go only to agents reporting engine_api 0.2.3 or later.
+      - TestDownloadResumesAfterAnInterruptedUpload is stable (it failed once in CI on 2026-11-09).
+    acceptance:
+      - Contract tests for stopCapture and Capture.files pass against fake agents, and stopCapture leaves the pending operations list.
+
+  - id: AGT-14
+    title: TLS profiles, TLS key export, and labeled criteria in the agent
+    phase: 2
+    workstream: AGT
+    size: M
+    depends_on: [ENG-20, CON-15, AGT-13]
+    paths: [engine/fps-agent/]
+    summary: >-
+      The agent builds no TlsProfiles, so a plan with tls_upgrade fails every session; it ignores
+      export_tls_keys and refuses a criterion with labels (ENG-20 and CON-15 findings).
+    deliverables:
+      - The agent builds the TLS profiles a plan names and sets RuntimeConfig::tls, with a key log that the capture download ships when export_tls_keys is set.
+      - Criterion.labels apply, at least side.
+    acceptance:
+      - A controller e2e run with an SMTP STARTTLS scenario passes through the real agent, and a capture of it decrypts with the exported keys; a server side criterion counts the server series.
+
+  - id: MOD-20
+    title: STARTTLS scenarios for smtp and imap
+    phase: 2
+    workstream: MOD
+    size: S
+    depends_on: [CON-17, AGT-14, MOD-08]
+    paths: [modules/smtp/, modules/imap/]
+    summary: >-
+      Add the STARTTLS variants that MOD-07 and MOD-08 left out now that the engine can upgrade a flow.
+    deliverables:
+      - smtp submission on 587 with STARTTLS and imap with STARTTLS, offered in the capability lists.
+    acceptance:
+      - The realism job decrypts the fixture captures with the exported keys and Zeek logs the messages inside TLS.
