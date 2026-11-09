@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #166 |
 | Branch | `wp/CTL-14` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 80% (5 of 6 plan steps) |
+| Pull request | #282 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-7c949b, lease until 2026-11-09T14:08:05Z |
-| Last verified commit | none (CI pending) |
+| Last verified commit | 8bb9751 (CI green) |
 
 ## Goal
 
@@ -21,19 +21,19 @@ Start filtered captures on the agents of a run, serve the pcapng files: POST and
 - [x] 3. REST handlers and wiring
 - [x] 4. fakeagent capture support (fakeagent/capture.go)
 - [x] 5. Tests: contract-style tests with a fake agent, resume, digest mismatch
-- [ ] 6. Docs: Controller.md, log entry, CI green
+- [x] 6. Docs: Controller.md, log entry, CI green
 
 ## Done and verified
 
-Code, tests, docs written. Not built locally (no Go module proxy); CI is the build loop. Not yet verified by CI.
+All steps done. CI green on 8bb9751 (controller lint and test, contracts, proto, e2e, rust).
 
 ## Remaining
 
-CI green; fix compile or lint errors that CI reports; open and finish the PR.
+Nothing for this package; see the findings in PR #282.
 
 ## Next action
 
-Open the PR and read the CI result of the controller workflow.
+Review PR #282.
 
 ## Blockers and open questions
 
@@ -61,3 +61,4 @@ cd controller && go test ./internal/captures/ ./internal/agents/
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09 | claude-7c949b | claim | | claimed #166 |
+| 2026-11-09 | claude-7c949b | finish | 8bb9751 | PR #282, CI green, ready for review |
