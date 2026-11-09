@@ -269,8 +269,14 @@ func TestTokens(t *testing.T) {
 	t.Run("wrong secret, unknown id, malformed", func(t *testing.T) {
 		tok, _, _ := a.NewToken("agent-a", time.Minute)
 		id, secret, _ := splitToken(tok)
+		// Change the last character to one it is not, so the wrong secret
+		// never equals the real one (a fixed "A" did 1 time in 64).
+		last := "A"
+		if strings.HasSuffix(secret, "A") {
+			last = "B"
+		}
 		for name, bad := range map[string]string{
-			"wrong secret": id + "." + secret[:len(secret)-1] + "A",
+			"wrong secret": id + "." + secret[:len(secret)-1] + last,
 			"unknown id":   "0000000000000000." + secret,
 			"no dot":       id + secret,
 			"empty":        "",
