@@ -65,6 +65,14 @@ def rows(module: str, report: dict[str, Any]) -> list[str]:
             ran = ", ".join(f"{p['parser']} {p['version']}" for p in check.get("parsers", []))
             detail = f"ran {ran or 'none'}" + skipped_text(check)
             out.append(f"| {module} | {kind} | all | {_verdict(check['passed'])} | {detail} |")
+        if kind == "encryption":
+            detail = (
+                f"{check['decrypted_sessions']} of {check['sampled_sessions']} sampled sessions "
+                f"decrypted, {check['ja4_matched_sessions']} with the JA4 of their profile"
+            )
+            if check["failures"]:
+                detail += ": " + check["failures"][0]
+            out.append(f"| {module} | {kind} | all | {_verdict(check['passed'])} | {detail} |")
     return out
 
 

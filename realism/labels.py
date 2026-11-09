@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from realism.capture import Session
+from realism.ja4 import split as ja4_split
 
 LABELS_FORMAT = "fps-realism-labels"
 LABELS_VERSION = 1
@@ -35,7 +36,10 @@ _MATCH_FIELDS = {
     "server_ip": str,
     "server_port": int,
 }
-_TOP_LEVEL = {"labels", "version", "threshold", "applications", "sessions", "default"}
+_TOP_LEVEL = {"labels", "version", "threshold", "applications", "sessions", "default", "tls"}
+_TLS_FIELDS = {"profiles", "sample", "min_decrypted"}
+DEFAULT_TLS_SAMPLE = 100
+DEFAULT_MIN_DECRYPTED = 1.0
 
 
 class LabelsError(Exception):
@@ -48,10 +52,26 @@ class Rule:
 
     application: str
     match: Mapping[str, str | int]
+    tls_profile: str | None = None
 
     def matches(self, session: Session) -> bool:
         """Return True when every field of the rule equals the session field."""
         return all(getattr(session, name) == value for name, value in self.match.items())
+
+
+@dataclass(frozen=True)
+class TlsLabels:
+    """The expected TLS clients of one capture.
+
+    ``profiles`` maps the name of a configured client profile to the JA4
+    fingerprints that its ClientHello may have. A rule with ``tls_profile`` ties
+    the sessions it matches to a profile. The encryption check samples at most
+    ``sample`` of those sessions and requires that ``min_decrypted`` of them decrypt.
+    """
+
+    profiles: Mapping[str, tuple[str, ...]]
+    sample: int = DEFAULT_TLS_SAMPLE
+    min_decrypted: float = DEFAULT_MIN_DECRYPTED
 
 
 @dataclass
@@ -62,6 +82,14 @@ class Labels:
     default: str | None = None
     threshold: float | None = None
     applications: dict[str, dict[str, tuple[str, ...]]] = field(default_factory=dict)
+    tls: TlsLabels | None = None
+
+    def tls_profile_of(self, session: Session) -> str | None:
+        """Return the client profile of a session from its first matching rule, or None."""
+        for rule in self.rules:
+            if rule.matches(session):
+                return rule.tls_profile
+        return None
 
     def application_of(self, session: Session) -> str | None:
         """Return the intended application of a session, or None when unlabelled."""
@@ -135,12 +163,52 @@ def parse(doc: Any, source: str = "<labels>") -> Labels:
         for index, item in enumerate(_list(doc.get("sessions", []), f"{where} sessions"))
     ]
     applications = _applications(doc.get("applications", {}), where)
+    tls = _tls(doc["tls"], where) if "tls" in doc else None
+    for index, rule in enumerate(rules):
+        if rule.tls_profile is not None and (tls is None or rule.tls_profile not in tls.profiles):
+            raise LabelsError(
+                f"{where} sessions[{index}]: tls_profile {rule.tls_profile!r} "
+                "is not a profile of the tls section"
+            )
     return Labels(
         rules=rules,
         default=default,
         threshold=float(threshold) if threshold is not None else None,
         applications=applications,
+        tls=tls,
     )
+
+
+def _tls(value: Any, where: str) -> TlsLabels:
+    """Validate the tls section, whose profiles hold the expected JA4 of each client."""
+    if not isinstance(value, dict) or set(value) - _TLS_FIELDS:
+        raise LabelsError(f"{where} tls: must be a mapping with only {sorted(_TLS_FIELDS)}")
+    raw = value.get("profiles")
+    if not isinstance(raw, dict) or not raw:
+        raise LabelsError(f"{where} tls.profiles: must be a non empty mapping")
+    profiles: dict[str, tuple[str, ...]] = {}
+    for name, entry in raw.items():
+        ja4 = entry.get("ja4") if isinstance(entry, dict) and set(entry) == {"ja4"} else None
+        listed = [ja4] if isinstance(ja4, str) else ja4
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(listed, list)
+            or not listed
+            or not all(isinstance(item, str) and ja4_split(item) is not None for item in listed)
+        ):
+            raise LabelsError(
+                f"{where} tls.profiles.{name}: must be a mapping with ja4, one JA4 string "
+                "such as t13d1516h2_8daaf6152771_e5627efa2ab1 or a list of them"
+            )
+        profiles[name] = tuple(listed)
+    sample = value.get("sample", DEFAULT_TLS_SAMPLE)
+    if isinstance(sample, bool) or not isinstance(sample, int) or sample < 1:
+        raise LabelsError(f"{where} tls.sample: must be a positive integer")
+    minimum = value.get("min_decrypted", DEFAULT_MIN_DECRYPTED)
+    if isinstance(minimum, bool) or not isinstance(minimum, int | float) or not 0 < minimum <= 1:
+        raise LabelsError(f"{where} tls.min_decrypted: must be a number above 0 and up to 1")
+    return TlsLabels(profiles=profiles, sample=sample, min_decrypted=float(minimum))
 
 
 def _list(value: Any, where: str) -> Sequence[Any]:
@@ -154,8 +222,11 @@ def _is_name(value: Any) -> bool:
 
 
 def _rule(item: Any, where: str) -> Rule:
-    if not isinstance(item, dict) or set(item) - {"application", "match"}:
-        raise LabelsError(f"{where}: a rule has only application and match")
+    if not isinstance(item, dict) or set(item) - {"application", "match", "tls_profile"}:
+        raise LabelsError(f"{where}: a rule has only application, match, and tls_profile")
+    tls_profile = item.get("tls_profile")
+    if tls_profile is not None and (not isinstance(tls_profile, str) or not tls_profile):
+        raise LabelsError(f"{where}: tls_profile must be a profile name")
     application = item.get("application")
     if not isinstance(application, str) or not application:
         raise LabelsError(f"{where}: application must be a non empty string")
@@ -179,7 +250,7 @@ def _rule(item: Any, where: str) -> Rule:
                 normalized[name] = str(ipaddress.ip_address(normalized[name]))
             except ValueError as exc:
                 raise LabelsError(f"{where}: match field {name}: {exc}") from exc
-    return Rule(application=application, match=normalized)
+    return Rule(application=application, match=normalized, tls_profile=tls_profile)
 
 
 def _applications(value: Any, where: str) -> dict[str, dict[str, tuple[str, ...]]]:
