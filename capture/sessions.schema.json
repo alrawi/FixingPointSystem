@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alrawi/FixingPointSystem/capture/sessions.schema.json",
+  "title": "Capture sessions",
+  "description": "Output of `python3 -m capture sessions`. Times are integer nanoseconds since the Unix epoch, durations are milliseconds, and the client of a session is the side that opened it, or the side that the extractor guessed (see roles). SPDX-License-Identifier: GPL-3.0-only",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source", "parameters", "summary", "sessions"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "format", "frames", "packets", "skipped_frames", "warnings", "interfaces"],
+      "properties": {
+        "file": { "type": "string", "description": "Base name of the capture file." },
+        "format": { "enum": ["pcap", "pcapng"] },
+        "frames": { "type": "integer", "minimum": 0, "description": "Frames read, after the interface filter." },
+        "packets": { "type": "integer", "minimum": 0, "description": "Frames decoded to TCP segments or UDP datagrams." },
+        "skipped_frames": {
+          "type": "object",
+          "description": "Frames that were not decoded, counted by reason: not_ip, fragment, truncated_header, bad_header, unsupported_l4, unsupported_link_type.",
+          "additionalProperties": { "type": "integer", "minimum": 1 }
+        },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "interfaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "link_type", "snaplen", "name", "tsresol", "section"],
+            "properties": {
+              "id": { "type": "integer", "minimum": 0, "description": "Counts interfaces over the whole file, across pcapng sections." },
+              "link_type": { "type": "integer", "minimum": 0 },
+              "snaplen": { "type": "integer", "minimum": 0 },
+              "name": { "type": ["string", "null"] },
+              "tsresol": { "type": "string", "description": "Timestamp resolution of the interface, such as 1e-6 or 2^-10." },
+              "section": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["udp_idle_timeout_s", "payloads"],
+      "properties": {
+        "udp_idle_timeout_s": { "type": "number", "exclusiveMinimum": 0 },
+        "payloads": { "type": "boolean", "description": "Whether turns carry payload bytes." }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sessions", "tcp", "udp"],
+      "properties": {
+        "sessions": { "type": "integer", "minimum": 0 },
+        "tcp": { "type": "integer", "minimum": 0 },
+        "udp": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "sessions": {
+      "type": "array",
+      "description": "Ordered by start time. Ids start at 1 and follow that order.",
+      "items": { "$ref": "#/$defs/session" }
+    }
+  },
+  "$defs": {
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ip", "port"],
+      "properties": {
+        "ip": { "type": "string" },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "protocol", "ip_version", "client", "server", "roles", "interfaces",
+        "start_ns", "end_ns", "duration_ms", "data_start_ns", "data_end_ns",
+        "data_duration_ms", "end_reason", "continues", "handshake",
+        "client_to_server", "server_to_client", "anomalies", "turns"
+      ],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "protocol": { "enum": ["tcp", "udp"] },
+        "ip_version": { "enum": [4, 6] },
+        "client": { "$ref": "#/$defs/endpoint" },
+        "server": { "$ref": "#/$defs/endpoint" },
+        "roles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["client_known", "basis"],
+          "properties": {
+            "client_known": { "type": "boolean", "description": "True when a SYN or SYN ACK fixed the roles." },
+            "basis": {
+              "enum": ["syn", "synack", "port", "first_packet"],
+              "description": "syn: the client sent the first SYN. synack: the server answered. port: exactly one port is below 1024 and that side is the server. first_packet: the sender of the first packet seen. A UDP flow that continues after an idle split keeps the roles of the flow."
+            }
+          }
+        },
+        "interfaces": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "Ids of the capture interfaces that saw packets of this session." },
+        "start_ns": { "type": "integer" },
+        "end_ns": { "type": "integer" },
+        "duration_ms": { "type": "number", "minimum": 0, "description": "From the first to the last packet." },
+        "data_start_ns": { "type": ["integer", "null"], "description": "First packet with payload, in either direction." },
+        "data_end_ns": { "type": ["integer", "null"] },
+        "data_duration_ms": { "type": ["number", "null"], "minimum": 0 },
+        "end_reason": {
+          "enum": ["fin", "rst", "half_close", "capture_end", "new_connection", "idle_timeout"],
+          "description": "fin: both sides sent FIN. rst: a RST was seen. half_close: only one side sent FIN. capture_end: the capture ended while the session was open. new_connection: a SYN with a new initial sequence number replaced it. idle_timeout: UDP only, a later flow of the same 5-tuple follows after the idle timeout."
+        },
+        "continues": { "type": ["integer", "null"], "minimum": 1, "description": "Id of the earlier session of the same UDP 5-tuple that an idle split ended." },
+        "handshake": {
+          "oneOf": [
+            { "type": "null", "description": "UDP has no handshake." },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["state", "server_rtt_ms", "client_rtt_ms", "rtt_ms"],
+              "properties": {
+                "state": { "enum": ["complete", "incomplete", "missing"] },
+                "server_rtt_ms": { "type": ["number", "null"], "description": "Last SYN to the SYN ACK: the round trip between the capture point and the server." },
+                "client_rtt_ms": { "type": ["number", "null"], "description": "SYN ACK to the client ACK: the round trip between the capture point and the client." },
+                "rtt_ms": { "type": ["number", "null"], "description": "The sum of both, the end to end handshake time. Null unless the handshake is complete." }
+              }
+            }
+          ]
+        },
+        "client_to_server": { "$ref": "#/$defs/direction" },
+        "server_to_client": { "$ref": "#/$defs/direction" },
+        "anomalies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "missing_handshake", "handshake_incomplete", "syn_retransmitted",
+              "retransmission", "out_of_order", "overlap_mismatch", "data_gap",
+              "reassembly_overflow", "reset", "half_close", "role_guessed",
+              "truncated_payload", "udp_idle_split"
+            ]
+          }
+        },
+        "turns": { "type": "array", "items": { "$ref": "#/$defs/turn" } }
+      }
+    },
+    "direction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packets", "ip_bytes", "payload_bytes"],
+      "properties": {
+        "packets": { "type": "integer", "minimum": 0 },
+        "ip_bytes": { "type": "integer", "minimum": 0, "description": "Sum of the IP total lengths, headers included." },
+        "payload_bytes": { "type": "integer", "minimum": 0, "description": "Transport payload on the wire, counting every retransmitted copy." },
+        "stream_bytes": { "type": "integer", "minimum": 0, "description": "TCP only: distinct payload bytes captured, each counted once." },
+        "retransmitted_packets": { "type": "integer", "minimum": 0, "description": "TCP only: segments that repeat bytes seen before." },
+        "retransmitted_bytes": { "type": "integer", "minimum": 0 },
+        "out_of_order_packets": { "type": "integer", "minimum": 0, "description": "TCP only: segments with new bytes that lie behind the highest byte seen, so they fill a hole." },
+        "missing_bytes": { "type": "integer", "minimum": 0, "description": "TCP only: bytes between the first and the highest offset that no segment carried." },
+        "fin": { "type": "boolean" },
+        "rst": { "type": "boolean" }
+      }
+    },
+    "turn": {
+      "type": "object",
+      "description": "A run of consecutive deliveries in one direction. TCP deliveries are reassembled bytes in stream order. UDP deliveries are datagrams.",
+      "additionalProperties": false,
+      "required": ["direction", "start_ns", "end_ns", "bytes", "packets", "gap_before"],
+      "properties": {
+        "direction": { "enum": ["client_to_server", "server_to_client"] },
+        "start_ns": { "type": "integer", "description": "When the first bytes of the turn were available, which is the time of the segment that closed the last hole before them." },
+        "end_ns": { "type": "integer" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "packets": { "type": "integer", "minimum": 1, "description": "Deliveries merged into the turn. A hole fill can release several segments at once." },
+        "gap_before": { "type": "integer", "minimum": 0, "description": "TCP only: bytes that no segment carried, skipped before this turn. A turn with a gap always starts a new turn." },
+        "datagram_sizes": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "UDP only: payload size of each datagram." },
+        "data_b64": { "type": "string", "contentEncoding": "base64", "description": "TCP, with --payloads: the bytes of the turn." },
+        "datagrams_b64": { "type": "array", "items": { "type": "string", "contentEncoding": "base64" }, "description": "UDP, with --payloads: one entry per datagram." }
+      }
+    }
+  }
+}

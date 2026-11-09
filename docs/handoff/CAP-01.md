@@ -10,7 +10,7 @@
 | Branch | `wp/CAP-01` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-c4a901, lease until 2026-11-09T17:42:01Z |
 | Last verified commit | none |
 
@@ -24,23 +24,23 @@ Reassemble TCP streams and group UDP flows from a capture into sessions with tim
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Claim commit and handoff
-- [ ] 2. Readers (pcap, pcapng) and packet decoder
-- [ ] 3. TCP reassembly and UDP flows, session builder, CLI, JSON Schema
-- [ ] 4. Tests with synthetic captures, ruff, mypy, mk/cap.mk
+- [x] 1. Claim commit and handoff
+- [x] 2. Readers (pcap, pcapng) and packet decoder
+- [x] 3. TCP reassembly and UDP flows, session builder, CLI, JSON Schema
+- [x] 4. Tests with synthetic captures, ruff, mypy, mk/cap.mk
 - [ ] 5. Wiki page, log entry, PR, CI
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+`make lint-cap test-cap`: ruff, mypy --strict, and 44 pytest tests pass (pcap and pcapng readers, TCP reassembly, UDP flows, schema validation of every output).
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Wiki page, log entry, PR, CI.
 
 ## Next action
 
-Step 2: write capture/pcapio.py.
+Step 5: write docs/wiki/Capture.md and the log entry, open the PR, wait for CI.
 
 ## Blockers and open questions
 
