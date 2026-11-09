@@ -3,7 +3,9 @@
 package report
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 
@@ -16,6 +18,9 @@ import (
 const (
 	JSONContentType = "application/json"
 	CSVContentType  = "text/csv; charset=utf-8"
+	// HTMLContentType equals html.ContentType, which this package cannot
+	// import.
+	HTMLContentType = "text/html; charset=utf-8"
 )
 
 // RunSource returns runs by id. *runs.Orchestrator satisfies it.
@@ -43,6 +48,11 @@ type API struct {
 	eval   *Evaluator
 	runs   RunSource
 	totals TotalsSource
+
+	// html, samples, and objectives serve format=html. See serve.go.
+	html       HTMLRenderer
+	samples    SampleSource
+	objectives ObjectiveSource
 }
 
 var _ api.ServerInterface = (*API)(nil)
@@ -50,19 +60,24 @@ var _ api.ServerInterface = (*API)(nil)
 // NewAPI returns the report operation over the runs of rs and the metrics of
 // ts. A nil ts builds reports from the run totals alone. When ts is also a
 // SeriesSource, as *metrics.Aggregator is, reports select labeled series, and
-// e reads the same source when a run stops, through UseSeries.
+// e reads the same source when a run stops, through UseSeries. When ts is a
+// SampleSource, as *metrics.Aggregator is, the HTML report draws its samples.
 func NewAPI(e *Evaluator, rs RunSource, ts TotalsSource) *API {
 	if ss, ok := ts.(SeriesSource); ok {
 		e.UseSeries(ss)
 	}
-	return &API{eval: e, runs: rs, totals: ts}
+	a := &API{eval: e, runs: rs, totals: ts}
+	if ss, ok := ts.(SampleSource); ok {
+		a.samples = ss
+	}
+	return a
 }
 
 // safeName matches run ids that may appear in a file name unquoted.
 var safeName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 
-// GetRunReport answers GET /v1/runs/{id}/report in JSON, the default, or in
-// CSV. The HTML format of the contract answers 501 until a package adds it.
+// GetRunReport answers GET /v1/runs/{id}/report in JSON, the default, in CSV,
+// or in HTML. The HTML format answers 501 until UseHTML sets a renderer.
 func (a *API) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, params api.GetRunReportParams) {
 	format := api.GetRunReportParamsFormatJson
 	if params.Format != nil {
@@ -72,7 +87,7 @@ func (a *API) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, pa
 		api.WriteProblem(w, r, api.Problemf(http.StatusBadRequest, "unknown report format %q", format))
 		return
 	}
-	if format == api.GetRunReportParamsFormatHtml {
+	if format == api.GetRunReportParamsFormatHtml && a.html == nil {
 		api.WriteProblem(w, r, api.Problemf(http.StatusNotImplemented, "the html report format is not implemented"))
 		return
 	}
@@ -113,10 +128,17 @@ func (a *API) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, pa
 	}
 	var body []byte
 	contentType := JSONContentType
-	if format == api.GetRunReportParamsFormatCsv {
+	switch format {
+	case api.GetRunReportParamsFormatHtml:
+		contentType = HTMLContentType
+		var in HTMLInput
+		if in, err = a.htmlInput(r.Context(), run); err == nil {
+			body, err = a.html(rep, in)
+		}
+	case api.GetRunReportParamsFormatCsv:
 		contentType = CSVContentType
 		body, err = rep.CSV()
-	} else {
+	default:
 		body, err = rep.JSON()
 	}
 	if err != nil {
@@ -127,9 +149,33 @@ func (a *API) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, pa
 	h.Set("Content-Type", contentType)
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Content-Type-Options", "nosniff")
+	if format == api.GetRunReportParamsFormatHtml {
+		h.Set("Content-Security-Policy", HTMLContentSecurityPolicy)
+	}
 	if format == api.GetRunReportParamsFormatCsv && safeName.MatchString(run.ID) {
 		h.Set("Content-Disposition", `attachment; filename="report-`+run.ID+`.csv"`)
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// htmlInput gathers what the HTML report holds beyond the report: the
+// per second samples of the run and the objective of its configuration. A run
+// without samples gets a page without charts, and a run whose configuration
+// is gone or unreadable gets a page without objective.
+func (a *API) htmlInput(ctx context.Context, run runs.Run) (HTMLInput, error) {
+	var in HTMLInput
+	if a.samples != nil {
+		s, err := a.samples.Samples(run.ID, api.MetricViewApplication, metrics.Window{})
+		if err != nil && !errors.Is(err, metrics.ErrRunUnknown) {
+			return in, fmt.Errorf("report of run %s: %w", run.ID, err)
+		}
+		in.Samples = s
+	}
+	if a.objectives != nil {
+		if o, err := a.objectives.Objective(ctx, run.ConfigID); err == nil {
+			in.Objective = o
+		}
+	}
+	return in, nil
 }
