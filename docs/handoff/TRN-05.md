@@ -5,8 +5,8 @@
 | Issue | #160 |
 | Branch | `wp/TRN-05` |
 | Pull request | #329 |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-t05a1c, lease until 2026-11-09T21:23:49Z |
 | Last verified commit | none |
 
@@ -22,7 +22,7 @@ Define at least four browser like client profiles (Chrome, Firefox, Safari, Edge
 - [x] 2. Profile knob `sig_schemes` and the four profiles with documented sources (`native/src/browser.rs`)
 - [x] 3. CI test `modules/tls/tests/ja4.rs` with the stdlib JA4 helper script and a tshark cross check
 - [x] 4. Transport wiki page, module README, log entry
-- [ ] 5. Checks, pull request, CI
+- [x] 5. Checks, pull request, CI
 
 ## Done and verified
 
@@ -63,3 +63,4 @@ CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=1 cargo test -p fps-module-tls
 |---|---|---|---|---|
 | 2026-11-09T19:24Z | claude-t05a1c | claim | none | lease taken on #160 |
 | 2026-11-09T20:08Z | claude-t05a1c | checkpoint | none | profiles, tests, wiki |
+| 2026-11-09T20:20Z | claude-t05a1c | review | none | PR 329, CI green |
