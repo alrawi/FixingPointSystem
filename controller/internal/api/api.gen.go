@@ -309,6 +309,39 @@ type AgentBackend string
 // AgentState defines model for Agent.State.
 type AgentState string
 
+// CalibrationEntry The calibration estimate of one mix entry.
+type CalibrationEntry struct {
+	// BytesPerSession The estimate of application bytes per session that the next rates rest on.
+	BytesPerSession float64 `json:"bytes_per_session"`
+
+	// Id Mix entry id.
+	Id string `json:"id"`
+
+	// Measured True when the estimate comes from measurements and not from the manifest estimate.
+	Measured bool `json:"measured"`
+}
+
+// CalibrationStep One change of the calibration factor of a run.
+type CalibrationStep struct {
+	// Entries The bytes per session estimate of each mix entry.
+	Entries *[]CalibrationEntry `json:"entries,omitempty"`
+
+	// Factor Scales every compiled session rate of the run from this step on.
+	Factor float64 `json:"factor"`
+
+	// Multipliers The byte mix multiplier of each mix entry by mix entry id, which scales the rate of the entry beside the factor. Absent for a run without byte weighted mix control, such as a run whose profile basis is not bytes.
+	Multipliers *map[string]float64 `json:"multipliers,omitempty"`
+
+	// SessionsPerSecond The total session rate across the mix that the factor implies.
+	SessionsPerSecond float64 `json:"sessions_per_second"`
+
+	// Target The factor that the estimates called for before the bounds of the step limited the move.
+	Target float64 `json:"target"`
+
+	// Time Controller clock time of the step.
+	Time time.Time `json:"time"`
+}
+
 // Capabilities defines model for Capabilities.
 type Capabilities struct {
 	Agents     []Agent                `json:"agents"`
@@ -414,8 +447,10 @@ type Problem struct {
 
 // Run defines model for Run.
 type Run struct {
-	ConfigId  string     `json:"config_id"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
+	// Calibration The changes of the calibration factor of a run with a throughput_bps objective, oldest first. Absent for any other objective and while the factor stays at one. The controller keeps the newest 256 steps of a run.
+	Calibration *[]CalibrationStep `json:"calibration,omitempty"`
+	ConfigId    string             `json:"config_id"`
+	CreatedAt   *time.Time         `json:"created_at,omitempty"`
 
 	// Degraded True when an agent failed during the run.
 	Degraded       *bool              `json:"degraded,omitempty"`
@@ -507,6 +542,15 @@ type ListModulesParams struct {
 	Type      *ModuleType `form:"type,omitempty" json:"type,omitempty"`
 	PageSize  *PageSize   `form:"page_size,omitempty" json:"page_size,omitempty"`
 	PageToken *PageToken  `form:"page_token,omitempty" json:"page_token,omitempty"`
+}
+
+// InstallModuleParams defines parameters for InstallModule.
+type InstallModuleParams struct {
+	// XModuleSignatureKeyId Id of the trust store key that made the signature, for example ed25519:fe812c12f3ab4ce6ac5db69ac352f906. Sent together with X-Module-Signature, or not at all.
+	XModuleSignatureKeyId *string `json:"X-Module-Signature-Key-Id,omitempty"`
+
+	// XModuleSignature The 64 byte Ed25519 signature over the module tree digest, in standard base64 with padding. Sent together with X-Module-Signature-Key-Id, or not at all. A module without a signature installs only when the controller allows unsigned modules.
+	XModuleSignature *[]byte `json:"X-Module-Signature,omitempty"`
 }
 
 // ListRunsParams defines parameters for ListRuns.
@@ -618,7 +662,7 @@ type ServerInterface interface {
 	ListModules(w http.ResponseWriter, r *http.Request, params ListModulesParams)
 	// Install a signed module archive.
 	// (POST /modules)
-	InstallModule(w http.ResponseWriter, r *http.Request)
+	InstallModule(w http.ResponseWriter, r *http.Request, params InstallModuleParams)
 
 	// (DELETE /modules/{name}/{version})
 	DeleteModule(w http.ResponseWriter, r *http.Request, name string, version string)
@@ -922,14 +966,59 @@ func (siw *ServerInterfaceWrapper) ListModules(w http.ResponseWriter, r *http.Re
 // InstallModule operation middleware
 func (siw *ServerInterfaceWrapper) InstallModule(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
 	ctx := r.Context()
 
 	ctx = context.WithValue(ctx, BearerTokenScopes, []string{})
 
 	r = r.WithContext(ctx)
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params InstallModuleParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Module-Signature-Key-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Module-Signature-Key-Id")]; found {
+		var XModuleSignatureKeyId string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Module-Signature-Key-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Module-Signature-Key-Id", valueList[0], &XModuleSignatureKeyId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Module-Signature-Key-Id", Err: err})
+			return
+		}
+
+		params.XModuleSignatureKeyId = &XModuleSignatureKeyId
+
+	}
+
+	// ------------- Optional header parameter "X-Module-Signature" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Module-Signature")]; found {
+		var XModuleSignature []byte
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Module-Signature", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Module-Signature", valueList[0], &XModuleSignature, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "byte"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Module-Signature", Err: err})
+			return
+		}
+
+		params.XModuleSignature = &XModuleSignature
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.InstallModule(w, r)
+		siw.Handler.InstallModule(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
