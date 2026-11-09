@@ -5,10 +5,10 @@
 | Issue | #276 |
 | Branch | `wp/AGT-10` |
 | Pull request | #307 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-a10c3e, lease until 2026-11-09T17:41:43Z |
-| Last verified commit | 45ef53e |
+| Last verified commit | 204a3af |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ The agent uses `fps_capture::CaptureCell` for TCP and UDP, so `StartCapture` rec
 - [x] 1. Shared capture cell (`control.rs` re-export, `run.rs` passes the cell to `RuntimeConfig`), test in `tests/run_control.rs`
 - [x] 2. `PinnedVerifier` in `identity.rs`, fake endpoint tests in `tests/mtls.rs`
 - [x] 3. Close after the handshake: `closed_before_response`, `Lost::ClosedAfterHandshake`, confirm by one immediate redial, tighten the refused certificate test
-- [ ] 4. Docs (`Agent.md`), log entry, checks, PR, CI
+- [x] 4. Docs (`Agent.md`), log entry, checks, PR, CI
 
 ## Done and verified
 
@@ -29,11 +29,11 @@ The agent uses `fps_capture::CaptureCell` for TCP and UDP, so `StartCapture` rec
 
 ## Remaining
 
-PR and CI.
+none. CI is green on 204a3af.
 
 ## Next action
 
-Open the PR, then poll CI.
+Review and merge.
 
 ## Blockers and open questions
 
@@ -59,3 +59,4 @@ cargo test -p fps-agent --test mtls --test run_control
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-09T17:15Z | claude-a10c3e | claim | none | claimed #276 |
+| 2026-11-09T18:10Z | claude-a10c3e | review | 204a3af | CI green, PR 307; CI showed the CANCELLED variant of the close, now handled |
