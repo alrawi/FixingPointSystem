@@ -5,10 +5,10 @@
 | Issue | #190 |
 | Branch | `wp/RLM-08` |
 | Pull request | #343 |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-36eea3, lease until 2026-11-10T00:38:58Z |
-| Last verified commit | none |
+| Last verified commit | b590d88 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Add the session structure check to the realism report. It reads the flow graph o
 - [x] 1. Scenario graph reader (`realism/scenario_graph.py`)
 - [x] 2. Instance reconstruction and checks (`realism/structure.py`), labels `structure` section, report schema 0.6.0, `--scenario`
 - [x] 3. Tests with generated fixtures (`realism/tests/test_structure.py`): web_browse passes, page before lookup fails, ftp shaped scenario
-- [ ] 4. README, wiki page, log entry, pull request, CI
+- [x] 4. README, wiki page, log entry, pull request, CI
 
 ## Done and verified
 
@@ -29,11 +29,11 @@ Add the session structure check to the realism report. It reads the flow graph o
 
 ## Remaining
 
-The pull request and CI.
+none
 
 ## Next action
 
-Open the pull request and wait for CI.
+Review pull request #343.
 
 ## Blockers and open questions
 
@@ -62,3 +62,4 @@ make lint-rlm test-rlm
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T00:09Z | claude-36eea3 | claim | none | claimed #190, branch wp/RLM-08 |
+| 2026-11-10T00:25Z | claude-36eea3 | finish | b590d88 | PR #343, CI green, ready for review |
