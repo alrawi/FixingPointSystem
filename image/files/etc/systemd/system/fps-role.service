@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[Unit]
+Description=FixingPointSystem role selector
+Documentation=https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md
+# cloud-init.service runs first, so user-data may write /etc/fps/role.env.
+After=cloud-init.service
+Before=fps-tune.service fps-controller.service fps-agent.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+RuntimeDirectory=fps
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/libexec/fps/fps-role
+
+[Install]
+WantedBy=multi-user.target

@@ -2,16 +2,21 @@
 [Unit]
 Description=FixingPointSystem agent
 Documentation=https://github.com/alrawi/FixingPointSystem/blob/main/image/README.md
-After=fps-controller.service fps-mgmt-addr.service
+After=fps-controller.service fps-mgmt-addr.service fps-role.service fps-tune.service
 Requires=fps-mgmt-addr.service
-Wants=fps-controller.service
+Wants=fps-controller.service fps-tune.service
+# fps-role writes the marker for the roles that run the agent. fps-tune writes the
+# reboot marker when the kernel options of the agent profile need a reboot.
+ConditionPathExists=/run/fps/role.d/fps-agent.service
+ConditionPathExists=!/run/fps/tune-reboot
 
 [Service]
 Type=simple
 # The agent moves test interfaces into network namespaces and binds pool
-# addresses, so it runs as root. IMG-02 narrows this when the role selector lands.
+# addresses, so it runs as root.
 ExecStart=/usr/libexec/fps/fps-agent-start
 Restart=always
+LimitNOFILE=4194304
 RestartSec=5
 # Exit code 2 is a usage error or a kernel before Linux 6.3, which a restart
 # cannot fix.

@@ -8,6 +8,11 @@ data_dir: /var/lib/fps
 # The agent on this VM registers itself. Set this to false and enroll agents with
 # POST /v1/agents when other machines may reach the management network.
 agent_auto_enroll: true
+# Stopgap until AGT-08 gives the agent mutual TLS: since CTL-27 the controller
+# requires client certificates on gRPC, and the agent in this image cannot present
+# one yet. This flag keeps the plain gRPC listener of IMG-01 and logs INSECURE.
+# Remove it when the image provisions an enrollment token for the agent.
+insecure_plain_grpc: true
 tokens:
   # /etc/fps/admin.token comes from cloud-init user-data, or the controller
   # creates it on the first start. Read it with: sudo cat /etc/fps/admin.token
