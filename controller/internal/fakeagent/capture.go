@@ -12,7 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"time"
+
+	"google.golang.org/grpc"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents/agentpb"
 )
@@ -273,6 +274,17 @@ func (u *upload) run() {
 	u.host.mu.Unlock()
 }
 
+// hangUp ends the call without an end message and waits for the answer of the
+// controller. It half closes the stream instead of cancelling the call: the
+// stream keeps its order, so the controller reads every chunk that was sent
+// and then sees the end of the stream, which makes Upload.Sent equal to what
+// the controller holds. Cancelling the call, even after a sleep, can discard
+// chunks that the controller has not read yet, and a test that then compares
+// the resume offset with Upload.Sent fails when the machine is slow.
+func hangUp(stream grpc.ClientStreamingClient[agentpb.UploadCaptureRequest, agentpb.UploadCaptureResponse]) {
+	_, _ = stream.CloseAndRecv()
+}
+
 func (u *upload) send() (int, error) {
 	a := u.agent
 	a.mu.Lock()
@@ -300,11 +312,7 @@ func (u *upload) send() (int, error) {
 			n = u.stopAfter - sent
 		}
 		if n <= 0 {
-			// Break the call here: let the controller read what was sent,
-			// then cancel the call without an end message.
-			time.Sleep(50 * time.Millisecond)
-			cancel()
-			_, _ = stream.CloseAndRecv()
+			hangUp(stream)
 			return sent, errBroken
 		}
 		piece := append([]byte(nil), u.data[off:off+n]...)
@@ -319,9 +327,7 @@ func (u *upload) send() (int, error) {
 		sent += n
 	}
 	if u.stopAfter >= 0 && sent >= u.stopAfter {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
-		_, _ = stream.CloseAndRecv()
+		hangUp(stream)
 		return sent, errBroken
 	}
 	err = stream.Send(&agentpb.UploadCaptureRequest{Body: &agentpb.UploadCaptureRequest_End{End: &agentpb.CaptureEnd{TotalBytes: uint64(len(u.data)), Digest: u.digest}}})

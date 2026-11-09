@@ -358,8 +358,13 @@ func (e *CommandError) Error() string {
 	return fmt.Sprintf("agent %s: command failed with %s: %s", e.AgentID, e.Code, e.Message)
 }
 
-// Prepare sends a prepare command to agent id and waits for its result.
+// Prepare sends a prepare command to agent id and waits for its result. It
+// refuses, without sending, a plan with labeled criteria for an agent below
+// engine_api 0.2.3, with ErrPlanUnsupported.
 func (m *Manager) Prepare(ctx context.Context, id string, cmd *agentpb.PrepareCommand) (*agentpb.PrepareResult, error) {
+	if err := m.requirePlanEngine(id, cmd.GetPlan()); err != nil {
+		return nil, err
+	}
 	res, err := m.command(ctx, id, &agentpb.SessionResponse{Body: &agentpb.SessionResponse_Prepare{Prepare: cmd}}, false)
 	if err != nil {
 		return nil, err

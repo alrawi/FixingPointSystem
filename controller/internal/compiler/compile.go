@@ -21,10 +21,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/netip"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -46,6 +48,8 @@ var (
 	ErrAmbiguousScenario = errors.New("ambiguous scenario")
 	// ErrPoolTooSmall reports a host pool that cannot give every agent at least one host.
 	ErrPoolTooSmall = errors.New("host pool too small for the agents")
+	// ErrAgentTooOld reports an agent whose engine_api cannot apply a part of the plan. A criterion with labels needs engine_api 0.2.3 or later, because an older agent skips the labels and would count every series of the metric.
+	ErrAgentTooOld = errors.New("agent engine api is too old for the plan")
 	// ErrNoByteEstimate reports a scenario that has no bytes per session estimate where the test needs one: a throughput objective, or the profile basis bytes.
 	ErrNoByteEstimate = errors.New("no bytes per session estimate")
 )
@@ -62,7 +66,17 @@ type Agent struct {
 	// empty, a port that spreads across agents skips the agent unless the
 	// port interface appears in it, and a port pinned to the agent needs it.
 	Interfaces []string
+	// EngineAPI is the engine_api version that the agent reported, such as
+	// 0.2.3. Empty means unknown, and the compiler then applies no version
+	// check, so an inventory that has no versions, such as the one that
+	// validates a configuration, still compiles. The agent manager checks the
+	// version again when it sends the plan.
+	EngineAPI string
 }
+
+// LabelsEngineAPI is the first engine_api version whose agents apply
+// Criterion.labels (CON-15).
+const LabelsEngineAPI = "0.2.3"
 
 // Scenario is one scenario that an installed module exports.
 type Scenario struct {
@@ -181,6 +195,9 @@ func compile(req Request) ([]Plan, error) {
 		return nil, err
 	}
 	if err := c.loadAndCriteria(cfg); err != nil {
+		return nil, err
+	}
+	if err := c.checkLabelSupport(agents); err != nil {
 		return nil, err
 	}
 
@@ -886,7 +903,69 @@ func (c *compiled) loadAndCriteria(cfg Config) error {
 		case math.IsNaN(cr.Value) || math.IsInf(cr.Value, 0):
 			return invalid(path, "value is not finite")
 		}
-		c.criteria = append(c.criteria, Criterion{Metric: cr.Metric, Op: op, Value: cr.Value})
+		crit := Criterion{Metric: cr.Metric, Op: op, Value: cr.Value}
+		if len(cr.Where) > 0 {
+			// The filter reaches the agent as labels, and the metrics layer
+			// of the controller applies it to the series as before.
+			crit.Labels = maps.Clone(cr.Where)
+		}
+		c.criteria = append(c.criteria, crit)
 	}
 	return nil
+}
+
+// checkLabelSupport refuses a plan with a labeled criterion when an agent
+// reports an engine_api older than LabelsEngineAPI. An agent of 0.2.2 or
+// earlier skips the labels and would measure another rule, so the compiler
+// fails with a message that names the criterion and the agent, and nothing
+// drops the labels silently.
+func (c *compiled) checkLabelSupport(agents []Agent) error {
+	for i, cr := range c.criteria {
+		if len(cr.Labels) == 0 {
+			continue
+		}
+		for _, ag := range agents {
+			if ag.EngineAPI != "" && !engineAtLeast(ag.EngineAPI, LabelsEngineAPI) {
+				return fmt.Errorf("%w: criteria[%d] filters %s by labels (where), which needs engine_api %s or later, and agent %s reports %s; remove the where filter or upgrade the agent",
+					ErrAgentTooOld, i, cr.Metric, LabelsEngineAPI, ag.ID, ag.EngineAPI)
+			}
+		}
+	}
+	return nil
+}
+
+// engineAtLeast reports whether the version v, such as 0.2.3, is at least
+// floor. A version that does not parse is older than every floor.
+func engineAtLeast(v, floor string) bool {
+	have, ok1 := parseVersion(v)
+	want, ok2 := parseVersion(floor)
+	if !ok1 || !ok2 {
+		return false
+	}
+	for i := range have {
+		if have[i] != want[i] {
+			return have[i] > want[i]
+		}
+	}
+	return true
+}
+
+func parseVersion(v string) ([3]int, bool) {
+	var out [3]int
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, p := range parts {
+		// Drop a pre-release or build suffix.
+		if j := strings.IndexAny(p, "-+"); j >= 0 {
+			p = p[:j]
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
