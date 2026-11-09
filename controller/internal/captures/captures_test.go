@@ -373,7 +373,7 @@ func TestAgentThatCannotServeTheFile(t *testing.T) {
 	// The file of agent-b alone is served, and the headers name the gap.
 	rec := r.download(c.Id)
 	if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), r.agents["agent-b"].CaptureBytes(r.planOf("agent-b"), c.Id)) {
-		t.Fatalf("download: %d %s", rec.Code, rec.Body.Len())
+		t.Fatalf("download: %d %d", rec.Code, rec.Body.Len())
 	}
 	if rec.Header().Get("X-FPS-Capture-Agents") != "agent-b" || rec.Header().Get("X-FPS-Capture-Missing") != "agent-a" {
 		t.Fatalf("headers %v", rec.Header())
