@@ -275,8 +275,8 @@ func TestByteMixNeedsThroughputObjective(t *testing.T) {
 // TestByteMixExactEstimatesStartOnTarget is the acceptance test of CTL-34: when
 // the manifest estimates are exact, the compiler turns the byte weights into
 // session shares that already give the byte weights, so the byte shares are
-// within 2 points from the first window on, the first rates are the compiled
-// ones, and the throughput stays on the objective.
+// within 2 points from the first window on, the rates keep the compiled
+// ratios, and the throughput stays on the objective.
 func TestByteMixExactEstimatesStartOnTarget(t *testing.T) {
 	h, _ := mixHarness(t, mixThroughput, mixCalibration(false), mixCatalog{exact: true})
 	a := startMixAgent(t, h, "agent-a")
@@ -295,22 +295,23 @@ func TestByteMixExactEstimatesStartOnTarget(t *testing.T) {
 	if math.Abs(last.bps/mixObjectiveBps-1) > 0.05 {
 		t.Errorf("throughput %.0f bit/s is not within 5%% of the objective %.0f bit/s", last.bps, mixObjectiveBps)
 	}
-	// The first command keeps the compiled session ratio, the byte weight over
-	// the estimate, because the multipliers start at 1.
-	cmds := updateCommands(a)
-	if len(cmds) == 0 {
-		t.Fatal("the agent received no UpdateRates")
-	}
-	var browse, get float64
-	for _, r := range cmds[0].GetRates() {
-		switch r.GetMixEntry() {
-		case "web_browse":
-			browse = r.GetSessionsPerSecond()
-		case "web_get":
-			get = r.GetSessionsPerSecond()
+	// Exact estimates leave the multipliers at 1 and the calibration factor
+	// scales every entry alike, so the agent may get no UpdateRates at all, and
+	// every command that it gets keeps the compiled session ratio, the byte
+	// weight over the estimate.
+	want := (39.9 / mixTrueBytes["web_get"]) / (60 / mixTrueBytes["web_browse"])
+	for _, c := range updateCommands(a) {
+		var browse, get float64
+		for _, r := range c.GetRates() {
+			switch r.GetMixEntry() {
+			case "web_browse":
+				browse = r.GetSessionsPerSecond()
+			case "web_get":
+				get = r.GetSessionsPerSecond()
+			}
 		}
-	}
-	if want := (39.9 / mixTrueBytes["web_get"]) / (60 / mixTrueBytes["web_browse"]); math.Abs(get/browse/want-1) > 0.1 {
-		t.Errorf("first session rates %v and %v are not at the compiled ratio %v", browse, get, want)
+		if math.Abs(get/browse/want-1) > 0.1 {
+			t.Errorf("session rates %v and %v are not at the compiled ratio %v", browse, get, want)
+		}
 	}
 }
