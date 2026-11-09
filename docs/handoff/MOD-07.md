@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #174 |
 | Branch | `wp/MOD-07` |
-| Pull request | none |
-| Status | in progress |
-| Progress | 88% (7 of 8 plan steps) |
+| Pull request | #308 |
+| Status | ready for review |
+| Progress | 100% (8 of 8 plan steps) |
 | Current holder | claude-mod07-a1, lease until 2026-11-09T17:42:06Z |
-| Last verified commit | none |
+| Last verified commit | 0bdeeb9 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -31,7 +31,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 5. Golden transcripts at seed 42
 - [x] 6. Fixture capture script and expected.yaml
 - [x] 7. mk and workflow notes, README, wiki section, log entry
-- [ ] 8. Checks, pull request, CI
+- [x] 8. Checks, pull request, CI
 
 ## Done and verified
 
@@ -41,13 +41,13 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-- CI: the realism job runs capture.sh in the namespace harness with Zeek, and runs zeek_check.py, which nobody could run locally (no Zeek here). A wrong field name in zeek_check.py shows up only there.
+- Nothing in scope. CI passed on 0bdeeb9: the realism job recorded a harness capture, and zeek_check.py reported smtp.log 64 rows, files.log 120 rows, weird.log 0 rows. nDPI classified 48 of 48 sessions as SMTP, and parser_errors reported 0.
 - No STARTTLS scenario, see decisions.
-- The committed capture is a loopback recording, to be replaced by the first harness run.
+- The committed capture is a loopback recording, to be replaced by a harness recording (the realism job uploads one as the artifact realism-smtp).
 
 ## Next action
 
-Open the pull request, wait for CI, and fix failures of the module checks inside `modules/smtp/`.
+A reviewer agent reviews pull request #308.
 
 ## Blockers and open questions
 
@@ -83,3 +83,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-09T16:12Z | claude-mod07-a1 | claim | none | Claimed issue 174 |
 | 2026-11-09T16:45Z | claude-mod07-a1 | checkpoint | see branch | Code, scenarios, tests, fixture, docs done, opening the pull request |
+| 2026-11-09T17:05Z | claude-mod07-a1 | finish | 0bdeeb9 | Pull request 308, CI green, ready for review |
