@@ -67,6 +67,8 @@ type rig struct {
 	doc    *openapi3.T
 	server http.Handler
 	agents map[string]*fakeagent.Agent
+	// skipReq leaves the request unvalidated, for requests that break the contract on purpose.
+	skipReq bool
 }
 
 type rigOptions struct {
@@ -156,7 +158,7 @@ func (r *rig) call(method, path string, params map[string]string, body string) *
 		Route:      &routers.Route{Spec: r.doc, Path: path, PathItem: item, Method: method, Operation: op},
 		Options:    &openapi3filter.Options{AuthenticationFunc: openapi3filter.NoopAuthenticationFunc},
 	}
-	if body != "" && !strings.Contains(body, "BREAK") {
+	if body != "" && !r.skipReq {
 		if err := openapi3filter.ValidateRequest(context.Background(), in); err != nil {
 			r.t.Fatalf("%s %s: request breaks the contract: %v", method, url, err)
 		}
@@ -420,16 +422,19 @@ func TestStartCaptureErrors(t *testing.T) {
 		params map[string]string
 		body   string
 		want   int
+		broken bool // the request breaks the contract on purpose
 	}{
-		{"unknown port", id, `{"port":"nope"}`, http.StatusUnprocessableEntity},
-		{"bad filter", id, `{"port":"eth1","bpf":"tcp and ((port 80"}`, http.StatusUnprocessableEntity},
-		{"unknown run", map[string]string{"id": "run-9"}, `{"port":"eth1"}`, http.StatusNotFound},
-		{"unknown field BREAK", id, `{"port":"eth1","extra":1}`, http.StatusBadRequest},
-		{"zero max_bytes BREAK", id, `{"port":"eth1","max_bytes":0}`, http.StatusUnprocessableEntity},
-		{"not json BREAK", id, `[`, http.StatusBadRequest},
+		{"unknown port", id, `{"port":"nope"}`, http.StatusUnprocessableEntity, false},
+		{"bad filter", id, `{"port":"eth1","bpf":"tcp and ((port 80"}`, http.StatusUnprocessableEntity, false},
+		{"unknown run", map[string]string{"id": "run-9"}, `{"port":"eth1"}`, http.StatusNotFound, false},
+		{"unknown field", id, `{"port":"eth1","extra":1}`, http.StatusBadRequest, true},
+		{"zero max_bytes", id, `{"port":"eth1","max_bytes":0}`, http.StatusUnprocessableEntity, true},
+		{"not json", id, `[`, http.StatusBadRequest, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			r.skipReq = c.broken
+			defer func() { r.skipReq = false }()
 			problemStatus(t, r.call(http.MethodPost, "/runs/{id}/captures", c.params, c.body), c.want)
 		})
 	}
