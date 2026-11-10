@@ -1,13 +1,34 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Expected labels of imap.pcapng, which capture.sh records in the QA-01 harness.
-# Every session of the fixture is IMAP on TCP port 143, and nDPI must classify
-# at least 99% of them as IMAP from payload alone. realism/schema/labels.schema.json
-# defines the format.
+# realism/schema/labels.schema.json defines the format.
+#
+# The plain sessions run on TCP port 143, and nDPI must classify at least 99% of
+# them as IMAP from payload alone.
+#
+# The STARTTLS sessions (MOD-20) run on TCP port 1143, because the labels tell
+# sessions apart by port and port 143 carries the plain sessions. See the README
+# for why they are not 143 in the fixture. The encryption check decrypts these
+# sessions with the keys that the capture embeds and compares the JA4 of every
+# ClientHello with the expected value of the profile. The mailbox dialogue inside
+# TLS is measured by decrypted_check.py, which decrypts the capture with tshark
+# and scores a decrypted view with nDPI and, where it is installed, Zeek.
+#
+# The ja4 value is the expected_ja4 of the browser profile in
+# modules/tls/native/src/browser.rs, which modules/imap/tests/starttls.rs checks
+# against real ClientHello bytes.
 labels: fps-realism-labels
 version: 1
 threshold: 0.99
+tls:
+  min_decrypted: 1
+  profiles:
+    safari-18.5: {ja4: t13d1011h2_61a7ad8aa9b6_6d021c4c45cd}
 sessions:
   - application: imap
     match: {transport: tcp, server_port: 143}
+  - application: imap_starttls
+    tls_profile: safari-18.5
+    match: {transport: tcp, server_port: 1143}
 applications:
   imap: {ndpi: [IMAP]}
+  imap_starttls: {ndpi: [IMAPS]}

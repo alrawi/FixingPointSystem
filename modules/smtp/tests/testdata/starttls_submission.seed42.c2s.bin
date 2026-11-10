@@ -1,0 +1,59 @@
+EHLO laptop-23.example.test
+STARTTLS
+EHLO laptop-23.example.test
+AUTH PLAIN AGJyb3JhaXMubG9nZW1AZXhhbXBsZS50ZXN0AFRzdC1Ob3V0cm91azk3OTc=
+MAIL FROM:<brorais.logem@example.test>
+RCPT TO:<drezoulir.soutraipais@example.test>
+RCPT TO:<trege.touter@example.test>
+DATA
+From: brorais.logem@example.test
+To: drezoulir.soutraipais@example.test, trege.touter@example.test
+Subject: Invoice 8962 attached
+Date: Sat, 25 Jul 2026 17:57:51 +0000
+Message-ID: <9d715c64c929d952da354132@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_2cb0989b731f78ba5ea9"
+
+This is a multi-part message in MIME format.
+--=_fps_2cb0989b731f78ba5ea9
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Naelo,
+
+The morning market keeps the records in order with great care. The quiet
+river plans a careful survey every second Tuesday. A small workshop opens
+the doors at dawn in the early evening. The old bridge measures the water
+each week.
+
+Ref: INV-683077
+
+Kind regards,
+Ilobru Zinqua
+Support desk
+ilobru.zinqua@example.test
+
+..
+The line above holds a single dot.
+--=_fps_2cb0989b731f78ba5ea9
+Content-Type: application/pdf; name="invoice.pdf"
+Content-Disposition: attachment; filename="invoice.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4K
+ZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4K
+ZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAg
+MCA2MTIgNzkyXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAw
+IFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAxNDYgPj4Kc3RyZWFtCkJUIC9G
+MSAxNCBUZiA1MCA3ODAgVGQgKERvY3VtZW50IDBlNDdmNjc4NmQpIFRqIEVUCkJUIC9GMSAxMCBU
+ZiA1MCA3NjAgVGQgKFRoZSBub3J0aGVybiBzdGF0aW9uIHJlcGFpcnMgdGhlIGJyb2tlbiBjbG9j
+a3Mgd2l0aCBncmVhdCBjYXJlLikgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9U
+eXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoK
+eHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDE1IDAwMDAwIG4gCjAwMDAwMDAw
+NjQgMDAwMDAgbiAKMDAwMDAwMDEyMSAwMDAwMCBuIAowMDAwMDAwMjQ3IDAwMDAwIG4gCjAwMDAw
+MDA0NDMgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJl
+Zgo1MTMKJSVFT0YK
+--=_fps_2cb0989b731f78ba5ea9--
+.
+QUIT

@@ -194,6 +194,7 @@ pub const EHLO_REPLY: FunctionSpec = FunctionSpec {
             DefaultValue::Boolean(true),
         ),
         opt("size", ValueType::Int, DefaultValue::Int(DEFAULT_SIZE)),
+        opt("starttls", ValueType::Boolean, DefaultValue::Boolean(false)),
     ],
 };
 

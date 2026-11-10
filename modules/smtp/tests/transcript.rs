@@ -8,7 +8,7 @@
 
 mod common;
 
-use common::{module_dir, run, scenarios_with, SEED, SESSION_ID};
+use common::{all_scenarios_with, module_dir, run, SEED, SESSION_ID};
 use fps_flow::Value;
 
 fn overrides() -> Vec<(&'static str, Value)> {
@@ -24,7 +24,7 @@ fn overrides() -> Vec<(&'static str, Value)> {
 #[tokio::test(start_paused = true)]
 async fn every_scenario_matches_its_golden_transcript() {
     let testdata = module_dir().join("tests").join("testdata");
-    for (name, s) in scenarios_with(&overrides()) {
+    for (name, s) in all_scenarios_with(&overrides()) {
         let r = run(&s, SEED, SESSION_ID).await;
         assert!(r.client.is_ok(), "{name} client: {:?}", r.client);
         assert!(r.server.is_ok(), "{name} server: {:?}", r.server);
@@ -35,7 +35,7 @@ async fn every_scenario_matches_its_golden_transcript() {
 
 #[tokio::test(start_paused = true)]
 async fn the_same_seed_renders_the_same_bytes() {
-    for (name, s) in scenarios_with(&overrides()) {
+    for (name, s) in all_scenarios_with(&overrides()) {
         let a = run(&s, SEED, SESSION_ID).await;
         let b = run(&s, SEED, SESSION_ID).await;
         assert_eq!(a.c2s, b.c2s, "{name}");

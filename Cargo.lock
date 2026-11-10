@@ -1032,8 +1032,10 @@ dependencies = [
  "fps-interp",
  "fps-io",
  "fps-module-content",
+ "fps-module-tls",
  "rand 0.8.8",
  "rand_pcg",
+ "rustls",
  "serde_norway",
  "tokio",
 ]
@@ -1064,8 +1066,10 @@ dependencies = [
  "fps-interp",
  "fps-io",
  "fps-module-content",
+ "fps-module-tls",
  "rand 0.8.8",
  "rand_pcg",
+ "rustls",
  "serde_norway",
  "tokio",
 ]
