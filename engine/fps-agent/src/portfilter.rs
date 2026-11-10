@@ -397,11 +397,17 @@ mod tests {
         let Kind::ServerPorts(r) = parse("80").unwrap().kind else {
             panic!("80 is a server port");
         };
-        assert_eq!(r, [80..=80]);
+        assert_eq!(
+            r.iter().map(|r| (*r.start(), *r.end())).collect::<Vec<_>>(),
+            [(80, 80)]
+        );
         let Kind::ServerPorts(r) = parse("53, 8000-8999,443").unwrap().kind else {
             panic!("a list");
         };
-        assert_eq!(r, [53..=53, 8000..=8999, 443..=443]);
+        assert_eq!(
+            r.iter().map(|r| (*r.start(), *r.end())).collect::<Vec<_>>(),
+            [(53, 53), (8000, 8999), (443, 443)]
+        );
         assert!(parse("65535").is_ok());
     }
 
