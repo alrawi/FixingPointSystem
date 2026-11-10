@@ -38,7 +38,7 @@ def test_the_build_script_reads_the_pin_and_checks_the_commit() -> None:
 def test_the_install_script_runs_the_build_after_the_apt_packages() -> None:
     text = INSTALL.read_text(encoding="utf-8")
     assert text.rstrip().endswith('"$here/build-ndpi.sh"')
-    assert text.index("apt-get install") < text.rindex("build-ndpi.sh")
+    assert text.index("tools/ci/apt-install.sh") < text.rindex("build-ndpi.sh")
 
 
 def test_both_workflows_install_through_the_script_and_name_no_ndpi_version() -> None:
