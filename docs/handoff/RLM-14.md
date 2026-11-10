@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #409 |
 | Branch | `wp/RLM-14` |
-| Pull request | none yet |
+| Pull request | #436 |
 | Status | in progress |
 | Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-790651, lease until 2026-11-11T00:05:08Z |
