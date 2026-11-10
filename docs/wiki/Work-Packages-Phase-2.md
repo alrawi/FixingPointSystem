@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 122 work packages. Packages marked critical path gate the phase.
+This page lists 131 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -133,6 +133,15 @@ flowchart LR
   AGT_19["AGT-19<br/>SMB2 in the agent"]
   RLM_14["RLM-14<br/>Message counts in the decrypted view"]
   IMG_07["IMG-07<br/>The heartbeat timeout in the image boot test"]
+  CTL_40["CTL-40<br/>The first response frame of an agent session"]
+  CTL_41["CTL-41<br/>Realism reports attached to a run"]
+  ENG_26["ENG-26<br/>Datagram flows in multi flow instances and data ports without repeats"]
+  AGT_20["AGT-20<br/>SIP with RTP in the agent"]
+  ENG_27["ENG-27<br/>Dropped counts of a capture"]
+  RLM_15["RLM-15<br/>Packet inter arrival times inside a session"]
+  RLM_16["RLM-16<br/>Deliver the realism report to the controller"]
+  UI_09["UI-09<br/>Reservation holders in the agents view"]
+  QA_09["QA-09<br/>The single http1 parser error of the Gate 1 run"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -283,6 +292,19 @@ flowchart LR
   RLM_12 --> RLM_14
   MOD_22 --> RLM_14
   IMG_06 --> IMG_07
+  IMG_07 --> CTL_40
+  CON_22 --> CTL_41
+  CTL_39 --> CTL_41
+  AGT_16 --> ENG_26
+  MOD_14 --> ENG_26
+  ENG_26 --> AGT_20
+  MOD_14 --> AGT_20
+  AGT_18 --> ENG_27
+  RLM_06 --> RLM_15
+  MOD_14 --> RLM_15
+  CON_22 --> RLM_16
+  CON_22 --> UI_09
+  UI_06 --> UI_09
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -413,6 +435,15 @@ flowchart LR
 | [AGT-19](#agt-19-smb2-in-the-agent) | SMB2 in the agent | S | MOD-13, AGT-17 |  |
 | [RLM-14](#rlm-14-message-counts-in-the-decrypted-view) | Message counts in the decrypted view | S | RLM-12, MOD-22 |  |
 | [IMG-07](#img-07-the-heartbeat-timeout-in-the-image-boot-test) | The heartbeat timeout in the image boot test | S | IMG-06 |  |
+| [CTL-40](#ctl-40-the-first-response-frame-of-an-agent-session) | The first response frame of an agent session | S | IMG-07 |  |
+| [CTL-41](#ctl-41-realism-reports-attached-to-a-run) | Realism reports attached to a run | S | CON-22, CTL-39 |  |
+| [ENG-26](#eng-26-datagram-flows-in-multi-flow-instances-and-data-ports-without-repeats) | Datagram flows in multi flow instances and data ports without repeats | M | AGT-16, MOD-14 |  |
+| [AGT-20](#agt-20-sip-with-rtp-in-the-agent) | SIP with RTP in the agent | S | ENG-26, MOD-14 |  |
+| [ENG-27](#eng-27-dropped-counts-of-a-capture) | Dropped counts of a capture | S | AGT-18 |  |
+| [RLM-15](#rlm-15-packet-inter-arrival-times-inside-a-session) | Packet inter arrival times inside a session | S | RLM-06, MOD-14 |  |
+| [RLM-16](#rlm-16-deliver-the-realism-report-to-the-controller) | Deliver the realism report to the controller | S | CON-22 |  |
+| [UI-09](#ui-09-reservation-holders-in-the-agents-view) | Reservation holders in the agents view | S | CON-22, UI-06 |  |
+| [QA-09](#qa-09-the-single-http1-parser-error-of-the-gate-1-run) | The single http1 parser error of the Gate 1 run | S | QA-04 |  |
 
 ## CON Contracts
 
@@ -701,6 +732,23 @@ Acceptance.
 
 - [ ] The suite passes on a clean runner and records every measured value in the gate report.
 
+### QA-09 The single http1 parser error of the Gate 1 run
+
+Phase 2 · size S · workstream QA
+
+- **Depends on.** QA-04
+- **Paths.** `tests/gates/gate1/`
+
+The Gate 1 suite failed twice on 2026-11-10 on one http1 parser error from tshark or Zeek in its live controller and agent run (MOD-22 in qa-gate1, CTL-39 in the gate job) and passed on rerun. In the MOD-22 run 1339 of 1340 sessions were captured.
+
+Deliverables.
+
+- The suite keeps the parser findings of a failing run as an artifact (which parser, which packet), the cause is found (a session cut by the capture stop, a parser limit, or a real encoding error), and it is fixed where it lies or the suite excludes sessions cut at the capture boundary with a stated rule.
+
+Acceptance.
+
+- [ ] The suite passes 10 times in a row in CI and still fails on a capture with a corrupted HTTP message.
+
 ## ENG Agent engine
 
 ### ENG-11 WebAssembly extension host
@@ -948,6 +996,40 @@ Deliverables.
 Acceptance.
 
 - [ ] Unit tests cover every width, both endiannesses, the error cases, and the three now formats under a pinned clock, and the parity fixtures pass in Rust and Python.
+
+### ENG-26 Datagram flows in multi flow instances and data ports without repeats
+
+Phase 2 · size M · workstream ENG
+
+- **Depends on.** AGT-16, MOD-14
+- **Paths.** `engine/fps-runtime/`
+
+The instance runner of the runtime opens no datagram sockets, so the agent refuses multi flow scenarios with a UDP flow and SIP with RTP cannot run (MOD-14; modules/sip_rtp/native/examples/fixture_peer.rs is a working opener). Two concurrent instances that draw the same rand_int data port meet one listener, which accepts one and resets the other (AGT-18).
+
+Deliverables.
+
+- A datagram opener in InstanceEnv (a bound server socket per port shared by its sessions, a socket per media port bound for the flow, a connected client socket with its own source port per flow), and data listeners that keep accepting until their own peer arrives or a port draw that does not repeat across a worker's concurrent instances.
+
+Acceptance.
+
+- [ ] Runtime tests run a SIP call with RTP through the instance runner, and two concurrent instances that draw the same data port both succeed.
+
+### ENG-27 Dropped counts of a capture
+
+Phase 2 · size S · workstream ENG
+
+- **Depends on.** AGT-18
+- **Paths.** `engine/fps-capture/`
+
+StopCaptureResult.dropped is documented as packets that the capture missed, but it also counts every session still open when the capture stops (AGT-18 found this behind the run_control flake).
+
+Deliverables.
+
+- Queue overflow drops and sessions open at the stop are counted apart, and the documentation says which is which.
+
+Acceptance.
+
+- [ ] Tests for an overflowing ring and for a stop during a run give the two counts with literal values.
 
 ## TRN Transport backends
 
@@ -1290,6 +1372,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A controller e2e plan runs an smb2 scenario through the real agent with succeeded sessions.
+
+### AGT-20 SIP with RTP in the agent
+
+Phase 2 · size S · workstream AGT
+
+- **Depends on.** ENG-26, MOD-14
+- **Paths.** `engine/fps-agent/`
+
+check_flows in engine/fps-agent/src/assemble.rs refuses multi flow scenarios with a UDP flow, and the registry has no sip_rtp entry.
+
+Deliverables.
+
+- The refusal is lifted for datagram flows the runtime can open, and the registry dispatches sip_rtp with one SipRtp per flow side.
+
+Acceptance.
+
+- [ ] A controller e2e plan runs sip_rtp/basic_call through the real agent with succeeded sessions and RTP in the capture.
 
 ## CTL Controller
 
@@ -1711,6 +1810,40 @@ Deliverables.
 Acceptance.
 
 - [ ] A report API test with literal scenario totals and a realism result, and the UI mock still validates against the OpenAPI.
+
+### CTL-40 The first response frame of an agent session
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** IMG-07
+- **Paths.** `controller/internal/agents/`
+
+Manager.Session reads the open message, marks the agent online, and sends nothing until it has a command or a heartbeat to ack. The agent waits for the first response frame before it heartbeats, so an idle session is timed out after 5 to 6 s and a command sent at that moment fails with agent session lost (IMG-07, from the journals of two failed boot tests). IMG-07 added a session gate in image/ as a workaround.
+
+Deliverables.
+
+- The controller sends the response headers as soon as the session opens (stream.SendHeader after m.open), and a test client that waits for the headers before it heartbeats.
+
+Acceptance.
+
+- [ ] A test with that client holds an idle session open for three heartbeat timeouts, fails on the old code, and the image boot test reports a stable session on its first try.
+
+### CTL-41 Realism reports attached to a run
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CON-22, CTL-39
+- **Paths.** `controller/internal/report/`, `controller/internal/store/`, `controller/internal/wiring/`
+
+CON-22 added PUT /v1/runs/{id}/realism (attachRealismReport), which answers 501 today. CTL-39 gave Report a Realism field that Report.API maps into RunReport.realism.
+
+Deliverables.
+
+- The operation stores the realism report of a finished run (replace on repeat, 409 for a run still active, 413 above 4 MiB, 415, 422 against an embedded copy of realism-report.schema.json), maps each check metric to a RealismResult as contracts/changes/CON-22.md says, and fills RunReport.realism.
+
+Acceptance.
+
+- [ ] REST tests with literal results for a conformance and a temporal check, the replace and refusal cases, a byte-identical schema copy test, and attachRealismReport leaves the pending operations list.
 
 ## CLI Python SDK and command line client
 
@@ -2266,6 +2399,40 @@ Acceptance.
 
 - [ ] The four committed fixtures pass with literal counts, and a view with a missing message fails with a named reason.
 
+### RLM-15 Packet inter arrival times inside a session
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** RLM-06, MOD-14
+- **Paths.** `realism/`
+
+The temporal check measures session start gaps and payload sizes, not the gaps between the packets of one session, so the RTP pacing of sip_rtp is checked only by the module's own rtp_check.py.
+
+Deliverables.
+
+- A per application inter arrival property of the temporal check against a distribution of the labels, with the constant distribution for paced media.
+
+Acceptance.
+
+- [ ] The sip_rtp fixture passes with 20 ms and 30 ms packet times, and a capture with jittered packets fails with a named reason.
+
+### RLM-16 Deliver the realism report to the controller
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** CON-22
+- **Paths.** `realism/`
+
+CON-22 added attachRealismReport. The realism runner writes its report to a file only.
+
+Deliverables.
+
+- A score option that PUTs the report to a controller run with a run token read from a file or the environment, never from the command line, and reports the controller's answer.
+
+Acceptance.
+
+- [ ] A test against a local fake controller checks the request, the token handling, and the 409 and 422 answers.
+
 ## CAP Capture compiler and profile extractor
 
 ### CAP-01 Capture session extraction
@@ -2563,3 +2730,20 @@ Deliverables.
 Acceptance.
 
 - [ ] Component tests with literal values for a report with scenarios, two criteria that differ only in where, and a comparison; the mock validates against the OpenAPI.
+
+### UI-09 Reservation holders in the agents view
+
+Phase 2 · size S · workstream UI
+
+- **Depends on.** CON-22, UI-06
+- **Paths.** `ui/`
+
+CON-22 added Agent.reserved_by and a documented 409 for reserveAgent, which the agents view of UI-06 does not show.
+
+Deliverables.
+
+- The agents view shows who holds a reservation and explains a 409 from reserveAgent with its reason.
+
+Acceptance.
+
+- [ ] Component tests with literal holders (the operator and a run) and a conflict, and the mock validates against OpenAPI 0.10.0.

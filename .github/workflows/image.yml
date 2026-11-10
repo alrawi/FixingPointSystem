@@ -176,6 +176,10 @@ jobs:
         env:
           ACCEL: ${{ steps.accel.outputs.accel }}
           FPS_TEST_ARTIFACT_DIR: boot-out
+          # IMG-07: three boots in a row and a boot with an unreachable controller
+          # on pull requests, one boot on main.
+          FPS_TEST_REPEAT: ${{ github.event_name == 'pull_request' && '3' || '1' }}
+          FPS_TEST_NEGATIVE: ${{ github.event_name == 'pull_request' && 'agent-unreachable' || '' }}
         run: |
           set -euo pipefail
           if [ "$ACCEL" = tcg ]; then

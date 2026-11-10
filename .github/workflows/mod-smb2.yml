@@ -14,6 +14,9 @@ on:
       - modules/smb2/**
       - engine/fps-flow/**
       - Cargo.lock
+      - realism/**
+      - tools/contracts/**
+      - contracts/schemas/**
       - mk/mod-smb2.mk
       - .github/workflows/mod-smb2.yml
   pull_request:
@@ -21,13 +24,36 @@ on:
       - modules/smb2/**
       - engine/fps-flow/**
       - Cargo.lock
+      - realism/**
+      - tools/contracts/**
+      - contracts/schemas/**
       - mk/mod-smb2.mk
       - .github/workflows/mod-smb2.yml
 
 permissions:
   contents: read
 
+env:
+  GOWORK: "off"
+
 jobs:
+  module:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install nDPI, tshark, and Zeek, which the checks call out of process
+        run: realism/ci/install-tools.sh
+      - run: python -m pip install -r tools/contracts/requirements.txt
+      - run: make lint-mod-smb2 PYTHON=python
+      - name: Score the committed fixture
+        run: |
+          python -m realism score --pcap modules/smb2/fixtures/smb2.pcapng \
+            --labels modules/smb2/fixtures/expected.yaml --parsers tshark,zeek --output report.json
+          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))'
   tshark:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

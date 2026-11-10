@@ -3328,3 +3328,143 @@ work_packages:
       - The cause found from the VM logs of a failing run (slow guest, clock step at boot, or start order), and the boot test waits for a stable agent session or the units are ordered so the first run cannot race it.
     acceptance:
       - The boot test passes 10 times in a row in CI (a loop in the PR run), and still fails when the agent cannot reach the controller.
+
+  - id: CTL-40
+    title: The first response frame of an agent session
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [IMG-07]
+    paths: [controller/internal/agents/]
+    summary: >-
+      Manager.Session reads the open message, marks the agent online, and sends nothing until it has a command
+      or a heartbeat to ack. The agent waits for the first response frame before it heartbeats, so an idle
+      session is timed out after 5 to 6 s and a command sent at that moment fails with agent session lost
+      (IMG-07, from the journals of two failed boot tests). IMG-07 added a session gate in image/ as a
+      workaround.
+    deliverables:
+      - The controller sends the response headers as soon as the session opens (stream.SendHeader after m.open), and a test client that waits for the headers before it heartbeats.
+    acceptance:
+      - A test with that client holds an idle session open for three heartbeat timeouts, fails on the old code, and the image boot test reports a stable session on its first try.
+
+  - id: CTL-41
+    title: Realism reports attached to a run
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CON-22, CTL-39]
+    paths: [controller/internal/report/, controller/internal/store/, controller/internal/wiring/]
+    summary: >-
+      CON-22 added PUT /v1/runs/{id}/realism (attachRealismReport), which answers 501 today. CTL-39 gave
+      Report a Realism field that Report.API maps into RunReport.realism.
+    deliverables:
+      - The operation stores the realism report of a finished run (replace on repeat, 409 for a run still active, 413 above 4 MiB, 415, 422 against an embedded copy of realism-report.schema.json), maps each check metric to a RealismResult as contracts/changes/CON-22.md says, and fills RunReport.realism.
+    acceptance:
+      - REST tests with literal results for a conformance and a temporal check, the replace and refusal cases, a byte-identical schema copy test, and attachRealismReport leaves the pending operations list.
+
+  - id: ENG-26
+    title: Datagram flows in multi flow instances and data ports without repeats
+    phase: 2
+    workstream: ENG
+    size: M
+    depends_on: [AGT-16, MOD-14]
+    paths: [engine/fps-runtime/]
+    summary: >-
+      The instance runner of the runtime opens no datagram sockets, so the agent refuses multi flow scenarios
+      with a UDP flow and SIP with RTP cannot run (MOD-14; modules/sip_rtp/native/examples/fixture_peer.rs is a
+      working opener). Two concurrent instances that draw the same rand_int data port meet one listener, which
+      accepts one and resets the other (AGT-18).
+    deliverables:
+      - A datagram opener in InstanceEnv (a bound server socket per port shared by its sessions, a socket per media port bound for the flow, a connected client socket with its own source port per flow), and data listeners that keep accepting until their own peer arrives or a port draw that does not repeat across a worker's concurrent instances.
+    acceptance:
+      - Runtime tests run a SIP call with RTP through the instance runner, and two concurrent instances that draw the same data port both succeed.
+
+  - id: AGT-20
+    title: SIP with RTP in the agent
+    phase: 2
+    workstream: AGT
+    size: S
+    depends_on: [ENG-26, MOD-14]
+    paths: [engine/fps-agent/]
+    summary: >-
+      check_flows in engine/fps-agent/src/assemble.rs refuses multi flow scenarios with a UDP flow, and the
+      registry has no sip_rtp entry.
+    deliverables:
+      - The refusal is lifted for datagram flows the runtime can open, and the registry dispatches sip_rtp with one SipRtp per flow side.
+    acceptance:
+      - A controller e2e plan runs sip_rtp/basic_call through the real agent with succeeded sessions and RTP in the capture.
+
+  - id: ENG-27
+    title: Dropped counts of a capture
+    phase: 2
+    workstream: ENG
+    size: S
+    depends_on: [AGT-18]
+    paths: [engine/fps-capture/]
+    summary: >-
+      StopCaptureResult.dropped is documented as packets that the capture missed, but it also counts every
+      session still open when the capture stops (AGT-18 found this behind the run_control flake).
+    deliverables:
+      - Queue overflow drops and sessions open at the stop are counted apart, and the documentation says which is which.
+    acceptance:
+      - Tests for an overflowing ring and for a stop during a run give the two counts with literal values.
+
+  - id: RLM-15
+    title: Packet inter arrival times inside a session
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [RLM-06, MOD-14]
+    paths: [realism/]
+    summary: >-
+      The temporal check measures session start gaps and payload sizes, not the gaps between the packets of one
+      session, so the RTP pacing of sip_rtp is checked only by the module's own rtp_check.py.
+    deliverables:
+      - A per application inter arrival property of the temporal check against a distribution of the labels, with the constant distribution for paced media.
+    acceptance:
+      - The sip_rtp fixture passes with 20 ms and 30 ms packet times, and a capture with jittered packets fails with a named reason.
+
+  - id: RLM-16
+    title: Deliver the realism report to the controller
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [CON-22]
+    paths: [realism/]
+    summary: >-
+      CON-22 added attachRealismReport. The realism runner writes its report to a file only.
+    deliverables:
+      - A score option that PUTs the report to a controller run with a run token read from a file or the environment, never from the command line, and reports the controller's answer.
+    acceptance:
+      - A test against a local fake controller checks the request, the token handling, and the 409 and 422 answers.
+
+  - id: UI-09
+    title: Reservation holders in the agents view
+    phase: 2
+    workstream: UI
+    size: S
+    depends_on: [CON-22, UI-06]
+    paths: [ui/]
+    summary: >-
+      CON-22 added Agent.reserved_by and a documented 409 for reserveAgent, which the agents view of UI-06 does
+      not show.
+    deliverables:
+      - The agents view shows who holds a reservation and explains a 409 from reserveAgent with its reason.
+    acceptance:
+      - Component tests with literal holders (the operator and a run) and a conflict, and the mock validates against OpenAPI 0.10.0.
+
+  - id: QA-09
+    title: The single http1 parser error of the Gate 1 run
+    phase: 2
+    workstream: QA
+    size: S
+    depends_on: [QA-04]
+    paths: [tests/gates/gate1/]
+    summary: >-
+      The Gate 1 suite failed twice on 2026-11-10 on one http1 parser error from tshark or Zeek in its live
+      controller and agent run (MOD-22 in qa-gate1, CTL-39 in the gate job) and passed on rerun. In the MOD-22
+      run 1339 of 1340 sessions were captured.
+    deliverables:
+      - The suite keeps the parser findings of a failing run as an artifact (which parser, which packet), the cause is found (a session cut by the capture stop, a parser limit, or a real encoding error), and it is fixed where it lies or the suite excludes sessions cut at the capture boundary with a stated rule.
+    acceptance:
+      - The suite passes 10 times in a row in CI and still fails on a capture with a corrupted HTTP message.
