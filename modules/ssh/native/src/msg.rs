@@ -145,11 +145,7 @@ const PTY_MODES: &[u8] = &[
 ];
 
 /// A `pty-req`, `shell`, or `exec` request.
-pub(crate) fn channel_request(
-    kind: &str,
-    command: &str,
-    reply: bool,
-) -> Result<Vec<u8>, FnError> {
+pub(crate) fn channel_request(kind: &str, command: &str, reply: bool) -> Result<Vec<u8>, FnError> {
     let mut p = vec![CHANNEL_REQUEST];
     put_u32(&mut p, 0);
     put_string(&mut p, kind.as_bytes());

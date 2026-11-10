@@ -90,8 +90,8 @@ impl<'a> Reader<'a> {
     /// Reads a `name-list` and returns its names.
     pub(crate) fn names(&mut self, what: &str) -> Result<Vec<&'a str>, FnError> {
         let raw = self.string(what)?;
-        let text = std::str::from_utf8(raw)
-            .map_err(|_| protocol(format!("{what} is not ASCII text")))?;
+        let text =
+            std::str::from_utf8(raw).map_err(|_| protocol(format!("{what} is not ASCII text")))?;
         Ok(if text.is_empty() {
             Vec::new()
         } else {
@@ -121,7 +121,10 @@ mod tests {
         put_mpint(&mut out, &[]);
         assert_eq!(out, [0, 0, 0, 0]);
         out.clear();
-        put_mpint(&mut out, &[0, 0, 0x09, 0xa3, 0x78, 0xf9, 0xb2, 0xe3, 0x32, 0xa7]);
+        put_mpint(
+            &mut out,
+            &[0, 0, 0x09, 0xa3, 0x78, 0xf9, 0xb2, 0xe3, 0x32, 0xa7],
+        );
         assert_eq!(
             out,
             [0, 0, 0, 8, 0x09, 0xa3, 0x78, 0xf9, 0xb2, 0xe3, 0x32, 0xa7]

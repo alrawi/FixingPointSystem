@@ -242,7 +242,10 @@ fn a_forged_signature_fails_the_client() {
         let mut m = midway(1, 2, 1);
         let at = m.reply.len() - from_end;
         m.reply[at] ^= 0x01;
-        let err = m.client.try_receive(&mut m.reply, "ecdh_reply").unwrap_err();
+        let err = m
+            .client
+            .try_receive(&mut m.reply, "ecdh_reply")
+            .unwrap_err();
         assert_eq!(err.kind, FnErrorKind::Protocol);
         assert!(err.message.contains("does not verify"), "{err}");
     }
@@ -351,18 +354,39 @@ fn every_message_of_a_session_round_trips() {
     let pw = c.call("credential", &[ArgValue::Text("password")]);
     let to_s: Vec<(Vec<u8>, &str)> = vec![
         (c.call("service_request", &[]), "service_request"),
-        (c.call("auth_none", &[ArgValue::Text(user)]), "userauth_request"),
         (
-            c.call("auth_password", &[ArgValue::Text(user), ArgValue::Bytes(&pw)]),
+            c.call("auth_none", &[ArgValue::Text(user)]),
             "userauth_request",
         ),
-        (c.call("channel_open", &[ArgValue::Int(2_097_152), ArgValue::Int(32_768)]), "channel_open"),
-        (c.call("channel_request", &[ArgValue::Text("pty-req")]), "channel_request"),
-        (c.call("channel_request", &[ArgValue::Text("shell")]), "channel_request"),
+        (
+            c.call(
+                "auth_password",
+                &[ArgValue::Text(user), ArgValue::Bytes(&pw)],
+            ),
+            "userauth_request",
+        ),
+        (
+            c.call(
+                "channel_open",
+                &[ArgValue::Int(2_097_152), ArgValue::Int(32_768)],
+            ),
+            "channel_open",
+        ),
+        (
+            c.call("channel_request", &[ArgValue::Text("pty-req")]),
+            "channel_request",
+        ),
+        (
+            c.call("channel_request", &[ArgValue::Text("shell")]),
+            "channel_request",
+        ),
         (
             c.call(
                 "channel_request",
-                &[ArgValue::Text("exec"), ArgValue::Bytes(b"scp -t /srv/upload")],
+                &[
+                    ArgValue::Text("exec"),
+                    ArgValue::Bytes(b"scp -t /srv/upload"),
+                ],
             ),
             "channel_request",
         ),
@@ -378,9 +402,18 @@ fn every_message_of_a_session_round_trips() {
         (s.call("service_accept", &[]), "service_accept"),
         (s.call("auth_failure", &[]), "userauth_failure"),
         (s.call("auth_success", &[]), "userauth_success"),
-        (s.call("channel_confirm", &[ArgValue::Int(2_097_152), ArgValue::Int(32_768)]), "channel_confirm"),
+        (
+            s.call(
+                "channel_confirm",
+                &[ArgValue::Int(2_097_152), ArgValue::Int(32_768)],
+            ),
+            "channel_confirm",
+        ),
         (s.call("channel_success", &[]), "channel_success"),
-        (s.call("exit_status", &[ArgValue::Int(0)]), "channel_request"),
+        (
+            s.call("exit_status", &[ArgValue::Int(0)]),
+            "channel_request",
+        ),
         (s.call("channel_eof", &[]), "channel_eof"),
         (s.call("channel_close", &[]), "channel_close"),
     ];
@@ -442,11 +475,19 @@ fn chunk_div_rem_and_flag_do_what_the_scenarios_need() {
         String::from_utf8(p.call(f, a)).unwrap().parse().unwrap()
     };
     assert_eq!(
-        num(&mut p, "div", &[ArgValue::Int(262_144), ArgValue::Int(32_768)]),
+        num(
+            &mut p,
+            "div",
+            &[ArgValue::Int(262_144), ArgValue::Int(32_768)]
+        ),
         8
     );
     assert_eq!(
-        num(&mut p, "rem", &[ArgValue::Int(262_145), ArgValue::Int(32_768)]),
+        num(
+            &mut p,
+            "rem",
+            &[ArgValue::Int(262_145), ArgValue::Int(32_768)]
+        ),
         1
     );
     assert_eq!(num(&mut p, "flag", &[ArgValue::Int(0)]), 0);

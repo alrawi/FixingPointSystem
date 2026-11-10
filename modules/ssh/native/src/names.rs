@@ -179,7 +179,10 @@ mod tests {
                 "{u}"
             );
             let f = file_name(&mut r, "gz");
-            assert!(f.ends_with(".gz") && f.is_ascii() && !f.contains(' '), "{f}");
+            assert!(
+                f.ends_with(".gz") && f.is_ascii() && !f.contains(' '),
+                "{f}"
+            );
         }
     }
 
@@ -189,7 +192,9 @@ mod tests {
         for size in [0, 1, 2, 77, 1000, 30_000] {
             let t = text(&mut r, size);
             assert_eq!(t.len(), size);
-            assert!(t.iter().all(|b| b.is_ascii_graphic() || *b == b' ' || *b == b'\r' || *b == b'\n'));
+            assert!(t
+                .iter()
+                .all(|b| b.is_ascii_graphic() || *b == b' ' || *b == b'\r' || *b == b'\n'));
             let k = keys(&mut r, size);
             assert_eq!(k.len(), size);
             assert!(k.iter().all(|b| b.is_ascii_lowercase() || *b == b' '));

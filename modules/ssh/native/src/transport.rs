@@ -140,14 +140,14 @@ impl Half {
             )));
         }
         if self.keys.is_some() {
-            if length % 8 != 0 {
+            if !length.is_multiple_of(8) {
                 return Err(protocol(format!(
                     "packet length {length} is not a multiple of 8"
                 )));
             }
             Ok(length + TAG)
         } else {
-            if (length + 4) % 8 != 0 {
+            if !(length + 4).is_multiple_of(8) {
                 return Err(protocol(format!(
                     "unencrypted packet of {} bytes is not a multiple of 8",
                     length + 4
@@ -299,7 +299,12 @@ mod tests {
     #[test]
     fn hostile_lengths_fail_without_panicking() {
         let h = Half::new();
-        for head in [[0, 0, 0, 0], [0xff, 0xff, 0xff, 0xff], [0, 0, 0x90, 0], [0, 0, 0, 13]] {
+        for head in [
+            [0, 0, 0, 0],
+            [0xff, 0xff, 0xff, 0xff],
+            [0, 0, 0x90, 0],
+            [0, 0, 0, 13],
+        ] {
             assert!(h.body_len(&head).is_err(), "{head:?}");
         }
         let mut e = Half::new();

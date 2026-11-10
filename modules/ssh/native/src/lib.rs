@@ -54,11 +54,11 @@ mod wire;
 use fps_flow::{FnCall, FnError, FnErrorKind, TemplateFn};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
+use signature::{Signer, Verifier};
 use ssh_encoding::Encode;
 use ssh_key::private::Ed25519Keypair;
 use ssh_key::public::KeyData;
 use ssh_key::{PublicKey, Signature};
-use signature::{Signer, Verifier};
 use x25519_dalek::{PublicKey as XPublic, StaticSecret};
 
 pub use catalog::{DefaultValue, FunctionSpec, ParamSpec, FUNCTIONS, MAX_CHUNK};
@@ -413,8 +413,8 @@ fn parse_banner(line: &[u8]) -> Result<(Vec<u8>, String), FnError> {
     if line.len() > 255 {
         return Err(protocol("the identification line is longer than 255 bytes"));
     }
-    let text = std::str::from_utf8(body)
-        .map_err(|_| protocol("the identification line is not text"))?;
+    let text =
+        std::str::from_utf8(body).map_err(|_| protocol("the identification line is not text"))?;
     let software = text
         .strip_prefix(BANNER_PREFIX)
         .or_else(|| text.strip_prefix("SSH-1.99-"))
@@ -634,8 +634,12 @@ impl TemplateFn for Ssh {
                 }
                 let size = size as usize;
                 match a.text("kind")? {
-                    "text" => out.extend_from_slice(&names::text(&mut derive("chunk", -1, rng), size)),
-                    "keys" => out.extend_from_slice(&names::keys(&mut derive("chunk", -1, rng), size)),
+                    "text" => {
+                        out.extend_from_slice(&names::text(&mut derive("chunk", -1, rng), size))
+                    }
+                    "keys" => {
+                        out.extend_from_slice(&names::keys(&mut derive("chunk", -1, rng), size))
+                    }
                     "binary" => {
                         let at = out.len();
                         out.resize(at + size, 0);
@@ -672,7 +676,11 @@ impl TemplateFn for Ssh {
                 push(out, &format!("C{mode} {size} {name}\n"));
             }
             "div" | "rem" => {
-                let spec = if call.function == "div" { &c::DIV } else { &c::REM };
+                let spec = if call.function == "div" {
+                    &c::DIV
+                } else {
+                    &c::REM
+                };
                 let a = args::bind(spec, &call.args)?;
                 let (x, y) = (a.int("a")?, a.int("b")?);
                 if x < 0 || y <= 0 {

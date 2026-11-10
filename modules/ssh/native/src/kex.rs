@@ -113,7 +113,9 @@ impl Exchange<'_> {
     /// The exchange hash H.
     pub(crate) fn hash(&self) -> [u8; 32] {
         let mut buf = Vec::new();
-        for s in [self.v_c, self.v_s, self.i_c, self.i_s, self.k_s, self.q_c, self.q_s] {
+        for s in [
+            self.v_c, self.v_s, self.i_c, self.i_s, self.k_s, self.q_c, self.q_s,
+        ] {
             put_string(&mut buf, s);
         }
         put_mpint(&mut buf, self.k);
@@ -247,7 +249,10 @@ mod tests {
         let h = base.hash();
         let q = [9u8; 32];
         for changed in [
-            Exchange { v_c: b"SSH-2.0-x", ..base },
+            Exchange {
+                v_c: b"SSH-2.0-x",
+                ..base
+            },
             Exchange { i_s: b"ix", ..base },
             Exchange { q_c: &q, ..base },
             Exchange { k: &q, ..base },

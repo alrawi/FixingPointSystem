@@ -32,12 +32,17 @@ fn plain_prefix(wire: &[u8]) -> (String, Vec<Plain>, usize) {
         .iter()
         .position(|b| *b == b'\n')
         .expect("an identification line");
-    let line = std::str::from_utf8(&wire[..nl + 1]).expect("text").to_string();
+    let line = std::str::from_utf8(&wire[..nl + 1])
+        .expect("text")
+        .to_string();
     let mut at = nl + 1;
     let mut packets = Vec::new();
     loop {
         let len = u32::from_be_bytes(wire[at..at + 4].try_into().unwrap()) as usize;
-        assert!((12..=35_000).contains(&len) && (len + 4) % 8 == 0, "clear packet length {len}");
+        assert!(
+            (12..=35_000).contains(&len) && (len + 4).is_multiple_of(8),
+            "clear packet length {len}"
+        );
         let message = wire[at + 5];
         packets.push(Plain {
             start: at,
@@ -48,7 +53,10 @@ fn plain_prefix(wire: &[u8]) -> (String, Vec<Plain>, usize) {
         if message == 21 {
             return (line, packets, at);
         }
-        assert!(packets.len() < 4, "no SSH_MSG_NEWKEYS after the key exchange");
+        assert!(
+            packets.len() < 4,
+            "no SSH_MSG_NEWKEYS after the key exchange"
+        );
     }
 }
 
@@ -72,14 +80,23 @@ fn check(name: &str, run: &Run) -> Conn {
     let (c2s, s2c) = (conn.c2s(), conn.s2c());
     let (cl, cp, c_cipher) = plain_prefix(&c2s);
     let (sl, sp, s_cipher) = plain_prefix(&s2c);
-    assert!(cl.starts_with("SSH-2.0-OpenSSH_") && cl.ends_with("\r\n"), "{name}: {cl:?}");
-    assert!(sl.starts_with("SSH-2.0-OpenSSH_") && sl.ends_with("\r\n"), "{name}: {sl:?}");
+    assert!(
+        cl.starts_with("SSH-2.0-OpenSSH_") && cl.ends_with("\r\n"),
+        "{name}: {cl:?}"
+    );
+    assert!(
+        sl.starts_with("SSH-2.0-OpenSSH_") && sl.ends_with("\r\n"),
+        "{name}: {sl:?}"
+    );
     // The client sends SSH_MSG_KEXINIT, SSH_MSG_KEX_ECDH_INIT, SSH_MSG_NEWKEYS,
     // and the server SSH_MSG_KEXINIT, SSH_MSG_KEX_ECDH_REPLY, SSH_MSG_NEWKEYS.
     let types = |p: &[Plain]| p.iter().map(|x| x.message).collect::<Vec<_>>();
     assert_eq!(types(&cp), [20, 30, 21], "{name}");
     assert_eq!(types(&sp), [20, 31, 21], "{name}");
-    assert!(c2s.len() > c_cipher && s2c.len() > s_cipher, "{name}: nothing after the key exchange");
+    assert!(
+        c2s.len() > c_cipher && s2c.len() > s_cipher,
+        "{name}: nothing after the key exchange"
+    );
     // Nothing that a scenario says after the key exchange shows on the wire.
     for (dir, wire) in [("c2s", &c2s[c_cipher..]), ("s2c", &s2c[s_cipher..])] {
         for needle in [
@@ -135,7 +152,10 @@ async fn the_host_key_stays_and_the_ephemeral_keys_change() {
         let (_, p, _) = plain_prefix(&conn.c2s());
         inits.push(conn.c2s()[p[1].start..p[1].end].to_vec());
     }
-    assert!(keys.windows(2).all(|w| w[0] == w[1]), "one server, one host key");
+    assert!(
+        keys.windows(2).all(|w| w[0] == w[1]),
+        "one server, one host key"
+    );
     inits.sort();
     inits.dedup();
     assert_eq!(inits.len(), 4, "every session has its own client key");
@@ -189,7 +209,10 @@ async fn the_upload_moves_as_many_bytes_as_the_variable_says() {
         );
         // The server sends acknowledgements and window adjustments only.
         let adjusts = (size / 32_768 / 32) as usize;
-        assert!(down < FIXED + 40 * (adjusts + 4), "{size}: the server wrote {down} bytes");
+        assert!(
+            down < FIXED + 40 * (adjusts + 4),
+            "{size}: the server wrote {down} bytes"
+        );
     }
 }
 
@@ -202,13 +225,19 @@ async fn the_download_moves_as_many_bytes_as_the_variable_says() {
         let conn = check(name, &r);
         let (up, down) = (conn.c2s().len(), conn.s2c().len());
         let n = packets(size, 32_768);
-        assert!(down >= size as usize, "{size}: the server wrote {down} bytes");
+        assert!(
+            down >= size as usize,
+            "{size}: the server wrote {down} bytes"
+        );
         assert!(
             down <= size as usize + FIXED + PER_PACKET * (n + 2),
             "{size}: the server wrote {down} bytes"
         );
         let adjusts = (size / 32_768 / 32) as usize;
-        assert!(up < FIXED + 40 * (adjusts + 4), "{size}: the client wrote {up} bytes");
+        assert!(
+            up < FIXED + 40 * (adjusts + 4),
+            "{size}: the client wrote {up} bytes"
+        );
     }
 }
 
@@ -222,7 +251,10 @@ async fn the_remote_command_output_follows_the_variable() {
         let down = conn.s2c().len();
         let n = packets(size, 32_768);
         assert!(down >= size as usize, "{size}: {down}");
-        assert!(down <= size as usize + FIXED + PER_PACKET * n, "{size}: {down}");
+        assert!(
+            down <= size as usize + FIXED + PER_PACKET * n,
+            "{size}: {down}"
+        );
     }
 }
 
@@ -299,7 +331,10 @@ async fn a_bit_flipped_after_the_key_exchange_fails_the_server() {
         // service request, and the 20th byte lies inside its ciphertext.
         for at in [cipher_at, cipher_at + 20] {
             let r = run_flipping(s, SEED, 1, Some(at)).await;
-            assert!(r.result.is_err(), "{name}: a flipped bit at {at} went unnoticed");
+            assert!(
+                r.result.is_err(),
+                "{name}: a flipped bit at {at} went unnoticed"
+            );
             assert!(
                 r.records
                     .iter()
