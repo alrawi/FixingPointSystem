@@ -6,10 +6,14 @@
 // faults, and answers everything else with an RFC 9457 problem. It needs only
 // node:http, so it adds no dependency.
 
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { Problem } from "../src/api/client";
-import { loadMockData, type MockData } from "./fixtures";
+import { join } from "node:path";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { parse } from "yaml";
+import type { Finding, Problem, ValidationReport } from "../src/api/client";
+import { CONTRACTS_DIR, loadMockData, type MockData, type StoredConfig } from "./fixtures";
 
 /** The token that the mock server accepts unless the options name others. */
 export const MOCK_TOKEN = "fps-mock-token";
@@ -41,7 +45,17 @@ export interface RunningMockServer {
   close: () => Promise<void>;
 }
 
-type Handler = (match: RegExpExecArray, url: URL) => { status: number; body: unknown };
+/** The body of a request and its content type. */
+interface RequestInput {
+  body: string;
+  contentType: string;
+}
+
+type Handler = (
+  match: RegExpExecArray,
+  url: URL,
+  input: RequestInput,
+) => { status: number; body: unknown; headers?: Record<string, string> };
 
 function problem(status: number, title: string, detail: string): Problem {
   return { type: "about:blank", title, status, detail };
@@ -86,8 +100,143 @@ function matchesFault(fault: MockFault, method: string, path: string): boolean {
   return typeof fault.path === "string" ? fault.path === path : fault.path.test(path);
 }
 
+let schemaCheck: ReturnType<Ajv2020["compile"]> | undefined;
+
+/** Checks a body against the test configuration schema, as the controller does on create. */
+function schemaFindings(body: unknown): Finding[] {
+  schemaCheck ??= new Ajv2020({ allErrors: true, strict: false }).compile(
+    JSON.parse(
+      readFileSync(join(CONTRACTS_DIR, "schemas", "test-config.schema.json"), "utf8"),
+    ) as object,
+  );
+  if (schemaCheck(body)) return [];
+  return (schemaCheck.errors ?? [])
+    .filter((error) => !error.schemaPath.includes("/anyOf/"))
+    .map((error) => {
+      const params = error.params as Record<string, unknown>;
+      const extra = params["missingProperty"] ?? params["additionalProperty"];
+      return {
+        severity: "error" as const,
+        path: extra === undefined ? error.instancePath : `${error.instancePath}/${String(extra)}`,
+        message: error.message ?? "is not valid",
+      };
+    });
+}
+
+/** The checks beyond the schema: every scenario of the mix must come from an installed module. */
+function referenceFindings(body: StoredConfig["body"], data: MockData): Finding[] {
+  const known = data.modules.flatMap((module) =>
+    (module.summary.scenarios ?? []).map((scenario) => `${module.summary.name}/${scenario}`),
+  );
+  return body.profile.mix.flatMap((entry, index): Finding[] => {
+    const ref = entry.scenario;
+    const found = ref.includes("/")
+      ? known.includes(ref)
+      : known.filter((name) => name.endsWith(`/${ref}`)).length === 1;
+    return found
+      ? []
+      : [
+          {
+            severity: "error",
+            path: `/profile/mix/${String(index)}/scenario`,
+            message: `scenario ${ref} is not provided by an installed module`,
+          },
+        ];
+  });
+}
+
+/** Reads a configuration body as JSON or YAML, or returns the reason it cannot. */
+function decodeBody(input: RequestInput): { value: unknown } | { error: string } {
+  const type = input.contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  try {
+    if (type === "application/json") return { value: JSON.parse(input.body) as unknown };
+    if (type === "application/yaml") return { value: parse(input.body) as unknown };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "The body cannot be parsed." };
+  }
+  return { error: "Send the configuration as application/json or application/yaml." };
+}
+
 function routes(data: MockData): [string, RegExp, Handler][] {
+  const configs = [...data.configs];
+  let created = 0;
   return [
+    [
+      "GET",
+      /^\/v1\/configs$/,
+      (_match, url) =>
+        paginate(
+          // Newest first, as the contract says.
+          [...configs].reverse().map(({ id, name, created_at }) => ({ id, name, created_at })),
+          url,
+        ),
+    ],
+    [
+      "POST",
+      /^\/v1\/configs$/,
+      (_match, _url, input) => {
+        const decoded = decodeBody(input);
+        if ("error" in decoded) {
+          const status = decoded.error.startsWith("Send") ? 415 : 400;
+          return { status, body: problem(status, "Bad Request", decoded.error) };
+        }
+        const findings = schemaFindings(decoded.value);
+        if (findings.length > 0) {
+          return {
+            status: 422,
+            body: {
+              ...problem(
+                422,
+                "Unprocessable Content",
+                `the configuration breaks the schema at ${findings[0]?.path ?? ""}`,
+              ),
+              errors: findings,
+            },
+          };
+        }
+        const body = decoded.value as StoredConfig["body"];
+        created += 1;
+        const stored: StoredConfig = {
+          id: `cfg_mock${String(created).padStart(4, "0")}`,
+          name: body.metadata.name,
+          created_at: new Date(Date.UTC(2026, 11, 1, 9, created)).toISOString(),
+          body,
+        };
+        configs.push(stored);
+        return {
+          status: 201,
+          body: { id: stored.id, name: stored.name, created_at: stored.created_at },
+          headers: { Location: `/v1/configs/${stored.id}` },
+        };
+      },
+    ],
+    [
+      "GET",
+      /^\/v1\/configs\/([^/:]+)$/,
+      (match) => {
+        const found = configs.find((config) => config.id === decodeURIComponent(match[1] ?? ""));
+        return found
+          ? { status: 200, body: found.body }
+          : { status: 404, body: problem(404, "Not Found", "No configuration has this id.") };
+      },
+    ],
+    [
+      "POST",
+      /^\/v1\/configs\/([^/:]+):validate$/,
+      (match) => {
+        const found = configs.find((config) => config.id === decodeURIComponent(match[1] ?? ""));
+        if (!found) {
+          return { status: 404, body: problem(404, "Not Found", "No configuration has this id.") };
+        }
+        const findings = [...schemaFindings(found.body), ...referenceFindings(found.body, data)];
+        const report: ValidationReport = {
+          valid: findings.every((finding) => finding.severity !== "error"),
+          findings,
+          capacity: { agents_required: 1, agents_available: data.agents.length },
+        };
+        return { status: 200, body: report };
+      },
+    ],
     ["GET", /^\/v1\/capabilities$/, () => ({ status: 200, body: data.capabilities })],
     [
       "GET",
@@ -119,11 +268,17 @@ function routes(data: MockData): [string, RegExp, Handler][] {
   ];
 }
 
-function send(res: ServerResponse, status: number, body: unknown): void {
+function send(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+): void {
   const isProblem = status >= 400;
   res.writeHead(status, {
     "Content-Type": isProblem ? "application/problem+json" : "application/json",
     "Cache-Control": "no-store",
+    ...headers,
   });
   res.end(JSON.stringify(body));
 }
@@ -133,7 +288,7 @@ export function createMockHandler(options: MockServerOptions = {}) {
   const tokens = new Set(options.tokens ?? [MOCK_TOKEN]);
   const table = routes(options.data ?? loadMockData());
   const faults = options.faults ?? [];
-  return (req: IncomingMessage, res: ServerResponse): void => {
+  const handle = (req: IncomingMessage, res: ServerResponse, input: RequestInput): void => {
     const url = new URL(req.url ?? "/", "http://mock.invalid");
     const auth = req.headers.authorization ?? "";
     const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
@@ -156,8 +311,8 @@ export function createMockHandler(options: MockServerOptions = {}) {
       if (!match) continue;
       pathMatched = true;
       if (routeMethod !== method) continue;
-      const { status, body } = handler(match, url);
-      send(res, status, body);
+      const { status, body, headers } = handler(match, url, input);
+      send(res, status, body, headers);
       return;
     }
     if (pathMatched) {
@@ -165,6 +320,16 @@ export function createMockHandler(options: MockServerOptions = {}) {
     } else {
       send(res, 404, problem(404, "Not Found", `The mock does not serve ${url.pathname}.`));
     }
+  };
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      handle(req, res, {
+        body: Buffer.concat(chunks).toString("utf8"),
+        contentType: req.headers["content-type"] ?? "",
+      });
+    });
   };
 }
 
