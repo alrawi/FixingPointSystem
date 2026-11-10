@@ -364,3 +364,103 @@ fn an_extension_swapped_after_the_digest_is_never_compiled() {
     let err = modules::load(&plan, &dir, &ModulePolicy::default()).expect_err("digest differs");
     assert!(matches!(err, ModuleError::Digest { .. }), "{err}");
 }
+
+/// AGT-17. The agent reads `manifest.yaml` once, in the pass that digests the
+/// module tree, and parses those bytes. The hook swaps the file after the
+/// digest matched and before anything is parsed, which is the moment that a
+/// separate read of the manifest would open to a writer. A garbage file would
+/// make a second read fail, and a valid manifest with another catalog would
+/// change what the agent compiles the scenarios against. The plan loads
+/// instead with the manifest of the digested bytes.
+#[test]
+fn a_manifest_swapped_after_the_digest_is_never_parsed() {
+    let other = MANIFEST.replace("  - name: fail\n", "");
+    for (tag, swapped) in [
+        ("garbage", "name: [this is not a manifest".to_owned()),
+        ("catalog", other),
+    ] {
+        let dir = module_dir(&format!("mswap-{tag}"), None);
+        let plan = plan(&dir, 95, 96, 18_360);
+        let plan = fps_agent::plan::Plan::parse(&plan.to_string()).expect("plan");
+        let file = dir.join("xmod/manifest.yaml");
+        let mut runs = Vec::new();
+        let loaded = modules::load_with(&plan, &dir, &ModulePolicy::default(), &mut |module| {
+            std::fs::write(&file, &swapped).unwrap();
+            runs.push(module.to_owned());
+        })
+        .unwrap_or_else(|e| {
+            panic!("{tag}: the digested manifest loads, the swap is not read: {e}")
+        });
+        assert_eq!(runs, ["xmod"], "{tag}: the swap ran once, after the digest");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), swapped);
+        let manifest = loaded.set.manifests.get("xmod").expect("the manifest");
+        assert!(
+            manifest.functions.contains_key("fail"),
+            "{tag}: the digested catalog, with fail, is the one that the agent holds"
+        );
+
+        // Control: the swapped tree no longer matches the plan digest, so a
+        // load without the hook refuses it.
+        let err = modules::load(&plan, &dir, &ModulePolicy::default());
+        assert!(err.is_err(), "{tag}: the swapped tree is refused");
+    }
+}
+
+/// AGT-17. The gap that the hook above cannot reach is the one before the
+/// digest: a manifest that one read parsed and another read digested. A writer
+/// thread flips the manifest between the digested content and another valid
+/// catalog while the agent loads the module again and again. Whatever the
+/// interleaving, a load that passes the digest check of the plan has parsed
+/// the bytes that the digest covered, so its catalog is the digested one. A
+/// load that meets a half written file fails, which the test accepts.
+#[test]
+fn a_manifest_that_changes_during_the_load_is_never_parsed_unless_digested() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let dir = module_dir("mrace", None);
+    let plan = plan(&dir, 99, 100, 18_380);
+    let plan = fps_agent::plan::Plan::parse(&plan.to_string()).expect("plan");
+    let file = dir.join("xmod/manifest.yaml");
+    let other = MANIFEST.replace("  - name: fail\n", "");
+    let stop = Arc::new(AtomicBool::new(false));
+    let writer = {
+        let (stop, file) = (Arc::clone(&stop), file.clone());
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                std::fs::write(&file, &other).unwrap();
+                std::fs::write(&file, MANIFEST).unwrap();
+            }
+        })
+    };
+    let (mut loaded, mut refused) = (0, 0);
+    for _ in 0..300 {
+        match modules::load(&plan, &dir, &ModulePolicy::default()) {
+            Ok(l) => {
+                loaded += 1;
+                let m = l.set.manifests.get("xmod").expect("the manifest");
+                assert!(
+                    m.functions.contains_key("fail"),
+                    "a load that passed the digest parsed another manifest"
+                );
+            }
+            Err(_) => refused += 1,
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    writer.join().unwrap();
+    eprintln!("manifest race: {loaded} loads, {refused} refusals");
+}
+
+/// AGT-17. A module without a manifest in its tree is refused with the error
+/// of a failed manifest read, as before the manifest came from the digest pass.
+#[test]
+fn a_module_without_a_manifest_is_refused_as_a_manifest_error() {
+    let dir = module_dir("nomanifest", None);
+    let plan = plan(&dir, 97, 98, 18_370);
+    let plan = fps_agent::plan::Plan::parse(&plan.to_string()).expect("plan");
+    std::fs::remove_file(dir.join("xmod/manifest.yaml")).unwrap();
+    std::fs::write(dir.join("xmod/README"), b"no manifest here").unwrap();
+    let err = modules::load(&plan, &dir, &ModulePolicy::default()).expect_err("refused");
+    assert!(matches!(err, ModuleError::Manifest { .. }), "{err}");
+}

@@ -34,6 +34,8 @@ fps-module-http2 = { path = "../../modules/http2/native" }
 fps-module-imap = { path = "../../modules/imap/native" }
 fps-module-pop3 = { path = "../../modules/pop3/native" }
 fps-module-smtp = { path = "../../modules/smtp/native" }
+# One value per session side, because it holds the keys of one SSH session (AGT-17).
+fps-module-ssh = { path = "../../modules/ssh/native" }
 # The TLS profiles, authority, and key log of the runs with tls_upgrade (AGT-14).
 fps-module-tls = { path = "../../modules/tls/native" }
 fps-runtime = { path = "../fps-runtime" }
