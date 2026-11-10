@@ -162,15 +162,25 @@ def follow(base: list[str], sessions: dict[int, Session]) -> None:
     for stream in sessions:
         argv += ["-z", f"follow,tls,raw,{stream}"]
     current: Session | None = None
+    # Which of the two nodes is the client, which the header of each stream says:
+    # node 0 is the endpoint that sent the first bytes inside TLS, which is the
+    # server in TLS 1.3 for some dialogues and the client in others.
+    client_node = 1
     for line in run(argv).splitlines():
         header = re.fullmatch(r"Filter: tcp\.stream eq (\d+)", line)
         if header:
             current = sessions.get(int(header.group(1)))
             continue
+        node = re.fullmatch(r"Node ([01]): (\S+):(\d+)", line)
+        if node and current is not None:
+            if (node.group(2), int(node.group(3))) == current.client:
+                client_node = int(node.group(1))
+            continue
         if current is None or not re.fullmatch(r"\t?[0-9a-f]+", line):
             continue
-        # Node 0 is the server and node 1 is the client, which is indented.
-        current.inside.append((line.startswith("\t"), bytes.fromhex(line.strip())))
+        # Node 1 is indented in the output.
+        from_client = line.startswith("\t") == (client_node == 1)
+        current.inside.append((from_client, bytes.fromhex(line.strip())))
 
 
 def count_smtp(base: list[str], sessions: dict[int, Session]) -> None:

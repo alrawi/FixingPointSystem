@@ -1,0 +1,88 @@
+scenario: starttls_mailbox
+description: A mail client on port 143 that protects its session with STARTTLS, as Apple Mail does against a Dovecot server that disables plain text logins. The greeting and the first CAPABILITY answer list STARTTLS and LOGINDISABLED, the client sends STARTTLS, and the server answers OK in the clear. Both sides then upgrade the connection to TLS, the client with the profile safari-18.5 (Apple Mail uses the TLS stack of Safari) and the SNI imap.example.test, the server with the profile server-tls12, so the session runs on TLS 1.2. Inside TLS the client asks for CAPABILITY again, which now lists AUTH=PLAIN and no STARTTLS, logs in with quoted synthetic credentials, selects INBOX, lists UID, FLAGS, and RFC822.SIZE of every message, downloads the variable fetches (default 2) whole messages with BODY.PEEK[] as literals that carry a MIME message with a base64 attachment, and logs out. The client counts its tags up from A000, and the server copies each tag out of the command line. The server name of tls_upgrade is a literal that equals the default of the variable server_name, so a run that changes one must change the other too.
+vars:
+  server_port: 143
+  server_name: imap.example.test
+  messages: 6
+  fetches: 2
+  body_size: 1800
+  attachment_min: 24000
+  attachment_max: 160000
+  tag: A000
+flows:
+  - id: starttls_mailbox
+    module: imap
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} CAPABILITY\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} STARTTLS\r\n"
+      - expect: { pattern: " Begin TLS negotiation now.\r\n", timeout_ms: 5000 }
+      - tls_upgrade: { profile: safari-18.5, server_name: imap.example.test }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} CAPABILITY\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - set:
+          login: "{{ imap.credential('user') }}"
+          secret: "{{ imap.credential('password') }}"
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} LOGIN \"{{ vars.login }}\" \"{{ vars.secret }}\"\r\n"
+      - expect: { pattern: " Logged in\r\n", timeout_ms: 5000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} SELECT \"INBOX\"\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} FETCH 1:{{ vars.messages }} (UID FLAGS RFC822.SIZE)\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - loop:
+          count: "{{ vars.fetches }}"
+          do:
+            - set: { tag: "{{ imap.next(vars.tag) }}" }
+            - send: "{{ vars.tag }} FETCH {{ rand_int(1, vars.messages) }} (UID FLAGS BODY.PEEK[])\r\n"
+            - expect: { pattern: "secs).\r\n", timeout_ms: 30000 }
+            - delay: { dist: exponential, mean_ms: 80 }
+      - set: { tag: "{{ imap.next(vars.tag) }}" }
+      - send: "{{ vars.tag }} LOGOUT\r\n"
+      - expect: { pattern: "secs).\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ STARTTLS LOGINDISABLED] {{ vars.server_name }} Dovecot ready.\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "* CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ STARTTLS LOGINDISABLED\r\n{{ imap.tagged(last, text='Pre-login capabilities listed, post-login capabilities have more', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ imap.tagged(last, text='Begin TLS negotiation now.') }}"
+      - tls_upgrade: { profile: server-tls12 }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "* CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN\r\n{{ imap.tagged(last, text='Pre-login capabilities listed, post-login capabilities have more', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ imap.tagged(last, code='CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT UIDPLUS MOVE NAMESPACE CHILDREN', text='Logged in') }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ imap.select_data(vars.messages, unseen=1) }}{{ imap.tagged(last, code='READ-WRITE', text='Select completed', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ imap.fetch(last, exists=vars.messages) }}{{ imap.tagged(last, text='Fetch completed', timing=true) }}"
+      - loop:
+          count: "{{ vars.fetches }}"
+          do:
+            - expect: { pattern: "\r\n", timeout_ms: 30000 }
+            - set: { sid: "{{ rand_int(1, 2000000000) }}" }
+            - set:
+                subject: "Documents {{ rand_int(1000, 9999) }}"
+                text: "{{ content.email(size=vars.body_size) }}"
+            - branch:
+                - p: 0.4
+                  do:
+                    - set: { msg: "{{ imap.message(imap.address(vars.sid, 1), imap.address(vars.sid, 2), vars.subject, vars.text, cc=imap.address(vars.sid, 3), attachment=content.binary(kind='pdf', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='statement.pdf', content_type='application/pdf') }}" }
+                - p: 0.3
+                  do:
+                    - set: { msg: "{{ imap.message(imap.address(vars.sid, 1), imap.address(vars.sid, 2), vars.subject, vars.text, attachment=content.binary(kind='jpeg', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='photo.jpg', content_type='image/jpeg') }}" }
+                - p: 0.3
+                  do:
+                    - set: { msg: "{{ imap.message(imap.address(vars.sid, 1), imap.address(vars.sid, 2), vars.subject, vars.text, attachment=content.binary(kind='zip', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='archive.zip', content_type='application/zip') }}" }
+            - send: "{{ imap.fetch(last, vars.msg) }}{{ imap.tagged(last, text='Fetch completed', timing=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - send: "* BYE Logging out\r\n{{ imap.tagged(last, text='Logout completed', timing=true) }}"
+      - close: fin

@@ -9,9 +9,9 @@
 //!
 //! It needs python3, tshark 4.2 or newer, and ndpiReader, and it skips itself
 //! when one is missing. `FPS_REQUIRE_CAPTURE_TOOLS=1` turns a missing tool into
-//! a failure, as in the tests of the TLS module. Zeek is optional here, and the
-//! `module` job of the smtp workflow, which installs it, runs the same script
-//! with `--zeek`.
+//! a failure, as in the tests of the TLS module. Zeek is optional here. A job that
+//! installs Zeek, such as the `module` job of the smtp workflow once it has the
+//! step that the README names, runs the same script with `--zeek`.
 
 use std::path::Path;
 use std::process::Command;

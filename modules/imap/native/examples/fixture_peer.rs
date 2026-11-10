@@ -9,21 +9,35 @@
 //! belongs to the n-th client session and both sides draw from the same
 //! session generators.
 //!
+//! The STARTTLS scenario (MOD-20) upgrades its sessions to TLS. The agent
+//! builds the TLS profiles of a plan itself (AGT-14), and the peers build
+//! theirs with `tests/common/tls.rs`. The server generates a run authority,
+//! issues the certificate for `imap.example.test`, and writes the authority
+//! certificate to the file of `--ca`. The client waits for that file, trusts
+//! only that authority, and appends the secrets of every handshake to the file
+//! of `--keylog` in the NSS format, which `capture.sh` injects into the
+//! capture.
+//!
 //! ```text
-//! fixture_peer server --listen 10.202.0.2 [options]
-//! fixture_peer client --connect 10.202.0.2 --source 10.201.0.2 [options]
+//! fixture_peer server --listen 10.202.0.2 --ca ca.pem [options]
+//! fixture_peer client --connect 10.202.0.2 --source 10.201.0.2 --ca ca.pem --keylog keys.log [options]
 //!
 //! options
 //!   --sessions N      sessions per scenario, default 10
 //!   --seed S          run seed, default 42
 //!   --var NAME=INT    replace an integer variable in every scenario that declares it
+//!   --port NAME=PORT  replace server_port of the scenario NAME, the file name without .yaml
+//!   --ca FILE         the authority certificate in PEM form, which the server writes and the client reads
+//!   --keylog FILE     the key log of the client, default none (the secrets stay in memory)
 //! ```
 
 use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Duration;
 
 use fps_backend_kernel::{ConnectConfig, Connector, KernelListener, KernelStream, ListenConfig};
 use fps_flow::template::Filler;
@@ -32,7 +46,11 @@ use fps_flow::{Manifest, ModuleSet, Scenario, Value};
 use fps_interp::{session_rng, Limits, OpenKind, OpenRequest, Opener, Session, SessionCtx, Side};
 use fps_module_content::Content;
 use fps_module_imap::Imap;
+use fps_module_tls::NssKeyLog;
 use rand::RngCore;
+
+#[path = "../../tests/common/tls.rs"]
+mod tls;
 
 /// Routes the calls of the two modules that the scenarios use.
 #[derive(Default)]
@@ -91,8 +109,9 @@ impl KernelOpener {
     }
 
     /// Binds the listener of `port` unless it exists, and returns its index.
-    /// The server binds the port of every scenario before its first session,
-    /// so a client never meets a closed port.
+    /// The scenarios use several ports, so the server binds all of them before
+    /// the first session. A client that starts the first session on a later
+    /// port then never meets a closed port.
     fn bind(&mut self, port: u16) -> io::Result<usize> {
         let to_io = |e: fps_backend_kernel::BackendError| io::Error::other(e.to_string());
         let addr = SocketAddr::new(self.server, port);
@@ -121,6 +140,9 @@ struct Options {
     sessions: u64,
     seed: u64,
     vars: Vec<(String, Value)>,
+    ports: Vec<(String, i64)>,
+    ca: Option<PathBuf>,
+    keylog: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Options, String> {
@@ -137,6 +159,9 @@ fn parse_args() -> Result<Options, String> {
         sessions: 10,
         seed: 42,
         vars: Vec::new(),
+        ports: Vec::new(),
+        ca: None,
+        keylog: None,
     };
     let ip = |s: Option<String>| -> Result<IpAddr, String> {
         s.ok_or("missing address")?
@@ -159,11 +184,23 @@ fn parse_args() -> Result<Options, String> {
                     o.sessions = n;
                 }
             }
-            "--var" => {
+            "--var" | "--port" => {
                 let kv = args.next().ok_or("missing NAME=INT")?;
                 let (k, v) = kv.split_once('=').ok_or("expected NAME=INT")?;
                 let v: i64 = v.parse().map_err(|e| format!("bad value of {k}: {e}"))?;
-                o.vars.push((k.to_string(), Value::Int(v)));
+                if flag == "--var" {
+                    o.vars.push((k.to_string(), Value::Int(v)));
+                } else {
+                    o.ports.push((k.to_string(), v));
+                }
+            }
+            "--ca" | "--keylog" => {
+                let path = PathBuf::from(args.next().ok_or("missing file name")?);
+                if flag == "--ca" {
+                    o.ca = Some(path);
+                } else {
+                    o.keylog = Some(path);
+                }
             }
             other => return Err(format!("unknown option {other}")),
         }
@@ -171,7 +208,10 @@ fn parse_args() -> Result<Options, String> {
     Ok(o)
 }
 
-fn load(vars: &[(String, Value)]) -> Result<Vec<(String, Scenario)>, String> {
+fn load(
+    vars: &[(String, Value)],
+    ports: &[(String, i64)],
+) -> Result<Vec<(String, Scenario)>, String> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let m = Manifest::load(&dir.join("manifest.yaml")).map_err(|e| e.to_string())?;
     let mut set = ModuleSet::default();
@@ -185,20 +225,80 @@ fn load(vars: &[(String, Value)]) -> Result<Vec<(String, Scenario)>, String> {
     let mut out = Vec::new();
     for rel in &m.scenarios {
         let mut s = Scenario::load_with(&dir.join(rel), Some(&ctx)).map_err(|e| e.to_string())?;
-        let own: Vec<(String, Value)> = vars
+        let mut own: Vec<(String, Value)> = vars
             .iter()
             .filter(|(k, _)| s.vars.contains_key(k))
             .cloned()
             .collect();
+        // A port of this scenario by name wins over a variable of every scenario.
+        let stem = rel.file_stem().map(|n| n.to_string_lossy().into_owned());
+        if let Some((_, port)) = ports.iter().find(|(n, _)| Some(n) == stem.as_ref()) {
+            own.retain(|(k, _)| k != "server_port");
+            own.push(("server_port".into(), Value::Int(*port)));
+        }
         s.override_vars(&own).map_err(|e| e.to_string())?;
         s.fold_constants().map_err(|e| e.to_string())?;
         out.push((rel.display().to_string(), s));
     }
+    for (name, _) in ports {
+        let known = out.iter().any(|(n, _)| {
+            Path::new(n)
+                .file_stem()
+                .is_some_and(|stem| stem.to_string_lossy() == *name)
+        });
+        if !known {
+            return Err(format!("--port names the unknown scenario {name}"));
+        }
+    }
     Ok(out)
 }
 
+/// Builds the TLS profiles of this side, which the STARTTLS scenario names.
+async fn tls_profiles(o: &Options) -> Result<tls::Profiles, String> {
+    let profiles = tls::Profiles::default();
+    match o.side {
+        Side::Server => {
+            let authority = tls::authority().map_err(|e| e.to_string())?;
+            let identity = tls::identity(&authority).map_err(|e| e.to_string())?;
+            if let Some(ca) = &o.ca {
+                // Write and rename, so the client never reads half a certificate.
+                let partial = ca.with_extension("partial");
+                std::fs::write(&partial, authority.ca_pem())
+                    .and_then(|()| std::fs::rename(&partial, ca))
+                    .map_err(|e| format!("write {}: {e}", ca.display()))?;
+            }
+            profiles.with_servers(&identity).map_err(|e| e.to_string())
+        }
+        Side::Client => {
+            let ca =
+                o.ca.as_ref()
+                    .ok_or("the client needs --ca for the STARTTLS scenario")?;
+            let mut pem = None;
+            for _ in 0..100 {
+                if let Ok(bytes) = std::fs::read(ca) {
+                    pem = Some(bytes);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            let pem = pem.ok_or_else(|| format!("{} did not appear in 10 s", ca.display()))?;
+            let roots = tls::roots_from_pem(&pem)?;
+            let key_log = match &o.keylog {
+                Some(path) => {
+                    NssKeyLog::to_file(path).map_err(|e| format!("open {}: {e}", path.display()))?
+                }
+                None => NssKeyLog::in_memory(),
+            };
+            profiles
+                .with_clients(&roots, &Arc::new(key_log))
+                .map_err(|e| e.to_string())
+        }
+    }
+}
+
 async fn run(o: Options) -> Result<(), String> {
-    let scenarios = load(&o.vars)?;
+    let scenarios = load(&o.vars, &o.ports)?;
+    let profiles = tls_profiles(&o).await?;
     let filler = Filler::new(o.seed);
     let mut opener = KernelOpener {
         server: o.server,
@@ -238,6 +338,7 @@ async fn run(o: Options) -> Result<(), String> {
                 functions: &mut functions,
                 limits: Limits::default(),
             });
+            session.set_tls_upgrader(&profiles);
             if let Err(f) = session
                 .run_program(&mut opener, program, std::future::pending())
                 .await
