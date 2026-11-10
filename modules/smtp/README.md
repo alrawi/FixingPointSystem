@@ -89,7 +89,7 @@ The check leaves out a row of a STARTTLS session that has no sender, because Zee
 
 1. tshark parses the SMTP dialogue inside every TLS session. Each session shows `EHLO` again, `AUTH`, `MAIL`, `RCPT`, `DATA`, one Internet Message Format message, and `QUIT`, with the replies 235, 354, and 221.
 2. nDPI classifies the 8 sessions of the view as `SMTP` (ratio 1.0, no parser error).
-3. With `--zeek`, Zeek reads the view, and the checks of `zeek_check.py` hold on it: `smtp.log` has one message per session with every header field and the file of the attachment, `files.log` has the attachment with all its bytes, and `weird.log` has no `smtp` entry. This part could not run in the sandbox that wrote the module, because Zeek is not installed there. The step for the workflows is in the log entry of MOD-20.
+3. With `--zeek`, Zeek reads the view, and the checks of `zeek_check.py` hold on it: `smtp.log` has one message per session with every header field and the file of the attachment, `files.log` has the attachment with all its bytes, and `weird.log` has no `smtp` entry. This part could not run in the sandbox that wrote the module, because Zeek is not installed there. It ran in the `realism` workflow with Zeek 9.0.1 on the capture of that run: `smtp.log` held 8 messages, `files.log` 16 files, and no check failed. The step for the `mod-smtp` workflow is in the log entry of MOD-20.
 
 So the acceptance that Zeek logs the messages inside TLS holds for the view and not for the capture itself.
 

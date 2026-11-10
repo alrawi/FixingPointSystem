@@ -8,7 +8,7 @@
 |---|---|
 | Issue | #325 |
 | Branch | `wp/MOD-20` |
-| Pull request | #0 |
+| Pull request | #370 |
 | Status | in progress |
 | Progress | 85% (4 of 5 plan steps) |
 | Current holder | claude-m20a7c, lease until 2026-11-10T06:15:05Z |
@@ -39,7 +39,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 ## Remaining
 
 - Push, open the PR, poll CI, set ready for review.
-- Zeek on the decrypted views cannot run here (no zeek); CI (realism workflow through capture.sh) is the only proof. The mod-smtp/mod-imap workflow and mk steps are in the log entry for the coordinator.
+- Zeek on the decrypted views cannot run here (no zeek); the realism workflow ran it on PR 370: smtp view 8 messages / 16 files, 0 failed checks; imap view 8 connections, no service, 0 failed checks. The mod-smtp/mod-imap workflow and mk steps are in the log entry for the coordinator.
 
 ## Next action
 
