@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# Metric catalog, contract v0.4. Every metric that the agent records, the
+# Metric catalog, contract v0.5. Every metric that the agent records, the
 # controller derives, the API serves, or a test criterion names appears here
 # once. contracts/metrics/catalog.schema.json defines the format, and
 # tools/contracts/validate.py checks every metric reference against this file.
 catalog: fps-metrics
-version: 0.4.0
+version: 0.5.0
 
 # A reference to a histogram, in a test criterion or a report, appends one of
 # these statistic suffixes to the histogram name, for example
@@ -19,7 +19,10 @@ labels:
       value all reports it next to the per application series, and no module
       may be named all.
   scenario:
-    description: Scenario name within the module, for example web_get.
+    description: >-
+      Scenario name within the module, for example web_get. The session structure
+      check of the realism pipeline uses it for the name of the scenario whose
+      instances it rebuilt from the capture.
   flow:
     description: Flow id within the scenario.
   action_index:
@@ -32,7 +35,9 @@ labels:
       Side of the session that recorded the value, or of the flow program that
       ran the action. A total over both sides counts each session twice, so the
       API views and test criteria report the client side unless a criterion
-      selects the server side.
+      selects the server side. The metric realism.transport_deviations uses it
+      for the sender of the handshake packet: client for a SYN, server for a
+      SYN-ACK.
     values: [client, server]
   reason:
     description: >-
@@ -69,8 +74,42 @@ labels:
       Distribution that the realism pipeline compares with the target model.
       request_bytes holds the payload sizes of the client to server direction,
       response_bytes those of the server to client direction, and both the
-      payload sizes of the two directions pooled.
-    values: [session_bytes, request_bytes, response_bytes, inter_arrival, session_duration, both]
+      payload sizes of the two directions pooled. The values ttl, df, mss,
+      window_scale, sack, timestamps, options, and syn_window name the field of
+      a TCP SYN or SYN-ACK that the transport behavior check compares with the
+      operating system profile of the sending host, and only
+      realism.transport_deviations uses them.
+    values:
+      - session_bytes
+      - request_bytes
+      - response_bytes
+      - inter_arrival
+      - session_duration
+      - both
+      - ttl
+      - df
+      - mss
+      - window_scale
+      - sack
+      - timestamps
+      - options
+      - syn_window
+  check:
+    description: >-
+      Check kind of the realism report, as the check field of an entry of its
+      checks array names it.
+    values:
+      - conformance
+      - parser_errors
+      - encryption
+      - content
+      - session_structure
+      - temporal
+      - mix_accuracy
+      - transport_behavior
+  parser:
+    description: Reference parser of the parser error check of the realism pipeline.
+    values: [tshark, zeek, stub]
   alert:
     description: TLS alert description name in lower snake case, for example handshake_failure.
   port:
@@ -430,3 +469,71 @@ metrics:
     view: port
     labels: [port, host_pool]
     description: Emulated hosts that hold at least one open session.
+
+  # --- realism check metrics (CON-23) ----------------------------------------
+  # Every check kind of the realism report carries realism.check_failures, and
+  # most carry a metric of their own. The metrics sit at the end of the file so
+  # that the position of every earlier metric, which the engine table uses as
+  # its identifier, stays as it was. contracts/changes/CON-23.md gives the
+  # target and the outcome of each metric as the controller reports them.
+  - name: realism.check_failures
+    type: gauge
+    unit: events
+    level: application
+    view: realism
+    labels: [check]
+    description: >-
+      Number of reasons for which the check failed, and 0 exactly when the check passed.
+      Every check of the realism report carries one series, so a failing check is visible
+      even when no other metric of it exists, for example when no parser ran.
+  - name: realism.parser_errors
+    type: gauge
+    unit: events
+    level: application
+    view: realism
+    labels: [application, parser]
+    description: >-
+      Parser errors and malformed packets that the reference parser reported in the sessions
+      of the application. The application value all totals every finding of the parser,
+      including those in unlabelled sessions and in packets that belong to no session.
+  - name: realism.decrypted_ratio
+    type: gauge
+    unit: ratio
+    level: application
+    view: realism
+    labels: []
+    description: Fraction of the sampled TLS sessions that decrypted with the exported keys.
+  - name: realism.ja4_match_ratio
+    type: gauge
+    unit: ratio
+    level: application
+    view: realism
+    labels: []
+    description: Fraction of the sampled TLS sessions whose ClientHello has a JA4 fingerprint that its client profile lists.
+  - name: realism.duplicate_ratio
+    type: gauge
+    unit: ratio
+    level: application
+    view: realism
+    labels: [application]
+    description: Fraction of the payload units of the application that repeat an earlier payload of the capture.
+  - name: realism.structure_failures
+    type: gauge
+    unit: events
+    level: application
+    view: realism
+    labels: [scenario]
+    description: >-
+      Rules that the instances of the scenario break in the capture: a flow with a number of
+      connections that the scenario does not allow, a violated after or spawn edge, no session
+      for any flow, or a number of instances that differs from the expected one.
+  - name: realism.transport_deviations
+    type: gauge
+    unit: packets
+    level: application
+    view: realism
+    labels: [property, side]
+    description: >-
+      TCP SYN packets (side client) or SYN-ACK packets (side server) of profiled hosts whose
+      field named by property differs from the operating system profile. Only fields that the
+      check enforces have a series.

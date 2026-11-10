@@ -188,6 +188,20 @@ pub mod metric {
     pub const HOST_ND_FAILURES: MetricId = MetricId(46);
     /// `host.active`, a gauge in `hosts`.
     pub const HOST_ACTIVE: MetricId = MetricId(47);
+    /// `realism.check_failures`, a gauge in `events`.
+    pub const REALISM_CHECK_FAILURES: MetricId = MetricId(48);
+    /// `realism.parser_errors`, a gauge in `events`.
+    pub const REALISM_PARSER_ERRORS: MetricId = MetricId(49);
+    /// `realism.decrypted_ratio`, a gauge in `ratio`.
+    pub const REALISM_DECRYPTED_RATIO: MetricId = MetricId(50);
+    /// `realism.ja4_match_ratio`, a gauge in `ratio`.
+    pub const REALISM_JA4_MATCH_RATIO: MetricId = MetricId(51);
+    /// `realism.duplicate_ratio`, a gauge in `ratio`.
+    pub const REALISM_DUPLICATE_RATIO: MetricId = MetricId(52);
+    /// `realism.structure_failures`, a gauge in `events`.
+    pub const REALISM_STRUCTURE_FAILURES: MetricId = MetricId(53);
+    /// `realism.transport_deviations`, a gauge in `packets`.
+    pub const REALISM_TRANSPORT_DEVIATIONS: MetricId = MetricId(54);
 }
 
 /// Every metric of the catalog, in catalog order.
@@ -487,6 +501,48 @@ pub const CATALOG: &[MetricDef] = &[
         unit: "hosts",
         labels: &["port", "host_pool"],
     },
+    MetricDef {
+        name: "realism.check_failures",
+        kind: MetricKind::Gauge,
+        unit: "events",
+        labels: &["check"],
+    },
+    MetricDef {
+        name: "realism.parser_errors",
+        kind: MetricKind::Gauge,
+        unit: "events",
+        labels: &["application", "parser"],
+    },
+    MetricDef {
+        name: "realism.decrypted_ratio",
+        kind: MetricKind::Gauge,
+        unit: "ratio",
+        labels: &[],
+    },
+    MetricDef {
+        name: "realism.ja4_match_ratio",
+        kind: MetricKind::Gauge,
+        unit: "ratio",
+        labels: &[],
+    },
+    MetricDef {
+        name: "realism.duplicate_ratio",
+        kind: MetricKind::Gauge,
+        unit: "ratio",
+        labels: &["application"],
+    },
+    MetricDef {
+        name: "realism.structure_failures",
+        kind: MetricKind::Gauge,
+        unit: "events",
+        labels: &["scenario"],
+    },
+    MetricDef {
+        name: "realism.transport_deviations",
+        kind: MetricKind::Gauge,
+        unit: "packets",
+        labels: &["property", "side"],
+    },
 ];
 
 /// The labels whose values the catalog enumerates, with those values.
@@ -528,8 +584,30 @@ pub const LABEL_VALUES: &[(&str, &[&str])] = &[
             "inter_arrival",
             "session_duration",
             "both",
+            "ttl",
+            "df",
+            "mss",
+            "window_scale",
+            "sack",
+            "timestamps",
+            "options",
+            "syn_window",
         ],
     ),
+    (
+        "check",
+        &[
+            "conformance",
+            "parser_errors",
+            "encryption",
+            "content",
+            "session_structure",
+            "temporal",
+            "mix_accuracy",
+            "transport_behavior",
+        ],
+    ),
+    ("parser", &["tshark", "zeek", "stub"]),
 ];
 
 /// Every label name of the catalog, in catalog order.
@@ -544,6 +622,8 @@ pub const LABEL_NAMES: &[&str] = &[
     "classifier",
     "source",
     "property",
+    "check",
+    "parser",
     "alert",
     "port",
     "host_pool",
