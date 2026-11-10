@@ -25,9 +25,10 @@
 # as a decryption secrets block (editcap --inject-secrets), so the realism
 # runner and tshark decrypt the capture without a sidecar file.
 # FPS_FIXTURE_KEYLOG names a file that keeps the key log as well.
-# decrypted_check.py then reads the dialogue inside TLS with tshark, scores a
-# decrypted view with nDPI, and runs Zeek on the view when Zeek is installed,
-# see the README. FPS_FIXTURE_DECRYPTED_DIR keeps the view.
+# `python3 -m realism decrypted` then reads the dialogue inside TLS with tshark,
+# scores a decrypted view with nDPI, and runs Zeek on the view when Zeek is
+# installed, see the README. The result lands as imap.decrypted.json.
+# FPS_FIXTURE_DECRYPTED_DIR keeps the view as imap.decrypted.pcap.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -106,9 +107,18 @@ zeek=${FPS_ZEEK:-$(command -v zeek || true)}
 if [[ -z $zeek && -x /opt/zeek/bin/zeek ]]; then
   zeek=/opt/zeek/bin/zeek
 fi
+parsers=tshark
 zeek_args=()
 if [[ -n $zeek ]]; then
+  parsers=tshark,zeek
   zeek_args=(--zeek "$zeek")
 fi
-python3 "$here/decrypted_check.py" "$out/imap.pcapng" --sessions "$sessions" \
-  --work "${FPS_FIXTURE_DECRYPTED_DIR:-$work}" "${zeek_args[@]}"
+view_args=()
+if [[ -n ${FPS_FIXTURE_DECRYPTED_DIR:-} ]]; then
+  mkdir -p "$FPS_FIXTURE_DECRYPTED_DIR"
+  view_args=(--view "$FPS_FIXTURE_DECRYPTED_DIR/imap.decrypted.pcap")
+fi
+python3 -m realism decrypted --pcap "$out/imap.pcapng" \
+  --labels "$root/realism/examples/decrypted/imap.labels.yaml" \
+  --sessions "$sessions" --view-port 143 --parsers "$parsers" \
+  --output "$out/imap.decrypted.json" "${zeek_args[@]}" "${view_args[@]}"

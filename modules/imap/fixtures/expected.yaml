@@ -10,8 +10,9 @@
 # for why they are not 143 in the fixture. The encryption check decrypts these
 # sessions with the keys that the capture embeds and compares the JA4 of every
 # ClientHello with the expected value of the profile. The mailbox dialogue inside
-# TLS is measured by decrypted_check.py, which decrypts the capture with tshark
-# and scores a decrypted view with nDPI and, where it is installed, Zeek.
+# TLS is measured by `python3 -m realism decrypted` with
+# realism/examples/decrypted/imap.labels.yaml, which decrypts the capture with
+# tshark and scores a decrypted view with nDPI and, where it is installed, Zeek.
 #
 # The ja4 value is the expected_ja4 of the browser profile in
 # modules/tls/native/src/browser.rs, which modules/imap/tests/starttls.rs checks

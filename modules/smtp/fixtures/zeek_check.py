@@ -16,7 +16,8 @@ A capture with STARTTLS sessions (MOD-20) may hold rows of those sessions too.
 Zeek stops reading a session at ``STARTTLS`` and may log the plaintext start as a
 row with ``tls`` true and no sender, which this check leaves out of the message
 count, because the messages of those sessions are inside TLS and Zeek cannot read
-them. ``decrypted_check.py`` reads them on a decrypted view with this same check.
+them. ``python3 -m realism decrypted --view`` keeps a decrypted view of them, and ``capture.sh``
+runs this same check on that view.
 
 Usage::
 

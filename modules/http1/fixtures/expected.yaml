@@ -10,7 +10,8 @@
 # classifies these sessions as TLS, and the encryption check decrypts them with
 # the keys that the capture embeds and compares the JA4 of every ClientHello
 # with the expected value of its profile. The HTTP inside the TLS sessions is
-# measured on the decrypted capture by decrypted_check.py, see the README.
+# measured on the decrypted capture by `python3 -m realism decrypted` with
+# realism/examples/decrypted/http1.labels.yaml, see the README.
 #
 # The ja4 values are the expected_ja4 of the browser profiles in
 # modules/tls/native/src/browser.rs, which the tests of the TLS module and

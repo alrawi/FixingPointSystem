@@ -21,9 +21,11 @@
 # into the capture as a decryption secrets block, so the realism runner and
 # tshark decrypt the capture without a sidecar file. FPS_FIXTURE_KEYLOG names a
 # file that keeps the key log as well, for a reader that wants the sidecar. The
-# script then decrypts the capture with tshark and checks the HTTP/2 inside TLS
-# with decrypted_check.py. FPS_FIXTURE_DECRYPTED_DIR keeps the decrypted view,
-# a capture of the plaintext streams, that the check feeds to nDPI.
+# script then runs `python3 -m realism decrypted`, which decrypts the capture
+# with tshark and scores the HTTP/2 inside TLS on a decrypted view with nDPI,
+# with the labels realism/examples/decrypted/http2.labels.yaml. The result lands
+# as http2.decrypted.json. FPS_FIXTURE_DECRYPTED_DIR keeps the decrypted view, a
+# capture of the plaintext streams, as http2.decrypted.pcap.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -100,7 +102,16 @@ cd "$root"
 score_rc=0
 python3 -m realism score --pcap "$out/http2.pcapng" --labels "$here/expected.yaml" \
   --parsers tshark --output "$out/http2.report.json" || score_rc=$?
+# The two https scenarios run over TLS, so the capture holds two TLS sessions
+# per session of the peers.
+view_args=()
+if [[ -n ${FPS_FIXTURE_DECRYPTED_DIR:-} ]]; then
+  mkdir -p "$FPS_FIXTURE_DECRYPTED_DIR"
+  view_args=(--view "$FPS_FIXTURE_DECRYPTED_DIR/http2.decrypted.pcap")
+fi
 check_rc=0
-python3 "$here/decrypted_check.py" "$out/http2.pcapng" --work "${FPS_FIXTURE_DECRYPTED_DIR:-$work}" \
-  --report "$out/http2.decrypted.json" || check_rc=$?
+python3 -m realism decrypted --pcap "$out/http2.pcapng" \
+  --labels "$root/realism/examples/decrypted/http2.labels.yaml" \
+  --sessions $(( sessions * 2 )) --parsers tshark \
+  --output "$out/http2.decrypted.json" "${view_args[@]}" || check_rc=$?
 exit $(( score_rc != 0 ? score_rc : check_rc ))

@@ -15,9 +15,10 @@
 # protocol). SMTPS, which a later nDPI may give, counts as well. The encryption
 # check decrypts these sessions with the keys that the capture embeds and
 # compares the JA4 of every ClientHello with the expected value of its profile.
-# The messages inside the TLS sessions are measured by decrypted_check.py, which
-# decrypts the capture with tshark and scores a decrypted view with nDPI and,
-# where it is installed, Zeek, see the README.
+# The messages inside the TLS sessions are measured by `python3 -m realism
+# decrypted` with realism/examples/decrypted/smtp.labels.yaml, which decrypts the
+# capture with tshark and scores a decrypted view with nDPI and, where it is
+# installed, Zeek, see the README.
 #
 # The ja4 value is the expected_ja4 of the browser profile in
 # modules/tls/native/src/browser.rs, which modules/smtp/tests/starttls.rs checks
