@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 104 work packages. Packages marked critical path gate the phase.
+This page lists 109 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -115,6 +115,11 @@ flowchart LR
   ENG_24["ENG-24<br/>TLS per session connectors, instance TLS, and tls metrics"]
   MOD_21["MOD-21<br/>Parser errors on live http1 captures"]
   CON_19["CON-19<br/>Contract gaps found by CAP-02 and RLM-06"]
+  RLM_12["RLM-12<br/>A current nDPI and a shared decrypted view in the realism runner"]
+  TRN_15["TRN-15<br/>TLS plaintext backpressure and mail and h2 profiles"]
+  ENG_25["ENG-25<br/>int_bytes and now in the engine"]
+  CTL_38["CTL-38<br/>Distributions in the compiler and scenario counts in the run report"]
+  CON_20["CON-20<br/>Stream events, metric source label, and provenance fields"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -238,6 +243,12 @@ flowchart LR
   AGT_14 --> ENG_24
   MOD_04 --> MOD_21
   CON_18 --> CON_19
+  MOD_06 --> RLM_12
+  MOD_20 --> RLM_12
+  TRN_05 --> TRN_15
+  CON_19 --> ENG_25
+  CON_19 --> CTL_38
+  CON_19 --> CON_20
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -350,6 +361,11 @@ flowchart LR
 | [ENG-24](#eng-24-tls-per-session-connectors-instance-tls-and-tls-metrics) | TLS per session connectors, instance TLS, and tls metrics | S | ENG-23, AGT-14 |  |
 | [MOD-21](#mod-21-parser-errors-on-live-http1-captures) | Parser errors on live http1 captures | S | MOD-04 |  |
 | [CON-19](#con-19-contract-gaps-found-by-cap-02-and-rlm-06) | Contract gaps found by CAP-02 and RLM-06 | S | CON-18 |  |
+| [RLM-12](#rlm-12-a-current-ndpi-and-a-shared-decrypted-view-in-the-realism-runner) | A current nDPI and a shared decrypted view in the realism runner | S | MOD-06, MOD-20 |  |
+| [TRN-15](#trn-15-tls-plaintext-backpressure-and-mail-and-h2-profiles) | TLS plaintext backpressure and mail and h2 profiles | S | TRN-05 |  |
+| [ENG-25](#eng-25-int_bytes-and-now-in-the-engine) | int_bytes and now in the engine | S | CON-19 |  |
+| [CTL-38](#ctl-38-distributions-in-the-compiler-and-scenario-counts-in-the-run-report) | Distributions in the compiler and scenario counts in the run report | S | CON-19 |  |
+| [CON-20](#con-20-stream-events-metric-source-label-and-provenance-fields) | Stream events, metric source label, and provenance fields | S | CON-19 |  |
 
 ## CON Contracts
 
@@ -544,6 +560,23 @@ CAP-02 found no function that writes an integer as bytes, no clock function, and
 Deliverables.
 
 - Built in functions for integer to bytes (width, endianness) and the current time (HTTP date, epoch seconds and milliseconds); the rule for variables across after; optional arrival and size distributions in the test configuration that realism targets can follow; an all value or property for the KS metrics. contracts/changes/CON-19.md.
+
+Acceptance.
+
+- [ ] The contract checks pass and every change is additive.
+
+### CON-20 Stream events, metric source label, and provenance fields
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CON-19
+- **Paths.** `contracts/`
+
+UI-04 found the SSE end event, the retry field, the event ids, and the 501 of a controller without a stream undocumented; RLM-07 found the mix metrics cannot say their source; CAP-03 found the manifest provenance has no fields for the capture digest, scrub rules, and date. Needs owner approval as a contract change.
+
+Deliverables.
+
+- Document the stream's event names, ids, retry, and 501; add a source label to the mix metrics; add optional provenance fields (capture_sha256, scrub_rules with versions, scrubbed_at). contracts/changes/CON-20.md.
 
 Acceptance.
 
@@ -818,6 +851,23 @@ Acceptance.
 
 - [ ] Three consecutive sessions against a ticket issuing server keep the same ClientHello JA4, a tls_upgrade inside a spawned flow succeeds, and the tls metrics appear in a run snapshot.
 
+### ENG-25 int_bytes and now in the engine
+
+Phase 2 · size S · workstream ENG
+
+- **Depends on.** CON-19
+- **Paths.** `engine/fps-flow/`, `engine/fps-interp/`
+
+CON-19 defined the built in functions int_bytes and now; the engine does not implement them.
+
+Deliverables.
+
+- int_bytes(value, width, endianness) and now(format) with a clock seam that tests pin; verdicts.yaml parity fixtures for both.
+
+Acceptance.
+
+- [ ] Unit tests cover every width, both endiannesses, the error cases, and the three now formats under a pinned clock, and the parity fixtures pass in Rust and Python.
+
 ## TRN Transport backends
 
 ### TRN-04 TLS transport module
@@ -856,6 +906,23 @@ Deliverables.
 Acceptance.
 
 - [ ] RLM-04 reports the expected JA4 value for every profile.
+
+### TRN-15 TLS plaintext backpressure and mail and h2 profiles
+
+Phase 2 · size S · workstream TRN
+
+- **Depends on.** TRN-05
+- **Paths.** `modules/tls/`
+
+TlsSession::poll_fill fails with "received plaintext buffer full" when one ciphertext chunk completes more than 16 KiB of plaintext while earlier plaintext is unread (MOD-06), and there is no mail client profile without ALPN and no h2 server profile (MOD-20, MOD-06).
+
+Deliverables.
+
+- Treat a full plaintext buffer as backpressure (stop reading, keep the ciphertext, retry after the application drains); a mail client profile without ALPN; server profiles server-tls13-h2 and server-tls13-noalpn.
+
+Acceptance.
+
+- [ ] A TLS test moves a 1 MiB body in one burst both ways, and handshakes with the new profiles negotiate the expected ALPN.
 
 ## AGT Agent service
 
@@ -1068,6 +1135,7 @@ Deliverables.
 
 - The agent runs multi flow scenarios through the ENG-23 worker, and modules.rs reads extension.wasm once, digests those bytes with the module tree, and compiles the same bytes.
 - Per ENG-23 - remove the one flow refusal in assemble.rs, refuse multi flow scenarios with a UDP flow, and compile with Scenario::parse_instance; register fps-module-http2 (a stateful Http2 value, see the MOD-05 log entry) in the module registry.
+- Per ENG-24 and MOD-06 - build client connectors through TlsProfiles::with_client_factory (one per session, so server profiles may issue tickets again), set FlowRef::port to the plan port name, and offer the TRN-15 profiles (mail client without ALPN, server-tls13-h2).
 
 Acceptance.
 
@@ -1459,6 +1527,23 @@ Deliverables.
 Acceptance.
 
 - [ ] Contract tests of listConfigs pass, listConfigs leaves the pending operations list, and GET /v1/capabilities reports the stamped version.
+
+### CTL-38 Distributions in the compiler and scenario counts in the run report
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CON-19
+- **Paths.** `controller/internal/compiler/`, `controller/internal/registry/`, `controller/internal/report/`
+
+A test configuration with the CON-19 arrival or size fields passes the store's schema but fails the compiler's strict decoder; the registry does not type int_bytes and now; and the run report has no per scenario counts, so the RLM-07 mix check needs the metric series (RLM-07 finding).
+
+Deliverables.
+
+- The compiler accepts arrival and size (carried through to the report for realism targets), the registry types int_bytes and now, and the run report has a scenarios table with sessions and bytes.
+
+Acceptance.
+
+- [ ] Golden plans for a configuration with distributions, and a report test with the scenarios table that the RLM-07 check reads.
 
 ## CLI Python SDK and command line client
 
@@ -1943,6 +2028,24 @@ Deliverables.
 Acceptance.
 
 - [ ] A capture with two MAC addresses for one IP address reports a conflict.
+
+### RLM-12 A current nDPI and a shared decrypted view in the realism runner
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** MOD-06, MOD-20
+- **Paths.** `realism/`
+
+The realism CI installs libndpi-bin 4.2.0, which has no HTTP/2 protocol, so the http2 module fails conformance; nDPI 4.14 writes its CSV with a pipe separator and exits 1 on -h. Three modules carry copies of decrypted_check.py. The tool install step hung for over an hour on several runs.
+
+Deliverables.
+
+- realism/ci/install-tools.sh builds or installs a pinned nDPI 4.14 (cached), the classifier reads both CSV dialects and tolerates the -h exit code, and the install has a timeout with one retry.
+- python3 -m realism decrypted --pcap F --labels L that builds the decrypted view and scores it with nDPI and Zeek, replacing the copies in http1, smtp, imap, and http2.
+
+Acceptance.
+
+- [ ] The realism job for http2 classifies at least 99 percent of cleartext sessions as HTTP2, and the four modules pass with the shared decrypted check.
 
 ## CAP Capture compiler and profile extractor
 
