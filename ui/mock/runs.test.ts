@@ -288,3 +288,138 @@ describe("mock stream drops", () => {
     }
   });
 });
+
+describe("mock reports", () => {
+  let mock: RunningMockServer;
+  let clock: Clock;
+
+  beforeEach(async () => {
+    clock = new Clock();
+    mock = await startMockServer(0, "127.0.0.1", {
+      runs: {
+        now: clock.now,
+        runTicks: 10,
+        verdictStates: true,
+        failedEvery: (ordinal) => (ordinal === 1 ? 0 : 50),
+      },
+    });
+  });
+  afterEach(async () => {
+    await mock.close();
+  });
+
+  async function start(configId: string): Promise<string> {
+    const response = await fetch(`${mock.baseUrl}/runs`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ config_id: configId }),
+    });
+    return ((await response.json()) as { id: string }).id;
+  }
+
+  async function report(id: string) {
+    const response = await fetch(`${mock.baseUrl}/runs/${id}/report`, { headers });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("application/json");
+    const body = (await response.json()) as {
+      run: { state: string; reason?: string; verdict?: { passed?: boolean; criteria?: unknown[] } };
+      realism: { property: string; passed: boolean }[];
+    };
+    expectValid(responseSchema("/runs/{id}/report", "get", "200"), body);
+    return body;
+  }
+
+  it("serves a passing report that validates against the contract", async () => {
+    const id = await start("cfg_http_smoke");
+    clock.tick(12);
+    const body = await report(id);
+    expect(body.run.state).toBe("completed");
+    expect(body.run.verdict).toEqual({
+      passed: true,
+      criteria: [
+        {
+          metric: "sessions.failed_ratio",
+          op: "==",
+          value: 0,
+          observed: 0,
+          passed: true,
+          reason: "observed 0 == 0 holds",
+        },
+      ],
+    });
+    expect(body.realism.map((result) => result.passed)).toEqual([true, true, true]);
+  });
+
+  it("serves a failing report with the reason of the controller", async () => {
+    await start("cfg_http_smoke");
+    const id = await start("cfg_http_smoke");
+    clock.tick(12);
+    const body = await report(id);
+    expect(body.run.state).toBe("failed");
+    expect(body.run.reason).toBe(
+      "criteria failed: sessions.failed_ratio: observed 0.02 == 0 does not hold",
+    );
+    expect(body.run.verdict?.passed).toBe(false);
+    expect(body.realism.map((result) => result.passed)).toEqual([true, true, false]);
+  });
+
+  it("leaves out observed and passed for a metric without a value", async () => {
+    const id = await start("cfg_enterprise_mix_10g");
+    clock.tick(12);
+    const body = await report(id);
+    expect(body.run.verdict?.passed).toBe(true);
+    expect(body.run.verdict?.criteria?.[1]).toEqual({
+      metric: "mix.max_abs_error_pp",
+      op: "<=",
+      value: 2,
+      reason: "metric mix.max_abs_error_pp has no value",
+    });
+  });
+
+  it("serves a report with no verdict while the run is active and after an abort", async () => {
+    const id = await start("cfg_http_smoke");
+    clock.tick(4);
+    const active = await report(id);
+    expect(active.run.verdict).toBeUndefined();
+    expect(active.realism).toEqual([]);
+    await fetch(`${mock.baseUrl}/runs/${id}:stop`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ force: true }),
+    });
+    const aborted = await report(id);
+    expect(aborted.run.state).toBe("aborted");
+    expect(aborted.run.verdict).toBeUndefined();
+  });
+
+  it("answers 404 for a missing run and 501 for the formats that it does not serve", async () => {
+    const missing = await fetch(`${mock.baseUrl}/runs/run_none/report`, { headers });
+    expect(missing.status).toBe(404);
+    const id = await start("cfg_http_smoke");
+    const csv = await fetch(`${mock.baseUrl}/runs/${id}/report?format=csv`, { headers });
+    expect(csv.status).toBe(501);
+  });
+
+  it("keeps the scripted state without the verdictStates option", async () => {
+    const plain = await startMockServer(0, "127.0.0.1", {
+      runs: { now: clock.now, runTicks: 10 },
+    });
+    try {
+      const { id } = (await (
+        await fetch(`${plain.baseUrl}/runs`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ config_id: "cfg_http_smoke" }),
+        })
+      ).json()) as { id: string };
+      clock.tick(12);
+      const body = (await (
+        await fetch(`${plain.baseUrl}/runs/${id}/report`, { headers })
+      ).json()) as { run: { state: string; verdict?: { passed?: boolean } } };
+      expect(body.run.state).toBe("completed");
+      expect(body.run.verdict?.passed).toBe(false);
+    } finally {
+      await plain.close();
+    }
+  });
+});

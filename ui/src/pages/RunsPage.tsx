@@ -24,6 +24,9 @@ export function RunsPage() {
       </h1>
       <StartRunForm configs={configs.data} configsFailed={configs.isError} />
       <h2>Recent runs</h2>
+      <p>
+        <Link to="/compare">Compare two runs</Link>
+      </p>
       {runs.isPending && (
         <p role="status" aria-live="polite">
           Loading runs
@@ -185,6 +188,7 @@ function RunList({ runs, configs }: { runs: Run[]; configs: ConfigRef[] }) {
           <th scope="col">Configuration</th>
           <th scope="col">State</th>
           <th scope="col">Created (UTC)</th>
+          <th scope="col">Report</th>
         </tr>
       </thead>
       <tbody>
@@ -198,6 +202,9 @@ function RunList({ runs, configs }: { runs: Run[]; configs: ConfigRef[] }) {
               <StateBadge state={run.state} />
             </td>
             <td>{formatTimestamp(run.created_at)}</td>
+            <td>
+              <Link to={`/runs/${encodeURIComponent(run.id)}/report`}>{`Report of ${run.id}`}</Link>
+            </td>
           </tr>
         ))}
       </tbody>

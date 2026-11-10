@@ -24,6 +24,11 @@ export type MetricSeriesSet = Schemas["MetricSeriesSet"];
 export type Run = Schemas["Run"];
 export type RunState = Schemas["RunState"];
 export type RunSummary = Schemas["RunSummary"];
+export type RunVerdict = Schemas["RunVerdict"];
+export type CriterionResult = Schemas["CriterionResult"];
+export type RunReport = Schemas["RunReport"];
+/** One realism result of a report. */
+export type RealismResult = RunReport["realism"][number];
 /** A test configuration as GET /configs/{id} returns it. */
 export type TestConfig = Schemas["test-config.schema"];
 export type ConfigRef = Schemas["ConfigRef"];
@@ -275,6 +280,28 @@ export async function fetchRun(client: ApiClient, id: string, signal?: AbortSign
       ...(signal ? { signal } : {}),
     }),
   );
+}
+
+/** Fetches the JSON report of one run: the run with its verdict and the realism results. */
+export async function fetchRunReport(
+  client: ApiClient,
+  id: string,
+  signal?: AbortSignal,
+): Promise<RunReport> {
+  const body = unwrap(
+    await client.GET("/runs/{id}/report", {
+      params: { path: { id }, query: { format: "json" } },
+      ...(signal ? { signal } : {}),
+    }),
+  );
+  // The operation also answers CSV and HTML, which the generated type lists as strings.
+  if (typeof body === "string") {
+    throw new ApiError(200, {
+      type: "about:blank",
+      detail: "The controller answered the JSON report request with text.",
+    });
+  }
+  return body;
 }
 
 /** Asks the controller to stop a run. With `force` the run aborts at once and skips ramp down. */
