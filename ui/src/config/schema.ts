@@ -17,7 +17,12 @@ let compiled: ValidateFunction | undefined;
 
 function validator(): ValidateFunction {
   // Compile on first use, so views that never edit a configuration pay nothing.
-  compiled ??= new Ajv2020({ allErrors: true, strict: false }).compile(TEST_CONFIG_SCHEMA);
+  compiled ??= new Ajv2020({
+    allErrors: true,
+    // verbose keeps the schema of each failure, which the anyOf message reads.
+    verbose: true,
+    strict: false,
+  }).compile(TEST_CONFIG_SCHEMA);
   return compiled;
 }
 

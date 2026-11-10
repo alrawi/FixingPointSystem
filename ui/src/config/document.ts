@@ -20,6 +20,7 @@
 import {
   Document,
   isMap,
+  isScalar,
   isSeq,
   parseDocument,
   stringify,
@@ -112,6 +113,10 @@ export function setValue(doc: Document, path: Path, value: unknown): void {
     doc.deleteIn(path);
     return;
   }
+  // A field that was emptied is written as "". When it gets text again, let the
+  // serializer choose the style instead of keeping the quotes of the empty string.
+  const node = doc.getIn(path, true);
+  if (isScalar(node) && node.value === "" && typeof value === "string") node.type = undefined;
   doc.setIn(path, value);
 }
 
@@ -205,7 +210,7 @@ function orderLike(value: unknown, node: SchemaNode | undefined, root: SchemaNod
  * JSON carries none.
  */
 export function canonicalYaml(value: unknown, schema: object): string {
-  const ordered = orderLike(value, schema as SchemaNode, schema as SchemaNode);
+  const ordered = orderLike(value, schema, schema);
   return stringify(ordered, SERIALIZE_OPTIONS);
 }
 

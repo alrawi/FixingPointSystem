@@ -117,7 +117,7 @@ function schemaFindings(body: unknown): Finding[] {
       const extra = params["missingProperty"] ?? params["additionalProperty"];
       return {
         severity: "error" as const,
-        path: extra === undefined ? error.instancePath : `${error.instancePath}/${String(extra)}`,
+        path: typeof extra === "string" ? `${error.instancePath}/${extra}` : error.instancePath,
         message: error.message ?? "is not valid",
       };
     });
