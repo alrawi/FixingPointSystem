@@ -1016,8 +1016,54 @@ def _write_back(doc: dict[str, Any], items: list[Item]) -> None:
                     c[field_name] = max(0, c[field_name] + delta[d])
 
 
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+_RULE_ID = re.compile(r"[a-z][a-z0-9_]*")
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _record_problems(rec: dict[str, Any], doc: dict[str, Any]) -> list[str]:
+    """What keeps a scrub record from becoming manifest provenance, or from matching its capture.
+
+    The manifest schema (v0.4) takes the capture digest, the rules and the date as they stand,
+    so a record that holds them in another shape is not intact."""
+    problems = []
+    sha = rec.get("capture_sha256")
+    if sha is not None and not (isinstance(sha, str) and _SHA256.fullmatch(sha)):
+        problems.append(
+            "the scrub record holds a capture digest that is not 64 lowercase hex digits"
+        )
+    source = doc.get("source")
+    source_sha = source.get("sha256") if isinstance(source, dict) else None
+    if sha != source_sha:
+        problems.append(
+            "the scrub record names another capture than the document does "
+            "(the capture digests differ)"
+        )
+    date = rec.get("date")
+    if not (isinstance(date, str) and _DATE.fullmatch(date)):
+        problems.append("the scrub record holds a date that is not YYYY-MM-DD")
+    rules: Any = rec.get("rules")
+    ok = isinstance(rules, list) and all(
+        isinstance(r, dict)
+        and isinstance(r.get("id"), str)
+        and _RULE_ID.fullmatch(r["id"])
+        and isinstance(r.get("version"), int)
+        and not isinstance(r["version"], bool)
+        and r["version"] >= 1
+        for r in rules
+    )
+    if not ok:
+        problems.append(
+            "the scrub record holds rules without an identifier and a version of 1 or more"
+        )
+    elif len({r["id"] for r in rules}) != len(rules):
+        problems.append("the scrub record lists a rule twice")
+    return problems
+
+
 def check_record(doc: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
-    """The scrub record of a document if it is intact, and the problems if it is not."""
+    """The scrub record of a document if it is intact and matches its capture, and the problems
+    if it does not."""
     rec = doc.get("scrub")
     if rec is None:
         return None, []
@@ -1027,17 +1073,30 @@ def check_record(doc: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]
         return None, ["the document changed after it was scrubbed (its digest does not match)"]
     if not str(rec.get("consent", "")).strip():
         return None, ["the scrub record holds no consent note"]
+    problems = _record_problems(rec, doc)
+    if problems:
+        return None, problems
     return rec, []
 
 
+def provenance_fields(rec: dict[str, Any]) -> dict[str, Any]:
+    """The provenance fields of module manifest schema v0.4 from an intact scrub record.
+
+    ``capture_sha256`` is left out when the sessions document did not record the digest.
+    The fields never carry a removed value, because the record holds none."""
+    fields: dict[str, Any] = {}
+    if rec["capture_sha256"] is not None:
+        fields["capture_sha256"] = rec["capture_sha256"]
+    fields["scrub_rules"] = [{"id": r["id"], "version": r["version"]} for r in rec["rules"]]
+    fields["scrubbed_at"] = rec["date"]
+    return fields
+
+
 def provenance_notes(rec: dict[str, Any]) -> str:
-    """The text for the ``notes`` of the manifest provenance: the scrub record in one line."""
-    rules = ", ".join(f"{r['id']}@{r['version']}" for r in rec["rules"])
+    """The text for the ``notes`` of the manifest provenance: what the three fields do not hold."""
     pb = rec["payload_bytes"]
     return (
-        f"Scrubbed by {rec['tool']} {rec['version']} on {rec['date']}. "
-        f"Capture sha256 {rec['capture_sha256'] or 'unknown'}. "
+        f"Scrubbed by {rec['tool']} {rec['version']}. "
         f"Sessions sha256 {rec['input_sha256']}. "
-        f"Rules: {rules}. "
         f"Payload bytes {pb['before']} to {pb['after']} ({pb['delta']:+d})."
     )

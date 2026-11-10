@@ -6,7 +6,7 @@
 | Branch | `wp/CAP-05` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 3 plan steps) |
+| Progress | 90% (2 of 3 plan steps) |
 | Current holder | claude-5c05a1, lease until 2026-11-10T15:53:13Z |
 | Last verified commit | none |
 
@@ -16,21 +16,21 @@ CON-20 added the optional manifest provenance fields `capture_sha256`, `scrub_ru
 
 ## Plan
 
-- [ ] 1. Claim, handoff, branch.
-- [ ] 2. `capture/scrub.py` and `capture/scenario.py`: write the three fields, refuse a record whose capture digest does not match the document.
+- [x] 1. Claim, handoff, branch.
+- [x] 2. `capture/scrub.py` and `capture/scenario.py`: write the three fields, refuse a record whose capture digest does not match the document.
 - [ ] 3. Test on a committed fixture, `Capture.md`, log entry, checks, PR, CI.
 
 ## Done and verified
 
-Nothing yet.
+Step 2 and the tests: `make lint-cap test-cap` passes (175 passed, 1 skipped). `plan.py check`, `render --check` and `lint` pass.
 
 ## Remaining
 
-Everything after step 1.
+PR and CI.
 
 ## Next action
 
-Implement step 2.
+Open the PR, wait for CI, then `fps_swarm.py review 393 --pr N`.
 
 ## Blockers and open questions
 
@@ -38,11 +38,13 @@ none
 
 ## Decisions taken in this package
 
-None yet.
+- `check_record` (shared with `capture profile`) carries the new refusal, so both commands treat a mismatched record the same way.
+- A null `capture_sha256` in the record (document without `source.sha256`) is intact; the field is left out of the manifest.
+- `notes` keeps the scrubber version, the sessions digest and the byte change; the fields replace the rest.
 
 ## Pitfalls
 
-None yet.
+An unscrubbed capture manifest (`scrubbed: false`) is invalid under the schema on purpose, so tests validate the synthetic and scrubbed cases only.
 
 ## Verify the current state
 
@@ -55,3 +57,4 @@ python3 -m pytest capture/tests -q
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T14:23Z | claude-5c05a1 | claim | none | Claimed #393 with card 6769813726 |
+| 2026-11-10T14:45Z | claude-5c05a1 | checkpoint | see git log | Code, tests, docs, log entry done; PR next |
