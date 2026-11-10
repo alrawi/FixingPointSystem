@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #405 |
 | Branch | `wp/TRN-16` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (4 of 4 plan steps, CI pending) |
+| Pull request | #413 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-80bdc1, lease until 2026-11-10T18:55:30Z |
-| Last verified commit | none |
+| Last verified commit | 8f54735 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -32,11 +32,11 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Remaining
 
-CI of the PR, and the coordinator adds `libndpi-bin python3-yaml` to the install step of the `capture` job (see the log entry).
+CI: every job is green except the `capture` job of trn.yml, which fails with `FAIL: missing command ndpiReader` until the coordinator adds `libndpi-bin python3-yaml` to the install step of the `capture` job (see the log entry).
 
 ## Next action
 
-Poll the PR checks and fix failures inside `engine/fps-backend-kernel/`.
+Coordinator: add the install step, then re-run the capture job.
 
 ## Blockers and open questions
 
@@ -68,3 +68,4 @@ make lint-trn test-trn
 |---|---|---|---|---|
 | 2026-11-10T17:26Z | claude-80bdc1 | claim | none | claimed #405 |
 | 2026-11-10T17:40Z | claude-80bdc1 | checkpoint | none | scoring, negatives, docs, log entry done locally |
+| 2026-11-10T17:55Z | claude-80bdc1 | review | 8f54735 | PR #413, CI green except capture (needs ndpiReader install, coordinator file) |
