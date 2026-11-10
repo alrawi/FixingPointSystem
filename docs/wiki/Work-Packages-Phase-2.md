@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 109 work packages. Packages marked critical path gate the phase.
+This page lists 116 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -120,6 +120,13 @@ flowchart LR
   ENG_25["ENG-25<br/>int_bytes and now in the engine"]
   CTL_38["CTL-38<br/>Distributions in the compiler and scenario counts in the run report"]
   CON_20["CON-20<br/>Stream events, metric source label, and provenance fields"]
+  AGT_17["AGT-17<br/>SSH in the agent and TLS profiles from the TLS module"]
+  AGT_18["AGT-18<br/>The run_control capture flake"]
+  CON_21["CON-21<br/>Scenario totals, criterion filters, and realism results in the REST report"]
+  CTL_39["CTL-39<br/>Scenario totals and realism results in the REST report"]
+  RLM_13["RLM-13<br/>Mix accuracy from the classifier as metric series"]
+  CAP_05["CAP-05<br/>Provenance fields from the scrub record"]
+  MOD_22["MOD-22<br/>Shared decrypted check in the module capture scripts"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -248,6 +255,19 @@ flowchart LR
   CON_19 --> ENG_25
   CON_19 --> CTL_38
   CON_19 --> CON_20
+  MOD_11 --> AGT_17
+  TRN_15 --> AGT_17
+  AGT_16 --> AGT_17
+  AGT_12 --> AGT_18
+  CON_20 --> CON_21
+  CON_21 --> CTL_39
+  CTL_38 --> CTL_39
+  CON_20 --> RLM_13
+  RLM_07 --> RLM_13
+  CON_20 --> CAP_05
+  CAP_04 --> CAP_05
+  RLM_12 --> MOD_22
+  MOD_06 --> MOD_22
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -365,6 +385,13 @@ flowchart LR
 | [ENG-25](#eng-25-int_bytes-and-now-in-the-engine) | int_bytes and now in the engine | S | CON-19 |  |
 | [CTL-38](#ctl-38-distributions-in-the-compiler-and-scenario-counts-in-the-run-report) | Distributions in the compiler and scenario counts in the run report | S | CON-19 |  |
 | [CON-20](#con-20-stream-events-metric-source-label-and-provenance-fields) | Stream events, metric source label, and provenance fields | S | CON-19 |  |
+| [AGT-17](#agt-17-ssh-in-the-agent-and-tls-profiles-from-the-tls-module) | SSH in the agent and TLS profiles from the TLS module | S | MOD-11, TRN-15, AGT-16 |  |
+| [AGT-18](#agt-18-the-run_control-capture-flake) | The run_control capture flake | S | AGT-12 |  |
+| [CON-21](#con-21-scenario-totals-criterion-filters-and-realism-results-in-the-rest-report) | Scenario totals, criterion filters, and realism results in the REST report | S | CON-20 |  |
+| [CTL-39](#ctl-39-scenario-totals-and-realism-results-in-the-rest-report) | Scenario totals and realism results in the REST report | S | CON-21, CTL-38 |  |
+| [RLM-13](#rlm-13-mix-accuracy-from-the-classifier-as-metric-series) | Mix accuracy from the classifier as metric series | S | CON-20, RLM-07 |  |
+| [CAP-05](#cap-05-provenance-fields-from-the-scrub-record) | Provenance fields from the scrub record | S | CON-20, CAP-04 |  |
+| [MOD-22](#mod-22-shared-decrypted-check-in-the-module-capture-scripts) | Shared decrypted check in the module capture scripts | S | RLM-12, MOD-06 |  |
 
 ## CON Contracts
 
@@ -580,6 +607,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The contract checks pass and every change is additive.
+
+### CON-21 Scenario totals, criterion filters, and realism results in the REST report
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CON-20
+- **Paths.** `contracts/`
+
+RunReport has no per application or per scenario totals, CriterionResult has no where, so criteria that differ only in a label filter cannot be told apart, and nothing says how realism results reach the report (UI-05 findings). Needs owner approval as a contract change.
+
+Deliverables.
+
+- Additive OpenAPI fields RunReport.scenarios (sessions, bytes, failures per scenario and application) and CriterionResult.where, and the documented source of RunReport.realism.
+
+Acceptance.
+
+- [ ] validate.py and the openapi-breaking check pass, and the change entry lists the consumers (CTL-39, UI, SDK).
 
 ## OPS Repository and swarm tooling
 
@@ -1140,6 +1184,40 @@ Acceptance.
 
 - [ ] The controller e2e test runs an ftp plan through the real agent, and a test shows a swapped extension.wasm after the digest is never compiled.
 
+### AGT-17 SSH in the agent and TLS profiles from the TLS module
+
+Phase 2 · size S · workstream AGT
+
+- **Depends on.** MOD-11, TRN-15, AGT-16
+- **Paths.** `engine/fps-agent/`
+
+The agent registry has no ssh entry (MOD-11), its TLS profiles mail-client, server-tls13-h2 and server-tls13-noalpn are local copies of the ones TRN-15 added to modules/tls, and manifest.yaml is still read separately from the digest pass, the check-then-use gap AGT-16 closed for extension.wasm.
+
+Deliverables.
+
+- The ssh registry entry with one Ssh value per flow side; the TLS profile lookup reads the TLS module's registry; manifest.yaml is read once and the digested bytes are parsed.
+
+Acceptance.
+
+- [ ] A controller e2e plan runs ssh/interactive_shell and ssh/scp_upload through the real agent with succeeded sessions, a test shows the agent's profiles are the TLS module's, and a manifest swapped after the digest is never parsed.
+
+### AGT-18 The run_control capture flake
+
+Phase 2 · size S · workstream AGT
+
+- **Depends on.** AGT-12
+- **Paths.** `engine/fps-agent/`
+
+engine/fps-agent/tests/run_control.rs:758 (a_fake_controller_changes_rates_and_reads_a_capture) failed twice in batch 24 with dropped 1 and passed on rerun (CAP-04, MOD-11).
+
+Deliverables.
+
+- The cause of the dropped packet found and fixed, in the test or the capture path, with the reasoning in the PR.
+
+Acceptance.
+
+- [ ] The test passes 50 times in a row in CI (a loop step in the PR run) and still fails when a packet is really dropped.
+
 ## CTL Controller
 
 ### CTL-21 Throughput rate calibration
@@ -1544,6 +1622,23 @@ Acceptance.
 
 - [ ] Golden plans for a configuration with distributions, and a report test with the scenarios table that the RLM-07 check reads.
 
+### CTL-39 Scenario totals and realism results in the REST report
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CON-21, CTL-38
+- **Paths.** `controller/internal/report/`, `controller/internal/api/`
+
+Report.API returns realism as an empty list and has no scenario table, so the UI report and comparison views show totals only (UI-05).
+
+Deliverables.
+
+- The REST report carries the CTL-38 scenario table, criterion where, and the realism results of the run when the controller has them.
+
+Acceptance.
+
+- [ ] A report API test with literal scenario totals and a realism result, and the UI mock still validates against the OpenAPI.
+
 ## CLI Python SDK and command line client
 
 ### CLI-01 Python SDK
@@ -1907,6 +2002,23 @@ Acceptance.
 
 - [ ] The http1 realism harness job passes 20 times in a row in a temporary CI step, which is then removed.
 
+### MOD-22 Shared decrypted check in the module capture scripts
+
+Phase 2 · size S · workstream MOD
+
+- **Depends on.** RLM-12, MOD-06
+- **Paths.** `modules/http1/`, `modules/http2/`, `modules/smtp/`, `modules/imap/`
+
+The module workflows call python3 -m realism decrypted since batch 24, but the capture.sh scripts of http1, http2, smtp and imap still call their own decrypted_check.py copies, and http2 keeps ndpi_reader_compat.py although the runner reads the pipe CSV of nDPI 4.14.
+
+Deliverables.
+
+- The four capture.sh scripts call python3 -m realism decrypted, and the decrypted_check.py copies, their tests and ndpi_reader_compat.py are removed.
+
+Acceptance.
+
+- [ ] The realism workflow passes for the four modules, and no module file names decrypted_check.py.
+
 ## RLM Realism validation
 
 ### RLM-04 TLS decryption and JA4 checks
@@ -2046,6 +2158,23 @@ Acceptance.
 
 - [ ] nDPI 4.14 classifies at least 99 percent of the cleartext sessions of the http2 fixture on wp/MOD-06 as HTTP2 (evidence in the PR), and http1, smtp, and imap pass with the shared decrypted check; the module workflows switch to it in the coordinator wrap-up.
 
+### RLM-13 Mix accuracy from the classifier as metric series
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** CON-20, RLM-07
+- **Paths.** `realism/`
+
+CON-20 added the source label so the mix metrics can carry what the classifier saw in the capture beside the run's counters; the RLM-07 mix check still prints them only in its own report.
+
+Deliverables.
+
+- The realism report and its metric output carry mix.share_pct, mix.abs_error_pp and mix.max_abs_error_pp with source=classifier and the classifier label.
+
+Acceptance.
+
+- [ ] A test on a committed fixture with a known mix gives the literal series, and the output validates against metric catalog 0.4.0.
+
 ## CAP Capture compiler and profile extractor
 
 ### CAP-01 Capture session extraction
@@ -2115,6 +2244,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A profile extracted from a generated run reproduces its configured mix within 2 points.
+
+### CAP-05 Provenance fields from the scrub record
+
+Phase 2 · size S · workstream CAP
+
+- **Depends on.** CON-20, CAP-04
+- **Paths.** `capture/`
+
+CON-20 added optional module manifest provenance fields capture_sha256, scrub_rules and scrubbed_at, and the capture tools still describe the scrub in a notes sentence.
+
+Deliverables.
+
+- The capture tools write the three provenance fields from an intact scrub record and refuse a record that does not match the capture.
+
+Acceptance.
+
+- [ ] A test scrubs a committed fixture and the written provenance validates against module manifest schema v0.4 with literal values.
 
 ## IMG Appliance image
 

@@ -56,4 +56,7 @@ jobs:
       - name: Test the decrypted check
         run: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s modules/imap/fixtures
       - name: Decrypt the STARTTLS sessions of the committed fixture and read the decrypted view with Zeek
-        run: python modules/imap/fixtures/decrypted_check.py modules/imap/fixtures/imap.pcapng --sessions 8 --zeek /opt/zeek/bin/zeek
+        run: |
+          python -m realism decrypted --pcap modules/imap/fixtures/imap.pcapng \
+            --labels realism/examples/decrypted/imap.labels.yaml --sessions 8 \
+            --view-port 143 --parsers tshark,zeek --zeek /opt/zeek/bin/zeek
