@@ -29,8 +29,7 @@ curl -fsSL https://download.opensuse.org/repositories/security:zeek/xUbuntu_24.0
   | sudo gpg --dearmor --yes -o /usr/share/keyrings/zeek.gpg
 echo "deb [signed-by=/usr/share/keyrings/zeek.gpg] https://download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/ /" \
   | sudo tee /etc/apt/sources.list.d/zeek.list >/dev/null
-sudo apt-get update -q
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+"$here/../../tools/ci/apt-install.sh" \
   iproute2 tcpdump ethtool libndpi-bin tshark "zeek-core=$zeek_version" python3-yaml
 ndpiReader -h | head -1 || true
 tshark --version | head -1

@@ -11,6 +11,7 @@ permissions:
 jobs:
   contracts:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,6 +30,7 @@ jobs:
 
   proto:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,6 +64,7 @@ jobs:
 
   rust:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -75,6 +78,7 @@ jobs:
 
   licenses:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -83,7 +87,11 @@ jobs:
 
   scripts:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Lint shell scripts
-        run: shellcheck spikes/s1-engine/run-bench.sh spikes/s3-afxdp/host/*.sh spikes/s3-afxdp/guest/*.sh tools/swarm/*.sh tools/wiki/*.sh
+        run: shellcheck spikes/s1-engine/run-bench.sh spikes/s3-afxdp/host/*.sh spikes/s3-afxdp/guest/*.sh tools/ci/*.sh tools/swarm/*.sh tools/wiki/*.sh
+      - name: Test the apt helper with stubs
+        timeout-minutes: 5
+        run: tools/ci/test_apt_install.sh

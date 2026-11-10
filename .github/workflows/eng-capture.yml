@@ -36,8 +36,7 @@ jobs:
       - name: Install tshark
         run: |
           echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
-          sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends tshark
+          tools/ci/apt-install.sh tshark
       - name: Parse and decrypt the capture ring with tshark
         env:
           FPS_REQUIRE_CAPTURE_TOOLS: "1"

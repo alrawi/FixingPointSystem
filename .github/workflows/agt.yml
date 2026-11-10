@@ -35,14 +35,13 @@ permissions:
 jobs:
   standalone-netns:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install the harness tools
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends iproute2 ethtool
+        run: tools/ci/apt-install.sh iproute2 ethtool
       - name: Build the agent as the runner user
         run: cargo build -p fps-agent
       - name: Example plan in the namespace harness as root
@@ -57,6 +56,7 @@ jobs:
 
   controller-e2e:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

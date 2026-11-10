@@ -51,6 +51,7 @@ env:
 jobs:
   module:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -59,8 +60,7 @@ jobs:
       - name: Install tshark and the nDPI build tools
         run: |
           echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
-          sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark build-essential autoconf automake libtool pkg-config libpcap-dev libjson-c-dev
+          tools/ci/apt-install.sh --install-recommends tshark build-essential autoconf automake libtool pkg-config libpcap-dev libjson-c-dev
       - name: Build ndpiReader from the pinned nDPI tag
         run: |
           git clone -q --depth 1 --branch "$NDPI_REF" https://github.com/ntop/nDPI.git "$RUNNER_TEMP/ndpi"
@@ -84,6 +84,7 @@ jobs:
 
   harness:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -91,8 +92,7 @@ jobs:
       - name: Install the harness and realism tools
         run: |
           echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
-          sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+          tools/ci/apt-install.sh \
             iproute2 tcpdump ethtool tshark python3-yaml \
             build-essential autoconf automake libtool pkg-config libpcap-dev libjson-c-dev git
       - name: Build ndpiReader from the pinned nDPI tag
@@ -114,6 +114,7 @@ jobs:
 
   fuzz-60s:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
