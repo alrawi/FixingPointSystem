@@ -118,6 +118,10 @@
         {
           "if": {"properties": {"check": {"const": "transport_behavior"}}, "required": ["check"]},
           "then": {"$ref": "#/$defs/transport_behavior"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "messages"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/messages"}
         }
       ]
     },
@@ -862,6 +866,101 @@
           "description": "One sentence for each comparison that did not pass, and one when the labels name no target.",
           "type": "array",
           "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "messages": {
+      "description": "Message counts per session, read with tshark. Every session that a rule of the messages section selects has the expected number of requests, responses, commands, replies, or messages, every rule matches a session, and tshark ran. failures names each reason in words, for example a missing smtp message.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "tool", "sessions_checked", "sessions_failed", "rules",
+        "failures_total", "failures", "sessions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "messages"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "Empty until the metric catalog defines metrics for message counts.",
+          "type": "array",
+          "maxItems": 0
+        },
+        "tool": {
+          "description": "The program that counted the messages, or null when none ran.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["tool", "version"],
+              "additionalProperties": false,
+              "properties": {
+                "tool": {"enum": ["tshark", "stub"]},
+                "version": {"type": "string"}
+              }
+            },
+            {"type": "null"}
+          ]
+        },
+        "sessions_checked": {"type": "integer", "minimum": 0},
+        "sessions_failed": {"type": "integer", "minimum": 0},
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["rule", "protocol", "match", "expected", "sessions", "failed_sessions", "observed_total"],
+            "additionalProperties": false,
+            "properties": {
+              "rule": {"type": "integer", "minimum": 1, "description": "Position of the rule in the messages section, counting from 1."},
+              "protocol": {"enum": ["http1", "http2", "smtp", "imap"]},
+              "match": {"type": "object"},
+              "expected": {
+                "description": "Expected count per name, such as requests, messages, commands.EHLO, or replies.250. A null max is no upper limit.",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "required": ["min", "max"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "min": {"type": "integer", "minimum": 0},
+                    "max": {"type": ["integer", "null"], "minimum": 0}
+                  }
+                }
+              },
+              "sessions": {"type": "integer", "minimum": 0},
+              "failed_sessions": {"type": "integer", "minimum": 0},
+              "observed_total": {
+                "description": "The observed count of each expected name, summed over the sessions of the rule.",
+                "type": "object",
+                "additionalProperties": {"type": "integer", "minimum": 0}
+              }
+            }
+          }
+        },
+        "failures_total": {"type": "integer", "minimum": 0},
+        "failures": {
+          "description": "One sentence for each reason that the check failed, at most 50. failures_total counts them all.",
+          "type": "array",
+          "maxItems": 50,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "sessions": {
+          "description": "The first 100 checked sessions, failed ones first.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": ["session", "rule", "protocol", "client", "server", "observed", "passed", "reasons"],
+            "additionalProperties": false,
+            "properties": {
+              "session": {"type": "integer", "minimum": 1},
+              "rule": {"type": "integer", "minimum": 1},
+              "protocol": {"enum": ["http1", "http2", "smtp", "imap"]},
+              "client": {"$ref": "#/$defs/endpoint"},
+              "server": {"$ref": "#/$defs/endpoint"},
+              "observed": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+              "passed": {"type": "boolean"},
+              "reasons": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            }
+          }
         }
       }
     },
