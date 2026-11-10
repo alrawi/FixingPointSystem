@@ -350,7 +350,9 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
     // A server worker whose entry flow is UDP listens on datagram ports, and
     // the guards keep them bound between two sessions.
     let datagram_entries = match &role {
-        Role::Server(s) if worker.is_instance() && instance::entry_is_udp(&s.flow.scenario, s.flow.flow) => {
+        Role::Server(s)
+            if worker.is_instance() && instance::entry_is_udp(&s.flow.scenario, s.flow.flow) =>
+        {
             match bind_datagrams(&worker, id, s).await {
                 Ok(entries) => entries,
                 Err(e) => {
@@ -390,7 +392,14 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
             None => Control::Run,
         },
         Role::Server(_) => {
-            server_loop(&worker, listeners, datagram_entries, &mut control, &mut tick).await
+            server_loop(
+                &worker,
+                listeners,
+                datagram_entries,
+                &mut control,
+                &mut tick,
+            )
+            .await
         }
     };
     // Open sessions finish within the ramp down time and are reset after it.
@@ -434,15 +443,13 @@ async fn bind_datagrams(
 ) -> Result<Vec<(Listening, SocketAddr)>, RuntimeError> {
     let mut entries = Vec::with_capacity(s.listen.len());
     for address in &s.listen {
-        let entry = w
-            .datagram_ports
-            .listen(*address)
-            .await
-            .map_err(|source| RuntimeError::ListenDatagram {
+        let entry = w.datagram_ports.listen(*address).await.map_err(|source| {
+            RuntimeError::ListenDatagram {
                 worker,
                 address: *address,
                 source,
-            })?;
+            }
+        })?;
         entries.push(entry);
     }
     Ok(entries)
@@ -588,7 +595,8 @@ async fn server_loop(
                 w.open.set(w.open.get() + 1);
                 let w = Rc::clone(&w);
                 tokio::task::spawn_local(async move {
-                    w.run_instance(local_id, Peer::ServerDatagram(session)).await;
+                    w.run_instance(local_id, Peer::ServerDatagram(session))
+                        .await;
                 });
             }
         }));

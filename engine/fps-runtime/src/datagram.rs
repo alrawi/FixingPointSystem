@@ -341,11 +341,16 @@ impl DatagramPorts {
                         pins: Cell::new(0),
                         changed: Notify::new(),
                     });
-                    self.inner.ports.borrow_mut().insert(local, Rc::clone(&port));
+                    self.inner
+                        .ports
+                        .borrow_mut()
+                        .insert(local, Rc::clone(&port));
                     tokio::task::spawn_local(serve(Rc::clone(&self.inner), Rc::clone(&port)));
                     return Ok(port);
                 }
-                Err(e) if e.kind() == io::ErrorKind::AddrInUse && Instant::now() + wait < deadline => {
+                Err(e)
+                    if e.kind() == io::ErrorKind::AddrInUse && Instant::now() + wait < deadline =>
+                {
                     sleep(wait).await;
                     wait = (wait * 2).min(RETRY_MAX);
                 }
@@ -404,7 +409,10 @@ async fn serve(inner: Rc<Inner>, port: Rc<Port>) {
             if port.is_idle() {
                 // The entry leaves the map in the same step as the socket
                 // leaves this task, so a later accept binds the port again.
-                inner.ports.borrow_mut().retain(|_, p| !Rc::ptr_eq(p, &port));
+                inner
+                    .ports
+                    .borrow_mut()
+                    .retain(|_, p| !Rc::ptr_eq(p, &port));
                 return;
             }
             port.waiting.borrow().next_deadline()
@@ -514,14 +522,7 @@ impl DatagramOpener for DatagramFlowOpener {
                 }
             }
             (DatagramNet::Accepted(session), OpenKind::Accept) => Plan::Accepted(session.take()),
-            (
-                DatagramNet::Bind {
-                    ip,
-                    ports,
-                    expect,
-                },
-                OpenKind::Accept,
-            ) => Plan::Bind {
+            (DatagramNet::Bind { ip, ports, expect }, OpenKind::Accept) => Plan::Bind {
                 addr: SocketAddr::new(*ip, request.port),
                 ports: ports.clone(),
                 expect: *expect,
@@ -697,11 +698,17 @@ mod tests {
                     async move { ports.accept(addr, None).await }
                 });
                 tokio::task::yield_now().await;
-                assert!(std::net::UdpSocket::bind(addr).is_err(), "the port is bound");
+                assert!(
+                    std::net::UdpSocket::bind(addr).is_err(),
+                    "the port is bound"
+                );
                 peer(2).await.send_to(b"hi", addr).await.expect("sent");
                 let mut session = accept.await.expect("task").expect("a session");
                 assert_eq!(first(&mut session).await, b"hi");
-                assert!(std::net::UdpSocket::bind(addr).is_err(), "a session holds it");
+                assert!(
+                    std::net::UdpSocket::bind(addr).is_err(),
+                    "a session holds it"
+                );
                 drop(session);
                 tokio::time::sleep(Duration::from_millis(20)).await;
                 std::net::UdpSocket::bind(addr).expect("the port is free");

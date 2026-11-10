@@ -25,8 +25,8 @@ use fps_flow::{Manifest, ModuleSet, Scenario, Value};
 use fps_hosts::{HostPool, HostSelector, PoolSpec, Selection};
 use fps_module_sip_rtp::SipRtp;
 use fps_runtime::{
-    ClientConfig, FlowRef, FunctionFactory, Role, RunReport, Runtime, RuntimeConfig,
-    RuntimeHandle, ServerConfig, SourceHosts, WorkerConfig,
+    ClientConfig, FlowRef, FunctionFactory, Role, RunReport, Runtime, RuntimeConfig, RuntimeHandle,
+    ServerConfig, SourceHosts, WorkerConfig,
 };
 use fps_sched::{stream_id, Arrival, LoadProfile, Objective, Phase, ScheduleConfig, Shape};
 use fps_stats::{metric, Snapshot};
@@ -93,7 +93,12 @@ fn server_runtime(scenario: &Arc<Scenario>, ip: IpAddr) -> RuntimeHandle {
 
 /// One client worker that starts `rate` calls per second for one second from
 /// sources in `127.<pool>.0.0/24`, one source host per call.
-fn client_config(scenario: &Arc<Scenario>, server: SocketAddr, pool: u8, rate: f64) -> RuntimeConfig {
+fn client_config(
+    scenario: &Arc<Scenario>,
+    server: SocketAddr,
+    pool: u8,
+    rate: f64,
+) -> RuntimeConfig {
     let prefix = format!("127.{pool}.0.0/24");
     let hosts = HostPool::parse(&PoolSpec {
         name: "clients",
@@ -182,8 +187,16 @@ fn run_calls(name: &str, rtp: (i64, i64), pool: u8, calls: u64) -> usize {
     let sessions = calls * FLOW_SESSIONS;
     for (report, worker, side) in [(&client, 0, "client"), (&server, 10, "server")] {
         let s = exit(report, worker);
-        assert_eq!(s.counter_total(metric::SESSIONS_ATTEMPTED), sessions, "{side}");
-        assert_eq!(s.counter_total(metric::SESSIONS_SUCCEEDED), sessions, "{side}");
+        assert_eq!(
+            s.counter_total(metric::SESSIONS_ATTEMPTED),
+            sessions,
+            "{side}"
+        );
+        assert_eq!(
+            s.counter_total(metric::SESSIONS_SUCCEEDED),
+            sessions,
+            "{side}"
+        );
         assert_eq!(s.counter_total(metric::SESSIONS_FAILED), 0, "{side}");
     }
     // The datagrams that the client sent arrived at the server and the other
@@ -193,7 +206,10 @@ fn run_calls(name: &str, rtp: (i64, i64), pool: u8, calls: u64) -> usize {
         exit(&server, 10).counter_total(metric::BYTES_RX),
     );
     assert_eq!(tx, rx, "what the client sent, the server received");
-    assert!(tx > calls * RTP_PER_SIDE * RTP_BYTES as u64, "{tx} bytes sent");
+    assert!(
+        tx > calls * RTP_PER_SIDE * RTP_BYTES as u64,
+        "{tx} bytes sent"
+    );
 
     // The capture: the client sessions, SIP and RTP, as UDP frames. Every
     // flow of every call dialed from a source port of its own.
@@ -213,7 +229,11 @@ fn run_calls(name: &str, rtp: (i64, i64), pool: u8, calls: u64) -> usize {
         .filter(|p| p.dst == server_ip)
         .map(|p| (p.src, p.sport, p.dport))
         .collect();
-    assert_eq!(flows.len() as u64, sessions, "one 5-tuple per flow: {flows:?}");
+    assert_eq!(
+        flows.len() as u64,
+        sessions,
+        "one 5-tuple per flow: {flows:?}"
+    );
     let sip_port = sip.port();
     let rtp_from_client: Vec<_> = packets
         .iter()
@@ -225,18 +245,30 @@ fn run_calls(name: &str, rtp: (i64, i64), pool: u8, calls: u64) -> usize {
         .collect();
     for rtp in [&rtp_from_client, &rtp_to_client] {
         assert!(
-            rtp.iter().all(|p| p.payload.len() == RTP_BYTES && p.payload[0] >> 6 == 2),
+            rtp.iter()
+                .all(|p| p.payload.len() == RTP_BYTES && p.payload[0] >> 6 == 2),
             "RTP version 2 packets of {RTP_BYTES} bytes"
         );
-        assert_eq!(rtp.len() as u64, calls * RTP_PER_SIDE, "20 packets each way per call");
+        assert_eq!(
+            rtp.len() as u64,
+            calls * RTP_PER_SIDE,
+            "20 packets each way per call"
+        );
     }
     let sip_packets = packets
         .iter()
         .filter(|p| p.dport == sip_port || p.sport == sip_port)
         .filter(|p| p.payload.starts_with(b"INVITE ") || p.payload.starts_with(b"SIP/2.0 200 "))
         .count() as u64;
-    assert!(sip_packets >= 2 * calls, "INVITE and 200 OK of every call: {sip_packets}");
-    rtp_from_client.iter().map(|p| p.dport).collect::<BTreeSet<_>>().len()
+    assert!(
+        sip_packets >= 2 * calls,
+        "INVITE and 200 OK of every call: {sip_packets}"
+    );
+    rtp_from_client
+        .iter()
+        .map(|p| p.dport)
+        .collect::<BTreeSet<_>>()
+        .len()
 }
 
 /// The acceptance test: SIP calls with RTP run through the instance runner.

@@ -62,9 +62,7 @@ use rand::RngCore;
 use tokio::time::{sleep, Instant};
 
 use crate::data_ports::DataPorts;
-use crate::datagram::{
-    DatagramFlowOpener, DatagramNet, ServerDatagram, TapDatagramOpener,
-};
+use crate::datagram::{DatagramFlowOpener, DatagramNet, ServerDatagram, TapDatagramOpener};
 use crate::extension::close_reason_of;
 use crate::opener::{destination, global_session_id, invalid, source_address, TapOpener};
 use crate::tls::SessionTls;

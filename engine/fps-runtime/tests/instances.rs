@@ -732,5 +732,9 @@ fn concurrent_instances_that_draw_the_same_data_port_all_succeed() {
         .iter()
         .filter(|p| p.flags & SYN != 0 && p.flags & ACK == 0 && i64::from(p.dport) == port)
         .count() as u64;
-    assert_eq!(to_data, INSTANCES * TRANSFERS, "every transfer dialed the one port");
+    assert_eq!(
+        to_data,
+        INSTANCES * TRANSFERS,
+        "every transfer dialed the one port"
+    );
 }
