@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #324 |
 | Branch | `wp/AGT-14` |
-| Pull request | pending |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #357 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-a14c3e, lease until 2026-11-10T02:37:47Z |
-| Last verified commit | none |
+| Last verified commit | 9727f6f |
 
 ## Goal
 
@@ -20,7 +20,7 @@ The agent builds the TLS profiles that a plan's `tls_upgrade` actions name, ship
 - [x] 2. Key tap and the secrets block in the joined capture (`src/control.rs`)
 - [x] 3. Criterion labels (`src/criteria.rs`, `src/plan.rs`, `src/convert.rs`)
 - [x] 4. Tests (`tests/tls.rs`), the https runs in `tests/controller_e2e.sh`, docs and log entry
-- [ ] 5. CI green, then review
+- [x] 5. CI green, then review
 
 ## Done and verified
 
@@ -29,11 +29,11 @@ The agent builds the TLS profiles that a plan's `tls_upgrade` actions name, ship
 
 ## Remaining
 
-- CI: `controller-e2e` job (the new https runs and the switch of `http1` to the first party module), the full `make lint test`.
+none. CI is green on 9727f6f. `module (http1)` failed once with 4 tshark parser errors in a live recorded plain http capture and passed on rerun (flake, unrelated paths).
 
 ## Next action
 
-Open the pull request and poll CI.
+none
 
 ## Blockers and open questions
 
@@ -63,3 +63,4 @@ cargo test -p fps-agent --lib
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T01:55:00Z | claude-a14c3e | claim | none | claimed #324 |
+| 2026-11-10T02:25:00Z | claude-a14c3e | finish | 9727f6f | PR 357, CI green |
