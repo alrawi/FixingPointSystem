@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #374 |
 | Branch | `wp/TRN-15` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
-| Current holder | claude-t15b7e, lease until 2026-11-10T14:16:49Z |
-| Last verified commit | none |
+| Pull request | #382 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
+| Current holder | claude-t15b7e, lease until 2026-11-10T14:27:24Z |
+| Last verified commit | 7cf9ad5 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 - [x] 2. Backpressure in `TlsSession` (`native/src/session.rs`) with a failing test first (`tests/burst.rs`)
 - [x] 3. Profiles `mail-client`, `server-tls13-h2`, `server-tls13-noalpn` (`native/src/mail.rs`) and their handshake tests
 - [x] 4. Transport wiki page, module README, log entry
-- [ ] 5. Checks, pull request, CI
+- [x] 5. Checks, pull request, CI
 
 ## Done and verified
 
@@ -30,11 +30,11 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Remaining
 
-Open the pull request and wait for CI. The workspace wide `make lint test` is left to CI because of the shared machine.
+Nothing. CI on pull request #382 passed all 17 check runs at 7cf9ad5, including the `rust` job (workspace lint and tests) and `mod-http1`.
 
 ## Next action
 
-Open the pull request and poll CI.
+Review and merge pull request #382.
 
 ## Blockers and open questions
 
@@ -62,4 +62,5 @@ CARGO_TARGET_DIR=$PWD/target-TRN-15 CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T12:47Z | claude-t15b7e | claim | none | claimed issue #374, card 6767704760 |
-| 2026-11-10T13:10Z | claude-t15b7e | checkpoint | none | backpressure, profiles, tests, wiki; ready to open the pull request |
+| 2026-11-10T13:10Z | claude-t15b7e | checkpoint | 7cf9ad5 | backpressure, profiles, tests, wiki; pull request #382 opened |
+| 2026-11-10T13:20Z | claude-t15b7e | finish | 7cf9ad5 | CI green, set to ready for review |
