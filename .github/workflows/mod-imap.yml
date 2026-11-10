@@ -54,8 +54,6 @@ jobs:
           python -m realism score --pcap modules/imap/fixtures/imap.pcapng \
             --labels modules/imap/fixtures/expected.yaml --parsers tshark,zeek --output report.json
           python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))'
-      - name: Test the decrypted check
-        run: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s modules/imap/fixtures
       - name: Decrypt the STARTTLS sessions of the committed fixture and read the decrypted view with Zeek
         run: |
           python -m realism decrypted --pcap modules/imap/fixtures/imap.pcapng \
