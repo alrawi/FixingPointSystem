@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #393 |
 | Branch | `wp/CAP-05` |
-| Pull request | #0 |
+| Pull request | #395 |
 | Status | in progress |
 | Progress | 90% (2 of 3 plan steps) |
 | Current holder | claude-5c05a1, lease until 2026-11-10T15:53:13Z |
