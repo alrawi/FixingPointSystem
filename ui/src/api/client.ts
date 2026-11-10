@@ -19,6 +19,11 @@ export type ModuleManifest = Omit<Schemas["module-manifest.schema"], "$defs">;
 /** A template function that a module declares in its manifest. */
 export type ModuleFunction = Schemas["function"];
 export type MetricSample = Schemas["MetricSample"];
+/** A test configuration as GET /configs/{id} returns it. */
+export type TestConfig = Schemas["test-config.schema"];
+export type ConfigRef = Schemas["ConfigRef"];
+export type Finding = Schemas["Finding"];
+export type ValidationReport = Schemas["ValidationReport"];
 export type Problem = Schemas["Problem"];
 
 export type ApiClient = Client<paths>;
@@ -147,4 +152,63 @@ export async function fetchModule(
       ...(signal ? { signal } : {}),
     }),
   );
+}
+
+/** Fetches every stored configuration, newest first, following `next_page_token`. */
+export async function fetchConfigs(client: ApiClient, signal?: AbortSignal): Promise<ConfigRef[]> {
+  const configs: ConfigRef[] = [];
+  const seen = new Set<string>();
+  let pageToken: string | undefined;
+  for (;;) {
+    const page = unwrap(
+      await client.GET("/configs", {
+        params: {
+          query: {
+            page_size: MAX_PAGE_SIZE,
+            ...(pageToken === undefined ? {} : { page_token: pageToken }),
+          },
+        },
+        ...(signal ? { signal } : {}),
+      }),
+    );
+    configs.push(...page.items);
+    pageToken = page.next_page_token;
+    if (pageToken === undefined || pageToken === "" || seen.has(pageToken)) return configs;
+    seen.add(pageToken);
+  }
+}
+
+/** Fetches one stored configuration. The controller answers JSON, so comments are gone. */
+export async function fetchConfig(
+  client: ApiClient,
+  id: string,
+  signal?: AbortSignal,
+): Promise<TestConfig> {
+  return unwrap(
+    await client.GET("/configs/{id}", {
+      params: { path: { id } },
+      ...(signal ? { signal } : {}),
+    }),
+  );
+}
+
+/**
+ * Stores the YAML text as a new configuration. The text goes to the controller
+ * as it is, with the YAML content type, so the controller reads exactly what
+ * the editor shows. A text that breaks the schema fails with 422 and an
+ * `errors` list in the problem.
+ */
+export async function createConfig(client: ApiClient, yamlText: string): Promise<ConfigRef> {
+  return unwrap(
+    await client.POST("/configs", {
+      body: yamlText as unknown as TestConfig,
+      bodySerializer: (body) => body as unknown as string,
+      headers: { "Content-Type": "application/yaml" },
+    }),
+  );
+}
+
+/** Asks the controller to validate a stored configuration. */
+export async function validateConfig(client: ApiClient, id: string): Promise<ValidationReport> {
+  return unwrap(await client.POST("/configs/{id}:validate", { params: { path: { id } } }));
 }

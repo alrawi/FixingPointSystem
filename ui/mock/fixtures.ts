@@ -9,7 +9,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
-import type { Agent, Capabilities, ModuleSummary } from "../src/api/client";
+import type { Agent, Capabilities, ModuleSummary, TestConfig } from "../src/api/client";
 
 /** The contracts directory of the repository. */
 export const CONTRACTS_DIR = join(import.meta.dirname, "..", "..", "contracts");
@@ -83,6 +83,31 @@ export function loadExampleAgents(contractsDir = CONTRACTS_DIR): Agent[] {
   ];
 }
 
+/** A stored configuration as the controller keeps it: the parsed body without comments. */
+export interface StoredConfig {
+  id: string;
+  name: string;
+  created_at: string;
+  body: TestConfig;
+}
+
+/** Stores every example test of the contract, the oldest first, under the id `cfg_<file name>`. */
+export function loadExampleConfigs(contractsDir = CONTRACTS_DIR): StoredConfig[] {
+  const root = join(contractsDir, "examples", "tests");
+  return readdirSync(root)
+    .filter((name) => name.endsWith(".yaml"))
+    .sort()
+    .map((file, index) => {
+      const body = readYaml(join(root, file)) as TestConfig;
+      return {
+        id: `cfg_${file.replace(/\.yaml$/, "")}`,
+        name: body.metadata.name,
+        created_at: new Date(Date.UTC(2026, 10, 1, 9, index)).toISOString(),
+        body,
+      };
+    });
+}
+
 /** The first example value of a property of the Capabilities schema. */
 function capabilitiesExample(contractsDir: string, property: string): string {
   const api = readYaml(join(contractsDir, "openapi", "fps-api-v1.yaml"));
@@ -102,6 +127,8 @@ export interface MockData {
   capabilities: Capabilities;
   modules: ExampleModule[];
   agents: Agent[];
+  /** The configurations that the store holds at start. */
+  configs: StoredConfig[];
 }
 
 /** Loads the mock data from the contract examples. */
@@ -111,6 +138,7 @@ export function loadMockData(contractsDir = CONTRACTS_DIR): MockData {
   return {
     modules,
     agents,
+    configs: loadExampleConfigs(contractsDir),
     capabilities: {
       engine_api: capabilitiesExample(contractsDir, "engine_api"),
       api_version: capabilitiesExample(contractsDir, "api_version"),

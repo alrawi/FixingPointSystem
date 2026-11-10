@@ -1,16 +1,34 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { BrowserRouter, Route, Routes } from "react-router";
 import { ApiError } from "./api/client";
 import { SessionProvider, useSession } from "./auth/session";
 import { SignInPage } from "./auth/SignInPage";
 import { AppLayout } from "./layout/AppLayout";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage";
+import { ConfigsPage } from "./pages/ConfigsPage";
 import { ModuleDetailPage } from "./pages/ModuleDetailPage";
 import { ModulesPage } from "./pages/ModulesPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+
+// The editor ships a YAML library and a schema validator, so it loads on demand and the
+// initial bundle stays within its budget.
+const NewConfigPage = lazy(() =>
+  import("./pages/ConfigEditorPage").then((module) => ({ default: module.NewConfigPage })),
+);
+const StoredConfigPage = lazy(() =>
+  import("./pages/ConfigEditorPage").then((module) => ({ default: module.StoredConfigPage })),
+);
+
+function EditorLoading() {
+  return (
+    <p role="status" aria-live="polite">
+      Loading the editor
+    </p>
+  );
+}
 
 /**
  * True when a failed query may succeed on a second try. Client errors such as
@@ -49,6 +67,23 @@ function Routed() {
         <Route index element={<CapabilitiesPage />} />
         <Route path="modules" element={<ModulesPage />} />
         <Route path="modules/:name/:version" element={<ModuleDetailPage />} />
+        <Route path="configs" element={<ConfigsPage />} />
+        <Route
+          path="configs/new"
+          element={
+            <Suspense fallback={<EditorLoading />}>
+              <NewConfigPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="configs/:id"
+          element={
+            <Suspense fallback={<EditorLoading />}>
+              <StoredConfigPage />
+            </Suspense>
+          }
+        />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

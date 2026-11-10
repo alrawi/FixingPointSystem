@@ -85,3 +85,45 @@ The mock server pages `GET /modules` with `page_size` and `page_token` as the co
 ### Tests
 
 The component tests in `ui/src/pages/Modules.test.tsx` start a mock server per test and cover an empty registry, the two example modules `dns` and `http1`, an API error of the list, a rejected token, a module that is not installed, an API error of the manifest, and the keyboard path from the navigation to a detail view and back. Each view runs an axe-core scan. Unit tests cover the parameter, signature, and path helpers and the paging of `fetchModules`, and a Playwright test repeats the keyboard path with color contrast checks. The initial JavaScript weighs 110.9 kB gzip against the budget of 250 kB, and the license check passes with no new dependency.
+
+## Test configuration editor
+
+UI-03 added the configuration views. `/configs` lists the stored configurations through `GET /configs`, `/configs/new` opens the editor on a starter configuration, and `/configs/{id}` opens the editor on a stored one through `GET /configs/{id}`. The main navigation gained the entry Configurations. The editor route loads on demand, so the initial JavaScript grew only from 110.9 kB to 112.2 kB gzip against the budget of 250 kB, and the editor chunk adds 75.5 kB when someone opens it.
+
+### Editor
+
+| Part | Where | Behavior |
+|---|---|---|
+| Text model | `ui/src/config/document.ts` | The YAML text is the only state. Edits go through a `yaml` Document, and the module defines the round trip |
+| Browser check | `ui/src/config/schema.ts` | Ajv validates the text against `contracts/schemas/test-config.schema.json`, bundled at build time, and maps every failure to the JSON Pointer of its field |
+| Editor state | `ui/src/config/model.tsx` | One reducer parses the text, runs the check, and keeps the last value that parsed, so the forms stay readable while the YAML has a syntax error |
+| Forms | `ui/src/config/fields.tsx`, `sections.tsx` | General, Network (ports, host pools, external servers), Profile (basis and mix), Load (objective and phases), Timeline, and Criteria, each field with its own inline errors, and add, remove, and move buttons for every list |
+| Page | `ui/src/pages/ConfigEditorPage.tsx` | A list of checks, the buttons Save as new and Validate on controller, the forms, and the YAML view side by side on wide screens |
+
+The forms and the YAML view edit the same text. A form edit changes the text at once, and a YAML edit changes the forms at once. A syntax error in the YAML pauses the forms, shows the line and column, and disables saving, and fixing the text brings the forms back. Fields that the forms do not cover, which are `metadata.labels`, `modules`, `params` of a mix entry, and `where` of a criterion, stay in the YAML and show as read only text with a pointer to the YAML view. A scenario field suggests the scenarios of the installed modules from `GET /modules`.
+
+### Round trip definition
+
+The catalog says that every example test round trips through the editor without changes. We define that as follows.
+
+1. Text that the user loaded or typed stays byte for byte as it is until a form field edits it. Loading never reserializes.
+2. A form edit parses the text into a `yaml` Document, changes only the nodes of that edit, and serializes with `lineWidth: 0`. Comments, key order, quoting, and flow or block style of every other node stay. A new list item takes the flow or block style of its siblings. An edit may normalize line endings and the final newline of the whole text.
+3. A configuration that the controller returns is JSON and carries no comments. The editor shows it as YAML in the key order of the schema, and the YAML parses back to an equal value. Saving sends the YAML text to `POST /configs` with the content type `application/yaml`, so the controller reads what the editor shows, and the controller then stores and returns it as JSON.
+
+`ui/src/config/roundtrip.test.ts` loads every file of `contracts/examples/tests/` and checks, for each one, that the text parses and passes the schema in the browser, that the Document serializes byte for byte, that an edit which sets every field to its current value changes no byte, that a change of one field changes exactly one line and keeps the comments, and that the canonical YAML of the JSON form reads back equal and is stable. The test needs `lineWidth: 0`, because the default width of 80 characters folds the long flow mappings of the examples and the text would then differ.
+
+### Saving and validation
+
+The contract has no update operation, so Save as new always stores a new configuration with `createConfig`. The controller validates only stored configurations, so Validate on controller validates the stored copy when the editor still shows the text that the controller holds, and otherwise stores the text as a new configuration first and then validates it. The buttons stay disabled while the browser check finds a problem, so the controller sees only schema valid text. The findings of `validateConfig` and the `errors` of a 422 problem show next to the fields by their JSON Pointer and in the list of checks. They disappear when the text changes, because they describe the old text. The capacity of the report shows as a sentence. A 401 or 403 answer signs the user out like every other view.
+
+### Mock server
+
+The mock keeps the configurations in memory per server, starts with the six example tests under the ids `cfg_<file name>`, and serves `listConfigs`, `createConfig` (YAML or JSON, 201 or 422 with `errors`, 415 for another content type), `getConfig`, and `validateConfig`. Its validation checks the schema and that every scenario of the mix comes from an installed example module, so `dns_zone` fails with a finding at `/profile/mix/0/scenario`, because the example `dns` module has no `lookup_a`. `mock/configs.test.ts` validates every response against the contract.
+
+### Tests
+
+Unit tests cover the text model, the schema messages, and the round trip of the corpus. Component tests in `ui/src/pages/ConfigEditor.test.tsx` cover the list, loading a stored configuration, form to YAML and YAML to form sync, inline errors, syntax errors, list editing, scenario suggestions, saving, validation with findings on fields, stale findings, API failures, sign out, and axe scans. The Playwright test `ui/e2e/configs.spec.ts` repeats the main path in Chromium with the color contrast rule. The Playwright run found one real defect that jsdom cannot see: a button whose accessible name did not contain its visible text.
+
+### Choices and limits
+
+We added `ajv` and `yaml` as runtime dependencies, which were development dependencies at UI-02. Both are MIT and ISC, and `npm run check:licenses` passes. Ajv compiles the schema with `new Function`, so a future Content-Security-Policy for the UI that forbids `unsafe-eval` needs a precompiled validator. The controller sets no such policy on the UI today.
