@@ -829,7 +829,7 @@ def test_the_fixture_gives_the_literal_series_by_bytes(tmp_path: Path) -> None:
 
 def test_the_series_validate_against_catalog_0_4_0() -> None:
     catalog = yaml.safe_load(CATALOG.read_text())
-    assert catalog["version"] == "0.4.0"
+    assert catalog["version"] == "0.5.0"
     metrics = {m["name"]: m for m in catalog["metrics"]}
     source_values = set(catalog["labels"]["source"]["values"])
     classifier_values = set(catalog["labels"]["classifier"]["values"])

@@ -1,0 +1,387 @@
+--- a/realism/schema/realism-report.schema.json
++++ b/realism/schema/realism-report.schema.json
+@@ -77,6 +77,181 @@
+         "value": {"type": "number"}
+       }
+     },
++    "failures_metric": {
++      "description": "The series that every check carries: the number of reasons for which the check failed. The label check names the kind of the check, and the value is 0 exactly when the check passed.",
++      "allOf": [
++        {"$ref": "#/$defs/metric"},
++        {
++          "properties": {
++            "name": {"const": "realism.check_failures"},
++            "labels": {
++              "required": ["check"],
++              "properties": {"check": {"$ref": "#/$defs/name"}},
++              "additionalProperties": false
++            },
++            "value": {"type": "integer", "minimum": 0}
++          }
++        }
++      ]
++    },
++    "parser_errors_metric": {
++      "description": "Findings of one reference parser, in the sessions of one application or, with the application all, in the whole capture.",
++      "allOf": [
++        {"$ref": "#/$defs/metric"},
++        {
++          "properties": {
++            "name": {"const": "realism.parser_errors"},
++            "labels": {
++              "required": ["application", "parser"],
++              "properties": {
++                "application": {"type": "string", "minLength": 1},
++                "parser": {"enum": ["tshark", "zeek", "stub"]}
++              },
++              "additionalProperties": false
++            },
++            "value": {"type": "integer", "minimum": 0}
++          }
++        }
++      ]
++    },
++    "encryption_metric": {
++      "description": "The decrypted share and the JA4 matched share of the sampled TLS sessions.",
++      "allOf": [
++        {"$ref": "#/$defs/metric"},
++        {
++          "properties": {
++            "name": {"enum": ["realism.decrypted_ratio", "realism.ja4_match_ratio"]},
++            "labels": {"additionalProperties": false},
++            "value": {"minimum": 0, "maximum": 1}
++          }
++        }
++      ]
++    },
++    "content_metric": {
++      "description": "The duplicate share of the payload units of one application.",
++      "allOf": [
++        {"$ref": "#/$defs/metric"},
++        {
++          "properties": {
++            "name": {"const": "realism.duplicate_ratio"},
++            "labels": {
++              "required": ["application"],
++              "properties": {"application": {"type": "string", "minLength": 1}},
++              "additionalProperties": false
++            },
++            "value": {"minimum": 0, "maximum": 1}
++          }
++        }
++      ]
++    },
++    "session_structure_metric": {
++      "description": "The rules that the instances of one scenario break.",
++      "allOf": [
++        {"$ref": "#/$defs/metric"},
++        {
++          "properties": {
++            "name": {"const": "realism.structure_failures"},
++            "labels": {
++              "required": ["scenario"],
++              "properties": {"scenario": {"type": "string", "minLength": 1}},
++              "additionalProperties": false
++            },
++            "value": {"type": "integer", "minimum": 0}
++          }
++        }
++      ]
++    },
++    "transport_behavior_metric": {
++      "description": "The packets of one role whose field differs from the profile. A SYN has the side client and a SYN-ACK the side server.",
++      "allOf": [
++        {"$ref": "#/$defs/metric"},
++        {
++          "properties": {
++            "name": {"const": "realism.transport_deviations"},
++            "labels": {
++              "required": ["property", "side"],
++              "properties": {
++                "property": {"enum": ["ttl", "df", "mss", "window_scale", "sack", "timestamps", "options", "syn_window"]},
++                "side": {"enum": ["client", "server"]}
++              },
++              "additionalProperties": false
++            },
++            "value": {"type": "integer", "minimum": 0}
++          }
++        }
++      ]
++    },
++    "conformance_metric": {
++      "description": "The share of the sessions of one application that the classifier names as the application.",
++      "allOf": [
++        {"$ref": "#/$defs/metric"},
++        {
++          "properties": {
++            "name": {"const": "realism.conformance_ratio"},
++            "labels": {
++              "required": ["application", "classifier"],
++              "properties": {
++                "application": {"type": "string", "minLength": 1},
++                "classifier": {"type": "string"}
++              },
++              "additionalProperties": false
++            },
++            "value": {"minimum": 0, "maximum": 1}
++          }
++        }
++      ]
++    },
++    "temporal_metric": {
++      "description": "The KS statistic or p value of one comparison.",
++      "allOf": [
++        {"$ref": "#/$defs/metric"},
++        {
++          "properties": {
++            "name": {"enum": ["realism.ks_statistic", "realism.ks_p_value"]},
++            "labels": {
++              "required": ["application", "property"],
++              "properties": {
++                "application": {"type": "string", "minLength": 1},
++                "property": {"enum": ["inter_arrival", "request_bytes", "response_bytes"]}
++              },
++              "additionalProperties": false
++            },
++            "value": {"minimum": 0, "maximum": 1}
++          }
++        }
++      ]
++    },
++    "mix_metric": {
++      "description": "A share, a distance, or the largest distance of the mix that the classifier found.",
++      "allOf": [
++        {"$ref": "#/$defs/metric"},
++        {
++          "required": ["name", "labels"],
++          "properties": {
++            "name": {"enum": ["mix.share_pct", "mix.abs_error_pp", "mix.max_abs_error_pp"]},
++            "labels": {
++              "required": ["source", "classifier"],
++              "properties": {
++                "application": {"type": "string", "minLength": 1},
++                "source": {"const": "classifier"},
++                "classifier": {"type": "string", "minLength": 1}
++              },
++              "additionalProperties": false
++            },
++            "value": {"minimum": 0}
++          }
++        },
++        {
++          "if": {"properties": {"name": {"const": "mix.max_abs_error_pp"}}, "required": ["name"]},
++          "then": {"properties": {"labels": {"not": {"required": ["application"]}}}},
++          "else": {"properties": {"labels": {"required": ["application"]}}}
++        },
++        {
++          "if": {"properties": {"name": {"const": "mix.share_pct"}}, "required": ["name"]},
++          "then": {"properties": {"value": {"maximum": 100}}}
++        }
++      ]
++    },
+     "check": {
+       "description": "Fields that every check carries. The allOf entries add the fields of each known check kind.",
+       "type": "object",
+@@ -118,6 +293,33 @@
+         {
+           "if": {"properties": {"check": {"const": "transport_behavior"}}, "required": ["check"]},
+           "then": {"$ref": "#/$defs/transport_behavior"}
++        },
++        {
++          "description": "Every check carries exactly one realism.check_failures series, which the definition of its kind ties to its own kind.",
++          "properties": {
++            "metrics": {
++              "contains": {"properties": {"name": {"const": "realism.check_failures"}}, "required": ["name"]},
++              "maxContains": 1
++            }
++          }
++        },
++        {
++          "description": "The failures series is 0 for a check that passed and at least 1 for a check that did not.",
++          "if": {"properties": {"passed": {"const": true}}, "required": ["passed"]},
++          "then": {
++            "properties": {
++              "metrics": {
++                "contains": {"properties": {"name": {"const": "realism.check_failures"}, "value": {"const": 0}}, "required": ["name", "value"]}
++              }
++            }
++          },
++          "else": {
++            "properties": {
++              "metrics": {
++                "contains": {"properties": {"name": {"const": "realism.check_failures"}, "value": {"minimum": 1}}, "required": ["name", "value"]}
++              }
++            }
++          }
+         }
+       ]
+     },
+@@ -136,26 +338,10 @@
+           "type": "boolean"
+         },
+         "metrics": {
++          "description": "The realism.conformance_ratio series of each scored application, and the realism.check_failures series.",
+           "type": "array",
+-          "items": {
+-            "allOf": [
+-              {"$ref": "#/$defs/metric"},
+-              {
+-                "properties": {
+-                  "name": {"const": "realism.conformance_ratio"},
+-                  "labels": {
+-                    "required": ["application", "classifier"],
+-                    "properties": {
+-                      "application": {"type": "string", "minLength": 1},
+-                      "classifier": {"type": "string"}
+-                    },
+-                    "additionalProperties": false
+-                  },
+-                  "value": {"minimum": 0, "maximum": 1}
+-                }
+-              }
+-            ]
+-          }
++          "items": {"oneOf": [{"$ref": "#/$defs/conformance_metric"}, {"$ref": "#/$defs/failures_metric"}]},
++          "contains": {"properties": {"name": {"const": "realism.check_failures"}, "labels": {"properties": {"check": {"const": "conformance"}}, "required": ["check"]}}, "required": ["name", "labels"]}
+         },
+         "classifier": {"enum": ["ndpi", "zeek", "stub"]},
+         "classifier_version": {"type": "string"},
+@@ -229,9 +415,10 @@
+         "check": {"const": "parser_errors"},
+         "passed": {"type": "boolean"},
+         "metrics": {
+-          "description": "Empty until the metric catalog defines a parser error metric.",
++          "description": "The realism.parser_errors series of each application and parser that ran, with the application all for the total of the parser, and the realism.check_failures series. When no parser ran, only the failures series is there.",
+           "type": "array",
+-          "maxItems": 0
++          "items": {"oneOf": [{"$ref": "#/$defs/parser_errors_metric"}, {"$ref": "#/$defs/failures_metric"}]},
++          "contains": {"properties": {"name": {"const": "realism.check_failures"}, "labels": {"properties": {"check": {"const": "parser_errors"}}, "required": ["check"]}}, "required": ["name", "labels"]}
+         },
+         "parsers": {
+           "description": "The parsers that ran, in run order.",
+@@ -345,9 +532,10 @@
+         "check": {"const": "encryption"},
+         "passed": {"type": "boolean"},
+         "metrics": {
+-          "description": "Empty until the metric catalog defines metrics for the decrypted and JA4 matched shares.",
++          "description": "The realism.decrypted_ratio and realism.ja4_match_ratio series when sessions were sampled, and the realism.check_failures series.",
+           "type": "array",
+-          "maxItems": 0
++          "items": {"oneOf": [{"$ref": "#/$defs/encryption_metric"}, {"$ref": "#/$defs/failures_metric"}]},
++          "contains": {"properties": {"name": {"const": "realism.check_failures"}, "labels": {"properties": {"check": {"const": "encryption"}}, "required": ["check"]}}, "required": ["name", "labels"]}
+         },
+         "tool": {
+           "description": "The program that decrypted the sample, or null when none ran.",
+@@ -483,9 +671,10 @@
+         "check": {"const": "content"},
+         "passed": {"type": "boolean"},
+         "metrics": {
+-          "description": "Empty until the metric catalog defines a duplicate ratio metric.",
++          "description": "The realism.duplicate_ratio series of each application with payloads, and the realism.check_failures series.",
+           "type": "array",
+-          "maxItems": 0
++          "items": {"oneOf": [{"$ref": "#/$defs/content_metric"}, {"$ref": "#/$defs/failures_metric"}]},
++          "contains": {"properties": {"name": {"const": "realism.check_failures"}, "labels": {"properties": {"check": {"const": "content"}}, "required": ["check"]}}, "required": ["name", "labels"]}
+         },
+         "max_duplicate_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+         "ignored_headers": {
+@@ -613,9 +802,10 @@
+         "check": {"const": "session_structure"},
+         "passed": {"type": "boolean"},
+         "metrics": {
+-          "description": "Empty until the metric catalog defines a session structure metric.",
++          "description": "The realism.structure_failures series of each scenario, and the realism.check_failures series.",
+           "type": "array",
+-          "maxItems": 0
++          "items": {"oneOf": [{"$ref": "#/$defs/session_structure_metric"}, {"$ref": "#/$defs/failures_metric"}]},
++          "contains": {"properties": {"name": {"const": "realism.check_failures"}, "labels": {"properties": {"check": {"const": "session_structure"}}, "required": ["check"]}}, "required": ["name", "labels"]}
+         },
+         "max_gap_s": {
+           "description": "Silence of a client, in seconds, that starts a new instance. Null when no gap splits instances.",
+@@ -750,27 +940,10 @@
+         "check": {"const": "temporal"},
+         "passed": {"type": "boolean"},
+         "metrics": {
+-          "description": "The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads). Comparisons over all sessions and over both directions have no catalog label and are only in comparisons.",
++          "description": "The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions and over both directions have no catalog label and are only in comparisons.",
+           "type": "array",
+-          "items": {
+-            "allOf": [
+-              {"$ref": "#/$defs/metric"},
+-              {
+-                "properties": {
+-                  "name": {"enum": ["realism.ks_statistic", "realism.ks_p_value"]},
+-                  "labels": {
+-                    "required": ["application", "property"],
+-                    "properties": {
+-                      "application": {"type": "string", "minLength": 1},
+-                      "property": {"enum": ["inter_arrival", "request_bytes", "response_bytes"]}
+-                    },
+-                    "additionalProperties": false
+-                  },
+-                  "value": {"minimum": 0, "maximum": 1}
+-                }
+-              }
+-            ]
+-          }
++          "items": {"oneOf": [{"$ref": "#/$defs/temporal_metric"}, {"$ref": "#/$defs/failures_metric"}]},
++          "contains": {"properties": {"name": {"const": "realism.check_failures"}, "labels": {"properties": {"check": {"const": "temporal"}}, "required": ["check"]}}, "required": ["name", "labels"]}
+         },
+         "alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+         "min_samples": {"type": "integer", "minimum": 2},
+@@ -876,7 +1049,12 @@
+       "properties": {
+         "check": {"const": "transport_behavior"},
+         "passed": {"type": "boolean"},
+-        "metrics": {"type": "array", "maxItems": 0},
++        "metrics": {
++          "description": "The realism.transport_deviations series of each enforced field and role that the check compared, and the realism.check_failures series.",
++          "type": "array",
++          "items": {"oneOf": [{"$ref": "#/$defs/transport_behavior_metric"}, {"$ref": "#/$defs/failures_metric"}]},
++          "contains": {"properties": {"name": {"const": "realism.check_failures"}, "labels": {"properties": {"check": {"const": "transport_behavior"}}, "required": ["check"]}}, "required": ["name", "labels"]}
++        },
+         "strict": {"type": "boolean"},
+         "client_hops": {"type": "integer", "minimum": 0, "maximum": 254},
+         "server_hops": {"type": "integer", "minimum": 0, "maximum": 254},
+@@ -997,38 +1175,10 @@
+         "check": {"const": "mix_accuracy"},
+         "passed": {"type": "boolean"},
+         "metrics": {
+-          "description": "The shares that the classifier found in the capture, with source classifier, for the basis in metrics_basis. Empty when metrics_basis is null or no application has a share.",
++          "description": "The shares that the classifier found in the capture, with source classifier, for the basis in metrics_basis, and the realism.check_failures series. Without a basis or an application with a share, only the failures series is there.",
+           "type": "array",
+-          "items": {
+-            "allOf": [
+-              {"$ref": "#/$defs/metric"},
+-              {
+-                "required": ["name", "labels"],
+-                "properties": {
+-                  "name": {"enum": ["mix.share_pct", "mix.abs_error_pp", "mix.max_abs_error_pp"]},
+-                  "labels": {
+-                    "required": ["source", "classifier"],
+-                    "properties": {
+-                      "application": {"type": "string", "minLength": 1},
+-                      "source": {"const": "classifier"},
+-                      "classifier": {"type": "string", "minLength": 1}
+-                    },
+-                    "additionalProperties": false
+-                  },
+-                  "value": {"minimum": 0}
+-                }
+-              },
+-              {
+-                "if": {"properties": {"name": {"const": "mix.max_abs_error_pp"}}, "required": ["name"]},
+-                "then": {"properties": {"labels": {"not": {"required": ["application"]}}}},
+-                "else": {"properties": {"labels": {"required": ["application"]}}}
+-              },
+-              {
+-                "if": {"properties": {"name": {"const": "mix.share_pct"}}, "required": ["name"]},
+-                "then": {"properties": {"value": {"maximum": 100}}}
+-              }
+-            ]
+-          }
++          "items": {"oneOf": [{"$ref": "#/$defs/mix_metric"}, {"$ref": "#/$defs/failures_metric"}]},
++          "contains": {"properties": {"name": {"const": "realism.check_failures"}, "labels": {"properties": {"check": {"const": "mix_accuracy"}}, "required": ["check"]}}, "required": ["name", "labels"]}
+         },
+         "metrics_basis": {
+           "description": "The basis that the series describe, which is profile.basis of the test configuration, or the only basis that ran. null when neither tells it, for weights in the labels with both bases, and then metrics is empty.",

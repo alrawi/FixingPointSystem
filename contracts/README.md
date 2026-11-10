@@ -9,7 +9,7 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 | `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.6) |
 | `schemas/test-config.schema.json` | Test configuration (v0.3) |
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
-| `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels (catalog 0.4.0) |
+| `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels (catalog 0.5.0) |
 | `metrics/catalog.schema.json` | Format of the metric catalog |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3 between the controller and agents (gRPC, proto3). Agents dial the controller. |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |
@@ -73,7 +73,7 @@ A metric reference names a counter or a gauge directly. A reference to a histogr
 
 The OpenAPI document names the metric behind a response field with the `x-fps-metric` keyword. Every property of `RunSummary` carries one. Prometheus exposition maps a catalog name to `fps_` followed by the name with dots replaced by underscores, and adds `_total` to counters.
 
-The label `application` takes the value `all` for a series that totals every application of the run, and the label `property` takes the value `both` for the payload sizes of the two directions pooled (metric catalog 0.3.0). The realism metrics `realism.ks_statistic` and `realism.ks_p_value` use them for comparisons that no single module owns. No module may be named `all`, and the validator rejects the name. An `all` series sits next to the per application series, so a criterion on such a gauge selects it with `where: {application: all}`, and a reader that sums an `application` label must leave the `all` series out.
+The label `application` takes the value `all` for a series that totals every application of the run, and the label `property` takes the value `both` for the payload sizes of the two directions pooled (metric catalog 0.3.0). The realism metrics `realism.ks_statistic` and `realism.ks_p_value` use them for comparisons that no single module owns. Metric catalog 0.5.0 (CON-23) gives every check kind of the realism report a series: `realism.check_failures` (label `check`) for all of them, and `realism.parser_errors`, `realism.decrypted_ratio`, `realism.ja4_match_ratio`, `realism.duplicate_ratio`, `realism.structure_failures`, and `realism.transport_deviations` for the kinds that judge such a thing. The change entry `changes/CON-23.md` gives the target and the outcome of each, and `examples/realism/check-metrics.yaml` holds a passing and a failing case for every kind. No module may be named `all`, and the validator rejects the name. An `all` series sits next to the per application series, so a criterion on such a gauge selects it with `where: {application: all}`, and a reader that sums an `application` label must leave the `all` series out.
 
 ## Arrival and size distributions
 

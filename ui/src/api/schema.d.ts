@@ -241,7 +241,7 @@ export interface paths {
         /**
          * Attach the realism report of the run.
          * @description Delivers the realism report that the realism runner wrote for the capture of the run (`python3 -m realism score`), so that `realism` of `getRunReport` holds its results. The controller measures no realism itself.
-         *     The body is the report document as the runner writes it, validated against `realism/schema/realism-report.schema.json`, and it is not rewritten into another form. The controller reads the metrics of every check of the report, in the order of the checks and then of their metrics, and keeps one `RealismResult` for each. `metric` and `labels` are the name and the labels of the metric, and `observed` is its value. `target` and `passed` come from the check that holds the metric. For `realism.conformance_ratio` the target is `>= ` followed by the `threshold` of the check, and `passed` is the `passed` of the entry of `applications` whose `application` equals the label of the same name. For `realism.ks_statistic` and `realism.ks_p_value` the target is `p value >= ` followed by the `alpha` of the comparison of the same application and property (`request_bytes` and `response_bytes` are the `payload_size` comparisons of the direction `client` and `server`), and `passed` is true when its `status` is `pass`. Any other metric that a later version of the report format carries gets the target `check passed` and the `passed` of its check. A check whose `metrics` array is empty adds no result, so the results are not a full account of the report: a check such as `parser_errors` that fails but has no metric shows in the report document only.
+         *     The body is the report document as the runner writes it, validated against `realism/schema/realism-report.schema.json`, and it is not rewritten into another form. The controller reads the metrics of every check of the report, in the order of the checks and then of their metrics, and keeps one `RealismResult` for each. `metric` and `labels` are the name and the labels of the metric, and `observed` is its value. `target` and `passed` come from the check that holds the metric. For `realism.conformance_ratio` the target is `>= ` followed by the `threshold` of the check, and `passed` is the `passed` of the entry of `applications` whose `application` equals the label of the same name. For `realism.ks_statistic` and `realism.ks_p_value` the target is `p value >= ` followed by the `alpha` of the comparison of the same application and property (`request_bytes` and `response_bytes` are the `payload_size` comparisons of the direction `client` and `server`), and `passed` is true when its `status` is `pass`. The metrics that the other check kinds carry follow the table of `contracts/changes/CON-23.md`: `realism.check_failures` (every check carries one) has the target `== 0` and the `passed` of its check, `realism.parser_errors`, `realism.structure_failures`, and `realism.transport_deviations` have the target `== 0`, `realism.decrypted_ratio` has `>= ` followed by `min_decrypted`, `realism.ja4_match_ratio` has `>= 1`, `realism.duplicate_ratio` has `<= ` followed by `max_duplicate_ratio`, and the `mix.` metrics have a target that names `tolerance_points`. In each case `passed` is true when the value meets the target. Any other metric that a later version of the report format carries gets the target `check passed` and the `passed` of its check. Every check of the report carries `realism.check_failures`, so a check that fails always adds a result that shows it.
          *     The operation replaces. A run holds at most one realism report, a second call with a valid report replaces the first as a whole, and the response says so with `replaced`. A client that scores again, for example with other labels or a newer runner, therefore needs no delete. A report that the controller refuses leaves the earlier one unchanged. The operation is idempotent: the same document twice gives the same state.
          *     The run must have ended, which is the state `completed`, `failed`, or `aborted`, because the capture that the report scored is complete only then. A run in any other state answers 409. The controller does not compare `capture.sha256` with the digests of the capture files of the run, since the runner may have scored a merged or scrubbed copy, and it stores the digest as given. A token with the scope `run` may attach a report, so the results are what the client reported and not a measurement of the controller.
          *     The body is at most 4 MiB (4194304 bytes). Content type is `application/json` only.
@@ -598,7 +598,7 @@ export interface components {
             run: components["schemas"]["Run"];
             /** @description The counts of the run for each scenario of each application, ordered by application and then by scenario name. They are the client side series of the metric view `scenario` (the key of a sample there is `<application>/<scenario>`), so each session and each byte counts once, and the sum of an entry property over all entries equals the property of `run.summary` with the same name. A scenario appears once the run has recorded a counter for it. A controller of 0.9.0 or later always sends the property, empty when the run has recorded no scenario counter, and an older controller does not send it. For the totals of one application, sum the entries of that application. */
             scenarios?: components["schemas"]["ScenarioTotals"][];
-            /** @description The realism results that the controller holds for the run, in the order of the realism report that carried them. The controller does not measure realism itself. The realism runner (`python3 -m realism score`, whose report format is `realism/schema/realism-report.schema.json`) scores the capture of the run with independent classifiers and parsers, and each metric of a check of its report, with the verdict of the check, becomes one entry here. The same values are the `realism.` gauges of the metric view `realism`, and `mix.` gauges with `source: classifier`, when the controller holds them as series. Until the controller receives such a report for the run the array is empty, which is also the answer for a run whose capture was never scored. The operation attachRealismReport (`PUT /runs/{id}/realism`) delivers the report, replaces an earlier one, and describes how its metrics become the entries. The checks of the report that carry no metric add no entry. */
+            /** @description The realism results that the controller holds for the run, in the order of the realism report that carried them. The controller does not measure realism itself. The realism runner (`python3 -m realism score`, whose report format is `realism/schema/realism-report.schema.json`) scores the capture of the run with independent classifiers and parsers, and each metric of a check of its report, with the verdict of the check, becomes one entry here. The same values are the `realism.` gauges of the metric view `realism`, and `mix.` gauges with `source: classifier`, when the controller holds them as series. Until the controller receives such a report for the run the array is empty, which is also the answer for a run whose capture was never scored. The operation attachRealismReport (`PUT /runs/{id}/realism`) delivers the report, replaces an earlier one, and describes how its metrics become the entries. Every check of the report carries the metric `realism.check_failures`, so a failing check always adds an entry. */
             realism: components["schemas"]["RealismResult"][];
         };
         /** @description The counts of one scenario of one application over the whole run. The property names follow RunSummary, and each names its metric in contracts/metrics/catalog.yaml through x-fps-metric. A count is 0 when the run recorded no event for it. */
@@ -1580,6 +1580,59 @@ export interface components {
             /** @description One sentence for each enforced deviation and for an empty comparison, at most 50. failures_total counts them all. */
             failures: string[];
         };
+        /** @description Message counts per session, read with tshark. Every session that a rule of the messages section selects has the expected number of requests, responses, commands, replies, or messages, every rule matches a session, and tshark ran. failures names each reason in words, for example a missing smtp message. */
+        messages: {
+            /** @constant */
+            check: "messages";
+            passed: boolean;
+            /** @description Empty until the metric catalog defines metrics for message counts. */
+            metrics: unknown[];
+            /** @description The program that counted the messages, or null when none ran. */
+            tool: {
+                /** @enum {unknown} */
+                tool: "tshark" | "stub";
+                version: string;
+            } | null;
+            sessions_checked: number;
+            sessions_failed: number;
+            rules: {
+                /** @description Position of the rule in the messages section, counting from 1. */
+                rule: number;
+                /** @enum {unknown} */
+                protocol: "http1" | "http2" | "smtp" | "imap";
+                match: Record<string, never>;
+                /** @description Expected count per name, such as requests, messages, commands.EHLO, or replies.250. A null max is no upper limit. */
+                expected: {
+                    [key: string]: {
+                        min: number;
+                        max: number | null;
+                    };
+                };
+                sessions: number;
+                failed_sessions: number;
+                /** @description The observed count of each expected name, summed over the sessions of the rule. */
+                observed_total: {
+                    [key: string]: number;
+                };
+            }[];
+            failures_total: number;
+            /** @description One sentence for each reason that the check failed, at most 50. failures_total counts them all. */
+            failures: string[];
+            /** @description The first 100 checked sessions, failed ones first. */
+            sessions: {
+                session: number;
+                rule: number;
+                /** @enum {unknown} */
+                protocol: "http1" | "http2" | "smtp" | "imap";
+                client: components["schemas"]["endpoint"];
+                server: components["schemas"]["endpoint"];
+                observed: {
+                    [key: string]: number;
+                };
+                passed: boolean;
+                reasons: string[];
+            }[];
+        };
         "$defs-name": string;
         sha256: string;
         /** @description Fields that every check carries. The allOf entries add the fields of each known check kind. */
@@ -1587,7 +1640,7 @@ export interface components {
             check: components["schemas"]["$defs-name"];
             passed: boolean;
             metrics: components["schemas"]["metric"][];
-        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
+        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
         /**
          * FixingPointSystem realism report
          * @description Report of the realism runner for one capture. Every check adds one entry to checks. A new check kind adds a definition under $defs and one if/then entry to $defs.check.allOf, and keeps the common check fields.
@@ -1638,7 +1691,7 @@ export interface components {
                     check: components["schemas"]["$defs-name"];
                     passed: boolean;
                     metrics: components["schemas"]["metric"][];
-                } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
+                } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
                 /** @description Share of labelled sessions that one classifier names as the intended application. */
                 conformance: {
                     /** @constant */
@@ -2032,6 +2085,59 @@ export interface components {
                     insufficient_comparisons: number;
                     /** @description One sentence for each comparison that did not pass, and one when the labels name no target. */
                     failures: string[];
+                };
+                /** @description Message counts per session, read with tshark. Every session that a rule of the messages section selects has the expected number of requests, responses, commands, replies, or messages, every rule matches a session, and tshark ran. failures names each reason in words, for example a missing smtp message. */
+                messages: {
+                    /** @constant */
+                    check: "messages";
+                    passed: boolean;
+                    /** @description Empty until the metric catalog defines metrics for message counts. */
+                    metrics: unknown[];
+                    /** @description The program that counted the messages, or null when none ran. */
+                    tool: {
+                        /** @enum {unknown} */
+                        tool: "tshark" | "stub";
+                        version: string;
+                    } | null;
+                    sessions_checked: number;
+                    sessions_failed: number;
+                    rules: {
+                        /** @description Position of the rule in the messages section, counting from 1. */
+                        rule: number;
+                        /** @enum {unknown} */
+                        protocol: "http1" | "http2" | "smtp" | "imap";
+                        match: Record<string, never>;
+                        /** @description Expected count per name, such as requests, messages, commands.EHLO, or replies.250. A null max is no upper limit. */
+                        expected: {
+                            [key: string]: {
+                                min: number;
+                                max: number | null;
+                            };
+                        };
+                        sessions: number;
+                        failed_sessions: number;
+                        /** @description The observed count of each expected name, summed over the sessions of the rule. */
+                        observed_total: {
+                            [key: string]: number;
+                        };
+                    }[];
+                    failures_total: number;
+                    /** @description One sentence for each reason that the check failed, at most 50. failures_total counts them all. */
+                    failures: string[];
+                    /** @description The first 100 checked sessions, failed ones first. */
+                    sessions: {
+                        session: number;
+                        rule: number;
+                        /** @enum {unknown} */
+                        protocol: "http1" | "http2" | "smtp" | "imap";
+                        client: components["schemas"]["endpoint"];
+                        server: components["schemas"]["endpoint"];
+                        observed: {
+                            [key: string]: number;
+                        };
+                        passed: boolean;
+                        reasons: string[];
+                    }[];
                 };
                 /** @description The TTL and the TCP options of the SYN and SYN-ACK of every connection against the operating system profile of the sending host. The check passes when no enforced field differs and at least one handshake of a profiled host was compared. The option order and the SYN window are enforced only when strict is true, and they appear in deviations either way. */
                 transport_behavior: {

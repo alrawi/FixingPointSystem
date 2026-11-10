@@ -67,7 +67,7 @@ fn table_matches_the_catalog_file() {
         })
         .collect();
     assert_eq!(from_rust, from_yaml);
-    assert_eq!(CATALOG.len(), 48);
+    assert_eq!(CATALOG.len(), 55);
 }
 
 #[test]
