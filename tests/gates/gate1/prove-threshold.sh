@@ -5,7 +5,8 @@
 # files of a passing run of run.sh to OUT_DIR/raised, raises the threshold just
 # above the lowest measured conformance ratio, and scores the copy again. It
 # exits with 0 when the gate then fails with code 1, and with 1 otherwise, so
-# CI shows that the threshold decides the verdict.
+# CI shows that the threshold decides the verdict. The script then runs
+# prove-corruption.sh, which shows that a corrupted HTTP message fails the gate.
 #
 # Usage: tests/gates/gate1/prove-threshold.sh OUT_DIR
 set -euo pipefail
@@ -30,3 +31,6 @@ if [[ $rc -ne 1 ]]; then
   exit 1
 fi
 echo "prove-threshold.sh: the gate fails at threshold $threshold, above the measured ratios, see $raised/report.md"
+
+# The second negative proof corrupts one HTTP message of the same capture.
+"$here/prove-corruption.sh" "$out"
