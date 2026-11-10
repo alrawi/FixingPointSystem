@@ -65,6 +65,14 @@
 # parameters shorten the shell to one command of a few keys and the upload to a
 # small file, so whole sessions finish within the three seconds of a run.
 #
+# An eighth test (AGT-19) runs smb2/download and smb2/upload of the first party
+# smb2 module, one run each, with a synthetic NTLMv2 session setup in every
+# session. The run parameters name a server port above 1023 (18687 and 18688)
+# because the script runs without root, and a bind to 445 needs a privilege.
+# nDPI classifies SMB only on 445, but this test checks the verdict and the
+# succeeded sessions, not the classification. Both sizes are small multiples of
+# the 64 KiB read size, so a whole session finishes within the run.
+#
 # The tail of the script checks the handshake failures. An agent that trusts
 # another CA ends with exit code 2 and a TLS error before it spends its
 # token. After `fps-controller revoke`, the running agent ends with exit code
@@ -201,6 +209,9 @@ rm -r "$modules/smtp/native" "$modules/smtp/tests"
 # ftp requires content, which is installed above (AGT-16).
 cp -r "$here/../../../modules/ftp" "$modules/ftp"
 rm -r "$modules/ftp/native" "$modules/ftp/tests"
+# smb2 is the first party module of AGT-19. It keeps its fixtures too.
+cp -r "$here/../../../modules/smb2" "$modules/smb2"
+rm -r "$modules/smb2/native"
 # ssh is the first party module of AGT-17. The manifest names
 # fixtures/ssh.pcapng, so the fixtures stay.
 cp -r "$here/../../../modules/ssh" "$modules/ssh"
@@ -228,7 +239,7 @@ done
 [[ $(stat -c %a "$work/agent-pki/agent.key") == 600 ]] || fail "the agent key is not mode 0600"
 
 # content goes before smtp, which requires it.
-for name in http1 dns content smtp ftp ssh; do
+for name in http1 dns content smtp ftp ssh smb2; do
   (cd "$modules/$name" && tar -czf "$work/$name.tar.gz" -- *)
   call POST /v1/modules "$admin" -H 'Content-Type: application/gzip' --data-binary "@$work/$name.tar.gz" >/dev/null
 done
@@ -500,6 +511,53 @@ run_test "$work/ssh_scp.yaml"
 ssh_scp_succeeded=$(succeeded_of ssh)
 [[ $ssh_scp_succeeded -gt 0 ]] || fail "the ssh scp run $run counted no succeeded sessions: $metrics"
 echo "controller_e2e: run $run ran ssh/scp_upload with $ssh_scp_succeeded succeeded sessions, verdict passed"
+
+# The smb2 sessions of AGT-19. smb2_test SCENARIO PARAMS PORT SEED prints a test
+# configuration for one scenario of the first party smb2 module, like ssh_test.
+smb2_test() {
+  local scenario=$1 params=$2 port=$3 seed=$4
+  cat <<EOF
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: smb2_$scenario
+  description: SMB2 sessions of the first party smb2 module, with a synthetic NTLMv2 session setup.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/$iface }
+    - { name: server0, location: local/$iface }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 127.103.0.0/24, count: 16 }
+    - { name: servers, port: server0, role: server, ipv4: 127.104.0.0/24, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: smb2/$scenario, weight: 1, params: { server_port: $port, $params } }
+load:
+  objective: { type: sessions_per_second, value: 10 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: $seed }
+criteria:
+  - { metric: sessions.failed_ratio, op: "<=", value: 0.1 }
+  - { metric: sessions.succeeded, op: ">", value: 0 }
+EOF
+}
+
+smb2_test download 'file_size: 262144, read_size: 65536, tail_size: 65536' 18687 23 >"$work/smb2_download.yaml"
+run_test "$work/smb2_download.yaml"
+[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the smb2 download run $run did not pass: $summary"
+smb2_download_succeeded=$(succeeded_of smb2)
+[[ $smb2_download_succeeded -gt 0 ]] || fail "the smb2 download run $run counted no succeeded sessions: $metrics"
+echo "controller_e2e: run $run ran smb2/download with $smb2_download_succeeded succeeded sessions, verdict passed"
+
+smb2_test upload 'upload_size: 262144, write_size: 65536, upload_tail: 65536' 18688 29 >"$work/smb2_upload.yaml"
+run_test "$work/smb2_upload.yaml"
+[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the smb2 upload run $run did not pass: $summary"
+smb2_upload_succeeded=$(succeeded_of smb2)
+[[ $smb2_upload_succeeded -gt 0 ]] || fail "the smb2 upload run $run counted no succeeded sessions: $metrics"
+echo "controller_e2e: run $run ran smb2/upload with $smb2_upload_succeeded succeeded sessions, verdict passed"
 
 # The https fetch of AGT-14. Both sides of every session upgrade to TLS at
 # once: the client with the browser profile chrome-136, the server with

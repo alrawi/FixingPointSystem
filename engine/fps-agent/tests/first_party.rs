@@ -236,6 +236,40 @@ fn ssh_run() {
     assert!(ok >= 4, "{ok} ssh sessions succeeded\n{log}");
 }
 
+/// AGT-19: `download` and `upload` of the smb2 module run a synthetic NTLMv2
+/// session setup and 64 KiB reads and writes through the agent. The ports lie
+/// above 1023, because the test runs without root.
+#[test]
+fn smb2_scenarios_run_through_the_agent() {
+    let mut plan = mail_plan(&[("smb2/download", 18_024), ("smb2/upload", 18_025)]);
+    plan["mix"][0]["params"] = serde_json::json!({
+        "server_port": 18_024,
+        "file_size": 262_144,
+        "read_size": 65_536,
+        "tail_size": 65_536,
+    });
+    plan["mix"][1]["params"] = serde_json::json!({
+        "server_port": 18_025,
+        "upload_size": 262_144,
+        "write_size": 65_536,
+        "upload_tail": 65_536,
+    });
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fps-agent-first-party");
+    std::fs::create_dir_all(&dir).expect("plan dir");
+    let path = dir.join("smb2.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&plan).unwrap()).expect("write plan");
+
+    let (mut out, mut log) = (Vec::new(), Vec::new());
+    let summary = run(&RunOptions::new(path, repo_modules()), &mut out, &mut log).expect("run");
+    let log = String::from_utf8(log).unwrap();
+    assert_eq!(summary.outcome, Outcome::Pass, "{log}");
+    let out = String::from_utf8(out).unwrap();
+    let last: Json =
+        serde_json::from_str(out.lines().last().expect("a snapshot line")).expect("JSON line");
+    let ok = succeeded(&last, "smb2");
+    assert!(ok >= 2, "{ok} smb2 sessions succeeded\n{log}");
+}
+
 #[test]
 fn smtp_imap_and_pop3_scenarios_run_through_the_agent() {
     mail_run();

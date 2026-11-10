@@ -10,7 +10,7 @@
 | Branch | `wp/AGT-19` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 3 plan steps) |
+| Progress | 90% (3 of 3 plan steps, CI pending) |
 | Current holder | claude-61ad74, lease until 2026-11-11T00:05:18Z |
 | Last verified commit | none |
 
@@ -24,17 +24,20 @@ Register the smb2 module (MOD-12 functions, MOD-13 manifest and scenarios) in th
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Dependency, registry line, module list tests
-- [ ] 2. controller_e2e.sh runs smb2/download and smb2/upload
-- [ ] 3. Checks, PR, CI
+- [x] 1. Dependency, registry line, module list tests
+- [x] 2. controller_e2e.sh runs smb2/download and smb2/upload
+- [x] 3. Checks, PR (CI pending)
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- `cargo test -p fps-agent`: all suites pass, including the unit tests `the_registry_covers_every_first_party_module` (lists smb2) and the manifest tests, which now cover smb2 through `registered_with_manifest`.
+- New component test `smb2_scenarios_run_through_the_agent` in `tests/first_party.rs` runs smb2/download and smb2/upload through `run` with succeeded smb2 sessions (passes locally, 3.8 s).
+- `cargo fmt --check` and `cargo clippy -p fps-agent --all-targets -D warnings` clean.
+- `controller_e2e.sh` runs smb2/download and smb2/upload under the real controller on ports 18687 and 18688. `bash -n` passes. It cannot run here (no Go modules), so CI is the check.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+CI result of the PR.
 
 ## Next action
 
@@ -46,7 +49,7 @@ Write "none" or name each blocker with a link to its issue.
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- Port 445 needs root or `net.ipv4.ip_unprivileged_port_start`, and the e2e script runs without root, so it uses server_port 18687 and 18688 (nDPI classifies SMB only on 445, but the e2e checks sessions). Cargo.lock gains the fps-agent dependency line.
 
 ## Pitfalls
 
