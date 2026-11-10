@@ -16,3 +16,13 @@ sessions:
     match: {transport: tcp, server_port: 143}
 applications:
   starttls_decrypted: {ndpi: [IMAP]}
+# The message count check reads the view with tshark. Each session lists the mailbox, fetches
+# two messages as BODY[] literals, and logs out: seven commands, each completed with OK, and
+# two RFC 5322 messages, which are the 16 literals of the old decrypted_check.py in 8 sessions.
+messages:
+  - protocol: imap
+    match: {server_port: 143}
+    expect:
+      commands: {CAPABILITY: 1, LOGIN: 1, SELECT: 1, FETCH: 3, LOGOUT: 1}
+      replies: {OK: 7}
+      messages: 2
