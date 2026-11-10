@@ -168,6 +168,44 @@
         }
       }
     },
+    "mix": {
+      "description": "Settings of the mix accuracy check, which compares the achieved mix, from the run metrics and from nDPI, with the configured weights. The check runs when this section is present.",
+      "type": "object",
+      "required": ["scenarios"],
+      "dependentRequired": {"weights": ["basis"]},
+      "not": {"required": ["test_config", "weights"]},
+      "additionalProperties": false,
+      "properties": {
+        "scenarios": {
+          "description": "Each scenario of the mix and the application it stands for. The application gives the nDPI names as the conformance check reads them, unless the entry lists its own.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "oneOf": [
+              {"type": "string", "minLength": 1},
+              {
+                "type": "object",
+                "required": ["application"],
+                "additionalProperties": false,
+                "properties": {
+                  "application": {"type": "string", "minLength": 1},
+                  "ndpi": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+                }
+              }
+            ]
+          }
+        },
+        "test_config": {"description": "Test configuration file, relative to the labels file, whose profile.mix and profile.basis give the weights.", "type": "string", "minLength": 1},
+        "weights": {
+          "description": "Weights per scenario, instead of a test configuration. It needs basis.",
+          "type": "object",
+          "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
+        },
+        "run_report": {"description": "File with the achieved sessions and bytes per scenario, relative to the labels file.", "type": "string", "minLength": 1},
+        "basis": {"description": "sessions, bytes, or both. The default is profile.basis of the test configuration.", "enum": ["sessions", "bytes", "both"]},
+        "tolerance_points": {"description": "Largest difference between an achieved and a configured share, in percentage points. The default is 2.", "type": "number", "minimum": 0, "maximum": 100}
+      }
+    },
     "temporal": {
       "description": "Target distributions of the temporal distribution check, which compares the inter arrival times of sessions and the payload sizes with them through the Kolmogorov Smirnov test. The check runs when this section is present.",
       "type": "object",

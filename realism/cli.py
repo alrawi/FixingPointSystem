@@ -20,6 +20,7 @@ from realism.capture import CaptureError
 from realism.classifier import DEFAULT_TIMEOUT_S, ClassifierError, NdpiClassifier
 from realism.encryption import TsharkTlsProbe
 from realism.labels import LabelsError
+from realism.mix import BASES, MixError
 from realism.modules import ModuleError, discover, matrix, select
 from realism.parsers import PARSER_NAMES, ParserError, not_found_reason, resolve
 from realism.report import score
@@ -57,6 +58,16 @@ def _min_samples(text: str) -> int:
         raise argparse.ArgumentTypeError(f"not an integer: {text}") from exc
     if value < 2:
         raise argparse.ArgumentTypeError("the minimum must be 2 or more")
+    return value
+
+
+def _points(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not a number: {text}") from exc
+    if not 0.0 <= value <= 100.0:
+        raise argparse.ArgumentTypeError("tolerance must be from 0 to 100 percentage points")
     return value
 
 
@@ -140,6 +151,31 @@ def _parser() -> argparse.ArgumentParser:
         help="fewest observations that a KS comparison needs, 2 or more; adds the temporal "
         "distribution check and overrides the labels file, whose default is 30",
     )
+    score_cmd.add_argument(
+        "--test-config",
+        type=Path,
+        help="test configuration whose profile.mix weights the mix accuracy check compares with "
+        "the achieved mix; adds the check next to the mix section of the labels file",
+    )
+    score_cmd.add_argument(
+        "--run-report",
+        type=Path,
+        help="run report file with the sessions and bytes per scenario, a metric series of "
+        "GET /v1/runs/ID/metrics?view=scenario or a bundle with it under metrics; adds the "
+        "mix accuracy check",
+    )
+    score_cmd.add_argument(
+        "--mix-tolerance",
+        type=_points,
+        help="largest difference between an achieved and a configured share in percentage "
+        "points, default 2; adds the mix accuracy check and overrides the labels file",
+    )
+    score_cmd.add_argument(
+        "--mix-basis",
+        choices=(*BASES, "both"),
+        help="basis of the mix accuracy check, default profile.basis of the test configuration; "
+        "adds the check and overrides the labels file",
+    )
     score_cmd.add_argument("--tshark", help="path of tshark, defaults to FPS_TSHARK or the path")
     score_cmd.add_argument("--zeek", help="path of zeek, defaults to FPS_ZEEK or the path")
     modules_cmd = commands.add_parser(
@@ -220,8 +256,19 @@ def main(argv: list[str] | None = None) -> int:
             scenario_files=args.scenario,
             ks_alpha=args.ks_alpha,
             ks_min_samples=args.ks_min_samples,
+            test_config=args.test_config,
+            run_report=args.run_report,
+            mix_tolerance=args.mix_tolerance,
+            mix_basis=args.mix_basis,
         )
-    except (CaptureError, LabelsError, ClassifierError, ParserError, ScenarioError) as exc:
+    except (
+        CaptureError,
+        LabelsError,
+        ClassifierError,
+        ParserError,
+        ScenarioError,
+        MixError,
+    ) as exc:
         print(f"realism score failed: {exc}", file=sys.stderr)
         return EXIT_ERROR
     text = report.to_json()

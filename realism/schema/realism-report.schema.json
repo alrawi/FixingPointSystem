@@ -110,6 +110,10 @@
         {
           "if": {"properties": {"check": {"const": "temporal"}}, "required": ["check"]},
           "then": {"$ref": "#/$defs/temporal"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "mix_accuracy"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/mix_accuracy"}
         }
       ]
     },
@@ -853,6 +857,111 @@
         "failures": {
           "description": "One sentence for each comparison that did not pass, and one when the labels name no target.",
           "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "mix_row": {
+      "description": "One application of one basis. A share is null when its source has no total. A delta is the achieved share minus the configured share, in percentage points.",
+      "type": "object",
+      "required": [
+        "application", "scenarios", "configured_pct", "metrics_pct", "ndpi_pct", "metrics_delta_pp",
+        "ndpi_delta_pp", "metrics_count", "ndpi_count", "metrics_passed", "ndpi_passed", "passed", "reasons"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "application": {"type": "string", "minLength": 1},
+        "scenarios": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "configured_pct": {"type": "number", "minimum": 0, "maximum": 100},
+        "metrics_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "ndpi_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "metrics_delta_pp": {"type": ["number", "null"]},
+        "ndpi_delta_pp": {"type": ["number", "null"]},
+        "metrics_count": {"description": "Sessions or bytes that the run metrics count for the application, null for the unmatched row.", "type": ["integer", "null"], "minimum": 0},
+        "ndpi_count": {"description": "Sessions or payload bytes that nDPI assigned to the application.", "type": ["integer", "null"], "minimum": 0},
+        "metrics_passed": {"type": "boolean"},
+        "ndpi_passed": {"type": "boolean"},
+        "passed": {"type": "boolean"},
+        "reasons": {"description": "One sentence for each source that is outside the tolerance.", "type": "array", "items": {"type": "string", "minLength": 1}},
+        "observed": {
+          "description": "Only on the unmatched row: the sessions per protocol name that nDPI gave them.",
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "mix_accuracy": {
+      "description": "The achieved mix, from run metrics and from nDPI, against the configured weights, per basis and application. Each source must lie within tolerance_points of the configured share. The row unmatched holds the sessions or bytes that nDPI named as no application of the mix and has a configured share of 0.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "classifier", "classifier_version", "tolerance_points",
+        "basis_source", "test_config", "run_report", "mapping", "unlabelled_sessions", "bases",
+        "failures_total", "failures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "mix_accuracy"},
+        "passed": {"type": "boolean"},
+        "metrics": {"type": "array", "maxItems": 0},
+        "classifier": {"type": "string", "minLength": 1},
+        "classifier_version": {"type": "string", "minLength": 1},
+        "tolerance_points": {"type": "number", "minimum": 0, "maximum": 100},
+        "basis_source": {"enum": ["command line", "labels", "test configuration"]},
+        "test_config": {
+          "description": "The test configuration that gave the weights, null when the labels list them.",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["file", "basis"],
+              "additionalProperties": false,
+              "properties": {"file": {"type": "string"}, "basis": {"enum": ["sessions", "bytes"]}}
+            }
+          ]
+        },
+        "run_report": {
+          "type": "object",
+          "required": ["file", "form"],
+          "additionalProperties": false,
+          "properties": {"file": {"type": "string"}, "form": {"enum": ["metric_series", "bundle", "table"]}}
+        },
+        "mapping": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["application", "scenarios", "ndpi"],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "scenarios": {"type": "array", "items": {"type": "string", "minLength": 1}},
+              "ndpi": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            }
+          }
+        },
+        "unlabelled_sessions": {"type": "integer", "minimum": 0},
+        "bases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["basis", "passed", "metrics_total", "ndpi_total", "applications", "unmatched", "failures"],
+            "additionalProperties": false,
+            "properties": {
+              "basis": {"enum": ["sessions", "bytes"]},
+              "passed": {"type": "boolean"},
+              "metrics_total": {"type": "integer", "minimum": 0},
+              "ndpi_total": {"type": "integer", "minimum": 0},
+              "applications": {"type": "array", "items": {"$ref": "#/$defs/mix_row"}},
+              "unmatched": {"$ref": "#/$defs/mix_row"},
+              "failures": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            }
+          }
+        },
+        "failures_total": {"type": "integer", "minimum": 0},
+        "failures": {
+          "description": "One sentence for each broken rule, at most 50. failures_total counts them all.",
+          "type": "array",
+          "maxItems": 50,
           "items": {"type": "string", "minLength": 1}
         }
       }
