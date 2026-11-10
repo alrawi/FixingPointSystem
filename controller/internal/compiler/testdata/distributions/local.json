@@ -1,0 +1,115 @@
+{
+  "planId": "run-0001/local",
+  "runId": "run-0001",
+  "agentId": "local",
+  "testName": "distributions",
+  "engineApi": "0.2.0",
+  "seed": "3",
+  "topology": "TOPOLOGY_APP_SIM",
+  "backend": "BACKEND_KERNEL",
+  "modules": [
+    {
+      "name": "dns",
+      "version": "0.1.0",
+      "digest": "sha256:68e7a24ce6a1dc3ddc2c8258b98cc842fc07b9ab384237b98e4cb9709568454c"
+    },
+    {
+      "name": "http1",
+      "version": "0.1.0",
+      "digest": "sha256:2c2faa806b80e328c7ea59222a1bf2235c3b7b40a72265ae98f8e20a1ed74f8f"
+    }
+  ],
+  "scenarios": [
+    {
+      "ref": "dns/resolve",
+      "module": "dns",
+      "source": "scenario: resolve\ndescription: One A record query built by the module, with the answer address bound for later flows. The server answers from the query that it received.\nvars:\n  host: www.example.test\n  answer: 192.0.2.1\n  server_port: 53\nflows:\n  - id: query\n    module: dns\n    l4: udp\n    client:\n      - connect: { port: \"{{ vars.server_port }}\" }\n      - send: \"{{ dns.query(name=vars.host, qtype='A') }}\"\n      - expect: { min_bytes: 12, max_datagram: 512, timeout_ms: 2000 }\n      - set: { server_ip: \"{{ dns.answer_ip(last) }}\" }\n      - close: fin\n    server:\n      - accept: { port: \"{{ vars.server_port }}\" }\n      - expect: { min_bytes: 12, max_datagram: 512, timeout_ms: 2000 }\n      - send: \"{{ dns.response(last, address=vars.answer) }}\"\n      - close: fin\n",
+      "digest": "sha256:3a8e3884b6329b0711e091ca4d166900ea7fb2f3c37cc92254abf51dfa2ca64a"
+    },
+    {
+      "ref": "http1/web_get",
+      "module": "http1",
+      "source": "scenario: web_get\ndescription: One TCP connection that issues keepalive GET requests for objects of a fixed size.\nvars:\n  host: www.example.test\n  path: /index.html\n  server_port: 8080\n  requests: 4\n  body_size: 4096\n  user_agent: \"Mozilla/5.0 (X11; Linux x86_64) FixingPointSystem/0.1\"\nflows:\n  - id: page\n    module: http1\n    client:\n      - connect: { port: \"{{ vars.server_port }}\" }\n      - loop:\n          count: \"{{ vars.requests }}\"\n          do:\n            - send: \"GET {{ vars.path }} HTTP/1.1\\r\\nHost: {{ vars.host }}\\r\\nUser-Agent: {{ vars.user_agent }}\\r\\nAccept: */*\\r\\n\\r\\n\"\n            - expect: { pattern: \"\\r\\n\\r\\n\", timeout_ms: 5000 }\n            - expect: { bytes: \"{{ vars.body_size }}\", timeout_ms: 5000 }\n      - close: fin\n    server:\n      - accept: { port: \"{{ vars.server_port }}\" }\n      - loop:\n          count: \"{{ vars.requests }}\"\n          do:\n            - expect: { pattern: \"\\r\\n\\r\\n\", timeout_ms: 5000 }\n            - send: \"HTTP/1.1 200 OK\\r\\nServer: fps/0.1\\r\\nContent-Type: text/html\\r\\nContent-Length: {{ vars.body_size }}\\r\\n\\r\\n{{ fill(vars.body_size) }}\"\n      - close: fin\n",
+      "digest": "sha256:5ce7e5a6664c4f5f6e44d3f0253ba90714ba3a1d588c8f7b8785e4683cb7b29b"
+    }
+  ],
+  "mix": [
+    {
+      "id": "resolve",
+      "scenario": "dns/resolve",
+      "weight": 0.5
+    },
+    {
+      "id": "web_get",
+      "scenario": "http1/web_get",
+      "weight": 0.5
+    }
+  ],
+  "ports": [
+    {
+      "name": "client0",
+      "interfaceName": "lo"
+    },
+    {
+      "name": "server0",
+      "interfaceName": "lo"
+    }
+  ],
+  "hostPools": [
+    {
+      "name": "clients",
+      "port": "client0",
+      "role": "HOST_ROLE_CLIENT",
+      "ipv4Prefix": "16.0.0.0/24",
+      "poolCount": 254,
+      "count": 254,
+      "macBase": "02:00:00:00:00:00"
+    },
+    {
+      "name": "servers",
+      "port": "server0",
+      "role": "HOST_ROLE_SERVER",
+      "ipv4Prefix": "48.0.0.0/24",
+      "poolCount": 1,
+      "count": 1,
+      "macBase": "02:00:01:00:00:00"
+    }
+  ],
+  "workers": [
+    {
+      "hosts": [
+        {
+          "pool": "clients",
+          "count": 254
+        },
+        {
+          "pool": "servers",
+          "count": 1
+        }
+      ],
+      "rates": [
+        {
+          "mixEntry": "resolve",
+          "sessionsPerSecond": 250
+        },
+        {
+          "mixEntry": "web_get",
+          "sessionsPerSecond": 250
+        }
+      ]
+    }
+  ],
+  "load": {
+    "objective": "LOAD_OBJECTIVE_SESSIONS_PER_SECOND",
+    "objectiveValue": 500,
+    "phases": [
+      {
+        "name": "steady",
+        "duration": "20s",
+        "shape": "PHASE_SHAPE_HOLD",
+        "startFraction": 1,
+        "endFraction": 1
+      }
+    ]
+  }
+}

@@ -300,6 +300,7 @@ type (
 	litNode  struct {
 		typ string // int, float, text, or boolean
 		num float64
+		str string // the value of a text literal
 	}
 	refNode  struct{ parts []string }
 	callNode struct {
@@ -417,8 +418,8 @@ func (p *parser) expression(depth int) (exprNode, error) {
 		}
 		return litNode{typ: kind, num: f}, nil
 	case "str":
-		_, _ = p.take("str")
-		return litNode{typ: "text"}, nil
+		text, _ := p.take("str")
+		return litNode{typ: "text", str: text}, nil
 	case "ident":
 	default:
 		return nil, errors.New("expected a literal, a reference, or a call")
@@ -516,8 +517,42 @@ var (
 	distNonNegative = map[string]bool{"low": true, "high": true}
 )
 
-// coreResult is the result type of the core functions.
-var coreResult = map[string]string{"fill": "text", "hex": "bytes", "rand_int": "int"}
+// coreResult is the result type of the core functions. now is not in the
+// table, because its type follows its literal format, see nowResult.
+var coreResult = map[string]string{"fill": "text", "hex": "bytes", "rand_int": "int", "int_bytes": "bytes"}
+
+// nowResult is the type that now(format) renders for each literal format
+// (scenario contract v0.6).
+var nowResult = map[string]string{"http_date": "text", "epoch_s": "int", "epoch_ms": "int"}
+
+// coreCallResult returns the type of a call of a core function. A call of now
+// gets the type that its literal format fixes, and any for a format that is
+// not a literal or not known, which the contract validator reports.
+func coreCallResult(c callNode) string {
+	if c.name == "now" {
+		var format exprNode
+		switch {
+		case len(c.pos) > 0:
+			format = c.pos[0]
+		default:
+			for _, k := range c.kw {
+				if k.name == "format" {
+					format = k.val
+				}
+			}
+		}
+		if lit, ok := format.(litNode); ok && lit.typ == "text" {
+			if t, known := nowResult[lit.str]; known {
+				return t
+			}
+		}
+		return "any"
+	}
+	if t, ok := coreResult[c.name]; ok {
+		return t
+	}
+	return "any"
+}
 
 var sessionFields = map[string]string{"id": "int", "flow": "text"}
 
@@ -588,10 +623,7 @@ func checkCall(c callNode, sc scenarioScope, issues *[]string) string {
 		if c.module != "" {
 			return "bytes"
 		}
-		if t, ok := coreResult[c.name]; ok {
-			return t
-		}
-		return "any"
+		return coreCallResult(c)
 	}
 	params, ok := distFunctions[c.name]
 	if !ok {

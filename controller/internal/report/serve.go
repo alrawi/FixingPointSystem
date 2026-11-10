@@ -93,7 +93,12 @@ func (a *API) UseSamples(s SampleSource) *API {
 
 // UseObjectives sets the source of the objective of the HTML report. A run
 // whose objective the source cannot return gets a page without objective.
+// When o is also a DeclarationSource, as ConfigObjectives is, it becomes the
+// source of the declarations too, so the binary needs no further call.
 func (a *API) UseObjectives(o ObjectiveSource) *API {
 	a.objectives = o
+	if d, ok := o.(DeclarationSource); ok {
+		a.declarations = d
+	}
 	return a
 }
