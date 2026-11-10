@@ -9,6 +9,7 @@ where tshark or openssl is missing, and the rlm workflow installs both.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import ssl
 import subprocess
@@ -20,6 +21,7 @@ import pytest
 
 from realism import decrypted
 from realism.capture import summarize
+from realism.classifier import NdpiClassifier
 from realism.cli import EXIT_ERROR, EXIT_FAIL, EXIT_PASS, main
 from realism.decrypted import (
     DecryptedError,
@@ -31,6 +33,7 @@ from realism.decrypted import (
     parse_hellos,
     write_view,
 )
+from realism.report import score
 from realism.tests import pcapgen, tlsgen
 from realism.tests.conftest import NDPI_42_HEADER, NDPI_414_HEADER
 
@@ -448,3 +451,35 @@ def test_the_command_reads_the_pipe_csv_of_ndpi_414(
     assert result["failures"][0] == "the capture has no TLS session"
     assert result["classifier"] == "ndpi 9.8.7-fake"
     assert decrypted.PLAINTEXTS == ("inside", "upgrade")
+
+
+@needs_tls_tools
+@pytest.mark.skipif(
+    (os.environ.get("FPS_NDPI_READER") or shutil.which("ndpiReader")) is None,
+    reason="ndpiReader is not installed",
+)
+def test_real_ndpi_names_the_sessions_of_the_view_http_where_it_names_the_capture_tls(
+    tmp_path: Path, labels_file: Callable[..., Path]
+) -> None:
+    cap, _ = tlsgen.tls_capture(tmp_path, [CLIENT, TLS12, CLIENT])
+    pcap = cap.write_pcapng(tmp_path / "tls.pcapng", tls_keys=(tmp_path / "keys.log").read_bytes())
+    # On the capture itself nDPI cannot see inside TLS.
+    outer = {**_labels(443), "applications": {"inner": {"ndpi": ["TLS"]}}}
+    assert score(pcap, labels_file(outer), NdpiClassifier()).passed
+    code = main(
+        [
+            "decrypted",
+            "--pcap",
+            str(pcap),
+            "--labels",
+            str(labels_file(_labels(443), name="view.json")),
+            "--parsers",
+            "tshark",
+            "--output",
+            str(tmp_path / "result.json"),
+        ]
+    )
+    result = json.loads((tmp_path / "result.json").read_text())
+    assert code == EXIT_PASS, result["failures"]
+    app = result["report"]["checks"][0]["applications"][0]
+    assert app["conforming"] == app["sessions"] == 3
