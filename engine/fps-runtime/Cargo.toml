@@ -34,6 +34,8 @@ tracing = "0.1"
 # The instance tests run the ftp scenarios, which call the content module for their file bytes (ENG-23).
 fps-module-content = { path = "../../modules/content/native" }
 fps-module-ftp = { path = "../../modules/ftp/native" }
+# The datagram tests run SIP calls with RTP through the instance runner (ENG-26).
+fps-module-sip-rtp = { path = "../../modules/sip_rtp/native" }
 proptest = "1"
 # Decrypts the capture of the tls_upgrade test with the key log, independent of the TLS module.
 # ISC and Apache-2.0, already in the lock file through rustls.

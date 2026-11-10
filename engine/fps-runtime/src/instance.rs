@@ -31,9 +31,16 @@
 //!   connection for [`OPEN_GRACE`], because the server side of a spawned flow
 //!   may not have bound the port yet.
 //! - A server flow binds the rendered port on the address that accepted the
-//!   entry connection, accepts one connection, and releases the port. It
-//!   retries a bind that finds the port in use for [`OPEN_GRACE`], because
-//!   another instance may still hold the port.
+//!   entry connection, accepts one connection, and releases the port. The
+//!   listener of a port is shared by every instance of the worker that waits
+//!   on it and hands each connection to the instance that expects the address
+//!   it came from, see [`crate::data_ports`]. A bind that finds the port in
+//!   use by another process is retried for [`OPEN_GRACE`].
+//!
+//! A UDP flow opens as a datagram session of the same three kinds, see
+//! [`crate::datagram`]. The entry flow of a server is the first session of a
+//! UDP port that the worker listens on, and a media flow binds the rendered
+//! port, which its sessions share with the other instances of the worker.
 
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -43,17 +50,21 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use fps_backend_kernel::{KernelDatagram, KernelListener, KernelStream, ListenConfig};
+use fps_backend_kernel::KernelStream;
 use fps_capture::CaptureCell;
 use fps_flow::program::{Flow, L4};
 use fps_flow::{FnCall, FnError, Scenario, TemplateFn};
 use fps_interp::{
-    DatagramOpener, FlowEnv, InstanceConfig, OpenKind, OpenRequest, Opener, Reason,
-    ScenarioInstance, Side, Sides, TlsUpgrader,
+    FlowEnv, InstanceConfig, OpenKind, OpenRequest, Opener, Reason, ScenarioInstance, Side, Sides,
+    TlsUpgrader,
 };
 use rand::RngCore;
 use tokio::time::{sleep, Instant};
 
+use crate::data_ports::DataPorts;
+use crate::datagram::{
+    DatagramFlowOpener, DatagramNet, ServerDatagram, TapDatagramOpener,
+};
 use crate::extension::close_reason_of;
 use crate::opener::{destination, global_session_id, invalid, source_address, TapOpener};
 use crate::tls::SessionTls;
@@ -70,15 +81,27 @@ pub(crate) const ID_BLOCK_SHIFT: u32 = 16;
 /// with the reason of the interpreter.
 pub(crate) const OPEN_GRACE: Duration = Duration::from_secs(2);
 
-const RETRY_FIRST: Duration = Duration::from_millis(2);
-const RETRY_MAX: Duration = Duration::from_millis(50);
+/// The first wait between two tries of a bind or a connect, which doubles up
+/// to [`RETRY_MAX`].
+pub(crate) const RETRY_FIRST: Duration = Duration::from_millis(2);
+/// The longest wait between two tries.
+pub(crate) const RETRY_MAX: Duration = Duration::from_millis(50);
 
 /// The end that a worker task owns of the connection of an instance.
 pub(crate) enum Peer {
     /// A client session start, which dials.
     Client(Rc<ClientCtx>),
-    /// A server session, which the listener of the worker accepted.
+    /// A server session over TCP, which the listener of the worker accepted.
     Server(KernelStream),
+    /// A server session over UDP, which the first datagram of a peer opened on
+    /// a port that the worker listens on.
+    ServerDatagram(ServerDatagram),
+}
+
+/// The session that a server worker accepted for the entry flow.
+enum Entry {
+    Stream(KernelStream),
+    Datagram(ServerDatagram),
 }
 
 /// What the environment keeps of one flow side that the instance started.
@@ -101,11 +124,13 @@ enum Net {
         session: u64,
     },
     Server {
-        /// The accepted connection, until the entry flow takes it.
-        accepted: Option<KernelStream>,
+        /// The accepted session, until the entry flow takes it.
+        accepted: Option<Entry>,
         /// The address that data ports bind on.
         bind_ip: IpAddr,
-        config: ListenConfig,
+        /// The host of the peer of the entry session. A data session of this
+        /// instance comes from the same host.
+        expect: Option<IpAddr>,
     },
 }
 
@@ -139,8 +164,12 @@ enum FlowNet {
     },
     /// Hands out the connection that the worker accepted.
     Accepted(Option<KernelStream>),
-    /// Binds the rendered port and accepts one connection.
-    Bind { ip: IpAddr, config: ListenConfig },
+    /// Waits for the connection of the expected host on the rendered port.
+    Bind {
+        ip: IpAddr,
+        ports: DataPorts,
+        expect: Option<IpAddr>,
+    },
 }
 
 impl Drop for FlowOpener {
@@ -160,7 +189,7 @@ enum Plan {
         retry: bool,
     },
     Accepted(Option<KernelStream>),
-    Bind(SocketAddr, ListenConfig),
+    Bind(SocketAddr, DataPorts, Option<IpAddr>),
     Fail(io::Error),
 }
 
@@ -196,8 +225,8 @@ impl Opener for FlowOpener {
                 }
             }
             (FlowNet::Accepted(io), OpenKind::Accept) => Plan::Accepted(io.take()),
-            (FlowNet::Bind { ip, config }, OpenKind::Accept) => {
-                Plan::Bind(SocketAddr::new(*ip, request.port), config.clone())
+            (FlowNet::Bind { ip, ports, expect }, OpenKind::Accept) => {
+                Plan::Bind(SocketAddr::new(*ip, request.port), ports.clone(), *expect)
             }
             (_, OpenKind::Connect) => Plan::Fail(invalid("a server opener cannot connect".into())),
             (_, OpenKind::Accept) => Plan::Fail(invalid("a client opener cannot accept".into())),
@@ -236,49 +265,9 @@ impl Opener for FlowOpener {
                         }
                     }
                 }
-                Plan::Bind(addr, config) => {
-                    let deadline = Instant::now() + OPEN_GRACE;
-                    let mut wait = RETRY_FIRST;
-                    let listener = loop {
-                        match KernelListener::bind(addr, &config) {
-                            Ok(l) => break l,
-                            Err(e)
-                                if e.io_kind() == Some(io::ErrorKind::AddrInUse)
-                                    && Instant::now() + wait < deadline =>
-                            {
-                                sleep(wait).await;
-                                wait = (wait * 2).min(RETRY_MAX);
-                            }
-                            Err(e) => {
-                                return Err(io::Error::new(
-                                    e.io_kind().unwrap_or(io::ErrorKind::Other),
-                                    e,
-                                ))
-                            }
-                        }
-                    };
-                    // The listener drops with this future, which releases the
-                    // port once the connection is accepted.
-                    let (stream, _peer) = listener.accept().await.map_err(|e| {
-                        io::Error::new(e.io_kind().unwrap_or(io::ErrorKind::Other), e)
-                    })?;
-                    Ok(stream)
-                }
+                Plan::Bind(addr, ports, expect) => ports.accept(addr, expect).await,
             }
         }
-    }
-}
-
-/// The datagram opener of an instance on this worker, which runs stream
-/// flows only. the configuration check refuses a scenario with a UDP
-/// flow before the worker starts, so this opener is a guard.
-pub(crate) struct NoDatagrams;
-
-impl DatagramOpener for NoDatagrams {
-    type Io = KernelDatagram;
-
-    async fn open(&mut self, _request: OpenRequest<'_>) -> io::Result<KernelDatagram> {
-        Err(invalid("a worker instance runs stream flows only".into()))
     }
 }
 
@@ -303,6 +292,25 @@ impl TemplateFn for SharedFunctions {
     }
 }
 
+/// Takes the accepted session of the entry flow when it has the transport of
+/// the flow that asks, and leaves it for the flow that wants it otherwise.
+fn take_entry<T>(
+    accepted: &mut Option<Entry>,
+    entry: bool,
+    pick: impl FnOnce(Entry) -> Result<T, Entry>,
+) -> Option<T> {
+    if !entry {
+        return None;
+    }
+    match pick(accepted.take()?) {
+        Ok(io) => Some(io),
+        Err(other) => {
+            *accepted = Some(other);
+            None
+        }
+    }
+}
+
 impl InstanceEnv {
     fn index_of(&self, flow: &Flow) -> usize {
         self.scenario
@@ -320,7 +328,7 @@ impl InstanceEnv {
 
 impl FlowEnv for InstanceEnv {
     type Stream = TapOpener<CaptureCell, FlowOpener>;
-    type Datagram = NoDatagrams;
+    type Datagram = TapDatagramOpener<DatagramFlowOpener>;
 
     fn stream(&mut self, flow: &Flow, side: Side) -> Self::Stream {
         let entry = self.index_of(flow) == self.entry;
@@ -342,12 +350,16 @@ impl FlowEnv for InstanceEnv {
             Net::Server {
                 accepted,
                 bind_ip,
-                config,
-            } => match accepted.take().filter(|_| entry) {
+                expect,
+            } => match take_entry(accepted, entry, |e| match e {
+                Entry::Stream(io) => Ok(io),
+                other => Err(other),
+            }) {
                 Some(io) => FlowNet::Accepted(Some(io)),
                 None => FlowNet::Bind {
                     ip: *bind_ip,
-                    config: config.clone(),
+                    ports: self.worker.data_ports.clone(),
+                    expect: *expect,
                 },
             },
         };
@@ -359,8 +371,45 @@ impl FlowEnv for InstanceEnv {
         )
     }
 
-    fn datagram(&mut self, _flow: &Flow, _side: Side) -> NoDatagrams {
-        NoDatagrams
+    fn datagram(&mut self, flow: &Flow, side: Side) -> Self::Datagram {
+        let entry = self.index_of(flow) == self.entry;
+        let (id, ended) = self.current().map_or_else(
+            || (self.first_id, Rc::default()),
+            |l| (l.id, Rc::clone(&l.ended)),
+        );
+        let kind = match &mut self.net {
+            Net::Client {
+                ctx,
+                source,
+                session,
+            } => DatagramNet::Connect {
+                ctx: Rc::clone(ctx),
+                source: source.clone(),
+                session: *session,
+                entry,
+            },
+            Net::Server {
+                accepted,
+                bind_ip,
+                expect,
+            } => match take_entry(accepted, entry, |e| match e {
+                Entry::Datagram(io) => Ok(io),
+                other => Err(other),
+            }) {
+                Some(io) => DatagramNet::Accepted(Some(io)),
+                None => DatagramNet::Bind {
+                    ip: *bind_ip,
+                    ports: self.worker.datagram_ports.clone(),
+                    expect: *expect,
+                },
+            },
+        };
+        TapDatagramOpener::new(
+            DatagramFlowOpener { kind, ended },
+            self.worker.capture.clone(),
+            id,
+            side,
+        )
     }
 
     fn tls_upgrader(&mut self, _flow: &Flow, _side: Side) -> Option<Box<dyn TlsUpgrader>> {
@@ -383,7 +432,11 @@ impl FlowEnv for InstanceEnv {
                         side,
                         scenario: Arc::clone(&self.scenario),
                         flow: index,
-                        transport: Transport::Tcp,
+                        transport: if flow.l4 == L4::Udp {
+                            Transport::Udp
+                        } else {
+                            Transport::Tcp
+                        },
                     },
                     native,
                 ))));
@@ -423,19 +476,29 @@ pub(crate) async fn run(worker: Rc<Worker>, local_id: u64, peer: Peer) {
             )
         }
         Peer::Server(io) => {
-            // Data ports bind on the address that the client dialed.
+            // Data ports bind on the address that the client dialed, and the
+            // data sessions of the instance come from the host of the client.
             let bind_ip = io
                 .local_addr()
                 .map_or(IpAddr::from([0, 0, 0, 0]), |a| a.ip());
+            let expect = io.peer_addr().ok().map(|a| a.ip());
             (
                 Sides::Server,
                 Net::Server {
-                    accepted: Some(io),
+                    accepted: Some(Entry::Stream(io)),
                     bind_ip,
-                    config: worker.listen_config.clone(),
+                    expect,
                 },
             )
         }
+        Peer::ServerDatagram(session) => (
+            Sides::Server,
+            Net::Server {
+                bind_ip: session.local_addr().ip(),
+                expect: Some(session.peer_addr().ip()),
+                accepted: Some(Entry::Datagram(session)),
+            },
+        ),
     };
     let mut env = InstanceEnv {
         worker: Rc::clone(&worker),
@@ -517,8 +580,16 @@ fn end_extensions(log: &SideLog, failed: Option<Reason>) {
     }
 }
 
+/// Returns true when the entry flow of a scenario runs over UDP, so a server
+/// worker listens on a datagram port and not on a TCP listener.
+pub(crate) fn entry_is_udp(scenario: &Scenario, entry: usize) -> bool {
+    scenario.flows.get(entry).is_some_and(|f| f.l4 == L4::Udp)
+}
+
 /// Returns the reason that a scenario cannot run as an instance on a worker,
-/// or `None` when it can.
+/// or `None` when it can. A flow may be TCP or UDP, and the entry flow of a
+/// server worker decides which kind of port the worker listens on, see
+/// [`entry_is_udp`].
 pub(crate) fn refusal(scenario: &Scenario, entry: usize) -> Option<String> {
     let Some(flow) = scenario.flows.get(entry) else {
         return Some(format!("scenario {} has no flow {entry}", scenario.name));
@@ -529,57 +600,12 @@ pub(crate) fn refusal(scenario: &Scenario, entry: usize) -> Option<String> {
             flow.id, scenario.name
         ));
     }
-    scenario.flows.iter().find(|f| f.l4 == L4::Udp).map(|f| {
-        format!(
-            "scenario {} has the UDP flow {}; a worker runs the flows of an instance over TCP",
-            scenario.name, f.id
-        )
-    })
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn bind_opener(ip: IpAddr) -> FlowOpener {
-        FlowOpener {
-            kind: FlowNet::Bind {
-                ip,
-                config: ListenConfig::default(),
-            },
-            ended: Rc::default(),
-        }
-    }
-
-    #[tokio::test]
-    async fn a_bind_waits_for_a_port_that_another_instance_holds() {
-        let ip = IpAddr::from([127, 0, 0, 1]);
-        let holder = KernelListener::bind(SocketAddr::new(ip, 0), &ListenConfig::default())
-            .map_err(|e| e.to_string())
-            .expect("the holder binds");
-        let port = holder.local_addr().port();
-        let mut opener = bind_opener(ip);
-        let open = opener.open(OpenRequest {
-            kind: OpenKind::Accept,
-            host: None,
-            port,
-        });
-        let release = async {
-            sleep(Duration::from_millis(40)).await;
-            drop(holder);
-            // The accept of the opener starts once its bind succeeds.
-            for _ in 0..200 {
-                if tokio::net::TcpStream::connect((ip, port)).await.is_ok() {
-                    return true;
-                }
-                sleep(Duration::from_millis(5)).await;
-            }
-            false
-        };
-        let (stream, dialed) = tokio::join!(open, release);
-        assert!(dialed, "the port came free");
-        assert!(stream.is_ok(), "{:?}", stream.err());
-    }
 
     #[tokio::test]
     async fn a_used_stream_is_gone_and_a_server_opener_cannot_connect() {

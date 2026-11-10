@@ -1245,6 +1245,7 @@ dependencies = [
  "fps-io",
  "fps-module-content",
  "fps-module-ftp",
+ "fps-module-sip-rtp",
  "fps-module-tls",
  "fps-sched",
  "fps-stats",
