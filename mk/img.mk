@@ -13,6 +13,7 @@ IMG_SHELL_FILES := image/build.sh image/boot-test.sh image/tests/static-check.sh
 	image/files/usr/libexec/fps/fps-enroll-token image/tests/enroll-token-test.sh \
 	image/convert.sh image/tests/convert-test.sh \
 	image/tests/vm-run.sh image/ci-summary.sh \
+	image/tests/session-gate-test.sh image/tests/boot-loop-test.sh \
 	image/containers/run-lab.sh image/containers/static-check.sh \
 	image/containers/lab/enroll.sh image/containers/lab/prep.sh image/containers/lab/run-test.sh
 
