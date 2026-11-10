@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #181 |
 | Branch | `wp/MOD-14` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 83% (5 of 6 plan steps) |
+| Pull request | #417 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-4d1e7a (the lease on the status card renews at every checkpoint) |
-| Last verified commit | none |
+| Last verified commit | 3f97b8a |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -23,19 +23,19 @@ Ship `sip_rtp` scenarios with an INVITE dialog, SDP negotiation, and paced RTP s
 - [x] 3. Write `fixture_peer` and `capture.sh`, and record and score the fixture in the QA-01 harness
 - [x] 4. Write the RTP interval check and the Zeek check with their tests
 - [x] 5. Write the README, the log entry with the shared page notes, and the Modules page section
-- [ ] 6. Run the checks, open the PR, and wait for CI
+- [x] 6. Run the checks, open the PR, and wait for CI
 
 ## Done and verified
 
-Manifest, native crate, five scenarios, interpreter tests over an in memory UDP network, golden transcripts, `fixture_peer`, `capture.sh`, the recorded fixture `fixtures/sip_rtp.pcapng` (27 sessions: 15 SIP, 12 RTP), `rtp_check.py`, `zeek_check.py`, and their unit tests. `capture.sh` passes in the harness: nDPI 4.2.0 labels all 15 SIP and 12 RTP sessions, tshark reports no parser error, and all 24 RTP streams have a mean gap within 0.1 ms of the packet time. Zeek is not installed here, so `zeek_check.py` is tested only against synthetic logs.
+PR #417 passes all 32 CI checks at 3f97b8a, including the realism job of `sip_rtp` with a fresh capture, tshark 4.2.2, nDPI 4.2 from apt, and Zeek 9.0.1. Manifest, native crate, five scenarios, interpreter tests over an in memory UDP network, golden transcripts, `fixture_peer`, `capture.sh`, the recorded fixture `fixtures/sip_rtp.pcapng` (27 sessions: 15 SIP, 12 RTP), `rtp_check.py`, `zeek_check.py`, and their unit tests. `capture.sh` passes in the harness: nDPI 4.2.0 labels all 15 SIP and 12 RTP sessions, tshark reports no parser error, and all 24 RTP streams have a mean gap within 0.1 ms of the packet time. Zeek is not installed here, so `zeek_check.py` is tested only against synthetic logs.
 
 ## Remaining
 
-The final checks, the PR, and CI (including the first Zeek run and the nDPI 4.14 classification).
+The coordinator adds `mk/mod-sip.mk` and `.github/workflows/mod-sip.yml` from the log entry. The runtime datagram opener, the `sip_rtp` registry entry, and a per packet inter arrival property in the realism runner are follow ups.
 
 ## Next action
 
-Run the checks, open the PR, and poll CI.
+Review PR #417.
 
 ## Blockers and open questions
 
@@ -65,4 +65,5 @@ git log --oneline -3
 | 2026-11-10T17:25Z | claude-4d1e7a | claim | | Claimed #181 with a 6 step plan |
 | 2026-11-10T17:50Z | claude-4d1e7a | checkpoint | fa2f84c | Steps 1 and 2: manifest, native crate, scenarios, tests |
 | 2026-11-10T18:25Z | claude-4d1e7a | checkpoint | 541804a | Steps 3 and 4: fixture peer, recorded fixture, RTP interval and Zeek checks |
-| 2026-11-10T18:45Z | claude-4d1e7a | checkpoint | | Step 5: README, log entry, Modules page section |
+| 2026-11-10T18:45Z | claude-4d1e7a | checkpoint | 9b7fa8d | Step 5: README, log entry, Modules page section |
+| 2026-11-10T19:05Z | claude-4d1e7a | review | 3f97b8a | PR #417 opened, all 32 CI checks green (the realism job ran Zeek 9.0.1: sip.log 57 rows, no weird entry) |
