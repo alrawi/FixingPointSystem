@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #349 |
 | Branch | `wp/ENG-23` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 85% (4 of 5 plan steps) |
+| Pull request | #354 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-e23a7c, lease until 2026-11-10T02:37:54Z |
-| Last verified commit | none |
+| Last verified commit | caf65d1 |
 
 ## Goal
 
@@ -20,7 +20,7 @@
 - [x] 2. Config check for instance scenarios (entry flow, no UDP flow)
 - [x] 3. Loopback test of `modules/ftp` `mixed_session` with one data connection per transfer
 - [x] 4. Tests for the openers (connect before listener, port in use), metrics, extensions, capture
-- [ ] 5. `docs/wiki/Engine.md`, log entry, checks, PR
+- [x] 5. `docs/wiki/Engine.md`, log entry, checks, PR
 
 ## Done and verified
 
@@ -28,8 +28,8 @@
 
 ## Remaining
 
-Clippy, PR, and CI.
+Nothing.
 
 ## Next action
 
-Run clippy with `-D warnings`, open the PR, and wait for CI.
+Review PR #354.
