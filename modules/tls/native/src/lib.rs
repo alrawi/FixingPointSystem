@@ -22,6 +22,7 @@ mod authority;
 pub mod browser;
 mod error;
 mod keylog;
+pub mod mail;
 mod profile;
 mod session;
 
