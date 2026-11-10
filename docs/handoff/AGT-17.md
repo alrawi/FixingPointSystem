@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #388 |
 | Branch | `wp/AGT-17` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 60% (3 of 5 plan steps) |
+| Pull request | #401 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-1c4e6a |
-| Last verified commit | none |
+| Last verified commit | 62b0baa (CI green) |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,21 +21,22 @@ The agent registers the ssh module (MOD-11) with one `Ssh` value per session sid
 - [x] 1. Parse the digested manifest bytes in `modules.rs` and add the swap tests
 - [x] 2. Look the TLS profiles up in the TLS module registry and test that they are the module's
 - [x] 3. Register ssh, drop the http2 test exception, run ssh through the agent in `first_party.rs`
-- [ ] 4. Extend `controller_e2e.sh`, wiki page, and log entry; run the checks of AGENTS.md
-- [ ] 5. Open the PR, wait for CI, hand over for review
+- [x] 4. Extend `controller_e2e.sh`, wiki page, and log entry; run the checks of AGENTS.md
+- [x] 5. Open the PR, wait for CI, hand over for review
 
 ## Done and verified
 
 - Steps 1 to 3: `cargo test -p fps-agent --lib` (78 passed) and `--test extensions --test first_party --test tls` (all passed), with `CARGO_PROFILE_DEV_DEBUG=0`, one job.
-- Step 4 partly: the script edit is in place and cannot run here (Go does not build in this sandbox), so the controller e2e is left to CI.
+- Step 4: clippy `-D warnings`, `cargo fmt --check`, `plan.py check`, `render --check`, `lint` all pass. The controller e2e cannot run here (Go does not build in this sandbox) and ran in CI.
+- Step 5: PR #401, CI green on 62b0baa, including `rust`, `controller-e2e`, and `standalone-netns`.
 
 ## Remaining
 
-Clippy and the repository checks, the PR, and CI.
+Nothing. The first CI run (a943918) failed in `tests/first_party.rs`, where the ftp test lost 2 of 95 sessions while the new ssh test ran beside it; the tests of that file now run one at a time. It was not the AGT-18 flake.
 
 ## Next action
 
-Run `cargo clippy -p fps-agent --all-targets -- -D warnings`, the plan checks, then push and open the PR.
+The coordinator reviews and merges PR #401.
 
 ## Blockers and open questions
 
@@ -61,6 +62,8 @@ CARGO_TARGET_DIR=$PWD/target-AGT-17 CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0
 
 Expected: every test passes.
 
+- Tests that run a whole agent on the shared loopback pools in one test binary must not run in parallel on the 2 core runner: the example plan's criterion fails a run at one failed session (`failed_ratio < 0.001`).
+
 ## Session log
 
 | Time (UTC) | Agent | Event | Commit | Note |
@@ -68,3 +71,4 @@ Expected: every test passes.
 | 2026-11-10T14:25Z | claude-1c4e6a | claim | n/a | Claimed card 6769807358 |
 | 2026-11-10T15:00Z | claude-1c4e6a | checkpoint | a943918 | Manifest from the digest pass, profiles from the TLS module, ssh registered; PR #401 opened |
 | 2026-11-10T15:20Z | claude-1c4e6a | checkpoint | see branch | CI rust job failed in tests/first_party.rs (ftp 2 of 95 sessions failed while the new ssh test ran beside it, not the AGT-18 flake); the tests of that file now run one at a time |
+| 2026-11-10T15:45Z | claude-1c4e6a | finish | 62b0baa | CI green on 62b0baa; handoff set to ready for review |
