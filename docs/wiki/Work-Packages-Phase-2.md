@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 131 work packages. Packages marked critical path gate the phase.
+This page lists 132 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -142,6 +142,7 @@ flowchart LR
   RLM_16["RLM-16<br/>Deliver the realism report to the controller"]
   UI_09["UI-09<br/>Reservation holders in the agents view"]
   QA_09["QA-09<br/>The single http1 parser error of the Gate 1 run"]
+  CON_23["CON-23<br/>Catalog metrics for every realism check"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -305,6 +306,7 @@ flowchart LR
   CON_22 --> RLM_16
   CON_22 --> UI_09
   UI_06 --> UI_09
+  CON_22 --> CON_23
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -444,6 +446,7 @@ flowchart LR
 | [RLM-16](#rlm-16-deliver-the-realism-report-to-the-controller) | Deliver the realism report to the controller | S | CON-22 |  |
 | [UI-09](#ui-09-reservation-holders-in-the-agents-view) | Reservation holders in the agents view | S | CON-22, UI-06 |  |
 | [QA-09](#qa-09-the-single-http1-parser-error-of-the-gate-1-run) | The single http1 parser error of the Gate 1 run | S | QA-04 |  |
+| [CON-23](#con-23-catalog-metrics-for-every-realism-check) | Catalog metrics for every realism check | S | CON-22 |  |
 
 ## CON Contracts
 
@@ -693,6 +696,23 @@ Deliverables.
 Acceptance.
 
 - [ ] validate.py and the openapi-breaking check pass, and the change entry lists the consumers (controller, realism runner, CLI, UI, SDK).
+
+### CON-23 Catalog metrics for every realism check
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CON-22
+- **Paths.** `contracts/`
+
+Only the conformance and temporal checks of the realism report carry catalog metrics, so a failing parser errors, encryption, content, session structure, mix accuracy (beyond the mix series of CON-20) or transport behavior check adds no RealismResult and RunReport.realism never shows it (CON-22 finding). The owner chose catalog metrics per check kind on 2026-11-10 over a separate verdict list. Needs owner approval as a contract change (given with that choice).
+
+Deliverables.
+
+- Additive metric catalog entries (and labels where needed) so every check kind of realism-report.schema.json reports at least one metric whose value and target say whether it passed, the mapping rule of CON-22 extended to them, and the realism report schema requiring those metrics for each check.
+
+Acceptance.
+
+- [ ] validate.py passes, the catalog and schema examples cover each check kind with a passing and a failing value, and the change entry lists the consumers (realism runner RLM, controller CTL-41, fps-stats tables).
 
 ## OPS Repository and swarm tooling
 

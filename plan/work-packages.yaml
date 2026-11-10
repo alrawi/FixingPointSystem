@@ -3468,3 +3468,21 @@ work_packages:
       - The suite keeps the parser findings of a failing run as an artifact (which parser, which packet), the cause is found (a session cut by the capture stop, a parser limit, or a real encoding error), and it is fixed where it lies or the suite excludes sessions cut at the capture boundary with a stated rule.
     acceptance:
       - The suite passes 10 times in a row in CI and still fails on a capture with a corrupted HTTP message.
+
+  - id: CON-23
+    title: Catalog metrics for every realism check
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [CON-22]
+    paths: [contracts/]
+    summary: >-
+      Only the conformance and temporal checks of the realism report carry catalog metrics, so a failing parser
+      errors, encryption, content, session structure, mix accuracy (beyond the mix series of CON-20) or
+      transport behavior check adds no RealismResult and RunReport.realism never shows it (CON-22 finding).
+      The owner chose catalog metrics per check kind on 2026-11-10 over a separate verdict list. Needs owner
+      approval as a contract change (given with that choice).
+    deliverables:
+      - Additive metric catalog entries (and labels where needed) so every check kind of realism-report.schema.json reports at least one metric whose value and target say whether it passed, the mapping rule of CON-22 extended to them, and the realism report schema requiring those metrics for each check.
+    acceptance:
+      - validate.py passes, the catalog and schema examples cover each check kind with a passing and a failing value, and the change entry lists the consumers (realism runner RLM, controller CTL-41, fps-stats tables).
