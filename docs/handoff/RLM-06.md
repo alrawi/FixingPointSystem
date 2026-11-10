@@ -9,8 +9,8 @@
 | Issue | #188 |
 | Branch | `wp/RLM-06` |
 | Pull request | #353 |
-| Status | in progress |
-| Progress | 90% (5 of 5 plan steps, CI pending) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-9c41e7, lease until 2026-11-10T02:39:45Z |
 | Last verified commit | d7b75fc |
 
@@ -37,11 +37,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-CI on the pull request. Known gaps: the check does not compare think times inside a session, and comparisons over all sessions or over both directions have no catalog metric label.
+Nothing for this package. CI on commit 75635b1 is green. Known gaps: the check does not compare think times inside a session, and comparisons over all sessions or over both directions have no catalog metric label.
 
 ## Next action
 
-Wait for CI on pull request #353 and fix failures inside `realism/` and the wiki page.
+The coordinator reviews and merges pull request #353.
 
 ## Blockers and open questions
 
@@ -76,3 +76,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-10T02:10Z | claude-9c41e7 | claim | | claimed #188 |
 | 2026-11-10T02:30Z | claude-9c41e7 | checkpoint | d7b75fc | code, tests, docs pushed, pull request #353 opened |
+| 2026-11-10T01:40Z | claude-9c41e7 | review | 75635b1 | CI green on pull request #353, status ready for review |
