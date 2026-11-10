@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #391 |
 | Branch | `wp/CTL-39` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #411 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-39c7a1, lease until 2026-11-10T18:55:02Z |
-| Last verified commit | none |
+| Last verified commit | dab9d57 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -27,7 +27,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Read report.go, scenarios.go, criteria.go, rest.go and the generated types
 - [x] 2. Map scenarios, where and stored realism in Report.API
 - [x] 3. Tests with literal values
-- [ ] 4. Wiki ingest, log entry, checks, PR
+- [x] 4. Wiki ingest, log entry, checks, PR
 
 ## Done and verified
 
@@ -35,11 +35,11 @@ Steps 1 to 3 are written. `gofmt -l controller/internal/report` prints nothing. 
 
 ## Remaining
 
-Open the PR, wait for CI, fix failures. Golden files were edited by hand, so a CI diff on testdata is the first thing to check.
+Nothing. CI is green at dab9d57.
 
 ## Next action
 
-Open the pull request, then poll CI.
+Review PR 411.
 
 ## Blockers and open questions
 
@@ -70,3 +70,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T18:26Z | claude-39c7a1 | claim | - | Claimed #391, branch created from origin/main |
+| 2026-11-10T18:50Z | claude-39c7a1 | finish | dab9d57 | PR 411 opened, CI green (ctl, ci, cli-go, agt, qa-gate1, ops, containers, image) |
