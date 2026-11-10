@@ -20,9 +20,39 @@ rand_pcg = "0.3"
 h2 = "0.4"
 http = "1"
 bytes = "1"
-tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "test-util", "time"] }
+# The fixture_peer example runs the scenarios over kernel sockets.
+fps-backend-kernel = { path = "../../../engine/fps-backend-kernel" }
+fps-golden = { path = "../../../tests/golden/rust" }
 # The flow test runs both sides of a scenario through the interpreter.
 fps-interp = { path = "../../../engine/fps-interp" }
 fps-io = { path = "../../../engine/fps-io" }
+# The https scenarios upgrade their sessions to TLS with the profiles of the TLS module (MOD-04).
+fps-module-tls = { path = "../../tls/native" }
+# Reads the CA certificate of the fixture peers, and names the root store type of the TLS module.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
 serde_yaml = { package = "serde_norway", version = "0.9" }
+
+# The module layout keeps the tests of the scenarios in modules/http2/tests, next
+# to the scenarios they exercise, so the targets point one directory up. The
+# tests of the functions stay in native/tests.
+[[test]]
+name = "scenarios"
+path = "../tests/scenarios.rs"
+
+[[test]]
+name = "interop"
+path = "../tests/interop.rs"
+
+[[test]]
+name = "https"
+path = "../tests/https.rs"
+
+[[test]]
+name = "transcript"
+path = "../tests/transcript.rs"
+
+[[test]]
+name = "fixture"
+path = "../tests/fixture.rs"

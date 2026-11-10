@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Workflow of the http2 module under modules/http2/. The rust job of ci.yml runs
+# its Rust tests. The module job validates the manifest and scenarios and scores
+# the committed fixture with nDPI and tshark. The harness job records a fresh
+# capture in the QA-01 namespace harness over kernel sockets and scores it. The
+# fuzz job runs the 60 s fuzz test of the frame and HPACK parsers.
+#
+# nDPI 4.2.0, the libndpi-bin of ubuntu-24.04, has no HTTP/2 protocol and reports
+# every cleartext HTTP/2 session as Unknown. The jobs that score a capture
+# therefore build ndpiReader from the pinned nDPI tag in NDPI_REF and select it
+# with FPS_NDPI_REAL_READER. The realism runner reads comma separated flow files and
+# newer nDPI writes pipes, so FPS_NDPI_READER names the wrapper
+# modules/http2/fixtures/ndpi_reader_compat.py. The jobs fail early when the build
+# does not list HTTP2.
+# All jobs run on GitHub-hosted runners.
+name: mod-http2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - modules/http2/**
+      - modules/tls/**
+      - engine/**
+      - realism/**
+      - tests/harness/**
+      - tools/contracts/**
+      - contracts/schemas/**
+      - mk/mod-http2.mk
+      - .github/workflows/mod-http2.yml
+  pull_request:
+    paths:
+      - modules/http2/**
+      - modules/tls/**
+      - engine/**
+      - realism/**
+      - tests/harness/**
+      - tools/contracts/**
+      - contracts/schemas/**
+      - mk/mod-http2.mk
+      - .github/workflows/mod-http2.yml
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+  NDPI_REF: "4.14"
+
+jobs:
+  module:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install tshark and the nDPI build tools
+        run: |
+          echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark build-essential autoconf automake libtool pkg-config libpcap-dev libjson-c-dev
+      - name: Build ndpiReader from the pinned nDPI tag
+        run: |
+          git clone -q --depth 1 --branch "$NDPI_REF" https://github.com/ntop/nDPI.git "$RUNNER_TEMP/ndpi"
+          cd "$RUNNER_TEMP/ndpi"
+          ./autogen.sh >/dev/null
+          make -j"$(nproc)" >/dev/null
+          ./example/ndpiReader -H 2>&1 | grep -w HTTP2 || { ./example/ndpiReader -H 2>&1 | grep -i http | head; exit 1; }
+          echo "FPS_NDPI_REAL_READER=$RUNNER_TEMP/ndpi/example/ndpiReader" >> "$GITHUB_ENV"
+          echo "FPS_NDPI_READER=$GITHUB_WORKSPACE/modules/http2/fixtures/ndpi_reader_compat.py" >> "$GITHUB_ENV"
+      - run: python -m pip install -r tools/contracts/requirements.txt
+      - run: make lint-mod-http2 PYTHON=python
+      - name: Score the committed fixture
+        run: |
+          python -m realism score --pcap modules/http2/fixtures/http2.pcapng \
+            --labels modules/http2/fixtures/expected.yaml --parsers tshark --output report.json
+          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))'
+      - name: Check the decrypted HTTPS sessions of the committed fixture
+        run: python modules/http2/fixtures/decrypted_check.py modules/http2/fixtures/http2.pcapng
+
+  harness:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the harness and realism tools
+        run: |
+          echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            iproute2 tcpdump ethtool tshark python3-yaml \
+            build-essential autoconf automake libtool pkg-config libpcap-dev libjson-c-dev git
+      - name: Build ndpiReader from the pinned nDPI tag
+        run: |
+          git clone -q --depth 1 --branch "$NDPI_REF" https://github.com/ntop/nDPI.git "$RUNNER_TEMP/ndpi"
+          cd "$RUNNER_TEMP/ndpi"
+          ./autogen.sh >/dev/null
+          make -j"$(nproc)" >/dev/null
+          ./example/ndpiReader -H 2>&1 | grep -w HTTP2 || { ./example/ndpiReader -H 2>&1 | grep -i http | head; exit 1; }
+      - run: cargo build -p fps-module-http2 --example fixture_peer
+      - name: Record and score a fresh capture in the namespace harness
+        run: |
+          sudo env FPS_FIXTURE_PEER="$PWD/target/debug/examples/fixture_peer" \
+            FPS_NDPI_REAL_READER="$RUNNER_TEMP/ndpi/example/ndpiReader" \
+            FPS_NDPI_READER="$PWD/modules/http2/fixtures/ndpi_reader_compat.py" \
+            modules/http2/fixtures/capture.sh "$RUNNER_TEMP/fixture"
+          python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))' \
+            "$RUNNER_TEMP/fixture/http2.report.json"
+
+  fuzz-60s:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Fuzz the frame and HPACK parsers for 60 seconds
+        run: cargo test -p fps-module-http2 --release --test fuzz -- --ignored fuzz_60s --nocapture

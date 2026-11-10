@@ -1,0 +1,161 @@
+scenario: h2c_browse
+description: >-
+  A page view over HTTP/2 with prior knowledge on a cleartext port, the way curl
+  with --http2-prior-knowledge or nghttp2 clients load a page. The client opens
+  with the connection preface, a SETTINGS frame that disables server push
+  (SETTINGS_ENABLE_PUSH 0), a connection level WINDOW_UPDATE, and the request for
+  the page on stream 1. The server answers with its own SETTINGS and a
+  WINDOW_UPDATE that opens the connection window, acknowledges the client
+  SETTINGS, and sends the page. After a think time the client requests six
+  embedded objects at once on the odd streams 3 to 13, so six requests are in
+  flight on one connection. The server answers with six HEADERS frames and then
+  interleaves the DATA frames of the six objects, one frame per stream in every
+  round. The client tops up the connection window and sends a PING, which the
+  server acknowledges, and the server ends the connection with a graceful
+  shutdown, a GOAWAY frame that names the largest stream id and then a GOAWAY
+  frame with the last stream that it processed. Every side reads the frames of its peer
+  with two expect actions per frame, as the http2 template functions document.
+vars:
+  host: www.example.test
+  server_port: 8082
+  page_size: 24000
+  chunk_size: 4096
+  rounds: 3
+  tail_min: 300
+  tail_max: 4000
+  window_bump: 65536
+  request_headers: |-
+    user-agent: curl/8.5.0
+    accept: */*
+    accept-encoding: gzip, deflate
+  object_headers: |-
+    user-agent: curl/8.5.0
+    accept: */*
+    accept-encoding: gzip, deflate
+    referer: http://www.example.test/
+flows:
+  - id: browse
+    module: http2
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - set: { page_request: ":method: GET\n:scheme: http\n:authority: {{ vars.host }}\n:path: /\n{{ vars.request_headers }}" }
+      - send: "{{ http2.preface() }}{{ http2.settings(max_concurrent_streams=100, enable_push=0, initial_window_size=33554432) }}{{ http2.window_update(0, 33488897) }}{{ http2.headers(1, vars.page_request, end_stream=true) }}"
+      # The SETTINGS frame of the server, then its WINDOW_UPDATE for the connection.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      - expect: { bytes: 13, timeout_ms: 5000 }
+      - send: "{{ http2.settings_ack() }}"
+      # The SETTINGS ACK of the server, a header without a payload.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      # The response HEADERS frame of the page.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - set:
+          length: "{{ http2.frame_length(last) }}"
+          flags: "{{ http2.frame_field(last, 'flags') }}"
+      - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+      - set: { status: "{{ http2.header_value(http2.headers_decode(last, flags=vars.flags), ':status') }}" }
+      # The DATA frames of the page, as many as the server writes for page_size.
+      - loop:
+          count: "{{ http2.data_frames(vars.page_size) }}"
+          do:
+            - expect: { bytes: 9, timeout_ms: 5000 }
+            - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      - delay: { dist: lognormal, mu: 3.5, sigma: 0.7, unit: ms }
+      # Six requests in flight at once, one HEADERS frame per odd stream.
+      - set:
+          r3: ":method: GET\n:scheme: http\n:authority: {{ vars.host }}\n:path: /static/site{{ rand_int(1, 99) }}.css\n{{ vars.object_headers }}"
+          r5: ":method: GET\n:scheme: http\n:authority: {{ vars.host }}\n:path: /static/app{{ rand_int(1, 99) }}.js\n{{ vars.object_headers }}"
+          r7: ":method: GET\n:scheme: http\n:authority: {{ vars.host }}\n:path: /static/vendor{{ rand_int(1, 99) }}.js\n{{ vars.object_headers }}"
+          r9: ":method: GET\n:scheme: http\n:authority: {{ vars.host }}\n:path: /static/img{{ rand_int(1, 9999) }}.png\n{{ vars.object_headers }}"
+          r11: ":method: GET\n:scheme: http\n:authority: {{ vars.host }}\n:path: /static/img{{ rand_int(1, 9999) }}.png\n{{ vars.object_headers }}"
+          r13: ":method: GET\n:scheme: http\n:authority: {{ vars.host }}\n:path: /static/font{{ rand_int(1, 9) }}.woff2\n{{ vars.object_headers }}"
+      - send: "{{ http2.headers(3, vars.r3, end_stream=true) }}{{ http2.headers(5, vars.r5, end_stream=true) }}{{ http2.headers(7, vars.r7, end_stream=true) }}{{ http2.headers(9, vars.r9, end_stream=true) }}{{ http2.headers(11, vars.r11, end_stream=true) }}{{ http2.headers(13, vars.r13, end_stream=true) }}"
+      # The six response HEADERS frames.
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: 9, timeout_ms: 5000 }
+            - set:
+                length: "{{ http2.frame_length(last) }}"
+                flags: "{{ http2.frame_field(last, 'flags') }}"
+            - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+            - set: { got: "{{ http2.headers_decode(last, flags=vars.flags) }}" }
+      # The interleaved DATA frames, one per stream in every round, then the last frame of each stream.
+      - loop:
+          count: "{{ vars.rounds }}"
+          do:
+            - loop:
+                count: 6
+                do:
+                  - expect: { bytes: 9, timeout_ms: 5000 }
+                  - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: 9, timeout_ms: 5000 }
+            - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      # Top up the connection window and probe the connection with a PING.
+      - send: "{{ http2.window_update(0, vars.window_bump) }}{{ http2.ping() }}"
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - expect: { bytes: 8, timeout_ms: 5000 }
+      # The two GOAWAY frames of the graceful shutdown.
+      - expect: { bytes: 17, timeout_ms: 5000 }
+      - expect: { bytes: 17, timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      # The server speaks after the client preface, as servers do, so the client is the first
+      # side to send on the connection.
+      - expect: { bytes: 24, timeout_ms: 5000 }
+      - send: "{{ http2.settings(max_concurrent_streams=128, initial_window_size=65536) }}{{ http2.window_update(0, 2147418112) }}"
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      - set: { client_window: "{{ http2.settings_value(last, 'initial_window_size') }}" }
+      # The WINDOW_UPDATE of the client.
+      - expect: { bytes: 13, timeout_ms: 5000 }
+      # The request for the page.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - set:
+          length: "{{ http2.frame_length(last) }}"
+          stream: "{{ http2.frame_stream(last) }}"
+          flags: "{{ http2.frame_field(last, 'flags') }}"
+      - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+      - set: { path: "{{ http2.header_value(http2.headers_decode(last, flags=vars.flags), ':path') }}" }
+      - set: { page_response: ":status: 200\nserver: fps-h2\ncontent-type: text/html; charset=utf-8\ncontent-length: {{ vars.page_size }}\ncache-control: no-cache\nvary: accept-encoding" }
+      - send: "{{ http2.settings_ack() }}{{ http2.headers(vars.stream, vars.page_response) }}{{ http2.data(vars.stream, fill(vars.page_size), end_stream=true) }}"
+      # The SETTINGS ACK of the client.
+      - expect: { bytes: 9, timeout_ms: 30000 }
+      # The six requests.
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: 9, timeout_ms: 30000 }
+            - set:
+                length: "{{ http2.frame_length(last) }}"
+                flags: "{{ http2.frame_field(last, 'flags') }}"
+            - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+            - set: { got: "{{ http2.headers_decode(last, flags=vars.flags) }}" }
+      - set:
+          t3: "{{ rand_int(vars.tail_min, vars.tail_max) }}"
+          t5: "{{ rand_int(vars.tail_min, vars.tail_max) }}"
+          t7: "{{ rand_int(vars.tail_min, vars.tail_max) }}"
+          t9: "{{ rand_int(vars.tail_min, vars.tail_max) }}"
+          t11: "{{ rand_int(vars.tail_min, vars.tail_max) }}"
+          t13: "{{ rand_int(vars.tail_min, vars.tail_max) }}"
+      - send: "{{ http2.headers(3, ':status: 200\nserver: fps-h2\ncontent-type: text/css\ncache-control: public, max-age=31536000') }}{{ http2.headers(5, ':status: 200\nserver: fps-h2\ncontent-type: text/javascript\ncache-control: public, max-age=31536000') }}{{ http2.headers(7, ':status: 200\nserver: fps-h2\ncontent-type: text/javascript\ncache-control: public, max-age=31536000') }}{{ http2.headers(9, ':status: 200\nserver: fps-h2\ncontent-type: image/png\ncache-control: public, max-age=31536000') }}{{ http2.headers(11, ':status: 200\nserver: fps-h2\ncontent-type: image/png\ncache-control: public, max-age=31536000') }}{{ http2.headers(13, ':status: 200\nserver: fps-h2\ncontent-type: font/woff2\ncache-control: public, max-age=31536000') }}"
+      - loop:
+          count: "{{ vars.rounds }}"
+          do:
+            - send: "{{ http2.data(3, fill(vars.chunk_size)) }}{{ http2.data(5, fill(vars.chunk_size)) }}{{ http2.data(7, fill(vars.chunk_size)) }}{{ http2.data(9, fill(vars.chunk_size)) }}{{ http2.data(11, fill(vars.chunk_size)) }}{{ http2.data(13, fill(vars.chunk_size)) }}"
+            - delay: { dist: exponential, mean_ms: 2 }
+      - send: "{{ http2.data(3, fill(vars.t3), end_stream=true) }}{{ http2.data(5, fill(vars.t5), end_stream=true) }}{{ http2.data(7, fill(vars.t7), end_stream=true) }}{{ http2.data(9, fill(vars.t9), end_stream=true) }}{{ http2.data(11, fill(vars.t11), end_stream=true) }}{{ http2.data(13, fill(vars.t13), end_stream=true) }}"
+      # The WINDOW_UPDATE and the PING of the client, which the server acknowledges.
+      - expect: { bytes: 13, timeout_ms: 30000 }
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - expect: { bytes: 8, timeout_ms: 5000 }
+      - send: "{{ http2.ping_ack(last) }}"
+      - delay: { dist: exponential, mean_ms: 200 }
+      - send: "{{ http2.goaway(2147483647, 'NO_ERROR') }}"
+      - delay: { dist: exponential, mean_ms: 20 }
+      - send: "{{ http2.goaway(13, 'NO_ERROR') }}"
+      - close: fin

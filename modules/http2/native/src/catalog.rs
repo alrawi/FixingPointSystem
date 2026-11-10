@@ -83,7 +83,7 @@ pub const PREFACE: FunctionSpec = FunctionSpec {
 /// `http2.settings`, a SETTINGS frame.
 pub const SETTINGS: FunctionSpec = FunctionSpec {
     name: "settings",
-    summary: "A SETTINGS frame with the listed parameters in identifier order. A value of -1 leaves its parameter out, and a call without values renders an empty SETTINGS frame. A header_table_size also sets the largest dynamic table that this side accepts from its peer.",
+    summary: "A SETTINGS frame with the listed parameters in identifier order. A value of -1 leaves a parameter out. A header_table_size also sets the largest dynamic table that this side accepts.",
     params: &[
         opt("header_table_size", ValueType::Int, DefaultValue::Int(-1)),
         opt("enable_push", ValueType::Int, DefaultValue::Int(-1)),
@@ -112,7 +112,7 @@ pub const SETTINGS_ACK: FunctionSpec = FunctionSpec {
 /// `http2.headers`, a HEADERS frame and the CONTINUATION frames after it.
 pub const HEADERS: FunctionSpec = FunctionSpec {
     name: "headers",
-    summary: "A HEADERS frame with the header list HPACK encoded, followed by CONTINUATION frames when the block exceeds max_frame_size. The list holds one 'name: value' per line, and names are lowercase. The dynamic table persists across calls of the same session side. huffman is auto (code a string when that is shorter), always, or never, and index is auto (index fields except secrets), off (never index), or all. table_size of 0 or more starts the block with a dynamic table size update.",
+    summary: "A HEADERS frame with the HPACK encoded list 'name: value' per line, and CONTINUATION frames past max_frame_size. huffman: auto, always, never. index: auto, off, all.",
     params: &[
         req("stream", ValueType::Int),
         req("headers", ValueType::Bytes),
@@ -143,7 +143,7 @@ pub const HEADERS: FunctionSpec = FunctionSpec {
 /// `http2.data`, one or more DATA frames.
 pub const DATA: FunctionSpec = FunctionSpec {
     name: "data",
-    summary: "The data as DATA frames of at most max_frame_size octets each, with END_STREAM on the last one when end_stream is set. A padding of 0 or more adds that many zero octets to every frame, and -1 sends no padding.",
+    summary: "The data as DATA frames of at most max_frame_size octets, with END_STREAM on the last one when end_stream is set. A padding of 0 or more pads every frame, and -1 sends none.",
     params: &[
         req("stream", ValueType::Int),
         req("data", ValueType::Bytes),
@@ -231,7 +231,7 @@ pub const FRAME_STREAM: FunctionSpec = FunctionSpec {
 /// `http2.frame_field`, one field of a frame header.
 pub const FRAME_FIELD: FunctionSpec = FunctionSpec {
     name: "frame_field",
-    summary: "One field of the 9 octet frame header: length, stream, flags, and type_code as decimal digits, type as the frame type name such as HEADERS, and end_stream, end_headers, ack, padded, and priority as true or false.",
+    summary: "One field of the 9 octet frame header: length, stream, flags, type_code, type (the name), or the flags end_stream, end_headers, ack, padded, priority as true or false.",
     params: &[req("header", ValueType::Bytes), req("field", ValueType::Text)],
 };
 
@@ -248,7 +248,7 @@ pub const DATA_PAYLOAD: FunctionSpec = FunctionSpec {
 /// `http2.headers_decode`, the header list of a header block.
 pub const HEADERS_DECODE: FunctionSpec = FunctionSpec {
     name: "headers_decode",
-    summary: "Takes the payload of a HEADERS frame (type 1) or of a CONTINUATION frame (type 9) with the flags of its header, and renders the header list, one 'name: value' per line, when the frame has END_HEADERS. Before that it renders nothing and keeps the fragment. It updates the HPACK decoder of this side, so each block is decoded once, in the order it arrived.",
+    summary: "Takes a HEADERS or CONTINUATION payload and renders the 'name: value' list at END_HEADERS. It updates the HPACK decoder, so decode each block once, in order.",
     params: &[
         req("payload", ValueType::Bytes),
         opt("flags", ValueType::Int, DefaultValue::Int(4)),
@@ -270,7 +270,7 @@ pub const HEADER_VALUE: FunctionSpec = FunctionSpec {
 /// `http2.settings_value`, one parameter of a SETTINGS frame.
 pub const SETTINGS_VALUE: FunctionSpec = FunctionSpec {
     name: "settings_value",
-    summary: "The value of a setting in a SETTINGS frame payload as decimal digits. The name is one of header_table_size, enable_push, max_concurrent_streams, initial_window_size, max_frame_size, and max_header_list_size. A setting that the frame omits gives its initial value, and -1 stands for no limit.",
+    summary: "The value of a named setting in a SETTINGS frame payload as decimal digits. A setting that the frame omits gives its initial value, and -1 stands for no limit.",
     params: &[req("payload", ValueType::Bytes), req("name", ValueType::Text)],
 };
 
@@ -292,7 +292,7 @@ pub const DATA_FRAMES: FunctionSpec = FunctionSpec {
 /// `http2.headers_frames`, the number of frames that a header block takes.
 pub const HEADERS_FRAMES: FunctionSpec = FunctionSpec {
     name: "headers_frames",
-    summary: "The number of frames, one HEADERS and its CONTINUATION frames, that http2.headers renders for the header list on a connection that has sent no header block yet, as decimal digits. It is exact for the first block of a connection and for every block that a sender writes with index off, because then the dynamic table cannot change the size. With indexing a later block can be shorter.",
+    summary: "The number of frames that http2.headers renders for the list, as decimal digits. It is exact for the first block of a connection and for blocks with index off, and later indexed blocks can be shorter.",
     params: &[
         req("headers", ValueType::Bytes),
         opt(
