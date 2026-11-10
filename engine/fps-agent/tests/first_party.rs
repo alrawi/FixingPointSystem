@@ -301,7 +301,9 @@ fn repeat(name: &str, body: fn()) {
 // AGT-18: each repeat test runs one of the tests above 50 times in a row, and
 // the three of them run beside each other, as the tests above do in `cargo
 // test`. They take about 3 seconds a round, so they are ignored by default:
-// `cargo test -p fps-agent --test first_party -- --ignored repeat`.
+// `cargo test -p fps-agent --test first_party -- --ignored repeat`. Do not run
+// a repeat test beside the test that it repeats (`--include-ignored`): both use
+// the same server ports and the same plan file, so the second one fails to bind.
 
 #[test]
 fn repeat_the_ftp_test() {
