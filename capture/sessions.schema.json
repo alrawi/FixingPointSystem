@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "source", "parameters", "summary", "sessions"],
   "properties": {
-    "schema_version": { "const": "1.0" },
+    "schema_version": { "enum": ["1.0", "1.1"], "description": "1.1 documents carry a scrub record." },
     "source": {
       "type": "object",
       "additionalProperties": false,
@@ -15,6 +15,7 @@
       "properties": {
         "file": { "type": "string", "description": "Base name of the capture file." },
         "format": { "enum": ["pcap", "pcapng"] },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the capture file." },
         "frames": { "type": "integer", "minimum": 0, "description": "Frames read, after the interface filter." },
         "packets": { "type": "integer", "minimum": 0, "description": "Frames decoded to TCP segments or UDP datagrams." },
         "skipped_frames": {
@@ -60,6 +61,7 @@
         "udp": { "type": "integer", "minimum": 0 }
       }
     },
+    "scrub": { "$ref": "#/$defs/scrub" },
     "sessions": {
       "type": "array",
       "description": "Ordered by start time. Ids start at 1 and follow that order.",
@@ -67,6 +69,63 @@
     }
   },
   "$defs": {
+    "scrub": {
+      "type": "object",
+      "description": "Written by `capture scrub` (CAP-03), and only by it. The scenario generator sets `scrubbed: true` in a manifest only for an intact record. It never holds a value that was removed.",
+      "additionalProperties": false,
+      "required": ["tool", "version", "date", "consent", "capture_sha256", "input_sha256", "seed", "options", "rules", "learned", "payload_bytes", "opaque_bytes", "content_sha256"],
+      "properties": {
+        "tool": { "const": "capture scrub" },
+        "version": { "type": "string", "description": "Version of the scrubber." },
+        "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "consent": { "type": "string", "minLength": 1 },
+        "capture_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "Digest of the capture file, when the sessions document recorded it." },
+        "input_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Digest of the unscrubbed sessions file." },
+        "seed": { "type": "integer" },
+        "options": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hostnames", "extra_hostnames", "literals", "dropped_ports", "dropped_sessions"],
+          "properties": {
+            "hostnames": { "type": "boolean" },
+            "extra_hostnames": { "type": "integer", "minimum": 0 },
+            "literals": { "type": "integer", "minimum": 0 },
+            "dropped_ports": { "type": "array", "items": { "type": "integer" } },
+            "dropped_sessions": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "version", "applied"],
+            "properties": {
+              "id": { "type": "string" },
+              "version": { "type": "integer", "minimum": 1 },
+              "applied": { "type": "integer", "minimum": 0, "description": "Replacements that this rule made." }
+            }
+          }
+        },
+        "learned": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "description": "How many distinct addresses, email addresses, host names and other values were replaced."
+        },
+        "payload_bytes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["before", "after", "delta"],
+          "properties": {
+            "before": { "type": "integer", "minimum": 0 },
+            "after": { "type": "integer", "minimum": 0 },
+            "delta": { "type": "integer" }
+          }
+        },
+        "opaque_bytes": { "type": "integer", "minimum": 0, "description": "Bytes of binary payload, which the scrubber only sweeps for learned values." },
+        "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the document without this field, as sorted compact JSON. It catches an edit after scrubbing; it does not stop someone who recomputes it." }
+      }
+    },
     "endpoint": {
       "type": "object",
       "additionalProperties": false,
