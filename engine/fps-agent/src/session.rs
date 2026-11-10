@@ -837,6 +837,7 @@ impl Shared {
             max_duration,
             &ports,
             seed,
+            cmd.export_tls_keys,
         );
         drop(core);
         match started {
@@ -1040,8 +1041,14 @@ impl Shared {
                 ),
             ));
         }
-        let prepared = run::prepare(plan, &self.cfg.modules, self.cfg.sides, &self.cfg.policy)
-            .map_err(|e| (code_of(&e), chain(&e)))?;
+        let prepared = run::prepare_with(
+            plan,
+            &self.cfg.modules,
+            self.cfg.sides,
+            &self.cfg.policy,
+            &self.captures.key_tap(),
+        )
+        .map_err(|e| (code_of(&e), chain(&e)))?;
         for warning in prepared.warnings() {
             tracing::warn!(warning = %warning, "module signature");
         }

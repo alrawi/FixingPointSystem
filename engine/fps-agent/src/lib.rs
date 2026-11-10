@@ -39,6 +39,7 @@ pub mod proto;
 pub mod run;
 pub mod session;
 pub mod sysroot;
+pub mod tls;
 pub mod trust;
 pub mod udp;
 

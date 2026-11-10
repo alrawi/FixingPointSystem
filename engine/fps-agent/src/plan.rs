@@ -399,6 +399,11 @@ pub struct Criterion {
     pub op: CriterionOp,
     /// The threshold.
     pub value: f64,
+    /// Label filter: a series counts when it carries every label given here
+    /// with that value. `side` (`client` or `server`) picks the side of the
+    /// process, and without it the criterion counts the client side, or the
+    /// server side in a process without client workers.
+    pub labels: std::collections::BTreeMap<String, String>,
 }
 
 /// Errors of reading a plan file.
