@@ -1005,6 +1005,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fps-module-http2"
+version = "0.0.1"
+dependencies = [
+ "bytes",
+ "fps-flow",
+ "h2",
+ "http",
+ "rand 0.8.8",
+ "rand_pcg",
+ "serde_norway",
+ "tokio",
+]
+
+[[package]]
 name = "fps-module-imap"
 version = "0.0.1"
 dependencies = [

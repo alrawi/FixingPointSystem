@@ -1,0 +1,25 @@
+[package]
+name = "fps-module-http2"
+description = "Native template functions of the http2 module: HTTP/2 frames and HPACK (decision D10)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+fps-flow = { path = "../../../engine/fps-flow" }
+# RngCore appears in the signature of the TemplateFn trait.
+rand = { version = "0.8", default-features = false }
+
+[dev-dependencies]
+# The fuzz tests draw their inputs from a seeded generator.
+rand_pcg = "0.3"
+# The interop tests run the frames of this crate through the h2 crate, which is
+# already in Cargo.lock through the HTTP stack of the engine.
+h2 = "0.4"
+http = "1"
+bytes = "1"
+tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }
+# serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
+serde_yaml = { package = "serde_norway", version = "0.9" }
