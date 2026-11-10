@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #422 |
 | Branch | `wp/ENG-26` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 80% (5 of 6 plan steps) |
+| Pull request | #437 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-d50d53, lease until 2026-11-11T00:05:07Z |
-| Last verified commit | none |
+| Last verified commit | 021bc52 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -23,7 +23,7 @@ Give the instance runner of `engine/fps-runtime` a datagram opener (bound server
 - [x] 3. Data port collision fix
 - [x] 4. Runtime tests: SIP call with RTP through the instance runner, two instances on one drawn port
 - [x] 5. Checks, log entry, Engine page
-- [ ] 6. PR and CI
+- [x] 6. PR and CI
 
 ## Done and verified
 
@@ -34,11 +34,11 @@ Give the instance runner of `engine/fps-runtime` a datagram opener (bound server
 
 ## Remaining
 
-Open the PR, wait for CI, `fps_swarm.py review`. `cargo check -p fps-agent --tests` was started to show that the agent still builds against the runtime.
+Nothing. `cargo check -p fps-agent --tests` passes against the new runtime. CI is green at 021bc52.
 
 ## Next action
 
-Open the pull request and poll CI.
+Review and merge PR #437.
 
 ## Blockers and open questions
 
@@ -67,3 +67,4 @@ CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=1 cargo test -p fps-runtime
 |---|---|---|---|---|
 | 2026-11-10T22:36Z | claude-d50d53 | claim | none | Claimed #422 with card 6781155090 |
 | 2026-11-10T23:10Z | claude-d50d53 | checkpoint | see branch | Datagram opener, shared data ports, tests, Engine page, log entry |
+| 2026-11-10T23:12Z | claude-d50d53 | finish | 021bc52 | PR #437 opened, CI green, set to ready for review |
