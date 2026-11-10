@@ -48,7 +48,7 @@ const (
 
 // pendingOps are the operations that no package implements yet.
 var pendingOps = []string{
-	"attachRealismReport", "getRunMetrics", "streamRunMetrics",
+	"getRunMetrics", "streamRunMetrics",
 }
 
 func testConfig(t *testing.T, dataDir string) app.Config {
@@ -228,6 +228,11 @@ func (f *fakeReport) GetRunReport(w http.ResponseWriter, _ *http.Request, id api
 	w.WriteHeader(http.StatusTeapot)
 }
 
+func (f *fakeReport) AttachRealismReport(w http.ResponseWriter, _ *http.Request, id api.Id) {
+	f.calls = append(f.calls, "attach "+id)
+	w.WriteHeader(http.StatusTeapot)
+}
+
 func TestNewServesRunReports(t *testing.T) {
 	c := newController(t, testConfig(t, ""))
 	if c.Evaluator == nil {
@@ -250,7 +255,10 @@ func TestSetReportRoutesReportOperation(t *testing.T) {
 			t.Errorf("GET %s: status %d, want 418", url, rec.Code)
 		}
 	}
-	if want := []string{"r1 default", "r1 csv"}; !slices.Equal(f.calls, want) {
+	if rec := do(t, h, http.MethodPut, "/v1/runs/r1/realism", adminToken, ""); rec.Code != http.StatusTeapot {
+		t.Errorf("PUT /v1/runs/r1/realism: status %d, want 418", rec.Code)
+	}
+	if want := []string{"r1 default", "r1 csv", "attach r1"}; !slices.Equal(f.calls, want) {
 		t.Errorf("report calls = %v, want %v", f.calls, want)
 	}
 }

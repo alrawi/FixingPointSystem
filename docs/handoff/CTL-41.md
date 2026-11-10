@@ -6,7 +6,7 @@
 | Branch | `wp/CTL-41` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-8d6916, lease until 2026-11-11T00:05:07Z |
 | Last verified commit | none |
 
@@ -18,23 +18,23 @@ CON-22 added `PUT /v1/runs/{id}/realism` (attachRealismReport), which answers 50
 
 ## Plan
 
-- [ ] 1. Embedded schema copy, validation with JSON Pointer findings, and the metric mapping (`controller/internal/report/realism.go`) with unit tests.
-- [ ] 2. The in memory per run store and the handler (`AttachRealismReport`) with the 400, 404, 409, 413, 415, 422 cases.
-- [ ] 3. `Report.Realism` filled by `GetRunReport`; wiring (the operation leaves `pendingOps`).
-- [ ] 4. REST tests with literal results for a conformance and a temporal check, replace and refusal cases, the byte identical schema copy test.
+- [x] 1. Embedded schema copy, validation with JSON Pointer findings, and the metric mapping (`controller/internal/report/realism.go`) with unit tests.
+- [x] 2. The in memory per run store and the handler (`AttachRealismReport`) with the 400, 404, 409, 413, 415, 422 cases.
+- [x] 3. `Report.Realism` filled by `GetRunReport`; wiring (the operation leaves `pendingOps`).
+- [x] 4. REST tests with literal results for a conformance and a temporal check, replace and refusal cases, the byte identical schema copy test.
 - [ ] 5. Checks, wiki page, log entry, pull request, CI.
 
 ## Done and verified
 
-Nothing yet.
+- Steps 1 to 4 are written. Go cannot build here, so CI is the first compile and test run. `gofmt -l controller` prints nothing, and `testdata/realism-report.json` validates against the schema with python jsonschema (0 errors).
 
 ## Remaining
 
-Everything.
+Step 5: local checks (plan.py, lint), pull request, CI fixes.
 
 ## Next action
 
-Write `controller/internal/report/realism.go`.
+Open the pull request and wait for CI.
 
 ## Blockers and open questions
 
@@ -42,7 +42,11 @@ none
 
 ## Decisions taken in this package
 
-None yet.
+- Reports live in `report.MemoryRealism` (a `RealismStore`), because the orchestrator keeps runs in memory, so a persisted report would outlive its run.
+- `ReportHandler` (wiring) now requires `AttachRealismReport`; `pending.AttachRealismReport` forwards to it, like `GetRunReport`, so `SetReport` swaps both operations together and the attached report is the one that is read.
+- Check order of the handler: 404, 409, 415, 413, 400, 422.
+- A metric that finds no application or comparison to take its outcome from gets the generic `check passed` rule. A value that overflows float32 is a 422 finding, because JSON encoding of an infinite float32 would break `getRunReport`.
+- `html.Renderer` fills the realism rows of the HTML report from `Report.Realism` (inside `report/`).
 
 ## Pitfalls
 
@@ -59,3 +63,4 @@ cd controller && gofmt -l .        # prints nothing
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T22:35Z | claude-8d6916 | claim | none | Claimed issue 421, branch wp/CTL-41 |
+| 2026-11-10T23:05Z | claude-8d6916 | checkpoint | see branch | Steps 1 to 4 written |

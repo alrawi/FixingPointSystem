@@ -40,9 +40,9 @@ var (
 	_ TotalsSource = (*metrics.Aggregator)(nil)
 )
 
-// API serves GET /v1/runs/{id}/report and answers every other operation
-// with the 501 problem of api.Unimplemented. The binary embeds API next to
-// the other operation sets.
+// API serves GET /v1/runs/{id}/report and PUT /v1/runs/{id}/realism and
+// answers every other operation with the 501 problem of api.Unimplemented.
+// The binary embeds API next to the other operation sets.
 type API struct {
 	api.Unimplemented
 	eval   *Evaluator
@@ -54,6 +54,11 @@ type API struct {
 	samples      SampleSource
 	objectives   ObjectiveSource
 	declarations DeclarationSource
+
+	// realism keeps the realism reports that attachRealismReport receives,
+	// and realismCheck validates them. See realism_api.go.
+	realism      RealismStore
+	realismCheck *realismValidator
 }
 
 var _ api.ServerInterface = (*API)(nil)
@@ -67,7 +72,7 @@ func NewAPI(e *Evaluator, rs RunSource, ts TotalsSource) *API {
 	if ss, ok := ts.(SeriesSource); ok {
 		e.UseSeries(ss)
 	}
-	a := &API{eval: e, runs: rs, totals: ts}
+	a := &API{eval: e, runs: rs, totals: ts, realism: NewMemoryRealism(), realismCheck: &realismValidator{}}
 	if ss, ok := ts.(SampleSource); ok {
 		a.samples = ss
 	}
@@ -134,6 +139,7 @@ func (a *API) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, pa
 			rep.Declared = d
 		}
 	}
+	rep.Realism = a.realism.Results(id)
 	var body []byte
 	contentType := JSONContentType
 	switch format {

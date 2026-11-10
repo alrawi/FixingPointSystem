@@ -1,0 +1,1101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alrawi/FixingPointSystem/realism/schema/realism-report.schema.json",
+  "title": "FixingPointSystem realism report",
+  "description": "Report of the realism runner for one capture. Every check adds one entry to checks. A new check kind adds a definition under $defs and one if/then entry to $defs.check.allOf, and keeps the common check fields.",
+  "type": "object",
+  "required": ["report", "version", "generator", "passed", "capture", "labels", "checks"],
+  "additionalProperties": false,
+  "properties": {
+    "report": {"const": "fps-realism-report"},
+    "version": {
+      "description": "Report format version. Additive changes raise the minor version.",
+      "type": "string",
+      "pattern": "^0\\.[0-9]+\\.[0-9]+$"
+    },
+    "generator": {"type": "string", "minLength": 1},
+    "passed": {
+      "description": "True when checks is not empty and every check passed.",
+      "type": "boolean"
+    },
+    "capture": {
+      "type": "object",
+      "required": ["file", "sha256", "format", "link_types", "frames", "skipped_frames", "sessions"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {"type": "string", "description": "Base name of the capture file."},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "format": {"enum": ["pcap", "pcapng"]},
+        "link_types": {
+          "description": "Link types of the capture, numbered as in the tcpdump link type registry.",
+          "type": "array",
+          "items": {"type": "integer", "minimum": 0}
+        },
+        "frames": {"type": "integer", "minimum": 0},
+        "skipped_frames": {
+          "description": "Frames that carry no IPv4 or IPv6 TCP or UDP packet the runner decodes.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "sessions": {"type": "integer", "minimum": 0}
+      }
+    },
+    "labels": {
+      "type": "object",
+      "required": ["file", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {"type": "string"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/check"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "endpoint": {
+      "type": "object",
+      "required": ["ip", "port"],
+      "additionalProperties": false,
+      "properties": {
+        "ip": {"type": "string"},
+        "port": {"type": "integer", "minimum": 0, "maximum": 65535}
+      }
+    },
+    "metric": {
+      "description": "One metric value. The name is a metric of contracts/metrics/catalog.yaml, and labels are labels that the catalog declares for it.",
+      "type": "object",
+      "required": ["name", "labels", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z0-9_]+)+$"},
+        "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+        "value": {"type": "number"}
+      }
+    },
+    "check": {
+      "description": "Fields that every check carries. The allOf entries add the fields of each known check kind.",
+      "type": "object",
+      "required": ["check", "passed", "metrics"],
+      "properties": {
+        "check": {"$ref": "#/$defs/name"},
+        "passed": {"type": "boolean"},
+        "metrics": {"type": "array", "items": {"$ref": "#/$defs/metric"}}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"check": {"const": "conformance"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/conformance"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "parser_errors"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/parser_errors"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "encryption"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/encryption"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "content"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/content"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "session_structure"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/session_structure"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "temporal"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/temporal"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "mix_accuracy"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/mix_accuracy"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "transport_behavior"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/transport_behavior"}
+        }
+      ]
+    },
+    "conformance": {
+      "description": "Share of labelled sessions that one classifier names as the intended application.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "classifier", "classifier_version", "threshold",
+        "applications", "unlabelled_sessions", "mismatches", "mismatches_total"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "conformance"},
+        "passed": {
+          "description": "True when at least one application was scored and every application passed.",
+          "type": "boolean"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/metric"},
+              {
+                "properties": {
+                  "name": {"const": "realism.conformance_ratio"},
+                  "labels": {
+                    "required": ["application", "classifier"],
+                    "properties": {
+                      "application": {"type": "string", "minLength": 1},
+                      "classifier": {"type": "string"}
+                    },
+                    "additionalProperties": false
+                  },
+                  "value": {"minimum": 0, "maximum": 1}
+                }
+              }
+            ]
+          }
+        },
+        "classifier": {"enum": ["ndpi", "zeek", "stub"]},
+        "classifier_version": {"type": "string"},
+        "threshold": {"type": "number", "minimum": 0, "maximum": 1},
+        "applications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["application", "accepted", "sessions", "conforming", "ratio", "passed", "observed"],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "accepted": {
+                "description": "Classifier protocol names that count as the application. An empty list fails the application.",
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "sessions": {"type": "integer", "minimum": 1},
+              "conforming": {"type": "integer", "minimum": 0},
+              "ratio": {"type": "number", "minimum": 0, "maximum": 1},
+              "passed": {"type": "boolean"},
+              "observed": {
+                "description": "Session count per classifier protocol name.",
+                "type": "object",
+                "additionalProperties": {"type": "integer", "minimum": 1}
+              }
+            }
+          }
+        },
+        "unlabelled_sessions": {"type": "integer", "minimum": 0},
+        "mismatches": {
+          "description": "The first 100 labelled sessions that the classifier did not name as the intended application.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": ["session", "transport", "client", "server", "application", "observed"],
+            "additionalProperties": false,
+            "properties": {
+              "session": {"type": "integer", "minimum": 1},
+              "transport": {"enum": ["tcp", "udp"]},
+              "client": {"$ref": "#/$defs/endpoint"},
+              "server": {"$ref": "#/$defs/endpoint"},
+              "application": {"type": "string"},
+              "observed": {"type": "string"}
+            }
+          }
+        },
+        "mismatches_total": {"type": "integer", "minimum": 0}
+      }
+    },
+    "parser_counts": {
+      "type": "object",
+      "required": ["parser_errors", "malformed_packets"],
+      "additionalProperties": false,
+      "properties": {
+        "parser_errors": {"type": "integer", "minimum": 0},
+        "malformed_packets": {"type": "integer", "minimum": 0}
+      }
+    },
+    "parser_errors": {
+      "description": "Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran and no parser reported an error.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "parsers", "missing_parsers", "skipped_parsers",
+        "applications",
+        "unlabelled_errors", "unattributed_errors", "errors", "errors_total"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "parser_errors"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "Empty until the metric catalog defines a parser error metric.",
+          "type": "array",
+          "maxItems": 0
+        },
+        "parsers": {
+          "description": "The parsers that ran, in run order.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["parser", "version"],
+            "additionalProperties": false,
+            "properties": {
+              "parser": {"enum": ["tshark", "zeek", "stub"]},
+              "version": {"type": "string"}
+            }
+          }
+        },
+        "missing_parsers": {
+          "description": "Names of the parsers that the runner looked for and did not find. Report format 0.2.0 introduced this field, and skipped_parsers carries the same parsers with their reasons.",
+          "type": "array",
+          "items": {"enum": ["tshark", "zeek"]}
+        },
+        "skipped_parsers": {
+          "description": "Every parser that the run skipped, which in auto mode is each parser that is not installed, with the reason. Empty when every requested parser ran.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["parser", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "parser": {"enum": ["tshark", "zeek"]},
+              "reason": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "applications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["application", "sessions", "parser_errors", "malformed_packets", "by_parser"],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "sessions": {"type": "integer", "minimum": 1},
+              "parser_errors": {
+                "description": "The largest parser error count of any one parser.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "malformed_packets": {
+                "description": "The largest malformed packet count of any one parser.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "by_parser": {
+                "type": "object",
+                "additionalProperties": {"$ref": "#/$defs/parser_counts"}
+              }
+            }
+          }
+        },
+        "unlabelled_errors": {
+          "description": "Parser errors per parser in sessions that no labels rule names.",
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "unattributed_errors": {
+          "description": "Parser errors per parser that belong to no TCP or UDP session of the capture.",
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "errors": {
+          "description": "The first 100 parser errors in parser order.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "parser", "kind", "name", "message", "frame", "timestamp", "session",
+              "application", "transport", "client", "server"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "parser": {"enum": ["tshark", "zeek", "stub"]},
+              "kind": {"enum": ["malformed", "error", "weird"]},
+              "name": {
+                "description": "The protocol of the faulty layer for tshark, and the weird names for Zeek.",
+                "type": "string"
+              },
+              "message": {"type": "string"},
+              "frame": {"type": ["integer", "null"], "minimum": 1},
+              "timestamp": {"type": ["number", "null"]},
+              "session": {"type": ["integer", "null"], "minimum": 1},
+              "application": {"type": ["string", "null"]},
+              "transport": {"enum": ["tcp", "udp", null]},
+              "client": {"oneOf": [{"$ref": "#/$defs/endpoint"}, {"type": "null"}]},
+              "server": {"oneOf": [{"$ref": "#/$defs/endpoint"}, {"type": "null"}]}
+            }
+          }
+        },
+        "errors_total": {"type": "integer", "minimum": 0}
+      }
+    },
+    "encryption": {
+      "description": "Decryption and JA4 check of a sample of TLS sessions. The check passes when at least min_decrypted of the sampled sessions decrypt with the exported keys and every sampled ClientHello has a JA4 fingerprint that its client profile lists. failures names each reason in words.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "tool", "keys", "labelled_sessions", "sample_limit",
+        "sampled_sessions", "decrypted_sessions", "decrypted_ratio", "min_decrypted",
+        "ja4_matched_sessions", "ja4_mismatched_sessions", "profiles", "failures", "sessions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "encryption"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "Empty until the metric catalog defines metrics for the decrypted and JA4 matched shares.",
+          "type": "array",
+          "maxItems": 0
+        },
+        "tool": {
+          "description": "The program that decrypted the sample, or null when none ran.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["tool", "version"],
+              "additionalProperties": false,
+              "properties": {
+                "tool": {"enum": ["tshark", "stub"]},
+                "version": {"type": "string"}
+              }
+            },
+            {"type": "null"}
+          ]
+        },
+        "keys": {
+          "type": "object",
+          "required": ["embedded", "sidecar"],
+          "additionalProperties": false,
+          "properties": {
+            "embedded": {"type": "boolean", "description": "True when the capture holds a decryption secrets block."},
+            "sidecar": {"type": ["string", "null"], "description": "Base name of the key log file that the run passed, or null."}
+          }
+        },
+        "labelled_sessions": {"type": "integer", "minimum": 0, "description": "Sessions whose rule names a tls_profile."},
+        "sample_limit": {"type": "integer", "minimum": 1},
+        "sampled_sessions": {"type": "integer", "minimum": 0},
+        "decrypted_sessions": {"type": "integer", "minimum": 0},
+        "decrypted_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "min_decrypted": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "ja4_matched_sessions": {"type": "integer", "minimum": 0},
+        "ja4_mismatched_sessions": {"type": "integer", "minimum": 0},
+        "profiles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["profile", "expected_ja4", "sessions", "matched", "decrypted"],
+            "additionalProperties": false,
+            "properties": {
+              "profile": {"type": "string", "minLength": 1},
+              "expected_ja4": {"type": "array", "items": {"type": "string"}},
+              "sessions": {"type": "integer", "minimum": 1},
+              "matched": {"type": "integer", "minimum": 0},
+              "decrypted": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "failures": {
+          "description": "One sentence for each reason that the check failed. Empty when it passed.",
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "sessions": {
+          "description": "The first 100 sampled sessions.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "session", "profile", "client", "server", "server_name", "decrypted", "ja4",
+              "tshark_ja4", "expected_ja4", "ja4_matched", "reasons"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "session": {"type": "integer", "minimum": 1},
+              "profile": {"type": "string", "minLength": 1},
+              "client": {"$ref": "#/$defs/endpoint"},
+              "server": {"$ref": "#/$defs/endpoint"},
+              "server_name": {"type": ["string", "null"]},
+              "decrypted": {"type": "boolean"},
+              "ja4": {"type": ["string", "null"]},
+              "tshark_ja4": {"type": ["string", "null"]},
+              "expected_ja4": {"type": "array", "items": {"type": "string"}},
+              "ja4_matched": {"type": "boolean"},
+              "reasons": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    },
+    "size_distribution": {
+      "description": "Size distribution of payload units in bytes. cv is the population standard deviation over the mean, and the quantiles use linear interpolation.",
+      "type": "object",
+      "required": ["count", "min", "max", "mean", "stddev", "cv", "quantiles"],
+      "additionalProperties": false,
+      "properties": {
+        "count": {"type": "integer", "minimum": 1},
+        "min": {"type": "integer", "minimum": 0},
+        "max": {"type": "integer", "minimum": 0},
+        "mean": {"type": "number", "minimum": 0},
+        "stddev": {"type": "number", "minimum": 0},
+        "cv": {"type": "number", "minimum": 0},
+        "quantiles": {
+          "type": "object",
+          "required": ["p5", "p25", "p50", "p75", "p95", "p99"],
+          "additionalProperties": false,
+          "properties": {
+            "p5": {"type": "number", "minimum": 0},
+            "p25": {"type": "number", "minimum": 0},
+            "p50": {"type": "number", "minimum": 0},
+            "p75": {"type": "number", "minimum": 0},
+            "p95": {"type": "number", "minimum": 0},
+            "p99": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
+    "payload_group": {
+      "description": "Duplicate counts and size distribution of the payload units of one group.",
+      "type": "object",
+      "required": ["units", "distinct_units", "duplicate_units", "duplicate_ratio", "size"],
+      "additionalProperties": false,
+      "properties": {
+        "units": {"type": "integer", "minimum": 1},
+        "distinct_units": {"type": "integer", "minimum": 1},
+        "duplicate_units": {"type": "integer", "minimum": 0},
+        "duplicate_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "size": {"$ref": "#/$defs/size_distribution"}
+      }
+    },
+    "content": {
+      "description": "Content variety of the application payloads. Every application has at most max_duplicate_ratio of duplicate payloads, the observed size distribution agrees with expected_sizes where the labels give one, and at least one payload was analysed. failures names each reason in words.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "max_duplicate_ratio", "ignored_headers", "sessions_total",
+        "sessions_analysed", "skipped_encrypted_sessions", "sessions_without_payload",
+        "incomplete_directions", "truncated_units", "unparsed_tails", "units", "duplicate_units",
+        "duplicate_ratio", "applications", "expected_sizes", "duplicates", "failures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "content"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "Empty until the metric catalog defines a duplicate ratio metric.",
+          "type": "array",
+          "maxItems": 0
+        },
+        "max_duplicate_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "ignored_headers": {
+          "description": "HTTP header names that the check drops before it hashes a message.",
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "sessions_total": {"type": "integer", "minimum": 0},
+        "sessions_analysed": {"type": "integer", "minimum": 0},
+        "skipped_encrypted_sessions": {
+          "description": "TLS sessions, which the check does not read because it has no plaintext.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "sessions_without_payload": {"type": "integer", "minimum": 0},
+        "incomplete_directions": {
+          "description": "TCP directions with a hole in their sequence numbers, which the check cut at the hole.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated_units": {
+          "description": "HTTP messages that the end of the stream cut short and that the check dropped.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "unparsed_tails": {
+          "description": "TCP directions of an HTTP session whose end did not parse as a message.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "units": {"type": "integer", "minimum": 0},
+        "duplicate_units": {"type": "integer", "minimum": 0},
+        "duplicate_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "applications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "application", "units", "distinct_units", "duplicate_units", "duplicate_ratio",
+              "passed", "size", "directions"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "units": {"type": "integer", "minimum": 1},
+              "distinct_units": {"type": "integer", "minimum": 1},
+              "duplicate_units": {"type": "integer", "minimum": 0},
+              "duplicate_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+              "passed": {"type": "boolean"},
+              "size": {"$ref": "#/$defs/size_distribution"},
+              "directions": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "client": {"$ref": "#/$defs/payload_group"},
+                  "server": {"$ref": "#/$defs/payload_group"}
+                }
+              }
+            }
+          }
+        },
+        "expected_sizes": {
+          "description": "The comparison with the size distribution that the labels expect, one entry per application with an expectation.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "application", "direction", "units", "tolerance", "expected_median",
+              "observed_median", "expected_cv", "observed_cv", "passed"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "direction": {"enum": ["client", "server", "both"]},
+              "units": {"type": "integer", "minimum": 1},
+              "tolerance": {"type": "number", "exclusiveMinimum": 0},
+              "expected_median": {"type": "number"},
+              "observed_median": {"type": "number"},
+              "expected_cv": {"type": ["number", "null"]},
+              "observed_cv": {"type": "number"},
+              "passed": {"type": "boolean"}
+            }
+          }
+        },
+        "duplicates": {
+          "description": "The most repeated payloads, at most 20.",
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": ["application", "direction", "copies", "size", "sha256", "sessions"],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "direction": {"enum": ["client", "server"]},
+              "copies": {"type": "integer", "minimum": 2},
+              "size": {"type": "integer", "minimum": 0},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "sessions": {
+                "description": "The first 5 sessions that carry a copy.",
+                "type": "array",
+                "maxItems": 5,
+                "items": {"type": "integer", "minimum": 1}
+              }
+            }
+          }
+        },
+        "failures": {
+          "description": "One sentence for each reason that the check failed. Empty when it passed.",
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "session_structure": {
+      "description": "Connection count and ordering of each scenario instance against the flow graph of its scenario. The check passes when at least one instance was found for every scenario, every flow has a number of connections that the scenario allows, every after edge holds (the later flow starts once the earlier flow completed), every spawn edge holds (the spawned flow starts while its parent runs), and the number of instances agrees with expected_instances where the labels give one. failures names the instance and the violated edge in words.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "max_gap_s", "tolerance_s", "sessions_total",
+        "sessions_assigned", "sessions_unassigned", "instances", "failed_instances", "scenarios",
+        "failed_instance_details", "failures_total", "failures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "session_structure"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "Empty until the metric catalog defines a session structure metric.",
+          "type": "array",
+          "maxItems": 0
+        },
+        "max_gap_s": {
+          "description": "Silence of a client, in seconds, that starts a new instance. Null when no gap splits instances.",
+          "type": ["number", "null"]
+        },
+        "tolerance_s": {"type": "number", "minimum": 0},
+        "sessions_total": {"type": "integer", "minimum": 0},
+        "sessions_assigned": {"type": "integer", "minimum": 0},
+        "sessions_unassigned": {
+          "description": "Sessions that match no flow of any scenario or that no scenario entry may claim. The check does not judge them.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "instances": {"type": "integer", "minimum": 0},
+        "failed_instances": {"type": "integer", "minimum": 0},
+        "scenarios": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "scenario", "source", "expected_instances", "instances", "failed_instances",
+              "sessions", "flows", "edges"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "scenario": {"type": "string", "minLength": 1},
+              "source": {"type": "string", "minLength": 1},
+              "expected_instances": {"type": ["integer", "null"], "minimum": 0},
+              "instances": {"type": "integer", "minimum": 0},
+              "failed_instances": {"type": "integer", "minimum": 0},
+              "sessions": {"type": "integer", "minimum": 0},
+              "flows": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id", "module", "transport", "server_port", "spawned", "after",
+                    "min_connections", "max_connections", "connections"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {"type": "string", "minLength": 1},
+                    "module": {"type": "string"},
+                    "transport": {"enum": ["tcp", "udp"]},
+                    "server_port": {
+                      "description": "Server port that the scenario fixes, null when the flow matches any port that no other flow fixes.",
+                      "type": ["integer", "null"],
+                      "minimum": 0,
+                      "maximum": 65535
+                    },
+                    "spawned": {"type": "boolean"},
+                    "after": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                    "min_connections": {"type": "integer", "minimum": 0},
+                    "max_connections": {"type": ["integer", "null"], "minimum": 0},
+                    "connections": {
+                      "description": "Connections that the capture holds for the flow, over all instances.",
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "edges": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["kind", "from", "to"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {"enum": ["after", "spawn"]},
+                    "from": {"type": "string", "minLength": 1},
+                    "to": {"type": "string", "minLength": 1}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "failed_instance_details": {
+          "description": "The first 50 instances with a failure, with their connections in start order.",
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": ["scenario", "instance", "client_ip", "start", "opened_by", "connections", "failures"],
+            "additionalProperties": false,
+            "properties": {
+              "scenario": {"type": "string", "minLength": 1},
+              "instance": {"type": "integer", "minimum": 1},
+              "client_ip": {"type": "string"},
+              "start": {"description": "Capture time of the first packet, in seconds.", "type": "number"},
+              "opened_by": {
+                "description": "Why this instance opened when the one before it had no room, or null for the first instance of a client.",
+                "type": ["string", "null"]
+              },
+              "connections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["flow", "session", "start", "end"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "flow": {"type": "string", "minLength": 1},
+                    "session": {"type": "integer", "minimum": 1},
+                    "start": {"description": "Seconds after the first packet of the instance.", "type": "number"},
+                    "end": {"description": "Seconds after the first packet of the instance at which the session completes.", "type": "number"}
+                  }
+                }
+              },
+              "failures": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            }
+          }
+        },
+        "failures_total": {"type": "integer", "minimum": 0},
+        "failures": {
+          "description": "One sentence for each broken rule, at most 50. failures_total counts them all.",
+          "type": "array",
+          "maxItems": 50,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "temporal": {
+      "description": "Inter arrival times and payload sizes against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. The check passes when there is at least one comparison and every one passed. failures names each reason in words.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "alpha", "min_samples", "sessions_total",
+        "skipped_encrypted_sessions", "comparisons", "insufficient_comparisons", "failures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "temporal"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads). Comparisons over all sessions and over both directions have no catalog label and are only in comparisons.",
+          "type": "array",
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/metric"},
+              {
+                "properties": {
+                  "name": {"enum": ["realism.ks_statistic", "realism.ks_p_value"]},
+                  "labels": {
+                    "required": ["application", "property"],
+                    "properties": {
+                      "application": {"type": "string", "minLength": 1},
+                      "property": {"enum": ["inter_arrival", "request_bytes", "response_bytes"]}
+                    },
+                    "additionalProperties": false
+                  },
+                  "value": {"minimum": 0, "maximum": 1}
+                }
+              }
+            ]
+          }
+        },
+        "alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "min_samples": {"type": "integer", "minimum": 2},
+        "sessions_total": {"type": "integer", "minimum": 0},
+        "skipped_encrypted_sessions": {
+          "description": "TLS sessions, which the size comparisons do not read because the check has no plaintext. Zero when no comparison reads sizes.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "comparisons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "property", "application", "direction", "unit", "target", "test", "method", "alpha",
+              "n", "reference_n", "statistic", "p_value", "status", "reason", "observed"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "property": {"enum": ["inter_arrival", "payload_size"]},
+              "application": {
+                "description": "Application of the comparison, or null for all sessions.",
+                "type": ["string", "null"]
+              },
+              "direction": {
+                "description": "Payloads that count in a size comparison, null for arrivals.",
+                "enum": ["client", "server", "both", null]
+              },
+              "unit": {"enum": ["seconds", "bytes"]},
+              "target": {
+                "type": "object",
+                "required": ["dist", "parameters", "median", "source"],
+                "additionalProperties": false,
+                "properties": {
+                  "dist": {"enum": ["constant", "exponential", "uniform", "lognormal", "pareto", "empirical"]},
+                  "parameters": {
+                    "description": "Parameters in seconds or bytes: value, mean, min, max, mu, sigma, alpha, scale. Empty for an empirical target.",
+                    "type": "object",
+                    "additionalProperties": {"type": "number"}
+                  },
+                  "median": {"type": ["number", "null"]},
+                  "source": {
+                    "description": "Where an empirical target sample came from, null for a parametric target.",
+                    "enum": ["sample", "sample_file", "reference", null]
+                  }
+                }
+              },
+              "test": {"enum": ["ks_one_sample", "ks_two_sample", "constant"]},
+              "method": {
+                "description": "How the p value came about: exact, asymptotic, or constant. Null when the comparison had insufficient data.",
+                "enum": ["exact", "asymptotic", "constant", null]
+              },
+              "alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+              "n": {"description": "Observations in the capture.", "type": "integer", "minimum": 0},
+              "reference_n": {
+                "description": "Observations of the target sample in a two sample test, otherwise null.",
+                "type": ["integer", "null"],
+                "minimum": 0
+              },
+              "statistic": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "p_value": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "status": {"enum": ["pass", "fail", "insufficient_data"]},
+              "reason": {
+                "description": "Why the comparison did not pass, null for a pass.",
+                "type": ["string", "null"]
+              },
+              "observed": {
+                "description": "Minimum, median, mean, and maximum of the observations, null without observations.",
+                "oneOf": [
+                  {"type": "null"},
+                  {
+                    "type": "object",
+                    "required": ["min", "median", "mean", "max"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "min": {"type": "number"},
+                      "median": {"type": "number"},
+                      "mean": {"type": "number"},
+                      "max": {"type": "number"}
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "insufficient_comparisons": {"type": "integer", "minimum": 0},
+        "failures": {
+          "description": "One sentence for each comparison that did not pass, and one when the labels name no target.",
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "transport_behavior": {
+      "description": "The TTL and the TCP options of the SYN and SYN-ACK of every connection against the operating system profile of the sending host. The check passes when no enforced field differs and at least one handshake of a profiled host was compared. The option order and the SYN window are enforced only when strict is true, and they appear in deviations either way.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "strict", "client_hops", "server_hops", "expect", "profiles", "hosts",
+        "syns_total", "syn_acks_total", "unprofiled_handshakes", "deviations", "failures_total", "failures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "transport_behavior"},
+        "passed": {"type": "boolean"},
+        "metrics": {"type": "array", "maxItems": 0},
+        "strict": {"type": "boolean"},
+        "client_hops": {"type": "integer", "minimum": 0, "maximum": 254},
+        "server_hops": {"type": "integer", "minimum": 0, "maximum": 254},
+        "expect": {
+          "description": "The values of the labels that replace the profile.",
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "profiles": {
+          "description": "The profiles that the check read, with the values it compared (after expect).",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "file", "ttl", "mss", "window_scale", "syn_window", "options", "dont_fragment"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "file": {"type": "string", "minLength": 1},
+              "ttl": {"type": "integer", "minimum": 1, "maximum": 255},
+              "mss": {"type": "integer", "minimum": 1, "maximum": 65535},
+              "window_scale": {"type": ["integer", "null"], "minimum": 0, "maximum": 14},
+              "syn_window": {"type": "integer", "minimum": 0},
+              "options": {"type": "array", "minItems": 1, "items": {"enum": ["eol", "nop", "mss", "ws", "sok", "ts"]}},
+              "dont_fragment": {"type": "boolean"}
+            }
+          }
+        },
+        "hosts": {
+          "description": "Each profiled host that sent a SYN or a SYN-ACK, with the profile it was compared with.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["host", "profile", "syns", "syn_acks"],
+            "additionalProperties": false,
+            "properties": {
+              "host": {"type": "string", "minLength": 1},
+              "profile": {"type": "string", "minLength": 1},
+              "syns": {"type": "integer", "minimum": 0},
+              "syn_acks": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "syns_total": {"description": "Connections with a SYN in the capture, one per 4 tuple.", "type": "integer", "minimum": 0},
+        "syn_acks_total": {"description": "Connections with a SYN-ACK in the capture, one per 4 tuple.", "type": "integer", "minimum": 0},
+        "unprofiled_handshakes": {"description": "SYN and SYN-ACK packets from hosts that no profile covers, which the check leaves out.", "type": "integer", "minimum": 0},
+        "deviations": {
+          "description": "Every field of a host and role that differs from the profile in at least one packet.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["host", "profile", "role", "field", "expected", "observed", "handshakes", "mismatched", "enforced"],
+            "additionalProperties": false,
+            "properties": {
+              "host": {"type": "string", "minLength": 1},
+              "profile": {"type": "string", "minLength": 1},
+              "role": {"enum": ["syn", "syn-ack"]},
+              "field": {"enum": ["ttl", "df", "mss", "window_scale", "sack", "timestamps", "options", "syn_window"]},
+              "expected": {"type": "string"},
+              "observed": {
+                "description": "The values that differ from expected, with the packets that show each.",
+                "type": "object",
+                "additionalProperties": {"type": "integer", "minimum": 1}
+              },
+              "handshakes": {"description": "Packets of this role that the field was compared in.", "type": "integer", "minimum": 1},
+              "mismatched": {"type": "integer", "minimum": 1},
+              "enforced": {"description": "False for the option order and the SYN window without strict.", "type": "boolean"}
+            }
+          }
+        },
+        "failures_total": {"type": "integer", "minimum": 0},
+        "failures": {
+          "description": "One sentence for each enforced deviation and for an empty comparison, at most 50. failures_total counts them all.",
+          "type": "array",
+          "maxItems": 50,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "mix_row": {
+      "description": "One application of one basis. A share is null when its source has no total. A delta is the achieved share minus the configured share, in percentage points.",
+      "type": "object",
+      "required": [
+        "application", "scenarios", "configured_pct", "metrics_pct", "ndpi_pct", "metrics_delta_pp",
+        "ndpi_delta_pp", "metrics_count", "ndpi_count", "metrics_passed", "ndpi_passed", "passed", "reasons"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "application": {"type": "string", "minLength": 1},
+        "scenarios": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "configured_pct": {"type": "number", "minimum": 0, "maximum": 100},
+        "metrics_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "ndpi_pct": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "metrics_delta_pp": {"type": ["number", "null"]},
+        "ndpi_delta_pp": {"type": ["number", "null"]},
+        "metrics_count": {"description": "Sessions or bytes that the run metrics count for the application, null for the unmatched row.", "type": ["integer", "null"], "minimum": 0},
+        "ndpi_count": {"description": "Sessions or payload bytes that nDPI assigned to the application.", "type": ["integer", "null"], "minimum": 0},
+        "metrics_passed": {"type": "boolean"},
+        "ndpi_passed": {"type": "boolean"},
+        "passed": {"type": "boolean"},
+        "reasons": {"description": "One sentence for each source that is outside the tolerance.", "type": "array", "items": {"type": "string", "minLength": 1}},
+        "observed": {
+          "description": "Only on the unmatched row: the sessions per protocol name that nDPI gave them.",
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "mix_accuracy": {
+      "description": "The achieved mix, from run metrics and from nDPI, against the configured weights, per basis and application. Each source must lie within tolerance_points of the configured share. The row unmatched holds the sessions or bytes that nDPI named as no application of the mix and has a configured share of 0.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "metrics_basis", "classifier", "classifier_version",
+        "tolerance_points", "basis_source", "test_config", "run_report", "mapping", "unlabelled_sessions", "bases",
+        "failures_total", "failures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "mix_accuracy"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "The shares that the classifier found in the capture, with source classifier, for the basis in metrics_basis. Empty when metrics_basis is null or no application has a share.",
+          "type": "array",
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/metric"},
+              {
+                "required": ["name", "labels"],
+                "properties": {
+                  "name": {"enum": ["mix.share_pct", "mix.abs_error_pp", "mix.max_abs_error_pp"]},
+                  "labels": {
+                    "required": ["source", "classifier"],
+                    "properties": {
+                      "application": {"type": "string", "minLength": 1},
+                      "source": {"const": "classifier"},
+                      "classifier": {"type": "string", "minLength": 1}
+                    },
+                    "additionalProperties": false
+                  },
+                  "value": {"minimum": 0}
+                }
+              },
+              {
+                "if": {"properties": {"name": {"const": "mix.max_abs_error_pp"}}, "required": ["name"]},
+                "then": {"properties": {"labels": {"not": {"required": ["application"]}}}},
+                "else": {"properties": {"labels": {"required": ["application"]}}}
+              },
+              {
+                "if": {"properties": {"name": {"const": "mix.share_pct"}}, "required": ["name"]},
+                "then": {"properties": {"value": {"maximum": 100}}}
+              }
+            ]
+          }
+        },
+        "metrics_basis": {
+          "description": "The basis that the series describe, which is profile.basis of the test configuration, or the only basis that ran. null when neither tells it, for weights in the labels with both bases, and then metrics is empty.",
+          "enum": ["sessions", "bytes", null]
+        },
+        "classifier": {"type": "string", "minLength": 1},
+        "classifier_version": {"type": "string", "minLength": 1},
+        "tolerance_points": {"type": "number", "minimum": 0, "maximum": 100},
+        "basis_source": {"enum": ["command line", "labels", "test configuration"]},
+        "test_config": {
+          "description": "The test configuration that gave the weights, null when the labels list them.",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["file", "basis"],
+              "additionalProperties": false,
+              "properties": {"file": {"type": "string"}, "basis": {"enum": ["sessions", "bytes"]}}
+            }
+          ]
+        },
+        "run_report": {
+          "type": "object",
+          "required": ["file", "form"],
+          "additionalProperties": false,
+          "properties": {"file": {"type": "string"}, "form": {"enum": ["metric_series", "bundle", "table", "rest_report"]}}
+        },
+        "mapping": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["application", "scenarios", "ndpi"],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "scenarios": {"type": "array", "items": {"type": "string", "minLength": 1}},
+              "ndpi": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            }
+          }
+        },
+        "unlabelled_sessions": {"type": "integer", "minimum": 0},
+        "bases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["basis", "passed", "metrics_total", "ndpi_total", "applications", "unmatched", "failures"],
+            "additionalProperties": false,
+            "properties": {
+              "basis": {"enum": ["sessions", "bytes"]},
+              "passed": {"type": "boolean"},
+              "metrics_total": {"type": "integer", "minimum": 0},
+              "ndpi_total": {"type": "integer", "minimum": 0},
+              "applications": {"type": "array", "items": {"$ref": "#/$defs/mix_row"}},
+              "unmatched": {"$ref": "#/$defs/mix_row"},
+              "failures": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            }
+          }
+        },
+        "failures_total": {"type": "integer", "minimum": 0},
+        "failures": {
+          "description": "One sentence for each broken rule, at most 50. failures_total counts them all.",
+          "type": "array",
+          "maxItems": 50,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

@@ -157,7 +157,7 @@ func newHarness(t *testing.T, rs RunSource, ts TotalsSource) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth, err := api.NewStaticTokens(map[string]api.Scope{"token-read": api.ScopeRead})
+	auth, err := api.NewStaticTokens(map[string]api.Scope{"token-read": api.ScopeRead, "token-run": api.ScopeRun})
 	if err != nil {
 		t.Fatal(err)
 	}

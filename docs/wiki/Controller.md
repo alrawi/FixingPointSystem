@@ -788,7 +788,7 @@ Two adapter types connect the registry and the agent manager to the interfaces t
 | `/v1/modules` | `registry.API` |
 | `GET /v1/runs`, `POST /v1/runs`, `GET /v1/runs/{id}`, `POST /v1/runs/{id}:stop` | `runs.API` |
 | `GET /v1/runs/{id}/metrics` and `:stream` | The `MetricsHandler` of `Controller.SetMetrics`, or 501 |
-| `getRunReport` | The `ReportHandler` of `Controller.SetReport`, which defaults to `report.API` |
+| `getRunReport` and `attachRealismReport` | The `ReportHandler` of `Controller.SetReport`, which defaults to `report.API` (CTL-41 added the second operation) |
 | `listCaptures`, `startCapture`, `stopCapture`, `downloadCapture` | The `CaptureHandler` of `Handlers.Captures`, which `New` sets to `captures.API` (CTL-14) |
 
 ### Hook for run metrics
@@ -852,7 +852,7 @@ The evaluator decides the run state as the report decides the report. It reads t
 
 | Format | Content |
 |---|---|
-| `json`, the default | The `RunReport` schema, with the summary filled from the run totals, every criterion in the verdict with its `reason`, `observed` and `passed` only for compared criteria, `reason` of the run when it failed or aborted, `scenarios` from the [scenarios table](#scenarios-table), `where` on each criterion that has a filter, and the stored realism results in `realism`, an empty list until the controller stores any |
+| `json`, the default | The `RunReport` schema, with the summary filled from the run totals, every criterion in the verdict with its `reason`, `observed` and `passed` only for compared criteria, `reason` of the run when it failed or aborted, `scenarios` from the [scenarios table](#scenarios-table), `where` on each criterion that has a filter, and the realism results that [attachRealismReport](#realism-reports-attached-to-a-run) stored in `realism`, an empty list for a run without a report |
 | `csv` | One table with the columns `kind,name,op,threshold,value,result,detail`, with rows of kind `run` for the run fields, `criterion` for each criterion, `scenario` for each row of the [scenarios table](#scenarios-table), and `metric` for each run total in catalog order |
 | `html` | The page of `internal/report/html`, served as `text/html; charset=utf-8` with `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'` (see [HTML report](#html-report)). 501 when the `API` has no renderer |
 
@@ -866,9 +866,39 @@ CTL-39 fills `RunReport.scenarios` of the REST report (contract 0.9.0, CON-21) f
 
 `Report.API` also copies the `where` filter of each criterion of the verdict into `CriterionResult.where`, exactly as the configuration states it. The controller adds no `side` entry, and a criterion without a filter has no `where`. Two criteria that differ only in their filter keep their own.
 
-`Report.Realism` holds the realism results that the controller stores for the run, as `[]api.RealismResult`, and `Report.API` sends them in `realism` in their order, with an empty list when there are none. Nothing fills the field yet: the operation that delivers a realism report to a run belongs to CON-22 and its controller package, which only has to store the results and set the field when it builds the report.
+`Report.Realism` holds the realism results that the controller stores for the run, as `[]api.RealismResult`, and `Report.API` sends them in `realism` in their order, with an empty list when there are none. `GetRunReport` fills it from the realism store that `PUT /v1/runs/{id}/realism` writes, as [the next section](#realism-reports-attached-to-a-run) describes.
 
 `Report.Declared` holds the `compiler.Declarations` of the test configuration, the targets of the realism check, and `FileJSON` writes them under `declared`. `GetRunReport` reads them through the `DeclarationSource` of `UseDeclarations`. `ConfigObjectives` is one, and `UseObjectives` adopts a source that is also a `DeclarationSource`, so the binary needs no change. A configuration that is gone or unreadable leaves the report without declarations.
+
+### Realism reports attached to a run
+
+`PUT /v1/runs/{id}/realism` (`attachRealismReport`, scope `run`, CTL-41) stores the report that the realism runner wrote for the capture of a run, and `GetRunReport` serves its results in `realism`. `report.API.AttachRealismReport` answers in this order, and the first failing step answers.
+
+| Step | Answer |
+|---|---|
+| The run does not exist | 404 |
+| The run is `pending`, `preparing`, `running`, or `stopping` | 409, with the state in the detail. Only `completed`, `failed`, and `aborted` accept a report |
+| The content type is not `application/json` (parameters such as `charset` are fine) | 415 |
+| The body is longer than 4 MiB (4194304 bytes), `report.MaxRealismBytes` | 413. A body of exactly 4 MiB is served |
+| The body is not one JSON document | 400 |
+| The document breaks `realism/schema/realism-report.schema.json`, or two results share `metric` and `labels`, or a value does not fit a 32 bit float | 422, with `errors` that name each failing field by JSON Pointer into the document, sorted by path |
+| Otherwise | 200 with `RealismAttachment`: `realism`, the entries the run now holds, and `replaced`, true when the run held a report before |
+
+The controller validates with a byte copy of the report schema in `controller/internal/report/schema/`, which `go generate ./internal/report` refreshes and `TestEmbeddedRealismSchemaMatchesSource` compares with the source, as `internal/store` does for the test configuration schema. It compiles the schema on the first report. It does not compare `capture.sha256` with the capture files of the run, and it stores the document as given.
+
+`report.MapRealism` makes one `RealismResult` for each metric of each check, in the order of the document, by the rules of `contracts/changes/CON-22.md`.
+
+| Metric | `target` | `passed` |
+|---|---|---|
+| `realism.conformance_ratio` | `>= ` and the `threshold` of the check, for example `>= 0.99` | The `passed` of the entry of `applications` with the same `application` |
+| `realism.ks_p_value` and `realism.ks_statistic` | `p value >= ` and the `alpha` of the comparison of the same application and property, for example `p value >= 0.05` | True when the `status` of that comparison is `pass`. The property `request_bytes` is the `payload_size` comparison of direction `client`, and `response_bytes` that of direction `server` |
+| Any other metric | `check passed` | The `passed` of its check |
+
+The last row is generic, so the metrics that CON-23 adds for the other check kinds need no change here. A conformance or KS metric that finds no application or comparison to take its outcome from falls back to the last row too, which a document that conforms to the schema never causes. `property` is wording for an operator: `conformance of http1 by ndpi`, `inter arrival of http1, KS p value`, and for any other metric its name followed by its labels. A check without metrics adds no entry, so a failing `parser_errors` check shows in the document and not in `realism` (the open question of CON-22).
+
+A second valid report replaces the first as a whole, and a refused report leaves the earlier one. The reports live in a `report.RealismStore`, by default a `MemoryRealism`, because the orchestrator keeps its runs in memory too. `API.UseRealism` replaces it, and `MemoryRealism.Document` returns the document as sent, for a later read operation. The wiring routes the operation to the handler of `Controller.SetReport`, which `ReportHandler` now requires to serve both operations, so the report that was attached is the report that is read. The operation left the pending list of `wiring_test.go`, whose entries are now `getRunMetrics` and `streamRunMetrics`.
+
+`realism_test.go` runs the operation through the generated router and checks every response against the contract. `TestMapRealismFixture` and `TestAttachRealismReportOfEndedRuns` hold the literal results of a conformance and a temporal check (`testdata/realism-report.json`, eight entries, two of them failing for each check). Other tests cover the replacement, the refusals that keep the earlier report, the four states of a run that has not ended, 404, 415, 400, the size limit at 4 MiB and one byte above, the findings of the schema with their JSON Pointers, the scope `run`, and the generic rule.
 
 ### Tests of the report
 
@@ -909,7 +939,7 @@ The charts are inline SVG that `chart.go` draws: one line chart per per second s
 
 ### Interface
 
-`html.FromReport(report.Report, html.Options)` builds a `html.Page`, a plain model of strings and numbers, and `html.Render(Page)` returns the document. `Options` carries what the report model does not hold: the `Objective` text (the run record does not keep the load objective, so the caller reads it from the test configuration and may use `html.FormatObjective`), the `Samples` of `metrics.Aggregator.Samples(id, api.MetricViewApplication, metrics.Window{})`, and the `Realism` rows, which stay empty until a package produces them. `html.ContentType` is the media type of the page.
+`html.FromReport(report.Report, html.Options)` builds a `html.Page`, a plain model of strings and numbers, and `html.Render(Page)` returns the document. `Options` carries what the report model does not hold: the `Objective` text (the run record does not keep the load objective, so the caller reads it from the test configuration and may use `html.FormatObjective`), the `Samples` of `metrics.Aggregator.Samples(id, api.MetricViewApplication, metrics.Window{})`, and the `Realism` rows. `html.Renderer` fills the rows from `Report.Realism`. `html.ContentType` is the media type of the page.
 
 ### Serving
 
