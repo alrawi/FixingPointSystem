@@ -15,7 +15,7 @@ The UI is a static single page application in TypeScript that the controller ser
 | Accessible primitives | React Aria Components | Apache-2.0 |
 | API client | Types from openapi-typescript, calls through openapi-fetch | MIT |
 | Server state | @tanstack/react-query | MIT |
-| Live charts | uPlot | MIT |
+| Live charts | A small SVG line chart in `src/runs/LineChart.tsx`, written for the project. D11 names uPlot, but UI-04 found that its charts of a few hundred points need no library and that jsdom has no canvas to test one | GPL-3.0 |
 | Event stream | A local `fetch()` reader for `text/event-stream` | GPL-3.0 |
 | Lint and format | ESLint 10, typescript-eslint, eslint-plugin-jsx-a11y, Prettier | MIT |
 | Unit and component tests | Vitest and @testing-library/react | MIT |
@@ -25,7 +25,7 @@ The UI is a static single page application in TypeScript that the controller ser
 ## Rules for UI packages
 
 1. Components call the API only through the generated client. A CI check regenerates the types from the contract and fails on a diff.
-2. The live metrics view reads `GET /runs/{id}/metrics:stream` with `fetch()`, because `EventSource` cannot send the bearer token. Samples go into a ring buffer outside React state and reach uPlot through a ref.
+2. The live metrics view reads `GET /runs/{id}/metrics:stream` with `fetch()`, because `EventSource` cannot send the bearer token. Samples go into a ring buffer outside React state (`src/runs/metricsStore.ts`), and the store tells the page once per flush, so the page renders the charts once per tick and not once per event.
 3. Interactive widgets come from React Aria Components or follow the matching WAI-ARIA pattern. Every Playwright test runs an axe-core check and fails on any violation.
 4. The linter runs with warnings as errors and includes the accessibility rules of eslint-plugin-jsx-a11y.
 5. The build fails when the initial JavaScript passes 250 kB gzip.

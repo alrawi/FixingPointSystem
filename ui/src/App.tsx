@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Route, Routes } from "react-router";
 import { ApiError } from "./api/client";
 import { SessionProvider, useSession } from "./auth/session";
@@ -12,6 +12,9 @@ import { ConfigsPage } from "./pages/ConfigsPage";
 import { ModuleDetailPage } from "./pages/ModuleDetailPage";
 import { ModulesPage } from "./pages/ModulesPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { RunPage } from "./pages/RunPage";
+import { RunsPage } from "./pages/RunsPage";
+import { DEFAULT_RUN_SETTINGS, RunSettingsContext, type RunSettings } from "./runs/useRunMetrics";
 
 // The editor ships a YAML library and a schema validator, so it loads on demand and the
 // initial bundle stays within its budget.
@@ -84,6 +87,8 @@ function Routed() {
             </Suspense>
           }
         />
+        <Route path="runs" element={<RunsPage />} />
+        <Route path="runs/:id" element={<RunPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
@@ -94,18 +99,23 @@ export interface AppProps {
   /** Base URL of the controller API, `/v1` by default. */
   baseUrl?: string;
   queryClient?: QueryClient;
+  /** Timings of the run view, one second by default. Tests shorten them. */
+  runSettings?: Partial<RunSettings>;
 }
 
 /** The whole UI. */
-export function App({ baseUrl, queryClient }: AppProps) {
+export function App({ baseUrl, queryClient, runSettings }: AppProps) {
   const [client] = useState(() => queryClient ?? createQueryClient());
+  const settings = useMemo(() => ({ ...DEFAULT_RUN_SETTINGS, ...runSettings }), [runSettings]);
   return (
     <QueryClientProvider client={client}>
-      <SessionProvider {...(baseUrl === undefined ? {} : { baseUrl })}>
-        <BrowserRouter>
-          <Routed />
-        </BrowserRouter>
-      </SessionProvider>
+      <RunSettingsContext.Provider value={settings}>
+        <SessionProvider {...(baseUrl === undefined ? {} : { baseUrl })}>
+          <BrowserRouter>
+            <Routed />
+          </BrowserRouter>
+        </SessionProvider>
+      </RunSettingsContext.Provider>
     </QueryClientProvider>
   );
 }
