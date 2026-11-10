@@ -68,7 +68,12 @@ impl SessionMetrics {
         outcome: &Result<(), Failure>,
         duration_us: u64,
     ) {
-        self.ended_with(shard, stats, outcome.as_ref().err().map(|f| f.reason), duration_us);
+        self.ended_with(
+            shard,
+            stats,
+            outcome.as_ref().err().map(|f| f.reason),
+            duration_us,
+        );
     }
 
     /// Records the end of a session that failed with `failed`, or succeeded

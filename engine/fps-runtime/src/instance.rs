@@ -55,9 +55,7 @@ use rand::RngCore;
 use tokio::time::{sleep, Instant};
 
 use crate::extension::close_reason_of;
-use crate::opener::{
-    destination, global_session_id, invalid, source_address, TapOpener,
-};
+use crate::opener::{destination, global_session_id, invalid, source_address, TapOpener};
 use crate::worker::{ClientCtx, Worker};
 use crate::{SessionExtensions, SessionKey, Transport};
 
@@ -203,8 +201,9 @@ impl Opener for FlowOpener {
         async move {
             match plan {
                 Plan::Fail(e) => Err(e),
-                Plan::Accepted(io) => io
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "session used")),
+                Plan::Accepted(io) => {
+                    io.ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "session used"))
+                }
                 Plan::Connect {
                     ctx,
                     source,
@@ -321,9 +320,10 @@ impl FlowEnv for InstanceEnv {
 
     fn stream(&mut self, flow: &Flow, side: Side) -> Self::Stream {
         let entry = self.index_of(flow) == self.entry;
-        let (id, ended) = self
-            .current()
-            .map_or_else(|| (self.first_id, Rc::default()), |l| (l.id, Rc::clone(&l.ended)));
+        let (id, ended) = self.current().map_or_else(
+            || (self.first_id, Rc::default()),
+            |l| (l.id, Rc::clone(&l.ended)),
+        );
         let kind = match &mut self.net {
             Net::Client {
                 ctx,
@@ -515,14 +515,88 @@ pub(crate) fn refusal(scenario: &Scenario, entry: usize) -> Option<String> {
             flow.id, scenario.name
         ));
     }
-    scenario
-        .flows
-        .iter()
-        .find(|f| f.l4 == L4::Udp)
-        .map(|f| {
-            format!(
-                "scenario {} has the UDP flow {}; a worker runs the flows of an instance over TCP",
-                scenario.name, f.id
-            )
-        })
+    scenario.flows.iter().find(|f| f.l4 == L4::Udp).map(|f| {
+        format!(
+            "scenario {} has the UDP flow {}; a worker runs the flows of an instance over TCP",
+            scenario.name, f.id
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bind_opener(ip: IpAddr) -> FlowOpener {
+        FlowOpener {
+            kind: FlowNet::Bind {
+                ip,
+                config: ListenConfig::default(),
+            },
+            ended: Rc::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_bind_waits_for_a_port_that_another_instance_holds() {
+        let ip = IpAddr::from([127, 0, 0, 1]);
+        let holder = KernelListener::bind(SocketAddr::new(ip, 0), &ListenConfig::default())
+            .map_err(|e| e.to_string())
+            .expect("the holder binds");
+        let port = holder.local_addr().port();
+        let mut opener = bind_opener(ip);
+        let open = opener.open(OpenRequest {
+            kind: OpenKind::Accept,
+            host: None,
+            port,
+        });
+        let release = async {
+            sleep(Duration::from_millis(40)).await;
+            drop(holder);
+            // The accept of the opener starts once its bind succeeds.
+            for _ in 0..200 {
+                if tokio::net::TcpStream::connect((ip, port)).await.is_ok() {
+                    return true;
+                }
+                sleep(Duration::from_millis(5)).await;
+            }
+            false
+        };
+        let (stream, dialed) = tokio::join!(open, release);
+        assert!(dialed, "the port came free");
+        assert!(stream.is_ok(), "{:?}", stream.err());
+    }
+
+    #[tokio::test]
+    async fn a_used_stream_is_gone_and_a_server_opener_cannot_connect() {
+        let mut opener = FlowOpener {
+            kind: FlowNet::Accepted(None),
+            ended: Rc::default(),
+        };
+        let accept = OpenRequest {
+            kind: OpenKind::Accept,
+            host: None,
+            port: 1,
+        };
+        let err = opener.open(accept).await.map(|_| ()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotConnected);
+        let connect = OpenRequest {
+            kind: OpenKind::Connect,
+            ..accept
+        };
+        let err = opener.open(connect).await.map(|_| ()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn the_end_of_a_side_is_the_drop_of_its_opener() {
+        let ended = Rc::new(Cell::new(None));
+        let opener = FlowOpener {
+            kind: FlowNet::Accepted(None),
+            ended: Rc::clone(&ended),
+        };
+        assert!(ended.get().is_none());
+        drop(opener);
+        assert!(ended.get().is_some());
+    }
 }

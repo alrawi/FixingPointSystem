@@ -132,9 +132,13 @@ impl Worker {
                 let m = match by_module.get(f.module.as_str()) {
                     Some(m) => m.clone(),
                     None => {
-                        let m =
-                            SessionMetrics::register(&mut shard, &f.module, &flow.scenario.name, side)
-                                .map_err(stats)?;
+                        let m = SessionMetrics::register(
+                            &mut shard,
+                            &f.module,
+                            &flow.scenario.name,
+                            side,
+                        )
+                        .map_err(stats)?;
                         by_module.insert(f.module.as_str(), m.clone());
                         m
                     }
@@ -283,15 +287,18 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
     let id = start.config.id;
     let role = start.config.role.clone();
     let prepared = match &role {
-        Role::Client(c) => Worker::new(&start, Side::Client, &c.flow, ListenConfig::default()).and_then(|w| {
-            let sched = Schedule::new(c.schedule.clone())
-                .map_err(|source| RuntimeError::Schedule { worker: id, source })?;
-            Ok((w, Vec::new(), Some(sched)))
-        }),
-        Role::Server(s) => Worker::new(&start, Side::Server, &s.flow, s.config.clone()).and_then(|w| {
-            let listeners = bind(id, s)?;
-            Ok((w, listeners, None))
-        }),
+        Role::Client(c) => Worker::new(&start, Side::Client, &c.flow, ListenConfig::default())
+            .and_then(|w| {
+                let sched = Schedule::new(c.schedule.clone())
+                    .map_err(|source| RuntimeError::Schedule { worker: id, source })?;
+                Ok((w, Vec::new(), Some(sched)))
+            }),
+        Role::Server(s) => {
+            Worker::new(&start, Side::Server, &s.flow, s.config.clone()).and_then(|w| {
+                let listeners = bind(id, s)?;
+                Ok((w, listeners, None))
+            })
+        }
     };
     let (worker, listeners, sched) = match prepared {
         Ok(p) => p,
