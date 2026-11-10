@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 116 work packages. Packages marked critical path gate the phase.
+This page lists 122 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -127,6 +127,12 @@ flowchart LR
   RLM_13["RLM-13<br/>Mix accuracy from the classifier as metric series"]
   CAP_05["CAP-05<br/>Provenance fields from the scrub record"]
   MOD_22["MOD-22<br/>Shared decrypted check in the module capture scripts"]
+  TRN_16["TRN-16<br/>Per profile captures scored with the transport check"]
+  CON_22["CON-22<br/>Realism report delivery and reservation conflicts in the REST API"]
+  UI_08["UI-08<br/>Scenario table, criterion filters, and realism results in the report views"]
+  AGT_19["AGT-19<br/>SMB2 in the agent"]
+  RLM_14["RLM-14<br/>Message counts in the decrypted view"]
+  IMG_07["IMG-07<br/>The heartbeat timeout in the image boot test"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -268,6 +274,15 @@ flowchart LR
   CAP_04 --> CAP_05
   RLM_12 --> MOD_22
   MOD_06 --> MOD_22
+  RLM_09 --> TRN_16
+  CON_21 --> CON_22
+  CTL_39 --> UI_08
+  UI_05 --> UI_08
+  MOD_13 --> AGT_19
+  AGT_17 --> AGT_19
+  RLM_12 --> RLM_14
+  MOD_22 --> RLM_14
+  IMG_06 --> IMG_07
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -392,6 +407,12 @@ flowchart LR
 | [RLM-13](#rlm-13-mix-accuracy-from-the-classifier-as-metric-series) | Mix accuracy from the classifier as metric series | S | CON-20, RLM-07 |  |
 | [CAP-05](#cap-05-provenance-fields-from-the-scrub-record) | Provenance fields from the scrub record | S | CON-20, CAP-04 |  |
 | [MOD-22](#mod-22-shared-decrypted-check-in-the-module-capture-scripts) | Shared decrypted check in the module capture scripts | S | RLM-12, MOD-06 |  |
+| [TRN-16](#trn-16-per-profile-captures-scored-with-the-transport-check) | Per profile captures scored with the transport check | S | RLM-09, TRN-03 |  |
+| [CON-22](#con-22-realism-report-delivery-and-reservation-conflicts-in-the-rest-api) | Realism report delivery and reservation conflicts in the REST API | S | CON-21 |  |
+| [UI-08](#ui-08-scenario-table-criterion-filters-and-realism-results-in-the-report-views) | Scenario table, criterion filters, and realism results in the report views | S | CTL-39, UI-05 |  |
+| [AGT-19](#agt-19-smb2-in-the-agent) | SMB2 in the agent | S | MOD-13, AGT-17 |  |
+| [RLM-14](#rlm-14-message-counts-in-the-decrypted-view) | Message counts in the decrypted view | S | RLM-12, MOD-22 |  |
+| [IMG-07](#img-07-the-heartbeat-timeout-in-the-image-boot-test) | The heartbeat timeout in the image boot test | S | IMG-06 |  |
 
 ## CON Contracts
 
@@ -624,6 +645,23 @@ Deliverables.
 Acceptance.
 
 - [ ] validate.py and the openapi-breaking check pass, and the change entry lists the consumers (CTL-39, UI, SDK).
+
+### CON-22 Realism report delivery and reservation conflicts in the REST API
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CON-21
+- **Paths.** `contracts/`
+
+No operation delivers a realism report to the controller, so RunReport.realism stays empty (CON-21 finding). reserveAgent names no status code for a refused reservation and Agent does not say who holds one (UI-06 finding). Needs owner approval as a contract change.
+
+Deliverables.
+
+- An additive operation that attaches a realism report to a run, a documented 409 for reserveAgent, and an optional Agent.reserved_by.
+
+Acceptance.
+
+- [ ] validate.py and the openapi-breaking check pass, and the change entry lists the consumers (controller, realism runner, CLI, UI, SDK).
 
 ## OPS Repository and swarm tooling
 
@@ -967,6 +1005,23 @@ Acceptance.
 
 - [ ] A TLS test moves a 1 MiB body in one burst both ways, and handshakes with the new profiles negotiate the expected ALPN.
 
+### TRN-16 Per profile captures scored with the transport check
+
+Phase 2 · size S · workstream TRN
+
+- **Depends on.** RLM-09, TRN-03
+- **Paths.** `engine/fps-backend-kernel/`
+
+RLM-09 proved the transport behavior check on synthetic captures and on the Linux fixtures only. The capture test tests/netns/profiles.sh records one client capture per OS profile, which nothing scores, and the harness fixtures show window scale 10 where linux6 expects 7.
+
+Deliverables.
+
+- profiles.sh scores each capture with python3 -m realism score --os-profile NAME (strict off for windows11 and macos14), and the window scale difference is explained or fixed.
+
+Acceptance.
+
+- [ ] The capture job of trn.yml passes with the three profiles scored, and a capture recorded with the wrong profile fails; the coordinator adds the tool install to the workflow.
+
 ## AGT Agent service
 
 ### AGT-04 Signed module verification
@@ -1208,15 +1263,33 @@ Phase 2 · size S · workstream AGT
 - **Depends on.** AGT-12
 - **Paths.** `engine/fps-agent/`
 
-engine/fps-agent/tests/run_control.rs:758 (a_fake_controller_changes_rates_and_reads_a_capture) failed twice in batch 24 with dropped 1 and passed on rerun (CAP-04, MOD-11).
+engine/fps-agent/tests/run_control.rs:758 (a_fake_controller_changes_rates_and_reads_a_capture) failed twice in batch 24 with dropped 1 and passed on rerun (CAP-04, MOD-11). In AGT-17 the ftp test of tests/first_party.rs lost 2 of 95 sessions when the ssh test ran beside it, so those tests now take a mutex; the cause is only inferred.
 
 Deliverables.
 
 - The cause of the dropped packet found and fixed, in the test or the capture path, with the reasoning in the PR.
+- The cause of the lost ftp sessions under parallel tests found, and the mutex removed or justified.
 
 Acceptance.
 
-- [ ] The test passes 50 times in a row in CI (a loop step in the PR run) and still fails when a packet is really dropped.
+- [ ] Both tests pass 50 times in a row in CI (a loop step in the PR run), and the capture test still fails when a packet is really dropped.
+
+### AGT-19 SMB2 in the agent
+
+Phase 2 · size S · workstream AGT
+
+- **Depends on.** MOD-13, AGT-17
+- **Paths.** `engine/fps-agent/`
+
+The agent registry has no smb2 entry. MOD-12 added the functions as a stateless value, and MOD-13 adds the manifest and scenarios.
+
+Deliverables.
+
+- The dependency on fps-module-smb2 and the stateless registry entry, with the module in the agent's module list test.
+
+Acceptance.
+
+- [ ] A controller e2e plan runs an smb2 scenario through the real agent with succeeded sessions.
 
 ## CTL Controller
 
@@ -2170,10 +2243,28 @@ CON-20 added the source label so the mix metrics can carry what the classifier s
 Deliverables.
 
 - The realism report and its metric output carry mix.share_pct, mix.abs_error_pp and mix.max_abs_error_pp with source=classifier and the classifier label.
+- The mix check also reads the scenarios table of the REST report (CON-21, application and scenario apart, bytes as bytes_tx plus bytes_rx) beside the file report form of CTL-38.
 
 Acceptance.
 
 - [ ] A test on a committed fixture with a known mix gives the literal series, and the output validates against metric catalog 0.4.0.
+
+### RLM-14 Message counts in the decrypted view
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** RLM-12, MOD-22
+- **Paths.** `realism/`
+
+MOD-22 replaced the module copies of decrypted_check.py with python3 -m realism decrypted, which does not count HTTP requests and responses inside TLS, the SMTP command and reply sequence, or the IMAP commands and literals that the old scripts checked.
+
+Deliverables.
+
+- Optional expectations in the decrypted labels for message counts per session (HTTP/1, HTTP/2, SMTP, IMAP), read with tshark from the view.
+
+Acceptance.
+
+- [ ] The four committed fixtures pass with literal counts, and a view with a missing message fails with a named reason.
 
 ## CAP Capture compiler and profile extractor
 
@@ -2369,6 +2460,23 @@ Acceptance.
 
 - [ ] The owner host boot test passes for the all in one, controller, and agent roles with the agent registered over mutual TLS.
 
+### IMG-07 The heartbeat timeout in the image boot test
+
+Phase 2 · size S · workstream IMG
+
+- **Depends on.** IMG-06
+- **Paths.** `image/`
+
+The Build, boot, and run job of image.yml failed twice on 2026-11-10 (MOD-06, MOD-22) and passed on other runs of the same code. The local agent in the VM lost its first sessions with "no heartbeat within the heartbeat timeout", so the first run failed in prepare with "agent session lost".
+
+Deliverables.
+
+- The cause found from the VM logs of a failing run (slow guest, clock step at boot, or start order), and the boot test waits for a stable agent session or the units are ordered so the first run cannot race it.
+
+Acceptance.
+
+- [ ] The boot test passes 10 times in a row in CI (a loop in the PR run), and still fails when the agent cannot reach the controller.
+
 ## UI Web UI
 
 ### UI-03 Test configuration editor
@@ -2438,3 +2546,20 @@ Deliverables.
 Acceptance.
 
 - [ ] Component tests cover reservation conflicts reported by the API.
+
+### UI-08 Scenario table, criterion filters, and realism results in the report views
+
+Phase 2 · size S · workstream UI
+
+- **Depends on.** CTL-39, UI-05
+- **Paths.** `ui/`
+
+The report and comparison views show run totals only and pair criteria by metric, operator and value, because the REST report had no scenario table and no where before CON-21.
+
+Deliverables.
+
+- The views show the scenario table and its comparison, pair criteria by metric, op, value and where, and pair realism results by metric and labels.
+
+Acceptance.
+
+- [ ] Component tests with literal values for a report with scenarios, two criteria that differ only in where, and a comparison; the mock validates against the OpenAPI.

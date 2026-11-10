@@ -3148,11 +3148,14 @@ work_packages:
     paths: [engine/fps-agent/]
     summary: >-
       engine/fps-agent/tests/run_control.rs:758 (a_fake_controller_changes_rates_and_reads_a_capture)
-      failed twice in batch 24 with dropped 1 and passed on rerun (CAP-04, MOD-11).
+      failed twice in batch 24 with dropped 1 and passed on rerun (CAP-04, MOD-11). In AGT-17 the ftp test
+      of tests/first_party.rs lost 2 of 95 sessions when the ssh test ran beside it, so those tests now
+      take a mutex; the cause is only inferred.
     deliverables:
       - The cause of the dropped packet found and fixed, in the test or the capture path, with the reasoning in the PR.
+      - The cause of the lost ftp sessions under parallel tests found, and the mutex removed or justified.
     acceptance:
-      - The test passes 50 times in a row in CI (a loop step in the PR run) and still fails when a packet is really dropped.
+      - Both tests pass 50 times in a row in CI (a loop step in the PR run), and the capture test still fails when a packet is really dropped.
 
   - id: CON-21
     title: Scenario totals, criterion filters, and realism results in the REST report
@@ -3197,6 +3200,7 @@ work_packages:
       the run's counters; the RLM-07 mix check still prints them only in its own report.
     deliverables:
       - The realism report and its metric output carry mix.share_pct, mix.abs_error_pp and mix.max_abs_error_pp with source=classifier and the classifier label.
+      - The mix check also reads the scenarios table of the REST report (CON-21, application and scenario apart, bytes as bytes_tx plus bytes_rx) beside the file report form of CTL-38.
     acceptance:
       - A test on a committed fixture with a known mix gives the literal series, and the output validates against metric catalog 0.4.0.
 
@@ -3230,3 +3234,97 @@ work_packages:
       - The four capture.sh scripts call python3 -m realism decrypted, and the decrypted_check.py copies, their tests and ndpi_reader_compat.py are removed.
     acceptance:
       - The realism workflow passes for the four modules, and no module file names decrypted_check.py.
+
+  - id: TRN-16
+    title: Per profile captures scored with the transport check
+    phase: 2
+    workstream: TRN
+    size: S
+    depends_on: [RLM-09, TRN-03]
+    paths: [engine/fps-backend-kernel/]
+    summary: >-
+      RLM-09 proved the transport behavior check on synthetic captures and on the Linux fixtures only. The
+      capture test tests/netns/profiles.sh records one client capture per OS profile, which nothing scores,
+      and the harness fixtures show window scale 10 where linux6 expects 7.
+    deliverables:
+      - profiles.sh scores each capture with python3 -m realism score --os-profile NAME (strict off for windows11 and macos14), and the window scale difference is explained or fixed.
+    acceptance:
+      - The capture job of trn.yml passes with the three profiles scored, and a capture recorded with the wrong profile fails; the coordinator adds the tool install to the workflow.
+
+  - id: CON-22
+    title: Realism report delivery and reservation conflicts in the REST API
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [CON-21]
+    paths: [contracts/]
+    summary: >-
+      No operation delivers a realism report to the controller, so RunReport.realism stays empty (CON-21
+      finding). reserveAgent names no status code for a refused reservation and Agent does not say who
+      holds one (UI-06 finding). Needs owner approval as a contract change.
+    deliverables:
+      - An additive operation that attaches a realism report to a run, a documented 409 for reserveAgent, and an optional Agent.reserved_by.
+    acceptance:
+      - validate.py and the openapi-breaking check pass, and the change entry lists the consumers (controller, realism runner, CLI, UI, SDK).
+
+  - id: UI-08
+    title: Scenario table, criterion filters, and realism results in the report views
+    phase: 2
+    workstream: UI
+    size: S
+    depends_on: [CTL-39, UI-05]
+    paths: [ui/]
+    summary: >-
+      The report and comparison views show run totals only and pair criteria by metric, operator and value,
+      because the REST report had no scenario table and no where before CON-21.
+    deliverables:
+      - The views show the scenario table and its comparison, pair criteria by metric, op, value and where, and pair realism results by metric and labels.
+    acceptance:
+      - Component tests with literal values for a report with scenarios, two criteria that differ only in where, and a comparison; the mock validates against the OpenAPI.
+
+  - id: AGT-19
+    title: SMB2 in the agent
+    phase: 2
+    workstream: AGT
+    size: S
+    depends_on: [MOD-13, AGT-17]
+    paths: [engine/fps-agent/]
+    summary: >-
+      The agent registry has no smb2 entry. MOD-12 added the functions as a stateless value, and MOD-13
+      adds the manifest and scenarios.
+    deliverables:
+      - The dependency on fps-module-smb2 and the stateless registry entry, with the module in the agent's module list test.
+    acceptance:
+      - A controller e2e plan runs an smb2 scenario through the real agent with succeeded sessions.
+
+  - id: RLM-14
+    title: Message counts in the decrypted view
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [RLM-12, MOD-22]
+    paths: [realism/]
+    summary: >-
+      MOD-22 replaced the module copies of decrypted_check.py with python3 -m realism decrypted, which does
+      not count HTTP requests and responses inside TLS, the SMTP command and reply sequence, or the IMAP
+      commands and literals that the old scripts checked.
+    deliverables:
+      - Optional expectations in the decrypted labels for message counts per session (HTTP/1, HTTP/2, SMTP, IMAP), read with tshark from the view.
+    acceptance:
+      - The four committed fixtures pass with literal counts, and a view with a missing message fails with a named reason.
+
+  - id: IMG-07
+    title: The heartbeat timeout in the image boot test
+    phase: 2
+    workstream: IMG
+    size: S
+    depends_on: [IMG-06]
+    paths: [image/]
+    summary: >-
+      The Build, boot, and run job of image.yml failed twice on 2026-11-10 (MOD-06, MOD-22) and passed on
+      other runs of the same code. The local agent in the VM lost its first sessions with "no heartbeat
+      within the heartbeat timeout", so the first run failed in prepare with "agent session lost".
+    deliverables:
+      - The cause found from the VM logs of a failing run (slow guest, clock step at boot, or start order), and the boot test waits for a stable agent session or the units are ordered so the first run cannot race it.
+    acceptance:
+      - The boot test passes 10 times in a row in CI (a loop in the PR run), and still fails when the agent cannot reach the controller.
