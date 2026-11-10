@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #406 |
 | Branch | `wp/CON-22` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #412 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-73ec6a, lease until 2026-11-10T18:55:01Z |
 | Last verified commit | none |
 
@@ -27,7 +27,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Read the report schema, CON-21, and the controller reserve code, and decide the contract
 - [x] 2. Edit the OpenAPI document (0.10.0)
 - [x] 3. Write the change entry, the Contracts page section, and the log entry
-- [ ] 4. Open the PR, wait for CI, and hand over for review
+- [x] 4. Open the PR, wait for CI, and hand over for review
 
 ## Done and verified
 
@@ -67,3 +67,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-10T17:25Z | claude-73ec6a | claim | - | claimed #406 |
 | 2026-11-10T17:50Z | claude-73ec6a | checkpoint | - | contract, change entry, wiki page, log entry written; checks green locally |
+| 2026-11-10T18:05Z | claude-73ec6a | review | - | PR #412; contracts, breaking, scripts green; ctl, cli-sdk, ui red until the coordinator applies the follow up |
