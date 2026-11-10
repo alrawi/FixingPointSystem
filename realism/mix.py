@@ -14,6 +14,10 @@ The two measurements have different faults. A scheduler that sends the wrong mix
 both. A generator whose traffic nDPI does not recognise as the intended application shows
 only in the nDPI share, and a counter bug of the engine only in the metrics share.
 
+**Series.** The nDPI side also gives the catalog gauges ``mix.share_pct``, ``mix.abs_error_pp``,
+and ``mix.max_abs_error_pp`` with ``source`` ``classifier`` and the classifier label, for the
+basis that :attr:`MixResult.metrics_basis` names.
+
 **Mapping.** A scenario is not an nDPI protocol, so the labels map each mix scenario to an
 application (``mix.scenarios``), and the application gives its nDPI names exactly as the
 conformance check reads them (``applications.<name>.ndpi`` of the labels, or the built in
@@ -68,6 +72,11 @@ MAX_FAILURES_LISTED = 50
 SESSIONS_METRIC = "sessions.attempted"
 BYTES_METRICS = ("bytes.tx", "bytes.rx")
 RUN_KEY = "*"
+SHARE_METRIC = "mix.share_pct"
+ERROR_METRIC = "mix.abs_error_pp"
+MAX_ERROR_METRIC = "mix.max_abs_error_pp"
+# The value of the catalog label ``source`` for what the classifier saw in the capture.
+SOURCE_CLASSIFIER = "classifier"
 
 
 class MixError(Exception):
@@ -238,19 +247,55 @@ def _from_table(entries: Any, where: str) -> dict[str, Counts]:
     return result
 
 
+_REST_KEYS = ("sessions_attempted", "bytes_tx", "bytes_rx")
+
+
+def _is_rest_entry(entry: Any) -> bool:
+    return isinstance(entry, dict) and any(k in entry for k in _REST_KEYS)
+
+
+def _from_rest(entries: list[Any], where: str) -> dict[str, Counts]:
+    """Read ``RunReport.scenarios``, the ``ScenarioTotals`` of the REST report.
+
+    The application and the scenario are apart, so the key is ``<application>/<scenario>``,
+    the sessions are ``sessions_attempted``, and the bytes are ``bytes_tx`` plus ``bytes_rx``.
+    """
+    result: dict[str, Counts] = {}
+    for index, entry in enumerate(entries):
+        here = f"{where}: scenarios[{index}]"
+        if not isinstance(entry, dict):
+            raise MixError(f"{here}: must be an object")
+        for name in ("application", "scenario"):
+            if not isinstance(entry.get(name), str) or not entry[name]:
+                raise MixError(f"{here}: needs an {name} name")
+        key = f"{entry['application']}/{entry['scenario']}"
+        if key in result:
+            raise MixError(f"{here}: scenario {key} is listed twice")
+        result[key] = Counts(
+            _count(entry.get("sessions_attempted"), f"{here}.sessions_attempted"),
+            _count(entry.get("bytes_tx"), f"{here}.bytes_tx")
+            + _count(entry.get("bytes_rx"), f"{here}.bytes_rx"),
+        )
+    return result
+
+
 def load_run_counts(path: Path) -> RunCounts:
     """Read the achieved sessions and bytes per scenario of a run.
 
-    The file is JSON (or YAML) in one of three forms.
+    The file is JSON (or YAML) in one of four forms.
 
     * A ``MetricSeriesSet`` of ``GET /v1/runs/{id}/metrics?view=scenario``, whose last sample per
       key supplies ``sessions.attempted``, ``bytes.tx``, and ``bytes.rx``. Keys are
       ``<application>/<scenario>``.
     * A bundle object with that series under ``metrics``, next to the ``run`` of a run report.
-    * A table ``{"scenarios": [{"scenario", "sessions", "bytes"}]}``.
+    * A table ``{"scenarios": [{"scenario", "sessions", "bytes"}]}``, with the scenario as
+      ``<application>/<scenario>``, which is the file form that the controller writes.
+    * The ``RunReport`` of ``GET /v1/runs/{id}/report``, whose ``scenarios`` list (API 0.9.0 and
+      later) has the application and the scenario apart, ``sessions_attempted``, ``bytes_tx``,
+      and ``bytes_rx``.
 
-    The ``RunReport`` of ``GET /v1/runs/{id}/report`` alone holds the whole run totals and no
-    per scenario counts, so the check cannot use it and says so.
+    A ``RunReport`` of a controller that predates ``scenarios`` holds only the totals of the
+    run, so the check cannot use it and says so.
     """
     doc = _read(path, "run report")
     where = f"run report {path}"
@@ -260,12 +305,17 @@ def load_run_counts(path: Path) -> RunCounts:
         return RunCounts(_from_series(doc["metrics"], where), path.name, "bundle")
     if "samples" in doc:
         return RunCounts(_from_series(doc, where), path.name, "metric_series")
+    scenarios = doc.get("scenarios")
+    rest_report = "run" in doc and "realism" in doc
+    if isinstance(scenarios, list) and (rest_report or any(_is_rest_entry(e) for e in scenarios)):
+        return RunCounts(_from_rest(scenarios, where), path.name, "rest_report")
     if "scenarios" in doc:
         return RunCounts(_from_table(doc["scenarios"], where), path.name, "table")
     raise MixError(
-        f"{where}: it has no per scenario counts. The report of GET /v1/runs/{{id}}/report holds "
-        "only the totals of the run. Save GET /v1/runs/{id}/metrics?view=scenario next to it, "
-        'under "metrics", or give a table "scenarios"'
+        f"{where}: it has no per scenario counts. A report of GET /v1/runs/{{id}}/report from a "
+        "controller before API 0.9.0 holds only the totals of the run. Save "
+        'GET /v1/runs/{id}/metrics?view=scenario next to it, under "metrics", or give a table '
+        '"scenarios"'
     )
 
 
@@ -345,15 +395,65 @@ class MixResult:
         """True when every basis passed."""
         return bool(self.bases) and all(b.passed for b in self.bases)
 
+    @property
+    def metrics_basis(self) -> str | None:
+        """The basis that the metric series describe, or None when it cannot be told.
+
+        The catalog says that ``mix.share_pct`` is by sessions or by bytes according to
+        ``profile.basis`` and has no label for the basis, so one report carries one basis. It is
+        the ``profile.basis`` of the test configuration when the check ran it, and the only basis
+        when the check ran just one. Weights in the labels and both bases leave it open, and the
+        report then carries no series, because two values would share one set of labels.
+        """
+        ran = [b.basis for b in self.bases]
+        if self.config is not None and self.config.basis in ran:
+            return self.config.basis
+        return ran[0] if len(ran) == 1 else None
+
+    def metrics(self) -> list[dict[str, Any]]:
+        """Return the catalog series of what the classifier saw, in the form of the report.
+
+        Each application gives ``mix.share_pct`` (the achieved share in percent) and
+        ``mix.abs_error_pp`` (its distance from the configured share in percentage points),
+        and the run gives ``mix.max_abs_error_pp``, all with ``source`` ``classifier`` and the
+        classifier label. An application whose share the capture cannot give (it has no
+        sessions or bytes to count) has no series. The row of the unrecognised traffic is not an
+        application and has none either: it lowers the shares of the others.
+        """
+        basis = next((b for b in self.bases if b.basis == self.metrics_basis), None)
+        if basis is None:
+            return []
+        labels = {"source": SOURCE_CLASSIFIER, "classifier": self.classifier}
+        rows = [r for r in basis.rows if r.ndpi is not None]
+        shares = [
+            {
+                "name": SHARE_METRIC,
+                "labels": {"application": r.application, **labels},
+                "value": _pct(r.ndpi),
+            }
+            for r in rows
+        ]
+        if not rows:
+            return []
+        distances = [round(abs(_delta(r.ndpi, r.configured) or 0.0), 6) for r in rows]
+        errors = [
+            {
+                "name": ERROR_METRIC,
+                "labels": {"application": r.application, **labels},
+                "value": distance,
+            }
+            for r, distance in zip(rows, distances, strict=True)
+        ]
+        peak = {"name": MAX_ERROR_METRIC, "labels": labels, "value": max(distances)}
+        return [*shares, *errors, peak]
+
     def to_dict(self) -> dict[str, Any]:
         """Return the check entry of the realism report."""
         failures = self.failures
         return {
             "check": CHECK_NAME,
-            # The catalog has mix.share_pct and mix.abs_error_pp, which the controller reports
-            # for the run itself. They carry no label for the measurement, so this entry would
-            # mix its two sources. Nothing is reported until the catalog names them.
-            "metrics": [],
+            "metrics": self.metrics(),
+            "metrics_basis": self.metrics_basis,
             "passed": self.passed,
             "classifier": self.classifier,
             "classifier_version": self.classifier_version,

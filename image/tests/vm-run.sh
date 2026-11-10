@@ -20,6 +20,10 @@
 #   FPS_RUN_RATE       sessions per second            (default 50)
 #   FPS_RUN_STEADY_S   seconds of the steady phase    (default 10)
 #   FPS_RUN_WAIT_S     seconds to wait for the run to end after the load phases (default 120)
+#   FPS_RUN_STABLE_S / FPS_RUN_FRESH_S / FPS_RUN_SESSION_WAIT_S   the agent session gate
+#                      before the first command: seconds that an opened session must hold
+#                      (3), the longest age of an unopened session that may take the first
+#                      command (2), and how long to wait for either (30)
 set -uo pipefail
 
 out="${1:-/tmp/fps-run}"
@@ -42,6 +46,121 @@ finish() {
 	journalctl -u fps-controller --no-pager -n 20 2>/dev/null || true
 	exit 1
 }
+
+# --- The agent session gate (IMG-07). ---
+#
+# "state online" in GET /v1/agents only says that the controller read the open message
+# of a session. The agent opens its side of the session when the controller sends the
+# first frame of the response stream, and it sends no heartbeat before. The controller
+# sends nothing on its own after the open message (see the section CI boot test of
+# docs/wiki/Image.md for the fix that belongs to the controller), so an idle session
+# has no heartbeat, the controller ends it at the first sweep after the
+# heartbeat timeout, and the agent dials again. A command that arrives in the last
+# second before that end finds an agent that already counted the silence, and the agent
+# drops the session: "agent session lost" in prepare. The jobs 129666780207 and
+# 129934010691 of image.yml failed that way, 5.07 s and 5.02 s after the session began.
+#
+# The gate decides from the two journals, with the monotonic clock of the journal, so
+# that a step of the wall clock changes nothing. It prints one line, "KIND REASON":
+#   stable  the agent opened its session and held it for FPS_RUN_STABLE_S seconds,
+#           so heartbeats and acks flow, and the first command is safe
+#   fresh   the controller registered a session FPS_RUN_FRESH_S seconds ago or less
+#           and the agent has not opened it, so a command now flushes it long before
+#           the timeout
+#   wait    anything else, with the reason: no session at all, the session is old
+#           and unopened (a command now would meet the timeout), or it just ended
+# wait_agent_session polls until stable or fresh, and fails after FPS_RUN_SESSION_WAIT_S
+# seconds, which is the case when the agent cannot reach the controller.
+stable_s="${FPS_RUN_STABLE_S:-3}"
+fresh_s="${FPS_RUN_FRESH_S:-2}"
+session_wait_s="${FPS_RUN_SESSION_WAIT_S:-30}"
+# shellcheck disable=SC2016 # Python source, not shell
+session_py='import json, sys, time
+
+agent_path, ctl_path, now_arg, stable_s, fresh_s = sys.argv[1:6]
+now = int(time.clock_gettime(time.CLOCK_MONOTONIC) * 1e6) if now_arg == "now" else int(now_arg)
+stable = int(float(stable_s) * 1e6)
+fresh = int(float(fresh_s) * 1e6)
+
+
+def load(path):
+    """Journal entries of `journalctl -o json` up to now whose MESSAGE is a JSON object: (time, object)."""
+    out = []
+    try:
+        fh = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        return out
+    with fh:
+        for line in fh:
+            try:
+                entry = json.loads(line)
+                msg = json.loads(entry["MESSAGE"])
+                ts = int(entry["__MONOTONIC_TIMESTAMP"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            if isinstance(msg, dict) and ts <= now:
+                out.append((ts, msg))
+    out.sort(key=lambda e: e[0])
+    return out
+
+
+agent = []
+for ts, m in load(agent_path):
+    f = m.get("fields")
+    if isinstance(f, dict) and f.get("message") in ("session open", "session lost"):
+        agent.append((ts, f["message"].split()[1], f.get("session")))
+ctl = []
+for ts, m in load(ctl_path):
+    if m.get("agent_id") == "local" and m.get("msg") in ("agent online", "agent offline"):
+        ctl.append((ts, m["msg"].split()[1], m.get("session")))
+
+
+def secs(us):
+    return "%.1f" % (us / 1e6)
+
+
+if not ctl:
+    print("wait the controller has not seen the agent local online")
+    sys.exit(0)
+c_ts, c_kind, c_sess = ctl[-1]
+if c_kind != "online":
+    print("wait the controller marked session %s of the agent local offline %s s ago" % (c_sess, secs(now - c_ts)))
+    sys.exit(0)
+# The journals of two units reach journald in either order within a few milliseconds.
+if agent and agent[-1][1] == "open" and agent[-1][0] >= c_ts - 500000:
+    held = now - agent[-1][0]
+    if held >= stable:
+        print("stable the agent holds session %s, open for %s s" % (agent[-1][2], secs(held)))
+    else:
+        print("wait the agent opened session %s %s s ago, and the gate wants %s s" % (agent[-1][2], secs(held), stable_s))
+    sys.exit(0)
+age = now - c_ts
+if age <= fresh:
+    print("fresh the controller registered session %s %s s ago and the agent has not opened it yet" % (c_sess, secs(age)))
+else:
+    print("wait the controller registered session %s %s s ago and the agent has not opened it, a command now meets the heartbeat timeout" % (c_sess, secs(age)))
+'
+session_verdict() { # session_verdict AGENT_JOURNAL CONTROLLER_JOURNAL NOW_US|now STABLE_S FRESH_S
+	python3 -I -c "$session_py" "$@"
+}
+wait_agent_session() { # wait_agent_session MAX_S: prints the last verdict, succeeds on stable or fresh
+	local max="$1" deadline verdict="" tmp
+	tmp="$(mktemp -d)"
+	deadline=$((SECONDS + max))
+	while :; do
+		journalctl -u fps-agent -o json --no-pager -q >"$tmp/agent.json" 2>/dev/null || true
+		journalctl -u fps-controller -o json --no-pager -q >"$tmp/controller.json" 2>/dev/null || true
+		verdict="$(session_verdict "$tmp/agent.json" "$tmp/controller.json" now "$stable_s" "$fresh_s")"
+		case "$verdict" in stable* | fresh*) break ;; esac
+		if ((SECONDS >= deadline)); then break; fi
+		sleep 0.2
+	done
+	rm -rf "$tmp"
+	printf '%s\n' "$verdict"
+	[[ "$verdict" == stable* || "$verdict" == fresh* ]]
+}
+# A test sources this file to call the functions above (image/tests/session-gate-test.sh).
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
 
 mkdir -p "$out"
 # shellcheck source=/dev/null
@@ -147,6 +266,18 @@ else
 	finish
 fi
 
+# The first command goes out only on a session that is live or young (see the gate above).
+# The modules and the configuration are in place, so nothing else comes between the gate
+# and the run, and the command leaves within a fraction of a second of the verdict.
+if verdict="$(wait_agent_session "$session_wait_s")"; then
+	pass "run: the agent local has a session that takes the first command (${verdict#* })"
+	if [[ "$verdict" == fresh* ]]; then
+		echo "NOTE the agent has not opened its session yet, because the controller sends nothing until the first command; the run starts now, inside the heartbeat timeout"
+	fi
+else
+	fail "run: the agent local has a session that takes the first command" "no live or young session within ${session_wait_s}s: ${verdict#* }"
+	finish
+fi
 run="$(call POST /v1/runs -H 'Content-Type: application/json' -d "{\"config_id\":\"$config\",\"agents\":[\"local\"]}" | json_field id)"
 if [[ -z "$run" ]]; then
 	fail "run: the run starts on the agent local"

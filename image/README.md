@@ -182,6 +182,14 @@ Mutual TLS adds these checks (IMG-06). In the controller and all-in-one roles, `
 
 The agent role has no controller in its VM. With `FPS_TEST_CONTROLLER_BIN=/path/to/fps-controller image/boot-test.sh --role agent`, the script runs that controller on the host (ports 18444, 18445, and 18446 on the loopback, reached from the VM as 10.0.2.2), mints a token into a file with `fps-controller token`, seeds the token and the CA, and checks that `GET /v1/agents` on the host shows `edge-1` online and that the controller log shows an enrollment and no `INSECURE`. Without the variable, the seed carries a placeholder token and a fingerprint, and the check proves only that the agent runs against `https://` and keeps redialing the absent controller.
 
+### The agent session gate, boots in a row, and the negative boot (IMG-07)
+
+The HTTP and DNS run of `--run` starts with a gate (`image/tests/vm-run.sh`, check `run: the agent local has a session that takes the first command`). The state `online` in `GET /v1/agents` only says that the controller read the open message of the agent session. The controller sends nothing after that message until it has a command or a heartbeat to answer, and the agent heartbeats only after it received the first frame of the response. An idle session therefore has no heartbeat, the controller ends it at the first one second sweep after the heartbeat timeout (5 s), and the agent dials again, over and over, with a period of about 6 s. A command that reaches an unopened session in the last second before the sweep finds an agent that has already counted five seconds of silence, and the agent drops the session, so the run fails in `prepare` with `agent session lost`. The gate reads the journals of `fps-agent` and `fps-controller` with the monotonic clock of the journal, and lets the run start only on a session that the agent opened and held for 3 s (`stable`), or on a session that the controller registered at most 2 s ago and that the first command opens in time (`fresh`). It waits up to 30 s for either, and fails when there is none, which is the case when the agent cannot reach the controller. `FPS_RUN_STABLE_S`, `FPS_RUN_FRESH_S`, and `FPS_RUN_SESSION_WAIT_S` tune it. Once the controller sends the response headers at the open message, the agent opens its session at once and the gate sees `stable` without any timing luck.
+
+`FPS_TEST_REPEAT=10 image/boot-test.sh --run` boots the image ten times, one boot after the other, each one a full run of the script, and stops at the first boot that fails. The result line is `RESULT: PASS (10 of 10 boots in a row)` only when every boot passed. With `FPS_TEST_ARTIFACT_DIR`, boot N writes its files to `boot-N/`.
+
+`FPS_TEST_NEGATIVE=agent-unreachable image/boot-test.sh --role all-in-one --run` adds one more boot after the boots in a row, in which the agent dials the loopback, where no controller listens. The step passes only when that boot fails, and fails at the right place: the agent registration check and the first check of the run fail, while the controller API and ssh work. Its output carries the prefix `negative boot:` on every PASS and FAIL line, so that the expected failures stay out of the counts of the job summary.
+
 The namespace test is `image/tests/isolation-netns.sh`. It builds a router with interfaces named `mgmt0` and `test0` in network namespaces inside the VM, and it can also run on any Linux host as root: `sudo image/tests/isolation-netns.sh`.
 
 ## Convert the image
@@ -230,7 +238,7 @@ Without a seed the VM has no login, because the image ships no password. The fir
 | `scripts/provision.sh`, `scripts/cleanup.sh` | The steps that run inside the build VM |
 | `cloud-init/build-user-data.tftpl` | Seed of the build VM, with a random one time password |
 | `seed-example/` | Example NoCloud seed for a VM |
-| `tests/` | The static checks, the offline tests of the role selector and the tuning (`role-test.sh`, `tune-test.sh`), the conversion test (`convert-test.sh`), the namespace test, and the checks that run inside the VM |
+| `tests/` | The static checks, the offline tests of the role selector and the tuning (`role-test.sh`, `tune-test.sh`), the conversion test (`convert-test.sh`), the offline tests of the agent session gate (`session-gate-test.sh`, which replays the journals of a failed CI job) and of the boots in a row and the negative boot (`boot-loop-test.sh`), the namespace test, and the checks that run inside the VM |
 
 Run the checks that need no KVM with `make lint-img test-img`, and the namespace test with `sudo make e2e-img`. `nft -c` needs root on many hosts, so `make test-img` prints a NOTE and skips that one check without root. Run `sudo make test-img` to include it.
 
@@ -245,5 +253,6 @@ Run the checks that need no KVM with `make lint-img test-img`, and the namespace
 | `FAIL rustup is missing` | Install rustup (Prerequisites, step 3). Distro cargo cannot add the musl target |
 | Packer waits for ssh until the timeout | Run with `FPS_PACKER_LOG=1` and set `headless = false` in `fps.pkr.hcl` locally to watch the console |
 | `qemu-system-x86_64: Could not set up host forwarding rule` | Another process uses the port. Set `FPS_TEST_API_PORT` or `FPS_TEST_SSH_PORT` |
+| The run fails in `prepare` with `agent session lost` | The first command met an agent session that had no heartbeat yet. The gate of `vm-run.sh` prevents it, so look at the line `run: the agent local has a session that takes the first command`: when that check fails, the agent never reached the controller. Read the agent and controller journals that the failed run prints |
 | `make lint-img` prints `shellcheck is not installed, skipped` | Optional: `sudo apt-get install -y shellcheck` |
 | `nft -c` is skipped in `make test-img` | It needs root. Run `sudo make test-img` |

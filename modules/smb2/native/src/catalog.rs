@@ -95,7 +95,7 @@ macro_rules! function {
 // Requests.
 
 function!(NEGOTIATE, "negotiate",
-    "A NEGOTIATE request that offers the dialects in the comma separated list, such as '2.0.2,2.1,3.0,3.0.2,3.1.1'. A list with 3.1.1 adds the preauthentication and encryption contexts. signing: disabled, enabled, required. A capabilities value of -1 chooses 0 for 2.x and DFS, leasing, and large MTU for 3.x. An empty client_guid draws 16 random octets.",
+    "A NEGOTIATE request that offers the comma separated dialects, such as '2.0.2,2.1'. A list with 3.1.1 adds the negotiate contexts. A capabilities value of -1 chooses the default of the dialect.",
     [
         opt("dialects", Text, T("2.1")),
         opt("message_id", Int, I(0)),
@@ -106,7 +106,7 @@ function!(NEGOTIATE, "negotiate",
     ]);
 
 function!(SESSION_SETUP, "session_setup",
-    "A SESSION_SETUP request that carries the security buffer, a SPNEGO token such as the result of ntlm_negotiate or ntlm_authenticate. A session_id of 0 opens a session, and the second request of an exchange carries the id that the server chose.",
+    "A SESSION_SETUP request with the security buffer, a SPNEGO token. A session_id of 0 opens a session, and the second request of an exchange carries the id that the server chose.",
     [
         req("security", Bytes),
         MESSAGE_ID,
@@ -132,7 +132,7 @@ function!(
 );
 
 function!(CREATE, "create",
-    "A CREATE request for a path below the share, with backslashes, or an empty name for the root of the share. The defaults open an existing file for reading (read data, attributes, and read control, share all, FILE_OPEN, FILE_NON_DIRECTORY_FILE). Use options 1 for a directory, disposition 2 to create a file that must not exist, and disposition 5 to overwrite or create.",
+    "A CREATE request for a path below the share, or an empty name for its root. The defaults open an existing file for reading. Options 1 opens a directory, disposition 2 creates, and 5 overwrites.",
     [
         req("name", Text),
         MESSAGE_ID,
@@ -164,7 +164,7 @@ function!(READ, "read",
     ]);
 
 function!(WRITE, "write",
-    "A WRITE request that carries data at offset into the file with the 32 digit hexadecimal file id. The data is binary, so a nested call such as content.binary fits. A credit_charge of -1 charges one credit per 64 KiB.",
+    "A WRITE request that carries data at offset into the file with the 32 digit hexadecimal file id. A credit_charge of -1 charges one credit per 64 KiB.",
     [
         req("file_id", Text),
         req("data", Bytes),
@@ -205,7 +205,7 @@ function!(
 );
 
 function!(QUERY_DIRECTORY, "query_directory",
-    "A QUERY_DIRECTORY request for the entries that match the pattern in the open directory with the 32 digit hexadecimal file id, as FileIdBothDirectoryInformation. restart starts the scan again, and single returns one entry.",
+    "A QUERY_DIRECTORY request for the entries that match the pattern in the open directory with the 32 digit hexadecimal file id. restart starts the scan again, and single returns one entry.",
     [
         req("file_id", Text),
         MESSAGE_ID,
@@ -222,7 +222,7 @@ function!(QUERY_DIRECTORY, "query_directory",
 // Responses.
 
 function!(NEGOTIATE_RESPONSE, "negotiate_response",
-    "A NEGOTIATE response that selects the dialect, such as '2.1' or '3.1.1'. An empty security buffer stands for the SPNEGO token that offers NTLMSSP alone, which is what a server without Kerberos sends. A capabilities value of -1 chooses 0 for 2.x and DFS, leasing, and large MTU for 3.x. An empty server_guid draws 16 random octets. A time of -1 is the fixed time of the module.",
+    "A NEGOTIATE response that selects the dialect, such as '2.1' or '3.1.1'. An empty security buffer is a SPNEGO token that offers NTLMSSP alone. A time or capabilities of -1 is the default.",
     [
         opt("dialect", Text, T("2.1")),
         opt("message_id", Int, I(0)),
@@ -237,7 +237,7 @@ function!(NEGOTIATE_RESPONSE, "negotiate_response",
     ]);
 
 function!(SESSION_SETUP_RESPONSE, "session_setup_response",
-    "A SESSION_SETUP response with the security buffer and a status such as more_processing_required, which answers the first request of an exchange, or success. session_flags: 1 guest, 2 null, 4 encrypt data.",
+    "A SESSION_SETUP response with the security buffer and a status such as more_processing_required or success. session_flags: 1 guest, 2 null, 4 encrypt data.",
     [
         req("security", Bytes),
         MESSAGE_ID,
@@ -263,7 +263,7 @@ function!(TREE_CONNECT_RESPONSE, "tree_connect_response",
     ]);
 
 function!(CREATE_RESPONSE, "create_response",
-    "A CREATE response for a file of size octets. An empty file_id draws a random 32 digit hexadecimal id, and an allocation_size of -1 rounds the size up to 4096. The attributes are 32 for a file and 16 for a directory. A time of -1 is the fixed time of the module.",
+    "A CREATE response for a file of size octets. An empty file_id draws a random id of 32 hexadecimal digits. The attributes are 32 for a file and 16 for a directory. A time of -1 is the fixed time.",
     [
         MESSAGE_ID,
         SESSION_ID,
@@ -371,7 +371,7 @@ function!(NTLM_NEGOTIATE, "ntlm_negotiate",
     ]);
 
 function!(NTLM_CHALLENGE, "ntlm_challenge",
-    "The NTLMSSP CHALLENGE_MESSAGE of a server with target information that names the domain and computer, wrapped in a SPNEGO NegTokenResp with the state accept-incomplete unless spnego is false. An empty server_challenge draws 8 random octets. A time of -1 is the fixed time of the module.",
+    "The NTLMSSP CHALLENGE_MESSAGE of a server with target information, in a SPNEGO NegTokenResp unless spnego is false. An empty server_challenge draws 8 random octets.",
     [
         opt("target", Text, T("FPS")),
         opt("computer", Text, T("FPSSERVER")),
@@ -384,7 +384,7 @@ function!(NTLM_CHALLENGE, "ntlm_challenge",
     ]);
 
 function!(NTLM_AUTHENTICATE, "ntlm_authenticate",
-    "The NTLMSSP AUTHENTICATE_MESSAGE of a client that answers a challenge, with a full NTLMv2 response computed from the user and the password, wrapped in a SPNEGO NegTokenResp unless spnego is false. The challenge is the security buffer of the session setup response, or a bare challenge message. An empty client_challenge draws 8 random octets.",
+    "The NTLMSSP AUTHENTICATE_MESSAGE of a client with a full NTLMv2 response, in a SPNEGO NegTokenResp unless spnego is false. The challenge is the security buffer of the session setup response.",
     [
         req("challenge", Bytes),
         req("user", Text),
@@ -405,7 +405,7 @@ function!(NTLM_SESSION_KEY, "ntlm_session_key",
     [req("authenticate", Bytes), req("password", Text)]);
 
 function!(SIGN, "sign",
-    "The SMB2 message with the signed flag set and the signature written as SMB 2.x computes it, HMAC-SHA256 over the message with the session key of 32 hexadecimal digits. A transport header in front of the message stays in front.",
+    "The SMB2 message with the signed flag set and the signature of SMB 2.x, HMAC-SHA256 under the session key of 32 hexadecimal digits. A transport header in front of the message stays.",
     [req("message", Bytes), req("key", Text)]);
 
 // Readers.
@@ -415,11 +415,11 @@ function!(MESSAGE_LENGTH, "message_length",
     [req("header", Bytes)]);
 
 function!(HEADER_FIELD, "header_field",
-    "A field of the SMB2 header of a message: command, command_code, status, status_code, message_id, session_id, tree_id, credits, credit_charge, flags, response, signed, async, or next_command. The message may start with a transport header.",
+    "A field of the SMB2 header: command, status, message_id, session_id, tree_id, credits, credit_charge, flags, response, signed, async, or next_command. The message may start with a transport header.",
     [req("message", Bytes), req("field", Text)]);
 
 function!(BODY_FIELD, "body_field",
-    "A field of the body of a message, by command. negotiate: dialects or dialect, security_mode, capabilities, guid, max_read, max_write. session_setup: session_flags, previous_session_id, binding. tree_connect: path, share_type, maximal_access. create: name, file_id, size, attributes, action, desired_access, disposition, options. read, write, and close: file_id, offset, length, count, remaining, flags. query_directory: pattern, flags, output_length, entries, and entry_count.",
+    "A field of the body of a message, by command, such as dialect, path, file_id, size, offset, length, count, name, or entries. The module README lists them.",
     [req("message", Bytes), req("field", Text)]);
 
 function!(SECURITY_BLOB, "security_blob",

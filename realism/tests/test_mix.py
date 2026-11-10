@@ -627,9 +627,13 @@ def test_the_report_entry_validates_against_the_schema(tmp_path: Path) -> None:
         ).to_dict()
         jsonschema.validate(report, schema)
         entry = next(c for c in report["checks"] if c["check"] == "mix_accuracy")
-        assert report["version"] == "0.9.0"
+        assert report["version"] == "0.10.0"
         assert entry["passed"] is expected
-        assert entry["metrics"] == []
+        assert {m["name"] for m in entry["metrics"]} == {
+            "mix.share_pct",
+            "mix.abs_error_pp",
+            "mix.max_abs_error_pp",
+        }
     assert report["passed"] is False
 
 
@@ -759,6 +763,235 @@ def test_real_ndpi_gives_the_mix_of_a_synthetic_capture(tmp_path: Path) -> None:
         row = entry["bases"][0]["applications"][0]
         assert row["ndpi_pct"] == 80.0 and row["ndpi_passed"] is True
         assert entry["passed"] is expected
+
+
+# --- metric series and the REST report ------------------------------------------------
+
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "mix"
+CATALOG = Path(__file__).resolve().parents[2] / "contracts" / "metrics" / "catalog.yaml"
+CLASSIFIER_LABELS = {"source": "classifier", "classifier": "ndpi"}
+
+
+def _entry_of(report: dict[str, Any]) -> dict[str, Any]:
+    jsonschema.validate(report, json.loads(SCHEMA_PATH.read_text()))
+    return next(c for c in report["checks"] if c["check"] == "mix_accuracy")
+
+
+def _fixture_entry(run_report: str, **kwargs: Any) -> dict[str, Any]:
+    """Score the committed capture (8 HTTP sessions, 2 lookups) and return the mix entry."""
+    config = kwargs.pop("test_config", FIXTURE / "test.yaml")
+    report = score(
+        FIXTURE / "mix.pcapng",
+        FIXTURE / "labels.yaml",
+        STUB,
+        test_config=config,
+        run_report=FIXTURE / run_report,
+        **kwargs,
+    )
+    return _entry_of(report.to_dict())
+
+
+def _series(name: str, value: float, **labels: str) -> dict[str, Any]:
+    return {"name": name, "labels": {**labels, **CLASSIFIER_LABELS}, "value": value}
+
+
+def test_the_fixture_gives_the_literal_series_by_sessions() -> None:
+    # Configured 75 and 25 percent, the capture holds 8 and 2 of 10 sessions.
+    entry = _fixture_entry("run-report.json")
+    assert entry["metrics_basis"] == "sessions"
+    assert entry["metrics"] == [
+        _series("mix.share_pct", 80.0, application="http1"),
+        _series("mix.share_pct", 20.0, application="dns"),
+        _series("mix.abs_error_pp", 5.0, application="http1"),
+        _series("mix.abs_error_pp", 5.0, application="dns"),
+        _series("mix.max_abs_error_pp", 5.0),
+    ]
+    assert entry["passed"] is False
+
+
+def test_the_fixture_gives_the_literal_series_by_bytes(tmp_path: Path) -> None:
+    # 448 and 164 payload bytes of 612 are 73.202614 and 26.797386 percent.
+    config = tmp_path / "test.yaml"
+    config.write_text(
+        (FIXTURE / "test.yaml").read_text().replace("basis: sessions", "basis: bytes")
+    )
+    entry = _fixture_entry("run-report.json", test_config=config)
+    assert entry["metrics_basis"] == "bytes"
+    assert entry["metrics"] == [
+        _series("mix.share_pct", 73.202614, application="http1"),
+        _series("mix.share_pct", 26.797386, application="dns"),
+        _series("mix.abs_error_pp", 1.797386, application="http1"),
+        _series("mix.abs_error_pp", 1.797386, application="dns"),
+        _series("mix.max_abs_error_pp", 1.797386),
+    ]
+    assert entry["passed"] is True
+
+
+def test_the_series_validate_against_catalog_0_4_0() -> None:
+    catalog = yaml.safe_load(CATALOG.read_text())
+    assert catalog["version"] == "0.4.0"
+    metrics = {m["name"]: m for m in catalog["metrics"]}
+    source_values = set(catalog["labels"]["source"]["values"])
+    classifier_values = set(catalog["labels"]["classifier"]["values"])
+    entry = _fixture_entry("run-report.json")
+    assert entry["metrics"]
+    for series in entry["metrics"]:
+        definition = metrics[series["name"]]
+        assert set(series["labels"]) == set(definition["labels"])
+        assert series["labels"]["source"] in source_values
+        assert series["labels"]["classifier"] in classifier_values
+        assert series["labels"]["source"] == "classifier"
+        assert definition["type"] == "gauge"
+        if series["name"] == "mix.share_pct":
+            assert 0 <= series["value"] <= 100
+
+
+def test_the_schema_refuses_series_that_break_the_catalog() -> None:
+    entry = _fixture_entry("run-report.json")
+    schema = json.loads(SCHEMA_PATH.read_text())
+    mix_schema = {"$ref": "#/$defs/mix_accuracy", "$defs": schema["$defs"]}
+    jsonschema.validate(entry, mix_schema)
+    first: list[Callable[[dict[str, Any]], object]] = [
+        lambda m: m["labels"].pop("source"),
+        lambda m: m["labels"].update(source="metrics"),
+        lambda m: m.update(name="mix.other_pp"),
+        lambda m: m["labels"].update(extra="x"),
+    ]
+    for change in first:
+        broken = json.loads(json.dumps(entry))
+        change(broken["metrics"][0])
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(broken, mix_schema)
+    broken = json.loads(json.dumps(entry))
+    broken["metrics"][-1]["labels"]["application"] = "http1"
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(broken, mix_schema)
+    broken = json.loads(json.dumps(entry))
+    del broken["metrics"][0]["labels"]["application"]
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(broken, mix_schema)
+
+
+@pytest.mark.skipif(NDPI_READER is None, reason="ndpiReader is not installed")
+def test_real_ndpi_gives_the_literal_series_of_the_fixture() -> None:
+    report = score(
+        FIXTURE / "mix.pcapng",
+        FIXTURE / "labels.yaml",
+        NdpiClassifier(reader=NDPI_READER),
+        test_config=FIXTURE / "test.yaml",
+        run_report=FIXTURE / "run-report.json",
+    )
+    shares = {
+        m["labels"]["application"]: m["value"]
+        for m in _entry_of(report.to_dict())["metrics"]
+        if m["name"] == "mix.share_pct"
+    }
+    assert shares == {"http1": 80.0, "dns": 20.0}
+
+
+def test_the_series_do_not_depend_on_the_form_of_the_run_report() -> None:
+    rest = _fixture_entry("run-report.json")
+    table = _fixture_entry("run-table.json")
+    assert rest["metrics"] == table["metrics"]
+    assert (rest["run_report"]["form"], table["run_report"]["form"]) == ("rest_report", "table")
+    assert rest["bases"] == table["bases"]
+
+
+def test_weights_in_the_labels_leave_the_basis_of_the_series_to_the_bases(tmp_path: Path) -> None:
+    weights = {"http1/web_get": 3, "dns/lookup": 1}
+    labels = tmp_path / "labels.json"
+    run_report = FIXTURE / "run-report.json"
+    labels.write_text(json.dumps(_labels(basis="both", weights=weights)))
+    entry = _entry_of(score(FIXTURE / "mix.pcapng", labels, STUB, run_report=run_report).to_dict())
+    assert entry["metrics_basis"] is None and entry["metrics"] == []
+    labels.write_text(json.dumps(_labels(basis="bytes", weights=weights)))
+    entry = _entry_of(score(FIXTURE / "mix.pcapng", labels, STUB, run_report=run_report).to_dict())
+    assert entry["metrics_basis"] == "bytes"
+    assert entry["metrics"][0]["value"] == 73.202614
+
+
+def test_a_capture_without_sessions_has_no_series(run: Run) -> None:
+    result = run.check(pcapgen.Capture(), _table(6, 4))
+    assert result.metrics() == []
+    assert result.metrics_basis == "sessions"
+
+
+def test_unrecognised_traffic_lowers_the_shares_and_is_no_application(run: Run) -> None:
+    stub = StubClassifier(lambda s: "HTTP" if s.server_port == 80 else None, name="ndpi")
+    result = run.check(_capture(6, 4), _table(6, 4), classifier=stub)
+    series = {(m["name"], m["labels"].get("application")): m["value"] for m in result.metrics()}
+    assert series[("mix.share_pct", "http1")] == 60.0
+    assert series[("mix.share_pct", "dns")] == 0.0
+    assert series[("mix.max_abs_error_pp", None)] == 40.0
+    assert all(m["labels"].get("application") != mix.UNMATCHED for m in result.metrics())
+
+
+def test_the_rest_report_gives_the_same_counts_as_the_file_table() -> None:
+    rest = mix.load_run_counts(FIXTURE / "run-report.json")
+    table = mix.load_run_counts(FIXTURE / "run-table.json")
+    assert (rest.form, table.form) == ("rest_report", "table")
+    assert (
+        rest.scenarios
+        == table.scenarios
+        == {"http1/web_get": mix.Counts(8, 448), "dns/lookup": mix.Counts(2, 164)}
+    )
+
+
+def _rest(**entry: Any) -> dict[str, Any]:
+    base = {"application": "http1", "scenario": "web_get", "sessions_attempted": 5}
+    base |= {"sessions_succeeded": 1, "sessions_failed": 4, "bytes_tx": 10, "bytes_rx": 32}
+    return {"run": {"id": "r"}, "realism": [], "scenarios": [{**base, **entry}]}
+
+
+def test_the_rest_report_counts_attempted_sessions_and_both_byte_directions(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(_rest()))
+    assert mix.load_run_counts(path).scenarios == {"http1/web_get": mix.Counts(5, 42)}
+
+
+def test_an_empty_scenarios_list_of_the_rest_report_counts_nothing(run: Run) -> None:
+    result = run.check(_capture(6, 4), {"run": {"id": "r"}, "realism": [], "scenarios": []})
+    assert not result.passed
+    assert "the run report counts no sessions" in result.failures[0]
+    assert result.to_dict()["run_report"]["form"] == "rest_report"
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"application": None}, "application"),
+        ({"scenario": ""}, "scenario"),
+        ({"sessions_attempted": None}, "sessions_attempted"),
+        ({"bytes_tx": None}, "bytes_tx"),
+        ({"bytes_rx": None}, "bytes_rx"),
+        ({"sessions_attempted": -1}, "sessions_attempted"),
+    ],
+)
+def test_malformed_rest_entries_name_the_fault(
+    tmp_path: Path, change: dict[str, Any], message: str
+) -> None:
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(_rest(**change)))
+    with pytest.raises(mix.MixError, match=message):
+        mix.load_run_counts(path)
+
+
+def test_a_scenario_listed_twice_in_the_rest_report_is_refused(tmp_path: Path) -> None:
+    doc = _rest()
+    doc["scenarios"] *= 2
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(doc))
+    with pytest.raises(mix.MixError, match="listed twice"):
+        mix.load_run_counts(path)
+
+
+def test_a_rest_report_without_scenarios_is_explained(tmp_path: Path) -> None:
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps({"run": {"id": "r"}, "realism": []}))
+    with pytest.raises(mix.MixError, match=r"before API 0\.9\.0"):
+        mix.load_run_counts(path)
 
 
 def test_the_example_labels_file_loads_and_validates() -> None:
