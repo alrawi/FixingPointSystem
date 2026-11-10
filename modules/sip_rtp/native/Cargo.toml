@@ -1,0 +1,38 @@
+[package]
+name = "fps-module-sip-rtp"
+description = "Native template functions of the sip_rtp module (decision D10)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+fps-flow = { path = "../../../engine/fps-flow" }
+# RngCore appears in the signature of the TemplateFn trait.
+rand = { version = "0.8", default-features = false }
+# The pacing function reads the clock of the runtime, which tests pause.
+tokio = { version = "1", default-features = false, features = ["time"] }
+
+[dev-dependencies]
+fps-golden = { path = "../../../tests/golden/rust" }
+fps-interp = { path = "../../../engine/fps-interp" }
+fps-io = { path = "../../../engine/fps-io" }
+rand_pcg = "0.3"
+# serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
+serde_yaml = { package = "serde_norway", version = "0.9" }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
+
+# The module layout keeps tests in modules/sip_rtp/tests, next to the scenarios
+# they exercise, so the targets point one directory up.
+[[test]]
+name = "catalog"
+path = "../tests/catalog.rs"
+
+[[test]]
+name = "scenarios"
+path = "../tests/scenarios.rs"
+
+[[test]]
+name = "transcript"
+path = "../tests/transcript.rs"

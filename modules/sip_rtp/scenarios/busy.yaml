@@ -1,0 +1,30 @@
+scenario: busy
+description: A call that the callee refuses. The client sends an INVITE over UDP, the server answers 100 Trying and then 486 Busy Here, and the client sends the ACK of the INVITE transaction with the branch of the INVITE, as RFC 3261 section 17.1.1.3 requires for a final response of 300 or above. No media flow starts and no BYE follows.
+vars:
+  server_ip: 192.0.2.20
+  client_ip: 192.0.2.10
+  sip_port: 5060
+  rtp_port_min: 16384
+  rtp_port_max: 32766
+  codecs: PCMU,PCMA
+  ptime_ms: 20
+flows:
+  - id: signaling
+    module: sip_rtp
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.sip_port }}" }
+      - set: { offer_port: "{{ sip_rtp.port(vars.rtp_port_min, vars.rtp_port_max) }}" }
+      - send: "{{ sip_rtp.invite(server=vars.server_ip, client=vars.client_ip, rtp_port=vars.offer_port, codecs=vars.codecs, ptime=vars.ptime_ms, sip_port=vars.sip_port) }}"
+      - expect: { pattern: "SIP/2.0 100 ", max_datagram: 4096, timeout_ms: 5000 }
+      - expect: { pattern: "SIP/2.0 486 ", max_datagram: 4096, timeout_ms: 5000 }
+      - send: "{{ sip_rtp.ack(last) }}"
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.sip_port }}" }
+      - expect: { pattern: "INVITE ", max_datagram: 4096, timeout_ms: 30000 }
+      - send: "{{ sip_rtp.response(last, 100, server=vars.server_ip, sip_port=vars.sip_port) }}"
+      - delay: { dist: uniform, min_ms: 40, max_ms: 400 }
+      - send: "{{ sip_rtp.response(last, 486, server=vars.server_ip, sip_port=vars.sip_port) }}"
+      - expect: { pattern: "ACK ", max_datagram: 4096, timeout_ms: 5000 }
+      - close: fin
