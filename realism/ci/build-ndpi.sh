@@ -40,7 +40,7 @@ reports_pin() {
 }
 
 if ! reports_pin "$reader"; then
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+  "$here/../../tools/ci/apt-install.sh" \
     build-essential git autoconf automake libtool pkg-config gettext flex bison \
     libpcap-dev libjson-c-dev
   src=$(mktemp -d)

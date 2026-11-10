@@ -26,14 +26,14 @@ permissions:
 jobs:
   kernel-port:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install the harness tools
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends iproute2 ethtool procps
+          tools/ci/apt-install.sh iproute2 ethtool procps
           sudo modprobe 8021q
       - name: Build the integration tests as the runner user
         run: cargo test -p fps-hosts --test kernel_port --no-run

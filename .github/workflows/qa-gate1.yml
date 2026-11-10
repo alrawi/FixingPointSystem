@@ -42,6 +42,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -64,7 +65,7 @@ jobs:
       - name: Install the harness and realism tools
         run: |
           realism/ci/install-tools.sh
-          sudo apt-get install -y -q --no-install-recommends curl
+          tools/ci/apt-install.sh curl
       - name: Build the agent and the controller as the runner user
         run: make build-qa-gate1 GO=go
       - name: Gate 1 suite and negative proof as root
