@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #350 |
 | Branch | `wp/AGT-16` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps, the pull request and CI are left) |
+| Pull request | #385 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-eb8bb0, lease until 2026-11-10T14:16:43Z |
-| Last verified commit | none |
+| Last verified commit | 0ab90d8 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Run multi flow scenarios in the agent (ENG-23 worker), load `extension.wasm` fro
 - [x] 1. `modules.rs`: the digest pass keeps the bytes of `extension.wasm` and `load_module_bytes` compiles them, `parse_instance`, the http2 registry entry
 - [x] 2. `assemble.rs`: no one flow refusal, refusal of several flows with a UDP flow, `FlowRef::port`
 - [x] 3. `tls.rs`: per session client connectors, the profiles `mail-client`, `server-tls13-h2`, `server-tls13-noalpn`
-- [ ] 4. Tests, docs, log entry, pull request, CI
+- [x] 4. Tests, docs, log entry, pull request, CI
 
 ## Done and verified
 
@@ -32,12 +32,11 @@ Run multi flow scenarios in the agent (ENG-23 worker), load `extension.wasm` fro
 
 ## Remaining
 
-- `controller_e2e.sh` gained an ftp run that the sandbox cannot execute (it needs the Go controller, and Go modules do not download here). CI job `controller-e2e` is its first run.
-- Pull request and CI.
+none. CI on 0ab90d8 is green, including `rust` and `controller-e2e` (the ftp run through the real controller and agent).
 
 ## Next action
 
-Open the pull request, then poll the check runs and fix failures inside `engine/fps-agent/`.
+Review PR #385. After TRN-15 and MOD-06 merge, follow the notes in the log entry.
 
 ## Blockers and open questions
 
@@ -72,3 +71,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-10T13:48Z | claude-eb8bb0 | claim | | Claimed #350, branch from origin/main 14894c3. The time in this row is wrong, the claim was at about 12:46Z (the card lease is 14:16:43Z). |
 | 2026-11-10T13:08Z | claude-eb8bb0 | checkpoint | | Steps 1 to 3 and the tests done, docs and log entry written |
+| 2026-11-10T13:30Z | claude-eb8bb0 | finish | 0ab90d8 | PR #385 opened, CI green, ready for review |
