@@ -1,0 +1,90 @@
+scenario: h2c_flow
+description: >-
+  Test scenario for the http2 functions, not a module scenario. A client opens
+  an HTTP/2 connection with prior knowledge on a cleartext port, exchanges
+  SETTINGS, and sends one POST whose header block continues in CONTINUATION
+  frames and whose body spans many DATA frames. The server reads every frame
+  with two expect actions (the 9 octet header, then the payload of the length
+  that the header announces), decodes the header block, and answers with
+  HEADERS, DATA, and GOAWAY. It shows how a flow reads frames, which is the
+  pattern that the http2 module scenarios of MOD-06 follow.
+vars:
+  server_port: 8080
+  body_size: 40000
+  reply_size: 5000
+  # A small frame size forces CONTINUATION and many DATA frames. A conforming
+  # peer accepts no less than 16384, but both sides here come from this crate.
+  max_frame: 100
+  request: |-
+    :method: POST
+    :scheme: http
+    :path: /upload
+    :authority: www.example.test
+    user-agent: fps-http2-test/1.0
+    content-type: application/octet-stream
+    accept: */*
+    x-request-id: 0123456789abcdef0123456789abcdef
+  response: |-
+    :status: 200
+    content-type: text/plain
+    server: fps-h2
+flows:
+  - id: h2c
+    module: http2
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ http2.preface() }}{{ http2.settings(max_concurrent_streams=100, initial_window_size=1048576) }}"
+      # The SETTINGS frame of the server, whose payload the client skips.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      - send: "{{ http2.settings_ack() }}"
+      # The SETTINGS ACK of the server is a header without a payload.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - send: "{{ http2.headers(1, vars.request, max_frame_size=vars.max_frame, huffman='never', index='off') }}{{ http2.data(1, fill(vars.body_size), end_stream=true, max_frame_size=vars.max_frame) }}"
+      # The response HEADERS frame.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - set:
+          length: "{{ http2.frame_length(last) }}"
+          flags: "{{ http2.frame_field(last, 'flags') }}"
+      - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+      - set: { status: "{{ http2.header_value(http2.headers_decode(last, flags=vars.flags), ':status') }}" }
+      # The DATA frames, as many as the server writes for reply_size.
+      - loop:
+          count: "{{ http2.data_frames(vars.reply_size, max_frame_size=vars.max_frame) }}"
+          do:
+            - expect: { bytes: 9, timeout_ms: 5000 }
+            - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      # The GOAWAY frame.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { bytes: 24, timeout_ms: 5000 }
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      - set: { client_window: "{{ http2.settings_value(last, 'initial_window_size') }}" }
+      - send: "{{ http2.settings(max_concurrent_streams=100) }}{{ http2.settings_ack() }}"
+      # The SETTINGS ACK of the client.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      # The header block, a HEADERS frame and its CONTINUATION frames. Each
+      # frame goes through headers_decode, which renders the list at END_HEADERS.
+      - loop:
+          count: "{{ http2.headers_frames(vars.request, max_frame_size=vars.max_frame, huffman='never', index='off') }}"
+          do:
+            - expect: { bytes: 9, timeout_ms: 5000 }
+            - set:
+                length: "{{ http2.frame_length(last) }}"
+                stream: "{{ http2.frame_stream(last) }}"
+                flags: "{{ http2.frame_field(last, 'flags') }}"
+                type: "{{ http2.frame_field(last, 'type_code') }}"
+            - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+            - set: { got: "{{ http2.headers_decode(last, flags=vars.flags, type=vars.type) }}" }
+      - set: { path: "{{ http2.header_value(vars.got, ':path') }}" }
+      - loop:
+          count: "{{ http2.data_frames(vars.body_size, max_frame_size=vars.max_frame) }}"
+          do:
+            - expect: { bytes: 9, timeout_ms: 5000 }
+            - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      - send: "{{ http2.headers(vars.stream, vars.response) }}{{ http2.data(vars.stream, fill(vars.reply_size), end_stream=true, max_frame_size=vars.max_frame) }}{{ http2.goaway(vars.stream) }}"
+      - close: fin
