@@ -23,6 +23,12 @@ NDPI_42_HEADER = (
     "ndpi_proto_num,ndpi_proto,server_name_sni,c_to_s_pkts,c_to_s_bytes"
 )
 
+# The flow CSV of nDPI 4.14 separates the fields with a pipe and adds columns.
+NDPI_414_HEADER = (
+    "#flow_id|protocol|first_seen|last_seen|duration|src_ip|src_port|dst_ip|dst_port|"
+    "ndpi_proto_num|ndpi_proto|proto_by_ip|server_name_sni|c_to_s_pkts|c_to_s_bytes"
+)
+
 LABELS_HTTP_DNS = {
     "labels": "fps-realism-labels",
     "version": 1,
@@ -50,11 +56,17 @@ def fake_reader(tmp_path: Path) -> Callable[..., Path]:
     """Return a factory for an executable that imitates ``ndpiReader``.
 
     The fake answers ``-h`` with a version banner and writes the given CSV text to
-    the path after ``-C``. It can also exit with an error or sleep, so tests reach
+    the path after ``-C``. ``help_exit`` is its exit code for ``-h``, which nDPI 4.14
+    sets to 1. It can also exit with an error or sleep, so tests reach
     every branch of the process boundary without nDPI.
     """
 
-    def make(csv_text: str = NDPI_42_HEADER + "\n", exit_code: int = 0, sleep_s: float = 0) -> Path:
+    def make(
+        csv_text: str = NDPI_42_HEADER + "\n",
+        exit_code: int = 0,
+        sleep_s: float = 0,
+        help_exit: int = 0,
+    ) -> Path:
         script = tmp_path / "fake-ndpiReader"
         csv_file = tmp_path / "fake-flows.csv"
         csv_file.write_text(csv_text)
@@ -64,7 +76,7 @@ def fake_reader(tmp_path: Path) -> Callable[..., Path]:
             "args = sys.argv[1:]\n"
             "if args == ['-h']:\n"
             "    print('Welcome to nDPI 9.8.7-fake')\n"
-            "    sys.exit(0)\n"
+            f"    sys.exit({help_exit})\n"
             f"time.sleep({sleep_s})\n"
             f"if {exit_code}:\n"
             "    print('pcap open failed', file=sys.stderr)\n"
