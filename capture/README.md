@@ -1,6 +1,6 @@
 # Capture compiler
 
-The `capture` package turns packet captures into data that the scenario generator, the scrubber, and the profile extractor read (work packages CAP-02 to CAP-04). CAP-01 adds the first command, `sessions`. The package uses only the Python standard library, version 3.10 or newer.
+The `capture` package turns packet captures into data that the scenario generator, the scrubber, and the profile extractor read (work packages CAP-02 to CAP-04). CAP-01 added the command `sessions`, and CAP-02 added `scenario`. The compiler uses only the Python standard library, version 3.10 or newer.
 
 ```bash
 python3 -m capture sessions --pcap run.pcapng --out sessions.json
@@ -19,6 +19,16 @@ The exit code is 0 on success and 1 when the capture cannot be read or the outpu
 
 The output follows [`sessions.schema.json`](sessions.schema.json). The wiki page [Capture](https://github.com/alrawi/FixingPointSystem/wiki/Capture) explains the rules for sessions, reassembly, anomalies, and turns.
 
+## Scenario generation
+
+```bash
+python3 -m capture sessions --pcap run.pcapng --payloads --out sessions.json
+python3 -m capture scenario --sessions sessions.json --all --out-dir out/my_module --synthetic
+python3 tools/contracts/validate.py --modules out --no-openapi
+```
+
+The second command writes `manifest.yaml` and one scenario per session, with lengths, identifiers, timestamps and cookies replaced by template expressions. Without `--synthetic` (or `--consent TEXT --scrubbed`) the manifest records an unscrubbed capture and fails validation on purpose. The wiki page [Capture](https://github.com/alrawi/FixingPointSystem/wiki/Capture) lists every option, heuristic and false positive guard.
+
 ## Files
 
 | File | Purpose |
@@ -27,6 +37,9 @@ The output follows [`sessions.schema.json`](sessions.schema.json). The wiki page
 | `decode.py` | Ethernet (with VLAN), Linux cooked, null, raw IP, IPv4, IPv6 with extension headers, TCP, and UDP |
 | `tcp.py` | Reassembly of one TCP direction |
 | `sessions.py` | Session grouping, handshake, anomalies, turns, and the JSON document |
+| `templates.py` | Template text for literal bytes, and a reference renderer of the template functions |
+| `fields.py` | Framing (HTTP, length prefixes) and detection of dynamic fields |
+| `scenario.py` | Flows, expects, manifest, YAML, and the render check |
 | `cli.py`, `__main__.py` | The command line |
 | `sessions.schema.json` | JSON Schema of the output |
 | `tests/` | Tests with synthetic captures that `tests/pcapgen.py` writes as bytes |

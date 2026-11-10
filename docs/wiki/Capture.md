@@ -1,8 +1,8 @@
 # Capture
 
-This page describes the capture compiler under `capture/`, which the CAP workstream owns. The compiler turns a packet capture into data for scenario generation, scrubbing, and profile extraction. CAP-01 added the first command, `python3 -m capture sessions`, which reassembles TCP streams, groups UDP flows, and writes one JSON document of sessions with timing. The later packages CAP-02 (scenario generation), CAP-03 (scrubbing and provenance), and CAP-04 (profile extractor) read that document, so its fields are the seam between them.
+This page describes the capture compiler under `capture/`, which the CAP workstream owns. The compiler turns a packet capture into data for scenario generation, scrubbing, and profile extraction. CAP-01 added the first command, `python3 -m capture sessions`, which reassembles TCP streams, groups UDP flows, and writes one JSON document of sessions with timing. CAP-02 added `python3 -m capture scenario`, which turns that document into a module directory of scenarios. The later packages CAP-03 (scrubbing and provenance), and CAP-04 (profile extractor) read that document, so its fields are the seam between them.
 
-The package needs only the Python standard library, version 3.10 or newer, and it reads captures as untrusted input, as [Coding Standards](Coding-Standards.md) require. The [Realism](Realism.md) runner has its own reader for scoring, and the two do not share code, because a realism check must not depend on the compiler that produced the traffic it judges.
+The compiler needs only the Python standard library, version 3.10 or newer (PyYAML is a test dependency, because the validator reads YAML), and it reads captures as untrusted input, as [Coding Standards](Coding-Standards.md) require. The [Realism](Realism.md) runner has its own reader for scoring, and the two do not share code, because a realism check must not depend on the compiler that produced the traffic it judges.
 
 ## Command
 
@@ -96,6 +96,114 @@ Each session has `client_to_server` and `server_to_client` objects. `packets`, `
 
 `turns` is the conversation of the session, which CAP-02 reads to build flow programs. A turn is a run of deliveries in one direction. For TCP a delivery is a stretch of bytes in stream order, and the turn's `start_ns` is the time at which the first bytes became available, so a segment that waited behind a hole takes the time of the segment that released it. For UDP a delivery is a datagram, and `datagram_sizes` keeps the boundaries. A gap in a TCP stream always starts a new turn and records `gap_before`. With `--payloads`, a TCP turn has `data_b64` and a UDP turn has `datagrams_b64`.
 
+## Scenario command
+
+```bash
+python3 -m capture sessions --pcap run.pcapng --payloads --out sessions.json
+python3 -m capture scenario --sessions sessions.json --all --out-dir out/my_module [--synthetic]
+```
+
+The command reads a sessions document that was written with `--payloads` and writes a module directory: `manifest.yaml` and one `scenarios/<protocol>_<id>.yaml` per session. The module name is the base name of `--out-dir`, and it has to match `^[a-z][a-z0-9_]{0,62}$`.
+
+| Option | Meaning |
+|---|---|
+| `--sessions` | Sessions document of schema 1.x with payloads. Required |
+| `--session ID` | Converts one session. Repeat it for several. `--all` converts every session. One of the two is required |
+| `--out-dir` | Module directory to write. Required |
+| `--combine NAME` | Writes one scenario that runs the selected sessions in order, each as a flow that the previous flow starts with `spawn` |
+| `--fill-min N` | A body of at least `N` bytes becomes `fill(N)`. The default is 256 |
+| `--opaque-min N` | A run of at least `N` binary bytes (less than 85 percent printable) becomes `fill(N)`. The default is 2048 |
+| `--timestamp-window S` | An epoch value is a timestamp when it lies within `S` seconds of the capture time. The default is 86400 |
+| `--no-fields` | Turns field detection off. Framing stays, so every expect still has a length or delimiter, and all data stays literal |
+| `--keep-timing` | Adds a `delay` for the gap between turns of one side, when the gap is at least `--min-delay-ms` (default 10) |
+| `--license`, `--synthetic`, `--consent TEXT`, `--scrubbed` | Provenance of the manifest, see below |
+| `--report FILE` | Writes a JSON report with the counts of detected fields per scenario |
+
+Warnings and the counts of detected fields go to standard error. The exit code is 0 on success and 1 when the input or the output cannot be handled.
+
+### Shape of a scenario
+
+A TCP session becomes a client flow and a server flow, with `connect` and `accept`, and a `close` that follows the observed FIN or RST. Each turn becomes a `send` on the side that sent it and an `expect` on the other. A UDP session becomes one `send` and one `expect` per datagram, and an expect of a datagram consumes the whole datagram, so it has `bytes: N`. An `expect` on TCP uses one of three forms.
+
+- `pattern` with a delimiter when the unit is text. The delimiters are CRLF CRLF, CRLF, and LF, and one is used only when its first occurrence ends the interval and at least 90 percent of the interval is printable.
+- `bytes` with the length of a record that the framing rules below found.
+- `bytes` with the whole length of the unit, as the fallback.
+
+A unit is cut into records (head, body, frame) at the places where a length or a delimiter is known, so a flow that follows an HTTP head and then a body does not lose its place when the body differs in content.
+
+The generator renders every template again before it writes it, with a reference implementation of the template functions. When the rendered length does not equal the observed length, it falls back to the literal bytes for that scenario and warns.
+
+### Heuristics and their guards
+
+Each heuristic names what it detects and what stops it from firing on ordinary data. The tests in `capture/tests/test_fields.py` and `capture/tests/test_scenario.py` have a case for the guards.
+
+| Field | Detection | Result | False positive guard |
+|---|---|---|---|
+| HTTP Content-Length | A valid HTTP start line and one numeric `Content-Length` whose body lies inside the unit | A variable (`up_len`, `down_len`) that the header and `fill(vars.x)` share, when the body has at least `--fill-min` bytes. Smaller bodies stay literal | A duplicate or conflicting header, a length larger than the unit, and a start line that is not HTTP leave the message alone. Equal sizes in one direction share one variable |
+| HTTP chunked body | `Transfer-Encoding: chunked` without Content-Length | Size lines stay literal, and chunk data of at least `--fill-min` bytes becomes `fill(n)` | Every size line has to be hexadecimal and every chunk and its CRLF has to lie inside the unit. At the first chunk that breaks this, the rest stays raw |
+| Binary length prefix | A prefix of 1, 2, or 4 bytes at offset 0, or of 2 bytes at offset 2 or 3, big or little endian, so that the frames tile the unit exactly | Literal `hex(..)` for the prefix and `fill(N)` for the payload | The frames have to tile the unit with no remainder, the length bytes must not all be printable, and when several layouts fit, the one with the fewest frames wins. The contract has no function that writes a number as bytes, so the prefix is not a variable |
+| Opaque binary | A run of at least `--opaque-min` bytes and less than 85 percent printable | `fill(N)` | Text and short runs stay literal |
+| UUID | Canonical 8-4-4-4-12 text | Digits of the same shape from `rand_int` | The UUID has to occur at least twice, across a request and a response |
+| Random token | A token of 7 to 63 characters from the base64 or hex alphabets | Digits of the same length and separators from `rand_int` | Needs a letter and a digit, or at least 12 digits, and at least 6 distinct characters. A run of four equal characters, a long run of letters, and a pronounceable run (6 or more letters with at least 40 percent vowels) reject it. Entropy has to reach 3.0 bits per character, or 3.3 for 16 or more characters. A token has to be echoed in both directions unless it is 16 or more characters. A token that is the only part of a request target, a whole base64 line, or a token whose 8 byte context is less than 90 percent printable is skipped |
+| Echoed identifier | The same token in a request and in the response | The sender sets a variable from `rand_int`, and the receiver captures it with a split `expect` and `set: {var: "{{ last }}"}`, so both sides use one value | The token has to pass the token guards. On UDP a datagram cannot be split, so the value becomes a scenario variable |
+| HTTP date | A date such as `Sun, 06 Nov 1994 08:49:37 GMT` that parses, has the right weekday, and lies within the window of the capture time | A scenario variable `http_date` that holds the observed date | The weekday has to match the day, which rejects ordinary text. There is no clock function in the contract |
+| Epoch timestamp | 10 digits (seconds) or 13 digits (milliseconds) within `--timestamp-window` of the capture time | `rand_int` over a window around the observed value that keeps the digit count | The value has to be inside the window and not part of a longer run of digits |
+| Cookie | A `Set-Cookie` value that a later `Cookie` header repeats | The same echo mechanism as an identifier | The value has to occur in both, in the right direction and order |
+
+A numeric token that is long, or that has trailing zeros, would be parsed by the agent as a number when `set` stores it, and its text would change. The generator therefore puts a literal letter in front of such a token, and the byte count stays the same.
+
+### Provenance
+
+A capture is real traffic, so the manifest says so. The default writes `source: capture`, `consent: "not recorded"`, and `scrubbed: false`. The schema requires consent and a scrubbed capture for that source, so **the generated module fails validation until CAP-03 scrubs it and the consent is recorded**, and the command warns. `--consent TEXT --scrubbed` states both, and `--synthetic` writes `source: synthetic` for captures that a test or a lab produced. The fixture captures of the modules are synthetic, so the validation runs below use `--synthetic`.
+
+### What the generator does not do
+
+- A binary length prefix is a literal, because the contract has no function that writes an integer as bytes. A scenario with a prefix replays the observed length, which is correct because the generator keeps the payload at that length too.
+- There is no clock function, so a date does not move with the replay time.
+- Combined scenarios chain flows with `spawn` and `spawned: true`, because the contract does not say that variables pass through `after`.
+- Identifier detection looks for random looking tokens. Credentials and hashes, such as an AUTH base64 string or an MD5 sum, and some user names such as `Tst-Pubrupun4007`, can be treated as identifiers. CAP-03 scrubs such values before a scenario leaves the lab.
+- Encrypted traffic is opaque, so it becomes frames and `fill` only.
+- Compression and content that spans turns are not undone.
+
+## Replay test
+
+`capture/tests/replay.py` replays generated scenarios with the real `fps-agent` in standalone mode (`run --plan --modules`) and compares the bytes of the replayed streams with the bytes of the corpus. The corpus is an HTTP exchange with a cookie, a date, an identifier and an epoch, an SMTP dialog, TLS style records, and a UDP exchange. The comparison is per port, with stream bytes for TCP and payload bytes for UDP, and the tolerance is 1 percent.
+
+| Mode | How | Needs |
+|---|---|---|
+| `loopback` | Addresses in `127.71.0.0/24` and `127.72.0.0/24`, capture on `lo` | root, `tcpdump` |
+| `netns` | The QA-01 namespace harness (`tests/harness/netns.sh`), pools `16.0.0.0/24` and `48.0.0.0/24`, the method of `engine/fps-agent/tests/netns_smoke.sh` | root, `tcpdump`, `ip` |
+
+The pytest wrapper `capture/tests/test_replay_harness.py` skips with a message unless `FPS_CAP_REPLAY` is `netns` or `loopback`, `FPS_AGENT` names the agent binary, and the process is root with the tools present. By hand:
+
+```bash
+cargo build -p fps-agent
+sudo env "PATH=$PATH" python3 -m capture.tests.replay --mode loopback --agent target/debug/fps-agent
+```
+
+The `cap.yml` workflow runs only `make lint-cap test-cap` on a runner without the agent, so the replay skips there. A job that runs it in the namespace harness needs these steps, in the pattern of the AGT workflow.
+
+```yaml
+  replay:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y iproute2 tcpdump ethtool
+      - run: python -m pip install -r capture/requirements-dev.txt
+      - run: cargo build -p fps-agent
+      - run: >
+          sudo env "PATH=$PATH" "RUSTUP_HOME=$RUSTUP_HOME" "CARGO_HOME=$CARGO_HOME"
+          FPS_CAP_REPLAY=netns FPS_AGENT="$PWD/target/debug/fps-agent"
+          python -m pytest -q capture/tests/test_replay_harness.py
+```
+
+The path filters of the workflow have to include `capture/**`, `engine/**`, `tests/harness/**`, `contracts/**`, and `tools/contracts/**`. The loopback mode ran on a development machine without `ip` and the byte counts were equal on every port. The namespace mode has not run yet, so the first CI run of this job is its first test.
+
 ## Schema and versioning
 
 [`capture/sessions.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/capture/sessions.schema.json) is a JSON Schema (draft 2020-12) of the document, and every test validates its output against it. The document carries `schema_version` `1.0`. CAP-02 to CAP-04 may add optional fields in a minor version. A change that removes or reinterprets a field needs a new major version and an issue that names the packages that read it.
@@ -104,21 +212,9 @@ Each session has `client_to_server` and `server_to_client` objects. `packets`, `
 
 `make lint-cap test-cap` runs `ruff format --check`, `ruff check`, `mypy --strict`, and `pytest`. `capture/tests/pcapgen.py` writes pcap and pcapng bytes, so no binary fixture is checked in. The tests cover each rule above: retransmission and overlap, out of order delivery, holes that never fill, missing handshakes and mid stream starts, SYN retransmission, resets and half closes, port reuse, sequence wraparound, IPv6, VLAN tags, snap length cuts, UDP idle splits, pcap variants, pcapng with several interfaces and resolutions, concatenated sections, and damaged files.
 
-CI has no workflow for `capture/` yet. A job needs these steps.
+The tests of the scenario command run a model of the flow interpreter (`capture/tests/flowsim.py`) over generated scenarios and validate the output with `tools/contracts/validate.py`. Over the committed fixture captures of the modules (HTTP, DNS, SMTP, FTP, IMAP, and POP3, 608 sessions) every generated scenario validates with 0 errors, and the model reproduces the byte counts of each session exactly, without a deadlock.
 
-```yaml
-- uses: actions/checkout@v4
-- uses: actions/setup-python@v5
-  with:
-    python-version: "3.12"
-- run: python -m pip install -r capture/requirements-dev.txt
-- run: make lint-cap test-cap PYTHON=python
-- run: |
-    python -m pip install ./capture
-    python -I -m capture sessions --pcap "$RUNNER_TEMP/sample.pcap" --out "$RUNNER_TEMP/sessions.json"
-```
-
-The last step needs a sample capture, for example one that a test writes first, and checks that the installed command runs under `python -I`, as the Python rules require for code that reads captures.
+`.github/workflows/cap.yml` runs `make lint-cap test-cap` after `pip install -r capture/requirements-dev.txt` on every change of `capture/`.
 
 ## Limits
 
