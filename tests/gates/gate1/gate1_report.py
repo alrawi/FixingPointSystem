@@ -107,15 +107,22 @@ def agent_sessions(metrics: dict[str, Any]) -> dict[str, int]:
     return out
 
 
+# The Zeek weird that CI named for the one http1 parser error of 2026-11-10: a SYN
+# that reuses the 5-tuple of a connection which Zeek still tracks.
+REUSE_WEIRDS = frozenset({"premature_connection_reuse"})
+
+
 def reused_findings(
     parser_check: dict[str, Any], findings: dict[str, Any] | None
 ) -> int:
-    """Count the Zeek weirds that lie in a session which reuses a TCP 5-tuple.
+    """Count the Zeek reuse weirds that lie in a session which reuses a TCP 5-tuple.
 
     Two connections with one 5-tuple form one session of the realism runner, and
-    Zeek raises state weirds for the second connection, such as a SYN after the
-    close of the first. The rule counts only weirds, so a malformed packet of
-    tshark in such a session still fails the gate. The count holds only when
+    Zeek raises ``premature_connection_reuse`` for the second connection when the
+    server side still holds the first. The rule counts only that weird, so a
+    malformed packet of tshark, a weird of another name (also one that Zeek
+    merges into the same entry), and a finding in a session of one connection
+    still fail the gate. The count holds only when
     parser_findings.py listed every finding of the parser error check, which the
     realism report cuts off at 100 entries. Otherwise it is 0, so a finding that
     the files cannot place always counts.
@@ -131,6 +138,7 @@ def reused_findings(
         for f in listed
         if isinstance(f, dict)
         and f.get("kind") == "weird"
+        and set(str(f.get("name", "")).split(",")) <= REUSE_WEIRDS
         and f.get("reused_tuple") is True
         and f.get("session") is not None
     )
@@ -225,13 +233,13 @@ def evaluate(
                 passed,
                 f"{counted} findings from {ran or 'no parser'}"
                 + (
-                    f", {reused} Zeek weirds not counted (reused 5-tuple)"
+                    f", {reused} premature_connection_reuse weirds not counted"
                     if reused
                     else ""
                 )
                 + (f", missing {', '.join(missing)}" if missing else ""),
-                "passed with every named parser, Zeek weirds in sessions that reuse a "
-                "TCP 5-tuple not counted",
+                "passed with every named parser, premature_connection_reuse weirds of "
+                "Zeek in sessions that reuse a TCP 5-tuple not counted",
             )
         )
 
