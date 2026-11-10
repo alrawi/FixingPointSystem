@@ -24,6 +24,12 @@
 // RunReport schema of the REST contract, and in CSV, one table with a row per
 // run field, criterion, and run total.
 //
+// The JSON report carries the scenarios of the run (CTL-39), one entry per
+// application and scenario with the three session counts and both byte
+// directions of the client side, and the label filter of each criterion as
+// where. Its realism list holds the stored realism results of the run, which
+// is empty until the controller stores any.
+//
 // The binary wires the package with two calls.
 //
 //	ev, _ := report.NewEvaluator(agg.Catalog())

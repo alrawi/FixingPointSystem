@@ -38,7 +38,10 @@
           "op": "<",
           "passed": false,
           "reason": "observed 0.01 < 0.005 does not hold for application=dns,side=client",
-          "value": 0.005
+          "value": 0.005,
+          "where": {
+            "application": "dns"
+          }
         },
         {
           "metric": "sessions.failed_ratio",
@@ -46,7 +49,10 @@
           "op": "<",
           "passed": false,
           "reason": "observed 0.015 < 0.01 does not hold for side=server",
-          "value": 0.01
+          "value": 0.01,
+          "where": {
+            "side": "server"
+          }
         },
         {
           "metric": "sessions.failed_ratio",
@@ -54,7 +60,10 @@
           "op": "<",
           "passed": true,
           "reason": "observed 0 < 0.01 holds for application=http1,side=client",
-          "value": 0.01
+          "value": 0.01,
+          "where": {
+            "application": "http1"
+          }
         },
         {
           "metric": "sessions.response_time.p99",
@@ -70,23 +79,53 @@
           "op": "<=",
           "passed": false,
           "reason": "observed 1500 <= 1000 does not hold for application=dns,side=server",
-          "value": 1000
+          "value": 1000,
+          "where": {
+            "application": "dns",
+            "side": "server"
+          }
         },
         {
           "metric": "bytes.tx",
           "op": "<",
           "passed": false,
           "reason": "metric bytes.tx has no label port",
-          "value": 1
+          "value": 1,
+          "where": {
+            "port": "eth0"
+          }
         },
         {
           "metric": "sessions.attempted",
           "op": ">",
           "reason": "the run reported no value for application=ftp,side=client",
-          "value": 0
+          "value": 0,
+          "where": {
+            "application": "ftp"
+          }
         }
       ],
       "passed": false
     }
-  }
+  },
+  "scenarios": [
+    {
+      "application": "dns",
+      "bytes_rx": 2000000,
+      "bytes_tx": 1000000,
+      "scenario": "query",
+      "sessions_attempted": 1000,
+      "sessions_failed": 10,
+      "sessions_succeeded": 990
+    },
+    {
+      "application": "http1",
+      "bytes_rx": 30000000,
+      "bytes_tx": 5000000,
+      "scenario": "web_get",
+      "sessions_attempted": 3000,
+      "sessions_failed": 0,
+      "sessions_succeeded": 3000
+    }
+  ]
 }

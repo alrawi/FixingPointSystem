@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alrawi/FixingPointSystem/controller/internal/api"
 	"github.com/alrawi/FixingPointSystem/controller/internal/compiler"
 	"github.com/alrawi/FixingPointSystem/controller/internal/runs"
 	"github.com/alrawi/FixingPointSystem/controller/internal/store"
@@ -91,8 +92,8 @@ func TestReportWithoutSeriesHasNoScenarios(t *testing.T) {
 }
 
 // TestFileJSONCarriesTheTable checks that the file report holds the table
-// in the form that the RLM-07 mix check reads, next to the unchanged
-// RunReport, and that the report that the REST API serves does not change.
+// in the form that the RLM-07 mix check reads, next to the RunReport, and that
+// the table form of the file shadows the scenarios of the REST report.
 func TestFileJSONCarriesTheTable(t *testing.T) {
 	rep := labeledSeriesReport(t, baseRun("run-labeled", runs.Completed, "agent-a"))
 	file, err := rep.FileJSON()
@@ -125,8 +126,8 @@ func TestFileJSONCarriesTheTable(t *testing.T) {
 	if err := json.Unmarshal(file, &fileDoc); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := restDoc["scenarios"]; ok {
-		t.Error("the REST report carries scenarios, which CTL-39 adds")
+	if string(restDoc["scenarios"]) == string(fileDoc["scenarios"]) {
+		t.Error("the file report carries the scenarios of the REST report and not its own table")
 	}
 	for _, key := range []string{"run", "realism"} {
 		if string(restDoc[key]) != string(fileDoc[key]) {
@@ -209,5 +210,119 @@ load:
 	a := NewAPI(newEvaluator(t), fakeRuns{}, nil).UseObjectives(src)
 	if a.declarations == nil {
 		t.Error("UseObjectives did not adopt the declaration source")
+	}
+}
+
+// TestScenarioTotalsInTheRESTReport checks the scenarios of the REST report
+// against literal counts: the client side only, the failures of every reason
+// added, a count of 0 for a counter that the run did not record, and sums
+// that equal the run summary.
+func TestScenarioTotalsInTheRESTReport(t *testing.T) {
+	rep := labeledSeriesReport(t, baseRun("run-labeled", runs.Completed, "agent-a"))
+	got := rep.API()
+	want := []api.ScenarioTotals{
+		{Application: "dns", Scenario: "query", SessionsAttempted: 1000, SessionsSucceeded: 990, SessionsFailed: 10, BytesTx: 1_000_000, BytesRx: 2_000_000},
+		{Application: "http1", Scenario: "web_get", SessionsAttempted: 3000, SessionsSucceeded: 3000, SessionsFailed: 0, BytesTx: 5_000_000, BytesRx: 30_000_000},
+	}
+	if got.Scenarios == nil || !reflect.DeepEqual(*got.Scenarios, want) {
+		t.Fatalf("Scenarios = %+v, want %+v", got.Scenarios, want)
+	}
+	sum := api.RunSummary{}
+	for _, sc := range *got.Scenarios {
+		sum.SessionsAttempted = ptr(sc.SessionsAttempted + deref(sum.SessionsAttempted))
+		sum.SessionsSucceeded = ptr(sc.SessionsSucceeded + deref(sum.SessionsSucceeded))
+		sum.SessionsFailed = ptr(sc.SessionsFailed + deref(sum.SessionsFailed))
+		sum.BytesTx = ptr(sc.BytesTx + deref(sum.BytesTx))
+		sum.BytesRx = ptr(sc.BytesRx + deref(sum.BytesRx))
+	}
+	s := got.Run.Summary
+	if s == nil || *s.SessionsAttempted != *sum.SessionsAttempted || *s.SessionsSucceeded != *sum.SessionsSucceeded ||
+		*s.SessionsFailed != *sum.SessionsFailed || *s.BytesTx != *sum.BytesTx || *s.BytesRx != *sum.BytesRx {
+		t.Errorf("the scenarios add up to %+v, the run summary is %+v", sum, s)
+	}
+}
+
+func deref(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
+}
+
+// TestRESTReportWithoutScenariosSendsAnEmptyList checks that a report built
+// from totals alone still sends scenarios, as the contract requires of a
+// controller of 0.9.0 or later, and that the JSON shows an empty array.
+func TestRESTReportWithoutScenariosSendsAnEmptyList(t *testing.T) {
+	rep := newEvaluator(t).Build(baseRun("run-totals", runs.Completed, "agent-a"), map[string]float64{"sessions.attempted": 10})
+	got := rep.API()
+	if got.Scenarios == nil || len(*got.Scenarios) != 0 {
+		t.Fatalf("Scenarios = %+v, want an empty list", got.Scenarios)
+	}
+	body, err := rep.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if string(doc["scenarios"]) != "[]" || string(doc["realism"]) != "[]" {
+		t.Errorf("scenarios = %s, realism = %s, want empty arrays", doc["scenarios"], doc["realism"])
+	}
+}
+
+// TestCriterionWhereInTheRESTReport checks that the label filter of a
+// criterion reaches its result as stated, without a side that the
+// configuration left out, and that a criterion without a filter has none. Two
+// criteria that differ only in their filter keep their own.
+func TestCriterionWhereInTheRESTReport(t *testing.T) {
+	run := baseRun("run-where", runs.Completed, "agent-a")
+	run.Verdict = verdictOf(true,
+		crit("sessions.attempted", ">", 0),
+		where(crit("sessions.attempted", ">", 0), "application", "dns"),
+		where(crit("sessions.attempted", ">", 0), "application", "http1", "side", "server"),
+	)
+	rep := newEvaluator(t).BuildSeries(run, nil)
+	got := rep.API()
+	if got.Run.Verdict == nil || got.Run.Verdict.Criteria == nil || len(*got.Run.Verdict.Criteria) != 3 {
+		t.Fatalf("verdict = %+v", got.Run.Verdict)
+	}
+	cs := *got.Run.Verdict.Criteria
+	if cs[0].Where != nil {
+		t.Errorf("a criterion without a filter has where %v", *cs[0].Where)
+	}
+	if cs[1].Where == nil || !reflect.DeepEqual(*cs[1].Where, map[string]string{"application": "dns"}) {
+		t.Errorf("where of the dns criterion = %v", cs[1].Where)
+	}
+	if cs[2].Where == nil || !reflect.DeepEqual(*cs[2].Where, map[string]string{"application": "http1", "side": "server"}) {
+		t.Errorf("where of the http1 criterion = %v", cs[2].Where)
+	}
+	// The result owns its map: a change of it leaves the stored criterion alone.
+	(*cs[1].Where)["application"] = "changed"
+	if rep.Run.Verdict.Criteria[1].Where["application"] != "dns" {
+		t.Error("the REST result shares the where map of the report")
+	}
+}
+
+// TestRealismResultsInTheRESTReport checks that the stored realism results of
+// a report reach the REST report in their order, and that a report without
+// any sends an empty array.
+func TestRealismResultsInTheRESTReport(t *testing.T) {
+	labels := map[string]string{"application": "http1", "classifier": "ndpi"}
+	metric := "realism.conformance_ratio"
+	rep := Report{Run: baseRun("run-realism", runs.Completed, "agent-a"), Realism: []api.RealismResult{
+		{Metric: &metric, Labels: &labels, Property: "conformance of http1 by ndpi", Target: ">= 0.99", Observed: 0.995, Passed: true},
+		{Property: "mix error", Target: "<= 2", Observed: 3.5, Passed: false},
+	}}
+	got := rep.API().Realism
+	want := []api.RealismResult{
+		{Metric: &metric, Labels: &labels, Property: "conformance of http1 by ndpi", Target: ">= 0.99", Observed: 0.995, Passed: true},
+		{Property: "mix error", Target: "<= 2", Observed: 3.5, Passed: false},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Realism = %+v, want %+v", got, want)
+	}
+	if empty := (Report{Run: rep.Run}).API().Realism; empty == nil || len(empty) != 0 {
+		t.Errorf("a report without realism results sends %#v, want an empty array", empty)
 	}
 }

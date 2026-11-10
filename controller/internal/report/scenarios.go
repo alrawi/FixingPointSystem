@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -30,17 +31,28 @@ type ScenarioCount struct {
 	Bytes uint64 `json:"bytes"`
 }
 
-// scenarioTable returns the scenarios table of series, ordered by scenario.
-// Like the totals of the report it counts the client side of every metric
-// that has a side, because the two sides see the same session. A scenario
-// appears when the run started at least one series of sessions.attempted for
-// it. The table is nil when no series names a scenario, as for a report built
-// from totals alone.
-func scenarioTable(series []*metrics.Series) []ScenarioCount {
-	rows := map[string]*ScenarioCount{}
+// scenarioRow sums the client side counters of one scenario of one application.
+type scenarioRow struct {
+	application, scenario string
+	attempted, succeeded  uint64
+	failed                uint64 // over every reason
+	bytesTx, bytesRx      uint64
+}
+
+// scenarioRows returns the rows of the scenarios of series, ordered by
+// application and then by scenario. Like the totals of the report it counts the
+// client side of every metric that has a side, because the two sides see the
+// same session, and it adds the sessions.failed series of every reason. A
+// scenario appears when the run recorded at least one of the five counters for
+// it, and a counter that the run did not record is 0. The result is nil when no
+// series names a scenario, as for a report built from totals alone.
+func scenarioRows(series []*metrics.Series) []*scenarioRow {
+	byName := map[[2]string]*scenarioRow{}
 	for _, s := range series {
 		name := s.Metric.Name
-		if name != "sessions.attempted" && name != "bytes.tx" && name != "bytes.rx" {
+		switch name {
+		case "sessions.attempted", "sessions.succeeded", "sessions.failed", "bytes.tx", "bytes.rx":
+		default:
 			continue
 		}
 		if side, ok := s.Label("side"); ok && side != metrics.SideClient {
@@ -51,24 +63,81 @@ func scenarioTable(series []*metrics.Series) []ScenarioCount {
 		if !ok1 || !ok2 {
 			continue
 		}
-		key := app + "/" + sc
-		row := rows[key]
+		key := [2]string{app, sc}
+		row := byName[key]
 		if row == nil {
-			row = &ScenarioCount{Scenario: key}
-			rows[key] = row
+			row = &scenarioRow{application: app, scenario: sc}
+			byName[key] = row
 		}
-		if name == "sessions.attempted" {
-			row.Sessions += s.Count
-		} else {
-			row.Bytes += s.Count
+		switch name {
+		case "sessions.attempted":
+			row.attempted += s.Count
+		case "sessions.succeeded":
+			row.succeeded += s.Count
+		case "sessions.failed":
+			row.failed += s.Count
+		case "bytes.tx":
+			row.bytesTx += s.Count
+		case "bytes.rx":
+			row.bytesRx += s.Count
 		}
 	}
+	var out []*scenarioRow
+	for _, row := range byName {
+		out = append(out, row)
+	}
+	slices.SortFunc(out, func(a, b *scenarioRow) int {
+		if c := strings.Compare(a.application, b.application); c != 0 {
+			return c
+		}
+		return strings.Compare(a.scenario, b.scenario)
+	})
+	return out
+}
+
+// scenarioTable returns the scenarios table of the file and CSV report from
+// rows, ordered by scenario: the sessions are sessions.attempted and the bytes
+// are bytes.tx plus bytes.rx.
+func scenarioTable(rows []*scenarioRow) []ScenarioCount {
 	var out []ScenarioCount
 	for _, row := range rows {
-		out = append(out, *row)
+		out = append(out, ScenarioCount{
+			Scenario: row.application + "/" + row.scenario,
+			Sessions: row.attempted,
+			Bytes:    row.bytesTx + row.bytesRx,
+		})
 	}
 	slices.SortFunc(out, func(a, b ScenarioCount) int { return strings.Compare(a.Scenario, b.Scenario) })
 	return out
+}
+
+// scenarioTotals returns the scenarios of the REST report from rows, in their
+// order, which is the order of the contract: by application and then by
+// scenario name. The sum of a property over all entries is the property of the
+// run summary, because both count the client side only.
+func scenarioTotals(rows []*scenarioRow) []api.ScenarioTotals {
+	var out []api.ScenarioTotals
+	for _, row := range rows {
+		out = append(out, api.ScenarioTotals{
+			Application:       row.application,
+			Scenario:          row.scenario,
+			SessionsAttempted: clampInt(row.attempted),
+			SessionsSucceeded: clampInt(row.succeeded),
+			SessionsFailed:    clampInt(row.failed),
+			BytesTx:           clampInt(row.bytesTx),
+			BytesRx:           clampInt(row.bytesRx),
+		})
+	}
+	return out
+}
+
+// clampInt converts a counter to the int of the REST schema, and a counter
+// that no int holds to the largest int.
+func clampInt(v uint64) int {
+	if v > math.MaxInt {
+		return math.MaxInt
+	}
+	return int(v)
 }
 
 // DeclarationSource returns the arrival and size declarations of the test
@@ -106,7 +175,10 @@ func (a *API) UseDeclarations(d DeclarationSource) *API {
 // fileReport is the report as a file holds it: the RunReport of the REST
 // contract, which stays as it is, and beside it the tables that only the file
 // and the internal structs carry. The REST report of GET /v1/runs/{id}/report
-// is RunReport alone, and CTL-39 adds the scenario table to it.
+// is RunReport alone, which carries its own scenarios in the form of the
+// contract (CTL-39). The table of the file shadows that property, because the
+// outer field of an embedding struct wins in encoding/json, and so the file
+// keeps the form that the RLM-07 mix check reads.
 type fileReport struct {
 	api.RunReport
 	// Scenarios is the scenarios table, left out when the report has none.
