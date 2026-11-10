@@ -13,6 +13,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -90,6 +91,9 @@ type session struct {
 
 	sendMu     sync.Mutex
 	sendClosed bool
+	// headerSent is true once the response headers went out, either through
+	// sendHeader or with the first message.
+	headerSent bool
 	// slot admits one command other than stop at a time.
 	slot chan struct{}
 
@@ -111,7 +115,25 @@ func (s *session) send(resp *agentpb.SessionResponse) error {
 	if s.sendClosed {
 		return ErrSessionLost
 	}
+	// Send writes the headers first when none went out.
+	s.headerSent = true
 	return s.stream.Send(resp)
+}
+
+// sendHeader sends the response headers without a message. A command may
+// have sent the first message already, which carried the headers, and then
+// there is nothing left to send.
+func (s *session) sendHeader() error {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	if s.sendClosed {
+		return ErrSessionLost
+	}
+	if s.headerSent {
+		return nil
+	}
+	s.headerSent = true
+	return s.stream.SendHeader(metadata.MD{})
 }
 
 func (s *session) closeSend() {
@@ -178,6 +200,14 @@ func (m *Manager) Session(stream grpc.BidiStreamingServer[agentpb.SessionRequest
 	// gRPC forbids stream calls after the handler returns, so the handler
 	// waits for a send in flight and closes the stream to later sends.
 	defer s.closeSend()
+	// Go's gRPC server sends the response headers with its first message,
+	// and an idle session has none. A client that waits for the headers
+	// before it enters its loop, as the agent does through tonic, would not
+	// heartbeat, and the sweep would end the session (CTL-40).
+	if err := s.sendHeader(); err != nil {
+		m.detach(s, ReasonStreamClosed, err)
+		return err
+	}
 	msgs := make(chan received)
 	go func() {
 		for {
