@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #373 |
 | Branch | `wp/RLM-12` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 85% (3 of 4 plan steps) |
+| Pull request | #384 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-7a1786, lease until 2026-11-10T14:27:28Z |
-| Last verified commit | 1f2416d |
+| Last verified commit | 0c3bcea |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ The realism CI installs libndpi-bin 4.2.0, which has no HTTP/2. Build a pinned n
 - [x] 1. Claim commit, handoff
 - [x] 2. Classifier reads both CSV dialects and tolerates `-h` exit 1, with tests
 - [x] 3. `realism decrypted` (view builder, scoring, CLI), with tests and example labels
-- [ ] 4. Pinned nDPI 4.14 build, HTTP/2 evidence test, docs, log entry, pull request, CI
+- [x] 4. Pinned nDPI 4.14 build, HTTP/2 evidence test, docs, log entry, pull request, CI
 
 ## Done and verified
 
@@ -29,13 +29,17 @@ The realism CI installs libndpi-bin 4.2.0, which has no HTTP/2. Build a pinned n
 - `realism decrypted` on the committed fixtures: http1 80 of 80, smtp 8 of 8, imap 8 of 8, and on the http2 fixture of `wp/MOD-06` 40 of 40 TLS sessions decrypt and nDPI 4.14 names every view session `HTTP`, `SMTP`, `IMAP`, and `HTTP2`.
 - nDPI 4.14 names 40 of 40 cleartext sessions of the http2 fixture `HTTP2`.
 
+## CI
+
+All checks of commit 0c3bcea passed. The `rlm` job built nDPI 4.14.0-1-90090b9, ran 497 tests with none skipped, and printed `nDPI 4.14.0-1-90090b9 classifies 40 of 40 cleartext sessions of the http2 fixture (server ports [8081, 8082]) as HTTP2, ratio 1.0000` and the decrypted counts 80 of 80, 8 of 8, 8 of 8, and 40 of 40. Every module of the `realism` workflow passed with nDPI 4.14.
+
 ## Remaining
 
-CI of the pull request (the `realism` workflow runs every module with nDPI 4.14), then review.
+Review by the coordinator and the switch of the module workflows (see the log entry).
 
 ## Next action
 
-Poll the checks of the pull request.
+Coordinator review of pull request #384.
 
 ## Blockers and open questions
 
@@ -65,3 +69,4 @@ make lint-rlm test-rlm PYTHON=python3
 |---|---|---|---|---|
 | 2026-11-10T12:50Z | claude-7a1786 | claim | none | claimed #373 |
 | 2026-11-10T12:58Z | claude-7a1786 | checkpoint | 1f2416d | classifier dialects, decrypted command |
+| 2026-11-10T13:20Z | claude-7a1786 | review | 0c3bcea | pull request #384, CI green |
