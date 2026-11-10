@@ -419,6 +419,9 @@ type CriterionResult struct {
 	// Reason Why the criterion passed, failed, or has no result, in words for an operator.
 	Reason *string  `json:"reason,omitempty"`
 	Value  *float32 `json:"value,omitempty"`
+
+	// Where The label filter of the criterion, exactly as `criteria[].where` of the test configuration states it: label names with the values that a series must carry for the criterion to count it, for example `{application: dns}`. Absent when the criterion has no filter. The controller does not add a `side` entry that the configuration left out, and a criterion without one counts the client side only for a metric that has the side label. Two results with the same metric, op, and value that differ only in their filter are told apart by this field.
+	Where *map[string]string `json:"where,omitempty"`
 }
 
 // Finding defines model for Finding.
@@ -477,6 +480,27 @@ type Problem struct {
 	Type     *string    `json:"type,omitempty"`
 }
 
+// RealismResult One realism measurement of the run with its target and outcome. A reader that pairs results of two runs pairs them by `metric` and `labels` when the result has them, and by `property` otherwise.
+type RealismResult struct {
+	// Labels The labels of the series, for example application http1 and classifier ndpi. Together with `metric` it is unique within one report.
+	Labels *map[string]string `json:"labels,omitempty"`
+
+	// Metric Metric name from contracts/metrics/catalog.yaml that the result belongs to, for example `realism.conformance_ratio`.
+	Metric *string `json:"metric,omitempty"`
+
+	// Observed The measured value.
+	Observed float32 `json:"observed"`
+
+	// Passed True when the value meets the target.
+	Passed bool `json:"passed"`
+
+	// Property Name of what was measured, in words for an operator, for example `conformance of http1 by ndpi`.
+	Property string `json:"property"`
+
+	// Target The rule that the value must meet, such as `>= 0.99`.
+	Target string `json:"target"`
+}
+
 // Run defines model for Run.
 type Run struct {
 	// Calibration The changes of the calibration factor of a run with a throughput_bps objective, oldest first. Absent for any other objective and while the factor stays at one. The controller keeps the newest 256 steps of a run.
@@ -507,13 +531,12 @@ type Run struct {
 
 // RunReport defines model for RunReport.
 type RunReport struct {
-	Realism []struct {
-		Observed float32 `json:"observed"`
-		Passed   bool    `json:"passed"`
-		Property string  `json:"property"`
-		Target   string  `json:"target"`
-	} `json:"realism"`
-	Run Run `json:"run"`
+	// Realism The realism results that the controller holds for the run, in the order of the realism report that carried them. The controller does not measure realism itself. The realism runner (`python3 -m realism score`, whose report format is `realism/schema/realism-report.schema.json`) scores the capture of the run with independent classifiers and parsers, and each metric of a check of its report, with the verdict of the check, becomes one entry here. The same values are the `realism.` gauges of the metric view `realism`, and `mix.` gauges with `source: classifier`, when the controller holds them as series. Until the controller receives such a report for the run the array is empty, which is also the answer for a run whose capture was never scored. The contract has no operation that delivers the report to the controller, so the way it arrives is the business of the controller and does not change this schema.
+	Realism []RealismResult `json:"realism"`
+	Run     Run             `json:"run"`
+
+	// Scenarios The counts of the run for each scenario of each application, ordered by application and then by scenario name. They are the client side series of the metric view `scenario` (the key of a sample there is `<application>/<scenario>`), so each session and each byte counts once, and the sum of an entry property over all entries equals the property of `run.summary` with the same name. A scenario appears once the run has recorded a counter for it. A controller of 0.9.0 or later always sends the property, empty when the run has recorded no scenario counter, and an older controller does not send it. For the totals of one application, sum the entries of that application.
+	Scenarios *[]ScenarioTotals `json:"scenarios,omitempty"`
 }
 
 // RunState defines model for RunState.
@@ -538,6 +561,22 @@ type RunVerdict struct {
 
 	// Passed True when every criterion passed and an agent survived the run.
 	Passed *bool `json:"passed,omitempty"`
+}
+
+// ScenarioTotals The counts of one scenario of one application over the whole run. The property names follow RunSummary, and each names its metric in contracts/metrics/catalog.yaml through x-fps-metric. A count is 0 when the run recorded no event for it.
+type ScenarioTotals struct {
+	// Application Module name of the application, for example http1.
+	Application string `json:"application"`
+	BytesRx     int    `json:"bytes_rx"`
+	BytesTx     int    `json:"bytes_tx"`
+
+	// Scenario Scenario name within the module, for example web_get.
+	Scenario          string `json:"scenario"`
+	SessionsAttempted int    `json:"sessions_attempted"`
+
+	// SessionsFailed Sessions that failed for any reason, which is the sum over the reason label.
+	SessionsFailed    int `json:"sessions_failed"`
+	SessionsSucceeded int `json:"sessions_succeeded"`
 }
 
 // ValidationReport defines model for ValidationReport.

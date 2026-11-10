@@ -36,8 +36,7 @@ jobs:
       - name: Install tshark and Python cryptography
         run: |
           echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
-          sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends tshark python3-cryptography
+          tools/ci/apt-install.sh tshark python3-cryptography
       - name: Decrypt the sample capture with the exported keys
         env:
           FPS_REQUIRE_CAPTURE_TOOLS: "1"

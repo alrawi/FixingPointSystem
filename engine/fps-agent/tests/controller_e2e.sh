@@ -56,6 +56,15 @@
 # of the three transfers. The run passes only when the agent lifts the check on
 # the number of flows and compiles the scenario with its `spawn` actions.
 #
+# A seventh test (AGT-17) runs ssh/interactive_shell and ssh/scp_upload of the
+# first party ssh module, one run each. Every session does a real curve25519
+# key exchange and then runs an encrypted SSH transport, so a session succeeds
+# only when both sides derived the same keys. The agent holds the state of one
+# SSH session in one value of the ssh functions per session side, and the runs
+# pass only when no side shares that state with another session. The run
+# parameters shorten the shell to one command of a few keys and the upload to a
+# small file, so whole sessions finish within the three seconds of a run.
+#
 # The tail of the script checks the handshake failures. An agent that trusts
 # another CA ends with exit code 2 and a TLS error before it spends its
 # token. After `fps-controller revoke`, the running agent ends with exit code
@@ -192,6 +201,10 @@ rm -r "$modules/smtp/native" "$modules/smtp/tests"
 # ftp requires content, which is installed above (AGT-16).
 cp -r "$here/../../../modules/ftp" "$modules/ftp"
 rm -r "$modules/ftp/native" "$modules/ftp/tests"
+# ssh is the first party module of AGT-17. The manifest names
+# fixtures/ssh.pcapng, so the fixtures stay.
+cp -r "$here/../../../modules/ssh" "$modules/ssh"
+rm -r "$modules/ssh/native" "$modules/ssh/tests"
 cat >"$modules/dns/zones/e2e.test.zone" <<'EOF'
 $ORIGIN e2e.test.
 $TTL 60
@@ -215,7 +228,7 @@ done
 [[ $(stat -c %a "$work/agent-pki/agent.key") == 600 ]] || fail "the agent key is not mode 0600"
 
 # content goes before smtp, which requires it.
-for name in http1 dns content smtp ftp; do
+for name in http1 dns content smtp ftp ssh; do
   (cd "$modules/$name" && tar -czf "$work/$name.tar.gz" -- *)
   call POST /v1/modules "$admin" -H 'Content-Type: application/gzip' --data-binary "@$work/$name.tar.gz" >/dev/null
 done
@@ -436,6 +449,57 @@ run_test "$work/ftp_mixed.yaml"
 ftp_succeeded=$(succeeded_of ftp)
 [[ $ftp_succeeded -ge 4 ]] || fail "the ftp run $run counted $ftp_succeeded succeeded sessions, want at least one instance of four: $metrics"
 echo "controller_e2e: run $run ran ftp scenario instances with $ftp_succeeded succeeded sessions (control and data connections), verdict passed"
+
+# The ssh sessions of AGT-17. ssh_test SCENARIO PARAMS PORT SEED prints a test
+# configuration for one scenario of the first party ssh module, with the
+# parameters PARAMS (the inside of a flow mapping) and the server port PORT.
+# The criteria bound the failed ratio, which allows for a session that the stop
+# of the run cuts, and the script checks the succeeded sessions of the ssh
+# application afterwards.
+ssh_test() {
+  local scenario=$1 params=$2 port=$3 seed=$4
+  cat <<EOF
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: ssh_$scenario
+  description: SSH sessions of the first party ssh module, with a real key exchange and an encrypted transport.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/$iface }
+    - { name: server0, location: local/$iface }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 127.101.0.0/24, count: 16 }
+    - { name: servers, port: server0, role: server, ipv4: 127.102.0.0/24, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: ssh/$scenario, weight: 1, params: { server_port: $port, $params } }
+load:
+  objective: { type: sessions_per_second, value: 10 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: $seed }
+criteria:
+  - { metric: sessions.failed_ratio, op: "<=", value: 0.1 }
+  - { metric: sessions.succeeded, op: ">", value: 0 }
+EOF
+}
+
+ssh_test interactive_shell 'commands: 1, typed: 3, think_min_ms: 0, think_max_ms: 20, key_gap_min_ms: 0, key_gap_max_ms: 10, motd_min: 100, motd_max: 300, output_min: 100, output_max: 1000' 18685 17 >"$work/ssh_shell.yaml"
+run_test "$work/ssh_shell.yaml"
+[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the ssh shell run $run did not pass: $summary"
+ssh_shell_succeeded=$(succeeded_of ssh)
+[[ $ssh_shell_succeeded -gt 0 ]] || fail "the ssh shell run $run counted no succeeded sessions: $metrics"
+echo "controller_e2e: run $run ran ssh/interactive_shell with $ssh_shell_succeeded succeeded sessions, verdict passed"
+
+ssh_test scp_upload 'file_bytes: 65536' 18686 19 >"$work/ssh_scp.yaml"
+run_test "$work/ssh_scp.yaml"
+[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the ssh scp run $run did not pass: $summary"
+ssh_scp_succeeded=$(succeeded_of ssh)
+[[ $ssh_scp_succeeded -gt 0 ]] || fail "the ssh scp run $run counted no succeeded sessions: $metrics"
+echo "controller_e2e: run $run ran ssh/scp_upload with $ssh_scp_succeeded succeeded sessions, verdict passed"
 
 # The https fetch of AGT-14. Both sides of every session upgrade to TLS at
 # once: the client with the browser profile chrome-136, the server with

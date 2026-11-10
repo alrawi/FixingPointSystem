@@ -82,6 +82,11 @@ type ExternalConfig struct {
 type Profile struct {
 	Basis string      `yaml:"basis" json:"basis"`
 	Mix   []MixConfig `yaml:"mix" json:"mix"`
+	// Arrival and Size are the optional declarations of test configuration
+	// v0.3 (CON-19). They are targets that the realism check follows and add
+	// no command to a plan, see Declarations.
+	Arrival *Arrival `yaml:"arrival,omitempty" json:"arrival,omitempty"`
+	Size    *Size    `yaml:"size,omitempty" json:"size,omitempty"`
 }
 
 // MixConfig is one entry of the profile mix.
@@ -91,6 +96,52 @@ type MixConfig struct {
 	ClientPool string         `yaml:"client_pool" json:"client_pool"`
 	ServerPool string         `yaml:"server_pool" json:"server_pool"`
 	Params     map[string]any `yaml:"params" json:"params"`
+	// Arrival and Size override the profile declarations for this entry.
+	Arrival *Arrival `yaml:"arrival,omitempty" json:"arrival,omitempty"`
+	Size    *Size    `yaml:"size,omitempty" json:"size,omitempty"`
+}
+
+// Arrival is a distribution of inter arrival times, as the schema definition
+// arrival writes it. Dist names the distribution, and each other field is
+// the parameter of some distribution, so a field that the distribution does
+// not use stays nil. The schema checks which parameters each distribution
+// takes, and the compiler only carries the declaration.
+type Arrival struct {
+	Dist        string   `yaml:"dist" json:"dist"`
+	Ms          *float64 `yaml:"ms,omitempty" json:"ms,omitempty"`
+	ToleranceMs *float64 `yaml:"tolerance_ms,omitempty" json:"tolerance_ms,omitempty"`
+	MeanMs      *float64 `yaml:"mean_ms,omitempty" json:"mean_ms,omitempty"`
+	MinMs       *float64 `yaml:"min_ms,omitempty" json:"min_ms,omitempty"`
+	MaxMs       *float64 `yaml:"max_ms,omitempty" json:"max_ms,omitempty"`
+	Mu          *float64 `yaml:"mu,omitempty" json:"mu,omitempty"`
+	Sigma       *float64 `yaml:"sigma,omitempty" json:"sigma,omitempty"`
+	Unit        string   `yaml:"unit,omitempty" json:"unit,omitempty"`
+	Alpha       *float64 `yaml:"alpha,omitempty" json:"alpha,omitempty"`
+	ScaleMs     *float64 `yaml:"scale_ms,omitempty" json:"scale_ms,omitempty"`
+}
+
+// SizeDist is a distribution of payload sizes in bytes, as the schema
+// definition size_distribution writes it.
+type SizeDist struct {
+	Dist      string   `yaml:"dist" json:"dist"`
+	Value     *float64 `yaml:"value,omitempty" json:"value,omitempty"`
+	Tolerance *float64 `yaml:"tolerance,omitempty" json:"tolerance,omitempty"`
+	Mean      *float64 `yaml:"mean,omitempty" json:"mean,omitempty"`
+	Min       *float64 `yaml:"min,omitempty" json:"min,omitempty"`
+	Max       *float64 `yaml:"max,omitempty" json:"max,omitempty"`
+	Mu        *float64 `yaml:"mu,omitempty" json:"mu,omitempty"`
+	Sigma     *float64 `yaml:"sigma,omitempty" json:"sigma,omitempty"`
+	Alpha     *float64 `yaml:"alpha,omitempty" json:"alpha,omitempty"`
+	Scale     *float64 `yaml:"scale,omitempty" json:"scale,omitempty"`
+}
+
+// Size holds the payload size distributions by direction: Request is the
+// client to server direction, Response the server to client direction, and
+// Both the two pooled.
+type Size struct {
+	Request  *SizeDist `yaml:"request,omitempty" json:"request,omitempty"`
+	Response *SizeDist `yaml:"response,omitempty" json:"response,omitempty"`
+	Both     *SizeDist `yaml:"both,omitempty" json:"both,omitempty"`
 }
 
 // Load holds the objective and the phases.

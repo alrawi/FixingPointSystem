@@ -206,6 +206,36 @@
         "tolerance_points": {"description": "Largest difference between an achieved and a configured share, in percentage points. The default is 2.", "type": "number", "minimum": 0, "maximum": 100}
       }
     },
+    "transport": {
+      "description": "Operating system profile of the hosts for the transport behavior check, which compares the TTL and the TCP options of every SYN and SYN-ACK with it. The check runs when this section is present. Give os_profile, hosts, or both.",
+      "type": "object",
+      "anyOf": [{"required": ["os_profile"]}, {"required": ["hosts"], "properties": {"hosts": {"minProperties": 1}}}],
+      "additionalProperties": false,
+      "properties": {
+        "os_profile": {"description": "Profile of every host that hosts does not list, such as windows11, linux6, or macos14.", "type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+        "hosts": {
+          "description": "Profile of single hosts, by IP address.",
+          "type": "object",
+          "propertyNames": {"pattern": "^[0-9A-Fa-f:.]+$"},
+          "additionalProperties": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"}
+        },
+        "profiles_dir": {"description": "Directory of the profile files, relative to the labels file. The default is the profiles of the kernel backend.", "type": "string", "minLength": 1},
+        "client_hops": {"description": "Routers between the clients and the capture point, which lower the TTL of a SYN. The default is 0.", "type": "integer", "minimum": 0, "maximum": 254},
+        "server_hops": {"description": "Routers between the servers and the capture point, which lower the TTL of a SYN-ACK. The default is 0.", "type": "integer", "minimum": 0, "maximum": 254},
+        "strict": {"description": "Also fail on the TCP option order and the SYN window. The default is false, because the kernel backend cannot set either.", "type": "boolean"},
+        "expect": {
+          "description": "Values that replace the profile for every host, for a capture whose stack differs from the profile in a known way.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ttl": {"type": "integer", "minimum": 0},
+            "mss": {"type": "integer", "minimum": 0},
+            "window_scale": {"type": "integer", "minimum": 0},
+            "syn_window": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
     "temporal": {
       "description": "Target distributions of the temporal distribution check, which compares the inter arrival times of sessions and the payload sizes with them through the Kolmogorov Smirnov test. The check runs when this section is present.",
       "type": "object",

@@ -96,9 +96,7 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
       - name: Install musl-gcc
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools
+        run: tools/ci/apt-install.sh musl-tools
       - name: Build
         run: cargo build --release --locked --target x86_64-unknown-linux-musl -p fps-agent
       - name: Stage and check

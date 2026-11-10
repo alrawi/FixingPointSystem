@@ -10,11 +10,14 @@
 //! | client | the browser profiles of the TLS module: `chrome-136`, `firefox-139`, `safari-18.5`, `edge-134`, and [`MAIL_CLIENT`], which is `firefox-139` without ALPN |
 //! | server | [`SERVER_TLS13`] and [`SERVER_TLS12`], which accept one version, select the ALPN id `http/1.1`, [`SERVER_TLS13_H2`], which accepts TLS 1.3 and selects `h2` for a client that offers it, and [`SERVER_TLS13_NOALPN`], which accepts TLS 1.3 and selects no ALPN id; all present a certificate for [`SERVER_NAME`] |
 //!
-//! The mail client and the two TLS 1.3 server profiles are built here from
-//! what the TLS module offers, because TRN-15 adds its own versions of them to
-//! `modules/tls/`. When that package has merged, `mail_client_profile` and
-//! `SERVER_SPECS` become lookups of the module registry under the same
-//! names, and nothing else changes.
+//! The mail client and the two TLS 1.3 server profiles are the ones that the
+//! TLS module registers in `fps_module_tls::mail` (TRN-15), looked up by name
+//! in [`client_profile`] and [`server_profile`] (AGT-17). The agent keeps no
+//! copy of them. Only `server-tls13` and `server-tls12`, which the module
+//! does not register, are defined here. The module's server profiles disable
+//! resumption, so that a connector that several sessions share never resumes;
+//! the agent builds one connector per session, see below, and sets the
+//! resumption of every server profile it builds to stateless tickets.
 //!
 //! [`scan`] reads the compiled scenarios of the mix and refuses the plan at
 //! prepare when an action names a profile that the table of its role lacks.
@@ -58,9 +61,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use fps_flow::program::{Op, Program, TlsRole};
 use fps_flow::Scenario;
 use fps_module_tls::browser::BROWSER_PROFILES;
+use fps_module_tls::mail;
 use fps_module_tls::{
-    ClientProfile, LeafKey, NssKeyLog, RunAuthority, ServerProfile, TlsAcceptor, TlsConnector,
-    TlsError, TlsVersion,
+    ClientProfile, LeafKey, NssKeyLog, RunAuthority, ServerProfile, ServerResumption, TlsAcceptor,
+    TlsConnector, TlsError, TlsVersion,
 };
 use fps_runtime::TlsProfiles;
 use num_bigint::BigUint;
@@ -77,18 +81,21 @@ pub const SERVER_TLS12: &str = "server-tls12";
 
 /// The server profile that accepts only TLS 1.3 and selects the ALPN id `h2`
 /// for a client that offers it, and `http/1.1` for one that offers that only.
-pub const SERVER_TLS13_H2: &str = "server-tls13-h2";
+/// The name of the profile of the TLS module.
+pub const SERVER_TLS13_H2: &str = mail::SERVER_TLS13_H2;
 
 /// The server profile that accepts only TLS 1.3 and selects no ALPN id, for
-/// the clients of mail and other protocols that send none.
-pub const SERVER_TLS13_NOALPN: &str = "server-tls13-noalpn";
+/// the clients of mail and other protocols that send none. The name of the
+/// profile of the TLS module.
+pub const SERVER_TLS13_NOALPN: &str = mail::SERVER_TLS13_NOALPN;
 
 /// The client profile of a mail client, such as the STARTTLS sessions of smtp
 /// and imap: the ClientHello of `firefox-139` without the ALPN extension.
 /// Thunderbird shares the TLS stack of Firefox and offers no ALPN on the mail
 /// ports. The profile follows the Firefox profile in everything else, and its
-/// JA4 differs from the Firefox one only where the ALPN id counts.
-pub const MAIL_CLIENT: &str = "mail-client";
+/// JA4 differs from the Firefox one only where the ALPN id counts. The name of
+/// the profile of the TLS module.
+pub const MAIL_CLIENT: &str = mail::MAIL_CLIENT;
 
 /// The name in the certificate of the servers, which the https scenarios send
 /// as SNI.
@@ -105,57 +112,12 @@ const AUTHORITY_NAME: &str = "FixingPointSystem run authority";
 /// about 600 bytes, so the limit holds tens of thousands of sessions.
 pub const MAX_KEY_BYTES: usize = 32 << 20;
 
-/// The browser profile that the mail client derives from.
-const MAIL_BASE: &str = "firefox-139";
-
-/// One server profile of the agent.
-struct ServerSpec {
-    name: &'static str,
-    version: TlsVersion,
-    /// The ALPN ids that the server selects from, in its order.
-    alpn: &'static [&'static [u8]],
-}
-
-/// The server profiles. They differ in the accepted version and in the ALPN
-/// ids that they select from.
-const SERVER_SPECS: [ServerSpec; 4] = [
-    ServerSpec {
-        name: SERVER_TLS13,
-        version: TlsVersion::Tls13,
-        alpn: &[b"http/1.1"],
-    },
-    ServerSpec {
-        name: SERVER_TLS12,
-        version: TlsVersion::Tls12,
-        alpn: &[b"http/1.1"],
-    },
-    ServerSpec {
-        name: SERVER_TLS13_H2,
-        version: TlsVersion::Tls13,
-        alpn: &[b"h2", b"http/1.1"],
-    },
-    ServerSpec {
-        name: SERVER_TLS13_NOALPN,
-        version: TlsVersion::Tls13,
-        alpn: &[],
-    },
-];
-
-/// Returns the profile of the mail client: [`MAIL_BASE`] without ALPN.
-fn mail_client_profile() -> Option<ClientProfile> {
-    let mut p = BROWSER_PROFILES
-        .iter()
-        .find(|b| b.name == MAIL_BASE)?
-        .client_profile();
-    p.name = MAIL_CLIENT.to_owned();
-    p.alpn.clear();
-    Some(p)
-}
-
-/// Returns the client profile `name`, or `None` when the agent has none.
-fn client_profile(name: &str) -> Option<ClientProfile> {
+/// Returns the client profile `name`, or `None` when the agent has none. The
+/// mail client is the profile of the TLS module, and the browser profiles are
+/// those of its browser registry.
+pub fn client_profile(name: &str) -> Option<ClientProfile> {
     if name == MAIL_CLIENT {
-        return mail_client_profile();
+        return Some(mail::mail_client());
     }
     BROWSER_PROFILES
         .iter()
@@ -174,17 +136,45 @@ pub fn client_profiles() -> Vec<&'static str> {
 
 /// Returns the names of the server profiles.
 pub fn server_profiles() -> Vec<&'static str> {
-    SERVER_SPECS.iter().map(|s| s.name).collect()
+    vec![
+        SERVER_TLS13,
+        SERVER_TLS12,
+        SERVER_TLS13_H2,
+        SERVER_TLS13_NOALPN,
+    ]
+}
+
+/// Returns the server profile `name`, or `None` when the agent has none.
+///
+/// `server-tls13-h2` and `server-tls13-noalpn` come from the registry of the
+/// TLS module. That registry disables resumption, and the agent enables
+/// stateless tickets on its copy: every client session of the agent builds its
+/// own connector, see the module documentation, so no client resumes, and a
+/// third party client of the server may. `server-tls13` and `server-tls12`
+/// accept one version each and select `http/1.1`.
+pub fn server_profile(name: &str) -> Option<ServerProfile> {
+    let one_version = |version| ServerProfile {
+        name: name.to_owned(),
+        versions: vec![version],
+        alpn: vec![b"http/1.1".to_vec()],
+        ..ServerProfile::default()
+    };
+    let profile = match name {
+        SERVER_TLS13 => one_version(TlsVersion::Tls13),
+        SERVER_TLS12 => one_version(TlsVersion::Tls12),
+        _ => mail::server_profile(name)?,
+    };
+    Some(ServerProfile {
+        resumption: ServerResumption::Tickets,
+        ..profile
+    })
 }
 
 /// Returns the ALPN ids that the server profile `name` selects from, in its
 /// order, or `None` when the agent has no such server profile. An empty list
 /// means that the profile selects no id.
 pub fn server_alpn(name: &str) -> Option<Vec<Vec<u8>>> {
-    SERVER_SPECS
-        .iter()
-        .find(|s| s.name == name)
-        .map(|s| s.alpn.iter().map(|a| a.to_vec()).collect())
+    server_profile(name).map(|p| p.alpn)
 }
 
 /// The profile names and server names that the scenarios of a plan use.
@@ -496,21 +486,20 @@ pub fn build(seed: u64, needs: &Needs, tap: &KeyTap) -> Result<Option<Arc<TlsPro
         names.insert(DEFAULT_NAME);
         let names: Vec<&str> = names.into_iter().collect();
         let identity = ca.issue(&names, LeafKey::EcdsaP256).map_err(tls_error)?;
-        for spec in &SERVER_SPECS {
-            if !needs.servers.contains(spec.name) {
+        for name in server_profiles() {
+            if !needs.servers.contains(name) {
                 continue;
             }
-            let profile = ServerProfile {
-                name: spec.name.into(),
-                versions: vec![spec.version],
-                alpn: spec.alpn.iter().map(|a| a.to_vec()).collect(),
-                // The default issues stateless tickets. Every client session
-                // of the agent has its own connector, so none resumes.
-                key_log: Some(tap.log()),
-                ..ServerProfile::default()
+            let Some(mut profile) = server_profile(name) else {
+                return Err(RunError::rule(format!(
+                    "TLS profiles: the server profile {name} cannot be built"
+                )));
             };
+            // The profile issues stateless tickets. Every client session of
+            // the agent has its own connector, so none resumes.
+            profile.key_log = Some(tap.log());
             let acceptor = TlsAcceptor::new(&profile, &identity).map_err(tls_error)?;
-            profiles = profiles.with_server(spec.name, acceptor);
+            profiles = profiles.with_server(name, acceptor);
         }
     }
     Ok(Some(Arc::new(profiles)))
@@ -620,5 +609,53 @@ flows:
         assert!(build(1, &Needs::default(), &KeyTap::new())
             .unwrap()
             .is_none());
+    }
+
+    /// AGT-17. The mail client and the two TLS 1.3 server profiles of the
+    /// agent are the ones in the registry of the TLS module, not copies: the
+    /// names are the module's constants, and every field the module sets
+    /// reaches the agent. The one deliberate difference is the resumption of
+    /// the server profiles, which the agent enables, see [`server_profile`].
+    #[test]
+    fn the_agent_profiles_are_the_profiles_of_the_tls_module() {
+        assert_eq!(MAIL_CLIENT, mail::MAIL_CLIENT);
+        assert_eq!(SERVER_TLS13_H2, mail::SERVER_TLS13_H2);
+        assert_eq!(SERVER_TLS13_NOALPN, mail::SERVER_TLS13_NOALPN);
+
+        let (agent, module) = (client_profile(MAIL_CLIENT).unwrap(), mail::mail_client());
+        assert_eq!(agent.name, module.name);
+        assert_eq!(agent.versions, module.versions);
+        assert_eq!(agent.send_sni, module.send_sni);
+        assert_eq!(agent.alpn, module.alpn);
+        assert_eq!(agent.groups, module.groups);
+        assert_eq!(agent.cipher_suites, module.cipher_suites);
+        assert_eq!(agent.sig_schemes, module.sig_schemes);
+        assert_eq!(agent.resumption, module.resumption);
+
+        for (name, module) in [
+            (SERVER_TLS13_H2, mail::server_tls13_h2()),
+            (SERVER_TLS13_NOALPN, mail::server_tls13_noalpn()),
+        ] {
+            let agent = server_profile(name).unwrap();
+            assert_eq!(agent.name, module.name, "{name}");
+            assert_eq!(agent.versions, module.versions, "{name}");
+            assert_eq!(agent.alpn, module.alpn, "{name}");
+            assert_eq!(agent.groups, module.groups, "{name}");
+            assert_eq!(agent.cipher_suites, module.cipher_suites, "{name}");
+            assert_eq!(
+                agent.use_server_cipher_order, module.use_server_cipher_order,
+                "{name}"
+            );
+            // The module disables tickets, and the agent issues them.
+            assert_eq!(module.resumption, ServerResumption::Disabled, "{name}");
+            assert_eq!(agent.resumption, ServerResumption::Tickets, "{name}");
+        }
+        // Every server profile of the agent issues tickets, as before.
+        for name in server_profiles() {
+            let p = server_profile(name).unwrap();
+            assert_eq!(p.resumption, ServerResumption::Tickets, "{name}");
+        }
+        assert!(server_profile("server-tls99").is_none());
+        assert!(client_profile("lynx").is_none());
     }
 }

@@ -44,6 +44,7 @@ env:
 jobs:
   detect:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
       any: ${{ steps.select.outputs.any }}
@@ -77,6 +78,7 @@ jobs:
     if: needs.detect.outputs.any == 'true'
     name: module (${{ matrix.module }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.detect.outputs.matrix) }}
@@ -105,6 +107,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.http1 == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
