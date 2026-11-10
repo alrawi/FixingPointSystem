@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #430 |
 | Branch | `wp/CON-23` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #434 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-0540fd, lease until 2026-11-11T00:05:13Z |
-| Last verified commit | none |
+| Last verified commit | 38db05f |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Every check kind of `realism/schema/realism-report.schema.json` reports at least
 - [x] 1. Read what each realism check computes and design the metrics.
 - [x] 2. Edit the catalog (version bump), the examples, and write `contracts/changes/CON-23.md`.
 - [x] 3. Run `validate.py`, the contract tests, and the plan checks.
-- [ ] 4. Open the PR, wait for CI, and request review.
+- [x] 4. Open the PR, wait for CI, and request review.
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ Every check kind of `realism/schema/realism-report.schema.json` reports at least
 
 ## Remaining
 
-Open the PR, wait for CI, and request review. The follow up outside `contracts/` is for the coordinator.
+The follow up outside `contracts/` is for the coordinator: the byte copy of the catalog, two version pins, the engine table, and three regenerated files. CI is red on exactly those (see the PR comment).
 
 ## Next action
 
-Open the pull request and wait for CI.
+Coordinator: apply the follow up list of `contracts/changes/CON-23.md` on the branch.
 
 ## Blockers and open questions
 
@@ -66,3 +66,4 @@ python3 -m pytest -q tools/contracts
 |---|---|---|---|---|
 | 2026-11-10 | claude-0540fd | claim | none | Claimed issue 430, branch wp/CON-23 from origin/main |
 | 2026-11-10 | claude-0540fd | checkpoint | see branch | Catalog, change entry, examples, patch, and wiki written; contract checks green except the two expected pins |
+| 2026-11-10 | claude-0540fd | finish | 38db05f | PR 434 opened, CI red only on the listed follow up files, review requested |
