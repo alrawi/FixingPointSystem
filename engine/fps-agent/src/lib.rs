@@ -35,6 +35,7 @@ pub mod identity;
 pub mod modules;
 pub mod pb;
 pub mod plan;
+pub mod portfilter;
 pub mod proto;
 pub mod run;
 pub mod session;

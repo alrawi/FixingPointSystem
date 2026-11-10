@@ -687,7 +687,8 @@ async fn a_fake_controller_changes_rates_and_reads_a_capture() {
     );
 
     // What the agent cannot capture is refused, so it never records more than
-    // the controller asked for.
+    // the controller asked for. A port that is no port name and no server port
+    // is refused as well (AGT-12).
     let with = |f: &dyn Fn(&mut pb::StartCaptureCommand)| {
         let mut c = start_capture(&id, "c");
         f(&mut c);
@@ -703,8 +704,16 @@ async fn a_fake_controller_changes_rates_and_reads_a_capture() {
             ErrorCode::InvalidArgument,
         ),
         (
-            with(&|c| c.port = "client0".into()),
-            ErrorCode::Unimplemented,
+            with(&|c| c.port = "70000".into()),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            with(&|c| c.port = "90-80".into()),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            with(&|c| c.port = "80,,81".into()),
+            ErrorCode::InvalidArgument,
         ),
         (with(&|c| c.snap_length = 96), ErrorCode::Unimplemented),
         (start_capture(&id, ""), ErrorCode::InvalidArgument),
@@ -953,6 +962,89 @@ async fn a_fake_controller_changes_rates_and_reads_a_capture() {
     let empty = wait_upload(&mut h, 3).await;
     assert!(empty.chunks.is_empty());
     assert_eq!(empty.end.as_ref().map(|e| e.total_bytes), Some(size));
+    h.shutdown().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Returns the TCP packets, the UDP packets, and the packets of the TCP port
+/// `tcp_port` of the capture `id`, after the stop result and the file agree.
+async fn captured(
+    h: &mut Harness,
+    dir: &Path,
+    plan: &str,
+    id: &str,
+    port: &str,
+    tcp_port: u16,
+) -> (usize, usize, usize) {
+    let mut cmd = start_capture(plan, id);
+    cmd.port = port.into();
+    let r = h.command(capture(cmd)).await;
+    assert!(r.error.is_none(), "port {port:?}: {r:?}");
+    advance(h, 4).await;
+    let r = h.command(stop_capture(plan, id)).await;
+    assert!(r.error.is_none(), "port {port:?}: {r:?}");
+    let done = stop_result(&r).clone();
+    let bytes = std::fs::read(fps_agent::control::capture_path(dir, plan, id)).unwrap();
+    assert_eq!(bytes.len() as u64, done.bytes, "port {port:?}");
+    assert_eq!(sha256_digest(&bytes), done.digest, "port {port:?}");
+    let (sections, packets) = read_pcapng(&bytes);
+    assert!(sections >= 1, "port {port:?}");
+    assert_eq!(packets as u64, done.packets, "port {port:?}");
+    let (tcp, udp, on_port) = transports(&bytes, tcp_port);
+    assert_eq!(tcp + udp, packets, "port {port:?}");
+    (tcp, udp, on_port)
+}
+
+/// AGT-12: a capture with a port keeps the sessions of that port, for TCP and
+/// for UDP, and an empty port keeps all of them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_capture_with_a_port_skips_the_sessions_of_other_ports() {
+    let dir = scratch("port-filter");
+    let mut h = Harness::start("agent-a", &dir).await;
+    h.wait_state(AgentState::Idle).await;
+    let (http, dns) = (18_283, 15_555);
+    let plan = loopback_plan(87, 88, http, dns, phases(1, 60));
+    let id = plan.plan_id.clone();
+    let r = h.command(prepare(&plan)).await;
+    assert!(r.error.is_none(), "{r:?}");
+    let r = h.command(start(&id)).await;
+    assert!(r.error.is_none(), "{r:?}");
+    h.wait_state(AgentState::Running).await;
+    advance(&mut h, 3).await;
+
+    // Every session first: the run has TCP sessions of the HTTP entry and UDP
+    // sessions of the DNS entry.
+    let (tcp, udp, on_port) = captured(&mut h, &dir, &id, "all", "", http).await;
+    assert!(tcp > 10 && udp > 2, "tcp {tcp}, udp {udp}");
+    assert_eq!(tcp, on_port);
+
+    // A TCP server port skips every UDP session, and the UDP port every TCP one.
+    let (tcp, udp, on_port) = captured(&mut h, &dir, &id, "tcp", &http.to_string(), http).await;
+    assert!(tcp > 10, "the TCP port kept {tcp} TCP packets");
+    assert_eq!((udp, on_port), (0, tcp), "the TCP port kept UDP sessions");
+    let (tcp, udp, _) = captured(&mut h, &dir, &id, "udp", &dns.to_string(), http).await;
+    assert!(udp > 2, "the UDP port kept {udp} UDP packets");
+    assert_eq!(tcp, 0, "the UDP port kept TCP sessions");
+
+    // A list and a range name ports, and a port with no session keeps nothing.
+    let list = format!("{http},{dns}");
+    let (tcp, udp, _) = captured(&mut h, &dir, &id, "list", &list, http).await;
+    assert!(tcp > 10 && udp > 2, "tcp {tcp}, udp {udp}");
+    let range = format!("{}-{}", dns - 5, dns + 5);
+    let (tcp, udp, _) = captured(&mut h, &dir, &id, "range", &range, http).await;
+    assert!(udp > 2 && tcp == 0, "tcp {tcp}, udp {udp}");
+    let (tcp, udp, _) = captured(&mut h, &dir, &id, "none", "9", http).await;
+    assert_eq!((tcp, udp), (0, 0), "port 9 has no session");
+
+    // The names of the ports of the plan select the sessions of their pools.
+    for name in ["client0", "server0"] {
+        let (tcp, udp, _) = captured(&mut h, &dir, &id, name, name, http).await;
+        assert!(tcp > 10 && udp > 2, "{name}: tcp {tcp}, udp {udp}");
+    }
+
+    let r = h.command(stop(&id, pb::StopMode::RampDown, 2)).await;
+    assert!(r.error.is_none(), "{r:?}");
+    h.wait_state(AgentState::Stopped).await;
     h.shutdown().await;
     let _ = std::fs::remove_dir_all(&dir);
 }

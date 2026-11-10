@@ -25,6 +25,7 @@ use fps_capture::{Capture, CaptureConfig, KeyLogMode, RingConfig, SamplePolicy, 
 use fps_sched::{Objective, RateControl};
 use sha2::{Digest, Sha256};
 
+use crate::portfilter::{FrameFilter, PortFilter, PortNets};
 use crate::tls::{KeyLines, KeyTap};
 
 /// Why an `UpdateRates` command was refused. Each variant but `Internal`
@@ -260,6 +261,8 @@ pub struct Entry {
     capture: Capture,
     /// True when the controller asked for the TLS key log lines in the file.
     export_tls_keys: bool,
+    /// Which sessions the file keeps, applied when the ring is joined.
+    port_filter: PortFilter,
     started: Instant,
     started_at: SystemTime,
     max_bytes: u64,
@@ -418,12 +421,15 @@ impl Captures {
         book.active = None;
     }
 
-    /// Starts a capture of every session of the agent.
+    /// Starts a capture of the sessions of the agent that `port` selects, or
+    /// of every session when `port` is empty.
     ///
     /// The engine sees sessions and no packets, so the capture records the
-    /// sessions that the workers tap, with synthesized frames. A port name, a
-    /// filter expression, or a snap length would narrow what the capture
-    /// keeps, and the agent cannot do that yet, so it refuses them instead of
+    /// sessions that the workers tap, with synthesized frames. `port` is the
+    /// name of a port of the plan or a server port, a list, or a range, see
+    /// [`PortFilter`]; the file keeps the matching sessions only. A filter
+    /// expression or a snap length would narrow what the capture keeps in a
+    /// way that the agent cannot do yet, so it refuses them instead of
     /// recording more than the controller asked for.
     #[allow(clippy::too_many_arguments)]
     pub fn start(
@@ -436,19 +442,13 @@ impl Captures {
         max_bytes: u64,
         max_duration: Option<Duration>,
         plan_ports: &[String],
+        pools: &[PortNets],
         seed: u64,
         export_tls_keys: bool,
     ) -> Result<Arc<Entry>, CaptureError> {
         plain_name("capture_id", capture_id)?;
-        if !port.is_empty() {
-            return Err(if plan_ports.iter().any(|p| p == port) {
-                CaptureError::Unimplemented(format!(
-                    "capture on port {port:?}: the agent captures sessions and cannot tell the ports of a plan apart, so start the capture with an empty port"
-                ))
-            } else {
-                CaptureError::Invalid(format!("port {port:?} is not a port of the plan"))
-            });
-        }
+        let port_filter = PortFilter::parse(port, plan_ports, pools)
+            .map_err(|e| CaptureError::Invalid(e.to_string()))?;
         if !filter.is_empty() {
             return Err(CaptureError::Invalid(format!(
                 "filter {filter:?}: this agent has no pcap-filter compiler, so it accepts only an empty filter"
@@ -523,6 +523,7 @@ impl Captures {
             prefix: capture_id.to_owned(),
             capture: capture.clone(),
             export_tls_keys,
+            port_filter,
             started: Instant::now(),
             started_at: SystemTime::now(),
             max_bytes,
@@ -885,7 +886,9 @@ fn assemble(entry: &Entry, dropped: u64, keys: &str) -> Result<Done, String> {
     }
     for (_, path) in &files {
         let mut input = BufReader::new(File::open(path).map_err(|e| err("open", path, &e))?);
-        // Each ring file is one section with one interface description.
+        // Each ring file is one section with one interface description. The
+        // sessions of a ring file are whole, so the filter starts afresh.
+        let mut frames = FrameFilter::new(&entry.port_filter);
         let mut secrets_done = false;
         loop {
             let mut head = [0u8; 8];
@@ -910,6 +913,9 @@ fn assemble(entry: &Entry, dropped: u64, keys: &str) -> Result<Done, String> {
                 .read_exact(&mut block[8..])
                 .map_err(|e| err("read", path, &e))?;
             if kind == EPB_TYPE {
+                if !frames.keep(epb_frame(&block)) {
+                    continue;
+                }
                 packets += 1;
             }
             emit(&block, &mut out).map_err(|e| err("write", &tmp, &e))?;
@@ -932,6 +938,20 @@ fn assemble(entry: &Entry, dropped: u64, keys: &str) -> Result<Done, String> {
         digest: format!("sha256:{}", hex(&hasher.finalize())),
         path: entry.out.clone(),
     })
+}
+
+/// Returns the captured bytes of the frame in an enhanced packet block, or an
+/// empty slice when the block is too short to hold one.
+fn epb_frame(block: &[u8]) -> &[u8] {
+    // 8 bytes of block header, then the interface, the two time stamp words,
+    // the captured length, and the original length.
+    let len = block
+        .get(20..24)
+        .and_then(|b| <[u8; 4]>::try_from(b).ok())
+        .map_or(0, |b| u32::from_le_bytes(b) as usize);
+    block
+        .get(28..)
+        .map_or(&[][..], |rest| &rest[..len.min(rest.len())])
 }
 
 fn read_full(r: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
@@ -1093,6 +1113,7 @@ mod tests {
             ring: path.with_extension("ring"),
             prefix: id.into(),
             capture: Capture::disabled(),
+            port_filter: PortFilter::all(),
             export_tls_keys: false,
             started: Instant::now(),
             started_at: SystemTime::now(),

@@ -322,7 +322,19 @@ fn captured_run(
     )
     .expect("prepare");
     let entry = caps
-        .start(plan_id, capture_id, "", "", 0, 0, None, &[], seed, export)
+        .start(
+            plan_id,
+            capture_id,
+            "",
+            "",
+            0,
+            0,
+            None,
+            &[],
+            &[],
+            seed,
+            export,
+        )
         .expect("start capture");
     let active = prepared
         .start_with(Duration::from_millis(500), caps.cell())
