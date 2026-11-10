@@ -45,7 +45,7 @@ flows:
           fid: "{{ smb2.body_field(last, 'file_id') }}"
           size: "{{ smb2.body_field(last, 'size') }}"
           mid: "{{ smb2.add(vars.mid) }}"
-          offset: 0
+          offset: "0"
       # All reads but the last ask for read_size octets. A call that is nested
       # in another call gives octets, so the count goes through a variable.
       - set: { reads: "{{ smb2.chunks(vars.size, vars.read_size) }}" }

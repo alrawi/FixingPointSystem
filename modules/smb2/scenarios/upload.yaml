@@ -45,7 +45,7 @@ flows:
       - set:
           fid: "{{ smb2.body_field(last, 'file_id') }}"
           mid: "{{ smb2.add(vars.mid) }}"
-          offset: 0
+          offset: "0"
       # All writes but the last carry write_size octets. A call that is nested
       # in another call gives octets, so the count goes through a variable.
       - set: { writes: "{{ smb2.chunks(vars.upload_size, vars.write_size) }}" }
