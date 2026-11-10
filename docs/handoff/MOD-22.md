@@ -5,10 +5,10 @@
 | Issue | #394 |
 | Branch | `wp/MOD-22` |
 | Pull request | #397 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-97754f, lease until 2026-11-10T15:53:19Z |
-| Last verified commit | 61397ee (local checks only) |
+| Last verified commit | 2f40520 (CI: realism passes for the four modules) |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ The four `capture.sh` scripts of http1, http2, smtp and imap call `python3 -m re
 - [x] 1. Claim commit and handoff file.
 - [x] 2. Switch the four `capture.sh` scripts and the Rust fixture tests to the shared command.
 - [x] 3. Remove the copies, their tests and the compat wrapper; update READMEs, expected.yaml comments, log entry with the workflow and mk edits.
-- [ ] 4. Checks, PR, CI.
+- [x] 4. Checks, PR, CI.
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ The four `capture.sh` scripts of http1, http2, smtp and imap call `python3 -m re
 
 ## Remaining
 
-Open the PR, wait for the `realism` workflow (four module jobs). The coordinator pushes the workflow edits listed in the log entry; `mod-imap` and `mod-http2` are red until then.
+The coordinator pushes the workflow edits of the log entry (`mod-imap.yml`, `mod-http2.yml`, `mod-http1.yml`). `mod-imap` (module) and `mod-http2` (module, harness) are red until then.
 
 ## Next action
 
-Open the pull request and poll CI.
+Coordinator: push the workflow edits, then merge.
 
 ## Blockers and open questions
 
@@ -49,7 +49,7 @@ none
 
 ## Pitfalls
 
-none yet
+- `qa-gate1` failed once on one http1 parser error of its live controller and agent run (1339 of 1340 sessions captured) and passed on rerun; it does not use the module scripts.
 
 ## Verify the current state
 
