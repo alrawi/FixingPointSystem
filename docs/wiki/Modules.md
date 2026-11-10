@@ -32,7 +32,7 @@ We test the module at four levels.
 3. The transcript test compares the bytes of every scenario at seed 42 with golden files under `modules/http1/tests/testdata/`.
 4. `fixtures/capture.sh` records 200 sessions in the QA-01 harness over the kernel TCP backend, 120 in the clear and 80 over TLS, and the realism runner scores the capture. nDPI 4.2.0 classifies every plain session as HTTP and every TLS session as TLS, and tshark reports no parser errors.
 
-The example `fixture_peer` drives the interpreter over kernel sockets without the agent. Both sides walk the scenarios in manifest order and run the sessions one after another, so the n-th accepted connection belongs to the n-th client session and both sides draw from the same session generators. The workflow `mod-http1` scores the committed fixture and records and scores a fresh capture as root on every change.
+The example `fixture_peer` drives the interpreter over kernel sockets without the agent. Both sides walk the scenarios in manifest order and run the sessions one after another, so the n-th accepted connection belongs to the n-th client session and both sides draw from the same session generators. The workflow `mod-http1` scores the committed fixture and records and scores a fresh capture as root on every change. The client peer assigns every session its own source port (MOD-21), because a source port that the kernel picked twice for the same destination merged two sessions into one 5-tuple and made the parser error check fail on some fresh captures, and `capture.sh` checks that the capture holds as many sessions as the peers ran.
 
 ### HTTPS scenarios
 

@@ -37,7 +37,9 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use fps_backend_kernel::{ConnectConfig, Connector, KernelListener, KernelStream, ListenConfig};
+use fps_backend_kernel::{
+    ConnectConfig, Connector, KernelListener, KernelStream, ListenConfig, PortRange,
+};
 use fps_flow::template::Filler;
 use fps_flow::{Manifest, ModuleSet, Scenario, Value};
 use fps_interp::{session_rng, Limits, OpenKind, OpenRequest, Opener, Session, SessionCtx, Side};
@@ -47,12 +49,26 @@ use fps_module_tls::NssKeyLog;
 #[path = "../../tests/common/tls.rs"]
 mod tls;
 
+/// The first source port of the client sessions. It lies inside the default
+/// ephemeral range of Linux, `net.ipv4.ip_local_port_range`.
+const FIRST_SOURCE_PORT: u16 = 40_000;
+/// The number of source ports that the client sessions use before they start over.
+const SOURCE_PORTS: u16 = 20_000;
+
 /// Opens kernel TCP sessions for the interpreter. The listener binds on the
 /// first `accept` of each port and stays open for later sessions.
+///
+/// Every client session gets its own source port, one after another from
+/// [`FIRST_SOURCE_PORT`]. The kernel would pick a port at random, and a port
+/// that an earlier session used and released can come up again for the same
+/// destination. The capture then holds two sessions with one 5-tuple, which
+/// the session table and the reference parsers see as one connection that
+/// restarts, and Zeek reports it as a parser error. Own ports keep every
+/// 5-tuple of a capture unique.
 struct KernelOpener {
     server: IpAddr,
     source: Option<IpAddr>,
-    connector: Connector,
+    connected: u16,
     listeners: Vec<KernelListener>,
 }
 
@@ -62,7 +78,13 @@ impl KernelOpener {
         match kind {
             OpenKind::Connect => {
                 let source = self.source.unwrap_or(IpAddr::from([0, 0, 0, 0]));
-                self.connector
+                let local = FIRST_SOURCE_PORT + self.connected;
+                self.connected = (self.connected + 1) % SOURCE_PORTS;
+                let config = ConnectConfig {
+                    local_ports: Some(PortRange::new(local, local).map_err(to_io)?),
+                    ..ConnectConfig::default()
+                };
+                Connector::new(config)
                     .connect(source, SocketAddr::new(self.server, port))
                     .await
                     .map_err(to_io)
@@ -245,7 +267,7 @@ async fn run(o: Options) -> Result<(), String> {
     let mut opener = KernelOpener {
         server: o.server,
         source: o.source,
-        connector: Connector::new(ConnectConfig::default()),
+        connected: 0,
         listeners: Vec::new(),
     };
     if o.side == Side::Server {
