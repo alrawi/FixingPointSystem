@@ -248,7 +248,7 @@ pub fn from_utf16le(bytes: &[u8], what: &'static str) -> Result<String, WireErro
         return Err(invalid(format!("{what} has an odd number of octets")));
     }
     let units: Vec<u16> = bytes
-        .chunks_exact(2)
+        .chunks(2)
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     String::from_utf16(&units).map_err(|_| invalid(format!("{what} is not valid UTF-16")))
@@ -274,7 +274,7 @@ pub fn from_hex(text: &str) -> Result<Vec<u8>, WireError> {
         return Err(invalid("hexadecimal text has an odd number of digits"));
     }
     digits
-        .chunks_exact(2)
+        .chunks(2)
         .map(|p| {
             let hi = (p[0] as char).to_digit(16);
             let lo = (p[1] as char).to_digit(16);

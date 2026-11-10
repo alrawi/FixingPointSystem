@@ -102,7 +102,7 @@ pub fn body_field(m: &Message<'_>, field: &str) -> Result<String, WireError> {
                 "dialects" => {
                     let n = usize::from(u16_at(body, 2, what)?);
                     let raw = slice(body, 36, n * 2, "the dialects")?;
-                    raw.chunks_exact(2)
+                    raw.chunks(2)
                         .map(|d| dialect_name(u16::from_le_bytes([d[0], d[1]])))
                         .collect::<Vec<_>>()
                         .join(",")
