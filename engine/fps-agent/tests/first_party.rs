@@ -121,6 +121,44 @@ fn succeeded(line: &Json, application: &str) -> u64 {
         .unwrap_or(0)
 }
 
+/// AGT-16: `mixed_session` of the ftp module has a control flow and three
+/// spawned data flows. The agent runs it as a scenario instance, so every
+/// instance gives four client sessions: the control connection and one data
+/// connection per transfer. The scenario needs the `spawn` action, which the
+/// loader of single flow sessions refuses, and the `content` module through
+/// `requires`.
+#[test]
+fn an_ftp_scenario_with_data_flows_runs_through_the_agent() {
+    let mut plan = mail_plan(&[("ftp/mixed_session", 18_021)]);
+    plan["mix"][0]["params"] = serde_json::json!({
+        "server_port": 18_021,
+        "server_ip": "127.82.0.1",
+        "data_port_min": 53_000,
+        "data_port_max": 53_199,
+    });
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fps-agent-first-party");
+    std::fs::create_dir_all(&dir).expect("plan dir");
+    let path = dir.join("ftp.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&plan).unwrap()).expect("write plan");
+
+    let (mut out, mut log) = (Vec::new(), Vec::new());
+    let summary = run(&RunOptions::new(path, repo_modules()), &mut out, &mut log).expect("run");
+    let log = String::from_utf8(log).unwrap();
+    assert_eq!(summary.outcome, Outcome::Pass, "{log}");
+    let last: Json = serde_json::from_str(
+        String::from_utf8(out)
+            .unwrap()
+            .lines()
+            .last()
+            .expect("a snapshot line"),
+    )
+    .expect("JSON line");
+    let ok = succeeded(&last, "ftp");
+    // One full instance is the control connection and three data
+    // connections, and the data connections count only inside an instance.
+    assert!(ok >= 4, "{ok} ftp sessions succeeded\n{log}");
+}
+
 #[test]
 fn smtp_imap_and_pop3_scenarios_run_through_the_agent() {
     let plan = mail_plan(&[
