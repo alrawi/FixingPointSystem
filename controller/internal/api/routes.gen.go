@@ -31,6 +31,7 @@ func operations(w *ServerInterfaceWrapper) []operation {
 		{method: http.MethodPost, path: "/runs/{id}/captures/{capture_id}:stop", id: "stopCapture", scope: ScopeRun, handler: w.StopCapture},
 		{method: http.MethodGet, path: "/runs/{id}/metrics", id: "getRunMetrics", scope: ScopeRead, handler: w.GetRunMetrics},
 		{method: http.MethodGet, path: "/runs/{id}/metrics:stream", id: "streamRunMetrics", scope: ScopeRead, handler: w.StreamRunMetrics},
+		{method: http.MethodPut, path: "/runs/{id}/realism", id: "attachRealismReport", scope: ScopeRun, handler: w.AttachRealismReport},
 		{method: http.MethodGet, path: "/runs/{id}/report", id: "getRunReport", scope: ScopeRead, handler: w.GetRunReport},
 		{method: http.MethodPost, path: "/runs/{id}:stop", id: "stopRun", scope: ScopeRun, handler: w.StopRun},
 	}
