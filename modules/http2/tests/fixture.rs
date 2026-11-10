@@ -29,7 +29,7 @@ fn knows_http2(reader: &str) -> bool {
                 String::from_utf8_lossy(&out.stderr)
             );
             text.lines()
-                .any(|line| line.split_whitespace().nth(1) == Some("HTTP2"))
+                .any(|line| line.split_whitespace().any(|word| word == "HTTP2"))
         })
         .unwrap_or(false)
 }
