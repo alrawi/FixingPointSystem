@@ -48,7 +48,7 @@ const (
 
 // pendingOps are the operations that no package implements yet.
 var pendingOps = []string{
-	"getRunMetrics", "streamRunMetrics",
+	"getRunMetrics", "streamRunMetrics", "attachRealismReport",
 }
 
 func testConfig(t *testing.T, dataDir string) app.Config {

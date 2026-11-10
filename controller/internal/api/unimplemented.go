@@ -116,6 +116,11 @@ func (Unimplemented) StopCapture(w http.ResponseWriter, r *http.Request, _ Id, _
 	notImplemented(w, r, "stopCapture")
 }
 
+// AttachRealismReport answers 501 until a package stores realism reports (CON-22).
+func (Unimplemented) AttachRealismReport(w http.ResponseWriter, r *http.Request, _ Id) {
+	notImplemented(w, r, "attachRealismReport")
+}
+
 // GetRunMetrics answers getRunMetrics with a 501 problem.
 func (Unimplemented) GetRunMetrics(w http.ResponseWriter, r *http.Request, _ Id, _ GetRunMetricsParams) {
 	notImplemented(w, r, "getRunMetrics")
