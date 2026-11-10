@@ -20,19 +20,37 @@ from realism import (
     conformance,
     content,
     encryption,
+    mix,
     parser_errors,
     structure,
     temporal,
 )
-from realism.capture import summarize
+from realism.capture import Session, SessionKey, summarize
 from realism.classifier import Classifier
 from realism.labels import load
 from realism.parsers import ParserRunner
 
 REPORT_FORMAT = "fps-realism-report"
-REPORT_VERSION = "0.7.0"
+REPORT_VERSION = "0.8.0"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "realism-report.schema.json"
 LABELS_SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "labels.schema.json"
+
+
+class _ClassifyOnce:
+    """Run the classifier once for the checks that share its verdicts on one capture."""
+
+    def __init__(self, inner: Classifier) -> None:
+        self._inner = inner
+        self.name = inner.name
+        self._verdicts: dict[SessionKey, str] | None = None
+
+    def version(self) -> str:
+        return self._inner.version()
+
+    def classify(self, capture: Path, sessions: Sequence[Session]) -> Mapping[SessionKey, str]:
+        if self._verdicts is None:
+            self._verdicts = dict(self._inner.classify(capture, sessions))
+        return self._verdicts
 
 
 @dataclass
@@ -87,6 +105,10 @@ def score(
     scenario_files: Sequence[Path] = (),
     ks_alpha: float | None = None,
     ks_min_samples: int | None = None,
+    test_config: Path | None = None,
+    run_report: Path | None = None,
+    mix_tolerance: float | None = None,
+    mix_basis: str | None = None,
 ) -> Report:
     """Score a capture against its labels and return the realism report.
 
@@ -112,6 +134,12 @@ def score(
     add the temporal distribution check, which compares inter arrival times and payload
     sizes with the target distributions of the labels through the KS test. The arguments
     override the significance level (default 0.01) and the fewest observations (default 30).
+
+    Labels with a ``mix`` section, or any of ``test_config``, ``run_report``, ``mix_tolerance``,
+    and ``mix_basis``, add the mix accuracy check, which compares the achieved mix from the
+    metrics of a run (``run_report``) and from nDPI with the weights of ``test_config`` within
+    ``mix_tolerance`` percentage points (default 2) on ``mix_basis`` (default the basis of the
+    test configuration). The arguments override the labels.
     """
     labels = load(labels_path)
     summary = summarize(pcap)
@@ -119,6 +147,11 @@ def score(
         threshold = (
             labels.threshold if labels.threshold is not None else conformance.DEFAULT_THRESHOLD
         )
+    run_mix = labels.mix is not None or any(
+        value is not None for value in (test_config, run_report, mix_tolerance, mix_basis)
+    )
+    if run_mix:
+        classifier = _ClassifyOnce(classifier)
     checks = [conformance.check(pcap, summary.sessions, labels, classifier, threshold).to_dict()]
     if parsers is not None:
         checks.append(
@@ -136,6 +169,19 @@ def score(
     if labels.temporal is not None or ks_alpha is not None or ks_min_samples is not None:
         checks.append(
             temporal.check(pcap, summary.sessions, labels, ks_alpha, ks_min_samples).to_dict()
+        )
+    if run_mix:
+        checks.append(
+            mix.check(
+                pcap,
+                summary.sessions,
+                labels,
+                classifier,
+                config_path=test_config,
+                run_report=run_report,
+                tolerance_points=mix_tolerance,
+                basis=mix_basis,
+            ).to_dict()
         )
     return Report(
         capture={
