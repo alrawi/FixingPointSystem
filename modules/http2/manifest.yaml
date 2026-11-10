@@ -1,0 +1,163 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: http2
+version: 0.1.0
+type: app
+summary: HTTP/2 page loads with six concurrent streams and uploads under flow control, with prior knowledge in the clear and with ALPN h2 over TLS 1.3, server push disabled.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: http2, transport: tcp, port: 8080 }
+  - { protocol: http2, transport: tcp, port: 8081 }
+  - { protocol: http2, transport: tcp, port: 443 }
+  - { protocol: http2, transport: tcp, port: 8443 }
+  - { protocol: http2, transport: tcp, port: 8444 }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    host: { type: string, minLength: 1, default: www.example.test, description: ":authority of every request." }
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 8080, description: "TCP port of the server side. The scenarios default to 8080 and 8081 in the clear and 8443 and 8444 over TLS, one port per scenario, so a capture tells them apart." }
+    page_size: { type: integer, minimum: 0, maximum: 16777216, default: 24000, description: Size of the page body of a browsing session in bytes. }
+    chunk_size: { type: integer, minimum: 1, maximum: 16384, default: 4096, description: Size of each DATA frame in the interleaved rounds of a browsing session. It stays within the default maximum frame size of 16384. }
+    rounds: { type: integer, minimum: 0, maximum: 1000, default: 3, description: Interleaved rounds of a browsing session. Every round writes one DATA frame of chunk_size octets on each of the six object streams, and the last frame of each stream follows the rounds. }
+    tail_min: { type: integer, minimum: 0, maximum: 16384, default: 300, description: Smallest size of the last DATA frame of an object stream. }
+    tail_max: { type: integer, minimum: 0, maximum: 16384, default: 4000, description: Largest size of the last DATA frame of an object stream, at most the maximum frame size of 16384. }
+    window_bump: { type: integer, minimum: 1, maximum: 2147483647, default: 65536, description: Increment of the WINDOW_UPDATE that the client sends for the connection after the objects arrived. }
+    request_headers: { type: string, description: "Header lines after the pseudo headers of the request for the page, one 'name: value' per line. The default depends on the scenario." }
+    object_headers: { type: string, description: "Header lines after the pseudo headers of the object requests, one 'name: value' per line. The default depends on the scenario." }
+    window: { type: integer, minimum: 1, maximum: 2147483647, default: 65536, description: "Stream window that the server of an upload announces in its SETTINGS frame, and the increment of each stream WINDOW_UPDATE. A round of round_frames frames of frame_size octets must equal it." }
+    frame_size: { type: integer, minimum: 1, maximum: 16384, default: 16384, description: Size of the DATA frames of an upload. }
+    round_frames: { type: integer, minimum: 1, maximum: 1000, default: 4, description: DATA frames per stream in one round of an upload. }
+    window_waits: { type: integer, minimum: 0, maximum: 1000, default: 2, description: Rounds of an upload after which the client waits for the WINDOW_UPDATE frames of the server. }
+    tail_size: { type: integer, minimum: 0, maximum: 16777216, default: 40000, description: Octets that each upload stream sends after the rounds, with END_STREAM. It must not exceed window. }
+    upload_headers: { type: string, description: "Header lines after the pseudo headers of the upload requests, one 'name: value' per line. The default depends on the scenario." }
+functions:
+  - name: preface
+    summary: "The client connection preface of RFC 9113 section 3.4, 24 octets that start with PRI * HTTP/2.0. The SETTINGS frame follows it."
+    params: []
+  - name: settings
+    summary: "A SETTINGS frame with the listed parameters in identifier order. A value of -1 leaves a parameter out. A header_table_size also sets the largest dynamic table that this side accepts."
+    params:
+      - { name: header_table_size, type: int, default: -1 }
+      - { name: enable_push, type: int, default: -1 }
+      - { name: max_concurrent_streams, type: int, default: -1 }
+      - { name: initial_window_size, type: int, default: -1 }
+      - { name: max_frame_size, type: int, default: -1 }
+      - { name: max_header_list_size, type: int, default: -1 }
+  - name: settings_ack
+    summary: "An empty SETTINGS frame with the ACK flag, which acknowledges the SETTINGS frame of the peer."
+    params: []
+  - name: headers
+    summary: "A HEADERS frame with the HPACK encoded list 'name: value' per line, and CONTINUATION frames past max_frame_size. huffman: auto, always, never. index: auto, off, all."
+    params:
+      - { name: stream, type: int }
+      - { name: headers, type: bytes }
+      - { name: end_stream, type: boolean, default: false }
+      - { name: padding, type: int, default: -1 }
+      - { name: priority_dependency, type: int, default: -1 }
+      - { name: priority_weight, type: int, default: 16 }
+      - { name: priority_exclusive, type: boolean, default: false }
+      - { name: max_frame_size, type: int, default: 16384 }
+      - { name: huffman, type: text, default: "auto" }
+      - { name: index, type: text, default: "auto" }
+      - { name: table_size, type: int, default: -1 }
+  - name: data
+    summary: "The data as DATA frames of at most max_frame_size octets, with END_STREAM on the last one when end_stream is set. A padding of 0 or more pads every frame, and -1 sends none."
+    params:
+      - { name: stream, type: int }
+      - { name: data, type: bytes }
+      - { name: end_stream, type: boolean, default: false }
+      - { name: padding, type: int, default: -1 }
+      - { name: max_frame_size, type: int, default: 16384 }
+  - name: window_update
+    summary: "A WINDOW_UPDATE frame that grants increment octets on a stream, or on the connection when stream is 0."
+    params:
+      - { name: stream, type: int }
+      - { name: increment, type: int }
+  - name: ping
+    summary: "A PING frame with 8 opaque octets. Without data the octets come from the session generator."
+    params:
+      - { name: data, type: bytes, default: "" }
+  - name: ping_ack
+    summary: "A PING frame with the ACK flag and the 8 opaque octets of the PING frame that payload holds, which is the `last` of the expect that read the payload."
+    params:
+      - { name: payload, type: bytes }
+  - name: goaway
+    summary: "A GOAWAY frame with the last stream id, an error code (a number or a name such as NO_ERROR), and optional debug data."
+    params:
+      - { name: last_stream, type: int, default: 0 }
+      - { name: error, type: any, default: 0 }
+      - { name: debug, type: bytes, default: "" }
+  - name: rst_stream
+    summary: "A RST_STREAM frame with an error code, a number or a name such as CANCEL."
+    params:
+      - { name: stream, type: int }
+      - { name: error, type: any, default: 0 }
+  - name: frame
+    summary: "A frame of any type with the given flags and payload, for frame types without a function of their own and for deliberately odd frames."
+    params:
+      - { name: type, type: int }
+      - { name: stream, type: int }
+      - { name: payload, type: bytes, default: "" }
+      - { name: flags, type: int, default: 0 }
+  - name: frame_length
+    summary: "The payload length in a 9 octet frame header as decimal digits, for an expect action with bytes that reads the payload after the header."
+    params:
+      - { name: header, type: bytes }
+  - name: frame_stream
+    summary: "The stream id in a 9 octet frame header as decimal digits, so the answer of a server uses the stream of the request."
+    params:
+      - { name: header, type: bytes }
+  - name: frame_field
+    summary: "One field of the 9 octet frame header: length, stream, flags, type_code, type (the name), or the flags end_stream, end_headers, ack, padded, priority as true or false."
+    params:
+      - { name: header, type: bytes }
+      - { name: field, type: text }
+  - name: data_payload
+    summary: "The data octets of a DATA frame payload without the padding, when flags holds the flags of its header."
+    params:
+      - { name: payload, type: bytes }
+      - { name: flags, type: int, default: 0 }
+  - name: headers_decode
+    summary: "Takes a HEADERS or CONTINUATION payload and renders the 'name: value' list at END_HEADERS. It updates the HPACK decoder, so decode each block once, in order."
+    params:
+      - { name: payload, type: bytes }
+      - { name: flags, type: int, default: 4 }
+      - { name: type, type: int, default: 1 }
+  - name: header_value
+    summary: "The value of the first field called name in a header list that headers_decode rendered. A missing field fails the call unless required is false, which renders an empty value."
+    params:
+      - { name: headers, type: bytes }
+      - { name: name, type: text }
+      - { name: required, type: boolean, default: true }
+  - name: settings_value
+    summary: "The value of a named setting in a SETTINGS frame payload as decimal digits. A setting that the frame omits gives its initial value, and -1 stands for no limit."
+    params:
+      - { name: payload, type: bytes }
+      - { name: name, type: text }
+  - name: data_frames
+    summary: "The number of DATA frames that http2.data renders for size octets with the same max_frame_size and padding, as decimal digits, so the reading side of a scenario knows how many frames to read."
+    params:
+      - { name: size, type: int }
+      - { name: max_frame_size, type: int, default: 16384 }
+      - { name: padding, type: int, default: -1 }
+  - name: headers_frames
+    summary: "The number of frames that http2.headers renders for the list, as decimal digits. It is exact for the first block of a connection and for blocks with index off, and later indexed blocks can be shorter."
+    params:
+      - { name: headers, type: bytes }
+      - { name: max_frame_size, type: int, default: 16384 }
+      - { name: huffman, type: text, default: "auto" }
+      - { name: index, type: text, default: "off" }
+      - { name: padding, type: int, default: -1 }
+      - { name: priority_dependency, type: int, default: -1 }
+scenarios:
+  - scenarios/h2c_browse.yaml
+  - scenarios/h2c_upload.yaml
+  - scenarios/https_browse.yaml
+  - scenarios/https_upload.yaml
+fixtures:
+  - { capture: fixtures/http2.pcapng, expect: { ndpi: [HTTP/2, TLS] } }
+provenance:
+  source: synthetic
+  notes: Frames follow RFC 9113 and header blocks follow RFC 7541. Every body comes from the seeded fill() generator, and every host name lies under the reserved .test domain. The SETTINGS values of the clients follow the shape of curl, Chrome, and Firefox, and the server SETTINGS follow nginx, without being captures of those programs.

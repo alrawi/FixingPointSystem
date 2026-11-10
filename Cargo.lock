@@ -1011,13 +1011,17 @@ name = "fps-module-http2"
 version = "0.0.1"
 dependencies = [
  "bytes",
+ "fps-backend-kernel",
  "fps-flow",
+ "fps-golden",
  "fps-interp",
  "fps-io",
+ "fps-module-tls",
  "h2",
  "http",
  "rand 0.8.8",
  "rand_pcg",
+ "rustls",
  "serde_norway",
  "tokio",
 ]

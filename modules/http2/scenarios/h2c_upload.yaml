@@ -1,0 +1,120 @@
+scenario: h2c_upload
+description: >-
+  Two concurrent uploads over HTTP/2 with prior knowledge on a cleartext port,
+  which shows flow control. The client opens with the connection preface, a
+  SETTINGS frame that disables server push (SETTINGS_ENABLE_PUSH 0), and the
+  HEADERS frames of two POST requests on streams 1 and 3. The server announces
+  a stream window of window octets, so the client sends rounds of DATA frames,
+  one frame per stream in turn, until each stream has used its window, and then
+  waits for the WINDOW_UPDATE frames of the server before the next round. After
+  window_waits rounds the client sends the rest of both bodies with END_STREAM.
+  The server answers both requests, sends a PING that the client acknowledges,
+  and ends the connection with a graceful GOAWAY sequence. Both sides read the
+  frames of their peer with two expect actions per frame.
+vars:
+  host: www.example.test
+  server_port: 8081
+  window: 65536
+  frame_size: 16384
+  round_frames: 4
+  window_waits: 2
+  tail_size: 40000
+  upload_headers: |-
+    user-agent: nghttp2/1.59.0
+    accept: */*
+    content-type: application/octet-stream
+flows:
+  - id: upload
+    module: http2
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - set:
+          up1: ":method: POST\n:scheme: http\n:authority: {{ vars.host }}\n:path: /upload/a{{ rand_int(1, 999) }}\n{{ vars.upload_headers }}"
+          up3: ":method: POST\n:scheme: http\n:authority: {{ vars.host }}\n:path: /upload/b{{ rand_int(1, 999) }}\n{{ vars.upload_headers }}"
+      - send: "{{ http2.preface() }}{{ http2.settings(max_concurrent_streams=100, enable_push=0, initial_window_size=33554432) }}{{ http2.headers(1, vars.up1) }}{{ http2.headers(3, vars.up3) }}"
+      # The SETTINGS frame of the server, its WINDOW_UPDATE for the connection, and its SETTINGS ACK.
+      # The client waits for the SETTINGS frame, because it announces the stream window.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      - expect: { bytes: 13, timeout_ms: 5000 }
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - send: "{{ http2.settings_ack() }}"
+      # Rounds that fill the window of both streams, each followed by the WINDOW_UPDATE frames of the server.
+      - loop:
+          count: "{{ vars.window_waits }}"
+          do:
+            - loop:
+                count: "{{ vars.round_frames }}"
+                do:
+                  - send: "{{ http2.data(1, fill(vars.frame_size), max_frame_size=vars.frame_size) }}{{ http2.data(3, fill(vars.frame_size), max_frame_size=vars.frame_size) }}"
+            - expect: { bytes: 26, timeout_ms: 5000 }
+      - send: "{{ http2.data(1, fill(vars.tail_size), end_stream=true, max_frame_size=vars.frame_size) }}{{ http2.data(3, fill(vars.tail_size), end_stream=true, max_frame_size=vars.frame_size) }}"
+      # The two responses.
+      - loop:
+          count: 2
+          do:
+            - expect: { bytes: 9, timeout_ms: 5000 }
+            - set:
+                length: "{{ http2.frame_length(last) }}"
+                flags: "{{ http2.frame_field(last, 'flags') }}"
+            - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+            - set: { got: "{{ http2.headers_decode(last, flags=vars.flags) }}" }
+      # The PING of the server, which the client acknowledges.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - expect: { bytes: 8, timeout_ms: 5000 }
+      - send: "{{ http2.ping_ack(last) }}"
+      # The two GOAWAY frames of the graceful shutdown.
+      - expect: { bytes: 17, timeout_ms: 5000 }
+      - expect: { bytes: 17, timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "{{ http2.settings(max_concurrent_streams=128, initial_window_size=vars.window) }}{{ http2.window_update(0, 2147418112) }}"
+      - expect: { bytes: 24, timeout_ms: 5000 }
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      - set: { client_window: "{{ http2.settings_value(last, 'initial_window_size') }}" }
+      - send: "{{ http2.settings_ack() }}"
+      # The two requests.
+      - loop:
+          count: 2
+          do:
+            - expect: { bytes: 9, timeout_ms: 5000 }
+            - set:
+                length: "{{ http2.frame_length(last) }}"
+                flags: "{{ http2.frame_field(last, 'flags') }}"
+            - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+            - set: { got: "{{ http2.headers_decode(last, flags=vars.flags) }}" }
+      # The SETTINGS ACK of the client.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      # Read a round of DATA frames, one per stream in turn, and open the windows again.
+      - loop:
+          count: "{{ vars.window_waits }}"
+          do:
+            - loop:
+                count: "{{ vars.round_frames }}"
+                do:
+                  - loop:
+                      count: 2
+                      do:
+                        - expect: { bytes: 9, timeout_ms: 30000 }
+                        - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+            - send: "{{ http2.window_update(1, vars.window) }}{{ http2.window_update(3, vars.window) }}"
+      - loop:
+          count: 2
+          do:
+            - loop:
+                count: "{{ http2.data_frames(vars.tail_size, max_frame_size=vars.frame_size) }}"
+                do:
+                  - expect: { bytes: 9, timeout_ms: 30000 }
+                  - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
+      - set: { resp: ":status: 201\nserver: fps-h2\ncontent-type: application/json\ncontent-length: 0" }
+      - send: "{{ http2.headers(1, vars.resp, end_stream=true) }}{{ http2.headers(3, vars.resp, end_stream=true) }}{{ http2.ping() }}"
+      # The acknowledgment of the PING.
+      - expect: { bytes: 9, timeout_ms: 5000 }
+      - expect: { bytes: 8, timeout_ms: 5000 }
+      - delay: { dist: exponential, mean_ms: 200 }
+      - send: "{{ http2.goaway(2147483647, 'NO_ERROR') }}"
+      - delay: { dist: exponential, mean_ms: 20 }
+      - send: "{{ http2.goaway(3, 'NO_ERROR') }}"
+      - close: fin

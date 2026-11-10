@@ -1,16 +1,12 @@
 # Handoff MOD-06 HTTP/2 module
 
-<!-- Copy this file to docs/handoff/<ID>.md when you claim a work package.
-     Update it at every checkpoint. A successor reads only this file, the
-     issue, and the branch, so write for an agent that knows nothing else. -->
-
 | Field | Value |
 |---|---|
 | Issue | #173 |
 | Branch | `wp/MOD-06` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 50% (3 of 6 plan steps) |
 | Current holder | claude-6d06a1, lease until 2026-11-10T06:15:03Z |
 | Last verified commit | none |
 
@@ -18,48 +14,52 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Goal
 
-State the outcome in two or three sentences, copied or condensed from the issue.
+Ship the http2 module scenarios for prior knowledge cleartext HTTP/2 and for TLS with ALPN h2: concurrent streams with interleaved DATA, realistic SETTINGS, flow control with WINDOW_UPDATE, PING, a graceful GOAWAY, and server push disabled. The manifest carries the functions list of `print_catalog`, `mk/mod-http2.mk` and a workflow run the 60 second fuzz test, and a fixture capture with keys is scored: tshark parses every frame without errors, and nDPI classifies at least 99% of the sessions as HTTP/2 (cleartext directly, TLS through the decrypted view).
 
 ## Plan
 
-Each step takes at most 30 minutes of work and ends in a state that tests can check.
-
-- [ ] 1. First step
-- [ ] 2. Second step
+- [x] 1. Manifest with the 20 functions and its parameters, four scenarios
+- [x] 2. Tests: scenario frame checks, golden transcripts, https checks, `h2` crate replay in both directions
+- [x] 3. Push the first checkpoint
+- [ ] 4. `fixture_peer`, `capture.sh`, `expected.yaml`, `decrypted_check.py`, record the capture
+- [ ] 5. `mk/mod-http2.mk`, `.github/workflows/mod-http2.yml`, README, `docs/wiki/Modules.md`
+- [ ] 6. Log entry, checks, pull request, CI
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- `cargo test -p fps-module-http2 --test scenarios --test https --test transcript --test interop --test catalog` passes.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Steps 4 to 6.
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Write `modules/http2/native/examples/fixture_peer.rs` from the http1 one and record the fixture with `capture.sh`.
 
 ## Blockers and open questions
 
-Write "none" or name each blocker with a link to its issue.
+none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- Four scenarios, one port each: `h2c_browse` 8080, `h2c_upload` 8081, `https_browse` 8443, `https_upload` 8444.
+- No scenario variable can compute with other variables, and a flow cannot branch on what it reads, so stream ids are literals (odd streams 1, 3 to 13 for browsing, 1 and 3 for uploads) and every count of frames comes from a variable or from `http2.data_frames`.
+- The TLS scenarios name the server profile `server-tls13-h2`, which the agent does not have yet.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+- The TLS session of `fps-module-tls` fails with "received plaintext buffer full" when the receiver has more than 16 KiB of undelivered plaintext after a chunk of ciphertext (rustls limit). The https scenarios therefore run with small bodies in tests and in the fixture.
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+CARGO_BUILD_JOBS=1 cargo test -p fps-module-http2
 ```
 
 ## Session log
 
-Append one row per session start, checkpoint, release, block, takeover, and finish. Never edit earlier rows.
-
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
+| 2026-11-10T04:45Z | claude-6d06a1 | claim | none | Claimed #173, pushed the handoff file |
+| 2026-11-10T05:10Z | claude-6d06a1 | checkpoint | see git log | Manifest, scenarios, and tests |
