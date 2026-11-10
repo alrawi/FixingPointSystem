@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #194 |
 | Branch | `wp/CAP-02` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #358 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-8fb6e0, lease until 2026-11-10T02:37:51Z |
-| Last verified commit | see the session log |
+| Last verified commit | bbce7ef |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Generate a flow program from extracted sessions: `python3 -m capture scenario --
 - [x] 2. Unit tests with a model of the flow interpreter, validator test, lint
 - [x] 3. Harness replay test (agent standalone mode) and a local loopback run
 - [x] 4. Wiki page `docs/wiki/Capture.md`, `capture/README.md`, log entry
-- [ ] 5. Pull request, CI, review hand-off
+- [x] 5. Pull request, CI, review hand-off
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ Generate a flow program from extracted sessions: `python3 -m capture scenario --
 
 ## Remaining
 
-Step 5. The namespace mode of the replay test has not run (no `ip` in the sandbox) and needs the CI job on the Capture page.
+Nothing in this package. The namespace mode of the replay test has not run (no `ip` in the sandbox) and needs the CI job on the Capture page.
 
 ## Next action
 
-Open the pull request, wait for CI, then set the status to ready for review.
+Coordinator review of pull request #358.
 
 ## Blockers and open questions
 
@@ -68,3 +68,4 @@ make lint-cap test-cap PYTHON=python3
 |---|---|---|---|---|
 | 2026-11-10T02:07Z | claude-8fb6e0 | claim | 3bd99d4 | claimed #194, branch wp/CAP-02 |
 | 2026-11-10T01:40Z | claude-8fb6e0 | checkpoint | see git log | tests, replay test, wiki, chunked bodies |
+| 2026-11-10T01:55Z | claude-8fb6e0 | ready for review | bbce7ef | PR #358, CI green |
