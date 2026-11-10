@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #297 |
 | Branch | `wp/AGT-12` |
-| Pull request | pending |
-| Status | in progress |
-| Progress | 90% (4 of 4 plan steps written, CI pending) |
+| Pull request | #369 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-a12c7e, lease until 2026-11-10T06:30:29Z |
-| Last verified commit | 74fa53e |
+| Last verified commit | 9b7f98d |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -31,11 +31,11 @@ The agent accepts `StartCapture` with a port and records only the sessions that 
 
 ## Remaining
 
-The CI result of the PR, in particular the `controller-e2e` job.
+Nothing. CI of 9b7f98d: rust, controller-e2e, and the other jobs passed; the controller-e2e log shows the dns and https REST captures.
 
 ## Next action
 
-Poll the checks of the PR, and fix `controller_e2e.sh` if the job fails.
+The coordinator reviews PR #369.
 
 ## Blockers and open questions
 
