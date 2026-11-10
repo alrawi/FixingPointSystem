@@ -77,6 +77,16 @@ fn write_expr(out: &mut String, indent: usize, prefix: &str, e: &Expr) {
             write_expr(out, child, "a = ", a);
             write_expr(out, child, "b = ", b);
         }
+        Expr::IntBytes(value, width, order) => {
+            line(out, indent, format_args!("{prefix}int_bytes"));
+            write_expr(out, child, "value = ", value);
+            write_expr(out, child, "width = ", width);
+            write_expr(out, child, "endianness = ", order);
+        }
+        Expr::Now(format) => {
+            line(out, indent, format_args!("{prefix}now"));
+            write_expr(out, child, "format = ", format);
+        }
         Expr::Profile(n) => line(out, indent, format_args!("{prefix}profiles.{n}")),
         Expr::Dist(d, args) => {
             line(out, indent, format_args!("{prefix}{}", d.qualified()));

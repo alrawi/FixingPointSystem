@@ -49,6 +49,13 @@
 # the loop of AGT-14, and one without must hold none. A small reader in this
 # script parses the files, and tshark reads them as well when it is installed.
 #
+# A sixth test (AGT-16) runs the ftp/mixed_session scenario of the first party ftp
+# module, which has a control flow and three spawned data flows. The agent runs
+# it as a scenario instance, so every instance gives four succeeded sessions of
+# the application ftp, the control connection and one data connection for each
+# of the three transfers. The run passes only when the agent lifts the check on
+# the number of flows and compiles the scenario with its `spawn` actions.
+#
 # The tail of the script checks the handshake failures. An agent that trusts
 # another CA ends with exit code 2 and a TLS error before it spends its
 # token. After `fps-controller revoke`, the running agent ends with exit code
@@ -182,6 +189,9 @@ cp -r "$here/../../../modules/smtp" "$modules/smtp"
 # The manifest names fixtures/smtp.pcapng, and the registry checks that the
 # tree holds every file that the manifest names, so the fixtures stay.
 rm -r "$modules/smtp/native" "$modules/smtp/tests"
+# ftp requires content, which is installed above (AGT-16).
+cp -r "$here/../../../modules/ftp" "$modules/ftp"
+rm -r "$modules/ftp/native" "$modules/ftp/tests"
 cat >"$modules/dns/zones/e2e.test.zone" <<'EOF'
 $ORIGIN e2e.test.
 $TTL 60
@@ -205,7 +215,7 @@ done
 [[ $(stat -c %a "$work/agent-pki/agent.key") == 600 ]] || fail "the agent key is not mode 0600"
 
 # content goes before smtp, which requires it.
-for name in http1 dns content smtp; do
+for name in http1 dns content smtp ftp; do
   (cd "$modules/$name" && tar -czf "$work/$name.tar.gz" -- *)
   call POST /v1/modules "$admin" -H 'Content-Type: application/gzip' --data-binary "@$work/$name.tar.gz" >/dev/null
 done
@@ -386,6 +396,46 @@ run_test "$work/smtp_relay.yaml"
 smtp_succeeded=$(succeeded_of smtp)
 [[ $smtp_succeeded -gt 0 ]] || fail "the smtp run $run counted no succeeded sessions: $metrics"
 echo "controller_e2e: run $run relayed mail through the first party smtp and content modules with $smtp_succeeded succeeded sessions, verdict passed"
+
+# The ftp session of AGT-16: one control connection that spawns three data
+# connections, a listing, a download, and an upload. The data ports come from a
+# range of the scenario variables. The criteria bound the failed ratio, which
+# allows for an instance that the stop of the run cuts, and the script checks
+# that at least one whole instance of four sessions succeeded.
+cat >"$work/ftp_mixed.yaml" <<EOF
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: ftp_mixed
+  description: FTP sessions with spawned data flows of the first party ftp module.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/$iface }
+    - { name: server0, location: local/$iface }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 127.99.0.0/24, count: 16 }
+    - { name: servers, port: server0, role: server, ipv4: 127.100.0.0/24, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - scenario: ftp/mixed_session
+      weight: 1
+      params: { server_port: 18684, server_ip: 127.100.0.1, data_port_min: 53000, data_port_max: 53999 }
+load:
+  objective: { type: sessions_per_second, value: 5 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: 13 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "<=", value: 0.1 }
+  - { metric: sessions.succeeded, op: ">", value: 3 }
+EOF
+run_test "$work/ftp_mixed.yaml"
+[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the ftp run $run did not pass: $summary"
+ftp_succeeded=$(succeeded_of ftp)
+[[ $ftp_succeeded -ge 4 ]] || fail "the ftp run $run counted $ftp_succeeded succeeded sessions, want at least one instance of four: $metrics"
+echo "controller_e2e: run $run ran ftp scenario instances with $ftp_succeeded succeeded sessions (control and data connections), verdict passed"
 
 # The https fetch of AGT-14. Both sides of every session upgrade to TLS at
 # once: the client with the browser profile chrome-136, the server with

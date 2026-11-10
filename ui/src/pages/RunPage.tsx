@@ -62,7 +62,8 @@ function RunView({ id }: { id: string }) {
         {`Run ${id}`}
       </h1>
       <p>
-        <Link to="/runs">All runs</Link>
+        <Link to="/runs">All runs</Link> |{" "}
+        <Link to={`/runs/${encodeURIComponent(id)}/report`}>Report</Link>
       </p>
       {run.isPending && (
         <p role="status" aria-live="polite">

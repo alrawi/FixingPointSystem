@@ -47,7 +47,7 @@ Tests use `fps_io::memory::duplex(capacity)`, which returns two connected `Memor
 
 ## Templates
 
-ENG-03 replaced the v0.1 template parser with a compiler for the full v0.2 grammar of `contracts/README.md`, and ENG-16 extended it to v0.3, see [Profiles and distributions](#profiles-and-distributions). The tokenizer and the recursive descent parser in `template/parse.rs` follow `tools/contracts/validate.py` rule for rule, so the engine and the validator accept the same templates. The compiler covers literals of all four kinds, the references `vars.<name>`, `session.id`, `session.flow`, and `last`, the core functions `fill`, `hex`, and `rand_int` with positional and keyword arguments, and module calls with keyword arguments and nested calls up to 8 levels.
+ENG-03 replaced the v0.1 template parser with a compiler for the full v0.2 grammar of `contracts/README.md`, and ENG-16 extended it to v0.3, see [Profiles and distributions](#profiles-and-distributions). The tokenizer and the recursive descent parser in `template/parse.rs` follow `tools/contracts/validate.py` rule for rule, so the engine and the validator accept the same templates. The compiler covers literals of all four kinds, the references `vars.<name>`, `session.id`, `session.flow`, and `last`, the core functions `fill`, `hex`, `rand_int`, and since ENG-25 `int_bytes` and `now` with positional and keyword arguments, and module calls with keyword arguments and nested calls up to 8 levels.
 
 A compiled template is a list of segments. A segment is either literal bytes or an expression slot. The compiler binds the arguments of core functions to their parameters and checks their static types with the rules of the contract section on types, so `fill('x')` fails at load time. Module calls keep their positional and keyword arguments in call order, because the extension binds them against its own catalog.
 
@@ -58,7 +58,7 @@ We fold in two passes, and neither pass changes the rendered bytes or the order 
 1. `Template::compile` folds literals and `hex()` of a literal into the neighboring literal segments. A template without placeholders, or with only such parts, is a single literal and `Template::as_static` returns its bytes.
 2. `Scenario::fold_constants` runs once per run after `Scenario::override_vars`. It substitutes every scenario variable that no `set` action binds and folds again. In the example `web_get` the whole client request becomes one literal of 132 bytes.
 
-`fill`, `rand_int`, `last`, the session fields, and module calls never fold, because they differ between sessions or draw from the session generator.
+`fill`, `rand_int`, `now`, `last`, the session fields, and module calls never fold, because they differ between sessions, draw from the session generator, or read the clock. `int_bytes` folds when its arguments are known and valid, and an invalid known argument stays in the template and fails when rendered.
 
 ### Profiles and distributions
 
@@ -78,6 +78,16 @@ ENG-16 added the two roots of scenario contract v0.3 (CON-10) to the parser, the
 The draw is rounded to the nearest integer and limited to `cap`, which defaults to 2,147,483,647 (`DEFAULT_CAP`). `uniform` has no `cap`, and its draw never leaves `[low, high]` before rounding. An infinite draw, which a tiny `alpha` can cause, lands on the cap. Every call consumes the same number of generator words whatever its arguments, so a seeded run repeats and two runs that differ only in the arguments stay in step. The parameters take `float` and bind an `int` too, and a variable of type `text` that parses as a number binds as well, as `fill` already accepts a numeric string.
 
 The ranges of the contract hold at two points. A literal argument is checked when the template compiles (`DistParameter`, `UniformRange`), so the loader rejects `dist.exponential(0)`. An argument that a variable or a call computes is checked on each render, and the session fails with the same errors. `alpha`, `scale`, `sigma`, `mean`, and `cap` must be positive, `low` and `high` must not be negative, `low` must not exceed `high`, and `mu` must be finite. The existing object form `delay: { dist: lognormal, ... }` stays as it was, and `delay: { ms: "{{ dist.lognormal(3.0, 0.8) }}" }` is the template form.
+
+### The functions `int_bytes` and `now`
+
+ENG-25 added the two core functions of scenario contract v0.6 (CON-19). Both draw nothing from the session generator, so a template that adds one leaves every other drawn value of the session unchanged.
+
+`int_bytes(value, width, endianness='big')` returns exactly `width` bytes. A literal argument that breaks a rule is a template error at load time, as the validator reports it: a width outside 1 to 8, an endianness other than `'big'` or `'little'`, and a negative value or one that does not fit the width. An argument from a variable or another call fails the session when rendered, with reason `template_error`, and the engine never truncates, wraps, or encodes a negative value. A width of 8 takes 0 to 2^63 - 1.
+
+`now(format)` takes `'http_date'` (text, the 29 byte IMF fixdate in UTC), `'epoch_s'` (int, truncated toward zero), or `'epoch_ms'` (int). A literal format fixes the result type, so `fill(now('epoch_s'))` compiles and `fill(now('http_date'))` does not, and a format from a variable gives type `any`. `http_date` needs a year from 1 to 9999, and the clock outside that range fails the session when rendered. Each evaluation reads the clock, so a scenario that needs one instant in several places binds it with `set`.
+
+The clock is a seam next to the random source. `fps_flow::Clock` has one method, `now_ms`, and `RenderCtx` carries a `&dyn Clock`. `SystemClock` reads the wall clock of the agent in UTC and is the default. `PinnedClock::new(ms)` returns one fixed instant, and `.with_step_ms(step)` advances it by a fixed step per call. A session takes a clock with `Session::set_clock`, and an instance gives the same clock to all of its sides with `ScenarioInstance::set_clock`, which a rerun keeps. `SessionCtx` and `InstanceConfig` did not change, so the crates that build them (`fps-runtime`, `fps-agent`, `fps-backend-kernel`) compile as before and run on the wall clock. A harness, golden, or replay that needs equal bytes pins the clock and records the instant, and a golden that does not pin it must not contain output of `now`.
 
 ### Module function dispatch
 
@@ -114,6 +124,7 @@ The renderer passes the session generator, so module output is reproducible from
 | `tests/profiles.rs` | `web_profile.yaml` loads and checks, a loaded scenario renders its profile and draws capped delays, and the loader rejects undeclared profiles, bad `dist` calls, and malformed profiles |
 | `src/template/tests_dist.rs` | Each `dist` function (sample mean or median over 200,000 draws within 3%, minimum and bounds), the cap and the default cap, seeded repeatability, fixed generator words per call, argument binding and range errors at compile and render time, profile rendering order and CRLF, and the dump |
 | `tests/templates.rs` | Property tests that rendering is deterministic for a fixed seed and session id, module calls included, and that folding preserves the rendering |
+| `src/template/tests_core.rs`, `src/clock.rs` | `int_bytes` for every width from 1 to 8 in both byte orders (zero, one, an asymmetric pattern, and the largest value of the width), the 2^63 - 1 limit of width 8, the error cases (width, endianness, negative value, value that does not fit, wrong types, call shape) at compile time for literals and at render time otherwise, folding, and a round trip property; `now` in the three formats under a pinned clock, truncation toward zero, the output lengths from 2001 to 2286, the year range, one clock read per evaluation, the formats and the result types, and that `now` never folds; the date arithmetic of `http_date` |
 
 We rewrite the golden files with `UPDATE_GOLDEN=1 cargo test -p fps-flow` and review every changed file before a commit.
 
@@ -260,7 +271,7 @@ The rule on `last` follows the Python validator. A loop body counts only when it
 
 ### Shared fixtures
 
-The fixtures live in `engine/fps-flow/tests/fixtures/`. Four fixture modules hold 43 scenarios, 12 accepted and 31 rejected, and `verdicts.yaml` lists each scenario with its verdict, the Rust error kind, and the JSON pointer of the first error. The Rust test `tests/fixtures.rs` checks every verdict, kind, and pointer with `Scenario::check_file`. The Python test `tests/test_fixtures.py` runs the module and scenario checks of `validate.py` over the same modules and checks every verdict and pointer. The workflow `eng.yml` runs the Python half, and the rust job of `ci.yml` runs the Rust half. A new rule therefore needs one fixture and one line in `verdicts.yaml`, and both tests pick it up.
+The fixtures live in `engine/fps-flow/tests/fixtures/`. Four fixture modules hold 61 scenarios, 16 accepted and 45 rejected, and `verdicts.yaml` lists each scenario with its verdict, the Rust error kind, and the JSON pointer of the first error. The Rust test `tests/fixtures.rs` checks every verdict, kind, and pointer with `Scenario::check_file`. The Python test `tests/test_fixtures.py` runs the module and scenario checks of `validate.py` over the same modules and checks every verdict and pointer. The workflow `eng.yml` runs the Python half, and the rust job of `ci.yml` runs the Rust half. A new rule therefore needs one fixture and one line in `verdicts.yaml`, and both tests pick it up.
 
 ### Limits
 
@@ -345,6 +356,8 @@ The tests run client and server programs against each other over the in memory d
 | `tests/failures.rs` | One test for each of the twelve reasons except the datagram one, and a second trigger for `connect_timeout`, `expect_timeout`, `peer_closed`, and `internal`, each checking the reason, action index, and action type of both sides |
 | `tests/catalog.rs` | The reasons, sides, and action types against the metric catalog |
 | `tests/upgrade.rs` | `tls_upgrade` with a stand in upgrader that masks the bytes: the first half crosses in the clear and the second masked, each side takes the role of its side and the client passes the server name, a failed handshake is `tls_failure` at the action, an unknown profile, a missing upgrader, and bytes buffered before the handshake are `internal` |
+| `tests/core_functions.rs` | `int_bytes` and `now` in running sessions: the bytes on the wire under a pinned and a stepped clock, one instant bound with `set`, the wall clock by default, and every render time error as `template_error` with nothing sent |
+| `tests/instances.rs` (variables) | A later flow and a flow two steps later read what an earlier flow bound with `set`, the pinned clock reaches every side of an instance and survives a rerun, and a client instance and a server instance each see only their own bindings (scenario contract v0.6, "Variables across `after`") |
 | unit tests | `session_rng` streams and bug #90, delay sample means and supports, and the action index mapping |
 
 ## The worker runtime

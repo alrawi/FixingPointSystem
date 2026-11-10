@@ -65,7 +65,11 @@ pub struct HandshakeReport {
 pub struct TlsSession<IO> {
     io: IO,
     conn: Connection,
+    /// Ciphertext read from the transport. The bytes in `in_pos..in_len` are not
+    /// yet handed to rustls, which happens when its plaintext buffer was full.
     inbound: Box<[u8]>,
+    in_pos: usize,
+    in_len: usize,
     outbound: Vec<u8>,
     out_pos: usize,
     close_sent: bool,
@@ -96,6 +100,8 @@ impl<IO: SessionIo> TlsSession<IO> {
             io,
             conn,
             inbound: vec![0u8; READ_CHUNK].into_boxed_slice(),
+            in_pos: 0,
+            in_len: 0,
             outbound: Vec::with_capacity(READ_CHUNK),
             out_pos: 0,
             close_sent: false,
@@ -133,30 +139,60 @@ impl<IO: SessionIo> TlsSession<IO> {
         }
     }
 
-    /// Reads one chunk of ciphertext and feeds it to rustls. Returns the chunk
-    /// size, and zero at the end of the transport.
-    fn poll_fill(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
-        let n = {
-            let mut buf = ReadBuf::new(&mut self.inbound);
-            ready!(Pin::new(&mut self.io).poll_read(cx, &mut buf))?;
-            buf.filled().len()
-        };
-        if n == 0 {
-            // Tell rustls about the end of the transport, so a read reports it.
-            let mut empty: &[u8] = &[];
-            self.conn.read_tls(&mut empty)?;
-            return Poll::Ready(Ok(0));
-        }
-        let mut rest = &self.inbound[..n];
-        while !rest.is_empty() {
-            let before = rest.len();
-            self.conn.read_tls(&mut rest)?;
-            self.conn.process_new_packets().map_err(protocol_error)?;
-            if rest.len() == before {
-                break;
+    /// Feeds ciphertext to rustls. It first hands over what an earlier call
+    /// kept back, and reads a new chunk from the transport only when nothing is
+    /// left, so the transport is never read while ciphertext waits.
+    ///
+    /// A full plaintext buffer of rustls is backpressure and no error: the call
+    /// stops, keeps the rest of the chunk in `inbound`, and returns
+    /// [`Fill::Full`]. The caller drains the plaintext and calls again.
+    fn poll_fill(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<Fill>> {
+        if self.in_pos >= self.in_len {
+            let n = {
+                let mut buf = ReadBuf::new(&mut self.inbound);
+                ready!(Pin::new(&mut self.io).poll_read(cx, &mut buf))?;
+                buf.filled().len()
+            };
+            self.in_pos = 0;
+            self.in_len = n;
+            if n == 0 {
+                // Tell rustls about the end of the transport, so a read reports
+                // it. A full plaintext buffer refuses even that, and then the
+                // reader still holds data, so the next call tells rustls.
+                let mut empty: &[u8] = &[];
+                match self.conn.read_tls(&mut empty) {
+                    Err(e) if is_backpressure(&e) => {}
+                    other => {
+                        other?;
+                    }
+                }
+                return Poll::Ready(Ok(Fill::Eof));
             }
         }
-        Poll::Ready(Ok(n))
+        let mut stalled = false;
+        while self.in_pos < self.in_len {
+            let mut rest = &self.inbound[self.in_pos..self.in_len];
+            let before = rest.len();
+            match self.conn.read_tls(&mut rest) {
+                Ok(_) => {}
+                Err(e) if is_backpressure(&e) => return Poll::Ready(Ok(Fill::Full)),
+                Err(e) => return Poll::Ready(Err(e)),
+            }
+            let used = before - rest.len();
+            self.in_pos += used;
+            self.conn.process_new_packets().map_err(protocol_error)?;
+            if used == 0 {
+                // Rustls takes no more, for example after close_notify. One
+                // more round gives it the chance to empty its buffers first.
+                if stalled {
+                    self.in_pos = self.in_len;
+                }
+                stalled = true;
+            } else {
+                stalled = false;
+            }
+        }
+        Poll::Ready(Ok(Fill::Data))
     }
 
     async fn drive_handshake(&mut self) -> io::Result<()> {
@@ -178,11 +214,21 @@ impl<IO: SessionIo> TlsSession<IO> {
                 .await;
             }
             poll_fn(|cx| self.poll_flush_tls(cx)).await?;
-            if poll_fn(|cx| self.poll_fill(cx)).await? == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "the transport ended during the handshake",
-                ));
+            match poll_fn(|cx| self.poll_fill(cx)).await? {
+                Fill::Data => {}
+                Fill::Eof => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "the transport ended during the handshake",
+                    ));
+                }
+                // Plaintext cannot pile up before the handshake ends, and
+                // waiting for a reader that does not exist would hang.
+                Fill::Full => {
+                    return Err(io::Error::other(
+                        "received plaintext buffer full during the handshake",
+                    ));
+                }
             }
         }
     }
@@ -259,6 +305,25 @@ fn iana_name(suite: rustls::CipherSuite) -> String {
     format!("{suite:?}").replacen("TLS13_", "TLS_", 1)
 }
 
+/// What one call of `poll_fill` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fill {
+    /// All ciphertext went to rustls.
+    Data,
+    /// The transport ended.
+    Eof,
+    /// Rustls holds more than its plaintext limit, so some ciphertext waits in
+    /// the session until the application reads.
+    Full,
+}
+
+/// Returns true for the error that `read_tls` raises while the received
+/// plaintext buffer is full. Rustls documents `ErrorKind::Other` as its
+/// backpressure signal, and reading from a slice raises no other error.
+fn is_backpressure(e: &io::Error) -> bool {
+    e.kind() == io::ErrorKind::Other
+}
+
 fn protocol_error(e: rustls::Error) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, e)
 }
@@ -328,6 +393,8 @@ impl<IO: SessionIo> AsyncRead for TlsSession<IO> {
             if let Poll::Ready(Err(e)) = this.poll_flush_tls(cx) {
                 return Poll::Ready(Err(e));
             }
+            // A full plaintext buffer needs no wait: the next loop round reads
+            // from it, and the ciphertext that rustls refused stays in the session.
             ready!(this.poll_fill(cx))?;
         }
     }

@@ -63,6 +63,19 @@ scenarios:
   - scenarios/tls_upgrade_udp_nested.yaml
   - scenarios/transport_tcp.yaml
   - scenarios/transport_udp.yaml
+  - scenarios/core_int_bytes_ok.yaml
+  - scenarios/core_now_ok.yaml
+  - scenarios/int_bytes_width_high.yaml
+  - scenarios/int_bytes_width_zero.yaml
+  - scenarios/int_bytes_value_negative.yaml
+  - scenarios/int_bytes_value_overflow.yaml
+  - scenarios/int_bytes_endianness.yaml
+  - scenarios/int_bytes_value_type.yaml
+  - scenarios/int_bytes_missing_width.yaml
+  - scenarios/int_bytes_arity.yaml
+  - scenarios/now_format_unknown.yaml
+  - scenarios/now_format_missing.yaml
+  - scenarios/now_http_date_is_text.yaml
 provenance:
   source: synthetic
   notes: Test fixture of the scenario loader. All content is generated.

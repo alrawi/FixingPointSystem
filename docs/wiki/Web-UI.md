@@ -173,3 +173,36 @@ The mock serves `listRuns`, `startRun`, `getRun`, `stopRun`, `getRunMetrics`, an
 ### Limits
 
 The charts read the `application` view only. The views `port`, `tcp`, `tls`, and `realism` are not drawn yet, and the server side of the sessions (`side=server`) has no switch. A run that outlives the ring shows its newest ten minutes.
+
+## Reports and run comparison
+
+UI-05 added the report view `/runs/{id}/report` and the comparison view `/compare`. Both read `GET /runs/{id}/report` through `fetchRunReport` and use no other endpoint, apart from `GET /runs` for the run selects. The Runs page links every run to its report and to the comparison, and the live view of a run links to its report. The two views are part of the initial bundle, which grew from 119.6 kB to 123.0 kB gzip against the budget of 250 kB, and no dependency was added.
+
+### Views
+
+| Path | View | Behavior |
+|---|---|---|
+| `/runs/{id}/report` | `ui/src/pages/ReportPage.tsx` | The verdict as one word (Passed, Failed, or No verdict) with the reason and the degraded notice, the run facts (state, configuration, times, duration, seed, engine version, modules), a table of the criteria with the observed value, the result, and the reason, a table of the realism results with observed value, target, and result, and the totals of the run. A run that is still active shows a sentence in place of results and reads the report again every few seconds until the run is final |
+| `/compare?a={id}&b={id}` | `ui/src/pages/ComparePage.tsx` | Two selects for run A and run B, kept in the query string so the link can be shared, and tables that put the runs side by side: the run facts, the totals with the change from A to B, the criteria, and the realism results, each criteria and realism row with a Change column. A summary sentence above the tables counts the results that got worse. The same run on both sides, a run that does not exist, and a report that fails to load each show a message |
+
+Every outcome is a word, so color never carries the meaning alone. The words are Passed, Failed, and No value for a criterion, and Same, Now fails, Now passes, Differs, Only in run A, and Only in run B for a change. The tables carry row and column headers, and both views run axe-core in the component tests.
+
+### What the report holds
+
+The comparison model is in `ui/src/reports/compare.ts`, and its functions are pure.
+
+1. A criterion with `passed` and `observed` shows both. A criterion whose metric has no value carries neither and shows No value with its reason. This follows the `CriterionResult` schema, and the controller reports a missing metric this way, as `controller/internal/report` documents.
+2. The criteria of two runs pair by metric, operator, and value. The API does not carry the `where` filter of a criterion, so two criteria that agree in those three fields pair in order of appearance, and the view cannot tell which label each one selects.
+3. The realism results pair by property name, and the Target column shows both targets when the runs differ.
+4. A change is Now fails when a result passed in A and failed in B, and Now passes for the reverse. A pair with a missing value on one side is Differs, and a row that only one run has is Only in run A or Only in run B.
+5. The totals are the `RunSummary` fields plus the failed ratio, which the view derives as failed over attempted. The change column shows the difference with a sign and a percentage of A, and the failed ratio shows percentage points. A change from zero shows no percentage.
+
+The controller returns `realism: []` today (`Report.API` fills only the verdict), so the realism sections show a sentence for runs of that controller. They already draw results that a later controller package fills in. The report endpoint also serves CSV and HTML, which a browser needs the bearer token to download, so the views do not link them. A later package can fetch them with `fetch()` and save the body.
+
+### Mock server
+
+`mock/reports.ts` evaluates the criteria of the configuration against the summary of a finished run with the wording of the controller (`observed 0.02 == 0 does not hold`), and `mock/runs.ts` serves the report through `runs.report`. The mock knows one metric, `sessions.failed_ratio`, so a criterion on any other metric, such as a mix error, has no value. The realism results are fixed, and a run with failed sessions also fails `response_bytes.ks_statistic`. Two options of `MockRunOptions` make a passing and a failing run in one server. `failedEvery(ordinal, configId)` sets every how many sessions one fails, and 0 means none, with 50 as the default that earlier tests expect. `verdictStates` makes a run whose criteria fail end in `failed` with the reason of the controller, as the real controller does, and it is off by default, so the scripts of UI-04 still end in `completed`. The report of an active or aborted run has no verdict and no realism results. The mock answers `format=csv` and `format=html` with 501, as the controller does for HTML when no renderer is set. `mock/runs.test.ts` validates every report against the OpenAPI document.
+
+### Tests
+
+`ui/src/pages/Reports.test.tsx` runs the whole UI against the mock and states every number as a literal. It covers a passing run (verdict, criteria, realism, totals, facts), a failing run (reason, failed criterion, failed realism result, totals), a criterion without a value, a run in progress, an aborted run, a missing run, a server error, a rejected token, the links from the run list and the run view, and the comparison: the totals and the changes, the swapped order, runs of different configurations whose criteria only one run has, the two selects with the query string, a link that preselects run A, a missing run, and a run in progress. Unit tests in `ui/src/reports/compare.test.ts` cover the outcomes, the pairing, the change words, and the totals. The development sandbox has no browser, so no Playwright test covers the report views yet.

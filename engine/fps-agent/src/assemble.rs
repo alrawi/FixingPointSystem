@@ -15,6 +15,13 @@
 //! session stays on its worker. Its schedule draws from the stream of its
 //! plan worker and mix index. A server worker listens on every address of the
 //! worker's range of the server pool at the port of the scenario's `accept`.
+//!
+//! A scenario with several flows runs as a scenario instance (ENG-23): the
+//! workers drive the entry flow, which is the first flow of the scenario, and
+//! the flows that it spawns or that follow it through `after` run inside the
+//! instance. The L4 protocol, the accept port, and the host ranges of the
+//! mix entry are those of the entry flow. The runtime runs instances over TCP
+//! only, so a scenario with several flows may not have a UDP flow.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -228,22 +235,19 @@ pub fn assemble(plan: &Plan, loaded: &LoadedModules, sides: Sides) -> Result<Ass
             .get(&e.scenario)
             .ok_or_else(|| RunError::rule(format!("scenario {} is not loaded", e.scenario)))?;
         let s = with_params(&e.id, base, &e.params)?;
-        if s.flows.len() != 1 {
-            return Err(RunError::Unimplemented(format!(
-                "scenario {} has {} flows; the standalone mode runs scenarios with one flow",
-                e.scenario,
-                s.flows.len()
-            )));
-        }
+        check_flows(&e.scenario, &s)?;
         let l4 = s.flows[0].l4;
         flows.push((Arc::new(s), l4));
     }
-    let flow_ref = |i: usize| {
+    // `port` is the name of the test port that the side runs on, which labels
+    // the tls series of the flow.
+    let flow_ref = |i: usize, port: &str| {
         let mut f = FlowRef::new(Arc::clone(&flows[i].0), 0);
         f.functions = Arc::clone(&functions);
         f.extensions = loaded.extensions.clone();
         // UpdateRates names mix entries, and two entries may share a scenario.
         f.entry = Some(plan.mix[i].id.clone());
+        f.port = (!port.is_empty()).then(|| port.to_owned());
         f
     };
     let external: Vec<IpAddr> = plan
@@ -327,7 +331,7 @@ pub fn assemble(plan: &Plan, loaded: &LoadedModules, sides: Sides) -> Result<Ass
                     id,
                     core: usize::try_from(w.core).ok(),
                     role: Role::Server(ServerConfig {
-                        flow: flow_ref(i),
+                        flow: flow_ref(i, &slice.port),
                         listen,
                         config: ListenConfig::default(),
                     }),
@@ -349,6 +353,31 @@ pub fn assemble(plan: &Plan, loaded: &LoadedModules, sides: Sides) -> Result<Ass
     Ok(out)
 }
 
+/// Refuses the scenarios that the workers cannot run: one whose entry flow is
+/// spawned, and one with several flows of which any is UDP, because the
+/// instance runner of the runtime opens TCP connections only.
+fn check_flows(reference: &str, s: &Scenario) -> Result<(), RunError> {
+    let Some(entry) = s.flows.first() else {
+        return Err(RunError::rule(format!("scenario {reference} has no flow")));
+    };
+    if entry.spawned {
+        return Err(RunError::rule(format!(
+            "scenario {reference}: the entry flow {} is spawned, so no client can start it",
+            entry.id
+        )));
+    }
+    if s.flows.len() > 1 {
+        if let Some(udp) = s.flows.iter().find(|f| f.l4 == L4::Udp) {
+            return Err(RunError::Unimplemented(format!(
+                "scenario {reference} has {} flows and its flow {} is UDP; the standalone mode runs scenarios with several flows over TCP only",
+                s.flows.len(),
+                udp.id
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn too_many() -> RunError {
     RunError::Unimplemented(
         "the standalone mode supports worker ids below 256 and at most 128 mix entries".into(),
@@ -364,7 +393,7 @@ fn client_worker(
     profile: &LoadProfile,
     external: &[IpAddr],
     external_port: Option<u16>,
-    flow_ref: &dyn Fn(usize) -> FlowRef,
+    flow_ref: &dyn Fn(usize, &str) -> FlowRef,
 ) -> Result<(usize, WorkerConfig), RunError> {
     let (mix_index, entry) = plan
         .mix
@@ -407,7 +436,7 @@ fn client_worker(
         id,
         core: usize::try_from(w.core).ok(),
         role: Role::Client(Box::new(ClientConfig {
-            flow: flow_ref(mix_index),
+            flow: flow_ref(mix_index, &cslice.port),
             schedule,
             servers,
             port,
@@ -434,5 +463,65 @@ mod tests {
         assert_eq!(engine_worker_id(255, 127, true), Some(65_535));
         assert_eq!(engine_worker_id(256, 0, false), None);
         assert_eq!(engine_worker_id(0, 128, false), None);
+    }
+
+    fn parse(text: &str) -> Scenario {
+        Scenario::parse_instance(text, None).unwrap()
+    }
+
+    const TCP_PAIR: &str = "scenario: pair
+flows:
+  - id: control
+    module: m
+    client:
+      - connect: { port: 21 }
+      - spawn: { flow: data }
+      - close: fin
+    server:
+      - accept: { port: 21 }
+      - spawn: { flow: data }
+      - close: fin
+  - id: data
+    module: m
+    spawned: true
+    client:
+      - connect: { port: 22 }
+      - close: fin
+    server:
+      - accept: { port: 22 }
+      - close: fin
+";
+
+    #[test]
+    fn a_scenario_with_several_tcp_flows_passes_the_check() {
+        let s = parse(TCP_PAIR);
+        assert_eq!(s.flows.len(), 2);
+        check_flows("m/pair", &s).unwrap();
+    }
+
+    #[test]
+    fn a_scenario_with_a_udp_flow_among_several_is_refused() {
+        let text = TCP_PAIR.replace("    spawned: true\n", "    spawned: true\n    l4: udp\n");
+        let e = check_flows("m/pair", &parse(&text))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("2 flows") && e.contains("data is UDP"), "{e}");
+    }
+
+    #[test]
+    fn a_scenario_with_one_udp_flow_still_passes() {
+        let text = "scenario: dns
+flows:
+  - id: q
+    module: m
+    l4: udp
+    client:
+      - connect: { port: 53 }
+      - close: fin
+    server:
+      - accept: { port: 53 }
+      - close: fin
+";
+        check_flows("m/dns", &parse(text)).unwrap();
     }
 }

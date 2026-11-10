@@ -29,6 +29,7 @@ use std::task::Poll;
 
 use fps_flow::program::{Flow, Program, L4};
 use fps_flow::template::Filler;
+use fps_flow::Clock;
 use fps_flow::{Scenario, TemplateFn, Vars};
 use tokio::sync::watch;
 
@@ -239,6 +240,7 @@ pub struct ScenarioInstance<'s> {
     failures: Vec<Failure>,
     error: Option<InstanceError>,
     aborting: bool,
+    clock: Option<Arc<dyn Clock>>,
 }
 
 /// What a finished side task returns.
@@ -264,6 +266,7 @@ struct SideJob<'a> {
     filler: &'a Filler,
     functions: Box<dyn TemplateFn>,
     upgrader: Option<Box<dyn TlsUpgrader>>,
+    clock: Option<Arc<dyn Clock>>,
     config: InstanceConfig,
     queue: SpawnQueue,
     abort: watch::Receiver<bool>,
@@ -311,6 +314,9 @@ async fn run_stream<O: Opener>(mut job: SideJob<'_>, mut opener: O) -> SideDone 
     let (result, stats, overlay) = {
         let mut session = Session::new(job.ctx(functions.as_mut()));
         session.set_spawn_queue(job.queue.clone());
+        if let Some(clock) = job.clock.as_deref() {
+            session.set_clock(clock);
+        }
         if let Some(upgrader) = upgrader.as_deref() {
             session.set_tls_upgrader(upgrader);
         }
@@ -329,6 +335,9 @@ async fn run_datagram<O: DatagramOpener>(mut job: SideJob<'_>, mut opener: O) ->
     let (result, stats, overlay) = {
         let mut session = Session::new(job.ctx(functions.as_mut()));
         session.set_spawn_queue(job.queue.clone());
+        if let Some(clock) = job.clock.as_deref() {
+            session.set_clock(clock);
+        }
         let result = session
             .run_datagram_program(&mut opener, job.program, stop)
             .await;
@@ -362,7 +371,15 @@ impl<'s> ScenarioInstance<'s> {
             failures: Vec::new(),
             error: None,
             aborting: false,
+            clock: None,
         }
+    }
+
+    /// Makes `now()` in every side of the instance read `clock` instead of
+    /// the wall clock of the host. The sides share the clock, so a clock with
+    /// a step advances once per call over all of them.
+    pub fn set_clock(&mut self, clock: Arc<dyn Clock>) {
+        self.clock = Some(clock);
     }
 
     /// Returns the shared scenario variables.
@@ -459,7 +476,10 @@ impl<'s> ScenarioInstance<'s> {
     }
 
     fn reset(&mut self) {
-        let fresh = ScenarioInstance::new(self.scenario, self.config);
+        // The clock is a setting of the instance and survives a rerun.
+        let clock = self.clock.take();
+        let mut fresh = ScenarioInstance::new(self.scenario, self.config);
+        fresh.clock = clock;
         *self = fresh;
     }
 
@@ -561,6 +581,7 @@ impl<'s> ScenarioInstance<'s> {
                 L4::Tcp => env.tls_upgrader(flow, side),
                 L4::Udp => None,
             },
+            clock: self.clock.clone(),
             config: self.config,
             queue: starter.queue.clone(),
             abort: starter.abort.clone(),

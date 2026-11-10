@@ -1,6 +1,6 @@
 # Capture
 
-This page describes the capture compiler under `capture/`, which the CAP workstream owns. The compiler turns a packet capture into data for scenario generation, scrubbing, and profile extraction. CAP-01 added the first command, `python3 -m capture sessions`, which reassembles TCP streams, groups UDP flows, and writes one JSON document of sessions with timing. CAP-02 added `python3 -m capture scenario`, which turns that document into a module directory of scenarios. CAP-03 added `python3 -m capture scrub`, which removes personal data and credentials from the document and writes the provenance record. CAP-04 (profile extractor) reads the document too, so its fields are the seam between the packages.
+This page describes the capture compiler under `capture/`, which the CAP workstream owns. The compiler turns a packet capture into data for scenario generation, scrubbing, and profile extraction. CAP-01 added the first command, `python3 -m capture sessions`, which reassembles TCP streams, groups UDP flows, and writes one JSON document of sessions with timing. CAP-02 added `python3 -m capture scenario`, which turns that document into a module directory of scenarios. CAP-03 added `python3 -m capture scrub`, which removes personal data and credentials from the document and writes the provenance record. CAP-04 added `python3 -m capture profile`, which reads the document (or a capture, which it extracts first) and writes a test profile: the application mix, the arrival model of sessions, and the size models of requests and responses.
 
 The compiler needs only the Python standard library, version 3.10 or newer (PyYAML is a test dependency, because the validator reads YAML), and it reads captures as untrusted input, as [Coding Standards](Coding-Standards.md) require. The [Realism](Realism.md) runner has its own reader for scoring, and the two do not share code, because a realism check must not depend on the compiler that produced the traffic it judges.
 
@@ -257,6 +257,44 @@ Credentials, cookies, tokens, hashes, email addresses that were at least as long
 - A capture that has more than about 131,000 distinct IPv4 addresses stops with an error.
 - It protects the generated module as well as the document, because the generator reads only the scrubbed document. It does not scrub a module that someone wrote by hand.
 
+## Profile command
+
+```bash
+python3 -m capture profile (--pcap FILE | --sessions FILE) [--out FILE] [--basis sessions|bytes]
+    [--app RULE]... [--no-default-apps] [--min-samples N] [--profile-only] [--udp-idle-timeout SECONDS]
+```
+
+The command follows the method of [Swing](https://cseweb.ucsd.edu/~kvishwanath/Swing/): it measures the shares of the applications, the gaps between session starts, and the sizes of the payloads in a capture, and it fits a distribution to each. It needs no payload bytes, so a document from `sessions` without `--payloads` is enough, and a scrubbed document works as well. The output holds counts, times, and sizes only, never an address or a payload byte, and a test confirms it.
+
+| Option | Meaning |
+|---|---|
+| `--pcap`, `--sessions` | One of the two. A capture is read with the reader of `sessions`, a document is read as it is |
+| `--basis` | `sessions` (the default) weights the mix by the number of sessions, `bytes` by distinct payload bytes of both directions. A TCP stream counts each byte once, so a retransmission adds no weight |
+| `--app RULE` | `[tcp:` or `udp:]PORT[-PORT]=NAME` names the application of a server port range. A rule wins over the table. Repeatable |
+| `--no-default-apps` | Drops the table of well known ports |
+| `--min-samples` | A model needs at least this many observations (default 30, the minimum of the realism temporal check) |
+| `--profile-only` | Writes only the `profile` object, which pastes into a test configuration |
+
+**Applications.** The compiler reads no protocol, so the server port names the application. The table holds the ports of the application modules: 21 `ftp`, 25 and 587 `smtp`, 53 `dns` (UDP and TCP), 80 and 8080 `http`, 110 `pop3`, 143 `imap`, and 443 and 8443 `https`. When a capture did not show who opened a session (`roles.client_known` is false), the client port is tried too. A name is a bare application or a scenario reference (`http1/single_fetch`) of lowercase letters, digits, and underscores, so that it fits the `scenario` field of a mix entry. The mix names whatever the rules gave, and renaming an entry to a real scenario of an installed module is the step that turns the profile into a runnable test. A session that no rule names counts as unclassified and stays out of the mix, as the passive data connections of FTP stay out of the realism labels. The report lists the unclassified server ports, and the command warns.
+
+**Sessions.** A UDP session that continues an earlier flow after an idle gap (`continues`) adds its bytes and datagrams to its application, but it is not a new session of the mix or of the arrival sequence.
+
+**Output.** One JSON document.
+
+| Field | Content |
+|---|---|
+| `profile` | The `profile` object of a test configuration (`basis`, `arrival`, `mix`) and nothing else, validated against `contracts/schemas/test-config.schema.json` by a test |
+| `profile.mix[]` | `scenario`, `weight` as a percentage with four decimals, and `arrival` and `size` when there are enough observations. Entries sort by weight, largest first |
+| `profile.arrival` | The model of the gaps between the starts of all classified sessions |
+| `applications[]` | Per application: sessions, payload bytes, both shares, bytes per direction, and for the arrival and each size direction the sample count, the model, its KS statistic, and the KS statistic of every other family that could be fitted. A missing model says `insufficient_data` or `all_zero` |
+| `unclassified` | Sessions, bytes, and the 20 most common server ports with no application |
+| `scrub` | `none`, `intact` with the date and digests of the record and the number of dropped sessions, or `invalid` with the problems. The profile checks the record with the same function that `scenario` uses |
+| `source`, `parameters`, `notes` | The capture file name and digest, the options, and warnings. A scrub that dropped sessions is a note, because the mix then leaves them out |
+
+**Models.** Five families are candidates, with the parameter names of the contract: constant, exponential, uniform, lognormal, and Pareto. A sample whose values lie within 1 percent of their median is constant, with the largest deviation as the tolerance. Otherwise the command fits each family by moments or maximum likelihood (the mean for exponential, the extremes for uniform, the mean and standard deviation of the logarithms for lognormal, and the minimum and the maximum likelihood tail index for Pareto) and keeps the family with the smallest Kolmogorov Smirnov distance to the sample. A tie goes to the earlier family in the order exponential, uniform, lognormal, Pareto. Lognormal and Pareto need positive values, so a sample with a zero gap (two sessions that start in one timestamp tick) tries only the other two. Lognormal arrivals are written in seconds with `unit: s`, the default of the contract. A size is the length of one payload unit: a UDP datagram, or one whole direction of a TCP session, because the compiler does not split a stream into messages. Empty directions give no unit.
+
+**Limits.** The distance is a ranking, not a test: the command does not report a p value, so a poor fit shows as a large `ks_statistic`, and the realism temporal check decides whether a model passes. Weights come from the capture, so the mix of a short capture is as noisy as its session count. The arrival model describes the sessions of the whole capture. Time of day, host populations, and think times inside a session are not modeled. A capture taken behind a proxy or NAT names applications by port only.
+
 ## Replay test
 
 `capture/tests/replay.py` replays generated scenarios with the real `fps-agent` in standalone mode (`run --plan --modules`) and compares the bytes of the replayed streams with the bytes of the corpus. The corpus is an HTTP exchange with a cookie, a date, an identifier and an epoch, an SMTP dialog, TLS style records, and a UDP exchange. The comparison is per port, with stream bytes for TCP and payload bytes for UDP, and the tolerance is 1 percent.
@@ -307,6 +345,8 @@ The path filters of the workflow have to include `capture/**`, `engine/**`, `tes
 `capture/tests/test_scrub.py` writes a capture with 44 known secrets (user names, passwords, tokens, cookies, JWTs, API keys, emails, hostnames, addresses) over HTTP, SMTP, IMAP, POP3, FTP, syslog, and a binary datagram. It scrubs it, and it searches the sessions JSON, every payload, and every generated YAML file for each secret in the raw bytes, with percent decoding, and with every Base64 token decoded, and finds none. The same search finds all of them in the unscrubbed document. Further tests check the replacement lengths and classes, the equality of addresses, the record and its digest, the refusal of the old `--consent` and `--scrubbed` options, and that all 608 sessions of the module fixtures scrub and generate modules that validate.
 
 The tests of the scenario command run a model of the flow interpreter (`capture/tests/flowsim.py`) over generated scenarios and validate the output with `tools/contracts/validate.py`. Over the committed fixture captures of the modules (HTTP, DNS, SMTP, FTP, IMAP, and POP3, 608 sessions) every generated scenario validates with 0 errors, and the model reproduces the byte counts of each session exactly, without a deadlock.
+
+`capture/tests/test_profile.py` checks the profile three ways. On the committed fixture captures it asserts literal values: the http1 fixture gives 120 plain HTTP and 80 TLS sessions (60 and 40 percent by sessions, and 47.7126 and 52.2874 percent by bytes, from 447,869 and 490,812 payload bytes that the author summed independently from the session document), the FTP fixture gives 40 control connections and 80 unclassified data connections, and the DNS, SMTP, IMAP, and POP3 fixtures give their session counts with and without rules for their nonstandard ports. On generated runs of 600 sessions with a configured mix of 50, 30, and 20 percent, it asserts that the extracted weights stay within 2 points (they are exact) and that the byte shares equal those that the generator wrote. Fits of seeded samples check that each family is recognized and that the parameters come back within a few percent. Further tests cover the scrub record, dropped sessions, UDP idle splits, the bad inputs, and the command line.
 
 `.github/workflows/cap.yml` runs `make lint-cap test-cap` after `pip install -r capture/requirements-dev.txt` on every change of `capture/`.
 

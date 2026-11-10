@@ -8,10 +8,12 @@ import { SessionProvider, useSession } from "./auth/session";
 import { SignInPage } from "./auth/SignInPage";
 import { AppLayout } from "./layout/AppLayout";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage";
+import { ComparePage } from "./pages/ComparePage";
 import { ConfigsPage } from "./pages/ConfigsPage";
 import { ModuleDetailPage } from "./pages/ModuleDetailPage";
 import { ModulesPage } from "./pages/ModulesPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { ReportPage } from "./pages/ReportPage";
 import { RunPage } from "./pages/RunPage";
 import { RunsPage } from "./pages/RunsPage";
 import { DEFAULT_RUN_SETTINGS, RunSettingsContext, type RunSettings } from "./runs/useRunMetrics";
@@ -89,6 +91,8 @@ function Routed() {
         />
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/:id" element={<RunPage />} />
+        <Route path="runs/:id/report" element={<ReportPage />} />
+        <Route path="compare" element={<ComparePage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

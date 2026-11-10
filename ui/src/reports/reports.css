@@ -1,0 +1,51 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+
+/* Reports and run comparison */
+
+.verdict {
+  display: inline-block;
+  margin: 0 0 0.5rem;
+  padding: 0.25rem 0.75rem;
+  border: 2px solid currentcolor;
+  border-radius: 4px;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.outcome-pass,
+.change-improved {
+  color: var(--state-ok);
+}
+
+.outcome-fail,
+.change-regressed {
+  color: var(--danger);
+}
+
+.outcome-none,
+.change-differs,
+.change-only-a,
+.change-only-b {
+  color: var(--state-warn);
+}
+
+.outcome-word {
+  font-weight: 600;
+}
+
+.compare-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  align-items: flex-end;
+}
+
+.compare-table td,
+.compare-table th {
+  vertical-align: top;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}

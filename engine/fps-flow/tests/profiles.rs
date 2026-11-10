@@ -45,6 +45,7 @@ fn render(t: &Template, seed: u128) -> Vec<u8> {
         rng: &mut rng,
         filler: &filler,
         functions: &mut none,
+        clock: &fps_flow::SystemClock,
     };
     t.render_to_vec(&mut ctx).expect("render")
 }

@@ -1,0 +1,141 @@
+scenario: remote_command
+description: "One command that a script runs over SSH, as in ssh host command. The key exchange, the host key signature, and the password authentication are the same as in interactive_shell. The client opens a session channel, sends an exec request without a terminal, and closes its side of the input with EOF. The server sends vars.output_bytes bytes of output in packets of vars.chunk bytes, then the exit status, EOF, and close. The output must fit the window of the channel, so vars.output_bytes stays below vars.window."
+vars:
+  server_port: 22
+  client_banner: OpenSSH_9.6p1 Ubuntu-3ubuntu13.5
+  server_banner: OpenSSH_9.6p1 Ubuntu-3ubuntu13.5
+  host_key_seed: 1
+  window: 2097152
+  max_packet: 32768
+  chunk: 32768
+  output_bytes: 8000
+flows:
+  - id: session
+    module: ssh
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ ssh.banner(vars.client_banner) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { peer: "{{ ssh.peer_banner(last) }}" }
+      - send: "{{ ssh.kexinit() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'kexinit') }}" }
+      - send: "{{ ssh.ecdh_init() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'ecdh_reply') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'newkeys') }}" }
+      - send: "{{ ssh.newkeys() }}"
+      - set: { user: "{{ ssh.credential('user') }}" }
+      - send: "{{ ssh.service_request() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'service_accept') }}" }
+      - send: "{{ ssh.auth_none(vars.user) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'userauth_failure') }}" }
+      - send: "{{ ssh.auth_password(vars.user, ssh.credential('password')) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'userauth_success') }}" }
+      - send: "{{ ssh.channel_open(vars.window, vars.max_packet) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_confirm') }}" }
+      - send: "{{ ssh.channel_request('exec', ssh.command()) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_success') }}" }
+      - send: "{{ ssh.channel_eof() }}"
+      - set: { full: "{{ ssh.div(vars.output_bytes, vars.chunk) }}", tail: "{{ ssh.rem(vars.output_bytes, vars.chunk) }}" }
+      - set: { tail_n: "{{ ssh.flag(vars.tail) }}" }
+      - loop:
+          count: "{{ vars.full }}"
+          do:
+            - expect: { bytes: 4, timeout_ms: 10000 }
+            - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+            - set: { got: "{{ ssh.recv(last, 'channel_data') }}" }
+      - loop:
+          count: "{{ vars.tail_n }}"
+          do:
+            - expect: { bytes: 4, timeout_ms: 10000 }
+            - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+            - set: { got: "{{ ssh.recv(last, 'channel_data') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_request') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_eof') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_close') }}" }
+      - send: "{{ ssh.channel_close() }}"
+      - send: "{{ ssh.disconnect() }}"
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "{{ ssh.banner(vars.server_banner) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { peer: "{{ ssh.peer_banner(last) }}" }
+      - send: "{{ ssh.kexinit() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'kexinit') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'ecdh_init') }}" }
+      - send: "{{ ssh.ecdh_reply(vars.host_key_seed) }}"
+      - send: "{{ ssh.newkeys() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'newkeys') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'service_request') }}" }
+      - send: "{{ ssh.service_accept() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'userauth_request') }}" }
+      - send: "{{ ssh.auth_failure() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'userauth_request') }}" }
+      - delay: { ms: "{{ rand_int(5, 25) }}" }
+      - send: "{{ ssh.auth_success() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_open') }}" }
+      - send: "{{ ssh.channel_confirm(vars.window, vars.max_packet) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_request') }}" }
+      - send: "{{ ssh.channel_success() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_eof') }}" }
+      - set: { full: "{{ ssh.div(vars.output_bytes, vars.chunk) }}", tail: "{{ ssh.rem(vars.output_bytes, vars.chunk) }}" }
+      - set: { tail_n: "{{ ssh.flag(vars.tail) }}" }
+      - delay: { ms: "{{ rand_int(10, 80) }}" }
+      - loop:
+          count: "{{ vars.full }}"
+          do:
+            - send: "{{ ssh.channel_data(ssh.chunk(vars.chunk, 'text')) }}"
+      - loop:
+          count: "{{ vars.tail_n }}"
+          do:
+            - send: "{{ ssh.channel_data(ssh.chunk(vars.tail, 'text')) }}"
+      - send: "{{ ssh.exit_status(0) }}"
+      - send: "{{ ssh.channel_eof() }}"
+      - send: "{{ ssh.channel_close() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_close') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'disconnect') }}" }
+      - close: fin

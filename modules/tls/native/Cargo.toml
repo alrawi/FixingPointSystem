@@ -33,3 +33,7 @@ path = "../tests/capture.rs"
 [[test]]
 name = "ja4"
 path = "../tests/ja4.rs"
+
+[[test]]
+name = "burst"
+path = "../tests/burst.rs"

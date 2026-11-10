@@ -612,3 +612,147 @@ async fn a_single_session_rejects_spawn() {
     assert_eq!(failure.action_index, 3);
     assert!(matches!(*failure.kind, FailureKind::Invalid(_)));
 }
+
+/// A scenario in which later flows read what earlier flows bound, directly
+/// and through a chain of `after`, and in which each role binds its own
+/// variables (scenario contract v0.6, "Variables across `after`").
+const CARRY: &str = r#"
+scenario: carry
+flows:
+  - id: a
+    module: m
+    client:
+      - connect: { port: 7000 }
+      - set: { stamp: "{{ now('epoch_s') }}" }
+      - set: { n: "67" }
+      - send: "hello"
+      - close: fin
+    server:
+      - accept: { port: 7000 }
+      - expect: { bytes: 5, timeout_ms: 2000 }
+      - set: { word: "{{ last }}" }
+      - close: fin
+  - id: b
+    after: a
+    module: m
+    client:
+      - connect: { port: 7001 }
+      - send: "{{ vars.stamp }}:{{ int_bytes(vars.n, 1) }}"
+      - close: fin
+    server:
+      - accept: { port: 7001 }
+      - expect: { bytes: 12, timeout_ms: 2000 }
+      - set: { got: "{{ last }}" }
+      - close: fin
+  - id: c
+    after: b
+    module: m
+    client:
+      - connect: { port: 7002 }
+      - set: { again: "{{ vars.stamp }}" }
+      - send: "{{ vars.again }}"
+      - close: fin
+    server:
+      - accept: { port: 7002 }
+      - expect: { bytes: 10, timeout_ms: 2000 }
+      - set: { got_c: "{{ last }}" }
+      - close: fin
+"#;
+
+const T0_MS: i64 = 1_794_291_304_123;
+
+#[tokio::test]
+async fn a_later_flow_reads_what_an_earlier_flow_bound_and_the_pinned_clock_holds() {
+    let scenario = compile(CARRY);
+    let mut env = Env {
+        net: MemNet::default(),
+    };
+    let mut instance = ScenarioInstance::new(&scenario, config(Sides::Both));
+    instance.set_clock(Arc::new(fps_flow::PinnedClock::new(T0_MS)));
+    instance
+        .run(&mut env, filler(), std::future::pending())
+        .await
+        .unwrap();
+    let vars = instance.vars();
+    // The client of a bound the instant once, and b and c read that value.
+    assert_eq!(vars.get("stamp"), Some(&Value::Int(1_794_291_304)));
+    assert_eq!(vars.get("got"), Some(&Value::Str("1794291304:C".into())));
+    // c reads the binding of a through the chain a, b, c.
+    assert_eq!(vars.get("again"), Some(&Value::Int(1_794_291_304)));
+    assert_eq!(vars.get("got_c"), Some(&Value::Int(1_794_291_304)));
+    assert_eq!(vars.get("word"), Some(&Value::Str("hello".into())));
+
+    // A second run starts from fresh variables and keeps the clock.
+    instance
+        .run(&mut env, filler(), std::future::pending())
+        .await
+        .unwrap();
+    assert_eq!(
+        instance.vars().get("stamp"),
+        Some(&Value::Int(1_794_291_304))
+    );
+}
+
+#[tokio::test]
+async fn each_role_sees_only_its_own_bindings_when_the_sides_run_apart() {
+    // The client and the server of one run are two instances with no channel
+    // for variables, so a client binding reaches the client sides of later
+    // flows and a server binding the server sides.
+    let scenario = compile(CARRY);
+    let net = MemNet::default();
+    let mut client_env = Env { net: net.clone() };
+    let mut server_env = Env { net };
+    let mut client = ScenarioInstance::new(&scenario, config(Sides::Client));
+    let mut server = ScenarioInstance::new(&scenario, config(Sides::Server));
+    client.set_clock(Arc::new(fps_flow::PinnedClock::new(T0_MS)));
+    server.set_clock(Arc::new(fps_flow::PinnedClock::new(T0_MS)));
+    let (c, s) = tokio::join!(
+        client.run(&mut client_env, filler(), std::future::pending()),
+        server.run(&mut server_env, filler(), std::future::pending()),
+    );
+    c.unwrap();
+    s.unwrap();
+    let (cv, sv) = (client.vars(), server.vars());
+    assert_eq!(cv.get("stamp"), Some(&Value::Int(1_794_291_304)));
+    assert_eq!(cv.get("again"), Some(&Value::Int(1_794_291_304)));
+    assert!(cv.get("word").is_none() && cv.get("got").is_none() && cv.get("got_c").is_none());
+    assert_eq!(sv.get("word"), Some(&Value::Str("hello".into())));
+    assert_eq!(sv.get("got"), Some(&Value::Str("1794291304:C".into())));
+    assert_eq!(sv.get("got_c"), Some(&Value::Int(1_794_291_304)));
+    assert!(sv.get("stamp").is_none() && sv.get("again").is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_flow_that_reads_a_binding_of_the_other_role_fails_with_template_error() {
+    // The server of b reads `stamp`, which only a client binds. The engine
+    // has no variable channel between the agents, so the read fails at
+    // render time and does not see a stale or empty value.
+    let text = CARRY.replace(
+        "      - expect: { bytes: 12, timeout_ms: 2000 }\n      - set: { got: \"{{ last }}\" }",
+        "      - expect: { bytes: 12, timeout_ms: 2000 }\n      - send: \"{{ vars.stamp }}\"\n      - set: { got: \"{{ last }}\" }",
+    );
+    let scenario = compile(&text);
+    let net = MemNet::default();
+    let mut client_env = Env { net: net.clone() };
+    let mut server_env = Env { net };
+    let mut client = ScenarioInstance::new(&scenario, config(Sides::Client));
+    let mut server = ScenarioInstance::new(&scenario, config(Sides::Server));
+    let (c, s) = tokio::join!(
+        client.run(&mut client_env, filler(), std::future::pending()),
+        server.run(&mut server_env, filler(), std::future::pending()),
+    );
+    let failure = s.expect_err("the server side of b reads a client binding");
+    assert_eq!(failure.flow, "b");
+    assert_eq!(failure.failure.reason, Reason::TemplateError, "{failure}");
+    assert!(
+        matches!(
+            *failure.failure.kind,
+            FailureKind::Render {
+                source: fps_flow::TemplateError::UndefinedVariable(_)
+            }
+        ),
+        "{failure}"
+    );
+    // What the client instance returns is not part of this rule.
+    drop(c);
+}

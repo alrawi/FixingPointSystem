@@ -107,7 +107,9 @@ class NdpiClassifier:
     def version(self) -> str:
         """Return the nDPI version that ``ndpiReader -h`` prints."""
         if self._version is None:
-            proc = self._run([self.reader, "-h"], "read the nDPI version")
+            # nDPI 4.14 prints its usage text for -h and then exits with 1, so the
+            # exit code does not say whether the banner came out.
+            proc = self._run([self.reader, "-h"], "read the nDPI version", ok_codes=(0, 1))
             match = _VERSION.search(proc.stdout + proc.stderr)
             self._version = match.group(1) if match else UNKNOWN
         return self._version
@@ -128,7 +130,9 @@ class NdpiClassifier:
                 ) from exc
         return parse_ndpi_csv(text, source=str(capture))
 
-    def _run(self, argv: list[str], what: str) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self, argv: list[str], what: str, ok_codes: Sequence[int] = (0,)
+    ) -> subprocess.CompletedProcess[str]:
         try:
             proc = subprocess.run(
                 argv,
@@ -146,7 +150,7 @@ class NdpiClassifier:
             raise ClassifierError(
                 f"ndpi {what}: {self.reader} ran longer than {self.timeout_s} s"
             ) from exc
-        if proc.returncode != 0:
+        if proc.returncode not in ok_codes:
             tail = (proc.stderr or proc.stdout).strip().splitlines()[-1:]
             raise ClassifierError(
                 f"ndpi {what}: {self.reader} exited with {proc.returncode}: "
@@ -155,13 +159,26 @@ class NdpiClassifier:
         return proc
 
 
+def _delimiter(header: str) -> str:
+    """Return the field separator of a flow CSV from its header line."""
+    return "|" if header.count("|") > header.count(",") else ","
+
+
 def parse_ndpi_csv(text: str, source: str = "<csv>") -> dict[SessionKey, str]:
     """Parse the flow CSV of ``ndpiReader -C`` into a protocol name per session key.
 
     Columns are found by header name, so the parser accepts the column order of
-    nDPI 4.2 and of later releases that add columns.
+    nDPI 4.2 and of later releases that add columns. nDPI 4.2 separates the fields
+    with commas and nDPI 4.14 with ``|``, and the header line says which: the
+    dialect is the separator that the header uses most often.
     """
-    rows = csv.reader(text.splitlines())
+    lines = text.splitlines()
+    delimiter = _delimiter(lines[0]) if lines else ","
+    rows = csv.reader(
+        lines,
+        delimiter=delimiter,
+        quoting=csv.QUOTE_NONE if delimiter == "|" else csv.QUOTE_MINIMAL,
+    )
     header = next(rows, None)
     if header is None:
         return {}
