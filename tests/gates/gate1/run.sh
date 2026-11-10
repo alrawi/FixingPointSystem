@@ -32,6 +32,11 @@
 #   FPS_NETNS             name prefix of the harness, gate1
 #   FPS_GATE1_MGMT_NET    management link between the client and server
 #                         namespaces, 10.203.0.0/30
+#   FPS_GATE1_REPEAT      runs of the suite in a row, 1. With more than one,
+#                         each run writes to OUT_DIR/run-N, the loop stops at
+#                         the first run that does not pass, and OUT_DIR holds
+#                         the files of that run, or of the last run when all
+#                         pass, and repeat.json with the exit code of each run
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -43,6 +48,7 @@ rate=${FPS_GATE1_RATE:-100}
 steady=${FPS_GATE1_STEADY_S:-20}
 min_sessions=${FPS_GATE1_MIN_SESSIONS:-100}
 parsers=${FPS_REALISM_PARSERS:-tshark,zeek}
+repeat=${FPS_GATE1_REPEAT:-1}
 
 usage() {
   echo "usage: run.sh FPS_CONTROLLER FPS_AGENT OUT_DIR | run.sh --rescore OUT_DIR" >&2
@@ -101,6 +107,37 @@ done
 mkdir -p "$3"
 out=$(cd "$3" && pwd)
 readonly controller agent out
+[[ $repeat =~ ^[1-9][0-9]*$ ]] || die "FPS_GATE1_REPEAT $repeat is not a positive integer"
+
+# repeat_runs runs the suite FPS_GATE1_REPEAT times in a row. Every run starts
+# a new process of this script, so each run brings up its own harness,
+# controller, and agents. The loop stops at the first run that does not pass
+# and exits with its code. OUT then holds the files of that run, which the
+# artifact upload of the workflow picks up, and otherwise the files of the
+# last run, which prove-threshold.sh scores again. The captures of earlier
+# passing runs are deleted to save disk space.
+repeat_runs() {
+  local i rc=0 last="" codes=""
+  for ((i = 1; i <= repeat; i++)); do
+    rc=0
+    log "run $i of $repeat"
+    FPS_GATE1_REPEAT=1 "${BASH_SOURCE[0]}" "$controller" "$agent" "$out/run-$i" || rc=$?
+    codes+="${codes:+, }{\"run\": $i, \"exit\": $rc}"
+    [[ -z $last ]] || rm -f "$out/run-$last/gate1.pcapng"
+    last=$i
+    [[ $rc -eq 0 ]] || break
+  done
+  find "$out/run-$last" -maxdepth 1 -type f -exec cp -t "$out" {} +
+  printf '{"requested": %s, "completed": %s, "passed": %s, "runs": [%s]}\n' \
+    "$repeat" "$last" "$([[ $rc -eq 0 ]] && echo true || echo false)" "$codes" >"$out/repeat.json"
+  log "$last of $repeat runs completed, the last exited with $rc"
+  return "$rc"
+}
+
+if [[ $repeat -gt 1 ]]; then
+  repeat_runs || exit $?
+  exit 0
+fi
 
 export FPS_NETNS=${FPS_NETNS:-gate1}
 export FPS_STATE_DIR=${FPS_STATE_DIR:-$out/state}
@@ -320,6 +357,11 @@ client_state=$(wait_run "$client_run" completed failed)
 call POST "/v1/runs/$server_run:stop" "$runner" -H 'Content-Type: application/json' -d '{}' >/dev/null
 server_state=$(wait_run "$server_run" completed failed)
 "$harness" capture stop
+# tcpdump counts the packets that the kernel dropped when it stops. The log
+# stays in OUT, and the count goes to context.json, so a capture that lost
+# packets shows in the report and in the artifact.
+cp "$FPS_STATE_DIR/$FPS_NETNS.capture.log" "$out/tcpdump.log" 2>/dev/null || : >"$out/tcpdump.log"
+dropped=$(sed -n 's/^\([0-9][0-9]*\) packets dropped by kernel.*/\1/p' "$out/tcpdump.log" | tail -n 1)
 log "client run $client_run is $client_state and server run $server_run is $server_state"
 
 call GET "/v1/runs/$client_run/report" "$runner" >"$out/run-report.json"
@@ -328,9 +370,9 @@ call GET "/v1/runs/$client_run/metrics?view=application" "$runner" >"$out/run-me
 call GET "/v1/runs/$server_run/report" "$runner" >"$out/server-run-report.json"
 cp "$work/client.yaml" "$out/test-config.yaml"
 python3 -I -c 'import json, sys
-keys = ("client_run", "server_run", "server_run_state", "rate", "steady_s", "parsers", "commit")
+keys = ("client_run", "server_run", "server_run_state", "rate", "steady_s", "parsers", "capture_dropped", "commit")
 json.dump(dict(zip(keys, sys.argv[1:])), open(sys.argv[-1] + "/context.json", "w"), indent=2)' \
-  "$client_run" "$server_run" "$server_state" "$rate" "$steady" "$parsers" \
+  "$client_run" "$server_run" "$server_state" "$rate" "$steady" "$parsers" "${dropped:-unknown}" \
   "$(git -c safe.directory="$root" -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)" "$out"
 
 # Under set -e a failed gate ends the script with the code of the report.

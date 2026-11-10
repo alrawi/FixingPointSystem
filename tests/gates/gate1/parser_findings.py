@@ -17,6 +17,11 @@ It writes three files to OUT.
   finding, so the fault can be replayed in tshark or Zeek without the whole
   capture. It exists only when there is a finding with a session.
 
+The JSON also lists ``reused_sessions``, the TCP sessions that hold more than one
+connection, because two connections with one 5-tuple, which the kernel allows
+once the old connection left TIME_WAIT on the server side, form one session of
+the realism runner. A finding in such a session carries ``reused_tuple: true``.
+
 A session counts as cut at the capture start when it has no SYN without ACK and
 its first frame lies within ``--boundary-s`` seconds of the first frame of the
 capture, and as cut at the capture stop when it carries no FIN or RST of either
@@ -67,6 +72,7 @@ CSV_FIELDS = (
     "session_first_s",
     "session_last_s",
     "cut",
+    "reused_tuple",
 )
 
 
@@ -85,6 +91,14 @@ class SessionFacts:
     first: float = 0.0
     last: float = 0.0
     frames: list[int] = field(default_factory=list)
+    # The initial sequence numbers of the SYN packets without ACK. A retransmitted
+    # SYN repeats its number, so two numbers mean two connections.
+    syn_seqs: set[int] = field(default_factory=set)
+
+    @property
+    def reused(self) -> bool:
+        """True when the session holds more than one TCP connection."""
+        return len(self.syn_seqs) > 1
 
 
 def classify(
@@ -148,9 +162,10 @@ def read_sessions(
                 first = frame.timestamp
             first = min(first, frame.timestamp)
             last = max(last, frame.timestamp)
-            packet = cap.decode(frame)
-            if packet is None:
+            segment = cap.decode_segment(frame)
+            if segment is None:
                 continue
+            packet = segment.packet
             key = cap.SessionKey.of(
                 packet.transport,
                 packet.src_ip,
@@ -172,6 +187,7 @@ def read_sessions(
             flags = packet.tcp_flags
             if flags & TCP_SYN and not flags & TCP_ACK:
                 fact.syns += 1
+                fact.syn_seqs.add(segment.seq)
             if flags & TCP_FIN:
                 fact.fins += 1
             if flags & TCP_RST:
@@ -221,6 +237,7 @@ def build(
             entry["session_facts"] = {
                 "packets": fact.packets,
                 "syns": fact.syns,
+                "connections": max(len(fact.syn_seqs), 1),
                 "fins": fact.fins,
                 "rsts": fact.rsts,
                 "first_s": round(fact.first - start, 6),
@@ -230,9 +247,11 @@ def build(
             entry["cut"] = classify(
                 fact, str(entry["transport"] or ""), start, end, boundary_s
             )
+            entry["reused_tuple"] = fact.reused
         else:
             entry["session_facts"] = None
             entry["cut"] = "unknown"
+            entry["reused_tuple"] = False
         entries.append(entry)
     return entries
 
@@ -270,11 +289,22 @@ def write_files(
     check: dict[str, Any],
     entries: list[dict[str, Any]],
     by_session: dict[int, list[cap.Frame]],
+    facts: dict[int, SessionFacts],
     start: float,
     end: float,
     boundary_s: float,
 ) -> None:
     """Write the JSON, the CSV, and the capture of the findings to the directory."""
+    reused = [
+        {
+            "session": sid,
+            "connections": len(fact.syn_seqs),
+            "first_s": round(fact.first - start, 6),
+            "last_s": round(fact.last - start, 6),
+        }
+        for sid, fact in sorted(facts.items())
+        if fact.reused
+    ]
     doc = {
         "parsers": check.get("parsers", []),
         "errors_total": check.get("errors_total", 0),
@@ -282,6 +312,7 @@ def write_files(
         "boundary_s": boundary_s,
         "capture_start": start,
         "capture_end": end,
+        "reused_sessions": reused,
         "findings": entries,
     }
     (out / "parser-findings.json").write_text(
@@ -313,6 +344,7 @@ def write_files(
                     f.get("first_s", ""),
                     f.get("last_s", ""),
                     e["cut"],
+                    e["reused_tuple"],
                 ]
             )
     pcap_path = out / "parser-findings.pcapng"
@@ -331,7 +363,7 @@ def run(out: Path, boundary_s: float) -> list[dict[str, Any]]:
         raise FindingsError(f"{pcap} is missing")
     facts, stamps, by_session, start, end = read_sessions(pcap)
     entries = build(check, facts, stamps, start, end, boundary_s)
-    write_files(out, check, entries, by_session, start, end, boundary_s)
+    write_files(out, check, entries, by_session, facts, start, end, boundary_s)
     return entries
 
 

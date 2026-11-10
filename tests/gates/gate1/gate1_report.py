@@ -107,12 +107,42 @@ def agent_sessions(metrics: dict[str, Any]) -> dict[str, int]:
     return out
 
 
+def reused_findings(
+    parser_check: dict[str, Any], findings: dict[str, Any] | None
+) -> int:
+    """Count the Zeek weirds that lie in a session which reuses a TCP 5-tuple.
+
+    Two connections with one 5-tuple form one session of the realism runner, and
+    Zeek raises state weirds for the second connection, such as a SYN after the
+    close of the first. The rule counts only weirds, so a malformed packet of
+    tshark in such a session still fails the gate. The count holds only when
+    parser_findings.py listed every finding of the parser error check, which the
+    realism report cuts off at 100 entries. Otherwise it is 0, so a finding that
+    the files cannot place always counts.
+    """
+    if not findings:
+        return 0
+    listed = findings.get("findings", [])
+    total = int(parser_check.get("errors_total", 0))
+    if not isinstance(listed, list) or len(listed) != total:
+        return 0
+    return sum(
+        1
+        for f in listed
+        if isinstance(f, dict)
+        and f.get("kind") == "weird"
+        and f.get("reused_tuple") is True
+        and f.get("session") is not None
+    )
+
+
 def evaluate(
     run_report: dict[str, Any],
     realism: dict[str, Any],
     metrics: dict[str, Any],
     threshold: float,
     min_sessions: int,
+    findings: dict[str, Any] | None = None,
 ) -> tuple[list[Check], dict[str, float]]:
     """Apply the gate checks and return them with the ratio of each application."""
     run = run_report.get("run")
@@ -182,15 +212,26 @@ def evaluate(
         checks.append(Check("Parser error check", False, "absent", "passed"))
     else:
         ran = ", ".join(str(p.get("parser")) for p in parser_check.get("parsers", []))
-        errors = parser_check.get("errors_total", 0)
+        errors = int(parser_check.get("errors_total", 0))
         missing = parser_check.get("missing_parsers", [])
+        reused = reused_findings(parser_check, findings)
+        counted = errors - reused
+        passed = (
+            parser_check.get("passed") is True or (bool(ran) and counted == 0)
+        ) and not missing
         checks.append(
             Check(
                 "Parser error check",
-                parser_check.get("passed") is True and not missing,
-                f"{errors} findings from {ran or 'no parser'}"
+                passed,
+                f"{counted} findings from {ran or 'no parser'}"
+                + (
+                    f", {reused} Zeek weirds not counted (reused 5-tuple)"
+                    if reused
+                    else ""
+                )
                 + (f", missing {', '.join(missing)}" if missing else ""),
-                "passed with every named parser",
+                "passed with every named parser, Zeek weirds in sessions that reuse a "
+                "TCP 5-tuple not counted",
             )
         )
 
@@ -233,6 +274,7 @@ def render(
     realism: dict[str, Any],
     context: dict[str, Any],
     threshold: float,
+    findings: dict[str, Any] | None = None,
 ) -> str:
     """Render the gate report in Markdown."""
     passed = all(c.passed for c in checks)
@@ -303,6 +345,39 @@ def render(
         for p in parser_check.get("parsers", [])
     )
     lines += ["", f"Parsers {versions or 'none'}."]
+    listed = [f for f in (findings or {}).get("findings", []) if isinstance(f, dict)]
+    if listed:
+        lines += ["", "### Findings", ""]
+        lines += table(
+            (
+                "Parser",
+                "Kind",
+                "Name",
+                "Frame",
+                "Session",
+                "Application",
+                "Reused 5-tuple",
+            ),
+            [
+                (
+                    str(f.get("parser")),
+                    str(f.get("kind")),
+                    str(f.get("name")),
+                    str(f.get("frame", "")),
+                    str(f.get("session", "")),
+                    str(f.get("application", "")),
+                    "yes" if f.get("reused_tuple") else "no",
+                )
+                for f in listed[:20]
+            ],
+        )
+        lines += [
+            "",
+            (
+                "The files `parser-findings.json`, `parser-findings.csv`, and "
+                "`parser-findings.pcapng` hold every finding with its session."
+            ),
+        ]
 
     lines += ["", "## Client run", ""]
     summary = run.get("summary") or {}
@@ -376,15 +451,18 @@ def main(argv: list[str] | None = None) -> int:
         context_path = out / "context.json"
         context = load_json(context_path) if context_path.exists() else {}
         metrics = load_json(out / "run-metrics.json")
+        findings_path = out / "parser-findings.json"
+        findings = load_json(findings_path) if findings_path.exists() else None
         checks, ratios = evaluate(
-            run_report, realism, metrics, args.threshold, args.min_sessions
+            run_report, realism, metrics, args.threshold, args.min_sessions, findings
         )
     except GateInputError as e:
         print(f"gate1_report.py: {e}", file=sys.stderr)
         return 2
     passed = all(c.passed for c in checks)
     (out / "report.md").write_text(
-        render(checks, run_report, realism, context, args.threshold), encoding="utf-8"
+        render(checks, run_report, realism, context, args.threshold, findings),
+        encoding="utf-8",
     )
     summary_doc = {
         "gate": 1,

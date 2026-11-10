@@ -25,10 +25,11 @@ def tcp_frame(
     dport: int,
     flags: int,
     payload: bytes = b"",
+    seq: int = 1,
 ) -> tuple[float, bytes]:
     """Return a timestamp and an Ethernet frame that carries one TCP segment."""
     tcp = (
-        struct.pack("!HHIIBBHHH", sport, dport, 1, 1, 5 << 4, flags, 65535, 0, 0)
+        struct.pack("!HHIIBBHHH", sport, dport, seq, 1, 5 << 4, flags, 65535, 0, 0)
         + payload
     )
     total = 20 + len(tcp)
@@ -59,12 +60,13 @@ def session(
     syn: bool = True,
     close: bool = True,
     request: bytes = b"GET / HTTP/1.1\r\n\r\n",
+    isn: int = 1,
 ) -> list[tuple[float, bytes]]:
     """Return the frames of one HTTP session that starts at t."""
     frames = []
     if syn:
         frames += [
-            tcp_frame(t, CLIENT, port, SERVER, 80, SYN),
+            tcp_frame(t, CLIENT, port, SERVER, 80, SYN, seq=isn),
             tcp_frame(t + 0.001, SERVER, 80, CLIENT, port, SYN | ACK),
         ]
     frames.append(tcp_frame(t + 0.002, CLIENT, port, SERVER, 80, PSH | ACK, request))
@@ -200,3 +202,32 @@ def test_missing_inputs_are_reported(tmp_path: Path) -> None:
     with pytest.raises(pf.FindingsError, match="gate1.pcapng is missing"):
         pf.run(tmp_path, 2.0)
     assert pf.main(["--out-dir", str(tmp_path)]) == 2
+
+
+def test_second_connection_on_the_tuple_is_a_reused_session(tmp_path: Path) -> None:
+    frames = (
+        session(100.0, 40000, isn=1000)
+        + session(110.0, 40000, isn=900000)
+        + session(120.0, 40001)
+    )
+    # The two connections of port 40000 are session 1, frames 1 to 12.
+    out = prepare(tmp_path, frames, [finding(9, 1, 40000)])
+    [entry] = pf.run(out, 2.0)
+    assert entry["reused_tuple"] is True
+    assert entry["session_facts"]["connections"] == 2
+    doc = json.loads((out / "parser-findings.json").read_text(encoding="utf-8"))
+    assert [r["session"] for r in doc["reused_sessions"]] == [1]
+    assert doc["reused_sessions"][0]["connections"] == 2
+    rows = list(csv.DictReader((out / "parser-findings.csv").open(encoding="utf-8")))
+    assert rows[0]["reused_tuple"] == "True"
+
+
+def test_retransmitted_syn_is_not_a_reused_session(tmp_path: Path) -> None:
+    retransmission = [tcp_frame(100.5, CLIENT, 40000, SERVER, 80, SYN, seq=1000)]
+    frames = session(100.0, 40000, isn=1000) + retransmission
+    out = prepare(tmp_path, frames, [finding(2, 1, 40000)])
+    [entry] = pf.run(out, 2.0)
+    assert entry["session_facts"]["syns"] == 2
+    assert entry["reused_tuple"] is False
+    doc = json.loads((out / "parser-findings.json").read_text(encoding="utf-8"))
+    assert doc["reused_sessions"] == []
