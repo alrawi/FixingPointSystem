@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #421 |
 | Branch | `wp/CTL-41` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #433 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-8d6916, lease until 2026-11-11T00:05:07Z |
-| Last verified commit | none |
+| Last verified commit | efdb478 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,19 +22,19 @@ CON-22 added `PUT /v1/runs/{id}/realism` (attachRealismReport), which answers 50
 - [x] 2. The in memory per run store and the handler (`AttachRealismReport`) with the 400, 404, 409, 413, 415, 422 cases.
 - [x] 3. `Report.Realism` filled by `GetRunReport`; wiring (the operation leaves `pendingOps`).
 - [x] 4. REST tests with literal results for a conformance and a temporal check, replace and refusal cases, the byte identical schema copy test.
-- [ ] 5. Checks, wiki page, log entry, pull request, CI.
+- [x] 5. Checks, wiki page, log entry, pull request, CI.
 
 ## Done and verified
 
-- Steps 1 to 4 are written. Go cannot build here, so CI is the first compile and test run. `gofmt -l controller` prints nothing, and `testdata/realism-report.json` validates against the schema with python jsonschema (0 errors).
+- Steps 1 to 4 are written. Go cannot build here, so CI is the first compile and test run. `gofmt -l controller` prints nothing, and `testdata/realism-report.json` validates against the schema with python jsonschema (0 errors). CI on efdb478 is green: ctl (gofmt, go vet, golangci-lint, go test -race), ci, qa-gate1, cli-go, agt, and the rest.
 
 ## Remaining
 
-Step 5: local checks (plan.py, lint), pull request, CI fixes.
+Nothing. Review and merge by the coordinator.
 
 ## Next action
 
-Open the pull request and wait for CI.
+Review pull request #433.
 
 ## Blockers and open questions
 
@@ -64,3 +64,4 @@ cd controller && gofmt -l .        # prints nothing
 |---|---|---|---|---|
 | 2026-11-10T22:35Z | claude-8d6916 | claim | none | Claimed issue 421, branch wp/CTL-41 |
 | 2026-11-10T23:05Z | claude-8d6916 | checkpoint | see branch | Steps 1 to 4 written |
+| 2026-11-10T23:30Z | claude-8d6916 | review | efdb478 | PR #433 opened, CI green, ready for review |
