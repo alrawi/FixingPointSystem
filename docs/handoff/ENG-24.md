@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #360 |
 | Branch | `wp/ENG-24` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Pull request | #366 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-e24a7c, lease until 2026-11-10T06:24:49Z |
 | Last verified commit | none |
 
@@ -22,7 +22,7 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 - [x] 2. `tls.*` metrics in the worker shard (`TlsMetrics`), `FlowRef::port` for the `port` label.
 - [x] 3. Test `tests/tls_sessions.rs`: three sessions, same JA4 (computed with `realism/ja4.py`), a shared connector control, a spawned flow with `tls_upgrade`, the metrics in a snapshot.
 - [x] 4. Update `docs/wiki/Engine.md`, the log entry, and run lint and tests.
-- [ ] 5. Pull request and CI.
+- [x] 5. Pull request and CI.
 
 ## Done and verified
 
@@ -31,11 +31,11 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Remaining
 
-Step 5: pull request and CI.
+Nothing in the package. CI on the PR: `rust` job and every other job green except `module (http1)` (realism parser errors on the live capture, the known MOD-21 flake: `parser_errors | http1 | fail | 2 parser errors`, https group 0) and `module (ftp)`, which sat in the step that installs the harness (nDPI, tshark, Zeek) for 25 minutes.
 
 ## Next action
 
-Open the pull request and wait for CI.
+Review PR #366.
 
 ## Blockers and open questions
 
@@ -64,3 +64,4 @@ CARGO_TARGET_DIR=$PWD/target-ENG-24 CARGO_BUILD_JOBS=1 cargo test -p fps-runtime
 |---|---|---|---|---|
 | 2026-11-10 | claude-e24a7c | claim | none | claimed #360 |
 | 2026-11-10 | claude-e24a7c | checkpoint | HEAD | tests, docs, log entry written |
+| 2026-11-10 | claude-e24a7c | ready for review | HEAD | PR #366 opened, rust job green |
