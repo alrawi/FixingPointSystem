@@ -4,7 +4,7 @@
 // are pure, so the views only draw what they return and the tests state
 // literal values.
 
-import type { CriterionResult, RealismResult, Run, RunReport } from "../api/client";
+import type { CriterionResult, RealismResult, Run, RunReport, ScenarioTotals } from "../api/client";
 import {
   formatBitsPerSecond,
   formatBytes,
@@ -39,11 +39,24 @@ export function verdictWord(outcome: Outcome): string {
   return outcome === "pass" ? "Passed" : outcome === "fail" ? "Failed" : "No verdict";
 }
 
-/** A criterion as the configuration states it, such as `sessions.failed_ratio < 0.01`. */
+/** A label set as text with the names in alphabetical order, such as `application=dns, side=server`. */
+export function labelsText(labels: Readonly<Record<string, string>> | undefined): string {
+  return Object.entries(labels ?? {})
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([name, value]) => `${name}=${value}`)
+    .join(", ");
+}
+
+/**
+ * A criterion as the configuration states it, such as `sessions.failed_ratio < 0.01`, followed
+ * by its label filter when it has one, such as `mix.abs_error_pp <= 1 where application=http1`.
+ */
 export function criterionLabel(result: CriterionResult): string {
   const parts = [result.metric ?? "(unnamed metric)"];
   if (result.op !== undefined) parts.push(result.op);
   if (result.value !== undefined) parts.push(String(result.value));
+  const where = labelsText(result.where);
+  if (where !== "") parts.push("where", where);
   return parts.join(" ");
 }
 
@@ -200,8 +213,8 @@ export interface CriterionRow {
 
 /**
  * Pairs the criteria of two runs. A criterion is the same in both runs when metric, operator,
- * and value agree. The API does not carry the `where` filter, so two criteria that agree in
- * those three fields are paired in order of appearance.
+ * value, and `where` filter agree. Criteria that agree in all four, which a configuration can
+ * state twice, are paired in order of appearance.
  */
 export function pairCriteria(
   a: readonly CriterionResult[],
@@ -238,9 +251,13 @@ export function pairCriteria(
   return rows;
 }
 
-/** One realism property in the comparison. */
+/** One realism result in the comparison. */
 export interface RealismRow {
+  /** What pairs the results: the metric with its labels, or the property for a result without a metric. */
+  key: string;
   property: string;
+  /** The labels of the series as text, empty when the result has none. */
+  labels: string;
   a: RealismResult | undefined;
   b: RealismResult | undefined;
   /** The target of the property, with both targets when the runs differ. */
@@ -253,26 +270,86 @@ function realismOutcome(result: RealismResult | undefined): Outcome | undefined 
   return result.passed ? "pass" : "fail";
 }
 
-/** Pairs the realism results of two runs by property name. */
+/**
+ * The key that pairs a realism result across runs: the metric with its labels, and the property
+ * when the result has no metric. The property text may change between versions of the runner,
+ * so it is not part of a key that the metric supplies.
+ */
+export function realismKey(result: RealismResult): string {
+  if (result.metric === undefined) return `property ${result.property}`;
+  return `metric ${result.metric} ${labelsText(result.labels)}`;
+}
+
+/** Pairs the realism results of two runs by metric and labels, and by property without a metric. */
 export function pairRealism(
   a: readonly RealismResult[],
   b: readonly RealismResult[],
 ): RealismRow[] {
-  const properties = [...new Set([...a.map((r) => r.property), ...b.map((r) => r.property)])];
-  return properties.map((property) => {
-    const left = a.find((result) => result.property === property);
-    const right = b.find((result) => result.property === property);
+  const keys = [...new Set([...a.map(realismKey), ...b.map(realismKey)])];
+  return keys.map((key) => {
+    const left = a.find((result) => realismKey(result) === key);
+    const right = b.find((result) => realismKey(result) === key);
+    const shown = left ?? right;
     const target =
       left !== undefined && right !== undefined && left.target !== right.target
         ? `${left.target} / ${right.target}`
-        : ((left ?? right)?.target ?? "");
+        : (shown?.target ?? "");
     return {
-      property,
+      key,
+      property: shown?.property ?? "",
+      labels: labelsText(shown?.labels),
       a: left,
       b: right,
       target,
       change: changeOf(realismOutcome(left), realismOutcome(right)),
     };
+  });
+}
+
+/** The key of a scenario, as in the metric view `scenario`. */
+export function scenarioKey(scenario: ScenarioTotals): string {
+  return `${scenario.application}/${scenario.scenario}`;
+}
+
+/** The share of failed sessions of a scenario, or undefined when it attempted none. */
+export function failedRatio(scenario: ScenarioTotals): number | undefined {
+  return scenario.sessions_attempted > 0
+    ? scenario.sessions_failed / scenario.sessions_attempted
+    : undefined;
+}
+
+/** One scenario in the comparison. A side is undefined when that run has no counts for it. */
+export interface ScenarioRow {
+  key: string;
+  a: ScenarioTotals | undefined;
+  b: ScenarioTotals | undefined;
+  /** The change of the failed ratio from A to B in points, or `Only in run A` and `Only in run B`. */
+  change: string;
+}
+
+/** Pairs the scenarios of two runs by application and scenario name, in that order. */
+export function pairScenarios(
+  a: readonly ScenarioTotals[],
+  b: readonly ScenarioTotals[],
+): ScenarioRow[] {
+  const keys = [...new Set([...a.map(scenarioKey), ...b.map(scenarioKey)])].sort();
+  const ratio: Total = {
+    id: "ratio",
+    label: "Failed ratio",
+    value: undefined,
+    format: formatPercent,
+    formatDelta: formatPoints,
+  };
+  return keys.map((key) => {
+    const left = a.find((scenario) => scenarioKey(scenario) === key);
+    const right = b.find((scenario) => scenarioKey(scenario) === key);
+    const change =
+      left === undefined
+        ? CHANGE_WORD["only-b"]
+        : right === undefined
+          ? CHANGE_WORD["only-a"]
+          : totalChange(ratio, failedRatio(left), failedRatio(right)).delta;
+    return { key, a: left, b: right, change };
   });
 }
 
@@ -287,6 +364,8 @@ export function durationMs(run: Run): number | undefined {
 export interface Comparison {
   criteria: CriterionRow[];
   realism: RealismRow[];
+  /** The scenarios of both runs, or undefined when a report lacks them (a controller older than 0.9.0). */
+  scenarios: ScenarioRow[] | undefined;
   /** The criteria and realism rows that went from passing to failing. */
   regressions: number;
 }
@@ -295,6 +374,10 @@ export interface Comparison {
 export function compareReports(a: RunReport, b: RunReport): Comparison {
   const criteria = pairCriteria(a.run.verdict?.criteria ?? [], b.run.verdict?.criteria ?? []);
   const realism = pairRealism(a.realism, b.realism);
+  const scenarios =
+    a.scenarios === undefined || b.scenarios === undefined
+      ? undefined
+      : pairScenarios(a.scenarios, b.scenarios);
   const regressions = [...criteria, ...realism].filter((row) => row.change === "regressed").length;
-  return { criteria, realism, regressions };
+  return { criteria, realism, scenarios, regressions };
 }

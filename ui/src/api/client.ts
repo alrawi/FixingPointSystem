@@ -29,6 +29,8 @@ export type CriterionResult = Schemas["CriterionResult"];
 export type RunReport = Schemas["RunReport"];
 /** One realism result of a report. */
 export type RealismResult = RunReport["realism"][number];
+/** The counts of one scenario of one application in a report. */
+export type ScenarioTotals = Schemas["ScenarioTotals"];
 /** A test configuration as GET /configs/{id} returns it. */
 export type TestConfig = Schemas["test-config.schema"];
 export type ConfigRef = Schemas["ConfigRef"];

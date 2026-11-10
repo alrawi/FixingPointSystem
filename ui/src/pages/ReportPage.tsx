@@ -9,17 +9,29 @@ import {
   type CriterionResult,
   type RealismResult,
   type Run,
+  type ScenarioTotals,
 } from "../api/client";
 import {
   criterionLabel,
   criterionOutcome,
   durationMs,
+  failedRatio,
+  labelsText,
+  realismKey,
+  scenarioKey,
   totalsOf,
   verdictOutcome,
   verdictWord,
 } from "../reports/compare";
 import { OutcomeText } from "../reports/OutcomeText";
-import { formatDuration, formatMetric, formatTimestamp } from "../runs/format";
+import {
+  formatBytes,
+  formatCount,
+  formatDuration,
+  formatMetric,
+  formatPercent,
+  formatTimestamp,
+} from "../runs/format";
 import { useSignOutWhenUnauthorized } from "./modulesQuery";
 import { useRunReport } from "./reportQuery";
 import { StateBadge } from "./StateBadge";
@@ -59,6 +71,7 @@ export function ReportPage() {
           <RunFacts run={report.data.run} />
           <CriteriaSection run={report.data.run} />
           <RealismSection results={report.data.realism} run={report.data.run} />
+          <ScenariosSection scenarios={report.data.scenarios} run={report.data.run} />
           <TotalsSection run={report.data.run} />
         </>
       )}
@@ -201,6 +214,7 @@ function RealismSection({ results, run }: { results: RealismResult[]; run: Run }
           <thead>
             <tr>
               <th scope="col">Property</th>
+              <th scope="col">Labels</th>
               <th scope="col">Observed</th>
               <th scope="col">Target</th>
               <th scope="col">Result</th>
@@ -208,8 +222,9 @@ function RealismSection({ results, run }: { results: RealismResult[]; run: Run }
           </thead>
           <tbody>
             {results.map((result) => (
-              <tr key={result.property}>
+              <tr key={realismKey(result)}>
                 <th scope="row">{result.property}</th>
+                <td>{labelsText(result.labels) || "-"}</td>
                 <td className="num">{formatMetric(result.observed)}</td>
                 <td>{result.target}</td>
                 <td>
@@ -218,6 +233,56 @@ function RealismSection({ results, run }: { results: RealismResult[]; run: Run }
                     word={result.passed ? "Passed" : "Failed"}
                   />
                 </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function ScenariosSection({
+  scenarios,
+  run,
+}: {
+  scenarios: ScenarioTotals[] | undefined;
+  run: Run;
+}) {
+  return (
+    <section aria-labelledby="scenarios-heading">
+      <h2 id="scenarios-heading">Scenarios</h2>
+      {scenarios === undefined ? (
+        <p>This controller does not report the counts of each scenario.</p>
+      ) : scenarios.length === 0 ? (
+        <p>
+          {isFinalRunState(run.state)
+            ? "The run recorded no counts for any scenario."
+            : "No scenario has counts yet."}
+        </p>
+      ) : (
+        <table aria-label="Scenarios">
+          <thead>
+            <tr>
+              <th scope="col">Scenario</th>
+              <th scope="col">Sessions attempted</th>
+              <th scope="col">Sessions succeeded</th>
+              <th scope="col">Sessions failed</th>
+              <th scope="col">Failed ratio</th>
+              <th scope="col">Bytes sent</th>
+              <th scope="col">Bytes received</th>
+            </tr>
+          </thead>
+          <tbody>
+            {scenarios.map((scenario) => (
+              <tr key={scenarioKey(scenario)}>
+                <th scope="row">{scenarioKey(scenario)}</th>
+                <td className="num">{formatCount(scenario.sessions_attempted)}</td>
+                <td className="num">{formatCount(scenario.sessions_succeeded)}</td>
+                <td className="num">{formatCount(scenario.sessions_failed)}</td>
+                <td className="num">{formatPercent(failedRatio(scenario))}</td>
+                <td className="num">{formatBytes(scenario.bytes_tx)}</td>
+                <td className="num">{formatBytes(scenario.bytes_rx)}</td>
               </tr>
             ))}
           </tbody>
