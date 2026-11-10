@@ -661,3 +661,10 @@ x-request-id: 0123456789abcdef0123456789abcdef
         assert_eq!(n, frames, "max {max} padding {padding} dep {dep} {huffman}");
     }
 }
+
+/// The agent keeps one value per session and side and moves it between threads.
+#[test]
+fn the_module_value_is_clone_send_and_sync() {
+    fn check<T: Clone + std::fmt::Debug + Default + Send + Sync + 'static>() {}
+    check::<Http2>();
+}
