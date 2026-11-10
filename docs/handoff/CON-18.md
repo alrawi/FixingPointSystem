@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #351 |
 | Branch | `wp/CON-18` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #352 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-8b5636, lease until 2026-11-10T02:37:47Z |
 | Last verified commit | none |
 
@@ -21,7 +21,7 @@ The schema's `transport` (module tls with a profile) is rejected by `Scenario::l
 - [x] 1. Decide (A, sugar) and change the schema, validator, tests, embedded copy
 - [x] 2. Desugar in `Scenario::load` of `fps-flow` with parity fixtures
 - [x] 3. README, CHANGELOG, `contracts/changes/CON-18.md`, wiki Contracts page
-- [ ] 4. Run the checks, open the PR, wait for CI
+- [x] 4. Run the checks, open the PR, wait for CI
 
 ## Done and verified
 
@@ -30,11 +30,11 @@ The schema's `transport` (module tls with a profile) is rejected by `Scenario::l
 
 ## Remaining
 
-The PR and CI.
+Nothing. CI is green except `module (http1)`, which fails the same way on `main` at 05a215f (4 tshark/zeek parser errors in the http1 realism check).
 
 ## Next action
 
-Run `plan.py check`, `render --check`, `lint`, then open the PR.
+Review PR #352.
 
 ## Blockers and open questions
 
@@ -63,3 +63,5 @@ CARGO_TARGET_DIR=$PWD/target-CON-18 CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T01:10Z | claude-8b5636 | claim | none | Claimed #351 |
+| 2026-11-10T01:50Z | claude-8b5636 | checkpoint | 6e8b248 | PR #352 opened |
+| 2026-11-10T02:05Z | claude-8b5636 | review | 6e8b248 | CI green except the http1 job that fails on main too |
