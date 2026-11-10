@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #179 |
 | Branch | `wp/MOD-12` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 83% (5 of 6 plan steps) |
+| Pull request | #402 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-281119, lease until 2026-11-10T15:53:05Z |
-| Last verified commit | see session log |
+| Last verified commit | d756648 (CI green) |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -29,7 +29,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 3. Synthetic NTLM (NEGOTIATE, CHALLENGE, AUTHENTICATE) and session setup
 - [x] 4. Readers and golden bytes tests
 - [x] 5. Fuzz, catalog test, tshark script
-- [ ] 6. Log entry, Modules page, checks, PR, CI
+- [x] 6. Log entry, Modules page, checks, PR, CI
 
 ## Done and verified
 
@@ -41,11 +41,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Open the pull request, wait for CI, and set the handoff to ready for review. `cargo deny check` could not run here (tool not installed); the `licenses` job of CI is the check. The workflow and mk file for the module are in the Shared page notes of the log entry, not in this package.
+Nothing; PR #402 is open and CI is green on d756648. `cargo deny check` could not run here (tool not installed); the `licenses` job of CI is the check. The workflow and mk file for the module are in the Shared page notes of the log entry, not in this package.
 
 ## Next action
 
-Open the pull request against main and poll its check runs.
+Review and merge PR #402 (the coordinator adds the shared files from the log entry).
 
 ## Blockers and open questions
 
