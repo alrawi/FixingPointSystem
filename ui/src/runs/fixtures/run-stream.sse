@@ -1,0 +1,35 @@
+retry: 100
+
+id: 3
+data: {"ts":"2026-11-01T10:00:01.000Z","view":"application","key":"http1","values":{"sessions.attempted":20,"sessions.succeeded":10,"sessions.failed":0,"sessions.concurrent":10,"sessions.rate":20,"sessions.response_time.p50":13100,"sessions.response_time.p90":26200,"sessions.response_time.p99":52400,"sessions.duration.p50":39300,"sessions.duration.p90":78600,"sessions.duration.p99":157200,"bytes.tx":40960,"bytes.rx":163840,"throughput.bps":655360}}
+
+id: 4
+data: {"ts":"2026-11-01T10:00:02.000Z","view":"application","key":"http1","values":{"sessions.attempted":60,"sessions.succeeded":39,"sessions.failed":1,"sessions.concurrent":20,"sessions.rate":40,"sessions.response_time.p50":13200,"sessions.response_time.p90":26400,"sessions.response_time.p99":52800,"sessions.duration.p50":39600,"sessions.duration.p90":79200,"sessions.duration.p99":158400,"bytes.tx":122880,"bytes.rx":491520,"throughput.bps":1310720}}
+
+id: 5
+data: {"ts":"2026-11-01T10:00:03.000Z","view":"application","key":"http1","values":{"sessions.attempted":120,"sessions.succeeded":88,"sessions.failed":2,"sessions.concurrent":30,"sessions.rate":60,"sessions.response_time.p50":13300,"sessions.response_time.p90":26600,"sessions.response_time.p99":53200,"sessions.duration.p50":39900,"sessions.duration.p90":79800,"sessions.duration.p99":159600,"bytes.tx":245760,"bytes.rx":983040,"throughput.bps":1966080}}
+
+id: 6
+data: {"ts":"2026-11-01T10:00:04.000Z","view":"application","key":"http1","values":{"sessions.attempted":200,"sessions.succeeded":156,"sessions.failed":4,"sessions.concurrent":40,"sessions.rate":80,"sessions.response_time.p50":13400,"sessions.response_time.p90":26800,"sessions.response_time.p99":53600,"sessions.duration.p50":40200,"sessions.duration.p90":80400,"sessions.duration.p99":160800,"bytes.tx":409600,"bytes.rx":1638400,"throughput.bps":2621440}}
+
+id: 7
+data: {"ts":"2026-11-01T10:00:05.000Z","view":"application","key":"http1","values":{"sessions.attempted":300,"sessions.succeeded":244,"sessions.failed":6,"sessions.concurrent":50,"sessions.rate":100,"sessions.response_time.p50":13000,"sessions.response_time.p90":26000,"sessions.response_time.p99":52000,"sessions.duration.p50":39000,"sessions.duration.p90":78000,"sessions.duration.p99":156000,"bytes.tx":614400,"bytes.rx":2457600,"throughput.bps":3276800}}
+
+id: 8
+data: {"ts":"2026-11-01T10:00:06.000Z","view":"application","key":"http1","values":{"sessions.attempted":400,"sessions.succeeded":342,"sessions.failed":8,"sessions.concurrent":50,"sessions.rate":100,"sessions.response_time.p50":13100,"sessions.response_time.p90":26200,"sessions.response_time.p99":52400,"sessions.duration.p50":39300,"sessions.duration.p90":78600,"sessions.duration.p99":157200,"bytes.tx":819200,"bytes.rx":3276800,"throughput.bps":3276800}}
+
+id: 9
+data: {"ts":"2026-11-01T10:00:07.000Z","view":"application","key":"http1","values":{"sessions.attempted":500,"sessions.succeeded":440,"sessions.failed":10,"sessions.concurrent":50,"sessions.rate":100,"sessions.response_time.p50":13200,"sessions.response_time.p90":26400,"sessions.response_time.p99":52800,"sessions.duration.p50":39600,"sessions.duration.p90":79200,"sessions.duration.p99":158400,"bytes.tx":1024000,"bytes.rx":4096000,"throughput.bps":3276800}}
+
+id: 10
+data: {"ts":"2026-11-01T10:00:08.000Z","view":"application","key":"http1","values":{"sessions.attempted":600,"sessions.succeeded":538,"sessions.failed":12,"sessions.concurrent":50,"sessions.rate":100,"sessions.response_time.p50":13300,"sessions.response_time.p90":26600,"sessions.response_time.p99":53200,"sessions.duration.p50":39900,"sessions.duration.p90":79800,"sessions.duration.p99":159600,"bytes.tx":1228800,"bytes.rx":4915200,"throughput.bps":3276800}}
+
+id: 11
+data: {"ts":"2026-11-01T10:00:09.000Z","view":"application","key":"http1","values":{"sessions.attempted":700,"sessions.succeeded":636,"sessions.failed":14,"sessions.concurrent":50,"sessions.rate":100,"sessions.response_time.p50":13400,"sessions.response_time.p90":26800,"sessions.response_time.p99":53600,"sessions.duration.p50":40200,"sessions.duration.p90":80400,"sessions.duration.p99":160800,"bytes.tx":1433600,"bytes.rx":5734400,"throughput.bps":3276800}}
+
+id: 12
+data: {"ts":"2026-11-01T10:00:10.000Z","view":"application","key":"http1","values":{"sessions.attempted":800,"sessions.succeeded":734,"sessions.failed":16,"sessions.concurrent":50,"sessions.rate":100,"sessions.response_time.p50":13000,"sessions.response_time.p90":26000,"sessions.response_time.p99":52000,"sessions.duration.p50":39000,"sessions.duration.p90":78000,"sessions.duration.p99":156000,"bytes.tx":1638400,"bytes.rx":6553600,"throughput.bps":3276800}}
+
+event: end
+data: {"state":"completed"}
+

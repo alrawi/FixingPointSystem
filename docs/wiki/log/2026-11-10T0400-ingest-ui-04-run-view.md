@@ -1,0 +1,12 @@
+## [2026-11-10] ingest | UI-04 Run launch and live metrics
+
+The UI has a run list with a start form at `/runs` and a live view of one run at `/runs/{id}`. The form starts a stored configuration with `startRun`, optionally on chosen agents, and the view shows the run state with the states it saw, nine counters, and five SVG line charts of the `application` view that update with every tick, and it stops the run with `stopRun`, forced or not. The view reads the metrics stream with the fetch reader of UI-01, fills history and the gap after a dropped connection from `getRunMetrics`, reconnects with `Last-Event-ID`, and polls `getRunMetrics` once per second when the stream answers 501, as `fps watch` does. The mock server serves the six run and metrics operations, validated against the OpenAPI document by `mock/runs.test.ts`, and a recorded stream in `ui/src/runs/fixtures/run-stream.sse` is replayed by the component tests, which assert the rendered counters and chart points. We described the views, the feed, the mock, and the tests in [Web UI](Web-UI.md).
+
+We wrote the charts as SVG instead of adding uPlot, which D11 names and the lock file lacks. The initial JavaScript grew from 112.2 kB to 119.6 kB gzip against 250 kB, and no dependency was added.
+
+### Shared page notes
+
+- Testing: the UI level gains `mock/runs.test.ts`, `ui/src/pages/Runs.test.tsx`, and `ui/e2e/runs.spec.ts`. All run inside the existing `make test-ui` and `make e2e-ui` targets, so no target changes.
+- Contracts: no change. Observations for the owner. The description of `streamRunMetrics` says only that each event's data is a `MetricSample`. The event `end`, whose data is `{"state": ...}`, the `retry` field, and the tick number as the event id exist in the controller (`controller/internal/metrics/rest.go`) and not in the contract, and the UI depends on `end`. The 501 answer for a controller without a stream is not in the contract either, although the CLI and the UI handle it. The stream sends only the newest tick of each connection, so a client has to read `getRunMetrics` to fill a gap. `Run` has no list of state transitions, so a view that opens late cannot show the earlier states.
+- Decisions: D11 names uPlot for live charts, and UI-04 used a small SVG chart instead. The owner may confirm or ask for uPlot.
+- Implementation Plan: UI-04 is done once merged. UI-05 can reuse `LineChart`, `format.ts`, and `StateBadge`. UI-07 can use the labels in `ui/e2e/runs.spec.ts`.

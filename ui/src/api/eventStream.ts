@@ -105,6 +105,13 @@ export interface ReadEventStreamOptions {
   onEvent: (event: ServerEvent) => void;
   /** Called once when the controller rejects the token with 401 or 403. Reading stops. */
   onUnauthorized?: (status: number) => void;
+  /**
+   * Called once when the controller answers with a status that retrying cannot change, such as
+   * 404 or 501, and chosen by `isFatalStatus`. Reading stops.
+   */
+  onFatalStatus?: (status: number) => void;
+  /** True for a status that ends the reader instead of a retry. None by default. */
+  isFatalStatus?: (status: number) => boolean;
   /** Called after each lost connection, before the reader waits to reconnect. */
   onDisconnect?: (reason: unknown) => void;
   signal?: AbortSignal;
@@ -160,6 +167,10 @@ export async function readEventStream(options: ReadEventStreamOptions): Promise<
       const response = await doFetch(options.url, init);
       if (response.status === 401 || response.status === 403) {
         options.onUnauthorized?.(response.status);
+        return lastEventId;
+      }
+      if (options.isFatalStatus?.(response.status) === true) {
+        options.onFatalStatus?.(response.status);
         return lastEventId;
       }
       if (!response.ok || response.body === null) {
