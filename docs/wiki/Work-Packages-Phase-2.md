@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 101 work packages. Packages marked critical path gate the phase.
+This page lists 104 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -112,6 +112,9 @@ flowchart LR
   ENG_23["ENG-23<br/>Multi flow scenario instances in the runtime"]
   AGT_16["AGT-16<br/>Multi flow scenarios and digested extension bytes in the agent"]
   CON_18["CON-18<br/>Decide the transport keyword of the scenario contract"]
+  ENG_24["ENG-24<br/>TLS per session connectors, instance TLS, and tls metrics"]
+  MOD_21["MOD-21<br/>Parser errors on live http1 captures"]
+  CON_19["CON-19<br/>Contract gaps found by CAP-02 and RLM-06"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -231,6 +234,10 @@ flowchart LR
   ENG_21 --> AGT_16
   AGT_14 --> AGT_16
   ENG_20 --> CON_18
+  ENG_23 --> ENG_24
+  AGT_14 --> ENG_24
+  MOD_04 --> MOD_21
+  CON_18 --> CON_19
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -340,6 +347,9 @@ flowchart LR
 | [ENG-23](#eng-23-multi-flow-scenario-instances-in-the-runtime) | Multi flow scenario instances in the runtime | M | ENG-07, AGT-13 |  |
 | [AGT-16](#agt-16-multi-flow-scenarios-and-digested-extension-bytes-in-the-agent) | Multi flow scenarios and digested extension bytes in the agent | S | ENG-23, ENG-21, AGT-14 |  |
 | [CON-18](#con-18-decide-the-transport-keyword-of-the-scenario-contract) | Decide the transport keyword of the scenario contract | S | ENG-20 |  |
+| [ENG-24](#eng-24-tls-per-session-connectors-instance-tls-and-tls-metrics) | TLS per session connectors, instance TLS, and tls metrics | S | ENG-23, AGT-14 |  |
+| [MOD-21](#mod-21-parser-errors-on-live-http1-captures) | Parser errors on live http1 captures | S | MOD-04 |  |
+| [CON-19](#con-19-contract-gaps-found-by-cap-02-and-rlm-06) | Contract gaps found by CAP-02 and RLM-06 | S | CON-18 |  |
 
 ## CON Contracts
 
@@ -521,6 +531,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The contract checks pass, and the loader and the validator agree on the keyword.
+
+### CON-19 Contract gaps found by CAP-02 and RLM-06
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CON-18
+- **Paths.** `contracts/`
+
+CAP-02 found no function that writes an integer as bytes, no clock function, and no rule for whether after carries variables; RLM-06 found that the test configuration has no arrival or size distributions and the metric catalog has no application value for all sessions. Needs owner approval as a contract change.
+
+Deliverables.
+
+- Built in functions for integer to bytes (width, endianness) and the current time (HTTP date, epoch seconds and milliseconds); the rule for variables across after; optional arrival and size distributions in the test configuration that realism targets can follow; an all value or property for the KS metrics. contracts/changes/CON-19.md.
+
+Acceptance.
+
+- [ ] The contract checks pass and every change is additive.
 
 ## OPS Repository and swarm tooling
 
@@ -774,6 +801,23 @@ Acceptance.
 
 - [ ] A loopback runtime test runs modules/ftp mixed_session end to end with one data connection per transfer.
 
+### ENG-24 TLS per session connectors, instance TLS, and tls metrics
+
+Phase 2 · size S · workstream ENG
+
+- **Depends on.** ENG-23, AGT-14
+- **Paths.** `engine/fps-runtime/`, `engine/fps-interp/`
+
+TlsProfiles shares one connector per profile, so a client against a server that issues tickets resumes and changes its JA4 (AGT-14 works around it with ticketless servers); ScenarioInstance flows get no TlsUpgrader (ENG-23); and the runtime records no tls.* metrics.
+
+Deliverables.
+
+- A connector factory per profile that builds one client connector per session, a TlsUpgrader for every flow of an instance, and the tls.* handshake metrics of the catalog from TlsSession reports.
+
+Acceptance.
+
+- [ ] Three consecutive sessions against a ticket issuing server keep the same ClientHello JA4, a tls_upgrade inside a spawned flow succeeds, and the tls metrics appear in a run snapshot.
+
 ## TRN Transport backends
 
 ### TRN-04 TLS transport module
@@ -1023,6 +1067,7 @@ Lift the one flow check in assemble.rs once ENG-23 lands, and load extension.was
 Deliverables.
 
 - The agent runs multi flow scenarios through the ENG-23 worker, and modules.rs reads extension.wasm once, digests those bytes with the module tree, and compiles the same bytes.
+- Per ENG-23 - remove the one flow refusal in assemble.rs, refuse multi flow scenarios with a UDP flow, and compile with Scenario::parse_instance; register fps-module-http2 (a stateful Http2 value, see the MOD-05 log entry) in the module registry.
 
 Acceptance.
 
@@ -1534,6 +1579,7 @@ Ship http2 scenarios for prior knowledge cleartext and for TLS with ALPN.
 Deliverables.
 
 - Scenarios with concurrent streams and server push disabled by default.
+- From MOD-05 - the manifest carries the functions list that `cargo run -p fps-module-http2 --example print_catalog` prints, and a mk/mod-http2.mk plus workflow run the 60 second fuzz test (`cargo test -p fps-module-http2 --release --test fuzz -- --ignored fuzz_60s`).
 
 Acceptance.
 
@@ -1759,6 +1805,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The realism job decrypts the fixture captures with the exported keys and Zeek logs the messages inside TLS.
+
+### MOD-21 Parser errors on live http1 captures
+
+Phase 2 · size S · workstream MOD
+
+- **Depends on.** MOD-04
+- **Paths.** `modules/http1/`
+
+The realism job that records a fresh http1 capture failed on 2026-11-09 and 2026-11-10 with 4 tshark or Zeek parser errors on plain HTTP sessions and passed on re-run.
+
+Deliverables.
+
+- Find which sessions produce the parser errors (keep the failing capture as a CI artifact), and fix the scenario or the module function behind them.
+
+Acceptance.
+
+- [ ] The http1 realism harness job passes 20 times in a row in a temporary CI step, which is then removed.
 
 ## RLM Realism validation
 
