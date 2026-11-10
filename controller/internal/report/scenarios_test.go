@@ -3,6 +3,7 @@
 package report
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -154,8 +155,12 @@ func TestFileJSONCarriesDeclarations(t *testing.T) {
 	if err := json.Unmarshal(file, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"arrival":{"dist":"exponential","mean_ms":20}}`; string(doc.Declared) != want {
-		t.Errorf("declared = %s, want %s", doc.Declared, want)
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, doc.Declared); err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"arrival":{"dist":"exponential","mean_ms":20}}`; compact.String() != want {
+		t.Errorf("declared = %s, want %s", compact.String(), want)
 	}
 }
 

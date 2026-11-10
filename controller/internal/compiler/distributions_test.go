@@ -104,11 +104,12 @@ func TestDistributionsLeaveThePlanUnchanged(t *testing.T) {
 // profile declarations, and for each mix entry its own arrival and its size
 // with each direction overriding the profile's.
 func TestDeclarations(t *testing.T) {
-	got := loadConfig(t, distributionsConfig).Declarations()
+	cfg := loadConfig(t, distributionsConfig)
+	got := cfg.Declarations()
 	if got == nil {
 		t.Fatal("Declarations() = nil")
 	}
-	prof := loadConfig(t, distributionsConfig).Profile
+	prof := cfg.Profile
 	if got.Arrival != prof.Arrival || got.Size != prof.Size {
 		t.Errorf("profile level = %+v %+v, want the profile declarations", got.Arrival, got.Size)
 	}
