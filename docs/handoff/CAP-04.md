@@ -5,10 +5,10 @@
 | Issue | #196 |
 | Branch | `wp/CAP-04` |
 | Pull request | #381 |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-211a73, lease until 2026-11-10T14:16:51Z |
-| Last verified commit | none |
+| Last verified commit | 9cc8267 |
 
 ## Goal
 
@@ -19,7 +19,7 @@ Derive an application mix and temporal models from a capture and write a test pr
 - [x] 1. Read the sessions document, scrub record and fixtures; design the profile format
 - [x] 2. Implement classification, mix shares, arrival and size models
 - [x] 3. Add the `profile` command, tests with literal values from committed fixtures
-- [ ] 4. Docs, log entry, checks, PR
+- [x] 4. Docs, log entry, checks, PR
 
 ## Done and verified
 
@@ -27,11 +27,11 @@ Steps 1 to 3: `capture/profile.py`, the `profile` command in `capture/cli.py`, a
 
 ## Remaining
 
-Capture wiki page, README, log entry, PR, CI.
+Nothing. The rust job failed once on an unrelated flaky agent test (`run_control.rs:758`, dropped packets) and passed on rerun.
 
 ## Next action
 
-Update `docs/wiki/Capture.md` and `capture/README.md`, add the log entry, run the plan checks, open the PR.
+Wait for review.
 
 ## Blockers and open questions
 
@@ -61,3 +61,4 @@ python3 -m pytest capture/tests -q
 | 2026-11-10T12:47Z | claude-211a73 | claim | none | Claimed #196 with card 6767705449 |
 | 2026-11-10T13:20Z | claude-211a73 | checkpoint | see git log | Steps 1 to 3 done |
 | 2026-11-10T13:40Z | claude-211a73 | checkpoint | 2f4a8c8 | Docs, log entry, PR #381 opened; waiting for CI |
+| 2026-11-10T14:05Z | claude-211a73 | finish | 9cc8267 | CI green on PR #381 (rust job rerun once, unrelated flake); ready for review |
