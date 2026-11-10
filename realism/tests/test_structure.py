@@ -554,7 +554,7 @@ def test_report_entry_validates_against_the_schema(tmp_path: Path) -> None:
     assert entry["passed"] is True
     assert entry["instances"] == 1
     assert entry["failed_instances"] == 0
-    assert report["version"] == "0.9.0"
+    assert report["version"] == "0.10.0"
 
     bad = pcapgen.Capture()
     bad.http_get((CLIENT, 40001), WEB)
