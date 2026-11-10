@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #394 |
 | Branch | `wp/MOD-22` |
-| Pull request | none yet |
+| Pull request | #397 |
 | Status | in progress |
 | Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-97754f, lease until 2026-11-10T15:53:19Z |
-| Last verified commit | none |
+| Last verified commit | 61397ee (local checks only) |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
