@@ -196,19 +196,19 @@ pub const CATALOG: &[MetricDef] = &[
         name: "mix.share_pct",
         kind: MetricKind::Gauge,
         unit: "percent",
-        labels: &["application"],
+        labels: &["application", "source", "classifier"],
     },
     MetricDef {
         name: "mix.abs_error_pp",
         kind: MetricKind::Gauge,
         unit: "percentage_points",
-        labels: &["application"],
+        labels: &["application", "source", "classifier"],
     },
     MetricDef {
         name: "mix.max_abs_error_pp",
         kind: MetricKind::Gauge,
         unit: "percentage_points",
-        labels: &[],
+        labels: &["source", "classifier"],
     },
     MetricDef {
         name: "realism.conformance_ratio",
@@ -518,6 +518,7 @@ pub const LABEL_VALUES: &[(&str, &[&str])] = &[
         ],
     ),
     ("classifier", &["ndpi", "zeek"]),
+    ("source", &["metrics", "classifier"]),
     (
         "property",
         &[
@@ -541,6 +542,7 @@ pub const LABEL_NAMES: &[&str] = &[
     "side",
     "reason",
     "classifier",
+    "source",
     "property",
     "alert",
     "port",

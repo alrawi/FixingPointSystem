@@ -193,7 +193,14 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Live metrics as Server Sent Events, one event per second per view. */
+        /**
+         * Live metrics as Server Sent Events, one event per second per view.
+         * @description The response is a Server Sent Events stream (WHATWG HTML, event stream format) with these parts, in this order.
+         *     1. The first field of the stream is `retry: <ms>`, the reconnect delay that the controller asks for. It equals the event period, 1000 ms by default.
+         *     2. Once per event period (a tick), for each requested view in the order of the `view` parameters, the controller sends one event per current sample of that view. The event has no `event` field, so its type is `message`. Its `id` is the number of the tick, counted from 1 on each connection, so every event of one tick carries the same id. Its `data` is one line with a `MetricSample` as JSON.
+         *     3. When the run is in a final state (`completed`, `failed`, or `aborted`), or the controller no longer knows the run, the controller sends the samples of that last tick and then one event named `end`. It has no `id`, and its `data` is a `MetricStreamEnd` as JSON. The controller closes the stream after it, and a client must not reconnect. A client that is disconnected earlier reconnects after the `retry` delay, reads the run with `getRun`, and stops when its state is final, because no `end` event follows in that case.
+         *     The controller does not replay missed ticks. It ignores the `Last-Event-ID` header, and a new connection starts at tick 1 with the newest samples, so a client that needs the ticks of the gap reads `getRunMetrics`. A response carries `Cache-Control: no-store` and `X-Accel-Buffering: no`. A controller that serves no stream answers with problem details and the status 501 instead of the stream, and a client falls back to polling `getRunMetrics`.
+         */
         get: operations["streamRunMetrics"];
         put?: never;
         post?: never;
@@ -533,6 +540,14 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /** @description Data of the event `end` of streamRunMetrics, the last event of a stream. It follows the samples of the final tick. */
+        MetricStreamEnd: {
+            /**
+             * @description State of the run when the stream ended: a RunState value of a final state, or `unknown` when the controller no longer knows the run.
+             * @example completed
+             */
+            state: string;
+        };
         MetricSeriesSet: {
             view: components["schemas"]["MetricView"];
             samples: components["schemas"]["MetricSample"][];
@@ -593,7 +608,7 @@ export interface components {
         };
         /**
          * FixingPointSystem module manifest
-         * @description Contract v0.3. Declares a module's identity, capabilities, parameters, settings, template functions, scenarios, byte estimates, and provenance.
+         * @description Contract v0.4. Declares a module's identity, capabilities, parameters, settings, template functions, scenarios, byte estimates, and provenance.
          */
         "module-manifest.schema": {
             /** @constant */
@@ -662,6 +677,15 @@ export interface components {
                 consent?: string;
                 scrubbed?: boolean;
                 notes?: string;
+                /** @description SHA-256 of the capture file that the module was made from, as 64 lowercase hexadecimal digits. Optional, and meant for source capture. */
+                capture_sha256?: string;
+                /** @description The scrub rules that ran, each with the version of the rule at that time. A rule version rises when the rule changes what it replaces. Optional, and meant for source capture. */
+                scrub_rules?: {
+                    id: string;
+                    version: number;
+                }[];
+                /** @description Date (YYYY-MM-DD) or UTC date and time (RFC 3339) of the scrub. Optional, and meant for source capture. */
+                scrubbed_at?: string;
             };
             $defs: {
                 identifier: string;
@@ -1360,13 +1384,24 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Event stream. Each event's data field is a MetricSample encoded as JSON. */
+            /** @description Event stream. Each event without an `event` field carries a MetricSample encoded as JSON in its data field, and the event `end` carries a MetricStreamEnd and closes the stream. */
             200: {
                 headers: {
+                    /** @description Always `no-store`. */
+                    "Cache-Control"?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "text/event-stream": string;
+                };
+            };
+            /** @description This controller does not serve the stream. The body is problem details, and a client polls `getRunMetrics` instead. The status is not retried. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             default: components["responses"]["Problem"];
