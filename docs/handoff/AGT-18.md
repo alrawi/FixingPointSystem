@@ -6,8 +6,8 @@
 | Branch | `wp/AGT-18` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 25% (1 of 4 plan steps) |
-| Current holder | claude-048417, lease until 2026-11-10T18:55:02Z |
+| Progress | 75% (3 of 4 plan steps) |
+| Current holder | claude-048417, lease until 2026-11-10T19:14:44Z |
 | Last verified commit | none |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
@@ -19,21 +19,23 @@ Find and fix the cause of the dropped packet in `a_fake_controller_changes_rates
 ## Plan
 
 - [x] 1. Reproduce and fix the capture flake
-- [ ] 2. Reproduce the ftp session loss and fix it or justify the mutex
-- [ ] 3. Loop proof for CI (ignored loop tests), checks, wiki log entry, PR
-- [ ] 4. CI green, review
+- [x] 2. Reproduce the ftp session loss and fix it, remove the mutex
+- [x] 3. Repeat tests for the loop proof, checks, wiki log entry
+- [ ] 4. Open the PR, run the repeat tests in CI, CI green, review
 
 ## Done and verified
 
-1. Cause of the capture flake: a session that is open when the capture stops is counted as dropped. Reproduced locally with three busy loops beside the test (3 of 4 runs failed with `dropped: 1` or `2`), and a temporary diagnostic showed every drop was `TrySendError::Disconnected`, never `Full`. The fix is in the test (stop at rest) plus a test that a really lost session is reported.
+1. Capture flake. A session that is open when the capture stops is counted as dropped: it ends after the writer thread has gone, and `Shared::drop` in `engine/fps-capture/src/lib.rs` finds the channel disconnected. A temporary diagnostic showed every drop was `Disconnected`, never `Full`. Three busy loops beside the test made 3 of 4 runs fail with `dropped: 1` or `2`. The test now pauses both entries and waits for `sessions.concurrent` to be zero before it stops the capture (`quiesce`), and 4 of 4 runs under the same load passed. `a_capture_that_loses_sessions_reports_them_as_dropped` shows that a really lost session reaches `StopCaptureResult.dropped`. The ignored `repeat_stopping_a_capture_at_rest` stops a capture at rest 50 times in a row: 50 of 50 under three busy loops, 132 s.
+2. ftp sessions. The 2 lost sessions are one instance: two instances drew the same data port and one connection was reset (failed counters: one `unexpected_reset` and one `aborted` per side). The plan seed makes the 72 draws of the test identical in every run, and the old range of 200 ports drew 9 ports twice. A temporary log of bound and connected data ports showed the port with two connects before one accept. The range is now 53000 to 62999, where the 72 draws are all different, and the mutex is gone. With the three tests in parallel and three busy loops beside them, the old range failed 11 of 69 runs, the new one 0 of 44. The ignored repeat tests run each test 50 times side by side: 150 rounds passed under three busy loops, 281 s.
+3. Checks: `cargo fmt -p fps-agent -- --check` and `cargo clippy -p fps-agent --all-targets -- -D warnings` pass.
 
 ## Remaining
 
-Steps 2 to 4.
+Open the PR. Run the repeat tests in the PR run through a temporary commit that removes their `#[ignore]`, and revert that commit. The full capture test 50 times needs a workflow step (21 minutes), which the coordinator adds: see the PR description.
 
 ## Next action
 
-Reproduce the ftp loss with `first_party` tests running together, without the mutex.
+Open the PR and watch CI.
 
 ## Blockers and open questions
 
@@ -41,20 +43,24 @@ none
 
 ## Decisions taken in this package
 
-Local design choices are recorded as the steps finish.
+- The capture test stops at rest instead of changing the capture path, because the capture crate is outside the paths of this package, and a session that the stop cuts off is not recorded in any design that keeps one file per session. The counter that mixes it with queue overflow is a follow up (see the log entry).
+- The ftp data port range is a property of the seeded plan. Any change to the scenario, the seed, or the rate changes the draws, and the repeat tests catch a collision.
 
 ## Pitfalls
 
-The sandbox has 2 CPUs. Reproduce timing flakes with busy loops (`while :; do :; done`) beside the test.
+The sandbox has 2 CPUs. Reproduce timing flakes with busy loops (`while :; do :; done`) beside the test. The worktree guard refuses `source`, heredocs next to `git`, and long compound shell commands: write loops to a script file in the scratchpad.
 
 ## Verify the current state
 
 ```bash
-CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 cargo test -p fps-agent --test run_control
+CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 cargo test -p fps-agent --test run_control --test first_party
+CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 cargo test -p fps-agent --test first_party -- --ignored repeat
 ```
 
 ## Session log
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
-| 2026-11-10T18:25Z | claude-048417 | claim | none | claimed #389 with 4 steps |
+| 2026-11-10T17:55Z | claude-048417 | claim | none | claimed #389 with 4 steps |
+| 2026-11-10T18:14Z | claude-048417 | checkpoint | f6e53de | capture flake fixed in the test |
+| 2026-11-10T18:23Z | claude-048417 | checkpoint | see branch | ftp cause found, mutex removed, repeat tests added |

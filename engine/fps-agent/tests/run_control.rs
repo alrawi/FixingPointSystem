@@ -1107,6 +1107,61 @@ async fn a_capture_that_loses_sessions_reports_them_as_dropped() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// AGT-18: the stop of a capture at rest reports no drop, round after round.
+///
+/// One run serves every round. A round starts a capture, lets the sessions of
+/// both entries run, pauses the entries until no session is open, stops the
+/// capture, and resumes the entries. The whole of
+/// `a_fake_controller_changes_rates_and_reads_a_capture` takes 25 seconds, so
+/// this is the part of it that failed, repeated `FPS_REPEAT` times (50 by
+/// default) in about four minutes. It is ignored by default:
+/// `cargo test -p fps-agent --test run_control -- --ignored repeat`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "repeats a capture round 50 times, about four minutes"]
+async fn repeat_stopping_a_capture_at_rest() {
+    let rounds: usize = std::env::var("FPS_REPEAT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+    let dir = scratch("repeat-stop");
+    let mut h = Harness::start("agent-a", &dir).await;
+    h.wait_state(AgentState::Idle).await;
+    let plan = loopback_plan(91, 92, 18_285, 15_557, phases(1, 900));
+    let id = plan.plan_id.clone();
+    let r = h.command(prepare(&plan)).await;
+    assert!(r.error.is_none(), "{r:?}");
+    let r = h.command(start(&id)).await;
+    assert!(r.error.is_none(), "{r:?}");
+    h.wait_state(AgentState::Running).await;
+    let rates = || vec![sps("web_get", 120.0), sps("dns_lookup", 100.0)];
+    let r = h.command(update_rates(&id, rates())).await;
+    assert!(r.error.is_none(), "{r:?}");
+    advance(&mut h, 3).await;
+
+    for round in 1..=rounds {
+        let name = format!("r{round}");
+        let r = h.command(capture(start_capture(&id, &name))).await;
+        assert!(r.error.is_none(), "round {round}: {r:?}");
+        advance(&mut h, 2).await;
+        quiesce(&mut h, &id, &["web_get", "dns_lookup"]).await;
+        let r = h.command(stop_capture(&id, &name)).await;
+        assert!(r.error.is_none(), "round {round}: {r:?}");
+        let done = stop_result(&r).clone();
+        assert!(done.packets > 20, "round {round}: {done:?}");
+        assert_eq!(done.dropped, 0, "round {round}: {done:?}");
+        let r = h.command(update_rates(&id, rates())).await;
+        assert!(r.error.is_none(), "round {round}: {r:?}");
+        // Keep the disk free for the next rounds.
+        let _ = std::fs::remove_file(fps_agent::control::capture_path(&dir, &id, &name));
+    }
+
+    let r = h.command(stop(&id, pb::StopMode::RampDown, 2)).await;
+    assert!(r.error.is_none(), "{r:?}");
+    h.wait_state(AgentState::Stopped).await;
+    h.shutdown().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_capture_with_a_port_skips_the_sessions_of_other_ports() {
     let dir = scratch("port-filter");
