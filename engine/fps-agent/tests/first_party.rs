@@ -10,23 +10,33 @@
 //! of the content crate that the manifests require.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use fps_agent::modules::{sha256_digest, tree_digest};
 use fps_agent::{run, Outcome, RunOptions};
 use serde_json::Value as Json;
 
-/// The tests of this file share the loopback pools of `mail_plan` and run on a
-/// runner with two cores. Each run holds its criterion at a failed ratio of
-/// 0.001, so a single failed session fails the run. In CI the ftp test failed
-/// two of 95 sessions in the run where AGT-17 first ran a third test beside it,
-/// and it passed every time when it ran alone. The tests take this lock and run
-/// one after another.
-static SERIAL: Mutex<()> = Mutex::new(());
+// The tests of this file run in parallel on a runner with two cores, and they
+// need no lock. In AGT-17 the ftp test failed two of 95 sessions in the run
+// where a third test first ran beside it, and a mutex made the tests take
+// turns. The mutex hid the cause (AGT-18). The two failed sessions were one
+// ftp instance: `mixed_session` picks the port of each data connection with
+// `rand_int(data_port_min, data_port_max)`, and the plan seed makes those draws
+// the same in every run. With the range of 200 ports that the test used, nine
+// ports were drawn twice by 72 draws, so nine pairs of instances wanted the
+// same data port. A pair that overlaps in time fails: both clients connect to
+// the one listener, which accepts a connection and drops, and the kernel resets
+// the one that waited in its backlog (`unexpected_reset` for that flow,
+// `aborted` for the rest of the instance). Whether a pair overlaps depends on
+// the CPU, and a slow second test beside it made that likely. The ftp test now
+// draws from `FTP_DATA_PORTS`, a range in which the 72 draws of the seed of
+// `mail_plan` are all different, so no two instances share a data port. I
+// found the range by logging every bound data port of the runtime. A change to
+// the scenario, to the seed, or to the rate changes the draws, so the repeat
+// tests at the end of the file run the three tests together many times, and a
+// collision shows up there first.
 
-fn serial() -> MutexGuard<'static, ()> {
-    SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
-}
+/// The data ports of the ftp scenario, `data_port_min` and `data_port_max`.
+const FTP_DATA_PORTS: (u32, u32) = (53_000, 62_999);
 
 fn repo_modules() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules")
@@ -142,13 +152,16 @@ fn succeeded(line: &Json, application: &str) -> u64 {
 /// `requires`.
 #[test]
 fn an_ftp_scenario_with_data_flows_runs_through_the_agent() {
-    let _one_at_a_time = serial();
+    ftp_run();
+}
+
+fn ftp_run() {
     let mut plan = mail_plan(&[("ftp/mixed_session", 18_021)]);
     plan["mix"][0]["params"] = serde_json::json!({
         "server_port": 18_021,
         "server_ip": "127.82.0.1",
-        "data_port_min": 53_000,
-        "data_port_max": 53_199,
+        "data_port_min": FTP_DATA_PORTS.0,
+        "data_port_max": FTP_DATA_PORTS.1,
     });
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fps-agent-first-party");
     std::fs::create_dir_all(&dir).expect("plan dir");
@@ -181,7 +194,10 @@ fn an_ftp_scenario_with_data_flows_runs_through_the_agent() {
 /// one session into the next and fail its first encrypted packet.
 #[test]
 fn ssh_scenarios_with_a_real_key_exchange_run_through_the_agent() {
-    let _one_at_a_time = serial();
+    ssh_run();
+}
+
+fn ssh_run() {
     let mut plan = mail_plan(&[
         ("ssh/interactive_shell", 18_022),
         ("ssh/scp_upload", 18_023),
@@ -222,7 +238,10 @@ fn ssh_scenarios_with_a_real_key_exchange_run_through_the_agent() {
 
 #[test]
 fn smtp_imap_and_pop3_scenarios_run_through_the_agent() {
-    let _one_at_a_time = serial();
+    mail_run();
+}
+
+fn mail_run() {
     let plan = mail_plan(&[
         ("smtp/relay", 18_825),
         ("imap/mailbox_sync", 18_143),
@@ -255,4 +274,48 @@ fn smtp_imap_and_pop3_scenarios_run_through_the_agent() {
         log.contains("module content, which"),
         "the run did not note the required content module\n{log}"
     );
+}
+
+/// How often the repeat tests run their test, 50 unless `FPS_REPEAT` says
+/// otherwise.
+fn repeats() -> usize {
+    std::env::var("FPS_REPEAT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
+}
+
+/// Runs `body` [`repeats`] times in a row and names the round that failed.
+fn repeat(name: &str, body: fn()) {
+    for round in 1..=repeats() {
+        if let Err(e) = std::panic::catch_unwind(body) {
+            eprintln!("{name}: round {round} of {} failed", repeats());
+            std::panic::resume_unwind(e);
+        }
+    }
+}
+
+// AGT-18: each repeat test runs one of the tests above 50 times in a row, and
+// the three of them run beside each other, as the tests above do in `cargo
+// test`. They take about 3 seconds a round, so they are ignored by default:
+// `cargo test -p fps-agent --test first_party -- --ignored repeat`. Do not run
+// a repeat test beside the test that it repeats (`--include-ignored`): both use
+// the same server ports and the same plan file, so the second one fails to bind.
+
+#[test]
+#[ignore = "repeats a three second run 50 times"]
+fn repeat_the_ftp_test() {
+    repeat("ftp", ftp_run);
+}
+
+#[test]
+#[ignore = "repeats a three second run 50 times"]
+fn repeat_the_ssh_test() {
+    repeat("ssh", ssh_run);
+}
+
+#[test]
+#[ignore = "repeats a three second run 50 times"]
+fn repeat_the_mail_test() {
+    repeat("mail", mail_run);
 }

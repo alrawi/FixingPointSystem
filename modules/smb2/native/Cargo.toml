@@ -21,6 +21,8 @@ sha2 = "0.10"
 [dev-dependencies]
 # The fuzz tests draw their inputs from a seeded generator.
 rand_pcg = "0.3"
+# The fixture_peer example runs the scenarios over kernel sockets.
+fps-backend-kernel = { path = "../../../engine/fps-backend-kernel" }
 # The flow test runs both sides of a scenario through the interpreter.
 fps-interp = { path = "../../../engine/fps-interp" }
 fps-io = { path = "../../../engine/fps-io" }
@@ -28,4 +30,4 @@ fps-io = { path = "../../../engine/fps-io" }
 fps-golden = { path = "../../../tests/golden/rust" }
 # The catalog test parses the rendered catalog.
 serde_yaml = { package = "serde_norway", version = "0.9" }
-tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "test-util", "time"] }

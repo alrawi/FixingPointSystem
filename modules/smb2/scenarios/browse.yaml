@@ -1,0 +1,148 @@
+scenario: browse
+description: A Windows style client that browses a share. After the NTLM session setup it connects to the share, opens the root directory, lists it with QUERY_DIRECTORY until the server answers STATUS_NO_MORE_FILES, closes it, thinks, opens the directory subdir, lists it the same way, and tears the session down with TREE_DISCONNECT and LOGOFF. The server answers every request, and the two listings come from the variables listing and subdir_listing, one 'size kind name' entry per line. The client numbers its messages with smb2.add. Both sides read each message with two expect actions, the 4 octet header of direct TCP and then the octets that it announces.
+vars:
+  server_port: 445
+  share: '\\fps-files.example.test\data'
+  user: alice
+  password: Tst-quartz-meadow-41
+  domain: FPS
+  workstation: WS-0417
+  dialects: '2.0.2,2.1'
+  dialect: '2.1'
+  subdir: Projects
+  listing: "0 directory .\n0 directory ..\n0 directory Projects\n0 directory Archive\n18432 file budget-2026.xlsx\n2048 file notes.txt\n524288 file site-survey.pdf\n731 file readme.md"
+  subdir_listing: "0 directory .\n0 directory ..\n40960 file plan-v2.docx\n1310 file todo.txt\n8388 file schedule.csv"
+flows:
+  - id: browse
+    module: smb2
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ smb2.negotiate(dialects=vars.dialects, message_id=0) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - send: "{{ smb2.session_setup(smb2.ntlm_negotiate(domain=vars.domain, workstation=vars.workstation), 1) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set:
+          sid: "{{ smb2.header_field(last, 'session_id') }}"
+          # A set action keeps text, so the token travels as hexadecimal digits.
+          auth: "{{ smb2.hex(smb2.ntlm_authenticate(smb2.security_blob(last), vars.user, vars.password, domain=vars.domain, workstation=vars.workstation)) }}"
+      - send: "{{ smb2.session_setup(smb2.unhex(vars.auth), 2, session_id=vars.sid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - send: "{{ smb2.tree_connect(vars.share, 3, vars.sid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set:
+          tid: "{{ smb2.header_field(last, 'tree_id') }}"
+          mid: "{{ smb2.add(3) }}"
+      # Open the root directory and list it. The second request continues the
+      # scan and gets STATUS_NO_MORE_FILES.
+      - send: "{{ smb2.create('', vars.mid, vars.sid, vars.tid, desired_access=1048577, options=1) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set:
+          fid: "{{ smb2.body_field(last, 'file_id') }}"
+          mid: "{{ smb2.add(vars.mid) }}"
+      - send: "{{ smb2.query_directory(vars.fid, vars.mid, vars.sid, vars.tid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { mid: "{{ smb2.add(vars.mid) }}" }
+      - send: "{{ smb2.query_directory(vars.fid, vars.mid, vars.sid, vars.tid, restart=false) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { mid: "{{ smb2.add(vars.mid) }}" }
+      - send: "{{ smb2.close(vars.fid, vars.mid, vars.sid, vars.tid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - delay: { dist: lognormal, mu: 6.5, sigma: 0.5, unit: ms }
+      # Descend into the subdirectory and list it.
+      - set: { mid: "{{ smb2.add(vars.mid) }}" }
+      - send: "{{ smb2.create(vars.subdir, vars.mid, vars.sid, vars.tid, desired_access=1048577, options=1) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set:
+          fid: "{{ smb2.body_field(last, 'file_id') }}"
+          mid: "{{ smb2.add(vars.mid) }}"
+      - send: "{{ smb2.query_directory(vars.fid, vars.mid, vars.sid, vars.tid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { mid: "{{ smb2.add(vars.mid) }}" }
+      - send: "{{ smb2.query_directory(vars.fid, vars.mid, vars.sid, vars.tid, restart=false) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { mid: "{{ smb2.add(vars.mid) }}" }
+      - send: "{{ smb2.close(vars.fid, vars.mid, vars.sid, vars.tid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { mid: "{{ smb2.add(vars.mid) }}" }
+      - send: "{{ smb2.tree_disconnect(vars.mid, vars.sid, vars.tid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { mid: "{{ smb2.add(vars.mid) }}" }
+      - send: "{{ smb2.logoff(vars.mid, vars.sid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - set:
+          # The ids that this server gives to the session and to the tree.
+          session: "{{ rand_int(1048576, 2147483647) }}"
+          tree: "{{ rand_int(1, 65535) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - send: "{{ smb2.negotiate_response(dialect=vars.dialect) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - send: "{{ smb2.session_setup_response(smb2.ntlm_challenge(target=vars.domain), 1, vars.session, status='more_processing_required') }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - send: "{{ smb2.session_setup_response(smb2.spnego_accept(), 2, vars.session) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - send: "{{ smb2.tree_connect_response(3, vars.session, vars.tree) }}"
+      # The root directory: CREATE, two QUERY_DIRECTORY, CLOSE.
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.create_response(vars.rid, vars.session, vars.tree, attributes=16) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.query_directory_response(vars.listing, vars.rid, vars.session, vars.tree) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.error_response('query_directory', 'no_more_files', vars.rid, vars.session, vars.tree) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.close_response(vars.rid, vars.session, vars.tree, attributes=16) }}"
+      # The subdirectory.
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.create_response(vars.rid, vars.session, vars.tree, attributes=16) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.query_directory_response(vars.subdir_listing, vars.rid, vars.session, vars.tree) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.error_response('query_directory', 'no_more_files', vars.rid, vars.session, vars.tree) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.close_response(vars.rid, vars.session, vars.tree, attributes=16) }}"
+      # TREE_DISCONNECT and LOGOFF.
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.tree_disconnect_response(vars.rid, vars.session, vars.tree) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.logoff_response(vars.rid, vars.session) }}"
+      - close: fin
