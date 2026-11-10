@@ -43,7 +43,7 @@ Tests use `fps_io::memory::duplex(capacity)`, which returns two connected `Memor
 3. Rendering takes any sized `rand::RngCore`, and the filler buffer comes from `rand_pcg::Pcg64Mcg`, which gives the same bytes on every platform. The spike used `SmallRng`, whose algorithm may change between platforms and releases.
 4. The contract test `tests/contract_examples.rs` compiles every scenario under `contracts/examples/modules/`, so a new example joins the check on its own.
 
-`Scenario::load` still rejects transport modules, spawned flows, and the `spawn` and `raw` actions with `LoadError::Unsupported`, while `Scenario::check` accepts them when the contract allows them. The action `tls_upgrade` of ENG-20 compiles in every mode to `Op::UpgradeTls`, see [TLS upgrade of a running session](#tls-upgrade-of-a-running-session).
+`Scenario::load` desugars the flow keyword `transport: {module: tls, ...}` into a leading `tls_upgrade` on each side since CON-18, and still rejects spawned flows and the `spawn` and `raw` actions with `LoadError::Unsupported` (`Scenario::parse_instance` accepts spawn for the multi flow instances of ENG-23), while `Scenario::check` accepts them when the contract allows them. The action `tls_upgrade` of ENG-20 compiles in every mode to `Op::UpgradeTls`, see [TLS upgrade of a running session](#tls-upgrade-of-a-running-session).
 
 ## Templates
 
