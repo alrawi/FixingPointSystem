@@ -84,6 +84,7 @@ impl Half {
     }
 
     /// The number of packets that this half has handled.
+    #[cfg(test)]
     pub(crate) fn sequence(&self) -> u32 {
         self.seq
     }

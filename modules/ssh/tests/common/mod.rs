@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Shared helpers that load the ftp scenarios and run every flow of a scenario
-//! instance, both sides against each other, over an in memory network.
+//! Shared helpers that load the ssh scenarios and run both sides of a
+//! scenario against each other over an in memory network.
 //!
-//! A scenario instance spawns the data flows, so these helpers use
-//! `ScenarioInstance` of `fps-interp` instead of one `Session`. The network
-//! connects a `connect` to the `accept` of the same port and records the bytes
-//! that each connection carried in each direction.
+//! The network connects a `connect` to the `accept` of the same port and
+//! records the bytes that each connection carried in each direction.
 #![allow(dead_code)] // Each test file uses a different subset of the helpers.
 
 use std::collections::{HashMap, VecDeque};
@@ -26,18 +24,17 @@ use fps_interp::{
 };
 use fps_io::memory::{duplex, MemoryDatagram, MemoryIo};
 use fps_io::SessionIo;
-use fps_module_content::Content;
-use fps_module_ftp::Ftp;
+use fps_module_ssh::Ssh;
 use rand::RngCore;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::oneshot;
 
-/// Routes the calls of the two modules that the scenarios use, as the agent
-/// does with the native functions of every installed module.
+/// Routes the calls of the module that the scenarios use, as the agent does
+/// with the native functions of every installed module. One value serves one
+/// session, because the SSH functions hold the keys of the session.
 #[derive(Default)]
 pub struct Dispatch {
-    ftp: Ftp,
-    content: Content,
+    ssh: Ssh,
 }
 
 impl TemplateFn for Dispatch {
@@ -48,8 +45,7 @@ impl TemplateFn for Dispatch {
         out: &mut Vec<u8>,
     ) -> Result<(), FnError> {
         match call.module {
-            "ftp" => self.ftp.render(call, rng, out),
-            "content" => self.content.render(call, rng, out),
+            "ssh" => self.ssh.render(call, rng, out),
             other => Err(FnError::new(
                 FnErrorKind::Unsupported,
                 format!("no module provides '{other}.{}'", call.function),
@@ -64,7 +60,7 @@ pub const SEED: u64 = 42;
 /// The session id of the first flow session of every transcript.
 pub const SESSION_ID: u64 = 1;
 
-/// The module directory, `modules/ftp`.
+/// The module directory, `modules/ssh`.
 pub fn module_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }
@@ -87,17 +83,7 @@ pub fn scenarios_with(overrides: &[(&str, Value)]) -> Vec<(String, Scenario)> {
     let m = manifest();
     let mut set = ModuleSet::default();
     set.insert(m.clone());
-    // The scenarios call the content module, which the manifest requires.
-    set.insert(
-        Manifest::load(
-            &module_dir()
-                .join("..")
-                .join("content")
-                .join("manifest.yaml"),
-        )
-        .unwrap(),
-    );
-    let ctx = set.context("ftp").unwrap();
+    let ctx = set.context("ssh").unwrap();
     m.scenarios
         .iter()
         .map(|rel| {
@@ -121,6 +107,9 @@ pub fn scenarios_with(overrides: &[(&str, Value)]) -> Vec<(String, Scenario)> {
 pub struct Tap<S> {
     inner: S,
     written: Arc<Mutex<Vec<u8>>>,
+    /// Offset of a written byte whose lowest bit this tap flips, if any.
+    flip_at: Option<usize>,
+    sent: usize,
 }
 
 impl<S> Tap<S> {
@@ -130,9 +119,17 @@ impl<S> Tap<S> {
             Tap {
                 inner,
                 written: Arc::clone(&written),
+                flip_at: None,
+                sent: 0,
             },
             written,
         )
+    }
+
+    /// Flips the lowest bit of the byte at `offset` of what this tap writes.
+    pub fn flipping(mut self, offset: Option<usize>) -> Self {
+        self.flip_at = offset;
+        self
     }
 }
 
@@ -153,9 +150,19 @@ impl<S: SessionIo> AsyncWrite for Tap<S> {
         data: &[u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
+        let mut copy;
+        let mut data = data;
+        if let Some(at) = this.flip_at {
+            if (this.sent..this.sent + data.len()).contains(&at) {
+                copy = data.to_vec();
+                copy[at - this.sent] ^= 1;
+                data = &copy;
+            }
+        }
         let r = Pin::new(&mut this.inner).poll_write(cx, data);
         if let Poll::Ready(Ok(n)) = r {
             this.written.lock().unwrap().extend_from_slice(&data[..n]);
+            this.sent += n;
         }
         r
     }
@@ -258,6 +265,7 @@ impl MemNet {
 pub struct StreamEnd {
     net: MemNet,
     flow: String,
+    flip_client_at: Option<usize>,
 }
 
 impl Opener for StreamEnd {
@@ -266,12 +274,14 @@ impl Opener for StreamEnd {
     fn open(&mut self, request: OpenRequest<'_>) -> impl Future<Output = io::Result<Self::Io>> {
         let net = self.net.clone();
         let flow = self.flow.clone();
+        let flip = self.flip_client_at;
         let (kind, port) = (request.kind, request.port);
         async move {
             match kind {
                 OpenKind::Connect => {
                     let (client, server) = duplex(64 << 10);
                     let (client, c2s) = Tap::new(client);
+                    let client = client.flipping(flip);
                     let (server, s2c) = Tap::new(server);
                     net.conns.lock().unwrap().push(Conn {
                         flow,
@@ -303,12 +313,13 @@ impl DatagramOpener for NoDatagrams {
     type Io = MemoryDatagram;
 
     async fn open(&mut self, _request: OpenRequest<'_>) -> io::Result<MemoryDatagram> {
-        Err(io::Error::other("the ftp module has no UDP flow"))
+        Err(io::Error::other("the ssh module has no UDP flow"))
     }
 }
 
 struct Env {
     net: MemNet,
+    flip_client_at: Option<usize>,
 }
 
 impl FlowEnv for Env {
@@ -319,6 +330,7 @@ impl FlowEnv for Env {
         StreamEnd {
             net: self.net.clone(),
             flow: flow.id.clone(),
+            flip_client_at: self.flip_client_at,
         }
     }
 
@@ -353,9 +365,23 @@ impl Run {
 /// Runs every flow of `s`, both sides, with the first flow session id
 /// `first_session_id`.
 pub async fn run(s: &Scenario, seed: u64, first_session_id: u64) -> Run {
+    run_flipping(s, seed, first_session_id, None).await
+}
+
+/// Like [`run`], and flips the lowest bit of the byte at `flip_client_at` in
+/// what the client writes, which models a fault on the wire.
+pub async fn run_flipping(
+    s: &Scenario,
+    seed: u64,
+    first_session_id: u64,
+    flip_client_at: Option<usize>,
+) -> Run {
     let filler = Filler::new(seed);
     let net = MemNet::default();
-    let mut env = Env { net: net.clone() };
+    let mut env = Env {
+        net: net.clone(),
+        flip_client_at,
+    };
     let mut instance = ScenarioInstance::new(
         s,
         InstanceConfig {

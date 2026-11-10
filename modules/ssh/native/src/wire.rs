@@ -105,6 +105,7 @@ impl<'a> Reader<'a> {
     }
 
     /// The bytes that no read has used yet.
+    #[cfg(test)]
     pub(crate) fn rest(&self) -> &'a [u8] {
         self.buf
     }
