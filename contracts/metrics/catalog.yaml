@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# Metric catalog, contract v0.3. Every metric that the agent records, the
+# Metric catalog, contract v0.4. Every metric that the agent records, the
 # controller derives, the API serves, or a test criterion names appears here
 # once. contracts/metrics/catalog.schema.json defines the format, and
 # tools/contracts/validate.py checks every metric reference against this file.
 catalog: fps-metrics
-version: 0.3.0
+version: 0.4.0
 
 # A reference to a histogram, in a test criterion or a report, appends one of
 # these statistic suffixes to the histogram name, for example
@@ -56,6 +56,14 @@ labels:
   classifier:
     description: Independent classifier of the realism pipeline.
     values: [ndpi, zeek]
+  source:
+    description: >-
+      Where the value of a mix metric was measured. metrics means the counters
+      of the run, as the controller reports them, and classifier means the
+      sessions of the capture as the classifier named by the classifier label
+      labels them. A series without this label is a run metrics series, as
+      every series was before this label existed.
+    values: [metrics, classifier]
   property:
     description: >-
       Distribution that the realism pipeline compares with the target model.
@@ -77,21 +85,23 @@ metrics:
     unit: percent
     level: application
     view: application
-    labels: [application]
-    description: Achieved share of the application in the mix, by sessions or by bytes according to profile.basis.
+    labels: [application, source, classifier]
+    description: >-
+      Achieved share of the application in the mix, by sessions or by bytes according to profile.basis.
+      The label source says which measurement it is, and classifier names the classifier of a classifier series.
   - name: mix.abs_error_pp
     type: gauge
     unit: percentage_points
     level: application
     view: application
-    labels: [application]
+    labels: [application, source, classifier]
     description: Absolute difference between the achieved share and the configured weight of the application.
   - name: mix.max_abs_error_pp
     type: gauge
     unit: percentage_points
     level: application
     view: application
-    labels: []
+    labels: [source, classifier]
     description: Largest mix.abs_error_pp over all applications of the run.
   - name: realism.conformance_ratio
     type: gauge

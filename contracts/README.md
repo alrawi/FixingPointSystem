@@ -9,7 +9,7 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 | `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.6) |
 | `schemas/test-config.schema.json` | Test configuration (v0.3) |
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
-| `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels (catalog 0.3.0) |
+| `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels (catalog 0.4.0) |
 | `metrics/catalog.schema.json` | Format of the metric catalog |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3 between the controller and agents (gRPC, proto3). Agents dial the controller. |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |

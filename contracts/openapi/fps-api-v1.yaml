@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FixingPointSystem Controller API
-  version: 0.7.0
+  version: 0.8.0
   summary: Contract v0.2 for the controller REST API.
   description: >
     The controller stores test configurations, installs modules, starts runs on
@@ -329,12 +329,63 @@ paths:
           in: query
           description: Side of the sessions that every requested view counts, client or server. Omitted, it is client, as before the parameter existed.
           schema: { type: string, enum: [client, server], default: client }
+      description: >
+        The response is a Server Sent Events stream (WHATWG HTML, event stream
+        format) with these parts, in this order.
+
+        1. The first field of the stream is `retry: <ms>`, the reconnect delay
+        that the controller asks for. It equals the event period, 1000 ms by
+        default.
+
+        2. Once per event period (a tick), for each requested view in the order
+        of the `view` parameters, the controller sends one event per current
+        sample of that view. The event has no `event` field, so its type is
+        `message`. Its `id` is the number of the tick, counted from 1 on each
+        connection, so every event of one tick carries the same id. Its `data`
+        is one line with a `MetricSample` as JSON.
+
+        3. When the run is in a final state (`completed`, `failed`, or
+        `aborted`), or the controller no longer knows the run, the controller
+        sends the samples of that last tick and then one event named `end`. It
+        has no `id`, and its `data` is a `MetricStreamEnd` as JSON. The
+        controller closes the stream after it, and a client must not
+        reconnect. A client that is disconnected earlier reconnects after the
+        `retry` delay, reads the run with `getRun`, and stops when its state is
+        final, because no `end` event follows in that case.
+
+        The controller does not replay missed ticks. It ignores the
+        `Last-Event-ID` header, and a new connection starts at tick 1 with the
+        newest samples, so a client that needs the ticks of the gap reads
+        `getRunMetrics`. A response carries `Cache-Control: no-store` and
+        `X-Accel-Buffering: no`. A controller that serves no stream answers
+        with problem details and the status 501 instead of the stream, and a
+        client falls back to polling `getRunMetrics`.
+      x-event-stream:
+        retry: first field of the stream, in milliseconds
+        events:
+          - { event: message, id: "tick number, from 1 per connection", data: { $ref: "#/components/schemas/MetricSample" } }
+          - { event: end, id: absent, data: { $ref: "#/components/schemas/MetricStreamEnd" } }
       responses:
         "200":
-          description: Event stream. Each event's data field is a MetricSample encoded as JSON.
+          description: >
+            Event stream. Each event without an `event` field carries a
+            MetricSample encoded as JSON in its data field, and the event
+            `end` carries a MetricStreamEnd and closes the stream.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              schema: { type: string }
           content:
             text/event-stream:
               schema: { type: string }
+        "501":
+          description: >
+            This controller does not serve the stream. The body is problem
+            details, and a client polls `getRunMetrics` instead. The status is
+            not retried.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /runs/{id}/report:
     parameters:
@@ -751,6 +802,19 @@ components:
         view: { $ref: "#/components/schemas/MetricView" }
         key: { type: string, description: "Application, scenario, or port name that the sample describes." }
         values: { type: object, additionalProperties: { type: number, format: double }, description: Values keyed by metric name from contracts/metrics/catalog.yaml. }
+    MetricStreamEnd:
+      description: >-
+        Data of the event `end` of streamRunMetrics, the last event of a
+        stream. It follows the samples of the final tick.
+      type: object
+      required: [state]
+      properties:
+        state:
+          description: >-
+            State of the run when the stream ended: a RunState value of a final
+            state, or `unknown` when the controller no longer knows the run.
+          type: string
+          examples: [completed]
     MetricSeriesSet:
       type: object
       required: [view, samples]
