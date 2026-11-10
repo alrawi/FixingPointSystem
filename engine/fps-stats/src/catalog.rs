@@ -526,6 +526,7 @@ pub const LABEL_VALUES: &[(&str, &[&str])] = &[
             "response_bytes",
             "inter_arrival",
             "session_duration",
+            "both",
         ],
     ),
 ];

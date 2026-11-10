@@ -6,10 +6,10 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API (OpenAPI 3.1) |
 | `schemas/module-manifest.schema.json` | Module manifest, including the template function catalog |
-| `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.5) |
-| `schemas/test-config.schema.json` | Test configuration |
+| `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.6) |
+| `schemas/test-config.schema.json` | Test configuration (v0.3) |
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
-| `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels |
+| `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels (catalog 0.3.0) |
 | `metrics/catalog.schema.json` | Format of the metric catalog |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3 between the controller and agents (gRPC, proto3). Agents dial the controller. |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |
@@ -73,6 +73,40 @@ A metric reference names a counter or a gauge directly. A reference to a histogr
 
 The OpenAPI document names the metric behind a response field with the `x-fps-metric` keyword. Every property of `RunSummary` carries one. Prometheus exposition maps a catalog name to `fps_` followed by the name with dots replaced by underscores, and adds `_total` to counters.
 
+The label `application` takes the value `all` for a series that totals every application of the run, and the label `property` takes the value `both` for the payload sizes of the two directions pooled (metric catalog 0.3.0). The realism metrics `realism.ks_statistic` and `realism.ks_p_value` use them for comparisons that no single module owns. No module may be named `all`, and the validator rejects the name. An `all` series sits next to the per application series, so a criterion on such a gauge selects it with `where: {application: all}`, and a reader that sums an `application` label must leave the `all` series out.
+
+## Arrival and size distributions
+
+The test configuration may declare the distribution that the traffic of a run is meant to follow (test configuration v0.3). Both fields are optional, and a configuration without them keeps its meaning.
+
+| Field | Where | Describes |
+|---|---|---|
+| `arrival` | `profile` or one `profile.mix` entry | The gaps between the starts of consecutive sessions, for the whole run or for one mix entry |
+| `size` | `profile` or one `profile.mix` entry | The payload sizes in bytes, by direction, with the keys `request` (client to server), `response` (server to client), and `both` (the two pooled) |
+
+An entry overrides the profile. A mix entry that has its own `arrival` replaces `profile.arrival` for its sessions, and a mix entry that names a direction of `size` replaces that direction of `profile.size`. Each distribution is an object with `dist` and the parameters of the table. An arrival uses the parameter names of a scenario `delay`, in milliseconds unless `unit` says otherwise, and a size uses bytes.
+
+| `dist` | Arrival parameters | Size parameters |
+|---|---|---|
+| `constant` | `ms`, optional `tolerance_ms` | `value`, optional `tolerance` |
+| `exponential` | `mean_ms` | `mean` |
+| `uniform` | `min_ms`, `max_ms` | `min`, `max` |
+| `lognormal` | `mu`, `sigma`, optional `unit` (`s` or `ms`, default `s`) | `mu`, `sigma` |
+| `pareto` | `alpha`, `scale_ms` | `alpha`, `scale` |
+
+`mu` is the natural logarithm of the value in the `unit` (arrivals) or in bytes (sizes), and a Pareto distribution has `scale` as its smallest value, as the scenario `delay` and the realism check define them. The validator rejects a uniform distribution whose minimum is above its maximum.
+
+The fields are declarations. They add no command for an agent in this version, so the arrivals of a run still come from the load objective and its phases, and the sizes still come from the scenarios and their `params`. The realism runner takes its targets from them, with these mappings.
+
+| Declaration | Realism comparison |
+|---|---|
+| `profile.arrival` | `inter_arrival` with `application` set to `all` |
+| `profile.mix[].arrival` | `inter_arrival` with `application` set to the module of the entry's scenario |
+| `size.request`, `size.response` | `request_bytes` and `response_bytes`, with `application` set to `all` at the profile level and to the module of the entry in a mix entry |
+| `size.both` | `both`, with `application` as above |
+
+A declaration should agree with the rest of the configuration. An exponential `arrival` in a steady phase has `mean_ms` of 1000 divided by the `sessions_per_second` objective, and a configuration whose declaration disagrees with its objective fails the realism check and not the validator, which does not compare the two.
+
 ## Template grammar
 
 A template is a string with zero or more `{{ expression }}` placeholders. The engine copies text outside placeholders byte for byte. Scenario contract v0.2 extends the v0.1 grammar with module function calls, keyword arguments, nested calls, float and boolean literals, and the reference `last`. Every v0.1 template keeps its meaning.
@@ -112,6 +146,8 @@ The grammar has five further rules.
 | `fill(n)` | text | n printable bytes from a seeded generator |
 | `hex(s)` | bytes | Bytes decoded from the hexadecimal string s |
 | `rand_int(a, b)` | int | Uniform integer in [a, b] from the seeded generator |
+| `int_bytes(value, width, endianness)` | bytes | The unsigned integer `value` as exactly `width` bytes, 1 to 8, in `'big'` (the default) or `'little'` byte order (scenario contract v0.6) |
+| `now(format)` | text or int | The wall clock at the moment of the call, as `'http_date'` (text), `'epoch_s'` (int), or `'epoch_ms'` (int) (scenario contract v0.6) |
 | `<module>.<name>(...)` | bytes | The bytes that the module's `render` hook returns |
 
 ### Module calls
@@ -125,6 +161,47 @@ Core functions accept keyword arguments with the parameter names in the table ab
 `last` holds every byte that the most recent `expect` of the same side consumed. A `pattern` expect includes the match, a `bytes` expect holds exactly N bytes, a `min_bytes` expect holds everything it consumed, and on UDP `last` holds the whole datagram. Each `expect` replaces `last`. A side never sees the `last` of the other side, and `last` does not carry into a spawned flow or a flow that runs `after` this one. A `set` action copies a value out of `last` into a variable that later flows read.
 
 A template may refer to `last` only when an `expect` always runs earlier on the same side. The validator checks this rule in document order. An `expect` inside a `loop` counts after the loop only when `count` is a positive integer literal, and an `expect` inside a `branch` counts after the branch only when every arm contains one.
+
+### The functions `int_bytes` and `now`
+
+Scenario contract v0.6 adds two core functions. Both have no module prefix, accept keyword arguments with the parameter names of the table above, and draw nothing from the seeded generator, so a template that uses them leaves every other drawn value of the session unchanged.
+
+`int_bytes(value, width, endianness='big')` writes an integer into a binary field, such as a length prefix or a transaction identifier.
+
+- `width` is the number of bytes, from 1 to 8. `endianness` is `'big'` (network order) or `'little'`, and a template that leaves it out gets `'big'`.
+- `value` is an unsigned integer that fits the width. `int_bytes(258, 2)` renders the bytes `01 02`, and `int_bytes(258, 2, 'little')` renders `02 01`. The largest `value` of an `int` is 2^63 - 1, so a width of 8 takes the values from 0 to 2^63 - 1.
+- A negative value, a value that does not fit, a width outside 1 to 8, and another endianness are errors. The validator reports a literal argument at load time. A value that comes from a variable or another call fails the session at render time with the reason `template_error`, and the engine never truncates or wraps a value.
+- The result is `bytes`, and its length is exactly `width`. A modeled byte count therefore does not depend on `value`.
+
+`now(format)` reads the clock for headers and timestamps. The three formats render as follows.
+
+| `format` | Result | Rendering |
+|---|---|---|
+| `'http_date'` | text | The IMF fixdate of RFC 9110 section 5.6.7 in UTC, always 29 bytes, for example `Tue, 10 Nov 2026 06:15:04 GMT`. Day and month names are the English abbreviations, and the day and the time have two digits. |
+| `'epoch_s'` | int | Whole seconds since 1970-01-01T00:00:00Z, truncated toward zero. |
+| `'epoch_ms'` | int | Whole milliseconds since 1970-01-01T00:00:00Z, truncated toward zero. |
+
+An unknown format is an error, reported by the validator for a literal and by `template_error` at render time otherwise. The validator types the result by a literal format and gives `any` to a format that comes from a variable.
+
+`now` is the one core function that is not a function of the run seed and the session, so the rule for replays and goldens is part of the contract.
+
+1. Each evaluation reads the clock, so two calls in one template may straddle a second boundary. A scenario that needs one instant in several places binds it once with `set`. A variable is not re-evaluated.
+2. The engine reads the clock through the same seam as its random source. A production run reads the wall clock of the agent that renders the template, in UTC. The agents of a run have no common clock, so a client and a server that both call `now` can differ by the skew of their hosts.
+3. A test harness, a golden test, or a replay that needs equal bytes pins the clock. A pinned clock returns one fixed instant, and it may advance by a fixed step per call. The instant is a parameter of the harness, and a golden file must record it. A golden that does not pin the clock may not contain output of `now`.
+4. The length of the output does not depend on the instant, within the years 2001 to 2286. `http_date` is 29 bytes, `epoch_s` is 10 digits, and `epoch_ms` is 13 digits. A replay therefore reproduces the byte counts of a scenario without pinning the clock, and only the content of the date and epoch fields differs.
+5. The compiler never folds a call of `now`, as it never folds `fill` and `rand_int`, because its value differs between sessions.
+
+### Variables across `after`
+
+A variable that a `set` action binds lives in the scenario instance, which is the set of flows that one start of the scenario runs. The rule has five parts.
+
+1. A flow that runs `after` another flow sees every variable that the earlier flow bound, directly or through a chain of `after` entries. The flow reads the value as it stood when the flow started, so `after` carries variables as well as order.
+2. A variable that a flow binds is visible to its own later actions, to every flow ordered after it by `after`, and to the flows that it starts with `spawn`, which see the bindings of the parent side up to the `spawn` action.
+3. Two flows that `after` does not order have no defined order of completion. A flow must not read a variable that only such a flow binds, and when two flows bind the same name, the flow that completes last wins for the flows that read it later.
+4. The two roles of a flow run on different agents and share no variables during the run. A variable that the client side binds is visible to the client sides of later flows, and a variable of the server side to the server sides. A value that both roles need is bound by each role from its own `last`, as the generators of CAP-02 do for tokens that a request carries and the response echoes. An engine that runs both roles in one process may show a role the bindings of the other, and a scenario must not depend on that.
+5. Each scenario instance starts with the values of `vars`, after the overrides of the test parameters, and the bindings of one instance never reach another. A `set` replaces the value of the name in its instance only.
+
+A `set` parses the rendered value with the rules of a command line override, so the validator types a variable that only a `set` binds as `any`. The validator checks that a variable is bound somewhere in the scenario, and it does not check the order of the flows.
 
 ### Types
 
@@ -157,7 +234,7 @@ cargo install wasm-tools --locked
 wasm-tools component wit contracts/extension/fps-extension.wit
 ```
 
-The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax and argument types, module calls against the manifest function catalog, the precedence rule of `last`, the UDP datagram rules, `tls_upgrade` and `transport` only in TCP flows, scenario references in mixes, host pool sizes, and port references. The metric rules check that catalog names and labels are unique and declared, that formulas refer to catalog counters and gauges, and that every metric in test criteria and in `x-fps-metric` annotations exists in the catalog.
+The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax and argument types, module calls against the manifest function catalog, the precedence rule of `last`, the UDP datagram rules, `tls_upgrade` and `transport` only in TCP flows, the literal arguments of `int_bytes` and `now`, the bounds of uniform arrival and size distributions, the reserved module name `all`, scenario references in mixes, host pool sizes, and port references. The metric rules check that catalog names and labels are unique and declared, that formulas refer to catalog counters and gauges, and that every metric in test criteria and in `x-fps-metric` annotations exists in the catalog.
 
 The plan checker validates the agent plans in `examples/plans/`. It needs the protobuf packages in `tools/contracts/requirements-proto.txt`, and CI runs it in the `proto` job together with `buf lint` and `buf breaking`.
 
