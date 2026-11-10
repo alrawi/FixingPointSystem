@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #188 |
 | Branch | `wp/RLM-06` |
-| Pull request | #188 |
+| Pull request | #353 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 90% (5 of 5 plan steps, CI pending) |
 | Current holder | claude-9c41e7, lease until 2026-11-10T02:39:45Z |
-| Last verified commit | none |
+| Last verified commit | d7b75fc |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -24,23 +24,24 @@ Compare session inter-arrival times and object sizes with target distributions g
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Pure Python KS (one and two sample, exact and asymptotic p value) with tests against known values
-- [ ] 2. Labels section `temporal` and its schema, target distributions
-- [ ] 3. The check, report schema entry, CLI flags, metrics
-- [ ] 4. Tests with direct samples and pcapgen captures
-- [ ] 5. Docs: Realism.md, README, log entry, CI checks
+- [x] 1. Pure Python KS (one and two sample, exact and asymptotic p value) with tests against known values
+- [x] 2. Labels section `temporal` and its schema, target distributions
+- [x] 3. The check, report schema entry, CLI flags, metrics
+- [x] 4. Tests with direct samples and pcapgen captures
+- [x] 5. Docs: Realism.md, README, log entry, CI checks
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Steps 1 to 5: `python3 -m pytest -q realism` (389 passed, 3 skipped for tools that are not installed), `make lint-rlm`, `python3 tools/plan/plan.py check`, `render --check`, and `lint` all pass locally.
+- The KS tests match the critical value tables and `scipy.stats` (installed only in the scratchpad to read reference values, not a dependency).
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+CI on the pull request. Known gaps: the check does not compare think times inside a session, and comparisons over all sessions or over both directions have no catalog metric label.
 
 ## Next action
 
-Step 1: write realism/ks.py.
+Wait for CI on pull request #353 and fix failures inside `realism/` and the wiki page.
 
 ## Blockers and open questions
 
@@ -48,16 +49,23 @@ none
 
 ## Decisions taken in this package
 
+- Pure Python KS (`realism/ks.py`), because the runner has no numeric dependency. Exact p values for one sample up to 100 observations (Marsaglia, Tsang, Wang) and for two samples up to 10000 pairs (lattice paths), Stephens corrected asymptotic otherwise.
+- Targets live in the labels (`temporal` section), in the vocabulary of a scenario `delay` for arrivals and in bytes for sizes, because the test configuration has no arrival process or size distribution.
+- Insufficient data (default fewer than 30 observations) fails the check, and so does a section without targets, so the check never passes on nothing.
+- Default alpha 0.01 as the brief says, although the specification gate says 0.05, so the gate sets alpha explicitly.
+- Metrics only for per application comparisons whose property the catalog names (inter_arrival, request_bytes, response_bytes).
+
 Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+The worktree guard refuses a command that mixes a heredoc and git, so write helper scripts with the editor and run them alone. pcapgen sessions start at `clock + 0.001`, so tests set `cap.clock` to place a session start.
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+python3 -m pytest -q realism   # 389 passed, 3 skipped
+make lint-rlm                  # clean
 ```
 
 ## Session log
@@ -67,3 +75,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T02:10Z | claude-9c41e7 | claim | | claimed #188 |
+| 2026-11-10T02:30Z | claude-9c41e7 | checkpoint | d7b75fc | code, tests, docs pushed, pull request #353 opened |
