@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #173 |
 | Branch | `wp/MOD-06` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (5 of 6 plan steps) |
+| Pull request | #371 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-6d06a1, lease until 2026-11-10T06:15:03Z |
-| Last verified commit | none |
+| Last verified commit | 637ae80 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -23,7 +23,7 @@ Ship the http2 module scenarios for prior knowledge cleartext HTTP/2 and for TLS
 - [x] 3. Push the first checkpoint
 - [x] 4. `fixture_peer`, `capture.sh`, `expected.yaml`, `decrypted_check.py`, record the capture
 - [x] 5. `mk/mod-http2.mk`, `.github/workflows/mod-http2.yml`, README, `docs/wiki/Modules.md`
-- [ ] 6. Log entry, checks, pull request, CI
+- [x] 6. Log entry, checks, pull request, CI
 
 ## Done and verified
 
@@ -31,11 +31,11 @@ Ship the http2 module scenarios for prior knowledge cleartext HTTP/2 and for TLS
 
 ## Remaining
 
-Step 6: pull request and CI. Open: nDPI 4.2.0 has no HTTP/2 protocol, the workflow builds nDPI tag 4.14 (unverified).
+Nothing in this package. Owner action: the shared `realism.yml` job `module (http2)` fails the cleartext conformance check (0 of 40, Unknown) because `realism/ci/install-tools.sh` installs nDPI 4.2.0, which has no HTTP/2 protocol. The `mod-http2` workflow passes with nDPI 4.14.
 
 ## Next action
 
-Open the pull request, wait for CI, fix failures inside the package paths.
+Review of PR #371. The owner decides how `realism/ci/install-tools.sh` gets an nDPI with HTTP/2.
 
 ## Blockers and open questions
 
