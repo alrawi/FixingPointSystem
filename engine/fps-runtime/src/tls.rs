@@ -15,8 +15,8 @@
 //! profile. The resumption setting of the profile stays as it is, because
 //! switching it to `Disabled` would drop the `session_ticket` extension of a
 //! TLS 1.2 ClientHello and change the JA4 the other way. A build allocates one
-//! rustls `ClientConfig` and a small session store, which is microseconds next
-//! to a handshake with its key exchange and signatures.
+//! rustls `ClientConfig` and a small session store, which is cheap next to a
+//! handshake with its key exchange and signatures.
 
 use std::collections::HashMap;
 use std::fmt;

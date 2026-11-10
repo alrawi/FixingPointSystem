@@ -141,6 +141,9 @@ pub struct ServerConfig {
 }
 
 /// What a worker does.
+// A worker config is built once per worker thread, and boxing the server
+// variant would break the callers that build it, so the size gap stays.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Role {
     /// The worker opens sessions on a schedule.

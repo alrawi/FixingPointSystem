@@ -6,7 +6,7 @@
 | Branch | `wp/ENG-24` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 40% (2 of 5 plan steps) |
+| Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-e24a7c, lease until 2026-11-10T06:24:49Z |
 | Last verified commit | none |
 
@@ -20,21 +20,22 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 - [x] 1. `TlsProfiles::with_client_factory`, `SessionTls` upgrader with a handshake event sink, `FlowEnv::tls_upgrader`.
 - [x] 2. `tls.*` metrics in the worker shard (`TlsMetrics`), `FlowRef::port` for the `port` label.
-- [ ] 3. Test `tests/tls_sessions.rs`: three sessions, same JA4 (computed with `realism/ja4.py`), a shared connector control, a spawned flow with `tls_upgrade`, the metrics in a snapshot.
-- [ ] 4. Update `docs/wiki/Engine.md`, the log entry, and run lint and tests.
+- [x] 3. Test `tests/tls_sessions.rs`: three sessions, same JA4 (computed with `realism/ja4.py`), a shared connector control, a spawned flow with `tls_upgrade`, the metrics in a snapshot.
+- [x] 4. Update `docs/wiki/Engine.md`, the log entry, and run lint and tests.
 - [ ] 5. Pull request and CI.
 
 ## Done and verified
 
-- `cargo build -p fps-runtime` builds (step 1 and 2).
+- `cargo test -p fps-runtime -p fps-interp` passes, including `tests/tls_sessions.rs` (5 tests).
+- `cargo clippy -p fps-runtime -p fps-interp --all-targets -- -D warnings` and `cargo fmt --check` are clean; `plan.py check`, `render --check` pass.
 
 ## Remaining
 
-Steps 3 to 5.
+Step 5: pull request and CI.
 
 ## Next action
 
-Write `engine/fps-runtime/tests/tls_sessions.rs`.
+Open the pull request and wait for CI.
 
 ## Blockers and open questions
 
@@ -62,3 +63,4 @@ CARGO_TARGET_DIR=$PWD/target-ENG-24 CARGO_BUILD_JOBS=1 cargo test -p fps-runtime
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10 | claude-e24a7c | claim | none | claimed #360 |
+| 2026-11-10 | claude-e24a7c | checkpoint | HEAD | tests, docs, log entry written |
