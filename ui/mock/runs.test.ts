@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { EventStreamParser, type ServerEvent } from "../src/api/eventStream";
 import { CONTRACTS_DIR } from "./fixtures";
-import { MOCK_RUN_EPOCH_MS } from "./runs";
+import { MOCK_RUN_EPOCH_MS, scenarioTotalsAt } from "./runs";
 import { MOCK_TOKEN, startMockServer, type RunningMockServer } from "./server";
 
 const API_ID = "https://github.com/alrawi/FixingPointSystem/contracts/openapi/fps-api-v1.yaml";
@@ -348,6 +348,65 @@ describe("mock reports", () => {
       ],
     });
     expect(body.realism.map((result) => result.passed)).toEqual([true, true, true]);
+  });
+
+  it("serves the counts of each scenario, which add up to the run summary", async () => {
+    await start("cfg_http_smoke");
+    const id = await start("cfg_filtered_criteria");
+    clock.tick(12);
+    const response = await fetch(`${mock.baseUrl}/runs/${id}/report`, { headers });
+    const body = (await response.json()) as {
+      run: { summary: Record<string, number> };
+      scenarios: Record<string, string | number>[];
+    };
+    expectValid(responseSchema("/runs/{id}/report", "get", "200"), body);
+    expect(body.scenarios).toEqual([
+      {
+        application: "dns",
+        scenario: "lookup",
+        sessions_attempted: 80,
+        sessions_succeeded: 74,
+        sessions_failed: 1,
+        bytes_tx: 163840,
+        bytes_rx: 655360,
+      },
+      {
+        application: "http1",
+        scenario: "web_get",
+        sessions_attempted: 720,
+        sessions_succeeded: 661,
+        sessions_failed: 14,
+        bytes_tx: 1474560,
+        bytes_rx: 5898240,
+      },
+    ]);
+    expect(body.run.summary["sessions_attempted"]).toBe(800);
+    expect(body.run.summary["bytes_rx"]).toBe(6553600);
+  });
+
+  it("sends an empty scenario list before the first tick", async () => {
+    const id = await start("cfg_http_smoke");
+    const body = await report(id);
+    expect((body as { scenarios?: unknown }).scenarios).toEqual([]);
+  });
+
+  it("divides the counts of an application among its scenarios by weight", () => {
+    const app = {
+      key: "http1",
+      scenario: "http1/web_get",
+      scenarios: [
+        { name: "web_post", weight: 1 },
+        { name: "web_get", weight: 2 },
+      ],
+      rate: 90,
+      failedEvery: 0,
+    };
+    // At tick 10 the application attempted 720 sessions and holds 45 concurrent ones.
+    expect(scenarioTotalsAt([app], 10).map((s) => [s.scenario, s.sessions_attempted])).toEqual([
+      ["web_get", 480],
+      ["web_post", 240],
+    ]);
+    expect(scenarioTotalsAt([app], 0)).toEqual([]);
   });
 
   it("serves a failing report with the reason of the controller", async () => {

@@ -18,3 +18,20 @@ sessions:
     match: {transport: tcp, server_port: 8446}
 applications:
   https_decrypted: {ndpi: [HTTP]}
+# The message count check reads the view with tshark. https_fetch (8443) and
+# https_fetch_tls12 (8445) send one request, https_keepalive_browse (8444) and its TLS 1.2
+# twin (8446) send four on one connection, and every request has its response. That is 200
+# requests and 200 responses in the 80 sessions, the counts of the old decrypted_check.py.
+messages:
+  - protocol: http1
+    match: {server_port: 8443}
+    expect: {requests: 1, responses: 1}
+  - protocol: http1
+    match: {server_port: 8444}
+    expect: {requests: 4, responses: 4}
+  - protocol: http1
+    match: {server_port: 8445}
+    expect: {requests: 1, responses: 1}
+  - protocol: http1
+    match: {server_port: 8446}
+    expect: {requests: 4, responses: 4}

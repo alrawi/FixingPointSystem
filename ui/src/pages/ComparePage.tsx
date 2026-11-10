@@ -4,13 +4,20 @@ import type { ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import "../runs/runs.css";
 import "../reports/reports.css";
-import { ApiError, type CriterionResult, type Run, type RunReport } from "../api/client";
+import {
+  ApiError,
+  type CriterionResult,
+  type Run,
+  type RunReport,
+  type ScenarioTotals,
+} from "../api/client";
 import {
   CHANGE_WORD,
   compareReports,
   criterionOutcome,
   criterionWord,
   durationMs,
+  failedRatio,
   totalChange,
   totalsOf,
   verdictOutcome,
@@ -19,7 +26,13 @@ import {
   type Comparison,
 } from "../reports/compare";
 import { OutcomeText } from "../reports/OutcomeText";
-import { formatDuration, formatMetric } from "../runs/format";
+import {
+  formatBytes,
+  formatCount,
+  formatDuration,
+  formatMetric,
+  formatPercent,
+} from "../runs/format";
 import { useSignOutWhenUnauthorized } from "./modulesQuery";
 import { useRunReport } from "./reportQuery";
 import { useRuns } from "./runsQuery";
@@ -179,6 +192,7 @@ function ComparisonTables({ a, b }: { a: RunReport; b: RunReport }) {
       </section>
       <FactsTable a={a.run} b={b.run} />
       <TotalsTable a={a.run} b={b.run} />
+      <ScenariosTable comparison={comparison} />
       <CriteriaTable comparison={comparison} />
       <RealismTable comparison={comparison} />
     </>
@@ -283,6 +297,81 @@ function TotalsTable({ a, b }: { a: Run; b: Run }) {
   );
 }
 
+function pair(a: string | undefined, b: string | undefined): string {
+  return `${a ?? "-"} / ${b ?? "-"}`;
+}
+
+function ScenariosTable({ comparison }: { comparison: Comparison }) {
+  const side = (
+    scenario: ScenarioTotals | undefined,
+    pick: (scenario: ScenarioTotals) => string,
+  ) => (scenario === undefined ? undefined : pick(scenario));
+  return (
+    <section aria-labelledby="scenarios-heading">
+      <h2 id="scenarios-heading">Scenarios</h2>
+      {comparison.scenarios === undefined ? (
+        <p>
+          A report of a controller older than 0.9.0 has no scenario counts, so none are compared.
+        </p>
+      ) : comparison.scenarios.length === 0 ? (
+        <p>Neither run has scenario counts.</p>
+      ) : (
+        <table aria-label="Scenarios compared" className="compare-table">
+          <thead>
+            <tr>
+              <th scope="col">Scenario</th>
+              <th scope="col">Sessions attempted (A / B)</th>
+              <th scope="col">Sessions failed (A / B)</th>
+              <th scope="col">Failed ratio (A / B)</th>
+              <th scope="col">Bytes sent (A / B)</th>
+              <th scope="col">Bytes received (A / B)</th>
+              <th scope="col">Change of failed ratio</th>
+            </tr>
+          </thead>
+          <tbody>
+            {comparison.scenarios.map((row) => (
+              <tr key={row.key}>
+                <th scope="row">{row.key}</th>
+                <td className="num">
+                  {pair(
+                    side(row.a, (s) => formatCount(s.sessions_attempted)),
+                    side(row.b, (s) => formatCount(s.sessions_attempted)),
+                  )}
+                </td>
+                <td className="num">
+                  {pair(
+                    side(row.a, (s) => formatCount(s.sessions_failed)),
+                    side(row.b, (s) => formatCount(s.sessions_failed)),
+                  )}
+                </td>
+                <td className="num">
+                  {pair(
+                    side(row.a, (s) => formatPercent(failedRatio(s))),
+                    side(row.b, (s) => formatPercent(failedRatio(s))),
+                  )}
+                </td>
+                <td className="num">
+                  {pair(
+                    side(row.a, (s) => formatBytes(s.bytes_tx)),
+                    side(row.b, (s) => formatBytes(s.bytes_tx)),
+                  )}
+                </td>
+                <td className="num">
+                  {pair(
+                    side(row.a, (s) => formatBytes(s.bytes_rx)),
+                    side(row.b, (s) => formatBytes(s.bytes_rx)),
+                  )}
+                </td>
+                <td className="num">{row.change}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 function ChangeText({ change }: { change: Change }) {
   return <span className={`outcome-word change-${change}`}>{CHANGE_WORD[change]}</span>;
 }
@@ -359,6 +448,7 @@ function RealismTable({ comparison }: { comparison: Comparison }) {
           <thead>
             <tr>
               <th scope="col">Property</th>
+              <th scope="col">Labels</th>
               <th scope="col">Target</th>
               <th scope="col">Run A</th>
               <th scope="col">Run B</th>
@@ -367,8 +457,9 @@ function RealismTable({ comparison }: { comparison: Comparison }) {
           </thead>
           <tbody>
             {comparison.realism.map((row) => (
-              <tr key={row.property}>
+              <tr key={row.key}>
                 <th scope="row">{row.property}</th>
+                <td>{row.labels === "" ? "-" : row.labels}</td>
                 <td>{row.target}</td>
                 <td>{cell(row.a)}</td>
                 <td>{cell(row.b)}</td>

@@ -282,6 +282,53 @@
         }
       }
     },
+    "messages": {
+      "description": "Expected message counts per session, read with tshark. Each rule selects sessions with the match fields of a session rule (all TCP sessions without match) and names the protocol that tshark reads them as. The message count check runs when this section is present, and fails for a session whose count is outside its expectation, for a rule that matches no session, and when tshark is missing.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["protocol", "expect"],
+        "additionalProperties": false,
+        "properties": {
+          "protocol": {"enum": ["http1", "http2", "smtp", "imap"]},
+          "match": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "transport": {"enum": ["tcp", "udp"]},
+              "client_ip": {"type": "string"},
+              "client_port": {"type": "integer", "minimum": 0, "maximum": 65535},
+              "server_ip": {"type": "string"},
+              "server_port": {"type": "integer", "minimum": 0, "maximum": 65535}
+            }
+          },
+          "expect": {
+            "description": "Counts per session. requests and responses are for http1 and http2, messages (RFC 5322 messages that tshark parses from the DATA phase or a BODY[] literal), commands, and replies (SMTP reply codes, IMAP completion statuses) are for smtp and imap. A count is a number or a range with min and max.",
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "requests": {"$ref": "#/$defs/count"},
+              "responses": {"$ref": "#/$defs/count"},
+              "messages": {"$ref": "#/$defs/count"},
+              "commands": {"$ref": "#/$defs/counts_by_name"},
+              "replies": {"$ref": "#/$defs/counts_by_name"}
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"protocol": {"enum": ["http1", "http2"]}}},
+            "then": {"properties": {"expect": {"properties": {"messages": false, "commands": false, "replies": false}}}}
+          },
+          {
+            "if": {"properties": {"protocol": {"enum": ["smtp", "imap"]}}},
+            "then": {"properties": {"expect": {"properties": {"requests": false, "responses": false}}}}
+          }
+        ]
+      }
+    },
     "sessions": {
       "type": "array",
       "items": {
@@ -311,6 +358,28 @@
     }
   },
   "$defs": {
+    "count": {
+      "description": "An exact number of messages, or a range. A range without max has no upper limit, and one without min starts at 0.",
+      "oneOf": [
+        {"type": "integer", "minimum": 0},
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "min": {"type": "integer", "minimum": 0},
+            "max": {"type": "integer", "minimum": 0}
+          }
+        }
+      ]
+    },
+    "counts_by_name": {
+      "description": "Counts by command name or reply code, for example {EHLO: 2} or {250: 6}.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+      "additionalProperties": {"$ref": "#/$defs/count"}
+    },
     "empirical": {
       "description": "An empirical target: a list of values, a file of numbers separated by white space or commas, or a reference capture whose own sessions give the sample. The check runs the two sample test.",
       "type": "object",

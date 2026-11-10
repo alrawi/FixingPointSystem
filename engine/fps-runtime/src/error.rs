@@ -34,6 +34,17 @@ pub enum RuntimeError {
         #[source]
         source: BackendError,
     },
+    /// A server worker could not bind a UDP port for its entry flow.
+    #[error("worker {worker}: listen on UDP {address}")]
+    ListenDatagram {
+        /// The worker id.
+        worker: u32,
+        /// The address that the worker tried to bind.
+        address: std::net::SocketAddr,
+        /// The operating system error.
+        #[source]
+        source: io::Error,
+    },
     /// A worker could not register its statistics series.
     #[error("worker {worker}: statistics")]
     Stats {

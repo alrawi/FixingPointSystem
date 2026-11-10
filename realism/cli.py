@@ -27,6 +27,7 @@ from realism.capture import CaptureError
 from realism.classifier import DEFAULT_TIMEOUT_S, ClassifierError, NdpiClassifier
 from realism.encryption import TsharkTlsProbe
 from realism.labels import LabelsError
+from realism.messages import TsharkMessageProbe
 from realism.mix import BASES, MixError
 from realism.modules import ModuleError, discover, matrix, select
 from realism.parsers import PARSER_NAMES, ParserError, not_found_reason, resolve
@@ -420,6 +421,7 @@ def main(argv: list[str] | None = None) -> int:
             transport_strict=args.transport_strict,
             client_hops=args.client_hops,
             server_hops=args.server_hops,
+            message_probe=TsharkMessageProbe(args.tshark, args.timeout),
         )
     except (
         CaptureError,

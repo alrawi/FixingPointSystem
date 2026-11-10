@@ -15,3 +15,14 @@ sessions:
     match: {transport: tcp, server_port: 587}
 applications:
   starttls_decrypted: {ndpi: [SMTP]}
+# The message count check reads the view with tshark. Each session joins the dialogue before
+# STARTTLS (greeting and the first EHLO, without STARTTLS and its reply) to the dialogue
+# inside TLS: two EHLO, the authentication, one envelope with two recipients, one message,
+# and the closing reply 221. Six replies are 250 (two EHLO, MAIL, two RCPT, the message).
+messages:
+  - protocol: smtp
+    match: {server_port: 587}
+    expect:
+      commands: {EHLO: 2, AUTH: 1, MAIL: 1, RCPT: 2, DATA: 1, QUIT: 1}
+      replies: {220: 1, 235: 1, 250: 6, 354: 1, 221: 1}
+      messages: 1

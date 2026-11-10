@@ -16,3 +16,13 @@ sessions:
     match: {transport: tcp, server_port: 8444}
 applications:
   https2_decrypted: {ndpi: [HTTP2]}
+# The message count check reads the HEADERS frames of the view with tshark. https_browse
+# (8443) sends seven requests and https_upload (8444) two, each answered once: 180 requests
+# and 180 responses in the 40 sessions, the counts of the old decrypted_check.py.
+messages:
+  - protocol: http2
+    match: {server_port: 8443}
+    expect: {requests: 7, responses: 7}
+  - protocol: http2
+    match: {server_port: 8444}
+    expect: {requests: 2, responses: 2}
