@@ -1,0 +1,44 @@
+# TEMPORARY (MOD-21): 20 runners, each records and scores the http1 capture in
+# the namespace harness with tshark and Zeek. Removed before review.
+name: tmp-mod-21
+
+on:
+  push:
+    branches: [wp/MOD-21]
+    paths:
+      - .github/workflows/tmp-mod-21.yml
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+
+jobs:
+  http1:
+    name: http1 run ${{ matrix.n }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: realism-http1
+      - run: realism/ci/install-tools.sh
+      - run: cargo build -p fps-module-http1 --example fixture_peer
+      - name: Record and score three captures in a row
+        run: |
+          for i in 1 2 3; do
+            sudo env FPS_FIXTURE_PEER="$PWD/target/debug/examples/fixture_peer" \
+              GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" \
+              realism/ci/module-realism.sh http1 "$RUNNER_TEMP/realism/http1-$i"
+          done
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: tmp-mod-21-${{ matrix.n }}
+          path: ${{ runner.temp }}/realism
