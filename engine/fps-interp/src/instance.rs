@@ -476,7 +476,10 @@ impl<'s> ScenarioInstance<'s> {
     }
 
     fn reset(&mut self) {
-        let fresh = ScenarioInstance::new(self.scenario, self.config);
+        // The clock is a setting of the instance and survives a rerun.
+        let clock = self.clock.take();
+        let mut fresh = ScenarioInstance::new(self.scenario, self.config);
+        fresh.clock = clock;
         *self = fresh;
     }
 
