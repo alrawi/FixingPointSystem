@@ -282,6 +282,11 @@ pub(crate) fn check_document(
             }
         }
         let udp = flow.get("l4").and_then(Yaml::as_str) == Some("udp");
+        if udp && flow.get("transport").is_some() {
+            return Err(LoadError::TlsUpgradeOnUdp {
+                at: flow_at(i, id, "transport"),
+            });
+        }
         for side in [Side::Client, Side::Server] {
             let at = SideAt { index: i, id, side };
             let actions = seq(flow.get(side.key()));

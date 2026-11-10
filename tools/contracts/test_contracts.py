@@ -390,8 +390,55 @@ def test_schema_rejects_a_malformed_tls_upgrade(body, web_get):
     assert not v.schema_errors(v.load_schema("scenario.schema.json"), web_get, report, Path("s.yaml"))
 
 
-def test_scenario_schema_is_v0_4():
-    assert "v0.4" in v.load_schema("scenario.schema.json")["description"]
+# --- transport, the sugar for a leading tls_upgrade (scenario contract v0.5) --
+
+TRANSPORT = {"module": "tls", "profile": "strict", "server_name": "www.example.test"}
+
+
+def test_transport_validates_in_a_tcp_flow(web_get, http_manifest):
+    web_get["flows"][0]["transport"] = copy.deepcopy(TRANSPORT)
+    report = v.Report()
+    assert v.schema_errors(v.load_schema("scenario.schema.json"), web_get, report, Path("s.yaml"))
+    assert not check_scenario(web_get, http_manifest).errors
+
+
+def test_transport_without_server_name_validates(web_get, http_manifest):
+    web_get["flows"][0]["transport"] = {"module": "tls", "profile": "strict"}
+    assert not check_scenario(web_get, http_manifest).errors
+
+
+def test_transport_composes_with_tls_upgrade(web_get, http_manifest):
+    flow = web_get["flows"][0]
+    flow["transport"] = copy.deepcopy(TRANSPORT)
+    flow["client"].insert(1, copy.deepcopy(STARTTLS))
+    assert not check_scenario(web_get, http_manifest).errors
+
+
+def test_transport_in_a_udp_flow_is_an_error(resolve, dns_manifest):
+    assert resolve["flows"][0]["l4"] == "udp"
+    resolve["flows"][0]["transport"] = copy.deepcopy(TRANSPORT)
+    report = check_scenario(resolve, dns_manifest)
+    assert any(f.path == "/flows/0/transport" and "applies only to TCP" in f.message for f in report.errors)
+
+
+@pytest.mark.parametrize("body", [
+    {},
+    {"module": "tls"},
+    {"profile": "p"},
+    {"module": "quic", "profile": "p"},
+    {"module": "tls", "profile": ""},
+    {"module": "tls", "profile": "p", "server_name": ""},
+    {"module": "tls", "profile": "p", "role": "client"},
+    "tls",
+])
+def test_schema_rejects_a_malformed_transport(body, web_get):
+    web_get["flows"][0]["transport"] = body
+    report = v.Report()
+    assert not v.schema_errors(v.load_schema("scenario.schema.json"), web_get, report, Path("s.yaml"))
+
+
+def test_scenario_schema_is_v0_5():
+    assert "v0.5" in v.load_schema("scenario.schema.json")["description"]
 
 
 # --- scenario semantics -----------------------------------------------------

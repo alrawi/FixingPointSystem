@@ -658,9 +658,13 @@ fn compile_flow_body(f: &Yaml, id: String, mode: Mode) -> Result<(Flow, Vec<Stri
         Some("udp") => L4::Udp,
         Some(other) => return Err(invalid(format!("unknown l4 '{other}'")).at_field("l4")),
     };
-    if runnable && f.get("transport").is_some() {
-        return Err(unsupported("a transport module").at_field("transport"));
-    }
+    let transport = match f.get("transport") {
+        None => None,
+        Some(_) if l4 == L4::Udp => {
+            return Err(LoadError::TlsUpgradeOnUdp { at: Box::default() }.at_field("transport"));
+        }
+        Some(body) => Some(transport(body).map_err(|e| e.at_field("transport"))?),
+    };
     let spawned = f.get("spawned").and_then(Yaml::as_bool).unwrap_or(false);
     if mode == Mode::Session && spawned {
         return Err(unsupported("a spawned flow").at_field("spawned"));
@@ -677,6 +681,7 @@ fn compile_flow_body(f: &Yaml, id: String, mode: Mode) -> Result<(Flow, Vec<Stri
     let c = Compiler {
         runnable,
         spawn: mode == Mode::Instance,
+        transport,
     };
     let client_y = f
         .get("client")
@@ -762,6 +767,36 @@ fn tls_upgrade(body: &Yaml) -> Result<TlsUpgrade, LoadError> {
     })
 }
 
+/// Compiles the flow keyword `transport`, which stands for a `tls_upgrade`
+/// with the role of the side. Only the module `tls` exists, and its profile is
+/// required.
+fn transport(body: &Yaml) -> Result<TlsUpgrade, LoadError> {
+    let map = body
+        .as_mapping()
+        .ok_or_else(|| invalid("transport takes a mapping"))?;
+    for key in map.keys() {
+        match key.as_str() {
+            Some("module" | "profile" | "server_name") => {}
+            other => return Err(invalid(format!("unknown transport field {other:?}"))),
+        }
+    }
+    match body.get("module").and_then(Yaml::as_str) {
+        Some("tls") => {}
+        Some(other) => {
+            return Err(invalid(format!("unknown transport module '{other}'")).at_field("module"))
+        }
+        None => return Err(missing("module")),
+    }
+    // The fields are the profile and the server name of a tls_upgrade, and the
+    // role stays unset, so each side plays its own.
+    tls_upgrade(&Yaml::Mapping(
+        map.iter()
+            .filter(|(k, _)| k.as_str() != Some("module"))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    ))
+}
+
 fn template(v: &Yaml, field: &str) -> Result<Template, LoadError> {
     let t = match v {
         Yaml::String(s) => Template::compile(s),
@@ -776,6 +811,9 @@ struct Compiler {
     runnable: bool,
     /// Compile `spawn` to [`Op::Spawn`] for a scenario instance runner.
     spawn: bool,
+    /// The upgrade that the flow keyword `transport` stands for, as the
+    /// client side runs it. Both sides of the flow start with it.
+    transport: Option<TlsUpgrade>,
 }
 
 impl Compiler {
@@ -804,6 +842,15 @@ impl Compiler {
             None => None,
         };
         let mut ops = Vec::new();
+        if let Some(upgrade) = &self.transport {
+            // The flow keyword `transport` is sugar for a tls_upgrade right
+            // after the opener. The server name is for the client handshake.
+            let mut upgrade = upgrade.clone();
+            if side == Side::Server {
+                upgrade.server_name = None;
+            }
+            ops.push(Op::UpgradeTls(upgrade));
+        }
         self.actions(actions, 1, &mut ops)?;
         Ok(Program { port, host, ops })
     }
@@ -1051,6 +1098,81 @@ flows:
             let text = text.replace("{ profile: strict, server_name: mail.example.test }", bad);
             assert!(Scenario::parse(&text).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn transport_desugars_to_a_leading_tls_upgrade_on_both_sides() {
+        let text = r#"
+scenario: t
+flows:
+  - id: a
+    module: m
+    transport: { module: tls, profile: strict, server_name: www.example.test }
+    client:
+      - connect: { port: 443 }
+      - loop: { count: 2, do: [ { send: "x" } ] }
+    server:
+      - accept: { port: 443 }
+      - send: "y"
+  - id: b
+    module: m
+    client: [ { connect: { port: 80 } }, { send: "z" } ]
+"#;
+        let s = Scenario::parse(text).unwrap();
+        let client = &s.flows[0].client.ops;
+        let server = &s.flows[0].server.as_ref().unwrap().ops;
+        assert_eq!(
+            client[0],
+            Op::UpgradeTls(TlsUpgrade {
+                profile: "strict".into(),
+                role: None,
+                server_name: Some("www.example.test".into()),
+            })
+        );
+        assert_eq!(
+            server[0],
+            Op::UpgradeTls(TlsUpgrade {
+                profile: "strict".into(),
+                role: None,
+                server_name: None,
+            })
+        );
+        // The jump targets of the body account for the extra leading op.
+        assert!(matches!(&client[1], Op::LoopStart { end: 3, .. }));
+        assert!(matches!(&s.flows[1].client.ops[0], Op::Send(_)));
+        // Explicit upgrades follow the sugar.
+        let both = text.replace(
+            "client:\n      - connect: { port: 443 }",
+            "client:\n      - connect: { port: 443 }\n      - tls_upgrade: { profile: inner }",
+        );
+        let s = Scenario::parse(&both).unwrap();
+        assert!(matches!(&s.flows[0].client.ops[1], Op::UpgradeTls(u) if u.profile == "inner"));
+    }
+
+    #[test]
+    fn transport_rejects_bad_bodies_and_udp() {
+        let text = r#"
+scenario: t
+flows:
+  - id: a
+    module: m
+    transport: { module: tls, profile: p }
+    client: [ { connect: { port: 1 } } ]
+"#;
+        for bad in [
+            "{ profile: p }",
+            "{ module: tls }",
+            "{ module: quic, profile: p }",
+            "{ module: tls, profile: '' }",
+            "{ module: tls, profile: p, role: client }",
+            "tls",
+        ] {
+            let text = text.replace("{ module: tls, profile: p }", bad);
+            assert!(Scenario::parse(&text).is_err(), "{bad}");
+        }
+        let udp = text.replace("module: m\n", "module: m\n    l4: udp\n");
+        let err = Scenario::parse(&udp).unwrap_err();
+        assert_eq!(err.kind(), "TlsUpgradeOnUdp");
     }
 
     #[test]

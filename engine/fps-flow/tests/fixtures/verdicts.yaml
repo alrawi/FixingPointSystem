@@ -42,6 +42,9 @@ cases:
   - scenario: fx/scenarios/tls_upgrade_tcp.yaml
     verdict: accept
     about: "tls_upgrade in a TCP flow, at the top level of both sides and inside a loop."
+  - scenario: fx/scenarios/transport_tcp.yaml
+    verdict: accept
+    about: "transport: tls on TCP flows, with and without a server side, and composed with an explicit tls_upgrade (scenario contract v0.5)."
   - scenario: fx/scenarios/duplicate_flow.yaml
     verdict: reject
     error: DuplicateFlow
@@ -206,3 +209,8 @@ cases:
     error: TlsUpgradeOnUdp
     pointer: /flows/0/client/1/loop/do/0/branch/0/do/0/tls_upgrade
     about: "tls_upgrade in a branch arm inside a loop of a UDP flow."
+  - scenario: fx/scenarios/transport_udp.yaml
+    verdict: reject
+    error: TlsUpgradeOnUdp
+    pointer: /flows/0/transport
+    about: "transport on a UDP flow, which is sugar for tls_upgrade."

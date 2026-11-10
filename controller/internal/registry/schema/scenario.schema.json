@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/alrawi/FixingPointSystem/contracts/schemas/scenario.schema.json",
   "title": "FixingPointSystem scenario (flow programs)",
-  "description": "Scenario contract v0.4. A scenario groups flow programs with ordering and shared variables, and may declare behavior profiles. Each flow program lists actions per side.",
+  "description": "Scenario contract v0.5. A scenario groups flow programs with ordering and shared variables, and may declare behavior profiles. Each flow program lists actions per side.",
   "type": "object",
   "additionalProperties": false,
   "required": ["scenario", "flows"],
@@ -79,12 +79,14 @@
           "default": false
         },
         "transport": {
+          "description": "TCP flows only. Sugar for a tls_upgrade right after the opener of each side that the flow declares: the client side upgrades as the client with server_name, and the server side upgrades as the server. The profile names a TLS profile of the run and applies to both sides. It composes with explicit tls_upgrade actions, which follow the sugar.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["module"],
+          "required": ["module", "profile"],
           "properties": {
-            "module": { "$ref": "#/$defs/identifier" },
-            "profile": { "type": "string" }
+            "module": { "description": "The transport module. Only tls exists.", "const": "tls" },
+            "profile": { "description": "Name of a TLS profile of the run.", "type": "string", "minLength": 1 },
+            "server_name": { "description": "Name that the client handshake verifies and sends as SNI. The engine chooses when it is missing. The server side ignores it.", "type": "string", "minLength": 1 }
           }
         },
         "client": { "$ref": "#/$defs/actions" },

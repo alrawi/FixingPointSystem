@@ -8,7 +8,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.7.0 |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3, unreleased |
-| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.4 |
+| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.5 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.1.0 |
 | `examples/` | Example modules, tests, and plans that every validator run checks |
@@ -198,3 +198,17 @@ CON-17 moves the scenario contract from v0.3 to v0.4. The change is additive, so
 | Embedded copy | The controller embeds the scenario schema, so the copy under `controller/internal/registry/schema/` follows the contract and the controller accepts the keyword |
 
 The engine has parsed the action since ENG-20. `fps-flow` does not reject it in a UDP flow yet, and the runtime fails such a session with reason `internal`, so the engine needs the same rule as an ENG change. The agent builds no TLS profiles until AGT-14, so a session of a plan with the action fails until then. MOD-20 can add the STARTTLS variants of SMTP and IMAP once this change merges.
+
+## The transport keyword
+
+CON-18 moves the scenario contract from v0.4 to v0.5 and decides the flow keyword `transport`. The schema had `transport: {module, profile}` since v0.1, but `Scenario::load` answered `unsupported: a transport module` and the validator ignored it, so MOD-04 wrote `tls_upgrade` as the first action after the opener instead. We chose to keep the keyword and define it as sugar, because the engine cost is one op per side and removing it would leave the specification example without a contract. The entry `contracts/changes/CON-18.md` records the reasons and the compatibility.
+
+| Change | Rule |
+|---|---|
+| `transport` | `{module: tls, profile, server_name?}` on a TCP flow. It is exactly a `tls_upgrade` right after the opener of each side that the flow declares: the client side upgrades as the client with `server_name`, and the server side upgrades as the server. `module` takes only `tls`, and `profile` is required and applies to both sides, so a flow whose sides need different profiles keeps writing `tls_upgrade` on each side |
+| Composition | Explicit `tls_upgrade` actions run after the sugar in declaration order, and the `tls_upgrade` rules apply to it |
+| UDP rule | `tools/contracts/validate.py` reports `transport` in a flow with `l4: udp` as an error at `/flows/<i>/transport`. `fps-flow` reports the same case as `TlsUpgradeOnUdp` |
+| Loader | `Scenario::load` desugars the keyword into `Op::UpgradeTls` in front of each side's body, so the runtime and the agent see the same ops as for explicit actions. CON-18 makes this small `fps-flow` change itself, because the validator and the loader must agree. The shared fixtures `transport_tcp.yaml` and `transport_udp.yaml` pin both verdicts in the Rust test and in `test_fixtures.py` |
+| Embedded copy | The controller embeds the scenario schema, so the copy under `controller/internal/registry/schema/` follows the contract byte for byte |
+
+The tightened body breaks nothing, because no loader ever accepted the old shape. The agent builds no TLS profiles until AGT-14, so a session of a plan that uses the keyword fails until then, as it does for `tls_upgrade`.

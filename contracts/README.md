@@ -6,7 +6,7 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API (OpenAPI 3.1) |
 | `schemas/module-manifest.schema.json` | Module manifest, including the template function catalog |
-| `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.4) |
+| `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.5) |
 | `schemas/test-config.schema.json` | Test configuration |
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
 | `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels |
@@ -33,6 +33,8 @@ Each flow runs one session. The client side and the server side each execute the
 | `tls_upgrade` | Wrap the transport of the running session in TLS in place. The side's role starts or accepts the handshake, and every later action runs over TLS. TCP flows only. |
 | `close` | `fin` shuts down the write side and drains until the peer closes. `rst` aborts. `half` shuts down the write side and continues. |
 | `raw` | Write hex bytes without templating. Only `strike` and `fuzzer` modules may use it. |
+
+A flow may also carry the keyword `transport: {module: tls, profile, server_name?}`, which is sugar for a `tls_upgrade` right after the opener of each side the flow declares. The client side upgrades as the client with `server_name`, the server side upgrades as the server, and the profile names a TLS profile of the run for both sides. The loader desugars it, so `transport: {module: tls, profile: p, server_name: n}` means `tls_upgrade: {profile: p, server_name: n}` after `connect` and `tls_upgrade: {profile: p}` after `accept`. It composes with explicit `tls_upgrade` actions, which run after it, and it applies only to TCP flows. A flow whose sides need different profiles uses `tls_upgrade` on each side. `module` takes only `tls`, and `profile` is required (scenario contract v0.5).
 
 For UDP flows, `connect` binds the peer address, `accept` binds the port and waits for the first datagram, and `close` releases the socket. The datagram that `accept` waits for stays queued for the first `expect`.
 
@@ -155,7 +157,7 @@ cargo install wasm-tools --locked
 wasm-tools component wit contracts/extension/fps-extension.wit
 ```
 
-The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax and argument types, module calls against the manifest function catalog, the precedence rule of `last`, the UDP datagram rules, `tls_upgrade` only in TCP flows, scenario references in mixes, host pool sizes, and port references. The metric rules check that catalog names and labels are unique and declared, that formulas refer to catalog counters and gauges, and that every metric in test criteria and in `x-fps-metric` annotations exists in the catalog.
+The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax and argument types, module calls against the manifest function catalog, the precedence rule of `last`, the UDP datagram rules, `tls_upgrade` and `transport` only in TCP flows, scenario references in mixes, host pool sizes, and port references. The metric rules check that catalog names and labels are unique and declared, that formulas refer to catalog counters and gauges, and that every metric in test criteria and in `x-fps-metric` annotations exists in the catalog.
 
 The plan checker validates the agent plans in `examples/plans/`. It needs the protobuf packages in `tools/contracts/requirements-proto.txt`, and CI runs it in the `proto` job together with `buf lint` and `buf breaking`.
 
