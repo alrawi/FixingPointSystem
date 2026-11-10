@@ -17,7 +17,7 @@ description: >-
   with two expect actions per frame, as the http2 template functions document.
 vars:
   host: www.example.test
-  server_port: 8080
+  server_port: 8082
   page_size: 24000
   chunk_size: 4096
   rounds: 3

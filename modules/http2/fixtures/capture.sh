@@ -30,7 +30,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$here/../../.." && pwd)
 out=${1:-$here}
 sessions=${FPS_FIXTURE_SESSIONS:-20}
-port=8080
+port=8082
 
 if [[ $(id -u) -ne 0 ]]; then
   echo "capture.sh: needs root" >&2

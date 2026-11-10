@@ -7,7 +7,7 @@ summary: HTTP/2 page loads with six concurrent streams and uploads under flow co
 engine_api: ">=0.2, <0.3"
 license: GPL-3.0-only
 provides:
-  - { protocol: http2, transport: tcp, port: 8080 }
+  - { protocol: http2, transport: tcp, port: 8082 }
   - { protocol: http2, transport: tcp, port: 8081 }
   - { protocol: http2, transport: tcp, port: 443 }
   - { protocol: http2, transport: tcp, port: 8443 }
@@ -17,7 +17,7 @@ parameters:
   additionalProperties: false
   properties:
     host: { type: string, minLength: 1, default: www.example.test, description: ":authority of every request." }
-    server_port: { type: integer, minimum: 1, maximum: 65535, default: 8080, description: "TCP port of the server side. The scenarios default to 8080 and 8081 in the clear and 8443 and 8444 over TLS, one port per scenario, so a capture tells them apart." }
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 8082, description: "TCP port of the server side. The scenarios default to 8082 and 8081 in the clear and 8443 and 8444 over TLS, one port per scenario, so a capture tells them apart." }
     page_size: { type: integer, minimum: 0, maximum: 16777216, default: 24000, description: Size of the page body of a browsing session in bytes. }
     chunk_size: { type: integer, minimum: 1, maximum: 16384, default: 4096, description: Size of each DATA frame in the interleaved rounds of a browsing session. It stays within the default maximum frame size of 16384. }
     rounds: { type: integer, minimum: 0, maximum: 1000, default: 3, description: Interleaved rounds of a browsing session. Every round writes one DATA frame of chunk_size octets on each of the six object streams, and the last frame of each stream follows the rounds. }

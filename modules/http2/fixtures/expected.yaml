@@ -2,7 +2,9 @@
 # Expected labels of http2.pcapng, which capture.sh records in the QA-01 harness.
 # realism/schema/labels.schema.json defines the format.
 #
-# HTTP/2 with prior knowledge (h2c) runs on TCP ports 8080 and 8081. nDPI must
+# HTTP/2 with prior knowledge (h2c) runs on TCP ports 8082 and 8081, which are not
+# among the ports where Zeek starts its HTTP analyzer (8080 is), because that
+# analyzer reports every h2c session as a parser error. nDPI must
 # classify at least 99% of those sessions as HTTP2, its name for HTTP/2, from
 # payload alone. nDPI 4.2.0, the libndpi-bin of Ubuntu 24.04, has no HTTP/2
 # protocol and reports these sessions as Unknown, so scoring needs a newer
@@ -30,7 +32,7 @@ tls:
     firefox-139: {ja4: t13d1011h2_61a7ad8aa9b6_f674693fb0dc}
 sessions:
   - application: http2
-    match: {transport: tcp, server_port: 8080}
+    match: {transport: tcp, server_port: 8082}
   - application: http2
     match: {transport: tcp, server_port: 8081}
   - application: https2

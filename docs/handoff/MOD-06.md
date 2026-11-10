@@ -43,7 +43,7 @@ none
 
 ## Decisions taken in this package
 
-- Four scenarios, one port each: `h2c_browse` 8080, `h2c_upload` 8081, `https_browse` 8443, `https_upload` 8444.
+- Four scenarios, one port each: `h2c_browse` 8082, `h2c_upload` 8081, `https_browse` 8443, `https_upload` 8444.
 - No scenario variable can compute with other variables, and a flow cannot branch on what it reads, so stream ids are literals (odd streams 1, 3 to 13 for browsing, 1 and 3 for uploads) and every count of frames comes from a variable or from `http2.data_frames`.
 - The TLS scenarios name the server profile `server-tls13-h2`, which the agent does not have yet.
 
