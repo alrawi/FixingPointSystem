@@ -32,6 +32,7 @@ from realism.modules import ModuleError, discover, matrix, select
 from realism.parsers import PARSER_NAMES, ParserError, not_found_reason, resolve
 from realism.report import score
 from realism.scenario_graph import ScenarioError
+from realism.transport import TransportError
 
 EXIT_PASS = 0
 EXIT_FAIL = 1
@@ -75,6 +76,16 @@ def _points(text: str) -> float:
         raise argparse.ArgumentTypeError(f"not a number: {text}") from exc
     if not 0.0 <= value <= 100.0:
         raise argparse.ArgumentTypeError("tolerance must be from 0 to 100 percentage points")
+    return value
+
+
+def _hops(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not an integer: {text}") from exc
+    if not 0 <= value <= 254:
+        raise argparse.ArgumentTypeError("hops must be from 0 to 254")
     return value
 
 
@@ -182,6 +193,37 @@ def _parser() -> argparse.ArgumentParser:
         choices=(*BASES, "both"),
         help="basis of the mix accuracy check, default profile.basis of the test configuration; "
         "adds the check and overrides the labels file",
+    )
+    score_cmd.add_argument(
+        "--os-profile",
+        help="operating system profile of every host, such as windows11, linux6, or macos14; "
+        "adds the transport behavior check next to the transport section of the labels file "
+        "and overrides its os_profile",
+    )
+    score_cmd.add_argument(
+        "--os-profiles-dir",
+        type=Path,
+        help="directory of the profile files, default the profiles of the kernel backend; "
+        "adds the transport behavior check",
+    )
+    score_cmd.add_argument(
+        "--transport-strict",
+        action="store_true",
+        default=None,
+        help="also fail on the TCP option order and the SYN window; adds the transport "
+        "behavior check",
+    )
+    score_cmd.add_argument(
+        "--client-hops",
+        type=_hops,
+        help="routers between the clients and the capture point, which lower the TTL of a SYN; "
+        "adds the transport behavior check",
+    )
+    score_cmd.add_argument(
+        "--server-hops",
+        type=_hops,
+        help="routers between the servers and the capture point, which lower the TTL of a "
+        "SYN-ACK; adds the transport behavior check",
     )
     score_cmd.add_argument("--tshark", help="path of tshark, defaults to FPS_TSHARK or the path")
     score_cmd.add_argument("--zeek", help="path of zeek, defaults to FPS_ZEEK or the path")
@@ -373,6 +415,11 @@ def main(argv: list[str] | None = None) -> int:
             run_report=args.run_report,
             mix_tolerance=args.mix_tolerance,
             mix_basis=args.mix_basis,
+            os_profile=args.os_profile,
+            os_profiles_dir=args.os_profiles_dir,
+            transport_strict=args.transport_strict,
+            client_hops=args.client_hops,
+            server_hops=args.server_hops,
         )
     except (
         CaptureError,
@@ -381,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
         ParserError,
         ScenarioError,
         MixError,
+        TransportError,
     ) as exc:
         print(f"realism score failed: {exc}", file=sys.stderr)
         return EXIT_ERROR

@@ -15,6 +15,7 @@ The [specification](https://github.com/alrawi/FixingPointSystem/blob/main/docs/s
 | `session_structure` | Scenario files and the sessions of the capture, no external tool | Every scenario instance has the connections that its flow graph allows, in the order of its `after` and `spawn` edges | RLM-08 |
 | `temporal` | Session start times and payloads read by the runner, no external tool | Every inter arrival time and payload size sample that the labels give a target for agrees with it in a KS test at α (default 0.01), and none has too few observations | RLM-06 |
 | `mix_accuracy` | Run metrics per scenario and nDPI through `ndpiReader -d`, no other tool | Per basis (sessions, bytes, or both), the share of every application from the run metrics and from nDPI lies within 2 percentage points (configurable) of the configured weight | RLM-07 |
+| `transport_behavior` | The SYN and SYN-ACK of every connection read by the runner, and the OS profiles of the kernel backend, no external tool | The TTL, do not fragment flag, MSS, window scale, SACK permitted, and timestamps of every handshake equal those of the profile of the sending host (the option order and the SYN window too in strict mode) | RLM-09 |
 
 Every tool runs as a separate process, so the runner links none of their code. We chose the counting rules of the parser error check for three reasons.
 
@@ -26,7 +27,7 @@ The parser error check leaves `metrics` empty, because the [metric catalog](http
 
 ## Report
 
-[`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) defines the report, which is the seam to the controller and the gate suites. A new check adds a definition under `$defs` and one `if` and `then` entry in `$defs.check.allOf`. The report format is at version 0.8.0. Version 0.2.0 added the `parser_errors` entry, version 0.3.0 added `skipped_parsers` to it, version 0.4.0 added the `encryption` entry, version 0.5.0 added the `content` entry, version 0.6.0 added the `session_structure` entry, and version 0.7.0 added the `temporal` entry, and version 0.8.0 added the `mix_accuracy` entry.
+[`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) defines the report, which is the seam to the controller and the gate suites. A new check adds a definition under `$defs` and one `if` and `then` entry in `$defs.check.allOf`. The report format is at version 0.9.0. Version 0.2.0 added the `parser_errors` entry, version 0.3.0 added `skipped_parsers` to it, version 0.4.0 added the `encryption` entry, version 0.5.0 added the `content` entry, version 0.6.0 added the `session_structure` entry, and version 0.7.0 added the `temporal` entry, version 0.8.0 added the `mix_accuracy` entry, and version 0.9.0 added the `transport_behavior` entry.
 
 ## Seams for tests
 
@@ -148,6 +149,16 @@ A test sets its traffic mix as weights per scenario, by sessions or by bytes (`p
 **Evidence.** [`realism/tests/test_mix.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/tests/test_mix.py) builds captures with known session and byte shares and synthetic run reports. A run report that is 3 points off for one application fails and names the application, the source, and the delta, shares within 2 points pass (2.00 points exactly passes), the tolerance and the basis are configurable, and the command line test runs a fake ndpiReader through the real command. An optional test runs the real ndpiReader on a synthetic capture.
 
 **Limits.** A scenario that opens several connections per session, such as `web_browse` with its lookup and page fetch, has more sessions in a capture than in the metrics, so use the bytes basis for it or give the helper connections their own application. The capture must hold the whole run: a packet limit or a port filter that leaves out an application makes it fail for that application.
+
+## Transport behavior check
+
+A real host shows its operating system in the first packets of every TCP connection, in the IP TTL, the do not fragment flag, and the options of the SYN. RLM-09 checks in [`realism/transport.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/transport.py) that the SYN and the SYN-ACK of every connection agree with the operating system profile (`windows11`, `linux6`, or `macos14`, [TRN-03](Transport.md#operating-system-profiles)) of the host that sent them. The runner reads TCP headers itself, so the check needs no tool, and it reads the profile files of the kernel backend, so the check and the backend share one source of truth: `socket.ttl` and `socket.mss` are what the kernel sets, and `reference` is the SYN of the real system.
+
+**Fields.** The TTL (exact, less the routers between the host and the capture point, which the labels give as `client_hops` and `server_hops`), the do not fragment flag, the MSS, the window scale, SACK permitted, and timestamps. A server answers only the options that the client offered, so a SYN-ACK is compared in those options with the SYN of its connection and carries none that the SYN lacked. The labels name one profile for every host or one per IP address, and `expect` replaces a value of the profile for a capture whose stack differs from it in a known way.
+
+**Strict mode.** The Linux kernel decides the option order and rounds the SYN window to whole segments, so the kernel backend cannot reproduce the option order of windows11 and macos14 or the SYN window of macos14 (see the [limits](Transport.md#limits)). The report lists both as deviations that do not fail the check, and `strict` makes them fail, which suits captures of real systems.
+
+**Evidence.** [`realism/tests/test_transport.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/tests/test_transport.py) builds one capture per profile from option bytes that the test writes out (the public SYN signatures, not the profile files), and each passes. A SYN with the TTL of Linux (64) against windows11 fails with `the profile expects 128, the capture shows 64 in 5 of them`, and a TTL that is one too high or too low, a wrong MSS, window scale, timestamp, SACK, or do not fragment setting, a server answer with an option that the client did not offer, and a malformed option list fail as well. The committed fixtures of the kernel backend (`modules/*/fixtures/*.pcapng`) agree with the `linux6` profile in every field but the window scale, which is 10 in the harness namespaces and 7 in the profile, and they fail the `windows11` profile in TTL, window scale, and timestamps. The report format is 0.9.0.
 
 ## Pinned Zeek and skipped parsers
 

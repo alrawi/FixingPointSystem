@@ -6,7 +6,7 @@
 | Branch | `wp/RLM-09` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-35cacd, lease until 2026-11-10T15:52:54Z |
 | Last verified commit | none |
 
@@ -18,22 +18,24 @@ Compare the TCP handshake options of a capture with the selected OS profile (win
 
 ## Plan
 
-- [ ] 1. Claim commit, handoff
-- [ ] 2. `transport` labels section, handshake reader, `realism/transport.py`, report and CLI wiring, schema, version 0.9.0
-- [ ] 3. Tests on pcapgen captures and on the committed module fixtures
+- [x] 1. Claim commit, handoff
+- [x] 2. `transport` labels section, handshake reader, `realism/transport.py`, report and CLI wiring, schema, version 0.9.0
+- [x] 3. Tests on pcapgen captures and on the committed module fixtures
 - [ ] 4. README, Realism page, log entry, checks, pull request, CI
 
 ## Done and verified
 
-Nothing yet.
+- `make lint-rlm` and `python3 -m pytest -q realism`: 547 passed, 9 skipped (tool tests, no tshark, Zeek, or ndpiReader in the sandbox).
+- `plan.py check`, `render --check`, and `lint` pass.
+- Every OS profile capture passes, a SYN with TTL 64 against windows11 fails, and the committed fixtures match linux6 except the window scale (10, profile 7).
 
 ## Remaining
 
-Everything after step 1.
+Pull request and CI.
 
 ## Next action
 
-Write `realism/transport.py` and the `transport` labels section.
+Open the pull request and poll CI.
 
 ## Blockers and open questions
 
@@ -41,11 +43,16 @@ none
 
 ## Decisions taken in this package
 
-- Scope is `realism/` only. The profile files stay in `engine/fps-backend-kernel/profiles/` and the check reads their `reference` section, so there is one source of truth.
+- Scope is `realism/` only. The profile files stay in `engine/fps-backend-kernel/profiles/` and the check reads their `socket` and `reference` sections, so there is one source of truth.
+- The option order and the SYN window decide only in strict mode, because the kernel backend cannot set them (Transport page, limits). They show up in `deviations` either way.
+- The TTL comparison is exact and the labels give the hops (`client_hops`, `server_hops`), so a TTL that is one too high fails.
+- The report check name is `transport_behavior`; `metrics` is empty because the catalog has no metric for it.
 
 ## Pitfalls
 
 - The sandbox has no tshark, Zeek, or ndpiReader. The check reads TCP headers itself, so its tests need no tool.
+- The harness fixtures show window scale 10, not the 7 of linux6, so the example labels use `expect`.
+- The worktree guard refuses commands that mix heredocs or `source` with other commands. Write scripts with the editor and run them alone.
 
 ## Verify the current state
 
@@ -57,4 +64,5 @@ make lint-rlm test-rlm
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
-| 2026-11-10T14:23Z | claude-35cacd | claim | none | Claimed #191 |
+| 2026-11-10T14:23Z | claude-35cacd | claim | 37cb700 | Claimed #191 |
+| 2026-11-10T14:50Z | claude-35cacd | checkpoint | none | Check, schema, tests, docs written |

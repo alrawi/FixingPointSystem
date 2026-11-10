@@ -114,6 +114,10 @@
         {
           "if": {"properties": {"check": {"const": "mix_accuracy"}}, "required": ["check"]},
           "then": {"$ref": "#/$defs/mix_accuracy"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "transport_behavior"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/transport_behavior"}
         }
       ]
     },
@@ -857,6 +861,96 @@
         "failures": {
           "description": "One sentence for each comparison that did not pass, and one when the labels name no target.",
           "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "transport_behavior": {
+      "description": "The TTL and the TCP options of the SYN and SYN-ACK of every connection against the operating system profile of the sending host. The check passes when no enforced field differs and at least one handshake of a profiled host was compared. The option order and the SYN window are enforced only when strict is true, and they appear in deviations either way.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "strict", "client_hops", "server_hops", "expect", "profiles", "hosts",
+        "syns_total", "syn_acks_total", "unprofiled_handshakes", "deviations", "failures_total", "failures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "transport_behavior"},
+        "passed": {"type": "boolean"},
+        "metrics": {"type": "array", "maxItems": 0},
+        "strict": {"type": "boolean"},
+        "client_hops": {"type": "integer", "minimum": 0, "maximum": 254},
+        "server_hops": {"type": "integer", "minimum": 0, "maximum": 254},
+        "expect": {
+          "description": "The values of the labels that replace the profile.",
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "profiles": {
+          "description": "The profiles that the check read, with the values it compared (after expect).",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "file", "ttl", "mss", "window_scale", "syn_window", "options", "dont_fragment"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "file": {"type": "string", "minLength": 1},
+              "ttl": {"type": "integer", "minimum": 1, "maximum": 255},
+              "mss": {"type": "integer", "minimum": 1, "maximum": 65535},
+              "window_scale": {"type": ["integer", "null"], "minimum": 0, "maximum": 14},
+              "syn_window": {"type": "integer", "minimum": 0},
+              "options": {"type": "array", "minItems": 1, "items": {"enum": ["eol", "nop", "mss", "ws", "sok", "ts"]}},
+              "dont_fragment": {"type": "boolean"}
+            }
+          }
+        },
+        "hosts": {
+          "description": "Each profiled host that sent a SYN or a SYN-ACK, with the profile it was compared with.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["host", "profile", "syns", "syn_acks"],
+            "additionalProperties": false,
+            "properties": {
+              "host": {"type": "string", "minLength": 1},
+              "profile": {"type": "string", "minLength": 1},
+              "syns": {"type": "integer", "minimum": 0},
+              "syn_acks": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "syns_total": {"description": "Connections with a SYN in the capture, one per 4 tuple.", "type": "integer", "minimum": 0},
+        "syn_acks_total": {"description": "Connections with a SYN-ACK in the capture, one per 4 tuple.", "type": "integer", "minimum": 0},
+        "unprofiled_handshakes": {"description": "SYN and SYN-ACK packets from hosts that no profile covers, which the check leaves out.", "type": "integer", "minimum": 0},
+        "deviations": {
+          "description": "Every field of a host and role that differs from the profile in at least one packet.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["host", "profile", "role", "field", "expected", "observed", "handshakes", "mismatched", "enforced"],
+            "additionalProperties": false,
+            "properties": {
+              "host": {"type": "string", "minLength": 1},
+              "profile": {"type": "string", "minLength": 1},
+              "role": {"enum": ["syn", "syn-ack"]},
+              "field": {"enum": ["ttl", "df", "mss", "window_scale", "sack", "timestamps", "options", "syn_window"]},
+              "expected": {"type": "string"},
+              "observed": {
+                "description": "The values that differ from expected, with the packets that show each.",
+                "type": "object",
+                "additionalProperties": {"type": "integer", "minimum": 1}
+              },
+              "handshakes": {"description": "Packets of this role that the field was compared in.", "type": "integer", "minimum": 1},
+              "mismatched": {"type": "integer", "minimum": 1},
+              "enforced": {"description": "False for the option order and the SYN window without strict.", "type": "boolean"}
+            }
+          }
+        },
+        "failures_total": {"type": "integer", "minimum": 0},
+        "failures": {
+          "description": "One sentence for each enforced deviation and for an empty comparison, at most 50. failures_total counts them all.",
+          "type": "array",
+          "maxItems": 50,
           "items": {"type": "string", "minLength": 1}
         }
       }

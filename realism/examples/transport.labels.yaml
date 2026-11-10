@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels for the transport behavior check, written for the module fixtures that the
+# QA-01 harness records (modules/http1/fixtures/http1.pcapng and its siblings). The kernel
+# backend ran without an OS profile there, so the hosts show the defaults of Linux 6 with the
+# window scale of the harness namespaces. Run it with:
+#   python3 -m realism score --pcap modules/http1/fixtures/http1.pcapng \
+#     --labels realism/examples/transport.labels.yaml
+# realism/schema/labels.schema.json defines the format.
+labels: fps-realism-labels
+version: 1
+sessions:
+  - application: http1
+    match: {transport: tcp, server_port: 80}
+transport:
+  os_profile: linux6      # windows11 or macos14, read from engine/fps-backend-kernel/profiles
+  # hosts: {10.201.0.2: windows11}   # a profile per IP address, for hosts that differ
+  # profiles_dir: profiles           # other profile files, relative to this file
+  client_hops: 0          # the harness captures the client arm, so a SYN has its own TTL
+  server_hops: 1          # and a SYN-ACK has crossed the router once
+  strict: false           # true also fails on the TCP option order and the SYN window
+  expect:                 # the harness namespaces allow a window scale of 10, not the 7 of linux6
+    window_scale: 10
