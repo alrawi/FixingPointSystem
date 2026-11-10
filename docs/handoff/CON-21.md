@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #390 |
 | Branch | `wp/CON-21` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #398 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-c21a7f, lease until 2026-11-10T15:53:04Z |
 | Last verified commit | none |
 
@@ -23,7 +23,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Read the report code, the UI-05 log entry, the realism README and the CTL-38 entry; decide the field names
 - [x] 2. Edit `contracts/openapi/fps-api-v1.yaml` (0.9.0) and write `contracts/changes/CON-21.md`
 - [x] 3. Contracts page, log entry, and the contract checks
-- [ ] 4. Pull request, CI, and review
+- [x] 4. Pull request, CI, and review
 
 ## Done and verified
 
@@ -31,11 +31,11 @@ Steps 1 to 3. `python3 tools/contracts/validate.py` reports 0 errors and 0 warni
 
 ## Remaining
 
-The pull request and CI. Files outside `contracts/` that must change are listed in the change entry and in the pull request, and the coordinator applies them.
+CI on commit bda3433: `contracts`, `openapi-breaking` (`breaking`), `proto`, `licenses`, `scripts`, `replay`, and `ops` pass. `cli-sdk` (Currency check) and `ui` (`make lint-ui test-ui`, the schema check) fail as expected until the coordinator regenerates `_generated.py` and `schema.d.ts` and sets `APIVersion`. Files outside `contracts/` that must change are listed in the change entry and in the pull request, and the coordinator applies them.
 
 ## Next action
 
-Open the pull request and wait for CI.
+The coordinator applies the follow up list of the PR and `contracts/changes/CON-21.md` on this branch, then reviews.
 
 ## Blockers and open questions
 
@@ -62,3 +62,4 @@ python3 -m pytest -q tools/contracts
 |---|---|---|---|---|
 | 2026-11-10T15:23Z | claude-c21a7f | claim | none | Claimed issue #390, branch wp/CON-21 |
 | 2026-11-10T15:45Z | claude-c21a7f | checkpoint | see branch | OpenAPI 0.9.0, change entry, Contracts page, log entry, checks pass |
+| 2026-11-10T15:58Z | claude-c21a7f | review | bda3433 | PR #398 opened, contract and breaking checks green, cli-sdk and ui red as expected |
