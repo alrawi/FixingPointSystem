@@ -5,8 +5,8 @@
 | Issue | #362 |
 | Branch | `wp/CON-19` |
 | Pull request | #364 |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-51af6f, lease until 2026-11-10T06:15:04Z |
 | Last verified commit | none |
 
@@ -22,7 +22,7 @@ Close four contract gaps, all additive. CAP-02 found no integer to bytes functio
 - [x] 2. Arrival and size distributions in the test configuration schema (v0.3), validator rules, tests
 - [x] 3. Metric catalog 0.3.0: `all` for `application`, `both` for `property`
 - [x] 4. `contracts/changes/CON-19.md`, CHANGELOG, README, embedded copies, generated code, wiki Contracts page
-- [ ] 5. Run the checks, open the PR, wait for CI
+- [x] 5. Run the checks, open the PR, wait for CI
 
 ## Done and verified
 
@@ -35,11 +35,11 @@ Close four contract gaps, all additive. CAP-02 found no integer to bytes functio
 
 ## Remaining
 
-Open the PR and wait for CI.
+Nothing in the catalog paths. At the last poll (commit 1b093c1) every check of PR #364 was green except two that had not finished after about 40 minutes: `module` (stuck in the step that installs nDPI, tshark, and Zeek) and `Build, boot, and run` (the image build failed once on an Ubuntu mirror error, `File has unexpected size ... Mirror sync in progress?`, and was rerun). Neither touches `contracts/`.
 
 ## Next action
 
-Open the pull request against `main` and poll the checks.
+Review PR #364.
 
 ## Blockers and open questions
 
