@@ -367,6 +367,26 @@ function routes(data: MockData, runs: MockRuns): [string, RegExp, Handler][] {
     ],
     [
       "GET",
+      /^\/v1\/runs\/([^/:]+)\/report$/,
+      (match, url) => {
+        const found = runs.find(decodeURIComponent(match[1] ?? ""));
+        if (!found) return { status: 404, body: problem(404, "Not Found", "No run has this id.") };
+        const format = url.searchParams.get("format") ?? "json";
+        if (format !== "json") {
+          return {
+            status: 501,
+            body: problem(
+              501,
+              "Not Implemented",
+              `The mock serves only the json report, not ${format}.`,
+            ),
+          };
+        }
+        return { status: 200, body: runs.report(found) };
+      },
+    ],
+    [
+      "GET",
       /^\/v1\/runs\/([^/:]+)\/metrics$/,
       (match, url) => {
         const found = runs.find(decodeURIComponent(match[1] ?? ""));

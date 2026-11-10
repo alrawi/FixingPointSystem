@@ -56,6 +56,20 @@ export function formatPercent(value: number | undefined): string {
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value * 100)} %`;
 }
 
+/** A value of a metric with up to six significant digits, or a dash when the value is unknown. */
+export function formatMetric(value: number | undefined): string {
+  if (value === undefined) return "-";
+  return new Intl.NumberFormat("en-US", { maximumSignificantDigits: 6 }).format(value);
+}
+
+/** A length of time in milliseconds as `45 s` or `3 min 5 s`, or a dash when it is unknown. */
+export function formatDuration(ms: number | undefined): string {
+  if (ms === undefined) return "-";
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${String(seconds)} s`;
+  return `${String(Math.floor(seconds / 60))} min ${String(seconds % 60)} s`;
+}
+
 /** Milliseconds since the epoch as the UTC time of day, `10:00:05`. */
 export function formatClock(ms: number): string {
   return new Date(ms).toISOString().slice(11, 19);
