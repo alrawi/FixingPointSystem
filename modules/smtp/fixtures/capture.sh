@@ -27,10 +27,10 @@
 # realism runner and tshark decrypt the capture without a sidecar file.
 # FPS_FIXTURE_KEYLOG names a file that keeps the key log as well, for a reader
 # that wants the sidecar. The realism runner checks the encryption of those
-# sessions with the keys and the JA4 of their profile, and decrypted_check.py
-# then reads the dialogue inside TLS with tshark and, where Zeek is installed,
-# with Zeek, see the README. FPS_FIXTURE_DECRYPTED_DIR keeps the decrypted
-# view that the check builds.
+# sessions with the keys and the JA4 of their profile, and `python3 -m realism
+# decrypted` then reads the dialogue inside TLS with tshark and, where Zeek is
+# installed, with Zeek, see the README. The result lands as smtp.decrypted.json.
+# FPS_FIXTURE_DECRYPTED_DIR keeps the decrypted view as smtp.decrypted.pcap.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -118,8 +118,10 @@ zeek=${FPS_ZEEK:-$(command -v zeek || true)}
 if [[ -z $zeek && -x /opt/zeek/bin/zeek ]]; then
   zeek=/opt/zeek/bin/zeek
 fi
+parsers=tshark
 zeek_args=()
 if [[ -n $zeek ]]; then
+  parsers=tshark,zeek
   zeek_args=(--zeek "$zeek")
   python3 "$here/zeek_check.py" "$out/smtp.pcapng" --zeek "$zeek" \
     --messages "$messages" --attachments "$attachments"
@@ -128,6 +130,20 @@ else
 fi
 
 # The sessions inside TLS: tshark decrypts them with the embedded keys, nDPI
-# scores the decrypted view, and Zeek reads the view when it is installed.
-python3 "$here/decrypted_check.py" "$out/smtp.pcapng" --sessions "$sessions" \
-  --work "${FPS_FIXTURE_DECRYPTED_DIR:-$work}" "${zeek_args[@]}"
+# scores the decrypted view, and Zeek reads the view when it is installed. The
+# view puts the STARTTLS sessions on port 587, where Zeek starts its SMTP
+# analyzer, and joins the plain start of each dialogue to the dialogue inside
+# TLS. The shared command scores only the parser errors of Zeek on the view, so
+# zeek_check.py reads smtp.log and files.log of the view as well: one message
+# and one attachment per STARTTLS session.
+view_dir=${FPS_FIXTURE_DECRYPTED_DIR:-$work}
+mkdir -p "$view_dir"
+view="$view_dir/smtp.decrypted.pcap"
+python3 -m realism decrypted --pcap "$out/smtp.pcapng" \
+  --labels "$root/realism/examples/decrypted/smtp.labels.yaml" \
+  --sessions "$sessions" --plaintext upgrade --view-port 587 --parsers "$parsers" \
+  --output "$out/smtp.decrypted.json" --view "$view" "${zeek_args[@]}"
+if [[ -n $zeek ]]; then
+  python3 "$here/zeek_check.py" "$view" --zeek "$zeek" \
+    --messages "$sessions" --attachments "$sessions"
+fi

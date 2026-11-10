@@ -17,7 +17,8 @@
 # decrypts them with the keys that the capture embeds and compares the JA4 of
 # every ClientHello with the expected value of its profile. The HTTP/2 inside
 # the TLS sessions is measured on the decrypted capture by
-# decrypted_check.py, see the README.
+# `python3 -m realism decrypted` with
+# realism/examples/decrypted/http2.labels.yaml, see the README.
 #
 # The ja4 values are the expected_ja4 of the browser profiles in
 # modules/tls/native/src/browser.rs, which modules/http2/tests/https.rs checks
