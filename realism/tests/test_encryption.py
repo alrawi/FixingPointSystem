@@ -271,7 +271,7 @@ def test_report_has_the_encryption_entry_and_validates(tmp_path: Path) -> None:
     probe = StubTlsProbe(_observation(pcap))
     report = score(pcap, labels_path, classifier, tls_probe=probe).to_dict()
     _validate(report)
-    assert report["version"] == "0.10.0"
+    assert report["version"] == "0.11.0"
     encryption = [c for c in report["checks"] if c["check"] == "encryption"]
     assert len(encryption) == 1
     assert encryption[0]["passed"] is True

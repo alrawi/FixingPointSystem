@@ -787,7 +787,7 @@ def test_the_report_has_the_temporal_entry_and_validates(tmp_path: Path) -> None
     labels = _labels_file(tmp_path, EXPONENTIAL_200MS)
     report = score(good, labels, STUB).to_dict()
     _validate(report)
-    assert report["version"] == "0.10.0"
+    assert report["version"] == "0.11.0"
     assert [c["check"] for c in report["checks"]] == ["conformance", "temporal"]
     assert report["checks"][1]["passed"] is True
     assert report["passed"] is True

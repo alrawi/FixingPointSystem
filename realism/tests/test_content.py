@@ -543,7 +543,7 @@ def test_the_report_has_the_content_entry_and_validates(tmp_path: Path) -> None:
     classifier = StubClassifier.by_server_port({80: "HTTP"}, name="ndpi")
     report = score(pcap, _labels_path(tmp_path, {}), classifier).to_dict()
     _validate(report)
-    assert report["version"] == "0.10.0"
+    assert report["version"] == "0.11.0"
     assert [c["check"] for c in report["checks"]] == ["conformance", "content"]
     assert report["checks"][1]["passed"] is False
     assert report["passed"] is False
