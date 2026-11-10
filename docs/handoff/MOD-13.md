@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #180 |
 | Branch | `wp/MOD-13` |
-| Pull request | #0 |
+| Pull request | #416 |
 | Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Progress | 95% (4 of 5 plan steps) |
 | Current holder | claude-9c41d7, lease until 2026-11-10T19:08:16Z |
-| Last verified commit | 484a2e3 |
+| Last verified commit | 29405af |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -28,15 +28,16 @@ Ship smb2 scenarios for file browsing, download, and upload, with client and ser
 
 - `cargo test -p fps-module-smb2`: every test binary passes, 12 tests in `scenarios.rs`, the catalog test compares the manifest, `fixture.rs` scores the committed capture.
 - `modules/smb2/fixtures/capture.sh` ran in the namespace harness: 18 sessions, nDPI 4.2.0 classifies 18 of 18 as `NetBIOS.SMBv23` (ratio 1.0), tshark 4.2.2 reports no parser error.
+- CI `realism` job (module smb2, fresh capture, nDPI 4.14.0, tshark 4.2.2, Zeek 9.0.1): 18 of 18 conform as `NetBIOS.SMBv23`, 0 parser errors, 0 malformed packets.
 - `tools/contracts/validate.py --modules ... --tests --no-openapi` reports 0 errors, `cargo fmt --check`, `cargo clippy -D warnings`, `shellcheck`, `plan.py check`, `render --check`, and `lint` pass.
 
 ## Remaining
 
-Open the pull request, wait for CI, and set the handoff to ready for review.
+Wait for CI on the new head and set the handoff to ready for review.
 
 ## Next action
 
-Open the pull request against main.
+Poll the check runs of PR #416.
 
 ## Blockers and open questions
 
@@ -68,4 +69,4 @@ python3 -m realism score --pcap modules/smb2/fixtures/smb2.pcapng --labels modul
 |---|---|---|---|---|
 | 2026-11-10T17:25Z | claude-9c41d7 | claim | none | Claimed #180, branch wp/MOD-13 from origin/main |
 | 2026-11-10T17:45Z | claude-9c41d7 | checkpoint | 484a2e3 | Manifest, three scenarios, tests, golden transcripts |
-| 2026-11-10T18:15Z | claude-9c41d7 | checkpoint | pending | fixture_peer, capture.sh, fixture, README, log entry |
+| 2026-11-10T18:15Z | claude-9c41d7 | checkpoint | 29405af | fixture_peer, capture.sh, fixture, README, log entry, PR #416 opened |

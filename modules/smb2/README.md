@@ -75,4 +75,4 @@ The committed capture scores as follows.
 | nDPI 4.2.0 conformance | 18 of 18 sessions are SMB (ratio 1.0), reported as `NetBIOS.SMBv23` |
 | tshark 4.2.2 parser errors | none, and no malformed packets |
 
-The realism runner of CI uses nDPI 4.14, which we could not run here. The `mod-smb2` workflow scores the committed capture with it. Zeek was not installed when we recorded the capture, so the report covers tshark only.
+The `realism` workflow of CI records a fresh capture of the module with nDPI 4.14.0, tshark 4.2.2, and Zeek 9.0.1, and its first run on this package gave the same result: 18 of 18 sessions conform, nDPI 4.14.0 names them `NetBIOS.SMBv23` as 4.2.0 does, and neither tshark nor Zeek reports a parser error or a malformed packet. Zeek was not installed when we recorded the committed capture, so its report covers tshark only.
