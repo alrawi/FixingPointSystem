@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #361 |
 | Branch | `wp/MOD-21` |
-| Pull request | #0 |
-| Status | in progress |
+| Pull request | #367 |
+| Status | ready for review |
 | Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-4e7c21, lease until 2026-11-10T06:27:13Z |
-| Last verified commit | none |
+| Last verified commit | 2557032 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -65,3 +65,4 @@ sudo FPS_REALISM_PARSERS=tshark realism/ci/module-realism.sh http1 /tmp/http1-ou
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T05:00Z | claude-4e7c21 | claim | none | Claimed #361 with 4 plan steps |
+| 2026-11-10T06:05Z | claude-4e7c21 | review | 2557032 | PR #367 open, 17 checks reported, all green except two still running (Build, boot, and run; gate), module (http1) and negative-control green |
