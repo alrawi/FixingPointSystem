@@ -48,6 +48,9 @@ pub struct FlowRef {
     /// call to a module of the set runs in an instance that the session owns,
     /// and a call to any other module goes to [`FlowRef::functions`].
     pub extensions: Option<Arc<ExtensionSet>>,
+    /// The name of the test port that the flow runs on, the value of the
+    /// `port` label of the `tls.*` series. `None` labels them `default`.
+    pub port: Option<String>,
 }
 
 impl FlowRef {
@@ -61,6 +64,7 @@ impl FlowRef {
             limits: Limits::default(),
             entry: None,
             extensions: None,
+            port: None,
         }
     }
 
@@ -84,6 +88,7 @@ impl fmt::Debug for FlowRef {
             .field("scenario", &self.scenario.name)
             .field("entry", &self.entry)
             .field("extensions", &self.extensions)
+            .field("port", &self.port)
             .field("flow", &self.flow)
             .field("limits", &self.limits)
             .finish_non_exhaustive()

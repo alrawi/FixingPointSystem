@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use fps_backend_kernel::{Connector, KernelListener, ListenConfig};
 use fps_capture::CaptureCell;
+use fps_flow::program::Op;
 use fps_flow::template::Filler;
 use fps_interp::{session_rng, Session, SessionCtx, Side};
 use fps_sched::{RateHandle, Schedule};
@@ -25,9 +26,10 @@ use crate::config::{ClientConfig, FlowRef, Role, ServerConfig, WorkerConfig};
 use crate::control::Control;
 use crate::extension::close_reason;
 use crate::instance::{self, Peer};
-use crate::metrics::SessionMetrics;
+use crate::metrics::{SessionMetrics, TlsMetrics};
 use crate::opener::{global_session_id, Accepted, ClientOpener, Endpoints, TapOpener};
 use crate::runtime::WorkerExit;
+use crate::tls::{SessionTls, TlsEvent};
 use crate::{RuntimeError, SessionKey, TlsProfiles, Transport};
 
 /// What a worker thread receives from the runtime.
@@ -110,6 +112,10 @@ pub(crate) struct Worker {
     abort: watch::Sender<bool>,
     pub(crate) capture: CaptureCell,
     tls: Option<Arc<TlsProfiles>>,
+    /// True when a flow of the scenario has a `tls_upgrade` and the run has
+    /// profiles, so its sessions get an upgrader that reports to the metrics.
+    uses_tls: bool,
+    tls_metrics: TlsMetrics,
 }
 
 impl Worker {
@@ -163,6 +169,14 @@ impl Worker {
             abort: watch::channel(false).0,
             capture: start.capture.clone(),
             tls: start.tls.clone(),
+            uses_tls: start.tls.is_some()
+                && flow.scenario.flows.iter().any(|f| {
+                    [Some(&f.client), f.server.as_ref()]
+                        .into_iter()
+                        .flatten()
+                        .any(|p| p.ops.iter().any(|op| matches!(op, Op::UpgradeTls(_))))
+                }),
+            tls_metrics: TlsMetrics::new(flow.port.as_deref()),
         })
     }
 
@@ -170,6 +184,22 @@ impl Worker {
     /// runs a scenario instance.
     fn is_instance(&self) -> bool {
         !self.flow_metrics.is_empty()
+    }
+
+    /// Returns the upgrader of a session or instance, which collects its
+    /// handshakes for [`Worker::record_tls`], or `None` when no flow of the
+    /// scenario upgrades or the run has no profiles.
+    pub(crate) fn session_tls(&self) -> Option<SessionTls> {
+        let profiles = self.tls.as_ref().filter(|_| self.uses_tls)?;
+        Some(SessionTls::new(Arc::clone(profiles)))
+    }
+
+    /// Records the handshakes of a session as the `tls.*` metrics.
+    pub(crate) fn record_tls(&self, events: Vec<TlsEvent>) {
+        if !events.is_empty() {
+            self.tls_metrics
+                .record(&mut self.shard.borrow_mut(), events);
+        }
     }
 
     /// Returns the series of flow `index`.
@@ -249,12 +279,16 @@ impl Worker {
                     functions,
                     limits: self.flow.limits,
                 });
-                if let Some(profiles) = &self.tls {
-                    session.set_tls_upgrader(&**profiles);
+                let tls = self.session_tls();
+                if let Some(tls) = &tls {
+                    session.set_tls_upgrader(tls);
                 }
                 let outcome = session.run_program(&mut opener, program, stop).await;
                 let stats = session.stats();
                 drop(session);
+                if let Some(tls) = &tls {
+                    self.record_tls(tls.take_events());
+                }
                 if let Some(w) = wrapped {
                     // The outcome is recorded below, so a failing on-close
                     // hook cannot change it.

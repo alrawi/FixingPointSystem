@@ -58,4 +58,4 @@ pub use extension::{
 pub use fps_wasm::Transport;
 pub use opener::{global_session_id, ClientOpener};
 pub use runtime::{RunReport, Runtime, RuntimeHandle, WorkerExit};
-pub use tls::{TlsProfiles, DEFAULT_SERVER_NAME};
+pub use tls::{ConnectorFactory, TlsProfiles, DEFAULT_SERVER_NAME};
