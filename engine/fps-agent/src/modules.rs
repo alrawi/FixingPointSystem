@@ -178,27 +178,35 @@ pub fn tree_digest(module: &str, dir: &Path) -> Result<String, ModuleError> {
     Ok(read_tree(module, dir, false)?.digest)
 }
 
-/// What one pass over a module tree gives: the tree digest and, when the pass
-/// kept it, the bytes of `extension.wasm` that went into that digest.
-struct Tree {
-    digest: String,
+/// The file of a module tree that holds its manifest.
+const MANIFEST_FILE: &str = "manifest.yaml";
+
+/// The bytes of the two files of a module tree that the agent uses after the
+/// digest, as the digest pass read them.
+#[derive(Default)]
+struct Kept {
+    /// `manifest.yaml` in the root of the tree.
+    manifest: Option<Vec<u8>>,
+    /// `extension.wasm` in the root of the tree.
     extension: Option<Vec<u8>>,
 }
 
+/// What one pass over a module tree gives: the tree digest and, when the pass
+/// kept them, the bytes of `manifest.yaml` and `extension.wasm` that went into
+/// that digest.
+struct Tree {
+    digest: String,
+    kept: Kept,
+}
+
 /// Reads every file of the module tree `dir` once and digests it. With
-/// `keep_extension`, the pass also returns the bytes of the file
-/// `extension.wasm` in the root of the tree, so the caller compiles the bytes
-/// that the digest covers and reads the file no second time.
-fn read_tree(module: &str, dir: &Path, keep_extension: bool) -> Result<Tree, ModuleError> {
+/// `keep`, the pass also returns the bytes of the files `manifest.yaml` and
+/// `extension.wasm` in the root of the tree, so the caller parses and compiles
+/// the bytes that the digest covers and reads neither file a second time.
+fn read_tree(module: &str, dir: &Path, keep: bool) -> Result<Tree, ModuleError> {
     let mut lines: Vec<(String, String)> = Vec::new();
-    let mut extension = None;
-    walk(
-        module,
-        dir,
-        dir,
-        &mut lines,
-        keep_extension.then_some(&mut extension),
-    )?;
+    let mut kept = Kept::default();
+    walk(module, dir, dir, &mut lines, keep.then_some(&mut kept))?;
     lines.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
     let mut all = String::new();
     for (_, line) in &lines {
@@ -206,7 +214,7 @@ fn read_tree(module: &str, dir: &Path, keep_extension: bool) -> Result<Tree, Mod
     }
     Ok(Tree {
         digest: sha256_digest(all.as_bytes()),
-        extension,
+        kept,
     })
 }
 
@@ -215,7 +223,7 @@ fn walk(
     root: &Path,
     dir: &Path,
     out: &mut Vec<(String, String)>,
-    mut extension: Option<&mut Option<Vec<u8>>>,
+    mut kept: Option<&mut Kept>,
 ) -> Result<(), ModuleError> {
     let read = |path: &Path, source| ModuleError::Read {
         module: module.to_owned(),
@@ -234,7 +242,7 @@ fn walk(
             });
         }
         if kind.is_dir() {
-            walk(module, root, &path, out, extension.as_deref_mut())?;
+            walk(module, root, &path, out, kept.as_deref_mut())?;
         } else if kind.is_file() {
             let rel = path.strip_prefix(root).unwrap_or(&path);
             let parts: Option<Vec<&str>> =
@@ -249,9 +257,11 @@ fn walk(
             let rel = parts.join("/");
             let data = fs::read(&path).map_err(|e| read(&path, e))?;
             let line = format!("{}  {rel}\n", hex(&Sha256::digest(&data)));
-            if rel == fps_runtime::EXTENSION_FILE {
-                if let Some(slot) = extension.as_deref_mut() {
-                    *slot = Some(data);
+            if let Some(kept) = kept.as_deref_mut() {
+                if rel == fps_runtime::EXTENSION_FILE {
+                    kept.extension = Some(data);
+                } else if rel == MANIFEST_FILE {
+                    kept.manifest = Some(data);
                 }
             }
             out.push((rel, line));
@@ -292,9 +302,11 @@ pub struct LoadedModules {
 /// catalog differs from the manifest refuses the plan. A plan whose modules
 /// ship no extension never starts a WebAssembly engine.
 ///
-/// The agent reads `extension.wasm` once, in the pass that digests the module
-/// tree, and compiles those bytes. A writer that replaces the file after the
-/// digest check changes nothing that runs, because the file is not read again.
+/// The agent reads `manifest.yaml` and `extension.wasm` once, in the pass that
+/// digests the module tree, and parses and compiles those bytes. A writer that
+/// replaces either file after the digest check changes nothing that runs,
+/// because the files are not read again (AGT-16 for the extension, AGT-17 for
+/// the manifest).
 pub fn load(plan: &Plan, dir: &Path, policy: &ModulePolicy) -> Result<LoadedModules, ModuleError> {
     load_with(plan, dir, policy, &mut |_| {})
 }
@@ -394,12 +406,21 @@ fn no_native_functions(name: &str) -> String {
     format!("module {name} has no native functions in this agent, so its template calls fail")
 }
 
-/// Checks the manifest and the tree digest of module `m` and returns the
-/// manifest with the bytes of its `extension.wasm`, if it has one.
+/// Reads the module tree of `m` once, parses the manifest from the bytes that
+/// the pass digested, checks its name and version against the plan and the
+/// digest against the plan, and returns the manifest with the bytes of the
+/// `extension.wasm` of the same pass, if the module has one.
+///
+/// The manifest is part of the tree, so the digest covers it. Parsing the
+/// digested bytes means that a manifest swapped after the digest pass is never
+/// parsed, and that the catalog the agent compiles scenarios against is the
+/// one that the plan digest, and the signature over it, name.
 fn load_module(m: &ModuleRef, dir: &Path) -> Result<(Manifest, Option<Vec<u8>>), ModuleError> {
     let root = dir.join(&m.name);
-    let manifest =
-        Manifest::load(&root.join("manifest.yaml")).map_err(|source| ModuleError::Manifest {
+    let Tree { digest, kept } = read_tree(&m.name, &root, true)?;
+    let path = root.join(MANIFEST_FILE);
+    let (manifest, version) =
+        parse_manifest(&path, kept.manifest).map_err(|source| ModuleError::Manifest {
             module: m.name.clone(),
             source,
         })?;
@@ -411,7 +432,6 @@ fn load_module(m: &ModuleRef, dir: &Path) -> Result<(Manifest, Option<Vec<u8>>),
             want: m.name.clone(),
         });
     }
-    let version = manifest_version(&root.join("manifest.yaml")).unwrap_or_default();
     if version != m.version {
         return Err(ModuleError::Mismatch {
             module: m.name.clone(),
@@ -420,7 +440,6 @@ fn load_module(m: &ModuleRef, dir: &Path) -> Result<(Manifest, Option<Vec<u8>>),
             want: m.version.clone(),
         });
     }
-    let Tree { digest, extension } = read_tree(&m.name, &root, true)?;
     if digest != m.digest {
         return Err(ModuleError::Digest {
             module: m.name.clone(),
@@ -428,7 +447,37 @@ fn load_module(m: &ModuleRef, dir: &Path) -> Result<(Manifest, Option<Vec<u8>>),
             want: m.digest.clone(),
         });
     }
-    Ok((manifest, extension))
+    Ok((manifest, kept.extension))
+}
+
+/// Parses the manifest from `bytes`, the content of the file `path` as the
+/// digest pass read it, and returns it with its top level `version`. A tree
+/// without the file gives the error of a failed read, as `Manifest::load`
+/// does.
+fn parse_manifest(
+    path: &Path,
+    bytes: Option<Vec<u8>>,
+) -> Result<(Manifest, String), fps_flow::ManifestError> {
+    use fps_flow::ManifestError;
+    let read = |source| ManifestError::Read {
+        path: path.to_path_buf(),
+        source,
+    };
+    let bytes = bytes.ok_or_else(|| read(std::io::ErrorKind::NotFound.into()))?;
+    let text = String::from_utf8(bytes).map_err(|e| {
+        read(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            e.utf8_error(),
+        ))
+    })?;
+    let manifest = Manifest::parse(&text).map_err(|e| match e {
+        ManifestError::Invalid { path: None, reason } => ManifestError::Invalid {
+            path: Some(path.to_path_buf()),
+            reason,
+        },
+        other => other,
+    })?;
+    Ok((manifest, version_of(&text).unwrap_or_default()))
 }
 
 /// Lists the modules installed under `dir`, one per subdirectory that holds a
@@ -445,15 +494,17 @@ pub fn installed(dir: &Path) -> Vec<ModuleRef> {
         if !entry.file_type().is_ok_and(|t| t.is_dir()) {
             continue;
         }
-        let path = root.join("manifest.yaml");
-        let Ok(manifest) = Manifest::load(&path) else {
+        // One pass gives the digest and the manifest bytes that it covers.
+        let label = entry.file_name().to_string_lossy().into_owned();
+        let Ok(Tree { digest, kept }) = read_tree(&label, &root, true) else {
             continue;
         };
-        let Ok(digest) = tree_digest(&manifest.name, &root) else {
+        let Ok((manifest, version)) = parse_manifest(&root.join(MANIFEST_FILE), kept.manifest)
+        else {
             continue;
         };
         out.push(ModuleRef {
-            version: manifest_version(&path).unwrap_or_default(),
+            version,
             name: manifest.name,
             digest,
             settings: serde_json::Map::new(),
@@ -464,10 +515,9 @@ pub fn installed(dir: &Path) -> Vec<ModuleRef> {
     out
 }
 
-/// Reads the top level `version` of a manifest, which the `fps-flow`
+/// Returns the top level `version` of manifest text, which the `fps-flow`
 /// manifest reader leaves out.
-fn manifest_version(path: &Path) -> Option<String> {
-    let text = fs::read_to_string(path).ok()?;
+fn version_of(text: &str) -> Option<String> {
     text.lines().find_map(|l| {
         let v = l.strip_prefix("version:")?.trim();
         Some(v.trim_matches(|c| c == '"' || c == '\'').to_owned())
@@ -658,7 +708,53 @@ static REGISTRY: &[Registration] = &[
             Ok(Box::new(fps_module_http2::Http2::default()))
         },
     },
+    // Ssh holds the keys and the packet counters of one session side, so every
+    // session side gets a fresh value, see [`SshSide`].
+    Registration {
+        name: fps_module_ssh::MODULE_NAME,
+        catalog: || catalog_of!(fps_module_ssh),
+        build: |ctx| {
+            if ctx.given.is_some() {
+                return Err(BuildError::Settings(
+                    "the plan gives settings, but its native functions take none".to_owned(),
+                ));
+            }
+            Ok(Box::new(SshSide::default()))
+        },
+    },
 ];
+
+/// The ssh functions of one session side. `fps_module_ssh::Ssh` is not
+/// `Clone`, because a copy would share the keys and the packet counters of one
+/// SSH session between two sessions. The registry clones its value for every
+/// session side (see [`NativeFunctions::factory`]), so a clone of this wrapper
+/// starts a new session with a fresh `Ssh` and carries nothing of the original.
+#[derive(Default)]
+struct SshSide(fps_module_ssh::Ssh);
+
+impl Clone for SshSide {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for SshSide {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The keys of the session stay out of debug output.
+        f.debug_struct("SshSide").finish_non_exhaustive()
+    }
+}
+
+impl TemplateFn for SshSide {
+    fn render(
+        &mut self,
+        call: &FnCall<'_>,
+        rng: &mut dyn RngCore,
+        out: &mut Vec<u8>,
+    ) -> Result<(), FnError> {
+        self.0.render(call, rng, out)
+    }
+}
 
 fn build_dns(ctx: &BuildCtx<'_>) -> Result<Box<dyn NativeModule>, BuildError> {
     match dns_functions(ctx.dir, ctx.given) {
@@ -939,17 +1035,16 @@ mod tests {
         );
     }
 
-    /// The registered modules whose manifest exists under `root`. The manifest
-    /// of http2 belongs to MOD-06, which may merge after AGT-16, so the tests
-    /// skip it while the file is missing. Remove the exception when MOD-06
-    /// has merged, and the helper then returns every registered module.
+    /// The registered modules, each of which must have a manifest under
+    /// `root`.
     fn registered_with_manifest(root: &Path) -> Vec<&'static str> {
         NativeFunctions::registered()
             .into_iter()
-            .filter(|m| {
-                let there = root.join(m).join("manifest.yaml").exists();
-                assert!(there || *m == "http2", "module {m} has no manifest");
-                there
+            .inspect(|m| {
+                assert!(
+                    root.join(m).join("manifest.yaml").exists(),
+                    "module {m} has no manifest"
+                );
             })
             .collect()
     }
@@ -980,8 +1075,54 @@ mod tests {
     fn the_registry_covers_every_first_party_module() {
         assert_eq!(
             NativeFunctions::registered(),
-            ["http1", "dns", "content", "smtp", "imap", "pop3", "ftp", "http2"]
+            ["http1", "dns", "content", "smtp", "imap", "pop3", "ftp", "http2", "ssh"]
         );
+    }
+
+    /// AGT-17. The factory gives every session side its own ssh value. A call
+    /// on one value moves its state, and a value that the factory makes later
+    /// starts from nothing, as the key exchange of a new session needs.
+    #[test]
+    fn every_session_side_gets_its_own_ssh_value() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
+        let mut set = ModuleSet::default();
+        set.insert(Manifest::load(&root.join("ssh/manifest.yaml")).unwrap());
+        let f = NativeFunctions::for_modules(&set, &[], &root, &[], &mut Vec::new()).unwrap();
+        assert_eq!(f.modules(), ["ssh"]);
+        let factory = f.factory();
+        let (mut a, mut b) = (factory(), factory());
+        let mut rng = rand_pcg::Pcg64Mcg::new(7);
+        let call = |function| FnCall {
+            module: "ssh",
+            function,
+            args: fps_flow::CallArgs {
+                positional: &[],
+                named: &[],
+            },
+        };
+        // `ecdh_init` makes side `a` a client in the middle of a key exchange.
+        // Its `newkeys` then fails because the exchange is unfinished, while a
+        // side that has done nothing fails because it has no role yet. The two
+        // errors differ, so side `b` shares nothing with side `a`.
+        a.render(&call("ecdh_init"), &mut rng, &mut Vec::new())
+            .expect("ecdh_init");
+        let e = a
+            .render(&call("newkeys"), &mut rng, &mut Vec::new())
+            .expect_err("the exchange is unfinished")
+            .to_string();
+        assert!(e.contains("before the key exchange finished"), "{e}");
+        let e = b
+            .render(&call("newkeys"), &mut rng, &mut Vec::new())
+            .expect_err("no exchange started")
+            .to_string();
+        assert!(e.contains("wrong order"), "{e}");
+        // A value that the factory makes after `a` ran starts fresh too.
+        let mut c = factory();
+        let e = c
+            .render(&call("newkeys"), &mut rng, &mut Vec::new())
+            .expect_err("no exchange started")
+            .to_string();
+        assert!(e.contains("wrong order"), "{e}");
     }
 
     /// Every function of every first party manifest reaches the crate of its
