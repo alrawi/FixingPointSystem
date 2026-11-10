@@ -206,3 +206,29 @@ The controller returns `realism: []` today (`Report.API` fills only the verdict)
 ### Tests
 
 `ui/src/pages/Reports.test.tsx` runs the whole UI against the mock and states every number as a literal. It covers a passing run (verdict, criteria, realism, totals, facts), a failing run (reason, failed criterion, failed realism result, totals), a criterion without a value, a run in progress, an aborted run, a missing run, a server error, a rejected token, the links from the run list and the run view, and the comparison: the totals and the changes, the swapped order, runs of different configurations whose criteria only one run has, the two selects with the query string, a link that preselects run A, a missing run, and a run in progress. Unit tests in `ui/src/reports/compare.test.ts` cover the outcomes, the pairing, the change words, and the totals. The development sandbox has no browser, so no Playwright test covers the report views yet.
+
+## Agents and ports
+
+UI-06 added the agents view. It uses `listAgents`, `reserveAgent`, and `releaseAgent` of REST OpenAPI 0.8.0 and no other endpoint and no field outside the `Agent` schema, so the generated types in `ui/src/api/schema.d.ts` stay as they were.
+
+### View
+
+| Path | View | Behavior |
+|---|---|---|
+| `/agents` | `ui/src/pages/AgentsPage.tsx` | A sentence that counts the agents by state, a table of the agents, and a table of their ports |
+
+The agent table shows the identity, the state (`online`, `reserved`, `busy`, or `offline`), the backend, the cores, the version, the peer address, the labels, and the reservation action. An agent that is `online` has a Reserve button and an agent that is `reserved` has a Release button, and both name the agent (`Reserve agent-local`) so a screen reader user can tell them apart. A `busy` agent shows `In use by a run` and an `offline` agent shows `Not connected`, with no button, because a run holds the first and no control session exists for the second. A field that the agent did not report reads `not reported`. The port table has one row per port with the agent, the port name, the driver, and the speed, which the view writes as Mbit/s below 1000 and as Gbit/s from there. The API has no field that says which test port an agent port serves, so the view shows the ports that each agent offers and does not claim an assignment. The main navigation gained the entry Agents, and the view refreshes the list every five poll intervals (five seconds by default).
+
+### Reservation conflicts
+
+A reserve or release call runs against the state that the controller holds, which may have changed since the list loaded. The view sends the call whatever the list shows and reports the answer. A success puts the returned agent in the list and says `Agent agent-local reserved. It is now reserved.` in a status region. A problem shows `Agent agent-local was not reserved.` and the `detail` of the problem in an alert, and a 409 or a 404 also reads the list again at once, so the stale button changes to the one that fits the real state. The next action clears the message. A 401 or 403 signs the user out as in the other views.
+
+The controller (`controller/internal/agents/rest.go`) reserves for the operator, so it reserves an agent again without error and it never refuses a reservation because another user holds the agent. It answers 409 when the agent is offline (`reserve agent a: agent offline`) or holds a plan (`reserve agent a: plan loaded: agent busy`), and 404 for an unknown agent. A release of an agent that is not reserved succeeds. The OpenAPI document names none of these statuses, so the view treats every problem alike and re-reads the list for 409 and 404.
+
+### Mock server
+
+The mock now keeps the agent states per server and follows the controller. `POST /agents/{id}:reserve` moves an `online` agent to `reserved`, leaves a `reserved` agent as it is, and answers 409 for an `offline` or `busy` agent with the detail of the controller. `POST /agents/{id}:release` moves a `reserved` agent to `online`, leaves any other agent as it is, and answers 200. An unknown agent answers 404. `GET /capabilities` shows the current agent states, and `RunningMockServer.agents` gives tests the live list, so a test can take an agent offline or make it busy after the view loaded it. `mock/agents.test.ts` validates every response against the OpenAPI document with Ajv.
+
+### Tests
+
+`ui/src/pages/Agents.test.tsx` runs the whole UI against the mock with four agents in four states and states every value as a literal. It covers the table and the port table, the summary sentence, the empty and error states, the navigation entry, reserve then release, release of a reserved agent, a second reservation by another caller, two reservation conflicts (the agent went offline, the agent started a run) where the alert shows the controller's detail and the list refreshes to the new state, a problem that names a holder (injected as a fault, because the controller has no such case), a 404 that drops the agent from the list, the clearing of an old message, the absence of buttons for busy and offline agents, and a rejected token. Axe-core scans the document in the listing, the empty, the success, and the conflict states, with the contrast rule off because jsdom has no layout. Unit tests in `ui/src/pages/agentFormat.test.ts` cover the speed and label formats. The sandbox has no browser, so no Playwright test covers the view.

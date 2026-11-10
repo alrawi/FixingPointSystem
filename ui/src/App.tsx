@@ -7,6 +7,7 @@ import { ApiError } from "./api/client";
 import { SessionProvider, useSession } from "./auth/session";
 import { SignInPage } from "./auth/SignInPage";
 import { AppLayout } from "./layout/AppLayout";
+import { AgentsPage } from "./pages/AgentsPage";
 import { CapabilitiesPage } from "./pages/CapabilitiesPage";
 import { ComparePage } from "./pages/ComparePage";
 import { ConfigsPage } from "./pages/ConfigsPage";
@@ -70,6 +71,7 @@ function Routed() {
     <Routes>
       <Route element={<AppLayout />}>
         <Route index element={<CapabilitiesPage />} />
+        <Route path="agents" element={<AgentsPage />} />
         <Route path="modules" element={<ModulesPage />} />
         <Route path="modules/:name/:version" element={<ModuleDetailPage />} />
         <Route path="configs" element={<ConfigsPage />} />

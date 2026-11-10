@@ -12,7 +12,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { parse } from "yaml";
-import type { Finding, Problem, ValidationReport } from "../src/api/client";
+import type { Agent, Finding, Problem, ValidationReport } from "../src/api/client";
 import { CONTRACTS_DIR, loadMockData, type MockData, type StoredConfig } from "./fixtures";
 import { MockRuns, unknownAgents, type MockRunOptions } from "./runs";
 
@@ -51,6 +51,11 @@ export interface RunningMockServer {
   /** The API base URL, ending in /v1. */
   baseUrl: string;
   close: () => Promise<void>;
+  /**
+   * The live agents of the server. A test changes the `state` of one to simulate an agent that
+   * goes offline or starts a run, as another user or the controller would.
+   */
+  agents: Agent[];
 }
 
 /** The body of a request and its content type. */
@@ -189,7 +194,7 @@ const RUN_STATES = [
   "aborted",
 ];
 
-function routes(data: MockData, runs: MockRuns): [string, RegExp, Handler][] {
+function routes(data: MockData, runs: MockRuns, agents: Agent[]): [string, RegExp, Handler][] {
   const configs = [...data.configs];
   let created = 0;
   return [
@@ -269,7 +274,11 @@ function routes(data: MockData, runs: MockRuns): [string, RegExp, Handler][] {
         return { status: 200, body: report };
       },
     ],
-    ["GET", /^\/v1\/capabilities$/, () => ({ status: 200, body: data.capabilities })],
+    [
+      "GET",
+      /^\/v1\/capabilities$/,
+      () => ({ status: 200, body: { ...data.capabilities, agents } }),
+    ],
     [
       "GET",
       /^\/v1\/modules$/,
@@ -295,7 +304,49 @@ function routes(data: MockData, runs: MockRuns): [string, RegExp, Handler][] {
           : { status: 404, body: problem(404, "Not Found", "No such module is installed.") };
       },
     ],
-    ["GET", /^\/v1\/agents$/, () => ({ status: 200, body: data.agents })],
+    ["GET", /^\/v1\/agents$/, () => ({ status: 200, body: agents })],
+    [
+      "POST",
+      /^\/v1\/agents\/([^/:]+):reserve$/,
+      (match) => {
+        const id = decodeURIComponent(match[1] ?? "");
+        const agent = agents.find((candidate) => candidate.id === id);
+        if (!agent) {
+          return {
+            status: 404,
+            body: problem(404, "Not Found", `reserve agent ${id}: unknown agent`),
+          };
+        }
+        // The controller reserves for the operator. It reserves an agent again without error,
+        // and it refuses an agent that has no control session or that holds a plan.
+        if (agent.state === "offline" || agent.state === "busy") {
+          const why = agent.state === "offline" ? "" : "plan loaded: ";
+          return {
+            status: 409,
+            body: problem(409, "Conflict", `reserve agent ${id}: ${why}agent ${agent.state}`),
+          };
+        }
+        agent.state = "reserved";
+        return { status: 200, body: agent };
+      },
+    ],
+    [
+      "POST",
+      /^\/v1\/agents\/([^/:]+):release$/,
+      (match) => {
+        const id = decodeURIComponent(match[1] ?? "");
+        const agent = agents.find((candidate) => candidate.id === id);
+        if (!agent) {
+          return {
+            status: 404,
+            body: problem(404, "Not Found", `release agent ${id}: unknown agent`),
+          };
+        }
+        // Releasing an agent that is not reserved succeeds and changes nothing.
+        if (agent.state === "reserved") agent.state = "online";
+        return { status: 200, body: agent };
+      },
+    ],
     [
       "GET",
       /^\/v1\/runs$/,
@@ -471,7 +522,9 @@ export function createMockHandler(options: MockServerOptions = {}) {
   const tokens = new Set(options.tokens ?? [MOCK_TOKEN]);
   const data = options.data ?? loadMockData();
   const runs = new MockRuns(options.runs);
-  const table = routes(data, runs);
+  // Reservations change agent states, so the routes work on copies and the data stays as loaded.
+  const agents = data.agents.map((agent) => ({ ...agent }));
+  const table = routes(data, runs, agents);
   let connections = 0;
   const faults = options.faults ?? [];
   const handle = (req: IncomingMessage, res: ServerResponse, input: RequestInput): void => {
@@ -521,7 +574,7 @@ export function createMockHandler(options: MockServerOptions = {}) {
       send(res, 404, problem(404, "Not Found", `The mock does not serve ${url.pathname}.`));
     }
   };
-  return (req: IncomingMessage, res: ServerResponse): void => {
+  const listener = (req: IncomingMessage, res: ServerResponse): void => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => {
@@ -531,6 +584,7 @@ export function createMockHandler(options: MockServerOptions = {}) {
       });
     });
   };
+  return Object.assign(listener, { agents });
 }
 
 /** Starts the mock server. Port 0 picks a free port. */
@@ -539,7 +593,8 @@ export async function startMockServer(
   host = "127.0.0.1",
   options: MockServerOptions = {},
 ): Promise<RunningMockServer> {
-  const server = createServer(createMockHandler(options));
+  const handler = createMockHandler(options);
+  const server = createServer(handler);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {
@@ -550,6 +605,7 @@ export async function startMockServer(
   return {
     server,
     baseUrl: `http://${host}:${address.port}/v1`,
+    agents: handler.agents,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => {

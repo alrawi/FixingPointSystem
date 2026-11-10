@@ -7,6 +7,7 @@ import { useSession } from "../auth/session";
 /** Navigation entries. Later UI packages add their views here. */
 const NAV_ITEMS = [
   { to: "/", label: "Capabilities", end: true },
+  { to: "/agents", label: "Agents", end: false },
   { to: "/modules", label: "Modules", end: false },
   { to: "/configs", label: "Configurations", end: false },
   { to: "/runs", label: "Runs", end: false },
