@@ -44,10 +44,21 @@
 #                        agent runs against https:// and redials the absent controller.
 #   FPS_TEST_HOST_GRPC_PORT / FPS_TEST_HOST_ENROLL_PORT / FPS_TEST_HOST_API_PORT
 #                        host loopback ports of that controller (18444, 18445, 18446)
+#   FPS_TEST_REPEAT      boot the image this many times in a row, each boot a full run of
+#                        the script, and stop at the first boot that fails (IMG-07,
+#                        default 1). The result is PASS only when every boot passed.
+#                        With FPS_TEST_ARTIFACT_DIR, boot N writes to boot-N/.
+#   FPS_TEST_NEGATIVE=agent-unreachable   after the boots, prove that the test fails when the
+#                        agent cannot reach the controller (IMG-07). It boots the all-in-one
+#                        role once more with the agent pointed at the loopback, where no
+#                        controller listens, and passes only when that boot fails at the
+#                        agent checks (and at the HTTP and DNS run with --run) while the
+#                        controller API and ssh work. It needs --role all-in-one.
 set -euo pipefail
 
 self="${BASH_SOURCE[0]}"
 root="$(cd "$(dirname "$self")/.." && pwd)"
+orig_args=("$@")
 role=all-in-one
 run_short=0
 image_arg=""
@@ -123,6 +134,92 @@ if [[ ! -f "$image" ]]; then
 	exit 2
 fi
 image="$(readlink -f "$image")"
+
+# --- IMG-07: boots in a row and the negative boot. Each boot is a full run of this script. ---
+repeat="${FPS_TEST_REPEAT:-1}"
+negative="${FPS_TEST_NEGATIVE:-}"
+if ! [[ "$repeat" =~ ^[1-9][0-9]*$ ]]; then
+	echo "FAIL FPS_TEST_REPEAT must be a positive number, not '$repeat'" >&2
+	exit 2
+fi
+case "$negative" in
+"") ;;
+agent-unreachable)
+	if [[ "$role" != all-in-one ]]; then
+		echo "FAIL FPS_TEST_NEGATIVE=agent-unreachable needs --role all-in-one" >&2
+		exit 2
+	fi
+	;;
+*)
+	echo "FAIL unknown FPS_TEST_NEGATIVE: $negative (use agent-unreachable)" >&2
+	exit 2
+	;;
+esac
+if ((repeat > 1)) || [[ -n "$negative" ]]; then
+	passed=0
+	overall=0
+	for ((boot = 1; boot <= repeat; boot++)); do
+		echo "=== boot $boot of $repeat"
+		boot_dir=""
+		if [[ -n "$artifact_dir" ]]; then boot_dir="$artifact_dir/boot-$boot"; fi
+		if FPS_TEST_REPEAT=1 FPS_TEST_NEGATIVE="" FPS_TEST_ARTIFACT_DIR="$boot_dir" "$self" "${orig_args[@]}"; then
+			passed=$((passed + 1))
+		else
+			echo "FAIL boot $boot of $repeat did not pass"
+			overall=1
+			break
+		fi
+	done
+	if ((overall == 0)); then
+		echo "PASS $passed of $repeat boots passed in a row"
+	else
+		echo "FAIL $passed of $repeat boots passed before the first failure"
+	fi
+	if [[ -n "$negative" && "$overall" == 0 ]]; then
+		echo "=== negative boot: the agent cannot reach the controller"
+		neg_log="$(mktemp "${TMPDIR:-/tmp}/fps-boot-negative.XXXXXX")"
+		neg_dir=""
+		if [[ -n "$artifact_dir" ]]; then neg_dir="$artifact_dir/negative"; fi
+		neg_status=0
+		FPS_TEST_REPEAT=1 FPS_TEST_NEGATIVE="" FPS_TEST_AGENT_UNREACHABLE=1 FPS_TEST_ARTIFACT_DIR="$neg_dir" \
+			"$self" "${orig_args[@]}" >"$neg_log" 2>&1 || neg_status=$?
+		# The lines of the negative boot are shown with a prefix, so that its expected FAIL lines
+		# stay out of the counts of the CI summary.
+		sed -E 's/^(PASS|FAIL) /negative boot: \1 /' "$neg_log"
+		neg_ok=yes
+		neg_why=""
+		if [[ "$neg_status" != 1 ]]; then
+			neg_ok=no
+			neg_why="the boot ended with status $neg_status, and a failed test ends with 1"
+		fi
+		for must in "FAIL the local agent registered with the controller over mutual TLS" \
+			"PASS GET /v1/capabilities on the management interface answers 200" \
+			"PASS ssh as fps-admin with the seed key works"; do
+			if ! grep -q "^$must" "$neg_log"; then
+				neg_ok=no
+				neg_why="${neg_why:+$neg_why; }no line '$must'"
+			fi
+		done
+		if [[ "$run_short" == 1 ]] && ! grep -q '^FAIL run: the agent local is online' "$neg_log"; then
+			neg_ok=no
+			neg_why="${neg_why:+$neg_why; }no line 'FAIL run: the agent local is online'"
+		fi
+		rm -f "$neg_log"
+		if [[ "$neg_ok" == yes ]]; then
+			echo "PASS negative boot: the test fails when the agent cannot reach the controller"
+		else
+			echo "FAIL negative boot: the test must fail at the agent checks when the agent cannot reach the controller ($neg_why)"
+			overall=1
+		fi
+	fi
+	echo
+	if ((overall == 0)); then
+		echo "RESULT: PASS ($passed of $repeat boots in a row${negative:+, and the negative boot failed as it must})"
+	else
+		echo "RESULT: FAIL (see the boots above)"
+	fi
+	exit "$overall"
+fi
 
 if [[ "$role" == all ]]; then
 	overall=0
@@ -212,6 +309,24 @@ write_files:
     content: $token
 EOF
 case "$role" in
+all-in-one)
+	# The all-in-one role gets no role file at all, which proves that it is the default.
+	# The negative boot of IMG-07 points the agent at the loopback, where the controller
+	# does not listen (it listens on the management address only), so the agent cannot
+	# reach it, and nothing else of the VM changes.
+	if [[ "${FPS_TEST_AGENT_UNREACHABLE:-0}" == 1 ]]; then
+		cat >>"$work/user-data" <<EOF
+  - path: /etc/fps/role.env
+    permissions: "0644"
+    content: |
+      FPS_ROLE=all-in-one
+      FPS_CONTROLLER_URI=https://127.0.0.1:8444
+      FPS_ENROLL_ADDRESS=127.0.0.1:8445
+      FPS_CA_SHA256=$(openssl rand -hex 32)
+EOF
+		echo "NOTE the agent dials the loopback, where no controller listens (negative boot)"
+	fi
+	;;
 controller)
 	cat >>"$work/user-data" <<EOF
   - path: /etc/fps/role.env

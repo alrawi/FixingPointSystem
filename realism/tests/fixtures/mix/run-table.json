@@ -1,0 +1,6 @@
+{
+  "scenarios": [
+    {"scenario": "dns/lookup", "sessions": 2, "bytes": 164},
+    {"scenario": "http1/web_get", "sessions": 8, "bytes": 448}
+  ]
+}

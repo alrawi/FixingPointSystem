@@ -1,0 +1,8 @@
+{
+  "run": {"id": "run-fixture", "state": "completed"},
+  "scenarios": [
+    {"application": "dns", "scenario": "lookup", "sessions_attempted": 2, "sessions_succeeded": 2, "sessions_failed": 0, "bytes_tx": 60, "bytes_rx": 104},
+    {"application": "http1", "scenario": "web_get", "sessions_attempted": 8, "sessions_succeeded": 8, "sessions_failed": 0, "bytes_tx": 216, "bytes_rx": 232}
+  ],
+  "realism": []
+}

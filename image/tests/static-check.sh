@@ -54,7 +54,7 @@ else
 fi
 
 # 2c. The offline tests of the role selector and the tuning profiles.
-for t in role-test tune-test enroll-token-test convert-test; do
+for t in role-test tune-test enroll-token-test convert-test session-gate-test boot-loop-test; do
 	if out="$("$img/tests/$t.sh" 2>&1)"; then
 		pass "$t.sh: $(grep -c '^PASS' <<<"$out") checks pass"
 	else

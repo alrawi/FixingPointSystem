@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of smb2.pcapng, which capture.sh records in the QA-01 harness.
+# realism/schema/labels.schema.json defines the format.
+#
+# Every session runs on TCP port 445. nDPI must classify at least 99% of them as
+# SMB from payload alone. The 4 octet transport header of direct TCP, which
+# starts every message, is what nDPI sees on port 445, see the README.
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: smb2
+    match: {transport: tcp, server_port: 445}
+applications:
+  smb2: {ndpi: [SMBv23, SMB]}

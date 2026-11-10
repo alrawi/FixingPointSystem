@@ -988,15 +988,52 @@
       "description": "The achieved mix, from run metrics and from nDPI, against the configured weights, per basis and application. Each source must lie within tolerance_points of the configured share. The row unmatched holds the sessions or bytes that nDPI named as no application of the mix and has a configured share of 0.",
       "type": "object",
       "required": [
-        "check", "passed", "metrics", "classifier", "classifier_version", "tolerance_points",
-        "basis_source", "test_config", "run_report", "mapping", "unlabelled_sessions", "bases",
+        "check", "passed", "metrics", "metrics_basis", "classifier", "classifier_version",
+        "tolerance_points", "basis_source", "test_config", "run_report", "mapping", "unlabelled_sessions", "bases",
         "failures_total", "failures"
       ],
       "additionalProperties": false,
       "properties": {
         "check": {"const": "mix_accuracy"},
         "passed": {"type": "boolean"},
-        "metrics": {"type": "array", "maxItems": 0},
+        "metrics": {
+          "description": "The shares that the classifier found in the capture, with source classifier, for the basis in metrics_basis. Empty when metrics_basis is null or no application has a share.",
+          "type": "array",
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/metric"},
+              {
+                "required": ["name", "labels"],
+                "properties": {
+                  "name": {"enum": ["mix.share_pct", "mix.abs_error_pp", "mix.max_abs_error_pp"]},
+                  "labels": {
+                    "required": ["source", "classifier"],
+                    "properties": {
+                      "application": {"type": "string", "minLength": 1},
+                      "source": {"const": "classifier"},
+                      "classifier": {"type": "string", "minLength": 1}
+                    },
+                    "additionalProperties": false
+                  },
+                  "value": {"minimum": 0}
+                }
+              },
+              {
+                "if": {"properties": {"name": {"const": "mix.max_abs_error_pp"}}, "required": ["name"]},
+                "then": {"properties": {"labels": {"not": {"required": ["application"]}}}},
+                "else": {"properties": {"labels": {"required": ["application"]}}}
+              },
+              {
+                "if": {"properties": {"name": {"const": "mix.share_pct"}}, "required": ["name"]},
+                "then": {"properties": {"value": {"maximum": 100}}}
+              }
+            ]
+          }
+        },
+        "metrics_basis": {
+          "description": "The basis that the series describe, which is profile.basis of the test configuration, or the only basis that ran. null when neither tells it, for weights in the labels with both bases, and then metrics is empty.",
+          "enum": ["sessions", "bytes", null]
+        },
         "classifier": {"type": "string", "minLength": 1},
         "classifier_version": {"type": "string", "minLength": 1},
         "tolerance_points": {"type": "number", "minimum": 0, "maximum": 100},
@@ -1017,7 +1054,7 @@
           "type": "object",
           "required": ["file", "form"],
           "additionalProperties": false,
-          "properties": {"file": {"type": "string"}, "form": {"enum": ["metric_series", "bundle", "table"]}}
+          "properties": {"file": {"type": "string"}, "form": {"enum": ["metric_series", "bundle", "table", "rest_report"]}}
         },
         "mapping": {
           "type": "array",

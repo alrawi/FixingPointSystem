@@ -761,7 +761,7 @@ def test_the_report_has_the_transport_entry_and_validates(tmp_path: Path) -> Non
     labels = _labels_file(tmp_path, {"os_profile": "windows11", "server_hops": 1})
     report = score(good, labels, STUB).to_dict()
     _validate(report)
-    assert report["version"] == "0.9.0"
+    assert report["version"] == "0.10.0"
     assert [c["check"] for c in report["checks"]] == ["conformance", "transport_behavior"]
     entry = report["checks"][1]
     assert entry["passed"] is True
@@ -816,7 +816,7 @@ def test_the_command_line_adds_and_overrides_the_check(
     assert main([*plain, "--os-profile", "linux6", "--server-hops", "1"]) == EXIT_PASS
     report = json.loads(capsys.readouterr().out)
     assert report["checks"][1]["check"] == "transport_behavior"
-    assert report["version"] == "0.9.0"
+    assert report["version"] == "0.10.0"
     assert main([*plain, "--os-profile", "windows11", "--server-hops", "1"]) == EXIT_FAIL
     out = json.loads(capsys.readouterr().out)
     assert out["checks"][1]["failures"][0].startswith(
