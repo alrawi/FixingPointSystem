@@ -6,7 +6,7 @@
 | Branch | `wp/AGT-12` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 50% (2 of 4 plan steps) |
 | Current holder | claude-a12c7e, lease until 2026-11-10T06:17:28Z |
 | Last verified commit | none |
 
@@ -18,22 +18,22 @@ The agent accepts `StartCapture` with a port and records only the sessions that 
 
 ## Plan
 
-- [ ] 1. Port filter module in the agent (parse a port name or a server port list or range, match frames at assembly).
-- [ ] 2. Wire it into `StartCapture`, and agent tests for TCP and UDP.
+- [x] 1. Port filter module in the agent (parse a port name or a server port list or range, match frames at assembly).
+- [x] 2. Wire it into `StartCapture`, and agent tests for TCP and UDP.
 - [ ] 3. `controller_e2e.sh` capture steps (dns and https).
 - [ ] 4. Docs (`docs/wiki/Agent.md`, log entry), checks, PR, CI.
 
 ## Done and verified
 
-Nothing yet.
+Steps 1 and 2: `src/portfilter.rs` (6 unit tests) and `tests/run_control.rs::a_capture_with_a_port_skips_the_sessions_of_other_ports` pass with `cargo test -p fps-agent --lib` and `--test run_control`.
 
 ## Remaining
 
-Everything.
+Steps 3 and 4.
 
 ## Next action
 
-Write `engine/fps-agent/src/portfilter.rs`.
+Add the capture steps to `engine/fps-agent/tests/controller_e2e.sh`.
 
 ## Blockers and open questions
 
