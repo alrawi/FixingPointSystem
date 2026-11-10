@@ -909,6 +909,7 @@ dependencies = [
  "fps-module-http2",
  "fps-module-imap",
  "fps-module-pop3",
+ "fps-module-smb2",
  "fps-module-smtp",
  "fps-module-ssh",
  "fps-module-tls",

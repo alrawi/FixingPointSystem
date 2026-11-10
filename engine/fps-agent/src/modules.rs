@@ -694,6 +694,7 @@ static REGISTRY: &[Registration] = &[
     stateless!(fps_module_imap, Imap),
     stateless!(fps_module_pop3, Pop3),
     stateless!(fps_module_ftp, Ftp),
+    stateless!(fps_module_smb2, Smb2),
     // Http2 holds the HPACK tables of one connection side, so it is a value
     // with state and not a unit value. Every session clones its own copy.
     Registration {
@@ -1075,7 +1076,7 @@ mod tests {
     fn the_registry_covers_every_first_party_module() {
         assert_eq!(
             NativeFunctions::registered(),
-            ["http1", "dns", "content", "smtp", "imap", "pop3", "ftp", "http2", "ssh"]
+            ["http1", "dns", "content", "smtp", "imap", "pop3", "ftp", "smb2", "http2", "ssh"]
         );
     }
 
