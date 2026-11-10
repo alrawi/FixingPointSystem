@@ -59,3 +59,5 @@ jobs:
         run: |
           python modules/smtp/fixtures/zeek_check.py modules/smtp/fixtures/smtp.pcapng \
             --messages 64 --attachments 56
+      - name: Decrypt the STARTTLS sessions of the committed fixture and read the decrypted view with Zeek
+        run: python modules/smtp/fixtures/decrypted_check.py modules/smtp/fixtures/smtp.pcapng --sessions 8 --zeek /opt/zeek/bin/zeek
