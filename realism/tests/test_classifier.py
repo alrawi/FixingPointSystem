@@ -16,7 +16,7 @@ from realism.classifier import (
     matches,
     parse_ndpi_csv,
 )
-from realism.tests.conftest import NDPI_42_HEADER
+from realism.tests.conftest import NDPI_42_HEADER, NDPI_414_HEADER
 
 ROWS = (
     "0,6,1.0,1.1,0.1,10.0.0.10,40000,10.0.1.80,80,7,HTTP,www.example.com,6,414\n"
@@ -39,6 +39,23 @@ def test_parse_finds_columns_by_name_in_later_layouts() -> None:
     header += "ndpi_proto_num,ndpi_proto,proto_by_ip,proto_by_ip_num,server_name_sni"
     row = "0,6,1,1,0,10.0.0.1,1000,10.0.0.2,80,7,HTTP,Unknown,0,example.com"
     assert list(parse_ndpi_csv(header + "\n" + row).values()) == ["HTTP"]
+
+
+def test_parse_reads_the_pipe_separated_csv_of_ndpi_414() -> None:
+    rows = (
+        '0|6|1.0|1.1|0.1|10.0.0.10|40000|10.0.1.80|8082|7|HTTP2|Unknown|a, b "c"|6|414\n'
+        "1|6|1.0|1.1|0.1|2001:db8::1|41000|2001:db8::80|443|91|TLS.Google|Unknown||1|60\n"
+    )
+    result = parse_ndpi_csv(NDPI_414_HEADER + "\n" + rows)
+    assert result[SessionKey.of("tcp", "10.0.0.10", 40000, "10.0.1.80", 8082)] == "HTTP2"
+    assert result[SessionKey.of("tcp", "2001:db8::1", 41000, "2001:db8::80", 443)] == "TLS.Google"
+    assert len(result) == 2
+
+
+def test_both_dialects_give_the_same_verdicts() -> None:
+    comma = NDPI_42_HEADER + "\n0,6,1,1,0,10.0.0.10,40000,10.0.1.80,80,7,HTTP,,6,414\n"
+    pipe = NDPI_414_HEADER + "\n0|6|1|1|0|10.0.0.10|40000|10.0.1.80|80|7|HTTP||6|414\n"
+    assert parse_ndpi_csv(comma) == parse_ndpi_csv(pipe)
 
 
 @pytest.mark.parametrize(
@@ -116,3 +133,25 @@ def test_missing_ndpi_reader_is_reported(tmp_path: Path) -> None:
     classifier = NdpiClassifier(reader=str(tmp_path / "no-such-reader"))
     with pytest.raises(ClassifierError, match="not found"):
         classifier.version()
+
+
+def test_version_tolerates_the_exit_code_1_of_help(fake_reader: Callable[..., Path]) -> None:
+    classifier = NdpiClassifier(reader=str(fake_reader(help_exit=1)))
+    assert classifier.version() == "9.8.7-fake"
+
+
+def test_version_still_reports_a_reader_that_fails_on_help(
+    fake_reader: Callable[..., Path],
+) -> None:
+    classifier = NdpiClassifier(reader=str(fake_reader(help_exit=2)))
+    with pytest.raises(ClassifierError, match="exited with 2"):
+        classifier.version()
+
+
+def test_classify_reads_the_pipe_csv_of_a_reader_whose_help_exits_1(
+    tmp_path: Path, fake_reader: Callable[..., Path]
+) -> None:
+    csv = NDPI_414_HEADER + "\n0|6|1|1|0|10.0.0.10|40000|10.0.1.80|8082|7|HTTP2||6|414\n"
+    classifier = NdpiClassifier(reader=str(fake_reader(csv, help_exit=1)))
+    assert classifier.version() == "9.8.7-fake"
+    assert list(classifier.classify(tmp_path / "x.pcap", []).values()) == ["HTTP2"]

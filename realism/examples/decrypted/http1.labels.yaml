@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Labels of the decrypted view of modules/http1/fixtures/http1.pcapng. The view keeps the
+# server ports of the four https scenarios, and nDPI must name its sessions HTTP.
+#
+#   python3 -m realism decrypted --pcap modules/http1/fixtures/http1.pcapng \
+#     --labels realism/examples/decrypted/http1.labels.yaml --sessions 80
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: https_decrypted
+    match: {transport: tcp, server_port: 8443}
+  - application: https_decrypted
+    match: {transport: tcp, server_port: 8444}
+  - application: https_decrypted
+    match: {transport: tcp, server_port: 8445}
+  - application: https_decrypted
+    match: {transport: tcp, server_port: 8446}
+applications:
+  https_decrypted: {ndpi: [HTTP]}
