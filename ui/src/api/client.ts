@@ -228,6 +228,19 @@ export async function fetchAgents(client: ApiClient, signal?: AbortSignal): Prom
   return unwrap(await client.GET("/agents", signal ? { signal } : {}));
 }
 
+/**
+ * Reserves an agent for the caller. The controller answers the agent with state `reserved`, or a
+ * problem such as 409 when the agent is not free.
+ */
+export async function reserveAgent(client: ApiClient, id: string): Promise<Agent> {
+  return unwrap(await client.POST("/agents/{id}:reserve", { params: { path: { id } } }));
+}
+
+/** Releases a reserved agent. The controller answers the agent with its new state. */
+export async function releaseAgent(client: ApiClient, id: string): Promise<Agent> {
+  return unwrap(await client.POST("/agents/{id}:release", { params: { path: { id } } }));
+}
+
 /** The states in which a run no longer changes. */
 export const FINAL_RUN_STATES: readonly RunState[] = ["completed", "failed", "aborted"];
 

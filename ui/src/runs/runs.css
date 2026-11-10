@@ -39,18 +39,22 @@
 }
 
 .state-running,
-.state-completed {
+.state-completed,
+.state-online {
   color: var(--state-ok);
 }
 
 .state-pending,
 .state-preparing,
-.state-stopping {
+.state-stopping,
+.state-reserved,
+.state-busy {
   color: var(--state-warn);
 }
 
 .state-failed,
-.state-aborted {
+.state-aborted,
+.state-offline {
   color: var(--danger);
 }
 

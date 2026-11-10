@@ -22,6 +22,8 @@ criterion,sessions.response_time.p99,<=,1000,800,pass,observed 800 <= 1000 holds
 criterion,sessions.response_time.p99,<=,1000,1500,fail,"observed 1500 <= 1000 does not hold for application=dns,side=server"
 criterion,bytes.tx,<,1,,invalid,metric bytes.tx has no label port
 criterion,sessions.attempted,>,0,,missing,"the run reported no value for application=ftp,side=client"
+scenario,dns/query,,,1000,,bytes=3000000
+scenario,http1/web_get,,,3000,,bytes=35000000
 metric,sessions.attempted,,,4000,,
 metric,sessions.succeeded,,,3990,,
 metric,sessions.failed,,,10,,

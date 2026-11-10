@@ -12,12 +12,14 @@ from urllib.parse import quote, quote_plus, unquote
 
 import jsonschema
 import pytest
+import yaml
 
 from capture.cli import main
 from capture.scrub import (
     SCRUBBER_VERSION,
     Scrubber,
     apply_edits,
+    canonical_digest,
     check_record,
     resolve,
     scrub_document,
@@ -366,7 +368,8 @@ def test_generated_module_has_none_of_them_and_validates(tmp_path: Path, seeded:
     assert 'source: "capture"' in manifest or "source: capture" in manifest
     assert "scrubbed: true" in manifest
     assert CONSENT in manifest
-    assert f"capture scrub {SCRUBBER_VERSION}" in manifest and "smtp_auth@1" in manifest
+    assert f"capture scrub {SCRUBBER_VERSION}" in manifest
+    assert '{ id: "smtp_auth", version: 1 }' in manifest and "scrubbed_at:" in manifest
     assert len(scenario_docs(module)) == len(json.loads(out.read_text())["sessions"])
 
 
@@ -574,6 +577,112 @@ def test_scenario_takes_provenance_only_from_the_scrubber(
     assert validation_errors(gen(forged, "forged"))
     # synthetic stays available for traffic that a lab generated
     assert validation_errors(gen(seeded, "synth", "--synthetic")) == []
+
+
+MANIFEST_SCHEMA = json.loads(
+    (REPO / "contracts" / "schemas" / "module-manifest.schema.json").read_text(encoding="utf-8")
+)
+HTTP1_SHA256 = "b501f54771cff9df7a8a58461f0ebaf1f8008731eba422e8344f80aa249842e6"
+ALL_RULES = [
+    "ipv4", "ipv6", "ip_binary", "content_length", "email", "display_name", "hostname",
+    "http_authorization", "http_cookie", "http_header", "url_credentials", "parameter", "jwt",
+    "api_key", "private_key", "smtp_auth", "imap_login", "pop3", "ftp", "literal", "sweep",
+    "base64",
+]  # fmt: skip
+
+
+def _manifest(module: Path) -> dict[str, Any]:
+    manifest: dict[str, Any] = yaml.safe_load(
+        (module / "manifest.yaml").read_text(encoding="utf-8")
+    )
+    return manifest
+
+
+def _http1_sessions(tmp_path: Path) -> Path:
+    pcap = REPO / "modules" / "http1" / "fixtures" / "http1.pcapng"
+    sessions = tmp_path / "s.json"
+    assert main(["sessions", "--pcap", str(pcap), "--payloads", "--out", str(sessions)]) == 0
+    return sessions
+
+
+def test_manifest_provenance_fields_come_from_the_scrub_record(tmp_path: Path) -> None:
+    out = scrub(tmp_path, _http1_sessions(tmp_path), "--hostnames", "--date", "2026-11-10")
+    module = tmp_path / "parent" / "fx"
+    assert main(["scenario", "--sessions", str(out), "--all", "--out-dir", str(module)]) == 0
+    assert validation_errors(module) == []
+    manifest = _manifest(module)
+    jsonschema.Draft202012Validator(MANIFEST_SCHEMA).validate(manifest)  # v0.4
+    prov = manifest["provenance"]
+    notes = prov.pop("notes")
+    assert prov == {
+        "source": "capture",
+        "consent": CONSENT,
+        "scrubbed": True,
+        "capture_sha256": HTTP1_SHA256,
+        "scrub_rules": [{"id": r, "version": 1} for r in ALL_RULES],
+        "scrubbed_at": "2026-11-10",
+    }
+    # the notes keep what the fields do not hold, and no longer repeat what they do
+    assert "Sessions sha256" in notes and "Payload bytes 938681 to 938681 (+0)" in notes
+    assert HTTP1_SHA256 not in notes and "Rules:" not in notes
+
+
+def test_provenance_fields_are_absent_without_a_scrub_and_for_synthetic(
+    tmp_path: Path,
+) -> None:
+    sessions = _http1_sessions(tmp_path)
+    for n, extra in enumerate((["--synthetic"], [])):
+        module = tmp_path / f"p{n}" / "fx"
+        argv = ["scenario", "--sessions", str(sessions), "--all", "--out-dir", str(module)]
+        assert main([*argv, *extra]) == 0
+        if extra:  # an unscrubbed capture is invalid on purpose, a synthetic one is valid
+            jsonschema.Draft202012Validator(MANIFEST_SCHEMA).validate(_manifest(module))
+        prov = _manifest(module)["provenance"]
+        assert not {"capture_sha256", "scrub_rules", "scrubbed_at"} & prov.keys()
+
+
+def _forge(tmp_path: Path, out: Path, edit: Any) -> Path:
+    """A scrubbed document that someone changed and then gave a matching digest."""
+    doc = json.loads(out.read_text())
+    edit(doc)
+    doc["scrub"]["content_sha256"] = canonical_digest(doc)
+    forged = tmp_path / "forged.json"
+    forged.write_text(json.dumps(doc))
+    return forged
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (lambda d: d["source"].update(sha256="a" * 64), "another capture"),
+        (lambda d: d["scrub"].update(capture_sha256="a" * 64), "another capture"),
+        (lambda d: d["scrub"].update(capture_sha256="B501F" + "0" * 59), "64 lowercase"),
+        (lambda d: d["scrub"].update(date="10 Nov 2026"), "YYYY-MM-DD"),
+        (lambda d: d["scrub"]["rules"][0].update(version=0), "version of 1 or more"),
+        (lambda d: d["scrub"]["rules"].append(dict(d["scrub"]["rules"][0])), "twice"),
+    ],
+)
+def test_a_record_that_does_not_match_the_capture_writes_no_provenance(
+    tmp_path: Path,
+    seeded: Path,
+    capsys: pytest.CaptureFixture[str],
+    edit: Any,
+    message: str,
+) -> None:
+    out = scrub(tmp_path, seeded)
+    assert check_record(json.loads(out.read_text()))[0] is not None
+    forged = _forge(tmp_path, out, edit)
+    rec, problems = check_record(json.loads(forged.read_text()))
+    assert rec is None and any(message in p for p in problems)
+    capsys.readouterr()
+    module = tmp_path / "parent" / "forged"
+    argv = ["scenario", "--sessions", str(forged), "--all", "--out-dir", str(module)]
+    assert main(argv) == 0
+    assert message in capsys.readouterr().err
+    prov = _manifest(module)["provenance"]
+    assert prov["scrubbed"] is False and prov["consent"] == "not recorded"
+    assert not {"capture_sha256", "scrub_rules", "scrubbed_at"} & prov.keys()
+    assert validation_errors(module)  # the validator rejects it
 
 
 def test_scrub_refuses_without_consent_and_twice(

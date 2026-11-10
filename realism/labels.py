@@ -12,6 +12,7 @@ import importlib
 import ipaddress
 import json
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,7 +50,18 @@ _TOP_LEVEL = {
     "structure",
     "temporal",
     "mix",
+    "transport",
 }
+_TRANSPORT_FIELDS = {
+    "os_profile",
+    "hosts",
+    "profiles_dir",
+    "client_hops",
+    "server_hops",
+    "strict",
+    "expect",
+}
+TRANSPORT_EXPECT_FIELDS = ("ttl", "mss", "window_scale", "syn_window")
 _MIX_FIELDS = {"test_config", "run_report", "basis", "tolerance_points", "weights", "scenarios"}
 _MIX_SCENARIO_FIELDS = {"application", "ndpi"}
 MIX_BASES = ("sessions", "bytes", "both")
@@ -280,6 +292,27 @@ class MixLabels:
     weights: Mapping[str, float] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class TransportLabels:
+    """Settings of the transport behavior check.
+
+    ``os_profile`` names the operating system profile of every host that ``hosts`` does not
+    list, and ``hosts`` maps an IP address to its own profile. ``profiles_dir`` is the directory
+    of the profile files, relative to the labels file (the kernel backend profiles when absent).
+    ``client_hops`` and ``server_hops`` count the routers between a client or a server and the
+    capture point, which lower the TTL that the capture shows. ``strict`` makes the option order
+    and the SYN window decide too. ``expect`` replaces a value of the profile for every host.
+    """
+
+    os_profile: str | None = None
+    hosts: Mapping[str, str] = field(default_factory=dict)
+    profiles_dir: str | None = None
+    client_hops: int = 0
+    server_hops: int = 0
+    strict: bool = False
+    expect: Mapping[str, int] = field(default_factory=dict)
+
+
 @dataclass
 class Labels:
     """The expected labels of one capture."""
@@ -293,6 +326,7 @@ class Labels:
     structure: StructureLabels | None = None
     temporal: TemporalLabels | None = None
     mix: MixLabels | None = None
+    transport: TransportLabels | None = None
     base_dir: Path | None = None
 
     def tls_profile_of(self, session: Session) -> str | None:
@@ -393,6 +427,7 @@ def parse(doc: Any, source: str = "<labels>") -> Labels:
         structure=_structure(doc["structure"], where) if "structure" in doc else None,
         temporal=_temporal(doc["temporal"], where) if "temporal" in doc else None,
         mix=_mix(doc["mix"], where) if "mix" in doc else None,
+        transport=_transport(doc["transport"], where) if "transport" in doc else None,
     )
 
 
@@ -553,6 +588,64 @@ def _mix(value: Any, where: str) -> MixLabels:
         tolerance_points=float(tolerance) if tolerance is not None else None,
         weights={k: float(w) for k, w in weights.items()},
     )
+
+
+_PROFILE_NAME = re.compile(r"[a-z][a-z0-9_-]*")
+
+
+def _transport(value: Any, where: str) -> TransportLabels:
+    """Validate the transport section of the transport behavior check."""
+    here = f"{where} transport"
+    if not isinstance(value, dict) or set(value) - _TRANSPORT_FIELDS:
+        raise LabelsError(f"{here}: must be a mapping with only {sorted(_TRANSPORT_FIELDS)}")
+    profile = value.get("os_profile")
+    if profile is not None and not _is_profile_name(profile):
+        raise LabelsError(f"{here}.os_profile: must be a profile name such as linux6")
+    raw_hosts = value.get("hosts", {})
+    hosts: dict[str, str] = {}
+    if not isinstance(raw_hosts, dict):
+        raise LabelsError(f"{here}.hosts: must map IP addresses to profile names")
+    for address, name in raw_hosts.items():
+        try:
+            canonical = str(ipaddress.ip_address(address))
+        except ValueError as exc:
+            raise LabelsError(f"{here}.hosts: {address!r} is not an IP address") from exc
+        if not _is_profile_name(name):
+            raise LabelsError(f"{here}.hosts.{address}: must be a profile name such as linux6")
+        hosts[canonical] = name
+    if profile is None and not hosts:
+        raise LabelsError(f"{here}: give os_profile, hosts, or both")
+    directory = value.get("profiles_dir")
+    if directory is not None and not _is_name(directory):
+        raise LabelsError(f"{here}.profiles_dir: must be a directory path")
+    hops = {}
+    for key in ("client_hops", "server_hops"):
+        count = value.get(key, 0)
+        if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= 254:
+            raise LabelsError(f"{here}.{key}: must be an integer from 0 to 254")
+        hops[key] = count
+    strict = value.get("strict", False)
+    if not isinstance(strict, bool):
+        raise LabelsError(f"{here}.strict: must be true or false")
+    raw_expect = value.get("expect", {})
+    if not isinstance(raw_expect, dict) or set(raw_expect) - set(TRANSPORT_EXPECT_FIELDS):
+        raise LabelsError(f"{here}.expect: must be a mapping with only {TRANSPORT_EXPECT_FIELDS}")
+    for key, number in raw_expect.items():
+        if isinstance(number, bool) or not isinstance(number, int) or number < 0:
+            raise LabelsError(f"{here}.expect.{key}: must be a non negative integer")
+    return TransportLabels(
+        os_profile=profile,
+        hosts=hosts,
+        profiles_dir=directory,
+        client_hops=hops["client_hops"],
+        server_hops=hops["server_hops"],
+        strict=strict,
+        expect=dict(raw_expect),
+    )
+
+
+def _is_profile_name(value: Any) -> bool:
+    return isinstance(value, str) and _PROFILE_NAME.fullmatch(value) is not None
 
 
 def _finite(value: Any) -> TypeGuard[int | float]:

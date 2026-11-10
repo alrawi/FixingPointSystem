@@ -1,0 +1,34 @@
+# Arrival and size declarations of test configuration v0.3. They are targets
+# for the realism check and add no command to the plan, so the plan equals the
+# plan of the same test without them.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: distributions
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/lo }
+    - { name: server0, location: local/lo }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 16.0.0.0/24, count: 254 }
+    - { name: servers, port: server0, role: server, ipv4: 48.0.0.0/24, count: 1 }
+profile:
+  basis: sessions
+  arrival: { dist: exponential, mean_ms: 2 }
+  size:
+    request: { dist: lognormal, mu: 5.5, sigma: 0.8 }
+    response: { dist: pareto, alpha: 1.2, scale: 512 }
+  mix:
+    - scenario: dns/resolve
+      weight: 1
+      arrival: { dist: constant, ms: 4, tolerance_ms: 0.5 }
+      size:
+        request: { dist: constant, value: 33, tolerance: 2 }
+        both: { dist: uniform, min: 40, max: 600 }
+    - { scenario: http1/web_get, weight: 1 }
+load:
+  objective: { type: sessions_per_second, value: 500 }
+  phases:
+    - { name: steady, duration_s: 20, shape: hold }
+timeline: { seed: 3 }
