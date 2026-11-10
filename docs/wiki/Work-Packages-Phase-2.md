@@ -243,7 +243,6 @@ flowchart LR
   AGT_14 --> ENG_24
   MOD_04 --> MOD_21
   CON_18 --> CON_19
-  MOD_06 --> RLM_12
   MOD_20 --> RLM_12
   TRN_05 --> TRN_15
   CON_19 --> ENG_25
@@ -361,7 +360,7 @@ flowchart LR
 | [ENG-24](#eng-24-tls-per-session-connectors-instance-tls-and-tls-metrics) | TLS per session connectors, instance TLS, and tls metrics | S | ENG-23, AGT-14 |  |
 | [MOD-21](#mod-21-parser-errors-on-live-http1-captures) | Parser errors on live http1 captures | S | MOD-04 |  |
 | [CON-19](#con-19-contract-gaps-found-by-cap-02-and-rlm-06) | Contract gaps found by CAP-02 and RLM-06 | S | CON-18 |  |
-| [RLM-12](#rlm-12-a-current-ndpi-and-a-shared-decrypted-view-in-the-realism-runner) | A current nDPI and a shared decrypted view in the realism runner | S | MOD-06, MOD-20 |  |
+| [RLM-12](#rlm-12-a-current-ndpi-and-a-shared-decrypted-view-in-the-realism-runner) | A current nDPI and a shared decrypted view in the realism runner | S | MOD-20 |  |
 | [TRN-15](#trn-15-tls-plaintext-backpressure-and-mail-and-h2-profiles) | TLS plaintext backpressure and mail and h2 profiles | S | TRN-05 |  |
 | [ENG-25](#eng-25-int_bytes-and-now-in-the-engine) | int_bytes and now in the engine | S | CON-19 |  |
 | [CTL-38](#ctl-38-distributions-in-the-compiler-and-scenario-counts-in-the-run-report) | Distributions in the compiler and scenario counts in the run report | S | CON-19 |  |
@@ -2033,19 +2032,19 @@ Acceptance.
 
 Phase 2 · size S · workstream RLM
 
-- **Depends on.** MOD-06, MOD-20
+- **Depends on.** MOD-20
 - **Paths.** `realism/`
 
-The realism CI installs libndpi-bin 4.2.0, which has no HTTP/2 protocol, so the http2 module fails conformance; nDPI 4.14 writes its CSV with a pipe separator and exits 1 on -h. Three modules carry copies of decrypted_check.py. The tool install step hung for over an hour on several runs.
+The realism CI installs libndpi-bin 4.2.0, which has no HTTP/2 protocol, so the http2 module fails conformance; nDPI 4.14 writes its CSV with a pipe separator and exits 1 on -h. Three modules carry copies of decrypted_check.py. MOD-06 waits on this package; the apt hang of the install step is fixed separately (branch ci/apt-hang).
 
 Deliverables.
 
-- realism/ci/install-tools.sh builds or installs a pinned nDPI 4.14 (cached), the classifier reads both CSV dialects and tolerates the -h exit code, and the install has a timeout with one retry.
+- realism/ci/install-tools.sh builds or installs a pinned nDPI 4.14 (cached), the classifier reads both CSV dialects and tolerates the -h exit code.
 - python3 -m realism decrypted --pcap F --labels L that builds the decrypted view and scores it with nDPI and Zeek, replacing the copies in http1, smtp, imap, and http2.
 
 Acceptance.
 
-- [ ] The realism job for http2 classifies at least 99 percent of cleartext sessions as HTTP2, and the four modules pass with the shared decrypted check.
+- [ ] nDPI 4.14 classifies at least 99 percent of the cleartext sessions of the http2 fixture on wp/MOD-06 as HTTP2 (evidence in the PR), and http1, smtp, and imap pass with the shared decrypted check; the module workflows switch to it in the coordinator wrap-up.
 
 ## CAP Capture compiler and profile extractor
 
