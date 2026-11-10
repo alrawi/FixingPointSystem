@@ -5,10 +5,10 @@
 | Issue | #410 |
 | Branch | `wp/IMG-07` |
 | Pull request | #415 |
-| Status | in progress |
-| Progress | 70% (3 of 4 plan steps) |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-7a1c4e, lease until 2026-11-10T19:00:09Z |
-| Last verified commit | none |
+| Last verified commit | bddb755 |
 
 ## Goal
 
@@ -19,7 +19,7 @@ The "Build, boot, and run" job of `image.yml` failed twice on 2026-11-10 (MOD-06
 - [x] 1. Cause from the logs of the failing jobs 129934010691 and 129666780207, compared with passing jobs
 - [x] 2. Session gate in `image/tests/vm-run.sh`, with an offline replay test
 - [x] 3. Loop and negative mode in `image/boot-test.sh`
-- [ ] 4. Docs, log entry, PR, CI loop of 10 boots
+- [x] 4. Docs, log entry, PR, CI loop of 10 boots
 
 ## Done and verified
 
@@ -66,3 +66,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | 2026-11-10T17:00Z | claude-7a1c4e | claim | none | claimed #410, card 6774392966 |
 | 2026-11-10T18:05Z | claude-7a1c4e | checkpoint | see git log | cause found, session gate, loop and negative boot, offline tests, docs |
 | 2026-11-10T18:15Z | claude-7a1c4e | checkpoint | see git log | CI: 10 of 10 boots in a row and the negative boot (job 130012693667); temporary loop defaults reverted |
+| 2026-11-10T18:35Z | claude-7a1c4e | finish | see git log | CI green on bddb755, PR #415 ready for review |
