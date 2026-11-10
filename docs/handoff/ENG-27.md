@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #424 |
 | Branch | `wp/ENG-27` |
-| Pull request | none |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #432 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-e27a41, lease until 2026-11-11T00:05:31Z |
-| Last verified commit | none |
+| Last verified commit | 02f41fa |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 - [x] 1. Split the counter in `engine/fps-capture/src/lib.rs` and document it.
 - [x] 2. Tests: an overflowing queue and a stop during a run, with literal counts.
 - [x] 3. Checks, log entry, Engine page update.
-- [ ] 4. Pull request and CI.
+- [x] 4. Pull request and CI.
 
 ## Done and verified
 
@@ -29,11 +29,11 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Remaining
 
-Pull request and CI.
+Nothing.
 
 ## Next action
 
-Open the pull request and wait for CI.
+Coordinator review and merge.
 
 ## Blockers and open questions
 
@@ -58,3 +58,4 @@ CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=$PWD/target-ENG-27
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T22:36Z | claude-e27a41 | claim | none | claimed #424 |
+| 2026-11-10T23:20Z | claude-e27a41 | ready for review | 02f41fa | PR #432, CI green |
