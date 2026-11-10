@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #375 |
 | Branch | `wp/ENG-25` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #383 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-65883d, lease until 2026-11-10T14:16:38Z |
-| Last verified commit | none |
+| Last verified commit | a6a6e1d |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -27,7 +27,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Clock seam, `int_bytes`, `now` in the fps-flow template compiler and renderer, with unit tests
 - [x] 2. Parity fixtures in `verdicts.yaml` and the fixture scenarios
 - [x] 3. fps-interp: clock seam in `Session` and `ScenarioInstance`, variables across `after` test, interp tests
-- [ ] 4. Checks, log entry, Engine page, PR
+- [x] 4. Checks, log entry, Engine page, PR
 
 ## Done and verified
 
@@ -38,11 +38,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Step 4: open the PR, wait for CI, and hand over for review. No known gap in the code.
+None.
 
 ## Next action
 
-Open the PR for branch `wp/ENG-25`, poll its check runs, and fix failures inside `engine/fps-flow/` and `engine/fps-interp/`.
+Review PR #383. CI is green on a6a6e1d.
 
 ## Blockers and open questions
 
@@ -74,3 +74,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T13:47Z | claude-65883d | claim | none | claimed #375 |
+| 2026-11-10T14:00Z | claude-65883d | finish | a6a6e1d | PR #383 open, CI green (the first push failed the deprecated fetch_update lint of the newer CI toolchain; fixed with fetch_add) |
