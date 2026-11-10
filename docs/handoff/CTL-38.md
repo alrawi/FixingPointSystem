@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #376 |
 | Branch | `wp/CTL-38` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #396 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-c38a7e, lease until 2026-11-10T15:52:57Z |
-| Last verified commit | none |
+| Last verified commit | 1a2e89f |
 
 ## Goal
 
@@ -19,19 +19,19 @@ A test configuration with the CON-19 arrival or size fields passes the store's s
 - [x] 1. Compiler: `Arrival`, `SizeDist`, `Size` on `Profile` and `MixConfig`, `Config.Declarations()`, a golden plan and tests.
 - [x] 2. Registry: `coreResult` types `int_bytes` (bytes) and `now` (by its literal format), with a test.
 - [x] 3. Report: `Report.Scenarios`, `Report.Declared`, `FileJSON`, CSV `scenario` rows, `DeclarationSource`, tests, golden `labeled.csv`.
-- [ ] 4. Wiki page, log entry, CI green, review.
+- [x] 4. Wiki page, log entry, CI green, review.
 
 ## Done and verified
 
-Nothing is verified by a build yet, because Go modules cannot be downloaded here. `gofmt -l` is clean for the three packages. CI on the pull request is the build and test loop.
+`gofmt -l` is clean for the three packages. CI on 1a2e89f is green: controller test, controller-e2e, contracts, rust, scripts, licenses, proto, ops, standalone-netns, the compose lab (after a re-run of one proxy.golang.org stream error), and gate. The first push failed two of my own tests (`TestDeclarations` loaded the configuration twice and compared pointers, and `TestFileJSONCarriesDeclarations` compared indented JSON with compact text), fixed in 1a2e89f. The hand derived goldens passed.
 
 ## Remaining
 
-Open the pull request and read CI. The golden `controller/internal/compiler/testdata/distributions/local.json` was derived by hand from `module_settings/local.json` (testName and the dns settings differ), and the added rows of `report/testdata/labeled.csv` were computed by hand, so a CI diff there is the first thing to check.
+Review and merge. CTL-39 adds `Report.Scenarios` to the REST report after CON-21.
 
 ## Next action
 
-Open the pull request and poll the check runs.
+Review PR 396.
 
 ## Blockers and open questions
 
@@ -63,3 +63,5 @@ gofmt -l controller/internal/compiler controller/internal/registry controller/in
 |---|---|---|---|---|
 | 2026-11-10T14:23:00Z | claude-c38a7e | claim | 6b0781c | Claimed issue 376 with 4 plan steps |
 | 2026-11-10T14:30:00Z | claude-c38a7e | checkpoint | none | Steps 1 to 3 written, not yet built |
+| 2026-11-10T14:34:00Z | claude-c38a7e | checkpoint | 1a2e89f | PR 396 open, test fixes pushed |
+| 2026-11-10T14:43:00Z | claude-c38a7e | finish | 1a2e89f | CI green, ready for review |
