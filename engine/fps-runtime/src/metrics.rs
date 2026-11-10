@@ -68,12 +68,25 @@ impl SessionMetrics {
         outcome: &Result<(), Failure>,
         duration_us: u64,
     ) {
+        self.ended_with(shard, stats, outcome.as_ref().err().map(|f| f.reason), duration_us);
+    }
+
+    /// Records the end of a session that failed with `failed`, or succeeded
+    /// when that is `None`. A scenario instance reports its sides this way,
+    /// because it keeps the reason of a side and not the whole failure.
+    pub(crate) fn ended_with(
+        &self,
+        shard: &mut Shard,
+        stats: SideStats,
+        failed: Option<Reason>,
+        duration_us: u64,
+    ) {
         if stats.established {
             self.counters.established(shard);
         }
-        match outcome {
-            Ok(()) => self.counters.succeeded(shard),
-            Err(f) => self.counters.failed(shard, stats_reason(f.reason)),
+        match failed {
+            None => self.counters.succeeded(shard),
+            Some(reason) => self.counters.failed(shard, stats_reason(reason)),
         }
         self.counters
             .add_bytes(shard, stats.bytes_tx, stats.bytes_rx);

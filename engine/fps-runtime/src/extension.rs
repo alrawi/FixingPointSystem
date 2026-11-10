@@ -434,14 +434,19 @@ impl SessionExtensions {
 /// Every runner that calls [`SessionExtensions::finish`] uses this mapping, so
 /// that the extension sees one close reason for one outcome on any transport.
 pub fn close_reason(outcome: &Result<(), fps_interp::Failure>) -> CloseReason {
-    match outcome {
-        Ok(()) => CloseReason::Finished,
-        Err(f) => match f.reason {
-            Reason::Aborted | Reason::UnexpectedReset => CloseReason::Reset,
-            Reason::PeerClosed => CloseReason::PeerClosed,
-            Reason::ConnectTimeout | Reason::ExpectTimeout => CloseReason::Timeout,
-            _ => CloseReason::Failed,
-        },
+    close_reason_of(outcome.as_ref().err().map(|f| f.reason))
+}
+
+/// Maps the failure reason of a session, or `None` for a session that
+/// finished, to the close reason of its extensions. A scenario instance keeps
+/// only the reason of each side, see [`fps_interp::SideRecord`].
+pub(crate) fn close_reason_of(failed: Option<Reason>) -> CloseReason {
+    match failed {
+        None => CloseReason::Finished,
+        Some(Reason::Aborted | Reason::UnexpectedReset) => CloseReason::Reset,
+        Some(Reason::PeerClosed) => CloseReason::PeerClosed,
+        Some(Reason::ConnectTimeout | Reason::ExpectTimeout) => CloseReason::Timeout,
+        Some(_) => CloseReason::Failed,
     }
 }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! The openers that connect the interpreter to the kernel backend.
 
+use std::borrow::Borrow;
 use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
@@ -50,21 +51,7 @@ impl<'a> ClientOpener<'a> {
         port: Option<u16>,
         session: u64,
     ) -> Self {
-        let index = sources.selector.select(session);
-        let source = if sources.ipv6 {
-            sources.pool.ipv6_addr(index).map(|a| a.map(IpAddr::V6))
-        } else {
-            sources.pool.ipv4_addr(index).map(|a| a.map(IpAddr::V4))
-        };
-        let source = match source {
-            Ok(Some(a)) => Ok(a),
-            Ok(None) => Err(format!(
-                "pool {} has no {} prefix",
-                sources.pool.name(),
-                if sources.ipv6 { "IPv6" } else { "IPv4" }
-            )),
-            Err(e) => Err(e.to_string()),
-        };
+        let source = source_address(sources, session);
         Self {
             connector,
             servers,
@@ -75,33 +62,64 @@ impl<'a> ClientOpener<'a> {
     }
 
     fn destination(&self, request: &OpenRequest<'_>) -> io::Result<SocketAddr> {
-        let port = self.port.unwrap_or(request.port);
-        let ip = match request.host {
-            Some(host) => std::str::from_utf8(host)
-                .ok()
-                .and_then(|h| h.parse::<IpAddr>().ok())
-                .ok_or_else(|| {
-                    invalid(format!(
-                        "connect host {} is not an IP address",
-                        String::from_utf8_lossy(host)
-                    ))
-                })?,
-            None => {
-                let n = self.servers.len() as u64;
-                if n == 0 {
-                    return Err(invalid(
-                        "no server address for a connect without host".into(),
-                    ));
-                }
-                let i = usize::try_from(self.session % n).unwrap_or(0);
-                *self
-                    .servers
-                    .get(i)
-                    .ok_or_else(|| invalid("invariant: server index in range".into()))?
-            }
-        };
-        Ok(SocketAddr::new(ip, port))
+        destination(self.servers, self.session, self.port, request)
     }
+}
+
+/// Returns the source address that the selector of `sources` picks for
+/// `session`.
+pub(crate) fn source_address(sources: &SourceHosts, session: u64) -> Result<IpAddr, String> {
+    let index = sources.selector.select(session);
+    let source = if sources.ipv6 {
+        sources.pool.ipv6_addr(index).map(|a| a.map(IpAddr::V6))
+    } else {
+        sources.pool.ipv4_addr(index).map(|a| a.map(IpAddr::V4))
+    };
+    match source {
+        Ok(Some(a)) => Ok(a),
+        Ok(None) => Err(format!(
+            "pool {} has no {} prefix",
+            sources.pool.name(),
+            if sources.ipv6 { "IPv6" } else { "IPv4" }
+        )),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Returns the destination of a `connect`: the rendered host when the program
+/// sets one, which must then be an IP address, and otherwise server address
+/// `session mod len`, with `port` in place of the rendered port when set.
+pub(crate) fn destination(
+    servers: &[IpAddr],
+    session: u64,
+    port: Option<u16>,
+    request: &OpenRequest<'_>,
+) -> io::Result<SocketAddr> {
+    let port = port.unwrap_or(request.port);
+    let ip = match request.host {
+        Some(host) => std::str::from_utf8(host)
+            .ok()
+            .and_then(|h| h.parse::<IpAddr>().ok())
+            .ok_or_else(|| {
+                invalid(format!(
+                    "connect host {} is not an IP address",
+                    String::from_utf8_lossy(host)
+                ))
+            })?,
+        None => {
+            let n = servers.len() as u64;
+            if n == 0 {
+                return Err(invalid(
+                    "no server address for a connect without host".into(),
+                ));
+            }
+            let i = usize::try_from(session % n).unwrap_or(0);
+            *servers
+                .get(i)
+                .ok_or_else(|| invalid("invariant: server index in range".into()))?
+        }
+    };
+    Ok(SocketAddr::new(ip, port))
 }
 
 impl Opener for ClientOpener<'_> {
@@ -172,16 +190,18 @@ impl Endpoints for KernelStream {
 /// [`fps_capture::Capture::begin`], which decides by the sampler whether the
 /// session is recorded. The local address of a client session is its source
 /// and that of a server session is its listener.
-pub(crate) struct TapOpener<'a, O> {
+pub(crate) struct TapOpener<C, O> {
     inner: O,
-    cell: &'a CaptureCell,
+    cell: C,
     session_id: u64,
     side: Side,
 }
 
-impl<'a, O> TapOpener<'a, O> {
-    /// Wraps `inner`, whose sessions carry the run wide id `session_id`.
-    pub(crate) fn new(inner: O, cell: &'a CaptureCell, session_id: u64, side: Side) -> Self {
+impl<C, O> TapOpener<C, O> {
+    /// Wraps `inner`, whose sessions carry the run wide id `session_id`. The
+    /// cell is a reference for a session that its worker task owns, and a
+    /// clone for an opener that a scenario instance owns.
+    pub(crate) fn new(inner: O, cell: C, session_id: u64, side: Side) -> Self {
         Self {
             inner,
             cell,
@@ -191,18 +211,19 @@ impl<'a, O> TapOpener<'a, O> {
     }
 }
 
-impl<O: Opener> Opener for TapOpener<'_, O>
+impl<C, O: Opener> Opener for TapOpener<C, O>
 where
+    C: Borrow<CaptureCell> + Clone,
     O::Io: Endpoints,
 {
     type Io = Tapped<O::Io>;
 
     fn open(&mut self, request: OpenRequest<'_>) -> impl Future<Output = io::Result<Self::Io>> {
-        let (cell, id, side) = (self.cell, self.session_id, self.side);
+        let (cell, id, side) = (self.cell.clone(), self.session_id, self.side);
         let opened = self.inner.open(request);
         async move {
             let io = opened.await?;
-            let Some(capture) = cell.current() else {
+            let Some(capture) = cell.borrow().current() else {
                 return Ok(Tapped::new(io, None));
             };
             let handle = io.endpoints().and_then(|(local, peer)| {
@@ -218,7 +239,7 @@ where
     }
 }
 
-fn invalid(detail: String) -> io::Error {
+pub(crate) fn invalid(detail: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, detail)
 }
 

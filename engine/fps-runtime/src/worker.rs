@@ -2,13 +2,14 @@
 //! One worker thread with its own single threaded Tokio runtime.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
-use fps_backend_kernel::{Connector, KernelListener};
+use fps_backend_kernel::{Connector, KernelListener, ListenConfig};
 use fps_capture::CaptureCell;
 use fps_flow::template::Filler;
 use fps_interp::{session_rng, Session, SessionCtx, Side};
@@ -23,6 +24,7 @@ use crate::collector::WorkerSnapshot;
 use crate::config::{ClientConfig, FlowRef, Role, ServerConfig, WorkerConfig};
 use crate::control::Control;
 use crate::extension::close_reason;
+use crate::instance::{self, Peer};
 use crate::metrics::SessionMetrics;
 use crate::opener::{global_session_id, Accepted, ClientOpener, Endpoints, TapOpener};
 use crate::runtime::WorkerExit;
@@ -86,30 +88,60 @@ pub(crate) fn run_thread(start: WorkerStart) -> Result<WorkerExit, RuntimeError>
 }
 
 /// The shared state of one worker, which only its own thread touches.
-struct Worker {
-    id: u32,
-    seed: u64,
+pub(crate) struct Worker {
+    pub(crate) id: u32,
+    pub(crate) seed: u64,
     side: Side,
-    flow: FlowRef,
-    filler: Filler,
-    shard: RefCell<Shard>,
+    pub(crate) flow: FlowRef,
+    pub(crate) filler: Filler,
+    pub(crate) shard: RefCell<Shard>,
     metrics: SessionMetrics,
+    /// The series of every flow of the scenario, by flow index, for a worker
+    /// that runs scenario instances, and empty for a single flow scenario.
+    /// Flows of one module share their series.
+    flow_metrics: Vec<SessionMetrics>,
+    /// The configuration of the listeners that a server instance binds data
+    /// ports with.
+    pub(crate) listen_config: ListenConfig,
     open: Cell<u32>,
     closed: Notify,
     sequence: Cell<u64>,
     snapshots: Sender<WorkerSnapshot>,
     abort: watch::Sender<bool>,
-    capture: CaptureCell,
+    pub(crate) capture: CaptureCell,
     tls: Option<Arc<TlsProfiles>>,
 }
 
 impl Worker {
-    fn new(start: &WorkerStart, side: Side, flow: &FlowRef) -> Result<Self, RuntimeError> {
+    fn new(
+        start: &WorkerStart,
+        side: Side,
+        flow: &FlowRef,
+        listen_config: ListenConfig,
+    ) -> Result<Self, RuntimeError> {
         let id = start.config.id;
         let f = flow.get()?;
         let mut shard = Shard::new(id);
+        let stats = |source| RuntimeError::Stats { worker: id, source };
         let metrics = SessionMetrics::register(&mut shard, &f.module, &flow.scenario.name, side)
-            .map_err(|source| RuntimeError::Stats { worker: id, source })?;
+            .map_err(stats)?;
+        let mut flow_metrics = Vec::new();
+        if flow.scenario.flows.len() > 1 {
+            let mut by_module: HashMap<&str, SessionMetrics> = HashMap::new();
+            for f in &flow.scenario.flows {
+                let m = match by_module.get(f.module.as_str()) {
+                    Some(m) => m.clone(),
+                    None => {
+                        let m =
+                            SessionMetrics::register(&mut shard, &f.module, &flow.scenario.name, side)
+                                .map_err(stats)?;
+                        by_module.insert(f.module.as_str(), m.clone());
+                        m
+                    }
+                };
+                flow_metrics.push(m);
+            }
+        }
         Ok(Self {
             id,
             seed: start.seed,
@@ -118,6 +150,8 @@ impl Worker {
             filler: Filler::new(start.seed),
             shard: RefCell::new(shard),
             metrics,
+            flow_metrics,
+            listen_config,
             open: Cell::new(0),
             closed: Notify::new(),
             sequence: Cell::new(0),
@@ -126,6 +160,17 @@ impl Worker {
             capture: start.capture.clone(),
             tls: start.tls.clone(),
         })
+    }
+
+    /// Returns true when the scenario has several flows, so a session start
+    /// runs a scenario instance.
+    fn is_instance(&self) -> bool {
+        !self.flow_metrics.is_empty()
+    }
+
+    /// Returns the series of flow `index`.
+    pub(crate) fn metrics_of(&self, index: usize) -> &SessionMetrics {
+        self.flow_metrics.get(index).unwrap_or(&self.metrics)
     }
 
     /// Sends the cumulative snapshot of the shard to the collector.
@@ -144,7 +189,7 @@ impl Worker {
     }
 
     /// Returns a future that completes when the worker aborts its sessions.
-    fn aborted(&self) -> impl std::future::Future<Output = ()> + 'static {
+    pub(crate) fn aborted(&self) -> impl std::future::Future<Output = ()> + 'static {
         let mut rx = self.abort.subscribe();
         async move {
             // An error means that the worker dropped the sender, which ends
@@ -224,16 +269,26 @@ impl Worker {
     }
 }
 
+impl Worker {
+    /// Runs the scenario instance of one session start and ends the session
+    /// count of the worker, see [`instance`].
+    async fn run_instance(self: Rc<Self>, local_id: u64, peer: Peer) {
+        instance::run(Rc::clone(&self), local_id, peer).await;
+        self.open.set(self.open.get().saturating_sub(1));
+        self.closed.notify_one();
+    }
+}
+
 async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
     let id = start.config.id;
     let role = start.config.role.clone();
     let prepared = match &role {
-        Role::Client(c) => Worker::new(&start, Side::Client, &c.flow).and_then(|w| {
+        Role::Client(c) => Worker::new(&start, Side::Client, &c.flow, ListenConfig::default()).and_then(|w| {
             let sched = Schedule::new(c.schedule.clone())
                 .map_err(|source| RuntimeError::Schedule { worker: id, source })?;
             Ok((w, Vec::new(), Some(sched)))
         }),
-        Role::Server(s) => Worker::new(&start, Side::Server, &s.flow).and_then(|w| {
+        Role::Server(s) => Worker::new(&start, Side::Server, &s.flow, s.config.clone()).and_then(|w| {
             let listeners = bind(id, s)?;
             Ok((w, listeners, None))
         }),
@@ -339,6 +394,11 @@ async fn client_loop(
             worker.open.set(open);
             let (w, ctx) = (Rc::clone(worker), Rc::clone(&ctx));
             tokio::task::spawn_local(async move {
+                if w.is_instance() {
+                    let local = start.session_id;
+                    w.run_instance(local, Peer::Client(ctx)).await;
+                    return;
+                }
                 let ctx = &*ctx;
                 let opener = ClientOpener::new(
                     &ctx.connector,
@@ -377,9 +437,9 @@ async fn client_loop(
     }
 }
 
-struct ClientCtx {
-    connector: Connector,
-    config: ClientConfig,
+pub(crate) struct ClientCtx {
+    pub(crate) connector: Connector,
+    pub(crate) config: ClientConfig,
 }
 
 /// Accepts sessions until a stop arrives, and returns the stop.
@@ -405,6 +465,10 @@ async fn server_loop(
                 w.open.set(w.open.get() + 1);
                 let w = Rc::clone(&w);
                 tokio::task::spawn_local(async move {
+                    if w.is_instance() {
+                        w.run_instance(local_id, Peer::Server(io)).await;
+                        return;
+                    }
                     let flow = match w.flow.get() {
                         Ok(f) => f,
                         Err(_) => return,

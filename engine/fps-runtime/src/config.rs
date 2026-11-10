@@ -30,7 +30,9 @@ pub struct FlowRef {
     /// The compiled scenario after overrides and constant folding. Workers
     /// only read it.
     pub scenario: Arc<Scenario>,
-    /// The index of the flow in `scenario.flows`.
+    /// The index of the flow in `scenario.flows`. For a scenario with several
+    /// flows it is the entry flow, which a client dials first and whose server
+    /// side takes the accepted connection. It must not be spawned.
     pub flow: usize,
     /// The module functions of each session.
     pub functions: FunctionFactory,
@@ -222,6 +224,15 @@ impl RuntimeConfig {
                     w.id,
                     crate::opener::WORKER_ID_BITS
                 )));
+            }
+            let flow = match &w.role {
+                Role::Client(c) => &c.flow,
+                Role::Server(s) => &s.flow,
+            };
+            if flow.scenario.flows.len() > 1 {
+                if let Some(detail) = crate::instance::refusal(&flow.scenario, flow.flow) {
+                    return Err(config(&format!("worker {}: {detail}", w.id)));
+                }
             }
             match &w.role {
                 Role::Client(c) => {
