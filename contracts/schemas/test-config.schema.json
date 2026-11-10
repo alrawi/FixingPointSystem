@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/alrawi/FixingPointSystem/contracts/schemas/test-config.schema.json",
   "title": "FixingPointSystem test configuration",
-  "description": "Contract v0.2. Composes network, profile, load, timeline, criteria, and module settings. Names for ports and devices follow Open Traffic Generator vocabulary.",
+  "description": "Contract v0.3. Composes network, profile, load, timeline, criteria, and module settings. Names for ports and devices follow Open Traffic Generator vocabulary.",
   "type": "object",
   "additionalProperties": false,
   "required": ["apiVersion", "kind", "metadata", "topology", "network", "profile", "load"],
@@ -73,6 +73,14 @@
       "required": ["basis", "mix"],
       "properties": {
         "basis": { "enum": ["sessions", "bytes"] },
+        "arrival": {
+          "description": "Optional (v0.3). The distribution of the gaps between the starts of consecutive sessions of the whole run. A mix entry without its own arrival has no declared arrival process of its own. The declaration is the target that the realism check follows, and it adds no command for an agent.",
+          "$ref": "#/$defs/arrival"
+        },
+        "size": {
+          "description": "Optional (v0.3). The distribution of the payload sizes of the sessions of every mix entry that has no size of its own.",
+          "$ref": "#/$defs/size"
+        },
         "mix": {
           "type": "array",
           "minItems": 1,
@@ -89,7 +97,15 @@
               "weight": { "type": "number", "exclusiveMinimum": 0 },
               "client_pool": { "$ref": "#/$defs/name" },
               "server_pool": { "$ref": "#/$defs/name" },
-              "params": { "type": "object" }
+              "params": { "type": "object" },
+              "arrival": {
+                "description": "Optional (v0.3). The distribution of the gaps between the starts of consecutive sessions of this mix entry. It overrides profile.arrival for the entry.",
+                "$ref": "#/$defs/arrival"
+              },
+              "size": {
+                "description": "Optional (v0.3). The distribution of the payload sizes of this mix entry. Each direction that it names overrides the same direction of profile.size.",
+                "$ref": "#/$defs/size"
+              }
             }
           }
         }
@@ -172,6 +188,126 @@
   },
   "$defs": {
     "name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,62}$" },
+    "arrival": {
+      "description": "A distribution of inter arrival times, written with the parameter names of the scenario delay (milliseconds unless the unit says otherwise). Constant, exponential, uniform, lognormal, and Pareto are the names that the realism check accepts for a target.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "ms"],
+          "properties": {
+            "dist": { "const": "constant" },
+            "ms": { "type": "number", "exclusiveMinimum": 0 },
+            "tolerance_ms": { "type": "number", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "mean_ms"],
+          "properties": {
+            "dist": { "const": "exponential" },
+            "mean_ms": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "min_ms", "max_ms"],
+          "properties": {
+            "dist": { "const": "uniform" },
+            "min_ms": { "type": "number", "minimum": 0 },
+            "max_ms": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "mu", "sigma"],
+          "properties": {
+            "dist": { "const": "lognormal" },
+            "mu": { "type": "number" },
+            "sigma": { "type": "number", "exclusiveMinimum": 0 },
+            "unit": { "enum": ["s", "ms"], "default": "s" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "alpha", "scale_ms"],
+          "properties": {
+            "dist": { "const": "pareto" },
+            "alpha": { "type": "number", "exclusiveMinimum": 0 },
+            "scale_ms": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        }
+      ]
+    },
+    "size_distribution": {
+      "description": "A distribution of payload sizes in bytes. Lognormal parameters apply to the natural log of the size in bytes, and a Pareto distribution has the smallest value scale.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "value"],
+          "properties": {
+            "dist": { "const": "constant" },
+            "value": { "type": "number", "exclusiveMinimum": 0 },
+            "tolerance": { "type": "number", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "mean"],
+          "properties": {
+            "dist": { "const": "exponential" },
+            "mean": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "min", "max"],
+          "properties": {
+            "dist": { "const": "uniform" },
+            "min": { "type": "number", "minimum": 0 },
+            "max": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "mu", "sigma"],
+          "properties": {
+            "dist": { "const": "lognormal" },
+            "mu": { "type": "number" },
+            "sigma": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dist", "alpha", "scale"],
+          "properties": {
+            "dist": { "const": "pareto" },
+            "alpha": { "type": "number", "exclusiveMinimum": 0 },
+            "scale": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        }
+      ]
+    },
+    "size": {
+      "description": "Payload size distributions by direction. request is the client to server direction, response is the server to client direction, and both pools the two. A payload unit is one message of a message protocol, one datagram, or one whole direction of a session of a stream protocol, as the realism content check counts them.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "request": { "$ref": "#/$defs/size_distribution" },
+        "response": { "$ref": "#/$defs/size_distribution" },
+        "both": { "$ref": "#/$defs/size_distribution" }
+      }
+    },
     "host_pool": {
       "type": "object",
       "additionalProperties": false,

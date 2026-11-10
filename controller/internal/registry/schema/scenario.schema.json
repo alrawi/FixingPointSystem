@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/alrawi/FixingPointSystem/contracts/schemas/scenario.schema.json",
   "title": "FixingPointSystem scenario (flow programs)",
-  "description": "Scenario contract v0.5. A scenario groups flow programs with ordering and shared variables, and may declare behavior profiles. Each flow program lists actions per side.",
+  "description": "Scenario contract v0.6. A scenario groups flow programs with ordering and shared variables, and may declare behavior profiles. Each flow program lists actions per side.",
   "type": "object",
   "additionalProperties": false,
   "required": ["scenario", "flows"],
@@ -67,7 +67,7 @@
         "module": { "$ref": "#/$defs/identifier" },
         "l4": { "enum": ["tcp", "udp"], "default": "tcp" },
         "after": {
-          "description": "Flow ids that must complete before this flow starts.",
+          "description": "Flow ids that must complete before this flow starts. The flow also sees every variable that a set action of those flows bound, on the same role, as they stood when this flow started (scenario contract v0.6).",
           "oneOf": [
             { "$ref": "#/$defs/identifier" },
             { "type": "array", "items": { "$ref": "#/$defs/identifier" }, "minItems": 1, "uniqueItems": true }

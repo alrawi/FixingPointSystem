@@ -8,9 +8,9 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.7.0 |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3, unreleased |
-| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.5 |
+| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
-| `metrics/catalog.yaml` | Metric catalog 0.1.0 |
+| `metrics/catalog.yaml` | Metric catalog 0.3.0 |
 | `examples/` | Example modules, tests, and plans that every validator run checks |
 
 ## Agent control protocol
@@ -212,3 +212,17 @@ CON-18 moves the scenario contract from v0.4 to v0.5 and decides the flow keywor
 | Embedded copy | The controller embeds the scenario schema, so the copy under `controller/internal/registry/schema/` follows the contract byte for byte |
 
 The tightened body breaks nothing, because no loader ever accepted the old shape. The agent builds no TLS profiles until AGT-14, so a session of a plan that uses the keyword fails until then, as it does for `tls_upgrade`.
+
+## Gaps found by CAP-02 and RLM-06
+
+CON-19 moves the scenario contract from v0.5 to v0.6, the test configuration from v0.2 to v0.3, and the metric catalog from 0.2.0 to 0.3.0. Every change is additive, and the entry `contracts/changes/CON-19.md` records the reasons, the compatibility, and the follow up work.
+
+| Change | Rule |
+|---|---|
+| `int_bytes(value, width, endianness)` | Core function. An unsigned integer as exactly `width` bytes (1 to 8), `'big'` by default or `'little'`. A negative value or a value that does not fit is an error, never a truncation. The validator checks literal arguments, and a computed bad value fails the session with `template_error` |
+| `now(format)` | Core function. `'http_date'` (text, IMF fixdate in UTC, 29 bytes), `'epoch_s'` and `'epoch_ms'` (int). It reads the clock at each call, so it is not a function of the run seed. Replays and goldens pin the clock, and the output length does not depend on the instant, so byte counts replay without pinning. The compiler never folds it. Neither function draws from the seeded generator |
+| Variables across `after` | A flow sees the variables that flows before it (directly or through a chain) bound with `set`, as they stood when it started, and a spawned flow sees its parent up to the `spawn`. The two roles run on different agents and share no variables, so a value that both need is bound by each role from its own `last`. Flows that `after` does not order have no defined order. The engine already behaves this way, so the change states the rule |
+| `profile.arrival`, `profile.size`, and the same fields in a mix entry | Optional declarations of the intended distributions, which the realism check follows. `arrival` takes `constant`, `exponential`, `uniform`, `lognormal`, and `pareto` with the parameters of the scenario `delay`, and `size` takes the same names in bytes for `request`, `response`, and `both`. They add no command for agents, so arrivals still follow the load objective and sizes follow the scenarios |
+| `application: all` and `property: both` | The KS metrics `realism.ks_statistic` and `realism.ks_p_value` can total every application and pool both directions. The module name `all` is reserved, and the `LABEL_VALUES` mirror in `fps-stats` gains `both` |
+
+The engine does not implement `int_bytes` and `now` yet, the controller compiler does not accept `arrival` and `size` yet, and the realism runner does not read them yet. Until an ENG, a CTL, and an RLM package land, a scenario that calls the functions fails to load in the engine, and a configuration that declares the distributions fails in the compiler. The follow up list is in the change entry.

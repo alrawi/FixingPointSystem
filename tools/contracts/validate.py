@@ -217,6 +217,10 @@ HEX_RE = re.compile(r"(?:[0-9a-fA-F]{2})*")
 # value-type enum of contracts/extension/fps-extension.wit.
 VALUE_TYPES = ("int", "float", "boolean", "text", "bytes", "any")
 
+# The value of the metric label application that stands for every application
+# together (metric catalog 0.3.0), so no module may carry the name.
+ALL_APPLICATIONS = "all"
+
 # Template roots that are not module names. A module may not take one of
 # these names, because a template could not tell the two apart.
 RESERVED_ROOTS = {"vars", "session", "last", "true", "false", "profiles", "dist"}
@@ -248,7 +252,21 @@ CORE_FUNCTIONS: dict[str, FunctionSig] = {
     "fill": FunctionSig("fill", (Param("n", "int"),), "text"),
     "hex": FunctionSig("hex", (Param("s", "text"),), "bytes"),
     "rand_int": FunctionSig("rand_int", (Param("a", "int"), Param("b", "int")), "int"),
+    # Scenario contract v0.6 (CON-19). The result type of now() depends on the
+    # format literal, see NOW_RESULTS.
+    "int_bytes": FunctionSig("int_bytes", (Param("value", "int"), Param("width", "int"),
+                                           Param("endianness", "text", False)), "bytes"),
+    "now": FunctionSig("now", (Param("format", "text"),), "any"),
 }
+
+# Formats of now() and the type each one renders (scenario contract v0.6).
+NOW_RESULTS = {"http_date": "text", "epoch_s": "int", "epoch_ms": "int"}
+
+# Widths of int_bytes() in bytes, its byte orders, and the largest value of an
+# int, which is a signed 64 bit integer.
+INT_BYTES_WIDTHS = range(1, 9)
+INT_BYTES_ORDERS = ("big", "little")
+INT_MAX = 2**63 - 1
 
 # Distribution functions of scenario contract v0.3 (decision D12 item 18). They
 # need no manifest: the engine draws from the seeded generator and rounds to an
@@ -542,11 +560,41 @@ def _check_call(call: Call, scope: TemplateScope, issues: list[TemplateIssue]) -
                 "error", f"parameter '{param.name}' of '{call.qualified}' takes {param.type}, got {typ}"))
     if call.module == "dist":
         _check_dist_literals(call, bound, issues)
+    if call.qualified == "int_bytes":
+        _check_int_bytes(bound, issues)
+    result = sig.result
+    if call.qualified == "now":
+        node = bound.get("format", (None, None))[1]
+        if isinstance(node, Lit) and node.type == "text":
+            if node.value not in NOW_RESULTS:
+                issues.append(TemplateIssue(
+                    "error", f"unknown format '{node.value}' of now(), expected one of {', '.join(NOW_RESULTS)}"))
+            else:
+                result = NOW_RESULTS[node.value]
     if call.qualified == "hex" and "s" in bound:
         node = bound["s"][1]
         if isinstance(node, Lit) and node.type == "text" and not HEX_RE.fullmatch(node.value):
             issues.append(TemplateIssue("error", "hex() needs an even number of hexadecimal digits"))
-    return sig.result
+    return result
+
+
+def _check_int_bytes(bound: dict[str, tuple[str, Any]], issues: list[TemplateIssue]) -> None:
+    """Range rules for the literal arguments of int_bytes()."""
+    def literal(name: str, kind: str) -> Any:
+        node = bound.get(name, (None, None))[1]
+        return node.value if isinstance(node, Lit) and node.type == kind else None
+
+    width, value, order = literal("width", "int"), literal("value", "int"), literal("endianness", "text")
+    if width is not None and width not in INT_BYTES_WIDTHS:
+        issues.append(TemplateIssue("error", "int_bytes() takes a width from 1 to 8 bytes"))
+        width = None
+    if order is not None and order not in INT_BYTES_ORDERS:
+        issues.append(TemplateIssue("error", "int_bytes() takes the endianness 'big' or 'little'"))
+    if value is not None:
+        limit = min(2 ** (8 * width) - 1, INT_MAX) if width is not None else INT_MAX
+        if value < 0 or value > limit:
+            issues.append(TemplateIssue(
+                "error", f"int_bytes() value {value} does not fit {width or 8} byte(s) as an unsigned integer"))
 
 
 def _check_dist_literals(call: Call, bound: dict[str, tuple[str, Any]], issues: list[TemplateIssue]) -> None:
@@ -849,6 +897,9 @@ def check_module_dir(mod_dir: Path, report: Report, index: ModuleIndex) -> None:
 
     if name in RESERVED_ROOTS:
         report.error(manifest_path, "/name", f"module name '{name}' is reserved for template references")
+    if name == ALL_APPLICATIONS:
+        report.error(manifest_path, "/name",
+                     f"module name '{name}' is reserved for the application label value that totals every application")
     for i, req in enumerate(manifest.get("requires", [])):
         if req["module"] == name:
             report.error(manifest_path, f"/requires/{i}", "module requires itself")
@@ -1029,6 +1080,25 @@ def check_test_config(doc: dict, file: Path, report: Report, index: ModuleIndex,
     for i, name in enumerate(names):
         if names.index(name) != i:
             report.error(file, f"/load/phases/{i}/name", f"duplicate phase '{name}'")
+
+    _check_distributions(doc, file, report)
+
+
+def _check_distributions(doc: dict, file: Path, report: Report) -> None:
+    """Semantic rules of the arrival and size distributions (test configuration
+    v0.3). The schema fixes the shapes, and these rules relate two parameters."""
+    profile = doc["profile"]
+    sites: list[tuple[str, dict]] = []
+    scopes = [("/profile", profile)] + [(f"/profile/mix/{i}", e) for i, e in enumerate(profile["mix"])]
+    for where, scope in scopes:
+        if "arrival" in scope:
+            sites.append((where + "/arrival", scope["arrival"]))
+        for direction, dist in (scope.get("size") or {}).items():
+            sites.append((f"{where}/size/{direction}", dist))
+    for where, dist in sites:
+        for low, high in (("min_ms", "max_ms"), ("min", "max")):
+            if low in dist and dist[low] > dist[high]:
+                report.error(file, where, f"uniform distribution has {low} greater than {high}")
 
 
 # ---------------------------------------------------------------------------

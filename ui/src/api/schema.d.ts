@@ -682,6 +682,32 @@ export interface components {
                 relpath: string;
             };
         };
+        /** @description A distribution of payload sizes in bytes. Lognormal parameters apply to the natural log of the size in bytes, and a Pareto distribution has the smallest value scale. */
+        size_distribution: {
+            /** @constant */
+            dist: "constant";
+            value: number;
+            tolerance?: number;
+        } | {
+            /** @constant */
+            dist: "exponential";
+            mean: number;
+        } | {
+            /** @constant */
+            dist: "uniform";
+            min: number;
+            max: number;
+        } | {
+            /** @constant */
+            dist: "lognormal";
+            mu: number;
+            sigma: number;
+        } | {
+            /** @constant */
+            dist: "pareto";
+            alpha: number;
+            scale: number;
+        };
         name: string;
         host_pool: {
             name: components["schemas"]["name"];
@@ -696,9 +722,46 @@ export interface components {
             mac_base?: string;
             os_profile?: string;
         } | unknown | unknown;
+        /** @description A distribution of inter arrival times, written with the parameter names of the scenario delay (milliseconds unless the unit says otherwise). Constant, exponential, uniform, lognormal, and Pareto are the names that the realism check accepts for a target. */
+        arrival: {
+            /** @constant */
+            dist: "constant";
+            ms: number;
+            tolerance_ms?: number;
+        } | {
+            /** @constant */
+            dist: "exponential";
+            mean_ms: number;
+        } | {
+            /** @constant */
+            dist: "uniform";
+            min_ms: number;
+            max_ms: number;
+        } | {
+            /** @constant */
+            dist: "lognormal";
+            mu: number;
+            sigma: number;
+            /**
+             * @default s
+             * @enum {unknown}
+             */
+            unit: "s" | "ms";
+        } | {
+            /** @constant */
+            dist: "pareto";
+            alpha: number;
+            scale_ms: number;
+        };
+        /** @description Payload size distributions by direction. request is the client to server direction, response is the server to client direction, and both pools the two. A payload unit is one message of a message protocol, one datagram, or one whole direction of a session of a stream protocol, as the realism content check counts them. */
+        size: {
+            request?: components["schemas"]["size_distribution"];
+            response?: components["schemas"]["size_distribution"];
+            both?: components["schemas"]["size_distribution"];
+        };
         /**
          * FixingPointSystem test configuration
-         * @description Contract v0.2. Composes network, profile, load, timeline, criteria, and module settings. Names for ports and devices follow Open Traffic Generator vocabulary.
+         * @description Contract v0.3. Composes network, profile, load, timeline, criteria, and module settings. Names for ports and devices follow Open Traffic Generator vocabulary.
          */
         "test-config.schema": {
             /** @constant */
@@ -735,6 +798,10 @@ export interface components {
             profile: {
                 /** @enum {unknown} */
                 basis: "sessions" | "bytes";
+                /** @description Optional (v0.3). The distribution of the gaps between the starts of consecutive sessions of the whole run. A mix entry without its own arrival has no declared arrival process of its own. The declaration is the target that the realism check follows, and it adds no command for an agent. */
+                arrival?: components["schemas"]["arrival"];
+                /** @description Optional (v0.3). The distribution of the payload sizes of the sessions of every mix entry that has no size of its own. */
+                size?: components["schemas"]["size"];
                 mix: {
                     /** @description Scenario reference as <module>/<scenario> or a bare scenario name that is unique among installed modules. */
                     scenario: string;
@@ -742,6 +809,10 @@ export interface components {
                     client_pool?: components["schemas"]["name"];
                     server_pool?: components["schemas"]["name"];
                     params?: Record<string, never>;
+                    /** @description Optional (v0.3). The distribution of the gaps between the starts of consecutive sessions of this mix entry. It overrides profile.arrival for the entry. */
+                    arrival?: components["schemas"]["arrival"];
+                    /** @description Optional (v0.3). The distribution of the payload sizes of this mix entry. Each direction that it names overrides the same direction of profile.size. */
+                    size?: components["schemas"]["size"];
                 }[];
             };
             load: {
@@ -783,6 +854,69 @@ export interface components {
             };
             $defs: {
                 name: string;
+                /** @description A distribution of inter arrival times, written with the parameter names of the scenario delay (milliseconds unless the unit says otherwise). Constant, exponential, uniform, lognormal, and Pareto are the names that the realism check accepts for a target. */
+                arrival: {
+                    /** @constant */
+                    dist: "constant";
+                    ms: number;
+                    tolerance_ms?: number;
+                } | {
+                    /** @constant */
+                    dist: "exponential";
+                    mean_ms: number;
+                } | {
+                    /** @constant */
+                    dist: "uniform";
+                    min_ms: number;
+                    max_ms: number;
+                } | {
+                    /** @constant */
+                    dist: "lognormal";
+                    mu: number;
+                    sigma: number;
+                    /**
+                     * @default s
+                     * @enum {unknown}
+                     */
+                    unit: "s" | "ms";
+                } | {
+                    /** @constant */
+                    dist: "pareto";
+                    alpha: number;
+                    scale_ms: number;
+                };
+                /** @description A distribution of payload sizes in bytes. Lognormal parameters apply to the natural log of the size in bytes, and a Pareto distribution has the smallest value scale. */
+                size_distribution: {
+                    /** @constant */
+                    dist: "constant";
+                    value: number;
+                    tolerance?: number;
+                } | {
+                    /** @constant */
+                    dist: "exponential";
+                    mean: number;
+                } | {
+                    /** @constant */
+                    dist: "uniform";
+                    min: number;
+                    max: number;
+                } | {
+                    /** @constant */
+                    dist: "lognormal";
+                    mu: number;
+                    sigma: number;
+                } | {
+                    /** @constant */
+                    dist: "pareto";
+                    alpha: number;
+                    scale: number;
+                };
+                /** @description Payload size distributions by direction. request is the client to server direction, response is the server to client direction, and both pools the two. A payload unit is one message of a message protocol, one datagram, or one whole direction of a session of a stream protocol, as the realism content check counts them. */
+                size: {
+                    request?: components["schemas"]["size_distribution"];
+                    response?: components["schemas"]["size_distribution"];
+                    both?: components["schemas"]["size_distribution"];
+                };
                 host_pool: {
                     name: components["schemas"]["name"];
                     port: components["schemas"]["name"];

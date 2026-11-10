@@ -1,5 +1,15 @@
 # Contracts changelog
 
+## Scenario contract 0.6, test configuration 0.3, and metric catalog 0.3.0 (2026-11-10)
+
+Contract gaps that CAP-02 and RLM-06 found (CON-19). All changes are additive. See `changes/CON-19.md`.
+
+- Scenario contract v0.6 adds the core template functions `int_bytes(value, width, endianness)`, an unsigned integer as 1 to 8 bytes in big or little endian order, and `now(format)`, the wall clock as `http_date`, `epoch_s`, or `epoch_ms`. Neither draws from the seeded generator. `now` is not a function of the seed, so a golden test or a replay that needs equal bytes pins the clock, and the length of its output is fixed.
+- The scenario contract states the rule for variables across `after`: a flow sees the variables that the flows before it bound, on the same role. The two roles share no variables during a run.
+- Test configuration v0.3 adds the optional `arrival` and `size` distributions to `profile` and to each mix entry, with the distributions `constant`, `exponential`, `uniform`, `lognormal`, and `pareto`. They are declarations that the realism check follows, and they add no command for agents.
+- Metric catalog 0.3.0 documents the value `all` of the label `application` and adds the value `both` to the label `property`, for the KS metrics. The module name `all` is reserved.
+- The embedded copies in the controller are refreshed, and `ui/src/api/schema.d.ts` is regenerated.
+
 ## Scenario contract 0.5 (2026-11-10)
 
 The `transport` keyword is sugar for a leading `tls_upgrade` (CON-18). The change is additive for every scenario that a loader ever accepted. See `changes/CON-18.md`.
