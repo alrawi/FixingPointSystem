@@ -4,7 +4,9 @@
 Each module with TLS sessions has a fixture capture that embeds its TLS keys, and
 ``realism/examples/decrypted/`` holds the labels of its decrypted view. These tests run
 ``python3 -m realism decrypted`` on the fixtures with the installed tshark and the
-ndpiReader of nDPI 4.14, which replaces the ``decrypted_check.py`` copies of the modules.
+ndpiReader of nDPI 4.14, which replaces the ``decrypted_check.py`` copies of the modules. The
+labels also give the message counts per session, which ``test_messages.py`` checks with tshark
+alone.
 They skip where a tool is missing or nDPI is older than 4.14, and the http2 fixture
 comes from the same place as in ``test_ndpi_http2.py``.
 """
@@ -86,3 +88,8 @@ def test_the_shared_decrypted_check_passes_on_the_fixture(
         )
     assert code == EXIT_PASS, result["failures"]
     assert result["tls_sessions"] == result["decrypted_sessions"] == sessions
+    # The labels carry literal message counts, which every view session must show.
+    counts = next(c for c in result["report"]["checks"] if c["check"] == "messages")
+    assert counts["passed"], counts["failures"]
+    assert counts["sessions_checked"] == sessions
+    assert counts["sessions_failed"] == 0

@@ -24,6 +24,8 @@ use crate::clock::TokioClock;
 use crate::collector::WorkerSnapshot;
 use crate::config::{ClientConfig, FlowRef, Role, ServerConfig, WorkerConfig};
 use crate::control::Control;
+use crate::data_ports::DataPorts;
+use crate::datagram::{DatagramPorts, Listening};
 use crate::extension::close_reason;
 use crate::instance::{self, Peer};
 use crate::metrics::{SessionMetrics, TlsMetrics};
@@ -102,9 +104,10 @@ pub(crate) struct Worker {
     /// that runs scenario instances, and empty for a single flow scenario.
     /// Flows of one module share their series.
     flow_metrics: Vec<SessionMetrics>,
-    /// The configuration of the listeners that a server instance binds data
-    /// ports with.
-    pub(crate) listen_config: ListenConfig,
+    /// The TCP data ports that the instances of the worker share.
+    pub(crate) data_ports: DataPorts,
+    /// The UDP ports that the server sides of the instances share.
+    pub(crate) datagram_ports: DatagramPorts,
     open: Cell<u32>,
     closed: Notify,
     sequence: Cell<u64>,
@@ -161,7 +164,8 @@ impl Worker {
             shard: RefCell::new(shard),
             metrics,
             flow_metrics,
-            listen_config,
+            data_ports: DataPorts::new(listen_config),
+            datagram_ports: DatagramPorts::new(),
             open: Cell::new(0),
             closed: Notify::new(),
             sequence: Cell::new(0),
@@ -329,7 +333,9 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
             }),
         Role::Server(s) => {
             Worker::new(&start, Side::Server, &s.flow, s.config.clone()).and_then(|w| {
-                let listeners = bind(id, s)?;
+                // A UDP entry flow has no TCP listener.
+                let udp = w.is_instance() && instance::entry_is_udp(&s.flow.scenario, s.flow.flow);
+                let listeners = if udp { Vec::new() } else { bind(id, s)? };
                 Ok((w, listeners, None))
             })
         }
@@ -341,7 +347,27 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
             return Err(e);
         }
     };
-    let addrs = listeners.iter().map(KernelListener::local_addr).collect();
+    // A server worker whose entry flow is UDP listens on datagram ports, and
+    // the guards keep them bound between two sessions.
+    let datagram_entries = match &role {
+        Role::Server(s)
+            if worker.is_instance() && instance::entry_is_udp(&s.flow.scenario, s.flow.flow) =>
+        {
+            match bind_datagrams(&worker, id, s).await {
+                Ok(entries) => entries,
+                Err(e) => {
+                    let _ = start.ready.send((id, Err(clone_err(&e))));
+                    return Err(e);
+                }
+            }
+        }
+        _ => Vec::new(),
+    };
+    let addrs = listeners
+        .iter()
+        .map(KernelListener::local_addr)
+        .chain(datagram_entries.iter().map(|(_, a)| *a))
+        .collect();
     let rate = match (&role, &sched) {
         (Role::Client(c), Some(sched)) => Some((
             c.flow
@@ -365,7 +391,16 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
             Some(sched) => client_loop(&worker, *c, sched, &mut control, &mut tick).await,
             None => Control::Run,
         },
-        Role::Server(_) => server_loop(&worker, listeners, &mut control, &mut tick).await,
+        Role::Server(_) => {
+            server_loop(
+                &worker,
+                listeners,
+                datagram_entries,
+                &mut control,
+                &mut tick,
+            )
+            .await
+        }
     };
     // Open sessions finish within the ramp down time and are reset after it.
     // An abort, or a lost handle, resets them at once.
@@ -398,6 +433,26 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
         pinned: None,
         sessions: shard.snapshot(),
     })
+}
+
+/// Binds the UDP ports of a server worker whose entry flow is UDP.
+async fn bind_datagrams(
+    w: &Worker,
+    worker: u32,
+    s: &ServerConfig,
+) -> Result<Vec<(Listening, SocketAddr)>, RuntimeError> {
+    let mut entries = Vec::with_capacity(s.listen.len());
+    for address in &s.listen {
+        let entry = w.datagram_ports.listen(*address).await.map_err(|source| {
+            RuntimeError::ListenDatagram {
+                worker,
+                address: *address,
+                source,
+            }
+        })?;
+        entries.push(entry);
+    }
+    Ok(entries)
 }
 
 fn bind(worker: u32, s: &ServerConfig) -> Result<Vec<KernelListener>, RuntimeError> {
@@ -487,6 +542,7 @@ pub(crate) struct ClientCtx {
 async fn server_loop(
     worker: &Rc<Worker>,
     listeners: Vec<KernelListener>,
+    datagram_entries: Vec<(Listening, SocketAddr)>,
     control: &mut watch::Receiver<Control>,
     tick: &mut tokio::time::Interval,
 ) -> Control {
@@ -519,6 +575,28 @@ async fn server_loop(
                     };
                     let w2 = Rc::clone(&w);
                     w2.session(local_id, program, Accepted::new(io)).await;
+                });
+            }
+        }));
+    }
+    // A UDP entry flow starts an instance for the first datagram of each peer.
+    // The task owns the guard that keeps its port bound.
+    for (pin, address) in datagram_entries {
+        let (w, next_id) = (Rc::clone(worker), Rc::clone(&next_id));
+        accepts.push(tokio::task::spawn_local(async move {
+            let _pin = pin;
+            loop {
+                let Ok(session) = w.datagram_ports.accept(address, None).await else {
+                    tokio::task::yield_now().await;
+                    continue;
+                };
+                let local_id = next_id.get();
+                next_id.set(local_id + 1);
+                w.open.set(w.open.get() + 1);
+                let w = Rc::clone(&w);
+                tokio::task::spawn_local(async move {
+                    w.run_instance(local_id, Peer::ServerDatagram(session))
+                        .await;
                 });
             }
         }));

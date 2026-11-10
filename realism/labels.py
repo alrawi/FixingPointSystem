@@ -51,7 +51,26 @@ _TOP_LEVEL = {
     "temporal",
     "mix",
     "transport",
+    "messages",
 }
+MESSAGE_PROTOCOLS = ("http1", "http2", "smtp", "imap")
+_MESSAGE_RULE_FIELDS = {"protocol", "match", "expect"}
+# The counts that a messages rule may expect, by protocol. A scalar is one number, and a
+# table maps a command name or a reply code (or status) to a number.
+MESSAGE_SCALARS: dict[str, tuple[str, ...]] = {
+    "http1": ("requests", "responses"),
+    "http2": ("requests", "responses"),
+    "smtp": ("messages",),
+    "imap": ("messages",),
+}
+MESSAGE_TABLES: dict[str, tuple[str, ...]] = {
+    "http1": (),
+    "http2": (),
+    "smtp": ("commands", "replies"),
+    "imap": ("commands", "replies"),
+}
+_COUNT_FIELDS = {"min", "max"}
+_MESSAGE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _TRANSPORT_FIELDS = {
     "os_profile",
     "hosts",
@@ -313,6 +332,52 @@ class TransportLabels:
     expect: Mapping[str, int] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class Count:
+    """An expected number of messages in one session: an exact number or a range.
+
+    ``max`` is None for a range without an upper limit.
+    """
+
+    min: int
+    max: int | None
+
+    def holds(self, found: int) -> bool:
+        """Return True when the number lies inside the range."""
+        return found >= self.min and (self.max is None or found <= self.max)
+
+    def text(self) -> str:
+        """Return the expectation in words, for example ``1``, ``2 to 4``, or ``at least 1``."""
+        if self.max == self.min:
+            return str(self.min)
+        if self.max is None:
+            return f"at least {self.min}"
+        return f"{self.min} to {self.max}"
+
+    def to_dict(self) -> dict[str, int | None]:
+        """Return the range as the report shows it."""
+        return {"min": self.min, "max": self.max}
+
+
+@dataclass(frozen=True)
+class MessageRule:
+    """Expected message counts per session for the sessions that ``match`` selects.
+
+    ``protocol`` names how tshark reads the sessions. ``expect`` maps a count name to the
+    number that every matching session must show: ``requests``, ``responses`` (HTTP),
+    ``messages`` (an RFC 5322 message, SMTP and IMAP), and ``commands.NAME`` and
+    ``replies.CODE`` (SMTP and IMAP).
+    """
+
+    protocol: str
+    match: Mapping[str, str | int]
+    expect: Mapping[str, Count]
+
+    def matches(self, session: Session) -> bool:
+        """Return True when every match field equals the session field."""
+        return all(getattr(session, name) == value for name, value in self.match.items())
+
+
 @dataclass
 class Labels:
     """The expected labels of one capture."""
@@ -327,6 +392,7 @@ class Labels:
     temporal: TemporalLabels | None = None
     mix: MixLabels | None = None
     transport: TransportLabels | None = None
+    messages: list[MessageRule] | None = None
     base_dir: Path | None = None
 
     def tls_profile_of(self, session: Session) -> str | None:
@@ -428,6 +494,7 @@ def parse(doc: Any, source: str = "<labels>") -> Labels:
         temporal=_temporal(doc["temporal"], where) if "temporal" in doc else None,
         mix=_mix(doc["mix"], where) if "mix" in doc else None,
         transport=_transport(doc["transport"], where) if "transport" in doc else None,
+        messages=_messages(doc["messages"], where) if "messages" in doc else None,
     )
 
 
@@ -872,7 +939,15 @@ def _rule(item: Any, where: str) -> Rule:
     application = item.get("application")
     if not isinstance(application, str) or not application:
         raise LabelsError(f"{where}: application must be a non empty string")
-    match = item.get("match", {})
+    return Rule(
+        application=application,
+        match=_match_fields(item.get("match", {}), where),
+        tls_profile=tls_profile,
+    )
+
+
+def _match_fields(match: Any, where: str) -> dict[str, str | int]:
+    """Validate the match fields of a rule and return them with canonical addresses."""
     if not isinstance(match, dict):
         raise LabelsError(f"{where}: match must be a mapping")
     for name, value in match.items():
@@ -892,7 +967,63 @@ def _rule(item: Any, where: str) -> Rule:
                 normalized[name] = str(ipaddress.ip_address(normalized[name]))
             except ValueError as exc:
                 raise LabelsError(f"{where}: match field {name}: {exc}") from exc
-    return Rule(application=application, match=normalized, tls_profile=tls_profile)
+    return normalized
+
+
+def _messages(value: Any, where: str) -> list[MessageRule]:
+    """Validate the messages section of the message count check."""
+    here = f"{where} messages"
+    rules = _list(value, here)
+    if not rules:
+        raise LabelsError(f"{here}: give at least one rule")
+    return [_message_rule(item, f"{here}[{index}]") for index, item in enumerate(rules)]
+
+
+def _message_rule(item: Any, where: str) -> MessageRule:
+    if not isinstance(item, dict) or set(item) - _MESSAGE_RULE_FIELDS:
+        raise LabelsError(f"{where}: a rule has only {sorted(_MESSAGE_RULE_FIELDS)}")
+    protocol = item.get("protocol")
+    if protocol not in MESSAGE_PROTOCOLS:
+        raise LabelsError(f"{where}: protocol must be one of {', '.join(MESSAGE_PROTOCOLS)}")
+    raw = item.get("expect")
+    if not isinstance(raw, dict) or not raw:
+        raise LabelsError(f"{where}: expect must be a mapping with at least one count")
+    scalars, tables = MESSAGE_SCALARS[protocol], MESSAGE_TABLES[protocol]
+    expect: dict[str, Count] = {}
+    for name, spec in raw.items():
+        if name in scalars:
+            expect[name] = _count(spec, f"{where} expect.{name}")
+        elif name in tables:
+            if not isinstance(spec, dict) or not spec:
+                raise LabelsError(f"{where} expect.{name}: must map names to counts")
+            for key, count in spec.items():
+                text = str(key)
+                if isinstance(key, bool) or not _MESSAGE_NAME.fullmatch(text):
+                    raise LabelsError(f"{where} expect.{name}: {key!r} is not a name or a code")
+                expect[f"{name}.{text.upper()}"] = _count(count, f"{where} expect.{name}.{text}")
+        else:
+            allowed = sorted(scalars + tables)
+            raise LabelsError(f"{where} expect.{name}: {protocol} counts are {allowed}")
+    return MessageRule(protocol, _match_fields(item.get("match", {}), where), expect)
+
+
+def _count(spec: Any, where: str) -> Count:
+    """Read an exact count, or a mapping with ``min`` and ``max``."""
+    if isinstance(spec, dict):
+        if not spec or set(spec) - _COUNT_FIELDS:
+            raise LabelsError(f"{where}: a range has only min and max")
+        low, high = spec.get("min", 0), spec.get("max")
+        for key, number in (("min", low), ("max", high)):
+            if number is not None and (
+                isinstance(number, bool) or not isinstance(number, int) or number < 0
+            ):
+                raise LabelsError(f"{where}.{key}: must be a non negative integer")
+        if high is not None and high < low:
+            raise LabelsError(f"{where}: max is below min")
+        return Count(low, high)
+    if isinstance(spec, bool) or not isinstance(spec, int) or spec < 0:
+        raise LabelsError(f"{where}: must be a non negative integer or a range with min and max")
+    return Count(spec, spec)
 
 
 def _applications(value: Any, where: str) -> dict[str, dict[str, tuple[str, ...]]]:

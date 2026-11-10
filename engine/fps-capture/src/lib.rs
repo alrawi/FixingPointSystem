@@ -107,7 +107,7 @@ pub struct CaptureConfig {
     /// rest of the session is left out and the session counts as truncated.
     pub max_session_bytes: usize,
     /// The number of finished sessions that wait for the writer. A session that
-    /// finds the queue full is dropped and counted.
+    /// finds the queue full is dropped and counted in `sessions_dropped_overflow`.
     pub queue_depth: usize,
 }
 
@@ -150,8 +150,21 @@ pub struct CaptureStats {
     pub sessions_sampled: u64,
     /// Sessions that reached a ring file.
     pub sessions_written: u64,
-    /// Sessions dropped because the writer queue was full or already stopped.
+    /// Sessions that never reached the writer: the sum of
+    /// [`sessions_dropped_overflow`](Self::sessions_dropped_overflow) and
+    /// [`sessions_cut_at_stop`](Self::sessions_cut_at_stop). It keeps the value
+    /// that it had before the two were counted apart, so a caller that adds it
+    /// to `sessions_dropped_oversize` gets what it got before. Read the two
+    /// parts to tell a capture that was too slow from a capture that was
+    /// stopped while sessions ran.
     pub sessions_dropped_queue: u64,
+    /// Sessions that ended while the writer queue was full. This is the loss of
+    /// a capture whose writer could not keep up, and it happens during a run.
+    pub sessions_dropped_overflow: u64,
+    /// Sessions that were still open when [`Capture::stop`] ran, or that
+    /// finished after the writer had ended for another reason, and so found
+    /// no writer. They are no loss of the writer: the stop cut them off.
+    pub sessions_cut_at_stop: u64,
     /// Sessions dropped because they could not fit into one ring file.
     pub sessions_dropped_oversize: u64,
     /// Written sessions that were cut at `max_session_bytes`.
@@ -172,7 +185,8 @@ pub struct CaptureStats {
 struct Counters {
     sampled: AtomicU64,
     written: AtomicU64,
-    dropped_queue: AtomicU64,
+    dropped_overflow: AtomicU64,
+    cut_at_stop: AtomicU64,
     dropped_oversize: AtomicU64,
     truncated: AtomicU64,
     packets: AtomicU64,
@@ -185,10 +199,14 @@ struct Counters {
 impl Counters {
     fn snapshot(&self) -> CaptureStats {
         let get = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        let overflow = get(&self.dropped_overflow);
+        let cut = get(&self.cut_at_stop);
         CaptureStats {
             sessions_sampled: get(&self.sampled),
             sessions_written: get(&self.written),
-            sessions_dropped_queue: get(&self.dropped_queue),
+            sessions_dropped_queue: overflow + cut,
+            sessions_dropped_overflow: overflow,
+            sessions_cut_at_stop: cut,
             sessions_dropped_oversize: get(&self.dropped_oversize),
             sessions_truncated: get(&self.truncated),
             packets: get(&self.packets),
@@ -379,8 +397,10 @@ impl Capture {
     }
 
     /// Writes what is queued, closes the ring files, stops the writer, and
-    /// returns the final counters. Sessions that finish later are dropped and
-    /// counted. Stopping twice is harmless.
+    /// returns the final counters. A session that is still open finds no
+    /// writer when it ends, and counts in `sessions_cut_at_stop`, which the
+    /// counters returned here cannot hold yet: read [`Capture::stats`] once the
+    /// sessions have ended. Stopping twice is harmless.
     pub fn stop(&self) -> CaptureStats {
         let Some(inner) = &self.inner else {
             return CaptureStats::default();
@@ -565,10 +585,18 @@ impl Drop for Shared {
         };
         match self.inner.tx.try_send(Job::Session(Box::new(record))) {
             Ok(()) => {}
-            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+            // The queue is full: the writer is behind.
+            Err(TrySendError::Full(_)) => {
                 self.inner
                     .counters
-                    .dropped_queue
+                    .dropped_overflow
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            // The writer has ended, which `Capture::stop` does.
+            Err(TrySendError::Disconnected(_)) => {
+                self.inner
+                    .counters
+                    .cut_at_stop
                     .fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -596,6 +624,12 @@ impl Writer {
                     let _ = reply.send(self.ring.paths());
                 }
                 Job::Stop => break,
+            }
+        }
+        // A session that was queued behind the stop is not written either.
+        while let Ok(job) = rx.try_recv() {
+            if matches!(job, Job::Session(_)) {
+                self.counters.cut_at_stop.fetch_add(1, Ordering::Relaxed);
             }
         }
         let result = self.ring.close();
@@ -655,5 +689,83 @@ impl Writer {
             }
             Err(e) => self.fail(&e),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::{sync_channel, Receiver};
+
+    use super::*;
+
+    struct Fixed;
+
+    impl CaptureClock for Fixed {
+        fn now_nanos(&self) -> u64 {
+            1_000
+        }
+    }
+
+    fn flow(id: u64) -> FlowEndpoints {
+        FlowEndpoints::new(
+            std::net::SocketAddr::from(([10, 0, 0, 1], 40_000 + id as u16)),
+            std::net::SocketAddr::from(([10, 0, 0, 2], 80)),
+        )
+        .unwrap()
+    }
+
+    fn begin(capture: &Capture, id: u64) -> SessionHandle {
+        capture
+            .begin(id, flow(id), Transport::Tcp, Side::Client)
+            .unwrap()
+    }
+
+    /// A capture whose queue holds `depth` sessions and whose writer is the test.
+    fn capture_without_writer(depth: usize) -> (Capture, Receiver<Job>) {
+        let (tx, rx) = sync_channel(depth);
+        let inner = Inner {
+            sampler: Sampler::new(SamplePolicy::Rate(1.0), 1).unwrap(),
+            seed: 1,
+            max_session_bytes: 1 << 20,
+            clock: Arc::new(Fixed),
+            tx,
+            counters: Arc::new(Counters::default()),
+            first_error: Arc::new(Mutex::new(None)),
+            worker: Mutex::new(None),
+        };
+        (
+            Capture {
+                inner: Some(Arc::new(inner)),
+            },
+            rx,
+        )
+    }
+
+    #[test]
+    fn an_overflowing_queue_counts_overflow_and_nothing_cut_at_stop() {
+        // Nobody reads the queue, so two sessions fill it and three find it full.
+        let (capture, _rx) = capture_without_writer(2);
+        for id in 0..5 {
+            begin(&capture, id).record_out(b"x");
+        }
+        let stats = capture.stats();
+        assert_eq!(stats.sessions_sampled, 5);
+        assert_eq!(stats.sessions_dropped_overflow, 3, "{stats:?}");
+        assert_eq!(stats.sessions_cut_at_stop, 0, "{stats:?}");
+        assert_eq!(stats.sessions_dropped_queue, 3, "{stats:?}");
+    }
+
+    #[test]
+    fn sessions_that_end_after_the_writer_is_gone_are_cut_at_stop() {
+        let (capture, rx) = capture_without_writer(2);
+        // One session ends in time and two are still open when the writer ends.
+        begin(&capture, 0).record_out(b"x");
+        let open = vec![begin(&capture, 1), begin(&capture, 2)];
+        drop(rx);
+        drop(open);
+        let stats = capture.stats();
+        assert_eq!(stats.sessions_dropped_overflow, 0, "{stats:?}");
+        assert_eq!(stats.sessions_cut_at_stop, 2, "{stats:?}");
+        assert_eq!(stats.sessions_dropped_queue, 2, "{stats:?}");
     }
 }

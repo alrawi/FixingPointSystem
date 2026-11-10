@@ -20,6 +20,7 @@ from realism import (
     conformance,
     content,
     encryption,
+    messages,
     mix,
     parser_errors,
     structure,
@@ -32,7 +33,7 @@ from realism.labels import load
 from realism.parsers import ParserRunner
 
 REPORT_FORMAT = "fps-realism-report"
-REPORT_VERSION = "0.10.0"
+REPORT_VERSION = "0.11.0"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "realism-report.schema.json"
 LABELS_SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "labels.schema.json"
 
@@ -115,6 +116,7 @@ def score(
     transport_strict: bool | None = None,
     client_hops: int | None = None,
     server_hops: int | None = None,
+    message_probe: messages.MessageProbe | None = None,
 ) -> Report:
     """Score a capture against its labels and return the realism report.
 
@@ -212,6 +214,9 @@ def score(
                 server_hops=server_hops,
             ).to_dict()
         )
+    if labels.messages is not None:
+        mprobe = message_probe if message_probe is not None else messages.TsharkMessageProbe()
+        checks.append(messages.check(pcap, summary.sessions, labels, mprobe).to_dict())
     return Report(
         capture={
             "file": pcap.name,

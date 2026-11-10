@@ -130,8 +130,18 @@ describe("report of a passing run", () => {
     ]);
 
     const realism = screen.getByRole("table", { name: "Realism results" });
-    expect(rowOf(realism, "inter_arrival.ks_statistic")).toEqual(["0.03", "<= 0.05", "Passed"]);
-    expect(rowOf(realism, "response_bytes.ks_statistic")).toEqual(["0.04", "<= 0.05", "Passed"]);
+    expect(rowOf(realism, "inter_arrival.ks_statistic")).toEqual([
+      "application=all, property=inter_arrival",
+      "0.03",
+      "<= 0.05",
+      "Passed",
+    ]);
+    expect(rowOf(realism, "response_bytes.ks_statistic")).toEqual([
+      "application=all, property=response_bytes",
+      "0.04",
+      "<= 0.05",
+      "Passed",
+    ]);
 
     expect(counter("Sessions attempted")).toBe("800");
     expect(counter("Sessions succeeded")).toBe("750");
@@ -165,8 +175,18 @@ describe("report of a failing run", () => {
       "observed 0.02 == 0 does not hold",
     ]);
     const realism = screen.getByRole("table", { name: "Realism results" });
-    expect(rowOf(realism, "response_bytes.ks_statistic")).toEqual(["0.08", "<= 0.05", "Failed"]);
-    expect(rowOf(realism, "request_bytes.ks_statistic")).toEqual(["0.02", "<= 0.05", "Passed"]);
+    expect(rowOf(realism, "response_bytes.ks_statistic")).toEqual([
+      "application=all, property=response_bytes",
+      "0.08",
+      "<= 0.05",
+      "Failed",
+    ]);
+    expect(rowOf(realism, "request_bytes.ks_statistic")).toEqual([
+      "application=all, property=request_bytes",
+      "0.02",
+      "<= 0.05",
+      "Passed",
+    ]);
 
     expect(counter("Sessions failed")).toBe("16");
     expect(counter("Failed ratio")).toBe("2 %");
@@ -314,12 +334,14 @@ describe("comparison of two runs", () => {
     ]);
     const realism = screen.getByRole("table", { name: "Realism compared" });
     expect(rowOf(realism, "response_bytes.ks_statistic")).toEqual([
+      "application=all, property=response_bytes",
       "<= 0.05",
       "Passed (observed 0.04)",
       "Failed (observed 0.08)",
       "Now fails",
     ]);
     expect(rowOf(realism, "inter_arrival.ks_statistic")).toEqual([
+      "application=all, property=inter_arrival",
       "<= 0.05",
       "Passed (observed 0.03)",
       "Passed (observed 0.03)",
@@ -360,13 +382,13 @@ describe("comparison of two runs", () => {
       "Failed (observed 0.01875)",
       "Only in run B",
     ]);
-    // The two mix criteria of the filtered example differ in their limit, so both are listed.
-    expect(rowOf(criteria, "mix.abs_error_pp <= 1")).toEqual([
+    // The two mix criteria of the filtered example differ in their limit and their filter.
+    expect(rowOf(criteria, "mix.abs_error_pp <= 1 where application=http1")).toEqual([
       "Not in this run",
       "No value",
       "Only in run B",
     ]);
-    expect(rowOf(criteria, "mix.abs_error_pp <= 3")[2]).toBe("Only in run B");
+    expect(rowOf(criteria, "mix.abs_error_pp <= 3 where application=dns")[2]).toBe("Only in run B");
   });
 
   it("chooses the runs with the two selects and keeps them in the link", async () => {
@@ -411,5 +433,186 @@ describe("comparison of two runs", () => {
     expect(screen.getByText(/has not ended/)).toBeDefined();
     const facts = screen.getByRole("table", { name: "Runs compared" });
     expect(rowOf(facts, "Verdict")).toEqual(["Passed", "No verdict"]);
+  });
+});
+
+/**
+ * The filtered example with two criteria that agree in metric, operator, and value and differ
+ * only in their filter. Run 1 of a server has no failed session and run 2 fails every 50th
+ * session of each application: http1/web_get attempts 720 sessions and fails 14, which is
+ * 0.0194444 of them, and dns/lookup attempts 80 and fails 1, which is 0.0125.
+ */
+async function postFilteredConfig(mock: RunningMockServer): Promise<string> {
+  const headers = { Authorization: `Bearer ${MOCK_TOKEN}`, "Content-Type": "application/json" };
+  const base = (await (
+    await fetch(`${mock.baseUrl}/configs/cfg_filtered_criteria`, { headers })
+  ).json()) as { metadata: { name: string }; criteria: unknown };
+  const body = {
+    ...base,
+    metadata: { ...base.metadata, name: "two_filters" },
+    criteria: [
+      { metric: "sessions.failed_ratio", op: "<=", value: 0.015, where: { application: "http1" } },
+      { metric: "sessions.failed_ratio", op: "<=", value: 0.015, where: { application: "dns" } },
+    ],
+  };
+  const response = await fetch(`${mock.baseUrl}/configs`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  expect(response.status).toBe(201);
+  return ((await response.json()) as { id: string }).id;
+}
+
+describe("report with scenarios and criteria that differ in their filter", () => {
+  it("shows the scenario table with the counts of each scenario", async () => {
+    const clock = new Clock();
+    const mock = await newServer(clock);
+    await startRunDirect(mock);
+    const id = await startRunDirect(mock, "cfg_filtered_criteria");
+    clock.advance(12);
+    show(mock, `/runs/${id}/report`);
+
+    const section = await screen.findByRole("region", { name: "Scenarios" });
+    const table = within(section).getByRole("table", { name: "Scenarios" });
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((cell) => cell.textContent),
+    ).toEqual([
+      "Scenario",
+      "Sessions attempted",
+      "Sessions succeeded",
+      "Sessions failed",
+      "Failed ratio",
+      "Bytes sent",
+      "Bytes received",
+    ]);
+    expect(rowOf(table, "dns/lookup")).toEqual([
+      "80",
+      "74",
+      "1",
+      "1.25 %",
+      "163.84 kB",
+      "655.36 kB",
+    ]);
+    expect(rowOf(table, "http1/web_get")).toEqual([
+      "720",
+      "661",
+      "14",
+      "1.94 %",
+      "1.47 MB",
+      "5.9 MB",
+    ]);
+    // The rows add up to the totals of the run.
+    expect(counter("Sessions attempted")).toBe("800");
+    expect(counter("Sessions failed")).toBe("15");
+    await expectNoAxeViolations();
+  });
+
+  it("lists two criteria that differ only in their filter as two rows", async () => {
+    const clock = new Clock();
+    const mock = await newServer(clock);
+    await startRunDirect(mock);
+    const config = await postFilteredConfig(mock);
+    const id = await startRunDirect(mock, config);
+    clock.advance(12);
+    show(mock, `/runs/${id}/report`);
+
+    const criteria = await screen.findByRole("table", { name: "Criteria" });
+    expect(rowOf(criteria, "sessions.failed_ratio <= 0.015 where application=http1")).toEqual([
+      "0.0194444",
+      "Failed",
+      "observed 0.019444444444444445 <= 0.015 does not hold",
+    ]);
+    expect(rowOf(criteria, "sessions.failed_ratio <= 0.015 where application=dns")).toEqual([
+      "0.0125",
+      "Passed",
+      "observed 0.0125 <= 0.015 holds",
+    ]);
+    await expectNoAxeViolations();
+  });
+
+  it("says that a run that has not started has no scenario counts", async () => {
+    const clock = new Clock();
+    const mock = await newServer(clock);
+    const id = await startRunDirect(mock);
+    show(mock, `/runs/${id}/report`);
+    expect(await screen.findByText("No scenario has counts yet.")).toBeDefined();
+  });
+});
+
+describe("comparison with scenarios and criteria that differ in their filter", () => {
+  async function filteredRuns() {
+    const clock = new Clock();
+    const mock = await newServer(clock);
+    const config = await postFilteredConfig(mock);
+    const a = await startRunDirect(mock, config);
+    const b = await startRunDirect(mock, config);
+    clock.advance(12);
+    return { mock, a, b };
+  }
+
+  it("pairs the criteria by their filter and compares the scenarios side by side", async () => {
+    const { mock, a, b } = await filteredRuns();
+    show(mock, `/compare?a=${a}&b=${b}`);
+
+    const summary = await screen.findByRole("region", { name: "Summary" });
+    // One criterion and the realism result of the response bytes got worse.
+    expect(within(summary).getByRole("status").textContent).toBe(
+      "2 criteria or realism results got worse from run A to run B.",
+    );
+
+    const criteria = screen.getByRole("table", { name: "Criteria compared" });
+    expect(rowOf(criteria, "sessions.failed_ratio <= 0.015 where application=http1")).toEqual([
+      "Passed (observed 0)",
+      "Failed (observed 0.0194444)",
+      "Now fails",
+    ]);
+    expect(rowOf(criteria, "sessions.failed_ratio <= 0.015 where application=dns")).toEqual([
+      "Passed (observed 0)",
+      "Passed (observed 0.0125)",
+      "Same",
+    ]);
+
+    const scenarios = screen.getByRole("table", { name: "Scenarios compared" });
+    expect(rowOf(scenarios, "dns/lookup")).toEqual([
+      "80 / 80",
+      "0 / 1",
+      "0 % / 1.25 %",
+      "163.84 kB / 163.84 kB",
+      "655.36 kB / 655.36 kB",
+      "+1.25 pp",
+    ]);
+    expect(rowOf(scenarios, "http1/web_get")).toEqual([
+      "720 / 720",
+      "0 / 14",
+      "0 % / 1.94 %",
+      "1.47 MB / 1.47 MB",
+      "5.9 MB / 5.9 MB",
+      "+1.94 pp",
+    ]);
+    await expectNoAxeViolations();
+  });
+
+  it("marks a scenario that only one run has", async () => {
+    const clock = new Clock();
+    const mock = await newServer(clock);
+    const a = await startRunDirect(mock);
+    const b = await startRunDirect(mock, "cfg_filtered_criteria");
+    clock.advance(12);
+    show(mock, `/compare?a=${a}&b=${b}`);
+    await screen.findByRole("region", { name: "Summary" });
+    const scenarios = screen.getByRole("table", { name: "Scenarios compared" });
+    expect(rowOf(scenarios, "dns/lookup")).toEqual([
+      "- / 80",
+      "- / 1",
+      "- / 1.25 %",
+      "- / 163.84 kB",
+      "- / 655.36 kB",
+      "Only in run B",
+    ]);
+    // The same scenario in both runs pairs up although the mix differs.
+    expect(rowOf(scenarios, "http1/web_get")[0]).toBe("800 / 720");
   });
 });

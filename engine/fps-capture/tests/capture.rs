@@ -442,10 +442,55 @@ async fn a_full_queue_drops_sessions_and_counts_them() {
     capture.flush();
     let stats = capture.stop();
     assert_eq!(
-        stats.sessions_written + stats.sessions_dropped_queue,
+        stats.sessions_written + stats.sessions_dropped_overflow,
         500,
         "{stats:?}"
     );
+    // Every session ended before the stop, so none was cut by it.
+    assert_eq!(stats.sessions_cut_at_stop, 0, "{stats:?}");
+    assert_eq!(
+        stats.sessions_dropped_queue,
+        stats.sessions_dropped_overflow
+    );
+}
+
+#[tokio::test]
+async fn a_stop_during_a_run_counts_the_open_sessions_apart_from_overflow() {
+    let dir = fresh_dir("stop_during_run");
+    let capture = start(config(&dir, SamplePolicy::Rate(1.0)));
+    // Two sessions end before the stop and reach the ring.
+    for id in 0..2u64 {
+        exchange(
+            &capture,
+            id,
+            v4(41_000 + id as u16, 80),
+            REQUEST,
+            &body(500, 7),
+        )
+        .await;
+    }
+    capture.flush();
+    // Three sessions are open while the capture stops.
+    let open: Vec<_> = (10..13u64)
+        .map(|id| {
+            let h = capture
+                .begin(id, v4(41_000 + id as u16, 80), Transport::Tcp, Side::Client)
+                .unwrap();
+            h.record_out(&body(500, 8));
+            h
+        })
+        .collect();
+    let at_stop = capture.stop();
+    assert_eq!(at_stop.sessions_written, 2, "{at_stop:?}");
+    // The open sessions end after the writer has gone.
+    drop(open);
+    let stats = capture.stats();
+    assert_eq!(stats.sessions_sampled, 5, "{stats:?}");
+    assert_eq!(stats.sessions_written, 2, "{stats:?}");
+    assert_eq!(stats.sessions_cut_at_stop, 3, "{stats:?}");
+    assert_eq!(stats.sessions_dropped_overflow, 0, "{stats:?}");
+    // The sum that the agent reports as `dropped` is unchanged.
+    assert_eq!(stats.sessions_dropped_queue, 3, "{stats:?}");
 }
 
 /// Runs tshark with the given extra arguments and returns stdout.

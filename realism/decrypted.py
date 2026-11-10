@@ -30,12 +30,14 @@ from pathlib import Path
 from typing import Any
 
 from realism.classifier import Classifier
+from realism.messages import MessageProbe, TsharkMessageProbe
 from realism.parsers import ParserRunner
 from realism.report import score
 
 DEFAULT_TSHARK = "tshark"
 DEFAULT_TIMEOUT_S = 300.0
 PLAINTEXTS = ("inside", "upgrade")
+MAX_LISTED_FAILURES = 5
 MSS = 1400
 CLIENT_MAC = bytes.fromhex("020000000001")
 SERVER_MAC = bytes.fromhex("020000000002")
@@ -389,6 +391,12 @@ class DecryptedResult:
         if not self.report["passed"]:
             failed = [c["check"] for c in self.report["checks"] if not c["passed"]]
             reasons.append("the view fails " + (", ".join(failed) or "every check"))
+            reasons.extend(
+                f"messages: {reason}"
+                for entry in self.report["checks"]
+                if entry["check"] == "messages" and not entry["passed"]
+                for reason in entry["failures"][:MAX_LISTED_FAILURES]
+            )
         return reasons
 
     def _conformance(self) -> dict[str, Any]:
@@ -454,6 +462,7 @@ def run(
     parsers: Sequence[ParserRunner] | None = None,
     missing_parsers: Sequence[str] = (),
     skip_reasons: Mapping[str, str] | None = None,
+    message_probe: MessageProbe | None = None,
 ) -> DecryptedResult:
     """Decrypt the capture, write its decrypted view, and score the view.
 
@@ -461,11 +470,14 @@ def run(
     (the ports of the TLS sessions, or ``view_port``) and its applications name the
     protocol inside TLS, for example ``{ndpi: [HTTP]}``. ``work`` is a directory for
     the view when ``keep_view`` is None. The score is the realism report of the view
-    with the conformance check and, with ``parsers``, the parser error check.
+    with the conformance check and, with ``parsers``, the parser error check. Labels with a
+    ``messages`` section add the message count check, which ``message_probe`` (by default a
+    tshark of the program and timeout of ``tshark``) runs on the view.
     """
     if plaintext not in PLAINTEXTS:
         raise DecryptedError(f"plaintext must be one of {', '.join(PLAINTEXTS)}")
-    sessions = read_sessions(capture, keylog, tshark or Tshark(), plaintext)
+    tshark = tshark or Tshark()
+    sessions = read_sessions(capture, keylog, tshark, plaintext)
     view = keep_view or work / f"{capture.stem}.decrypted.pcap"
     decrypted = [session for session in sessions if session.decrypted]
     write_view(view, decrypted, plaintext, view_port)
@@ -477,6 +489,7 @@ def run(
         parsers=parsers,
         missing_parsers=missing_parsers,
         skip_reasons=skip_reasons,
+        message_probe=message_probe or TsharkMessageProbe(tshark.program, tshark.timeout_s),
     )
     return DecryptedResult(
         capture=capture.name,

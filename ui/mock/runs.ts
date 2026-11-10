@@ -16,6 +16,7 @@ import type {
   RunState,
   RunSummary,
   RunVerdict,
+  ScenarioTotals,
   TestConfig,
 } from "../src/api/client";
 import type { StoredConfig } from "./fixtures";
@@ -42,7 +43,14 @@ interface MockRun {
   /** The tick in which the run was created. */
   createdTick: number;
   /** The key and the share of each application of the configuration. */
-  apps: { key: string; scenario: string; rate: number; failedEvery: number }[];
+  apps: {
+    key: string;
+    scenario: string;
+    /** The scenarios of the application in the mix, with their weights. */
+    scenarios: { name: string; weight: number }[];
+    rate: number;
+    failedEvery: number;
+  }[];
   /** The criteria of the configuration, in order. */
   criteria: Criterion[];
   /** The tick of a stop request and whether it was forced. */
@@ -127,6 +135,55 @@ function summaryAt(apps: MockRun["apps"], tick: number): RunSummary {
   };
 }
 
+/** The scenario name of a reference such as `http1/web_get`, which is `web_get`. */
+function scenarioName(ref: string): string {
+  return ref.includes("/") ? ref.slice(ref.indexOf("/") + 1) : ref;
+}
+
+/**
+ * The counts of each scenario at a tick, ordered by application and then by scenario name. The
+ * values of an application divide among its scenarios by their weights in whole numbers, and the
+ * last scenario of the application takes the remainder, so the sum over all scenarios equals the
+ * run summary. A run at tick 0 has recorded no counter and so has no scenario.
+ */
+export function scenarioTotalsAt(apps: MockRun["apps"], tick: number): ScenarioTotals[] {
+  if (tick <= 0) return [];
+  const totals: ScenarioTotals[] = [];
+  for (const app of apps) {
+    const values = applicationValues(app, tick);
+    const scenarios = [...app.scenarios].sort((a, b) => a.name.localeCompare(b.name));
+    const weight = scenarios.reduce((sum, entry) => sum + entry.weight, 0);
+    const given = { attempted: 0, succeeded: 0, failed: 0, tx: 0, rx: 0 };
+    scenarios.forEach((entry, index) => {
+      const last = index === scenarios.length - 1;
+      const share = (value: number | undefined, taken: number) =>
+        last ? (value ?? 0) - taken : Math.floor(((value ?? 0) * entry.weight) / weight);
+      const counts = {
+        attempted: share(values["sessions.attempted"], given.attempted),
+        succeeded: share(values["sessions.succeeded"], given.succeeded),
+        failed: share(values["sessions.failed"], given.failed),
+        tx: share(values["bytes.tx"], given.tx),
+        rx: share(values["bytes.rx"], given.rx),
+      };
+      given.attempted += counts.attempted;
+      given.succeeded += counts.succeeded;
+      given.failed += counts.failed;
+      given.tx += counts.tx;
+      given.rx += counts.rx;
+      totals.push({
+        application: app.key,
+        scenario: entry.name,
+        sessions_attempted: counts.attempted,
+        sessions_succeeded: counts.succeeded,
+        sessions_failed: counts.failed,
+        bytes_tx: counts.tx,
+        bytes_rx: counts.rx,
+      });
+    });
+  }
+  return totals;
+}
+
 /** The runs of one mock server. */
 export class MockRuns {
   private readonly runs: MockRun[] = [];
@@ -155,11 +212,23 @@ export class MockRuns {
   create(config: StoredConfig, moduleOf: (scenario: string) => string): Run {
     const mix = config.body.profile.mix;
     const total = mix.reduce((sum, entry) => sum + entry.weight, 0);
-    const byModule = new Map<string, { scenario: string; weight: number }>();
+    const byModule = new Map<
+      string,
+      { scenario: string; weight: number; scenarios: { name: string; weight: number }[] }
+    >();
     for (const entry of mix) {
       const key = moduleOf(entry.scenario);
       const known = byModule.get(key);
-      byModule.set(key, { scenario: entry.scenario, weight: (known?.weight ?? 0) + entry.weight });
+      const name = scenarioName(entry.scenario);
+      const scenarios = known?.scenarios ?? [];
+      const same = scenarios.find((candidate) => candidate.name === name);
+      if (same === undefined) scenarios.push({ name, weight: entry.weight });
+      else same.weight += entry.weight;
+      byModule.set(key, {
+        scenario: entry.scenario,
+        weight: (known?.weight ?? 0) + entry.weight,
+        scenarios,
+      });
     }
     const failedEvery = this.failedEvery(this.runs.length + 1, config.id);
     const apps = [...byModule.entries()]
@@ -167,6 +236,7 @@ export class MockRuns {
       .map(([key, value]) => ({
         key,
         scenario: value.scenario,
+        scenarios: value.scenarios,
         rate: Math.max(1, Math.round((TOTAL_RATE * value.weight) / total)),
         failedEvery,
       }));
@@ -211,9 +281,14 @@ export class MockRuns {
   }
 
   /** The verdict of a finished run, or undefined while the run is active. */
-  private verdict(run: MockRun, state: RunState, summary: RunSummary | undefined) {
+  private verdict(
+    run: MockRun,
+    state: RunState,
+    summary: RunSummary | undefined,
+    scenarios: readonly ScenarioTotals[],
+  ) {
     if (state !== "completed" && state !== "failed") return undefined;
-    const criteria = evaluateCriteria(run.criteria, summary);
+    const criteria = evaluateCriteria(run.criteria, summary, scenarios);
     const passed = criteria.every((result) => result.passed !== false);
     const verdict: RunVerdict = { passed, criteria };
     return verdict;
@@ -223,7 +298,7 @@ export class MockRuns {
   view(run: MockRun): Run {
     const { state: scripted, lastTick } = this.status(run);
     const summary = lastTick > 0 ? summaryAt(run.apps, lastTick) : undefined;
-    const verdict = this.verdict(run, scripted, summary);
+    const verdict = this.verdict(run, scripted, summary, scenarioTotalsAt(run.apps, lastTick));
     const failedVerdict =
       this.verdictStates && scripted === "completed" && verdict?.passed === false;
     const state: RunState = failedVerdict ? "failed" : scripted;
@@ -248,11 +323,14 @@ export class MockRuns {
   /** The report of the contract: the run with its verdict once it ended, and the realism results. */
   report(run: MockRun): RunReport {
     const view = this.view(run);
-    const verdict = this.verdict(run, this.status(run).state, view.summary);
+    const { lastTick } = this.status(run);
+    const scenarios = scenarioTotalsAt(run.apps, lastTick);
+    const verdict = this.verdict(run, this.status(run).state, view.summary, scenarios);
     const final = view.state === "completed" || view.state === "failed";
     const failures = (view.summary?.sessions_failed ?? 0) > 0;
     return {
       run: verdict === undefined ? view : { ...view, verdict },
+      scenarios,
       realism: final ? realismResults(failures) : [],
     };
   }
