@@ -10,9 +10,9 @@
 | Branch | `wp/MOD-20` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 40% (2 of 5 plan steps) |
+| Progress | 85% (4 of 5 plan steps) |
 | Current holder | claude-m20a7c, lease until 2026-11-10T06:15:05Z |
-| Last verified commit | none |
+| Last verified commit | 544e5fb |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -26,39 +26,48 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 - [x] 1. Read the context, claim, and study the https scenarios and fixtures of MOD-04
 - [x] 2. smtp scenario starttls_submission with tests
-- [ ] 3. imap scenario starttls with tests
-- [ ] 4. Fixtures, labels, decrypted checks, Zeek
+- [x] 3. imap scenario starttls_mailbox with tests
+- [x] 4. Fixtures, labels, decrypted checks, Zeek
 - [ ] 5. READMEs, Modules page, log entry, PR, CI
 
 ## Done and verified
 
 - Step 2: `cargo test -p fps-module-smtp` passes (starttls.rs, goldens, fixture.rs); `cargo clippy -p fps-module-smtp --all-targets -D warnings` clean; capture.sh recorded smtp.pcapng with 8 STARTTLS sessions on port 5587; realism encryption check 8/8 decrypted and 8/8 JA4; nDPI 4.2.0 says SMTP for the STARTTLS sessions; decrypted_check.py passes (Zeek not installed here).
 
+- Step 3 and 4 (imap): `cargo test -p fps-module-imap` passes (7 starttls tests, goldens, fixture.rs), clippy clean, `make lint-mod-imap lint-mod-smtp` 0 errors; capture.sh in the namespace harness recorded imap.pcapng (40 plain + 8 STARTTLS on 1143); realism: conformance 40/40 IMAP and 8/8 IMAPS, parser errors 0, encryption 8/8 decrypted and JA4 matched; decrypted_check.py: 16 messages, nDPI classifies the decrypted view as IMAP, ratio 1.0.
+
 ## Remaining
 
-- imap scenario, fixture, READMEs, Modules page, log entry, PR.
-- Zeek on the decrypted view cannot run here (no zeek); CI is the only proof.
+- Push, open the PR, poll CI, set ready for review.
+- Zeek on the decrypted views cannot run here (no zeek); CI (realism workflow through capture.sh) is the only proof. The mod-smtp/mod-imap workflow and mk steps are in the log entry for the coordinator.
 
 ## Next action
 
-Write modules/imap/scenarios/starttls_mailbox.yaml (safari-18.5 client, server-tls12), its tests, peer, fixture, and decrypted_check.py (copy modules/smtp/fixtures/decrypted_check.py).
+Run plan.py checks, commit, push, open the PR.
 
 ## Blockers and open questions
 
-Write "none" or name each blocker with a link to its issue.
+none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- STARTTLS sessions run on ports 5587 (smtp) and 1143 (imap) in the fixtures, because the labels match by port and 587 and 143 carry the plain sessions.
+- Browser profiles (firefox-139, safari-18.5) and the server profiles of the http1 registry copy are used, so the ClientHello carries the ALPN ids of a browser. No new profile was defined.
+- nDPI labels: smtp STARTTLS stays SMTP (accepted SMTP, SMTPS), imap STARTTLS is IMAPS (accepted IMAPS only).
+- Zeek: decrypted view (nDPI says IMAP for the inside-TLS dialogue only, IMAPS when the STARTTLS exchange stays in, nothing when the pre-upgrade lines are joined without it).
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+- `follow,tls` node 0 is not always the server; decrypted_check.py reads the nodes from the header.
+- ethtool must be installed for the harness capture, or the first capture is truncated.
+- nDPI with `-d` does not guess by port, so a decrypted view that nDPI cannot see through shows Unknown.
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+cargo test -p fps-module-smtp -p fps-module-imap   # all pass
+python3 -m unittest discover -s modules/imap/fixtures
+python3 modules/imap/fixtures/decrypted_check.py modules/imap/fixtures/imap.pcapng --sessions 8   # passed
 ```
 
 ## Session log
@@ -69,3 +78,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-10T04:45Z | claude-m20a7c | claim | none | claimed #325 |
 | 2026-11-10T00:10Z | claude-m20a7c | checkpoint | see git log | smtp STARTTLS scenario, tests, fixture |
+| 2026-11-10T00:50Z | claude-m20a7c | checkpoint | 544e5fb | imap STARTTLS scenario, fixture, decrypted check; READMEs, Modules.md, log entry written |

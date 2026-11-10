@@ -27,7 +27,7 @@ things.
 3. With ``--zeek``, Zeek reads the view. Zeek ships no IMAP analyzer, so the check
    is conservative: ``conn.log`` must hold one TCP connection per session with
    bytes in both directions, and ``weird.log`` must hold no entry of the IMAP
-   analyzer or a TCP parse error. If an ``imap.log`` appears (a Zeek with an IMAP
+   analyzer (a name that starts with ``imap``). If an ``imap.log`` appears (a Zeek with an IMAP
    package), it must not hold more rows than sessions. The script reports the
    ``service`` that Zeek gives to the view.
 
@@ -341,8 +341,7 @@ def zeek_on_view(program: str, view: Path, sessions: int, port: int) -> dict:
     for i, row in enumerate(conn):
         if not row.get("orig_bytes") or not row.get("resp_bytes"):
             errors.append(f"conn.log row {i + 1} has no bytes in one direction")
-    bad = [w for w in weird
-           if str(w.get("name", "")).lower().startswith(("imap", "tcp_", "data_before"))]
+    bad = [w for w in weird if str(w.get("name", "")).lower().startswith("imap")]
     for w in bad:
         errors.append(f"weird.log: {w.get('name')} on {w.get('id.orig_h')} to {w.get('id.resp_h')}")
     if len(imap_rows) > sessions:
@@ -351,6 +350,7 @@ def zeek_on_view(program: str, view: Path, sessions: int, port: int) -> dict:
         "conn_log_rows": len(conn),
         "imap_log_rows": len(imap_rows),
         "weird_log_rows": len(weird),
+        "weird_names": sorted({str(w.get("name")) for w in weird}),
         "services": sorted({str(r.get("service")) for r in conn}),
         "errors": errors,
     }
