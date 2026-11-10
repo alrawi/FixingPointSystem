@@ -3486,3 +3486,38 @@ work_packages:
       - Additive metric catalog entries (and labels where needed) so every check kind of realism-report.schema.json reports at least one metric whose value and target say whether it passed, the mapping rule of CON-22 extended to them, and the realism report schema requiring those metrics for each check.
     acceptance:
       - validate.py passes, the catalog and schema examples cover each check kind with a passing and a failing value, and the change entry lists the consumers (realism runner RLM, controller CTL-41, fps-stats tables).
+
+  - id: RLM-17
+    title: The CON-23 metrics in the realism report
+    phase: 2
+    workstream: RLM
+    size: M
+    depends_on: [CON-23, RLM-14]
+    paths: [realism/]
+    summary: >-
+      CON-23 (metric catalog 0.5.0) gave every realism check kind catalog metrics, with realism.check_failures
+      on every check, and wrote the realism report schema change as contracts/changes/CON-23-realism-report-schema.patch.
+      The patch was made against report format 0.10.0; RLM-14 has since added the messages check and format
+      0.11.0, so it must be applied by hand and extended to the messages check. The Gate 1 suite (QA-09) does
+      not count the Zeek weird premature_connection_reuse in a session with more than one TCP connection,
+      which belongs in the runner.
+    deliverables:
+      - Every check emits the series that contracts/changes/CON-23.md defines, the report schema requires them (with the messages check covered by realism.check_failures), the report format moves on, and premature_connection_reuse joins ZEEK_STATE_WEIRDS in realism/parsers.py for sessions with more than one connection.
+    acceptance:
+      - Tests on committed fixtures with literal series for every check kind, a passing and a failing case each, the controller's copy of the report schema refreshed in the wrap-up, and the series of contracts/examples/realism/check-metrics.yaml validate.
+
+  - id: CON-24
+    title: Capture drop counts in the agent protocol and the REST API
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [ENG-27]
+    paths: [contracts/]
+    summary: >-
+      StopCaptureResult.dropped (proto) and the dropped field of the REST capture are documented as packets
+      but count sessions, and mix queue overflow, oversize sessions and sessions open at the stop. ENG-27 split
+      the counts inside fps-capture and kept the old sum on the wire. Needs owner approval as a contract change.
+    deliverables:
+      - Additive fields for sessions dropped by overflow or size and sessions cut at the stop, and corrected text for dropped.
+    acceptance:
+      - validate.py, the proto and openapi-breaking checks pass, and the change entry lists the consumers (agent, controller, UI, SDK).

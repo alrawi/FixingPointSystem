@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 132 work packages. Packages marked critical path gate the phase.
+This page lists 134 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -143,6 +143,8 @@ flowchart LR
   UI_09["UI-09<br/>Reservation holders in the agents view"]
   QA_09["QA-09<br/>The single http1 parser error of the Gate 1 run"]
   CON_23["CON-23<br/>Catalog metrics for every realism check"]
+  RLM_17["RLM-17<br/>The CON-23 metrics in the realism report"]
+  CON_24["CON-24<br/>Capture drop counts in the agent protocol and the REST API"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -307,6 +309,9 @@ flowchart LR
   CON_22 --> UI_09
   UI_06 --> UI_09
   CON_22 --> CON_23
+  CON_23 --> RLM_17
+  RLM_14 --> RLM_17
+  ENG_27 --> CON_24
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -447,6 +452,8 @@ flowchart LR
 | [UI-09](#ui-09-reservation-holders-in-the-agents-view) | Reservation holders in the agents view | S | CON-22, UI-06 |  |
 | [QA-09](#qa-09-the-single-http1-parser-error-of-the-gate-1-run) | The single http1 parser error of the Gate 1 run | S | QA-04 |  |
 | [CON-23](#con-23-catalog-metrics-for-every-realism-check) | Catalog metrics for every realism check | S | CON-22 |  |
+| [RLM-17](#rlm-17-the-con-23-metrics-in-the-realism-report) | The CON-23 metrics in the realism report | M | CON-23, RLM-14 |  |
+| [CON-24](#con-24-capture-drop-counts-in-the-agent-protocol-and-the-rest-api) | Capture drop counts in the agent protocol and the REST API | S | ENG-27 |  |
 
 ## CON Contracts
 
@@ -713,6 +720,23 @@ Deliverables.
 Acceptance.
 
 - [ ] validate.py passes, the catalog and schema examples cover each check kind with a passing and a failing value, and the change entry lists the consumers (realism runner RLM, controller CTL-41, fps-stats tables).
+
+### CON-24 Capture drop counts in the agent protocol and the REST API
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** ENG-27
+- **Paths.** `contracts/`
+
+StopCaptureResult.dropped (proto) and the dropped field of the REST capture are documented as packets but count sessions, and mix queue overflow, oversize sessions and sessions open at the stop. ENG-27 split the counts inside fps-capture and kept the old sum on the wire. Needs owner approval as a contract change.
+
+Deliverables.
+
+- Additive fields for sessions dropped by overflow or size and sessions cut at the stop, and corrected text for dropped.
+
+Acceptance.
+
+- [ ] validate.py, the proto and openapi-breaking checks pass, and the change entry lists the consumers (agent, controller, UI, SDK).
 
 ## OPS Repository and swarm tooling
 
@@ -2452,6 +2476,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A test against a local fake controller checks the request, the token handling, and the 409 and 422 answers.
+
+### RLM-17 The CON-23 metrics in the realism report
+
+Phase 2 · size M · workstream RLM
+
+- **Depends on.** CON-23, RLM-14
+- **Paths.** `realism/`
+
+CON-23 (metric catalog 0.5.0) gave every realism check kind catalog metrics, with realism.check_failures on every check, and wrote the realism report schema change as contracts/changes/CON-23-realism-report-schema.patch. The patch was made against report format 0.10.0; RLM-14 has since added the messages check and format 0.11.0, so it must be applied by hand and extended to the messages check. The Gate 1 suite (QA-09) does not count the Zeek weird premature_connection_reuse in a session with more than one TCP connection, which belongs in the runner.
+
+Deliverables.
+
+- Every check emits the series that contracts/changes/CON-23.md defines, the report schema requires them (with the messages check covered by realism.check_failures), the report format moves on, and premature_connection_reuse joins ZEEK_STATE_WEIRDS in realism/parsers.py for sessions with more than one connection.
+
+Acceptance.
+
+- [ ] Tests on committed fixtures with literal series for every check kind, a passing and a failing case each, the controller's copy of the report schema refreshed in the wrap-up, and the series of contracts/examples/realism/check-metrics.yaml validate.
 
 ## CAP Capture compiler and profile extractor
 

@@ -53,7 +53,7 @@ jobs:
 
   gate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -69,7 +69,10 @@ jobs:
       - name: Build the agent and the controller as the runner user
         run: make build-qa-gate1 GO=go
       - name: Gate 1 suite and negative proof as root
-        run: sudo env "PATH=/opt/zeek/bin:$PATH" make e2e-qa-gate1 QA_GATE1_OUT=gate1-out
+        env:
+          # QA-09: three runs in a row on pull requests, one on main.
+          FPS_GATE1_REPEAT: ${{ github.event_name == 'pull_request' && '3' || '1' }}
+        run: sudo env "PATH=/opt/zeek/bin:$PATH" "FPS_GATE1_REPEAT=$FPS_GATE1_REPEAT" make e2e-qa-gate1 QA_GATE1_OUT=gate1-out
       - name: Gate report in the job summary
         if: always()
         run: |

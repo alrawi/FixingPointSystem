@@ -116,6 +116,8 @@ The short run is a reduced variant of the [Gate 1](Gates.md) suite. The Gate 1 s
 
 ### The agent session gate (IMG-07)
 
+Since CTL-40 the controller sends the response headers as soon as a session opens, which closes the gap described below; the gate stays as a guard and now finds the first session `stable`.
+
 The job failed twice on 2026-11-10 (jobs 129666780207 on the MOD-06 branch and 129934010691 on the MOD-22 branch) and passed on rerun with the same code. Both runs used KVM, the VM booted in about 10 s (cloud-init reports 9.5 s), and the VM journal and the host log agree to the second, so a slow TCG guest and a clock step at boot do not explain it. Both sides also time their silence with monotonic clocks, which a wall clock step does not move. The two journals show the cause:
 
 | Time (job 129666780207) | Controller | Agent |
