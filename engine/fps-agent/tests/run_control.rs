@@ -234,6 +234,15 @@ struct Harness {
 
 impl Harness {
     async fn start(agent_id: &str, capture_dir: &Path) -> Self {
+        Self::start_with(agent_id, capture_dir, |_| {}).await
+    }
+
+    /// Starts the agent after `tweak` changed its configuration.
+    async fn start_with(
+        agent_id: &str,
+        capture_dir: &Path,
+        tweak: impl FnOnce(&mut Config),
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
         let shared = Arc::new(Shared::default());
@@ -257,6 +266,7 @@ impl Harness {
             max: Duration::from_millis(400),
         };
         cfg.captures.dir = capture_dir.to_path_buf();
+        tweak(&mut cfg);
         let (stop_agent, rx) = oneshot::channel::<()>();
         let agent = tokio::spawn(async move {
             serve(cfg, async {
@@ -458,6 +468,47 @@ async fn rate_of(h: &mut Harness, scenario: &str, n: usize) -> f64 {
     (after - before) as f64 / (n as f64 * 0.5)
 }
 
+/// Sums the gauge `sessions.concurrent` of the last snapshot over both sides
+/// and every scenario: the sessions that the agent has open right now.
+fn open_sessions(h: &Harness) -> f64 {
+    h.snapshots
+        .last()
+        .expect("a snapshot")
+        .counters
+        .iter()
+        .filter(|c| c.metric == "sessions.concurrent")
+        .map(|c| match c.value {
+            Some(pb::counter_value::Value::Gauge(g)) => g,
+            _ => 0.0,
+        })
+        .sum()
+}
+
+/// Pauses every mix entry and waits until no session is open, so that a
+/// capture that stops next has no session in flight.
+///
+/// A session that is still open when a capture stops never reaches the writer:
+/// the writer has gone when the session ends, and the capture counts the
+/// session as dropped. Under load that happens to a few sessions of every stop,
+/// so a test that asserts `dropped == 0` must stop the capture at rest. The
+/// snapshot after the gauge reads zero leaves the recorder of the last session
+/// time to drop, because the gauge falls when the session ends and the recorder
+/// drops with the tapped transport just after.
+async fn quiesce(h: &mut Harness, plan_id: &str, entries: &[&str]) {
+    let paused = entries.iter().map(|e| sps(e, 0.0)).collect();
+    let r = h.command(update_rates(plan_id, paused)).await;
+    assert!(r.error.is_none(), "{r:?}");
+    for _ in 0..40 {
+        advance(h, 1).await;
+        if open_sessions(h) == 0.0 {
+            advance(h, 2).await;
+            assert_eq!(open_sessions(h), 0.0, "a paused entry started a session");
+            return;
+        }
+    }
+    panic!("{} sessions stayed open after the pause", open_sessions(h));
+}
+
 fn update_rates(plan_id: &str, rates: Vec<pb::RateUpdate>) -> session_response::Body {
     session_response::Body::UpdateRates(pb::UpdateRatesCommand {
         plan_id: plan_id.into(),
@@ -555,6 +606,10 @@ fn transports(bytes: &[u8], tcp_port: u16) -> (usize, usize, usize) {
     }
     (tcp, udp, on_port)
 }
+
+/// The ring file size at which the HTTP sessions of the plan are too large and
+/// the DNS sessions are not.
+const LOSSY_FILE_BYTES: u64 = 1_500;
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -750,12 +805,27 @@ async fn a_fake_controller_changes_rates_and_reads_a_capture() {
     assert_eq!(error_code(&r), Some(ErrorCode::NotFound), "{r:?}");
     let r = h.command(stop_capture("run-0001/other", "cap-1")).await;
     assert_eq!(error_code(&r), Some(ErrorCode::NotFound), "{r:?}");
+    // The capture stops at rest. A capture that stops under load counts the
+    // sessions that are open at that moment as dropped, because they end after
+    // the writer has gone (AGT-18), so the assertion on `dropped` below holds
+    // only when no session is open. It still fails for a session that the
+    // capture loses, as `a_capture_that_loses_sessions_reports_them_as_dropped`
+    // shows.
+    quiesce(&mut h, &id, &["web_get", "dns_lookup"]).await;
     let r = h.command(stop_capture(&id, "cap-1")).await;
     assert!(r.error.is_none(), "{r:?}");
     let first = stop_result(&r).clone();
     assert_eq!(first.capture_id, "cap-1");
     assert!(first.packets > 20, "{first:?}");
     assert_eq!(first.dropped, 0, "{first:?}");
+    // The run goes on at the rates of the plan for the captures below.
+    let r = h
+        .command(update_rates(
+            &id,
+            vec![sps("web_get", 120.0), sps("dns_lookup", 100.0)],
+        ))
+        .await;
+    assert!(r.error.is_none(), "{r:?}");
 
     // The fake controller locates the file below the capture directory, reads
     // it, and checks the digest, the size, and the packet count.
@@ -997,6 +1067,46 @@ async fn captured(
 
 /// AGT-12: a capture with a port keeps the sessions of that port, for TCP and
 /// for UDP, and an empty port keeps all of them.
+/// AGT-18: the `dropped` of a capture is not always zero. A ring file that is
+/// too small for the larger sessions loses them, and the stop result says so,
+/// with no session open at the stop. The test pairs with the zero that
+/// `a_fake_controller_changes_rates_and_reads_a_capture` asserts at rest, so
+/// that assertion fails when the capture really loses a session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_capture_that_loses_sessions_reports_them_as_dropped() {
+    let dir = scratch("dropped");
+    let mut h = Harness::start_with("agent-a", &dir, |cfg| {
+        // The HTTP sessions do not fit one file, and the DNS sessions do.
+        cfg.captures.file_bytes = LOSSY_FILE_BYTES;
+    })
+    .await;
+    h.wait_state(AgentState::Idle).await;
+    let plan = loopback_plan(89, 90, 18_284, 15_556, phases(1, 60));
+    let id = plan.plan_id.clone();
+    let r = h.command(prepare(&plan)).await;
+    assert!(r.error.is_none(), "{r:?}");
+    let r = h.command(start(&id)).await;
+    assert!(r.error.is_none(), "{r:?}");
+    h.wait_state(AgentState::Running).await;
+    advance(&mut h, 3).await;
+
+    let r = h.command(capture(start_capture(&id, "lossy"))).await;
+    assert!(r.error.is_none(), "{r:?}");
+    advance(&mut h, 4).await;
+    quiesce(&mut h, &id, &["web_get", "dns_lookup"]).await;
+    let r = h.command(stop_capture(&id, "lossy")).await;
+    assert!(r.error.is_none(), "{r:?}");
+    let lossy = stop_result(&r).clone();
+    assert!(lossy.dropped > 0, "no drop was reported: {lossy:?}");
+    assert!(lossy.packets > 0, "the DNS sessions fit: {lossy:?}");
+
+    let r = h.command(stop(&id, pb::StopMode::RampDown, 2)).await;
+    assert!(r.error.is_none(), "{r:?}");
+    h.wait_state(AgentState::Stopped).await;
+    h.shutdown().await;
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_capture_with_a_port_skips_the_sessions_of_other_ports() {
     let dir = scratch("port-filter");
