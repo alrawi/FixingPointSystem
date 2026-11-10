@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #191 |
 | Branch | `wp/RLM-09` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #399 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-35cacd, lease until 2026-11-10T15:52:54Z |
-| Last verified commit | none |
+| Last verified commit | c01f9e4 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Compare the TCP handshake options of a capture with the selected OS profile (win
 - [x] 1. Claim commit, handoff
 - [x] 2. `transport` labels section, handshake reader, `realism/transport.py`, report and CLI wiring, schema, version 0.9.0
 - [x] 3. Tests on pcapgen captures and on the committed module fixtures
-- [ ] 4. README, Realism page, log entry, checks, pull request, CI
+- [x] 4. README, Realism page, log entry, checks, pull request, CI
 
 ## Done and verified
 
@@ -29,13 +29,17 @@ Compare the TCP handshake options of a capture with the selected OS profile (win
 - `plan.py check`, `render --check`, and `lint` pass.
 - Every OS profile capture passes, a SYN with TTL 64 against windows11 fails, and the committed fixtures match linux6 except the window scale (10, profile 7).
 
+## CI
+
+All checks of commit c01f9e4 passed. The `rlm` job ran 556 tests with none skipped, the `realism` workflow and every module workflow passed, and so did `ci`.
+
 ## Remaining
 
-Pull request and CI.
+Review by the coordinator.
 
 ## Next action
 
-Open the pull request and poll CI.
+Coordinator review of pull request #399.
 
 ## Blockers and open questions
 
@@ -65,4 +69,5 @@ make lint-rlm test-rlm
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T14:23Z | claude-35cacd | claim | 37cb700 | Claimed #191 |
-| 2026-11-10T14:50Z | claude-35cacd | checkpoint | none | Check, schema, tests, docs written |
+| 2026-11-10T14:50Z | claude-35cacd | checkpoint | c01f9e4 | Check, schema, tests, docs written, pull request opened |
+| 2026-11-10T15:00Z | claude-35cacd | finish | c01f9e4 | CI green, ready for review |
