@@ -1079,6 +1079,8 @@ dependencies = [
  "fps-hosts",
  "fps-interp",
  "fps-io",
+ "fps-module-content",
+ "fps-module-ftp",
  "fps-module-tls",
  "fps-sched",
  "fps-stats",
