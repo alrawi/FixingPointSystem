@@ -9,10 +9,10 @@
 | Issue | #325 |
 | Branch | `wp/MOD-20` |
 | Pull request | #370 |
-| Status | in progress |
-| Progress | 85% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-m20a7c, lease until 2026-11-10T06:15:05Z |
-| Last verified commit | 544e5fb |
+| Last verified commit | 4768603 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -28,7 +28,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 2. smtp scenario starttls_submission with tests
 - [x] 3. imap scenario starttls_mailbox with tests
 - [x] 4. Fixtures, labels, decrypted checks, Zeek
-- [ ] 5. READMEs, Modules page, log entry, PR, CI
+- [x] 5. READMEs, Modules page, log entry, PR, CI
 
 ## Done and verified
 
@@ -43,7 +43,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Next action
 
-Run plan.py checks, commit, push, open the PR.
+Review of PR 370.
 
 ## Blockers and open questions
 
@@ -79,3 +79,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | 2026-11-10T04:45Z | claude-m20a7c | claim | none | claimed #325 |
 | 2026-11-10T00:10Z | claude-m20a7c | checkpoint | see git log | smtp STARTTLS scenario, tests, fixture |
 | 2026-11-10T00:50Z | claude-m20a7c | checkpoint | 544e5fb | imap STARTTLS scenario, fixture, decrypted check; READMEs, Modules.md, log entry written |
+| 2026-11-10T01:30Z | claude-m20a7c | ready for review | 4768603 | PR 370, all CI workflows green after re-running three stalled or flaky jobs |
