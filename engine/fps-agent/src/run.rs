@@ -20,10 +20,13 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use fps_interp::Side;
-use fps_runtime::{Collector, RunReport, Runtime, RuntimeConfig, RuntimeError, RuntimeHandle};
+use fps_runtime::{
+    Collector, RunReport, Runtime, RuntimeConfig, RuntimeError, RuntimeHandle, TlsProfiles,
+};
 use fps_sched::LoadProfile;
 use fps_stats::{metric, Snapshot, SnapshotMeta, StatsError, Timestamp};
 
@@ -32,6 +35,7 @@ use crate::control::{CaptureCell, Rates};
 use crate::criteria::{evaluate_for, CriterionResult};
 use crate::modules::{self, ModuleError};
 use crate::plan::{Plan, PlanError};
+use crate::tls::{self, KeyTap};
 use crate::trust::ModulePolicy;
 use crate::udp::{UdpError, UdpHooks, UdpRuntime};
 
@@ -147,6 +151,7 @@ impl SideRun {
         udp: Vec<fps_runtime::WorkerConfig>,
         hooks: UdpHooks,
         tcp_capture: CaptureCell,
+        tls: Option<Arc<TlsProfiles>>,
     ) -> Result<Self, RunError> {
         let tcp = if tcp.is_empty() {
             None
@@ -154,6 +159,7 @@ impl SideRun {
             let mut cfg = RuntimeConfig::new(seed, tcp);
             cfg.snapshot_interval = interval;
             cfg.capture = tcp_capture;
+            cfg.tls = tls;
             Some(Runtime::start(cfg)?)
         };
         let udp = if udp.is_empty() {
@@ -242,6 +248,7 @@ pub struct Prepared {
     notes: Vec<String>,
     warnings: Vec<String>,
     summary: String,
+    tls: Option<Arc<TlsProfiles>>,
 }
 
 impl std::fmt::Debug for Prepared {
@@ -254,17 +261,39 @@ impl std::fmt::Debug for Prepared {
 }
 
 /// Checks `plan`, loads its modules from `modules_dir` under `policy`, and
-/// assembles the workers of `sides`.
+/// assembles the workers of `sides`. The TLS profiles of the run send their
+/// secrets nowhere, see [`prepare_with`].
 pub fn prepare(
     plan: Plan,
     modules_dir: &Path,
     sides: Sides,
     policy: &ModulePolicy,
 ) -> Result<Prepared, RunError> {
+    prepare_with(plan, modules_dir, sides, policy, &KeyTap::new())
+}
+
+/// Like [`prepare`], and the TLS profiles that the scenarios name send the
+/// secrets of their handshakes to `keys`, which a capture that exports TLS keys
+/// reads. A scenario whose `tls_upgrade` names a profile that the agent does
+/// not provide refuses the plan here, see [`tls::scan`].
+pub fn prepare_with(
+    plan: Plan,
+    modules_dir: &Path,
+    sides: Sides,
+    policy: &ModulePolicy,
+    keys: &KeyTap,
+) -> Result<Prepared, RunError> {
     plan.check()?;
     let loaded = modules::load(&plan, modules_dir, policy)?;
+    let needs = tls::scan(plan.mix.iter().filter_map(|e| {
+        loaded
+            .scenarios
+            .get(&e.scenario)
+            .map(|s| (e.scenario.as_str(), s))
+    }))?;
     let assembly = assemble(&plan, &loaded, sides)?;
     let profile = load_profile(&plan)?;
+    let tls = tls::build(plan.seed, &needs, keys)?;
     let reports = if assembly.has_clients() {
         Side::Client
     } else {
@@ -288,6 +317,7 @@ pub fn prepare(
         notes: loaded.notes,
         warnings: loaded.warnings,
         summary,
+        tls,
     })
 }
 
@@ -328,6 +358,7 @@ impl Prepared {
             assembly,
             profile,
             reports,
+            tls,
             ..
         } = self;
         // A client session holds both directions of its conversation, so a
@@ -352,6 +383,7 @@ impl Prepared {
             assembly.udp_servers,
             hooks.clone(),
             server_cell,
+            tls.clone(),
         )?;
         let clients = match SideRun::start(
             plan.seed,
@@ -360,6 +392,7 @@ impl Prepared {
             assembly.udp_clients,
             hooks,
             client_cell,
+            tls,
         ) {
             Ok(c) => c,
             Err(e) => {

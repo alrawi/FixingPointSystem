@@ -27,6 +27,19 @@
 # module (the message body and the attachment), so the run passes only when
 # the agent dispatches the native functions of both crates.
 #
+# A fourth test (AGT-14) runs the https_fetch scenario of the first party http1
+# module, which upgrades both sides to TLS with a browser profile and the server
+# profile of the agent, and it carries criteria with a `where` filter on the
+# side. The run passes only when the agent builds the TLS profiles of the plan,
+# since a session that upgrades without profiles fails, and when it accepts the
+# labels, since it refused a plan with a labeled criterion before. A second run
+# demands a server side volume that no run reaches and must end failed, which
+# shows that the criterion with the label decides the verdict. No SMTP STARTTLS
+# scenario exists before MOD-20, so the STARTTLS path is tested by the runtime
+# tests of ENG-20, and the agent tests of AGT-14 cover https. A capture of the
+# run is not part of this script, because the REST capture needs a port that
+# the agent refuses (AGT-12); tests/tls.rs decrypts the capture of an https run.
+#
 # The tail of the script checks the handshake failures. An agent that trusts
 # another CA ends with exit code 2 and a TLS error before it spends its
 # token. After `fps-controller revoke`, the running agent ends with exit code
@@ -140,15 +153,18 @@ start_agent() {
   pids+=("$agent_pid")
 }
 
-# The agent loads its modules from $modules. http1 is the example module. dns
-# is the first party module, because its native functions read the zone_file
+# The agent loads its modules from $modules. http1 is the first party module,
+# whose single_fetch scenario the first test runs and whose https_fetch scenario
+# the TLS test runs (AGT-14). dns is the first party module, because its native functions read the zone_file
 # setting, with the native crate and the tests left out, plus a zone file for
 # the name www.e2e.test that the shipped zone lacks. smtp and content are
 # first party modules too (AGT-13), installed the same way, because the smtp
 # scenarios call the functions of both. The agent and the controller see the
 # same trees, so their digests agree.
 mkdir -p "$modules"
-cp -r "$examples/modules/http1" "$modules/http1"
+cp -r "$here/../../../modules/http1" "$modules/http1"
+# The manifest names fixtures/http1.pcapng, so the fixtures stay.
+rm -r "$modules/http1/native" "$modules/http1/tests"
 cp -r "$here/../../../modules/dns" "$modules/dns"
 rm -r "$modules/dns/native" "$modules/dns/tests"
 cp -r "$here/../../../modules/content" "$modules/content"
@@ -208,7 +224,7 @@ network:
 profile:
   basis: sessions
   mix:
-    - { scenario: http1/web_get, weight: 1, params: { server_port: 18680 } }
+    - { scenario: http1/single_fetch, weight: 1, params: { server_port: 18680 } }
 load:
   objective: { type: sessions_per_second, value: 40 }
   phases:
@@ -361,6 +377,60 @@ run_test "$work/smtp_relay.yaml"
 smtp_succeeded=$(succeeded_of smtp)
 [[ $smtp_succeeded -gt 0 ]] || fail "the smtp run $run counted no succeeded sessions: $metrics"
 echo "controller_e2e: run $run relayed mail through the first party smtp and content modules with $smtp_succeeded succeeded sessions, verdict passed"
+
+# The https fetch of AGT-14. Both sides of every session upgrade to TLS at
+# once: the client with the browser profile chrome-136, the server with
+# server-tls13, whose certificate comes from the authority that the agent
+# derives from the seed of the run. The criteria with `where` count the server
+# side, see the header.
+https_test() {
+  local server_bytes=$1
+  cat <<EOF
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: https_fetch
+  description: HTTPS fetches of the first party http1 module through the TLS profiles of the agent.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/$iface }
+    - { name: server0, location: local/$iface }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 127.97.0.0/24, count: 16 }
+    - { name: servers, port: server0, role: server, ipv4: 127.98.0.0/24, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: http1/https_fetch, weight: 1, params: { server_port: 18683 } }
+load:
+  objective: { type: sessions_per_second, value: 20 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: 11 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "==", value: 0 }
+  - { metric: sessions.succeeded, op: ">", value: 0 }
+  - { metric: sessions.succeeded, op: ">", value: 0, where: { side: server } }
+  - { metric: bytes.tx, op: ">", value: $server_bytes, where: { side: server } }
+EOF
+}
+
+https_test 4000 >"$work/https_fetch.yaml"
+run_test "$work/https_fetch.yaml"
+[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the https run $run did not pass: $summary"
+https_succeeded=$(succeeded_of http1)
+[[ $https_succeeded -gt 0 ]] || fail "the https run $run counted no succeeded sessions: $metrics"
+echo "controller_e2e: run $run fetched pages over TLS 1.3 with $https_succeeded succeeded sessions, and its server side criteria held"
+
+# A server side volume of a terabyte is out of reach, so the criterion with the
+# label must fail the run while the sessions themselves succeed.
+https_test 1000000000000 >"$work/https_fetch_fail.yaml"
+run_test "$work/https_fetch_fail.yaml" failed
+[[ $(json_field verdict.passed <<<"$summary") != True ]] || fail "the https run $run passed with an impossible server side criterion: $summary"
+grep -q "\"run_id\":\"$run\".*criteria failed" "$work/controller.log" || fail "the https run $run did not fail its criteria"
+[[ $(succeeded_of http1) -gt 0 ]] || fail "the https run $run counted no succeeded sessions: $metrics"
+echo "controller_e2e: run $run ended failed on its server side criterion while its TLS sessions succeeded"
 
 # A CA that is not the controller CA. The agent checks the enrollment endpoint
 # against it, so the handshake fails before the token leaves the agent.

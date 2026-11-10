@@ -18,10 +18,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
-use fps_capture::pcapng::{interface_description, section_header, EPB_TYPE};
+use fps_capture::pcapng::{
+    decryption_secrets, interface_description, section_header, EPB_TYPE, IDB_TYPE,
+};
 use fps_capture::{Capture, CaptureConfig, KeyLogMode, RingConfig, SamplePolicy, SystemClock};
 use fps_sched::{Objective, RateControl};
 use sha2::{Digest, Sha256};
+
+use crate::tls::{KeyLines, KeyTap};
 
 /// Why an `UpdateRates` command was refused. Each variant but `Internal`
 /// maps to `ERROR_CODE_INVALID_ARGUMENT`, and nothing is applied.
@@ -254,6 +258,8 @@ pub struct Entry {
     ring: PathBuf,
     prefix: String,
     capture: Capture,
+    /// True when the controller asked for the TLS key log lines in the file.
+    export_tls_keys: bool,
     started: Instant,
     started_at: SystemTime,
     max_bytes: u64,
@@ -301,6 +307,9 @@ struct Book {
 pub struct Captures {
     settings: CaptureSettings,
     cell: CaptureCell,
+    /// Receives the secrets of the TLS handshakes of the plan while a capture
+    /// that exports keys runs, see [`Captures::key_tap`].
+    keys: KeyTap,
     book: Mutex<Book>,
     /// Set while a transfer holds the agent, which serves one at a time.
     busy: Arc<AtomicBool>,
@@ -373,6 +382,7 @@ impl Captures {
         Self {
             settings,
             cell: CaptureCell::new(),
+            keys: KeyTap::new(),
             book: Mutex::new(Book::default()),
             busy: Arc::new(AtomicBool::new(false)),
         }
@@ -383,11 +393,21 @@ impl Captures {
         self.cell.clone()
     }
 
+    /// Returns the tap that the TLS profiles of the plan write their secrets
+    /// to. Pass it to [`crate::run::prepare_with`]. A capture that was started
+    /// with `export_tls_keys` keeps the lines that arrive while it runs and
+    /// puts them into its file as a decryption secrets block.
+    pub fn key_tap(&self) -> KeyTap {
+        self.keys.clone()
+    }
+
     /// Forgets the captures of an earlier plan and names the plan that is
     /// loaded now. The files stay on the agent until the retention removes
     /// them, but no command finds them any more.
     pub fn reset(&self, plan_id: &str) {
         self.cell.clear();
+        // Lines of a capture that never ended must not reach the next one.
+        let _ = self.keys.end();
         let mut book = lock(&self.book);
         book.plan_id = plan_id.to_owned();
         let old = std::mem::take(&mut book.entries);
@@ -417,6 +437,7 @@ impl Captures {
         max_duration: Option<Duration>,
         plan_ports: &[String],
         seed: u64,
+        export_tls_keys: bool,
     ) -> Result<Arc<Entry>, CaptureError> {
         plain_name("capture_id", capture_id)?;
         if !port.is_empty() {
@@ -488,7 +509,10 @@ impl Captures {
         let mut cfg = CaptureConfig::new(ring_cfg);
         cfg.sample = SamplePolicy::EveryNth(1);
         cfg.seed = seed;
-        // One file that decrypts alone, with no key log beside it.
+        // One file that decrypts alone, with no key log beside it. The ring
+        // holds no key lines, because the TLS layer does not know the session
+        // that its handshake belongs to. `assemble` adds the lines of the
+        // plan to every section of the joined file instead.
         cfg.key_log = KeyLogMode::Embedded;
         let capture = Capture::start(cfg, Arc::new(SystemClock))
             .map_err(|e| CaptureError::Io(format!("start the capture: {e}")))?;
@@ -498,6 +522,7 @@ impl Captures {
             ring,
             prefix: capture_id.to_owned(),
             capture: capture.clone(),
+            export_tls_keys,
             started: Instant::now(),
             started_at: SystemTime::now(),
             max_bytes,
@@ -514,6 +539,9 @@ impl Captures {
         book.entries.push(Arc::clone(&entry));
         book.active = Some(capture_id.to_owned());
         drop(book);
+        if export_tls_keys {
+            self.keys.begin();
+        }
         self.cell.set(capture);
         Ok(entry)
     }
@@ -558,9 +586,22 @@ impl Captures {
             }
         }
         let stats = entry.capture.stop();
+        let keys = if entry.export_tls_keys {
+            self.keys.end()
+        } else {
+            KeyLines::default()
+        };
+        if keys.truncated {
+            tracing::warn!(
+                capture_id = %entry.id,
+                limit = crate::tls::MAX_KEY_BYTES,
+                "the TLS key log of the capture hit its limit, so later handshakes will not decrypt"
+            );
+        }
         let result = assemble(
             entry,
             stats.sessions_dropped_queue + stats.sessions_dropped_oversize,
+            &keys.text,
         );
         if let Err(e) = &result {
             tracing::warn!(capture_id = %entry.id, error = %e, "capture ended without a file");
@@ -803,7 +844,13 @@ fn create_private_dir(p: &Path) -> io::Result<()> {
 /// session gives a file with the section header and the interface description
 /// only. The packets are counted from the blocks, which also checks every
 /// block length.
-fn assemble(entry: &Entry, dropped: u64) -> Result<Done, String> {
+///
+/// A non empty `keys` goes into every section as one decryption secrets block
+/// of pcapng (type 0x0A), right after the interface description, so the lines
+/// stand ahead of every packet that they decrypt and the file decrypts with no
+/// key log beside it. Wireshark and tshark read such a block like the
+/// `tls.keylog_file` preference.
+fn assemble(entry: &Entry, dropped: u64, keys: &str) -> Result<Done, String> {
     let err =
         |what: &str, p: &Path, e: &dyn std::fmt::Display| format!("{what} {}: {e}", p.display());
     let mut files: Vec<(u64, PathBuf)> = Vec::new();
@@ -838,6 +885,8 @@ fn assemble(entry: &Entry, dropped: u64) -> Result<Done, String> {
     }
     for (_, path) in &files {
         let mut input = BufReader::new(File::open(path).map_err(|e| err("open", path, &e))?);
+        // Each ring file is one section with one interface description.
+        let mut secrets_done = false;
         loop {
             let mut head = [0u8; 8];
             match read_full(&mut input, &mut head) {
@@ -864,6 +913,11 @@ fn assemble(entry: &Entry, dropped: u64) -> Result<Done, String> {
                 packets += 1;
             }
             emit(&block, &mut out).map_err(|e| err("write", &tmp, &e))?;
+            if kind == IDB_TYPE && !keys.is_empty() && !secrets_done {
+                secrets_done = true;
+                emit(&decryption_secrets(keys.as_bytes()), &mut out)
+                    .map_err(|e| err("write", &tmp, &e))?;
+            }
         }
     }
     out.flush().map_err(|e| err("write", &tmp, &e))?;
@@ -1039,6 +1093,7 @@ mod tests {
             ring: path.with_extension("ring"),
             prefix: id.into(),
             capture: Capture::disabled(),
+            export_tls_keys: false,
             started: Instant::now(),
             started_at: SystemTime::now(),
             max_bytes: 0,

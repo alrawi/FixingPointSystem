@@ -33,6 +33,8 @@ fps-module-http1 = { path = "../../modules/http1/native" }
 fps-module-imap = { path = "../../modules/imap/native" }
 fps-module-pop3 = { path = "../../modules/pop3/native" }
 fps-module-smtp = { path = "../../modules/smtp/native" }
+# The TLS profiles, authority, and key log of the runs with tls_upgrade (AGT-14).
+fps-module-tls = { path = "../../modules/tls/native" }
 fps-runtime = { path = "../fps-runtime" }
 fps-sched = { path = "../fps-sched" }
 fps-stats = { path = "../fps-stats" }
@@ -41,6 +43,8 @@ fps-stats = { path = "../fps-stats" }
 fps-wasm = { path = "../fps-wasm" }
 # The histogram type of fps-stats snapshots, for criteria over percentiles.
 hdrhistogram = { version = "7", default-features = false }
+# The base point multiple that derives the authority key from the run seed (AGT-14). MIT or Apache-2.0.
+num-bigint = "0.4"
 # RngCore appears in the signature of the TemplateFn trait.
 rand = { version = "0.8", default-features = false }
 # Generated messages of agent.proto. Apache-2.0.

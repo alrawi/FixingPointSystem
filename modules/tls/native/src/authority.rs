@@ -82,6 +82,28 @@ impl RunAuthority {
     pub fn generate(common_name: &str) -> Result<Self, TlsError> {
         let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
             .map_err(authority_error("generate the authority key"))?;
+        Self::with_key(common_name, key)
+    }
+
+    /// Builds an authority around an ECDSA P-256 key that the caller made, as
+    /// a PKCS#8 document.
+    ///
+    /// Two authorities with the same key and the same `common_name` have the
+    /// same subject and the same public key, so a client that trusts one
+    /// verifies a certificate that the other issued, although their
+    /// self signed certificates differ in the bytes of the signature. A run
+    /// with several agents uses this to share one trust anchor without
+    /// shipping a certificate: every agent derives the key from the run seed
+    /// (AGT-14). The key then protects nothing, so only a test network uses
+    /// such an authority.
+    pub fn from_pkcs8_der(common_name: &str, pkcs8_der: &[u8]) -> Result<Self, TlsError> {
+        let der = PrivatePkcs8KeyDer::from(pkcs8_der);
+        let key = KeyPair::from_pkcs8_der_and_sign_algo(&der, &PKCS_ECDSA_P256_SHA256)
+            .map_err(authority_error("read the authority key"))?;
+        Self::with_key(common_name, key)
+    }
+
+    fn with_key(common_name: &str, key: KeyPair) -> Result<Self, TlsError> {
         let mut params = CertificateParams::new(Vec::<String>::new())
             .map_err(authority_error("create the authority parameters"))?;
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -167,6 +189,26 @@ mod tests {
         ));
         assert!(ca.ca_pem().starts_with("-----BEGIN CERTIFICATE-----"));
         assert_eq!(ca.root_store().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_authority_from_a_key_keeps_its_name_and_issues() {
+        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+        let der = key.serialize_der();
+        let a = RunAuthority::from_pkcs8_der("shared", &der).unwrap();
+        let b = RunAuthority::from_pkcs8_der("shared", &der).unwrap();
+        assert_eq!(a.root_store().unwrap().len(), 1);
+        assert_eq!(
+            b.issue(&["x.example.test"], LeafKey::EcdsaP256)
+                .unwrap()
+                .chain()
+                .len(),
+            2
+        );
+        assert!(matches!(
+            RunAuthority::from_pkcs8_der("shared", b"not a key"),
+            Err(TlsError::Authority { .. })
+        ));
     }
 
     #[test]
