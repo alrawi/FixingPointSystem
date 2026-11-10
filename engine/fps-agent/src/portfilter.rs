@@ -260,7 +260,15 @@ fn ends_of(frame: &[u8]) -> Option<Ends> {
 #[derive(Debug)]
 pub struct FrameFilter<'a> {
     filter: &'a PortFilter,
-    current: Option<(bool, (IpAddr, u16), (IpAddr, u16), bool)>,
+    current: Option<Current>,
+}
+
+/// The session that the last frame belonged to, and what the filter decided.
+#[derive(Debug, Clone, Copy)]
+struct Current {
+    tcp: bool,
+    ends: [(IpAddr, u16); 2],
+    keep: bool,
 }
 
 impl<'a> FrameFilter<'a> {
@@ -282,16 +290,19 @@ impl<'a> FrameFilter<'a> {
         let Some(e) = ends_of(frame) else {
             return false;
         };
-        let same = |a: (IpAddr, u16), b: (IpAddr, u16)| a == b;
-        if let Some((tcp, a, b, keep)) = self.current {
-            let continues = tcp == e.tcp
-                && ((same(a, e.src) && same(b, e.dst)) || (same(a, e.dst) && same(b, e.src)));
+        if let Some(c) = self.current {
+            let continues =
+                c.tcp == e.tcp && (c.ends == [e.src, e.dst] || c.ends == [e.dst, e.src]);
             if continues && !e.opens {
-                return keep;
+                return c.keep;
             }
         }
         let keep = self.filter.matches(e.src.0, e.dst.0, e.dst.1);
-        self.current = Some((e.tcp, e.src, e.dst, keep));
+        self.current = Some(Current {
+            tcp: e.tcp,
+            ends: [e.src, e.dst],
+            keep,
+        });
         keep
     }
 }
