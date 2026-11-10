@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #408 |
 | Branch | `wp/AGT-19` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (3 of 3 plan steps, CI pending) |
+| Pull request | #438 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-61ad74, lease until 2026-11-11T00:05:18Z |
 | Last verified commit | none |
 
@@ -26,7 +26,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 - [x] 1. Dependency, registry line, module list tests
 - [x] 2. controller_e2e.sh runs smb2/download and smb2/upload
-- [x] 3. Checks, PR (CI pending)
+- [x] 3. Checks, PR 
 
 ## Done and verified
 
@@ -37,7 +37,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-CI result of the PR.
+none. CI of the PR is green. The controller-e2e job of agt.yml logged: smb2/download 50 succeeded sessions, smb2/upload 83 succeeded sessions, verdict passed.
 
 ## Next action
 
