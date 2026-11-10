@@ -6,9 +6,9 @@
 | Branch | `wp/CAP-03` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 60% (3 of 5 plan steps) |
+| Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-f353e8, lease until 2026-11-10T06:14:57Z |
-| Last verified commit | 895712b |
+| Last verified commit | 31cb7b4 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Remove personal data and credentials from extracted sessions before scenario gen
 - [x] 2. Scrubber core (`capture/scrub.py`): addresses, protocol credentials, tokens, emails, names
 - [x] 3. CLI `scrub`, provenance in the manifest, scenario reads the scrub record
 - [x] 4. Seeded capture tests (raw, base64, percent decoded search), lint
-- [ ] 5. Wiki page, README, log entry, pull request, CI
+- [ ] 5. Wiki page, README, log entry (done), pull request, CI
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ Remove personal data and credentials from extracted sessions before scenario gen
 
 ## Remaining
 
-Wiki page, README, log entry, pull request, CI.
+Pull request and CI.
 
 ## Next action
 
-Update `docs/wiki/Capture.md` and `capture/README.md`, then open the pull request.
+Open the pull request, wait for CI, then run `fps_swarm.py review`.
 
 ## Blockers and open questions
 

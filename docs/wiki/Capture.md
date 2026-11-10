@@ -1,6 +1,6 @@
 # Capture
 
-This page describes the capture compiler under `capture/`, which the CAP workstream owns. The compiler turns a packet capture into data for scenario generation, scrubbing, and profile extraction. CAP-01 added the first command, `python3 -m capture sessions`, which reassembles TCP streams, groups UDP flows, and writes one JSON document of sessions with timing. CAP-02 added `python3 -m capture scenario`, which turns that document into a module directory of scenarios. The later packages CAP-03 (scrubbing and provenance), and CAP-04 (profile extractor) read that document, so its fields are the seam between them.
+This page describes the capture compiler under `capture/`, which the CAP workstream owns. The compiler turns a packet capture into data for scenario generation, scrubbing, and profile extraction. CAP-01 added the first command, `python3 -m capture sessions`, which reassembles TCP streams, groups UDP flows, and writes one JSON document of sessions with timing. CAP-02 added `python3 -m capture scenario`, which turns that document into a module directory of scenarios. CAP-03 added `python3 -m capture scrub`, which removes personal data and credentials from the document and writes the provenance record. CAP-04 (profile extractor) reads the document too, so its fields are the seam between the packages.
 
 The compiler needs only the Python standard library, version 3.10 or newer (PyYAML is a test dependency, because the validator reads YAML), and it reads captures as untrusted input, as [Coding Standards](Coding-Standards.md) require. The [Realism](Realism.md) runner has its own reader for scoring, and the two do not share code, because a realism check must not depend on the compiler that produced the traffic it judges.
 
@@ -15,10 +15,10 @@ python3 -m capture sessions --pcap FILE [--out FILE] [--udp-idle-timeout SECONDS
 | `--pcap` | Classic pcap in either byte order with microsecond or nanosecond timestamps, or pcapng with any number of sections and interfaces |
 | `--out` | Output file, default standard output |
 | `--udp-idle-timeout` | A UDP flow idle for more than this many seconds ends. The default is 60 |
-| `--payloads` | Adds the payload bytes of every turn as base64. Without it the document holds sizes and times only, which keeps it free of content until CAP-03 scrubs it |
+| `--payloads` | Adds the payload bytes of every turn as base64. Without it the document holds sizes and times only, which keeps it free of content. A document with payloads is real traffic until `scrub` has rewritten it |
 | `--interface` | Reads only the frames of one interface id. Ids count over the whole file, across pcapng sections |
 
-The exit code is 0 on success and 1 when the capture cannot be read. A capture that ends inside a record yields the earlier packets and a warning, which is what a killed `tcpdump` leaves behind.
+The exit code is 0 on success and 1 when the capture cannot be read. A capture that ends inside a record yields the earlier packets and a warning, which is what a killed `tcpdump` leaves behind. The document records the SHA-256 of the capture file in `source.sha256`, which the provenance record of the scrubber cites.
 
 ## Reading captures
 
@@ -100,8 +100,11 @@ Each session has `client_to_server` and `server_to_client` objects. `packets`, `
 
 ```bash
 python3 -m capture sessions --pcap run.pcapng --payloads --out sessions.json
-python3 -m capture scenario --sessions sessions.json --all --out-dir out/my_module [--synthetic]
+python3 -m capture scrub --sessions sessions.json --consent "owner approved" --out scrubbed.json
+python3 -m capture scenario --sessions scrubbed.json --all --out-dir out/my_module
 ```
+
+A capture of your own lab traffic skips the scrubber with `scenario --synthetic`.
 
 The command reads a sessions document that was written with `--payloads` and writes a module directory: `manifest.yaml` and one `scenarios/<protocol>_<id>.yaml` per session. The module name is the base name of `--out-dir`, and it has to match `^[a-z][a-z0-9_]{0,62}$`.
 
@@ -116,7 +119,7 @@ The command reads a sessions document that was written with `--payloads` and wri
 | `--timestamp-window S` | An epoch value is a timestamp when it lies within `S` seconds of the capture time. The default is 86400 |
 | `--no-fields` | Turns field detection off. Framing stays, so every expect still has a length or delimiter, and all data stays literal |
 | `--keep-timing` | Adds a `delay` for the gap between turns of one side, when the gap is at least `--min-delay-ms` (default 10) |
-| `--license`, `--synthetic`, `--consent TEXT`, `--scrubbed` | Provenance of the manifest, see below |
+| `--license`, `--synthetic` | License of the module, and `source: synthetic` for traffic that a lab generated. The other provenance fields come from the scrub record, see below |
 | `--report FILE` | Writes a JSON report with the counts of detected fields per scenario |
 
 Warnings and the counts of detected fields go to standard error. The exit code is 0 on success and 1 when the input or the output cannot be handled.
@@ -154,16 +157,105 @@ A numeric token that is long, or that has trailing zeros, would be parsed by the
 
 ### Provenance
 
-A capture is real traffic, so the manifest says so. The default writes `source: capture`, `consent: "not recorded"`, and `scrubbed: false`. The schema requires consent and a scrubbed capture for that source, so **the generated module fails validation until CAP-03 scrubs it and the consent is recorded**, and the command warns. `--consent TEXT --scrubbed` states both, and `--synthetic` writes `source: synthetic` for captures that a test or a lab produced. The fixture captures of the modules are synthetic, so the validation runs below use `--synthetic`.
+A capture is real traffic, so the manifest says so: `source: capture`, with `consent` and `scrubbed`. The schema (`contracts/schemas/module-manifest.schema.json`) requires a consent note and `scrubbed: true` for that source, and its provenance object has only the fields `source`, `consent`, `scrubbed`, and `notes`. **Only `capture scrub` can make `scrubbed` true.** The generator reads the `scrub` record in the sessions document, checks its digest, and copies the consent note from it. Without an intact record the manifest says `scrubbed: false` and `consent: "not recorded"`, the validator rejects the module, and the command warns. A document that someone edited after scrubbing fails the digest check and counts as unscrubbed, and so does a record that the scrubber did not write. The options `scenario --consent` and `--scrubbed` of CAP-02 are gone and exit with an error that points to `scrub`. `--synthetic` writes `source: synthetic` for captures that a lab produced.
+
+The schema has no field for the capture digest, the rules, or the date, so the manifest `notes` carry the record in one sentence, for example: `Scrubbed by capture scrub 1.0.0 on 2026-11-10. Capture sha256 ... Sessions sha256 ... Rules: ipv4@1, ipv6@1, ... Payload bytes 2391 to 2368 (-23).` The sessions document holds the full record under `scrub`.
 
 ### What the generator does not do
 
 - A binary length prefix is a literal, because the contract has no function that writes an integer as bytes. A scenario with a prefix replays the observed length, which is correct because the generator keeps the payload at that length too.
 - There is no clock function, so a date does not move with the replay time.
 - Combined scenarios chain flows with `spawn` and `spawned: true`, because the contract does not say that variables pass through `after`.
-- Identifier detection looks for random looking tokens. Credentials and hashes, such as an AUTH base64 string or an MD5 sum, and some user names such as `Tst-Pubrupun4007`, can be treated as identifiers. CAP-03 scrubs such values before a scenario leaves the lab.
+- Identifier detection looks for random looking tokens. Credentials and hashes, such as an AUTH base64 string or an MD5 sum, and some user names such as `Tst-Pubrupun4007`, can be treated as identifiers. `capture scrub` replaces such values before a scenario is generated, so run it first.
 - Encrypted traffic is opaque, so it becomes frames and `fill` only.
 - Compression and content that spans turns are not undone.
+
+## Scrubbing
+
+```bash
+python3 -m capture scrub --sessions sessions.json --consent TEXT --out scrubbed.json \
+    [--hostnames] [--hostname NAME] [--redact TEXT] [--redact-file FILE] \
+    [--drop-port PORT] [--seed N] [--date YYYY-MM-DD] [--report FILE]
+```
+
+The command reads a sessions document and writes a scrubbed copy, with schema version 1.1 and a `scrub` record. Run it before `scenario`. It works on the payloads of the turns and on the endpoints of the sessions, so it also scrubs a document without payloads (the addresses only).
+
+| Option | Meaning |
+|---|---|
+| `--consent TEXT` | Required. Who allowed the use of the capture. It goes into the record and the manifest |
+| `--hostnames` | Also replaces host names that appear in `Host` headers, URLs, `EHLO` and `HELO`, and `220` and `250` greetings |
+| `--hostname NAME` | Replaces this name everywhere, with or without `--hostnames` |
+| `--redact TEXT`, `--redact-file FILE` | Replaces this text everywhere, for what no rule can know, such as a person's name in free text. The file has one text per line and keeps the text out of the shell history. The record counts the texts and never stores them |
+| `--drop-port PORT` | Removes the sessions that use this port, for protocols that the scrubber cannot read. The remaining sessions are renumbered |
+| `--seed N` | Seed of the replacements, default 1. One seed gives one output, and the replacements do not depend on the secret |
+| `--date`, `--report` | The date in the record (default today, UTC), and a copy of the record as a file |
+
+The exit code is 0 on success and 1 when the document cannot be scrubbed: no consent note, a document that has a record already (scrub the original instead), or an unreadable file. The command prints the number of replacements per rule, the change in payload bytes, and a warning when binary payloads were only swept.
+
+### How it works
+
+Scrubbing has two passes over every payload, so that one value has one replacement in the whole capture.
+
+1. Discovery. The rules below find values. Each value gets a replacement that is drawn from a seeded generator in order of discovery, and the same value always gets the same one. The rule also replaces the value where it found it.
+2. Sweep. Every learned value is replaced everywhere else: as text, percent encoded (three styles), and inside any Base64 token that decodes to text that holds it, so a value that appears in a token that the rules never parsed still goes. A value that is shorter than the sweep limit (3 characters for names, 4 for passwords, 6 for tokens) is replaced only where a rule found it, because a sweep of `al` would mangle ordinary text.
+
+Both passes compute their edits against the original text. Where two edits overlap, the one from a rule beats the one from the sweep. Replacements are never derived from the secret by a hash, so a replacement is no oracle for a guess.
+
+### Replacements
+
+Credentials keep their length and the classes of their characters: digits stay digits, letters stay letters with their case, and hex stays hex, so an MD5 sum is still 32 hex digits. Separators in names and tokens (`.`, `-`, `_`, `=`) stay, so a JWT keeps its three parts. Passwords get their punctuation replaced as well. Bytes above 126 and control characters become letters, so no raw non ASCII byte of a name survives. A replacement never equals its original.
+
+| Kind | Replacement |
+|---|---|
+| IPv4 address | The next address of 192.0.2.0/24, then 198.51.100.0/24, then 203.0.113.0/24, then 198.18.0.0/15 |
+| IPv6 address | `2001:db8::N`, written compressed |
+| Email address | `userN@example.test`, padded with `x` in the local part to the old length when the old address was longer. The domain of every email address is learned as a host name |
+| Host name | `hostN.example.test`, padded in the first label in the same way |
+| User name, password, token, display name | Same length and classes, as above |
+
+One address always gets one pseudonym, in session endpoints, in text, in FTP `PORT` and `227` lists (`a,b,c,d`), and as the raw four or sixteen bytes in a binary UDP datagram or a non text IPv6 payload. IPv4 text stays valid in text of any shape, and `0.0.0.0`, `127.0.0.0/8`, `255.255.255.255`, `::`, and `::1` stay as they are. Addresses that already lie in a documentation range are mapped too, so the pseudonyms never collide with an original of the capture.
+
+### Rules
+
+Each rule has a version, which the record lists next to the number of replacements it made. A version rises when a rule changes what it replaces.
+
+| Rule | What it finds |
+|---|---|
+| `ipv4`, `ipv6`, `ip_binary` | Addresses in text, and raw address bytes in binary datagrams |
+| `email` | `local@domain` in any text. An address at `example.test` stays |
+| `display_name` | The name in `From`, `To`, `Cc`, `Bcc`, `Reply-To`, `Sender`, `Delivered-To`, and `Return-Path` headers: `"Name" <a@b>` and `Name <a@b>` |
+| `hostname` | The names that `--hostnames`, `--hostname`, and email domains name |
+| `http_authorization` | `Authorization` and `Proxy-Authorization`: Basic (decoded, user and password replaced, encoded again), Bearer and other tokens, Digest `username`, `response`, `cnonce`. Also `Bearer` and `Basic` anywhere in a body, and `Authentication-Info` |
+| `http_cookie` | Values in `Cookie` and `Set-Cookie` whose name looks like a session, token, key, user or id, or whose value has 8 or more characters. `theme=dark` stays. The same value in both headers gets the same replacement |
+| `http_header` | Headers whose name holds token, key, secret, auth, session, password, credential, csrf, xsrf, or signature. Names that start with `access-control-` and the `www-authenticate` headers are skipped |
+| `parameter` | Values of password, secret, token, key, session, auth, user, login, email and account parameters in query strings, forms, JSON, and XML, with the percent decoded value as the key |
+| `jwt`, `api_key`, `private_key` | JWTs, and the key formats of AWS, GitHub, GitLab, Stripe, Slack, Google, OpenAI style and SendGrid keys, and PEM private key bodies |
+| `url_credentials` | `scheme://user:password@host` |
+| `smtp_auth` | `AUTH` and IMAP `AUTHENTICATE` with PLAIN, LOGIN (user and password lines, with or without the initial response), CRAM-MD5 (user and digest), XOAUTH2, and any other mechanism (the token). The rule follows the dialog across turns |
+| `imap_login` | `tag LOGIN user password`, quoted or bare |
+| `pop3` | `USER`, `APOP user digest` |
+| `ftp` | `PASS` and `ACCT`, and the addresses in `PORT` and `227` |
+| `literal` and `sweep` | `--redact` texts and the learned values everywhere else |
+| `base64` | Base64 tokens that decode to text that holds a learned value |
+| `content_length` | Corrects `Content-Length` when edits changed the size of a body that lies in the same turn |
+
+### Provenance record
+
+The `scrub` object of the document holds the tool and its version, the date, the consent note, the SHA-256 of the capture file (`capture_sha256`, null when the document did not record it) and of the unscrubbed sessions file (`input_sha256`), the seed, the options, every rule with its version and its count, the number of learned addresses, emails, host names, and values, the payload bytes before and after, the bytes of binary payload, and `content_sha256`. The last is the digest of the whole document without that field, as sorted compact JSON. It catches an edit after scrubbing. It cannot stop someone who recomputes it, so it protects against mistakes and not against forgery. The record never holds a removed value, and neither does the document: the file name of the capture becomes `capture-<digest>.<format>`, interface names become `if<id>`, and warnings pass through the rules.
+
+### Byte counts
+
+Credentials, cookies, tokens, hashes, email addresses that were at least as long as `userN@example.test`, and host names of at least the length of `hostN.example.test` keep their length. Addresses in text change length (`10.20.30.41` becomes `192.0.2.1`), and so do shorter emails and host names, and a percent encoded value is written again from its replacement. The record gives the total change in payload bytes. The turn sizes and datagram sizes follow the new bytes, and the counters `payload_bytes`, `stream_bytes` and `ip_bytes` change by the same amount, which is approximate for a stream with retransmissions. On the seeded capture of the tests the payload went from 2391 to 2368 bytes (-1.0 percent). On the six fixture captures of the modules it changed by 0 to 80 bytes in 33 to 940 kilobytes.
+
+### What the scrubber does not do
+
+- It does not read binary protocols. DNS names in the wire format, TLS handshakes (the server name and the certificate), SMB, Kerberos, database protocols, and the like pass through, apart from learned values that occur in them as text and raw addresses as bytes. The command reports the bytes of binary payload, and `--drop-port` removes sessions of a protocol that you do not trust.
+- It finds credentials by where they stand. A password that a person typed into a chat message, a name inside a free text body, or a token with no `token=`, `Bearer`, or header around it can stay. Use `--redact` for what you know, and read the output of a capture that came from real users before you publish it.
+- A value shorter than the sweep limit is replaced only where a rule found it. The local part of an email address is not learned as a user name, because `info` and `admin` would then change everywhere.
+- IMAP literals (`{n}` after `LOGIN`) and HTTP chunked sizes are not followed. A `Content-Length` is corrected only when the body lies in the same turn.
+- A four part number such as a version `10.0.19.1` is an address to the scrubber and gets replaced. Over scrubbing is the chosen failure.
+- A capture that has more than about 131,000 distinct IPv4 addresses stops with an error.
+- It protects the generated module as well as the document, because the generator reads only the scrubbed document. It does not scrub a module that someone wrote by hand.
 
 ## Replay test
 
@@ -206,11 +298,13 @@ The path filters of the workflow have to include `capture/**`, `engine/**`, `tes
 
 ## Schema and versioning
 
-[`capture/sessions.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/capture/sessions.schema.json) is a JSON Schema (draft 2020-12) of the document, and every test validates its output against it. The document carries `schema_version` `1.0`. CAP-02 to CAP-04 may add optional fields in a minor version. A change that removes or reinterprets a field needs a new major version and an issue that names the packages that read it.
+[`capture/sessions.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/capture/sessions.schema.json) is a JSON Schema (draft 2020-12) of the document, and every test validates its output against it. The document carries `schema_version` `1.0`. CAP-02 to CAP-04 may add optional fields in a minor version. CAP-03 added `source.sha256` to documents of version 1.0, and the scrubber writes version 1.1, which differs by the `scrub` record. A change that removes or reinterprets a field needs a new major version and an issue that names the packages that read it.
 
 ## Tests
 
 `make lint-cap test-cap` runs `ruff format --check`, `ruff check`, `mypy --strict`, and `pytest`. `capture/tests/pcapgen.py` writes pcap and pcapng bytes, so no binary fixture is checked in. The tests cover each rule above: retransmission and overlap, out of order delivery, holes that never fill, missing handshakes and mid stream starts, SYN retransmission, resets and half closes, port reuse, sequence wraparound, IPv6, VLAN tags, snap length cuts, UDP idle splits, pcap variants, pcapng with several interfaces and resolutions, concatenated sections, and damaged files.
+
+`capture/tests/test_scrub.py` writes a capture with 44 known secrets (user names, passwords, tokens, cookies, JWTs, API keys, emails, hostnames, addresses) over HTTP, SMTP, IMAP, POP3, FTP, syslog, and a binary datagram. It scrubs it, and it searches the sessions JSON, every payload, and every generated YAML file for each secret in the raw bytes, with percent decoding, and with every Base64 token decoded, and finds none. The same search finds all of them in the unscrubbed document. Further tests check the replacement lengths and classes, the equality of addresses, the record and its digest, the refusal of the old `--consent` and `--scrubbed` options, and that all 608 sessions of the module fixtures scrub and generate modules that validate.
 
 The tests of the scenario command run a model of the flow interpreter (`capture/tests/flowsim.py`) over generated scenarios and validate the output with `tools/contracts/validate.py`. Over the committed fixture captures of the modules (HTTP, DNS, SMTP, FTP, IMAP, and POP3, 608 sessions) every generated scenario validates with 0 errors, and the model reproduces the byte counts of each session exactly, without a deadlock.
 
