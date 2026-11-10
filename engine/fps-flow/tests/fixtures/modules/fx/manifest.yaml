@@ -61,6 +61,8 @@ scenarios:
   - scenarios/tls_upgrade_tcp.yaml
   - scenarios/tls_upgrade_udp.yaml
   - scenarios/tls_upgrade_udp_nested.yaml
+  - scenarios/transport_tcp.yaml
+  - scenarios/transport_udp.yaml
 provenance:
   source: synthetic
   notes: Test fixture of the scenario loader. All content is generated.

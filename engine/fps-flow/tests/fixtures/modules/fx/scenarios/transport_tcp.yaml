@@ -1,0 +1,17 @@
+scenario: transport_tcp
+flows:
+  - id: a
+    module: fx
+    transport: { module: tls, profile: strict, server_name: www.example.test }
+    client:
+      - connect: { port: 443 }
+      - send: "GET"
+      - tls_upgrade: { profile: strict }
+    server:
+      - accept: { port: 443 }
+      - expect: { bytes: 3 }
+  - id: b
+    module: fx
+    transport: { module: tls, profile: strict }
+    client:
+      - connect: { port: 8443 }

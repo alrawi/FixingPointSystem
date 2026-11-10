@@ -1,5 +1,12 @@
 # Contracts changelog
 
+## Scenario contract 0.5 (2026-11-10)
+
+The `transport` keyword is sugar for a leading `tls_upgrade` (CON-18). The change is additive for every scenario that a loader ever accepted. See `changes/CON-18.md`.
+
+- The flow keyword `transport` takes `module: tls` (the only value), a required `profile`, and an optional `server_name`. It stands for a `tls_upgrade` right after the opener of each side, the client role on the client side and the server role on the server side. It composes with explicit `tls_upgrade` actions, and the validator reports it in a UDP flow as an error.
+- `fps-flow` desugars the keyword in `Scenario::load` and no longer answers `unsupported: a transport module`. The embedded schema copy of the controller is refreshed.
+
 ## Scenario contract 0.4 (2026-11-09)
 
 The `tls_upgrade` action (CON-17). The change is additive. See `changes/CON-17.md`.

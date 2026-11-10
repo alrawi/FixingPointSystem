@@ -1,0 +1,9 @@
+scenario: transport_udp
+flows:
+  - id: a
+    module: fx
+    l4: udp
+    transport: { module: tls, profile: strict }
+    client:
+      - connect: { port: 53 }
+      - send: "q"

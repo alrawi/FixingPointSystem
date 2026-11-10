@@ -172,7 +172,8 @@ pub enum LoadError {
         /// Location of the error.
         at: Box<Location>,
     },
-    /// `tls_upgrade` appears in a UDP flow.
+    /// `tls_upgrade`, or `transport`, which is sugar for it, appears in a UDP
+    /// flow.
     #[error("{}tls_upgrade applies only to TCP flows", prefix(.at))]
     TlsUpgradeOnUdp {
         /// Location of the error.

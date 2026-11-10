@@ -734,6 +734,8 @@ def check_scenario(doc: dict, file: Path, report: Report, module: dict | None = 
             if actions and not (isinstance(actions[0], dict) and opener in actions[0]):
                 report.error(file, f"/flows/{i}/{side}/0", f"{side} actions must start with '{opener}'")
         udp = flow.get("l4", "tcp") == "udp"
+        if udp and "transport" in flow:
+            report.error(file, f"/flows/{i}/transport", "transport (sugar for tls_upgrade) applies only to TCP flows")
         for side in ("client", "server"):
             for path, kind, body in _walk_actions(flow.get(side, []), ["flows", i, side]):
                 if kind == "spawn" and isinstance(body, dict):
