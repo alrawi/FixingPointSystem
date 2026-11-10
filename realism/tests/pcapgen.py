@@ -31,7 +31,15 @@ def _checksum(data: bytes) -> int:
     return ~total & 0xFFFF
 
 
-def _ip_packet(src: str, dst: str, proto: int, segment_without_sum: bytes, sum_at: int) -> bytes:
+def _ip_packet(
+    src: str,
+    dst: str,
+    proto: int,
+    segment_without_sum: bytes,
+    sum_at: int,
+    ttl: int = 64,
+    df: bool = True,
+) -> bytes:
     s = ipaddress.ip_address(src)
     d = ipaddress.ip_address(dst)
     if s.version == 4:
@@ -46,11 +54,21 @@ def _ip_packet(src: str, dst: str, proto: int, segment_without_sum: bytes, sum_a
     )
     if s.version == 4:
         header = struct.pack(
-            "!BBHHHBBH4s4s", 0x45, 0, 20 + len(segment), 1, 0x4000, 64, proto, 0, s.packed, d.packed
+            "!BBHHHBBH4s4s",
+            0x45,
+            0,
+            20 + len(segment),
+            1,
+            0x4000 if df else 0,
+            ttl,
+            proto,
+            0,
+            s.packed,
+            d.packed,
         )
         header = header[:10] + struct.pack("!H", _checksum(header)) + header[12:]
         return header + segment
-    header = struct.pack("!IHBB16s16s", 6 << 28, len(segment), proto, 64, s.packed, d.packed)
+    header = struct.pack("!IHBB16s16s", 6 << 28, len(segment), proto, ttl, s.packed, d.packed)
     return header + segment
 
 
@@ -61,19 +79,49 @@ def ethernet(ip_packet: bytes) -> bytes:
 
 
 def tcp(
-    src: str, sport: int, dst: str, dport: int, flags: int, seq: int, ack: int, payload: bytes = b""
+    src: str,
+    sport: int,
+    dst: str,
+    dport: int,
+    flags: int,
+    seq: int,
+    ack: int,
+    payload: bytes = b"",
+    ttl: int = 64,
+    df: bool = True,
+    window: int = 65535,
+    options: bytes = b"",
 ) -> bytes:
-    """Build one IPv4 or IPv6 TCP packet with correct checksums."""
+    """Build one IPv4 or IPv6 TCP packet with correct checksums.
+
+    ``options`` holds the raw TCP options and must be a multiple of four bytes.
+    """
+    if len(options) % 4:
+        raise ValueError("TCP options must fill whole words")
     segment = (
-        struct.pack("!HHIIBBHHH", sport, dport, seq, ack, 5 << 4, flags, 65535, 0, 0) + payload
+        struct.pack(
+            "!HHIIBBHHH", sport, dport, seq, ack, (5 + len(options) // 4) << 4, flags, window, 0, 0
+        )
+        + options
+        + payload
     )
-    return _ip_packet(src, dst, 6, segment, 16)
+    return _ip_packet(src, dst, 6, segment, 16, ttl, df)
 
 
 def udp(src: str, sport: int, dst: str, dport: int, payload: bytes) -> bytes:
     """Build one IPv4 or IPv6 UDP datagram with correct checksums."""
     segment = struct.pack("!HHHH", sport, dport, 8 + len(payload), 0) + payload
     return _ip_packet(src, dst, 17, segment, 6)
+
+
+@dataclass(frozen=True)
+class Handshake:
+    """The IP and TCP fields of a SYN or SYN-ACK that an operating system decides."""
+
+    ttl: int = 64
+    window: int = 65535
+    options: bytes = b""
+    df: bool = True
 
 
 @dataclass
@@ -104,6 +152,47 @@ class Capture:
         self.add(tcp(c, cp, s, sp, FIN | ACK, cs + 1 + len(request), ss + 1 + len(response)))
         self.add(tcp(s, sp, c, cp, FIN | ACK, ss + 1 + len(response), cs + 2 + len(request)))
         self.add(tcp(c, cp, s, sp, ACK, cs + 2 + len(request), ss + 2 + len(response)))
+
+    def tcp_handshake(
+        self,
+        client: tuple[str, int],
+        server: tuple[str, int],
+        syn: Handshake,
+        syn_ack: Handshake,
+    ) -> None:
+        """Append a three way handshake and a reset, with the given SYN and SYN-ACK fields."""
+        (c, cp), (s, sp) = client, server
+        self.add(
+            tcp(
+                c,
+                cp,
+                s,
+                sp,
+                SYN,
+                1000,
+                0,
+                ttl=syn.ttl,
+                df=syn.df,
+                window=syn.window,
+                options=syn.options,
+            )
+        )
+        self.add(
+            tcp(
+                s,
+                sp,
+                c,
+                cp,
+                SYN | ACK,
+                5000,
+                1001,
+                ttl=syn_ack.ttl,
+                df=syn_ack.df,
+                window=syn_ack.window,
+                options=syn_ack.options,
+            )
+        )
+        self.add(tcp(c, cp, s, sp, ACK, 1001, 5001, ttl=syn.ttl, df=syn.df))
 
     def http_get(
         self, client: tuple[str, int], server: tuple[str, int], path: str = "/index.html"

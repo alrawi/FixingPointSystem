@@ -24,6 +24,7 @@ from realism import (
     parser_errors,
     structure,
     temporal,
+    transport,
 )
 from realism.capture import Session, SessionKey, summarize
 from realism.classifier import Classifier
@@ -31,7 +32,7 @@ from realism.labels import load
 from realism.parsers import ParserRunner
 
 REPORT_FORMAT = "fps-realism-report"
-REPORT_VERSION = "0.8.0"
+REPORT_VERSION = "0.9.0"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "realism-report.schema.json"
 LABELS_SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "labels.schema.json"
 
@@ -109,6 +110,11 @@ def score(
     run_report: Path | None = None,
     mix_tolerance: float | None = None,
     mix_basis: str | None = None,
+    os_profile: str | None = None,
+    os_profiles_dir: Path | None = None,
+    transport_strict: bool | None = None,
+    client_hops: int | None = None,
+    server_hops: int | None = None,
 ) -> Report:
     """Score a capture against its labels and return the realism report.
 
@@ -140,6 +146,13 @@ def score(
     metrics of a run (``run_report``) and from nDPI with the weights of ``test_config`` within
     ``mix_tolerance`` percentage points (default 2) on ``mix_basis`` (default the basis of the
     test configuration). The arguments override the labels.
+
+    Labels with a ``transport`` section, or any of ``os_profile``, ``os_profiles_dir``,
+    ``transport_strict``, ``client_hops``, and ``server_hops``, add the transport behavior check,
+    which compares the TTL and the TCP options of the SYN and SYN-ACK of every connection with
+    the operating system profile ``os_profile`` (read from ``os_profiles_dir``). The option order
+    and the SYN window decide only when ``transport_strict`` is true, and ``client_hops`` and
+    ``server_hops`` give the routers between the hosts and the capture point.
     """
     labels = load(labels_path)
     summary = summarize(pcap)
@@ -181,6 +194,22 @@ def score(
                 run_report=run_report,
                 tolerance_points=mix_tolerance,
                 basis=mix_basis,
+            ).to_dict()
+        )
+    run_transport = labels.transport is not None or any(
+        value is not None
+        for value in (os_profile, os_profiles_dir, transport_strict, client_hops, server_hops)
+    )
+    if run_transport:
+        checks.append(
+            transport.check(
+                pcap,
+                labels,
+                os_profile=os_profile,
+                profiles_dir=os_profiles_dir,
+                strict=transport_strict,
+                client_hops=client_hops,
+                server_hops=server_hops,
             ).to_dict()
         )
     return Report(
