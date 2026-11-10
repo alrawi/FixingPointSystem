@@ -1,0 +1,18 @@
+SIP/2.0 100 Trying
+Via: SIP/2.0/UDP 192.0.2.10:5060;rport;branch=z9hG4bK35826b2fc2e9b6f1
+From: <sip:9093@192.0.2.10>;tag=63b3335d
+To: <sip:7618@192.0.2.20>
+Call-ID: 701ec70ac807a26663f1525c@192.0.2.10
+CSeq: 1 INVITE
+Server: FixingPoint-SIP/0.1
+Content-Length: 0
+
+ SIP/2.0 486 Busy Here
+Via: SIP/2.0/UDP 192.0.2.10:5060;rport;branch=z9hG4bK35826b2fc2e9b6f1
+From: <sip:9093@192.0.2.10>;tag=63b3335d
+To: <sip:7618@192.0.2.20>;tag=c50d1d32
+Call-ID: 701ec70ac807a26663f1525c@192.0.2.10
+CSeq: 1 INVITE
+Server: FixingPoint-SIP/0.1
+Content-Length: 0
+

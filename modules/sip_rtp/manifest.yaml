@@ -1,0 +1,97 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: sip_rtp
+version: 0.1.0
+type: app
+summary: SIP calls over UDP with an INVITE dialog, an SDP offer and answer, RTP media in both directions at the packet time of the codec in spawned flows, and a BYE teardown.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: sip, transport: udp, port: 5060 }
+  - { protocol: rtp, transport: udp }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    server_ip: { type: string, minLength: 7, default: 192.0.2.20, description: Address of the server that the SIP messages and the SDP answer name. Set it to the address of the server pool, so the c line of the SDP matches the host that receives the media. }
+    client_ip: { type: string, minLength: 7, default: 192.0.2.10, description: Address of the client that the Via, Contact, and SDP offer name. Set it to the address of the client pool. }
+    sip_port: { type: integer, minimum: 1, maximum: 65535, default: 5060, description: UDP port of the SIP server. The Via and Contact headers name the same port. }
+    rtp_port_min: { type: integer, minimum: 1024, maximum: 65535, default: 16384, description: Lowest port that either side offers for RTP. Each call draws an even port between rtp_port_min and rtp_port_max. }
+    rtp_port_max: { type: integer, minimum: 1024, maximum: 65535, default: 32766, description: Highest port that either side offers for RTP. }
+    codecs: { type: string, minLength: 1, description: "Codecs of the SDP offer in order of preference, separated by commas, from PCMU, PCMA, G722, G729, and opus. Each scenario sets its own default." }
+    accept: { type: string, minLength: 1, default: "PCMU,PCMA,G722,G729,opus", description: Codecs that the server accepts. The answer picks the first codec of the offer that appears in this list. }
+    ptime_ms: { type: integer, minimum: 10, maximum: 120, multipleOf: 10, description: "Packet time in milliseconds, which is also the interval of the RTP packets. Each scenario sets its own default." }
+    ring_ms: { type: integer, minimum: 0, maximum: 4000, description: "Time between 180 Ringing and 200 OK in milliseconds. It stays below 4000, because the engine gives the server side of the media flow five seconds from its start to the first RTP packet and that flow starts when the ring ends." }
+    talk_ms: { type: integer, minimum: 20, maximum: 3600000, description: "Time that RTP flows in each direction, in milliseconds. A call sends talk_ms divided by ptime_ms packets each way. Each scenario sets its own default." }
+functions:
+  - name: port
+    summary: An even UDP port between min and max, drawn from the session generator, as text.
+    params:
+      - { name: min, type: int }
+      - { name: max, type: int }
+  - name: invite
+    summary: INVITE request with an SDP offer of the codecs in order, with telephone-event, the packet time, and the audio port. Caller and callee are four digit extensions from the session generator.
+    params:
+      - { name: server, type: text }
+      - { name: client, type: text }
+      - { name: rtp_port, type: int }
+      - { name: codecs, type: text, default: "PCMU,PCMA" }
+      - { name: ptime, type: int, default: 20 }
+      - { name: sip_port, type: int, default: 5060 }
+  - name: response
+    summary: Response to an INVITE or a BYE with the dialog headers of the request and a To tag from the Call-ID. A 200 to an INVITE carries an SDP answer with the first offered codec that accept lists.
+    params:
+      - { name: request, type: bytes }
+      - { name: code, type: int }
+      - { name: server, type: text, default: "" }
+      - { name: rtp_port, type: int, default: 0 }
+      - { name: accept, type: text, default: "PCMU,PCMA,G722,G729,opus" }
+      - { name: sip_port, type: int, default: 5060 }
+  - name: ack
+    summary: ACK for a final response to an INVITE. A 2xx response gets a new branch, and a response of 300 or above keeps the branch of the INVITE.
+    params:
+      - { name: response, type: bytes }
+  - name: bye
+    summary: BYE that ends the dialog that a 2xx response to an INVITE opened, with the next CSeq and a new branch.
+    params:
+      - { name: response, type: bytes }
+  - name: sdp_port
+    summary: Audio port of the SDP body of a SIP message, as text.
+    params:
+      - { name: message, type: bytes }
+  - name: codec
+    summary: Name of the first codec of the SDP body of a SIP message that accept lists, or the first known codec when accept is empty.
+    params:
+      - { name: message, type: bytes }
+      - { name: accept, type: text, default: "" }
+  - name: rtp
+    summary: Next RTP packet of the stream of this flow side, with the marker bit on the first, a sequence number that counts up, a timestamp that advances by one packet time, and a random payload.
+    params:
+      - { name: codec, type: text }
+      - { name: ptime, type: int, default: 20 }
+  - name: packets
+    summary: Number of RTP packets that each side sends in talk_ms, as text.
+    params:
+      - { name: talk_ms, type: int }
+      - { name: ptime, type: int, default: 20 }
+  - name: hangup_ms
+    summary: Time from the start of the media to the BYE in milliseconds, as text. It is talk_ms plus a tenth plus 200 ms, so the BYE follows the last RTP packet.
+    params:
+      - { name: talk_ms, type: int }
+scenarios:
+  - scenarios/call_pcmu.yaml
+  - scenarios/call_pcma.yaml
+  - scenarios/call_g729.yaml
+  - scenarios/call_opus.yaml
+  - scenarios/busy.yaml
+expected_bytes:
+  call_pcmu: 175000
+  call_pcma: 175000
+  call_g729: 50000
+  call_opus: 150000
+  busy: 1800
+fixtures:
+  - { capture: fixtures/sip_rtp.pcapng, expect: { ndpi: [SIP, RTP], zeek: [sip] } }
+provenance:
+  source: synthetic
+  notes: Messages follow RFC 3261 for SIP over UDP, RFC 8866 and RFC 3264 for the SDP offer and answer, RFC 3550 and RFC 3551 for RTP and the static payload types, and RFC 7587 for the Opus payload type. The server and client addresses in the defaults lie in the documentation range of RFC 5737, the extensions are random four digit numbers, and the payload of every RTP packet is random bytes.

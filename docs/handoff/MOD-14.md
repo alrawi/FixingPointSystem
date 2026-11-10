@@ -6,7 +6,7 @@
 | Branch | `wp/MOD-14` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 33% (2 of 6 plan steps) |
 | Current holder | claude-4d1e7a (the lease on the status card renews at every checkpoint) |
 | Last verified commit | none |
 
@@ -18,8 +18,8 @@ Ship `sip_rtp` scenarios with an INVITE dialog, SDP negotiation, and paced RTP s
 
 ## Plan
 
-- [ ] 1. Write the manifest and the native crate (SIP messages, SDP offer and answer, RTP packets) with unit tests
-- [ ] 2. Write the scenarios and the interpreter, catalog, and golden transcript tests over an in memory UDP network
+- [x] 1. Write the manifest and the native crate (SIP messages, SDP offer and answer, RTP packets) with unit tests
+- [x] 2. Write the scenarios and the interpreter, catalog, and golden transcript tests over an in memory UDP network
 - [ ] 3. Write `fixture_peer` and `capture.sh`, and record and score the fixture in the QA-01 harness
 - [ ] 4. Write the RTP interval check and the Zeek check with their tests
 - [ ] 5. Write the README, the log entry with the shared page notes, and the Modules page section

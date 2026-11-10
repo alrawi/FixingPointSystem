@@ -1,0 +1,70 @@
+scenario: call_pcma
+description: A call between two user agents with G.711 A-law audio at a packet time of 30 ms. The client sends an INVITE over UDP with an SDP offer of PCMA and PCMU, the server answers 100 Trying and 180 Ringing, and after the ring time it answers 200 OK with an SDP answer that picks PCMA. The client sends the ACK and opens the media flow. Both sides then send RTP packets of 240 bytes every 30 ms for the talk time, in lock step on one pair of ports, and the client ends the call with a BYE that the server answers with 200 OK. The server spawns its media flow before the 200 OK, so the RTP port is open when the client learns it.
+vars:
+  server_ip: 192.0.2.20
+  client_ip: 192.0.2.10
+  sip_port: 5060
+  rtp_port_min: 16384
+  rtp_port_max: 32766
+  codecs: PCMA,PCMU
+  accept: PCMU,PCMA,G722,G729,opus
+  ptime_ms: 30
+  ring_ms: 1500
+  talk_ms: 9000
+flows:
+  - id: signaling
+    module: sip_rtp
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.sip_port }}" }
+      - set: { offer_port: "{{ sip_rtp.port(vars.rtp_port_min, vars.rtp_port_max) }}" }
+      - send: "{{ sip_rtp.invite(server=vars.server_ip, client=vars.client_ip, rtp_port=vars.offer_port, codecs=vars.codecs, ptime=vars.ptime_ms, sip_port=vars.sip_port) }}"
+      - expect: { pattern: "SIP/2.0 100 ", max_datagram: 4096, timeout_ms: 5000 }
+      - expect: { pattern: "SIP/2.0 180 ", max_datagram: 4096, timeout_ms: 5000 }
+      - expect: { pattern: "SIP/2.0 200 ", max_datagram: 4096, timeout_ms: 30000 }
+      - set:
+          rtp_port: "{{ sip_rtp.sdp_port(last) }}"
+          codec: "{{ sip_rtp.codec(last) }}"
+      - send: "{{ sip_rtp.ack(last) }}"
+      - spawn: { flow: media }
+      - delay: { ms: "{{ sip_rtp.hangup_ms(vars.talk_ms) }}" }
+      - send: "{{ sip_rtp.bye(last) }}"
+      - expect: { pattern: "SIP/2.0 200 ", max_datagram: 4096, timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.sip_port }}" }
+      - expect: { pattern: "INVITE ", max_datagram: 4096, timeout_ms: 30000 }
+      - set:
+          rtp_port: "{{ sip_rtp.port(vars.rtp_port_min, vars.rtp_port_max) }}"
+          codec: "{{ sip_rtp.codec(last, accept=vars.accept) }}"
+      - send: "{{ sip_rtp.response(last, 100, server=vars.server_ip, sip_port=vars.sip_port) }}"
+      - delay: { dist: uniform, min_ms: 5, max_ms: 25 }
+      - send: "{{ sip_rtp.response(last, 180, server=vars.server_ip, sip_port=vars.sip_port) }}"
+      - delay: { ms: "{{ vars.ring_ms }}" }
+      - spawn: { flow: media }
+      - send: "{{ sip_rtp.response(last, 200, server=vars.server_ip, rtp_port=vars.rtp_port, accept=vars.accept, sip_port=vars.sip_port) }}"
+      - expect: { pattern: "ACK ", max_datagram: 4096, timeout_ms: 5000 }
+      - expect: { pattern: "BYE ", max_datagram: 4096, timeout_ms: 3600000 }
+      - send: "{{ sip_rtp.response(last, 200, server=vars.server_ip, sip_port=vars.sip_port) }}"
+      - close: fin
+  - id: media
+    module: sip_rtp
+    l4: udp
+    spawned: true
+    client:
+      - connect: { port: "{{ vars.rtp_port }}" }
+      - loop:
+          count: "{{ sip_rtp.packets(vars.talk_ms, vars.ptime_ms) }}"
+          do:
+            - send: "{{ sip_rtp.rtp(codec=vars.codec, ptime=vars.ptime_ms) }}"
+            - expect: { min_bytes: 12, max_datagram: 1500, timeout_ms: 2000 }
+            - delay: { ms: "{{ vars.ptime_ms }}" }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.rtp_port }}" }
+      - loop:
+          count: "{{ sip_rtp.packets(vars.talk_ms, vars.ptime_ms) }}"
+          do:
+            - expect: { min_bytes: 12, max_datagram: 1500, timeout_ms: 2000 }
+            - send: "{{ sip_rtp.rtp(codec=vars.codec, ptime=vars.ptime_ms) }}"
+      - close: fin
