@@ -10,7 +10,7 @@
 | Branch | `wp/RLM-13` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-d73749, lease until 2026-11-10T18:55:18Z |
 | Last verified commit | none |
 
@@ -24,39 +24,41 @@ The mix accuracy check emits mix.share_pct, mix.abs_error_pp and mix.max_abs_err
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Metric series in the mix entry, schema, report version 0.10.0
-- [ ] 2. REST report scenarios table input
-- [ ] 3. Tests on a fixture with a known mix, catalog 0.4.0 validation
+- [x] 1. Metric series in the mix entry, schema, report version 0.10.0
+- [x] 2. REST report scenarios table input
+- [x] 3. Tests on a fixture with a known mix, catalog 0.4.0 validation
 - [ ] 4. README, Realism page, log entry, PR
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Steps 1 to 3: `python3 -m pytest -q realism` gives 567 passed, 9 skipped; `ruff format --check`, `ruff check`, and `mypy` of `realism` are clean; `plan.py check`, `render --check`, and `lint` pass. A real ndpiReader 4.2.0 run on `realism/tests/fixtures/mix/` gives the literal series.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Step 4: pull request and CI.
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Open the pull request, wait for CI, then run `fps_swarm.py review 392 --pr N`.
 
 ## Blockers and open questions
 
-Write "none" or name each blocker with a link to its issue.
+none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- Report format 0.10.0 (additive, per the schema description).
+- One basis per report in `metrics_basis`, because the catalog has no basis label; null when it cannot be told.
+- The unmatched row has no series. Run counter series (`source` `metrics`) are not emitted, the controller reports them.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+The root `.gitignore` ignores `*.pcapng`, so the fixture capture needs `git add -f`.
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+python3 -m pytest -q realism/tests/test_mix.py   # 80 passed
 ```
 
 ## Session log
@@ -66,3 +68,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T18:15Z | claude-d73749 | claim | - | claimed #392 |
+| 2026-11-10T18:50Z | claude-d73749 | checkpoint | - | series, REST form, tests, docs done |

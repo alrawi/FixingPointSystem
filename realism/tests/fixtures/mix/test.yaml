@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Test configuration of the mix fixture: 75 percent http1 and 25 percent dns, by sessions.
+profile:
+  basis: sessions
+  mix:
+    - {scenario: http1/web_get, weight: 3}
+    - {scenario: dns/lookup, weight: 1}
