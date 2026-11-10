@@ -6,7 +6,7 @@
 | Branch | `wp/MOD-14` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 67% (4 of 6 plan steps) |
+| Progress | 83% (5 of 6 plan steps) |
 | Current holder | claude-4d1e7a (the lease on the status card renews at every checkpoint) |
 | Last verified commit | none |
 
@@ -22,7 +22,7 @@ Ship `sip_rtp` scenarios with an INVITE dialog, SDP negotiation, and paced RTP s
 - [x] 2. Write the scenarios and the interpreter, catalog, and golden transcript tests over an in memory UDP network
 - [x] 3. Write `fixture_peer` and `capture.sh`, and record and score the fixture in the QA-01 harness
 - [x] 4. Write the RTP interval check and the Zeek check with their tests
-- [ ] 5. Write the README, the log entry with the shared page notes, and the Modules page section
+- [x] 5. Write the README, the log entry with the shared page notes, and the Modules page section
 - [ ] 6. Run the checks, open the PR, and wait for CI
 
 ## Done and verified
@@ -31,11 +31,11 @@ Manifest, native crate, five scenarios, interpreter tests over an in memory UDP 
 
 ## Remaining
 
-The README, the log entry with the shared page notes, the Modules page section, the checks, the PR, and CI (including the first Zeek run).
+The final checks, the PR, and CI (including the first Zeek run and the nDPI 4.14 classification).
 
 ## Next action
 
-Write `modules/sip_rtp/README.md`, then the log entry and the Modules section.
+Run the checks, open the PR, and poll CI.
 
 ## Blockers and open questions
 
@@ -64,4 +64,5 @@ git log --oneline -3
 |---|---|---|---|---|
 | 2026-11-10T17:25Z | claude-4d1e7a | claim | | Claimed #181 with a 6 step plan |
 | 2026-11-10T17:50Z | claude-4d1e7a | checkpoint | fa2f84c | Steps 1 and 2: manifest, native crate, scenarios, tests |
-| 2026-11-10T18:25Z | claude-4d1e7a | checkpoint | | Steps 3 and 4: fixture peer, recorded fixture, RTP interval and Zeek checks |
+| 2026-11-10T18:25Z | claude-4d1e7a | checkpoint | 541804a | Steps 3 and 4: fixture peer, recorded fixture, RTP interval and Zeek checks |
+| 2026-11-10T18:45Z | claude-4d1e7a | checkpoint | | Step 5: README, log entry, Modules page section |
