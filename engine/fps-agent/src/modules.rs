@@ -175,14 +175,39 @@ fn hex(bytes: &[u8]) -> String {
 /// path>\n`, the lines sort by the UTF-8 bytes of the path, and the digest is
 /// the SHA-256 of their concatenation. A symbolic link fails.
 pub fn tree_digest(module: &str, dir: &Path) -> Result<String, ModuleError> {
+    Ok(read_tree(module, dir, false)?.digest)
+}
+
+/// What one pass over a module tree gives: the tree digest and, when the pass
+/// kept it, the bytes of `extension.wasm` that went into that digest.
+struct Tree {
+    digest: String,
+    extension: Option<Vec<u8>>,
+}
+
+/// Reads every file of the module tree `dir` once and digests it. With
+/// `keep_extension`, the pass also returns the bytes of the file
+/// `extension.wasm` in the root of the tree, so the caller compiles the bytes
+/// that the digest covers and reads the file no second time.
+fn read_tree(module: &str, dir: &Path, keep_extension: bool) -> Result<Tree, ModuleError> {
     let mut lines: Vec<(String, String)> = Vec::new();
-    walk(module, dir, dir, &mut lines)?;
+    let mut extension = None;
+    walk(
+        module,
+        dir,
+        dir,
+        &mut lines,
+        keep_extension.then_some(&mut extension),
+    )?;
     lines.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
     let mut all = String::new();
     for (_, line) in &lines {
         all.push_str(line);
     }
-    Ok(sha256_digest(all.as_bytes()))
+    Ok(Tree {
+        digest: sha256_digest(all.as_bytes()),
+        extension,
+    })
 }
 
 fn walk(
@@ -190,6 +215,7 @@ fn walk(
     root: &Path,
     dir: &Path,
     out: &mut Vec<(String, String)>,
+    mut extension: Option<&mut Option<Vec<u8>>>,
 ) -> Result<(), ModuleError> {
     let read = |path: &Path, source| ModuleError::Read {
         module: module.to_owned(),
@@ -208,7 +234,7 @@ fn walk(
             });
         }
         if kind.is_dir() {
-            walk(module, root, &path, out)?;
+            walk(module, root, &path, out, extension.as_deref_mut())?;
         } else if kind.is_file() {
             let rel = path.strip_prefix(root).unwrap_or(&path);
             let parts: Option<Vec<&str>> =
@@ -223,6 +249,11 @@ fn walk(
             let rel = parts.join("/");
             let data = fs::read(&path).map_err(|e| read(&path, e))?;
             let line = format!("{}  {rel}\n", hex(&Sha256::digest(&data)));
+            if rel == fps_runtime::EXTENSION_FILE {
+                if let Some(slot) = extension.as_deref_mut() {
+                    *slot = Some(data);
+                }
+            }
             out.push((rel, line));
         }
     }
@@ -260,15 +291,35 @@ pub struct LoadedModules {
 /// the extension (AGT-11), and an extension that does not compile or whose
 /// catalog differs from the manifest refuses the plan. A plan whose modules
 /// ship no extension never starts a WebAssembly engine.
+///
+/// The agent reads `extension.wasm` once, in the pass that digests the module
+/// tree, and compiles those bytes. A writer that replaces the file after the
+/// digest check changes nothing that runs, because the file is not read again.
 pub fn load(plan: &Plan, dir: &Path, policy: &ModulePolicy) -> Result<LoadedModules, ModuleError> {
+    load_with(plan, dir, policy, &mut |_| {})
+}
+
+/// [`load`] with a hook that runs for every module after its tree digest
+/// matched the plan and before anything of it is compiled. A test uses it to
+/// change the module directory at the one moment that a time of check to time
+/// of use flaw would matter. It is not part of the stable interface.
+#[doc(hidden)]
+pub fn load_with(
+    plan: &Plan,
+    dir: &Path,
+    policy: &ModulePolicy,
+    after_digest: &mut dyn FnMut(&str),
+) -> Result<LoadedModules, ModuleError> {
     let mut set = ModuleSet::default();
     let mut warnings = Vec::new();
     let mut extensions: Option<ExtensionSet> = None;
     let mut extended: Vec<String> = Vec::new();
     for m in &plan.modules {
-        let manifest = load_module(m, dir)?;
+        let (manifest, extension_bytes) = load_module(m, dir)?;
+        after_digest(&m.name);
         // The digest of the directory equals m.digest here, so the signature
-        // that covers m.digest covers the bytes that the agent runs.
+        // that covers m.digest covers the bytes that the agent runs: the
+        // extension below is compiled from the bytes that the digest covered.
         let verdict = policy
             .judge(&m.name, &m.digest, &m.signature_key_id, &m.signature)
             .map_err(|source| ModuleError::Untrusted {
@@ -276,7 +327,7 @@ pub fn load(plan: &Plan, dir: &Path, policy: &ModulePolicy) -> Result<LoadedModu
                 source,
             })?;
         warnings.extend(verdict);
-        if load_extension(m, &manifest, dir, &mut extensions)? {
+        if load_extension(m, &manifest, extension_bytes, &mut extensions)? {
             extended.push(m.name.clone());
         }
         set.insert(manifest);
@@ -309,20 +360,19 @@ pub fn load(plan: &Plan, dir: &Path, policy: &ModulePolicy) -> Result<LoadedModu
     })
 }
 
-/// Compiles the `extension.wasm` of module `m` into `set` when its directory
-/// holds one, and creates the set at the first extension. Returns whether the
-/// module has an extension.
+/// Compiles `bytes`, the `extension.wasm` that the digest of module `m`
+/// covered, into `set` and creates the set at the first extension. Returns
+/// whether the module has an extension, that is, whether `bytes` is `Some`.
 fn load_extension(
     m: &ModuleRef,
     manifest: &Manifest,
-    dir: &Path,
+    bytes: Option<Vec<u8>>,
     set: &mut Option<ExtensionSet>,
 ) -> Result<bool, ModuleError> {
-    let root = dir.join(&m.name);
-    // A module without an extension costs one stat call.
-    if !root.join(fps_runtime::EXTENSION_FILE).exists() {
+    // A module without an extension starts no engine.
+    let Some(bytes) = bytes else {
         return Ok(false);
-    }
+    };
     let fail = |source| ModuleError::Extension {
         module: m.name.clone(),
         source,
@@ -333,8 +383,9 @@ fn load_extension(
     let Some(set) = set.as_mut() else {
         return Ok(false);
     };
-    set.load_module_dir(manifest, &root, WasmLimits::default())
-        .map_err(fail)
+    set.load_module_bytes(manifest, &bytes, WasmLimits::default())
+        .map_err(fail)?;
+    Ok(true)
 }
 
 /// The note of a module whose template calls fail for lack of native
@@ -343,7 +394,9 @@ fn no_native_functions(name: &str) -> String {
     format!("module {name} has no native functions in this agent, so its template calls fail")
 }
 
-fn load_module(m: &ModuleRef, dir: &Path) -> Result<Manifest, ModuleError> {
+/// Checks the manifest and the tree digest of module `m` and returns the
+/// manifest with the bytes of its `extension.wasm`, if it has one.
+fn load_module(m: &ModuleRef, dir: &Path) -> Result<(Manifest, Option<Vec<u8>>), ModuleError> {
     let root = dir.join(&m.name);
     let manifest =
         Manifest::load(&root.join("manifest.yaml")).map_err(|source| ModuleError::Manifest {
@@ -367,15 +420,15 @@ fn load_module(m: &ModuleRef, dir: &Path) -> Result<Manifest, ModuleError> {
             want: m.version.clone(),
         });
     }
-    let actual = tree_digest(&m.name, &root)?;
-    if actual != m.digest {
+    let Tree { digest, extension } = read_tree(&m.name, &root, true)?;
+    if digest != m.digest {
         return Err(ModuleError::Digest {
             module: m.name.clone(),
-            actual,
+            actual: digest,
             want: m.digest.clone(),
         });
     }
-    Ok(manifest)
+    Ok((manifest, extension))
 }
 
 /// Lists the modules installed under `dir`, one per subdirectory that holds a
@@ -431,11 +484,14 @@ fn compile(s: &ScenarioSource, set: &ModuleSet) -> Result<Scenario, ModuleError>
         });
     }
     let ctx = set.context(&s.module);
-    let scenario =
-        Scenario::parse_with(&s.source, ctx.as_ref()).map_err(|source| ModuleError::Scenario {
+    // A scenario instance runner accepts the spawned flows and the `spawn`
+    // action that the single flow loader refuses.
+    let scenario = Scenario::parse_instance(&s.source, ctx.as_ref()).map_err(|source| {
+        ModuleError::Scenario {
             scenario: s.r#ref.clone(),
             source,
-        })?;
+        }
+    })?;
     let want = s.r#ref.split_once('/').map_or("", |(_, n)| n);
     if scenario.name != want {
         return Err(ModuleError::ScenarioName {
@@ -588,6 +644,20 @@ static REGISTRY: &[Registration] = &[
     stateless!(fps_module_imap, Imap),
     stateless!(fps_module_pop3, Pop3),
     stateless!(fps_module_ftp, Ftp),
+    // Http2 holds the HPACK tables of one connection side, so it is a value
+    // with state and not a unit value. Every session clones its own copy.
+    Registration {
+        name: fps_module_http2::MODULE_NAME,
+        catalog: || catalog_of!(fps_module_http2),
+        build: |ctx| {
+            if ctx.given.is_some() {
+                return Err(BuildError::Settings(
+                    "the plan gives settings, but its native functions take none".to_owned(),
+                ));
+            }
+            Ok(Box::new(fps_module_http2::Http2::default()))
+        },
+    },
 ];
 
 fn build_dns(ctx: &BuildCtx<'_>) -> Result<Box<dyn NativeModule>, BuildError> {
@@ -869,16 +939,32 @@ mod tests {
         );
     }
 
+    /// The registered modules whose manifest exists under `root`. The manifest
+    /// of http2 belongs to MOD-06, which may merge after AGT-16, so the tests
+    /// skip it while the file is missing. Remove the exception when MOD-06
+    /// has merged, and the helper then returns every registered module.
+    fn registered_with_manifest(root: &Path) -> Vec<&'static str> {
+        NativeFunctions::registered()
+            .into_iter()
+            .filter(|m| {
+                let there = root.join(m).join("manifest.yaml").exists();
+                assert!(there || *m == "http2", "module {m} has no manifest");
+                there
+            })
+            .collect()
+    }
+
     #[test]
     fn first_party_manifests_get_their_native_functions() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
         let mut set = ModuleSet::default();
-        for m in NativeFunctions::registered() {
+        let present = registered_with_manifest(&root);
+        for m in &present {
             set.insert(Manifest::load(&root.join(m).join("manifest.yaml")).unwrap());
         }
         let mut notes = Vec::new();
         let f = NativeFunctions::for_modules(&set, &[], &root, &[], &mut notes).unwrap();
-        assert_eq!(f.modules(), NativeFunctions::registered(), "{notes:?}");
+        assert_eq!(f.modules(), present, "{notes:?}");
         assert!(notes.is_empty(), "{notes:?}");
 
         // The example manifests list other catalogs, so they get none.
@@ -894,7 +980,7 @@ mod tests {
     fn the_registry_covers_every_first_party_module() {
         assert_eq!(
             NativeFunctions::registered(),
-            ["http1", "dns", "content", "smtp", "imap", "pop3", "ftp"]
+            ["http1", "dns", "content", "smtp", "imap", "pop3", "ftp", "http2"]
         );
     }
 
@@ -905,7 +991,7 @@ mod tests {
     fn each_first_party_function_resolves() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
         let mut set = ModuleSet::default();
-        for m in NativeFunctions::registered() {
+        for m in registered_with_manifest(&root) {
             set.insert(Manifest::load(&root.join(m).join("manifest.yaml")).unwrap());
         }
         let mut f = NativeFunctions::for_modules(&set, &[], &root, &[], &mut Vec::new()).unwrap();

@@ -825,6 +825,7 @@ dependencies = [
  "fps-module-dns",
  "fps-module-ftp",
  "fps-module-http1",
+ "fps-module-http2",
  "fps-module-imap",
  "fps-module-pop3",
  "fps-module-smtp",

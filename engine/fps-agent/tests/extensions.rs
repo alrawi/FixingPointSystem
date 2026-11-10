@@ -334,3 +334,33 @@ fn the_tree_digest_covers_the_extension() {
         "{err}"
     );
 }
+
+/// AGT-16. The agent reads `extension.wasm` once, in the pass that digests the
+/// module tree, and compiles those bytes. The hook swaps the file after the
+/// digest matched and before the extension compiles, which is the moment that
+/// a second read would open to a writer. The swapped bytes are not a
+/// component, so a compile of them would refuse the plan with
+/// `ModuleError::Extension`. The plan loads instead and holds the extension
+/// of the digested bytes.
+#[test]
+fn an_extension_swapped_after_the_digest_is_never_compiled() {
+    let dir = module_dir("swap", Some(&component_bytes()));
+    let plan = plan(&dir, 93, 94, 18_350);
+    let plan = fps_agent::plan::Plan::parse(&plan.to_string()).expect("plan");
+    let file = dir.join("xmod/extension.wasm");
+    let mut swapped = Vec::new();
+    let loaded = modules::load_with(&plan, &dir, &ModulePolicy::default(), &mut |module| {
+        std::fs::write(&file, b"swapped after the digest").unwrap();
+        swapped.push(module.to_owned());
+    })
+    .expect("the digested bytes load, the swapped file is not read");
+    assert_eq!(swapped, ["xmod"], "the swap ran once, after the digest");
+    assert_eq!(std::fs::read(&file).unwrap(), b"swapped after the digest");
+    let extensions = loaded.extensions.expect("the extension set");
+    assert!(extensions.contains("xmod"));
+
+    // Control: the swapped tree no longer matches the plan digest, so a load
+    // without the hook refuses it at the digest check.
+    let err = modules::load(&plan, &dir, &ModulePolicy::default()).expect_err("digest differs");
+    assert!(matches!(err, ModuleError::Digest { .. }), "{err}");
+}

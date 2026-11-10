@@ -30,6 +30,7 @@ fps-module-content = { path = "../../modules/content/native" }
 fps-module-dns = { path = "../../modules/dns/native" }
 fps-module-ftp = { path = "../../modules/ftp/native" }
 fps-module-http1 = { path = "../../modules/http1/native" }
+fps-module-http2 = { path = "../../modules/http2/native" }
 fps-module-imap = { path = "../../modules/imap/native" }
 fps-module-pop3 = { path = "../../modules/pop3/native" }
 fps-module-smtp = { path = "../../modules/smtp/native" }
