@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #196 |
 | Branch | `wp/CAP-04` |
-| Pull request | none yet |
+| Pull request | #381 |
 | Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Progress | 90% (3 of 4 plan steps) |
 | Current holder | claude-211a73, lease until 2026-11-10T14:16:51Z |
 | Last verified commit | none |
 
@@ -60,3 +60,4 @@ python3 -m pytest capture/tests -q
 |---|---|---|---|---|
 | 2026-11-10T12:47Z | claude-211a73 | claim | none | Claimed #196 with card 6767705449 |
 | 2026-11-10T13:20Z | claude-211a73 | checkpoint | see git log | Steps 1 to 3 done |
+| 2026-11-10T13:40Z | claude-211a73 | checkpoint | 2f4a8c8 | Docs, log entry, PR #381 opened; waiting for CI |
