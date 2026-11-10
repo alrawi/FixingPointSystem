@@ -7,8 +7,10 @@ import {
   criterionLabel,
   criterionOutcome,
   durationMs,
+  failedRatio as scenarioFailedRatio,
   pairCriteria,
   pairRealism,
+  pairScenarios,
   totalChange,
   totalsOf,
   verdictOutcome,
@@ -114,7 +116,31 @@ describe("pairing", () => {
     ]);
   });
 
-  it("pairs criteria that agree in every field in order, because the API omits the where filter", () => {
+  it("pairs criteria by their where filter and not by their order of appearance", () => {
+    const http1 = { where: { application: "http1" } };
+    const dns = { where: { application: "dns" } };
+    const rows = pairCriteria(
+      [failedRatio(1, { ...http1, passed: true }), failedRatio(1, { ...dns, passed: true })],
+      [failedRatio(1, { ...dns, passed: false }), failedRatio(1, { ...http1, passed: true })],
+    );
+    expect(rows.map((row) => [row.label, row.change])).toEqual([
+      ["sessions.failed_ratio < 1 where application=http1", "same"],
+      ["sessions.failed_ratio < 1 where application=dns", "regressed"],
+    ]);
+  });
+
+  it("does not pair a criterion with a filter with the same criterion without one", () => {
+    const rows = pairCriteria(
+      [failedRatio(1, { passed: true })],
+      [failedRatio(1, { passed: true, where: { application: "dns", side: "server" } })],
+    );
+    expect(rows.map((row) => [row.label, row.change])).toEqual([
+      ["sessions.failed_ratio < 1", "only-a"],
+      ["sessions.failed_ratio < 1 where application=dns, side=server", "only-b"],
+    ]);
+  });
+
+  it("pairs criteria that agree in every field in order", () => {
     const rows = pairCriteria(
       [failedRatio(1, { passed: true }), failedRatio(1, { passed: false })],
       [failedRatio(1, { passed: true }), failedRatio(1, { passed: true })],
@@ -131,6 +157,64 @@ describe("pairing", () => {
       ["sessions.failed_ratio < 1", "only-a"],
       ["sessions.failed_ratio < 2", "differs"],
       ["sessions.failed_ratio < 3", "only-b"],
+    ]);
+  });
+
+  it("pairs realism results by metric and labels, whatever their property says", () => {
+    const conformance = (
+      application: string,
+      property: string,
+      passed: boolean,
+      labels: Record<string, string> = { application, classifier: "ndpi" },
+    ) => ({
+      property,
+      metric: "realism.conformance_ratio",
+      labels,
+      observed: 0.9,
+      target: ">= 0.99",
+      passed,
+    });
+    const rows = pairRealism(
+      [
+        conformance("http1", "conformance of http1 by ndpi", true),
+        conformance("dns", "conformance of dns by ndpi", true),
+      ],
+      [
+        conformance("dns", "dns conformance (ndpi)", false, {
+          classifier: "ndpi",
+          application: "dns",
+        }),
+        conformance("http1", "conformance of http1 by ndpi", true),
+        conformance("http1", "conformance of http1 by zeek", true, {
+          application: "http1",
+          classifier: "zeek",
+        }),
+      ],
+    );
+    expect(rows.map((row) => [row.labels, row.property, row.change])).toEqual([
+      ["application=http1, classifier=ndpi", "conformance of http1 by ndpi", "same"],
+      ["application=dns, classifier=ndpi", "conformance of dns by ndpi", "regressed"],
+      ["application=http1, classifier=zeek", "conformance of http1 by zeek", "only-b"],
+    ]);
+  });
+
+  it("pairs a realism result without a metric by its property", () => {
+    const rows = pairRealism(
+      [{ property: "a", observed: 1, target: "<= 2", passed: true }],
+      [
+        { property: "a", observed: 3, target: "<= 2", passed: false },
+        {
+          property: "a",
+          metric: "realism.ks_statistic",
+          observed: 1,
+          target: "<= 2",
+          passed: true,
+        },
+      ],
+    );
+    expect(rows.map((row) => [row.property, row.change])).toEqual([
+      ["a", "regressed"],
+      ["a", "only-b"],
     ]);
   });
 
@@ -161,8 +245,40 @@ describe("pairing", () => {
     expect(compareReports(report(undefined), report(undefined))).toEqual({
       criteria: [],
       realism: [],
+      scenarios: undefined,
       regressions: 0,
     });
+  });
+});
+
+describe("scenarios", () => {
+  const scenario = (application: string, name: string, attempted: number, failed: number) => ({
+    application,
+    scenario: name,
+    sessions_attempted: attempted,
+    sessions_succeeded: attempted - failed,
+    sessions_failed: failed,
+    bytes_tx: 10,
+    bytes_rx: 20,
+  });
+
+  it("pairs scenarios by application and name and states the change of the failed ratio", () => {
+    const rows = pairScenarios(
+      [scenario("http1", "web_get", 100, 1), scenario("dns", "lookup", 50, 0)],
+      [scenario("http1", "web_get", 200, 6), scenario("http1", "web_post", 10, 0)],
+    );
+    expect(rows.map((row) => [row.key, row.change])).toEqual([
+      ["dns/lookup", "Only in run A"],
+      ["http1/web_get", "+2 pp"],
+      ["http1/web_post", "Only in run B"],
+    ]);
+    expect(scenarioFailedRatio(scenario("dns", "lookup", 0, 0))).toBeUndefined();
+  });
+
+  it("compares scenarios only when both reports carry them", () => {
+    const withScenarios = { ...report(undefined), scenarios: [scenario("dns", "lookup", 5, 0)] };
+    expect(compareReports(withScenarios, report(undefined)).scenarios).toBeUndefined();
+    expect(compareReports(withScenarios, withScenarios).scenarios?.[0]?.change).toBe("0 pp");
   });
 });
 
