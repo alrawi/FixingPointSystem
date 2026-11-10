@@ -191,8 +191,8 @@ def scenario_yaml(
         lines.append(f"    module: {fl['module']}")
         if fl.get("l4"):
             lines.append(f"    l4: {fl['l4']}")
-        if fl.get("after"):
-            lines.append(f"    after: {fl['after']}")
+        if fl.get("spawned"):
+            lines.append("    spawned: true")
         _actions(lines, "client", fl["client"], "    ")
         _actions(lines, "server", fl["server"], "    ")
     return "\n".join(lines) + "\n"
@@ -387,14 +387,18 @@ def build_scenario(
         if not session["turns"]:
             warnings.append(f"session {session['id']} carries no payload and was skipped")
             continue
-        if not session["roles"]["client_known"]:
+        roles = session["roles"]
+        if session["protocol"] == "tcp" and not roles["client_known"]:
             warnings.append(
                 f"session {session['id']} has no handshake; the roles come from the ports"
             )
-        if session["anomalies"]:
+        elif roles["basis"] == "first_packet":
             warnings.append(
-                f"session {session['id']} has anomalies: {', '.join(session['anomalies'])}"
+                f"session {session['id']}: the sender of the first packet is taken as the client"
             )
+        anomalies = [a for a in session["anomalies"] if a != "role_guessed"]
+        if anomalies:
+            warnings.append(f"session {session['id']} has anomalies: {', '.join(anomalies)}")
         port = session["server"]["port"]
         if port not in ports:
             ports[port] = alloc.unique("server_port")
@@ -442,6 +446,12 @@ def build_scenario(
             send_side.append({"send": _compose(u, plan.spans[i])})
             recv_side += _expects(u, plan.analyses[i], plan.captures.get(i, []), timeout)
         c_close, s_close = _close_actions(session)
+        if idx + 1 < len(flows_info):
+            # The next flow starts here on both sides, and `spawn` hands it the variables
+            # that the side has bound, so a cookie from this session reaches the next one.
+            nxt = {"spawn": {"flow": f"s{flows_info[idx + 1].session['id']}"}}
+            client.append(nxt)
+            server.append(nxt)
         client += c_close
         server += s_close
         fl: dict[str, Any] = {
@@ -453,7 +463,7 @@ def build_scenario(
         if udp:
             fl["l4"] = "udp"
         if idx > 0:
-            fl["after"] = flows[idx - 1]["id"]
+            fl["spawned"] = True
         flows.append(fl)
 
     ids = [i.session["id"] for i in flows_info]

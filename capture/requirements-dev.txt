@@ -6,3 +6,5 @@ jsonschema>=4.20         # MIT
 ruff==0.17.3             # MIT
 mypy==2.4.1              # MIT
 types-jsonschema         # Apache-2.0
+PyYAML>=6.0              # MIT
+types-PyYAML             # Apache-2.0

@@ -21,7 +21,9 @@ from typing import Any
 from capture.templates import render
 
 _INT = re.compile(r"[+-]?[0-9]+")
-_FLOAT = re.compile(r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[+-]?(?:inf|infinity|nan)")
+_FLOAT = re.compile(
+    r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[+-]?(?:inf|infinity|nan)"
+)
 
 
 def parse_override(text: str) -> int | float | bool | str:
@@ -62,6 +64,7 @@ class _Side:
     inbox: bytearray = field(default_factory=bytearray)
     datagrams: list[bytes] = field(default_factory=list)
     sent: int = 0
+    spawned: list[str] = field(default_factory=list)
     received: int = 0
     done: bool = False
 
@@ -74,13 +77,19 @@ class _Vars(dict[str, Any]):
 
 
 def run_flow(
-    flow: dict[str, Any], scenario_vars: dict[str, Any], seed: int = 0
+    flow: dict[str, Any],
+    scenario_vars: dict[str, Any],
+    seed: int = 0,
+    inherited: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Run one flow and return the final variables and byte counts of each side."""
+    """Run one flow and return the final variables, byte counts, and spawns of each side.
+
+    ``inherited`` holds the variables that a parent flow handed to each side."""
     rng = random.Random(seed)
     udp = flow.get("l4") == "udp"
     sides = {
-        n: _Side(n, flow[n], _Vars(scenario_vars), udp) for n in ("client", "server")
+        n: _Side(n, flow[n], _Vars({**scenario_vars, **(inherited or {}).get(n, {})}), udp)
+        for n in ("client", "server")
     }
     peer = {"client": sides["server"], "server": sides["client"]}
     for _ in range(100_000):
@@ -89,12 +98,38 @@ def run_flow(
             while not side.done and _step(side, peer[side.name], rng):
                 progressed = True
         if all(s.done for s in sides.values()):
-            return {n: {"vars": dict(s.vars), "sent": s.sent, "received": s.received}
-                    for n, s in sides.items()}  # fmt: skip
+            return {
+                n: {
+                    "vars": dict(s.vars),
+                    "sent": s.sent,
+                    "received": s.received,
+                    "spawned": s.spawned,
+                }
+                for n, s in sides.items()
+            }
         if not progressed:
             where = {n: (s.pos, s.actions[s.pos]) for n, s in sides.items() if not s.done}
             raise Deadlock(f"deadlock at {where}")
     raise Deadlock("no end")
+
+
+def run_scenario(doc: dict[str, Any], seed: int = 0) -> list[dict[str, dict[str, Any]]]:
+    """Run the first flow of a scenario and every flow that it spawns, in order.
+
+    A spawned flow starts with the variables that its parent side holds, as the engine
+    does. Returns the result of each flow."""
+    flows = {f["id"]: f for f in doc["flows"]}
+    queue: list[tuple[str, dict[str, dict[str, Any]] | None]] = [
+        (next(f["id"] for f in doc["flows"] if not f.get("spawned")), None)
+    ]
+    out = []
+    while queue:
+        flow_id, inherited = queue.pop(0)
+        result = run_flow(flows[flow_id], doc.get("vars", {}), seed, inherited)
+        out.append(result)
+        for child in result["client"]["spawned"]:
+            queue.append((child, {n: r["vars"] for n, r in result.items()}))
+    return out
 
 
 def _count(side: _Side, value: Any, rng: random.Random) -> int:
@@ -114,6 +149,8 @@ def _step(side: _Side, other: _Side, rng: random.Random) -> bool:
     elif kind == "set":
         for k, tmpl in body.items():
             side.vars[k] = parse_override(render(tmpl, side.vars, last=side.last, rng=rng).decode())
+    elif kind == "spawn":
+        side.spawned.append(body["flow"])
     elif kind == "send":
         data = render(body, side.vars, last=side.last, rng=rng)
         side.sent += len(data)

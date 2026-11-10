@@ -137,6 +137,9 @@ def _http(data: bytes, direction: str, cfg: Config, alloc: VarAlloc) -> Analysis
         clen = [h for h in headers if h.group(1).lower() == b"content-length"]
         chunked = any(h.group(1).lower() == b"transfer-encoding" for h in headers)
         out.records.append(Record(pos, head_end, "head"))
+        if chunked and not clen:
+            pos = _chunked(data, head_end, cfg, out)
+            continue
         if chunked or len(clen) > 1:
             pos = head_end
             break  # the body is not delimited by one length, so the rest stays raw
@@ -156,7 +159,7 @@ def _http(data: bytes, direction: str, cfg: Config, alloc: VarAlloc) -> Analysis
             pos = len(data)
             break
         var = None
-        if n >= cfg.fill_min:
+        if n >= cfg.fill_min and cfg.detect_fields:
             var = alloc.length(direction, n)
             start = clen[0].start(2)
             out.spans.append(Span(start, start + len(digits), f"{{{{ vars.{var} }}}}", "length"))
@@ -169,6 +172,38 @@ def _http(data: bytes, direction: str, cfg: Config, alloc: VarAlloc) -> Analysis
     if pos < len(data):
         out.records.append(Record(pos, len(data), "raw"))
     return out
+
+
+def _chunked(data: bytes, pos: int, cfg: Config, out: Analysis) -> int:
+    """Add the records of a chunked body that starts at ``pos`` and return where it ends.
+
+    Guard: every chunk size line must be hexadecimal, and every chunk and its closing CRLF
+    must lie inside the unit, up to the final ``0`` chunk. Parsing stops at the first chunk
+    that breaks this, and the rest of the unit stays raw. The size lines stay literal,
+    because a template cannot write a number as hexadecimal text. Chunk data of at least
+    ``fill_min`` bytes becomes ``fill(n)`` with the literal size.
+    """
+    while True:
+        eol = data.find(b"\r\n", pos, pos + 32)
+        if eol < 0:
+            return pos
+        size_text = data[pos:eol].split(b";")[0].strip()
+        if not re.fullmatch(rb"[0-9a-fA-F]{1,8}", size_text):
+            return pos
+        size = int(size_text, 16)
+        if size == 0:
+            if data[eol : eol + 4] != b"\r\n\r\n":
+                return pos
+            out.records.append(Record(pos, eol + 4, "head"))
+            return eol + 4
+        start, end = eol + 2, eol + 2 + size
+        if end + 2 > len(data) or data[end : end + 2] != b"\r\n":
+            return pos
+        out.records.append(Record(pos, start, "head"))
+        out.records.append(Record(start, end + 2, "body"))
+        if size >= cfg.fill_min and cfg.detect_fields:
+            out.spans.append(Span(start, end, f"{{{{ fill({size}) }}}}", "body"))
+        pos = end + 2
 
 
 # (offset of the length field, width in bytes). The offset 3 with width 2 is the TLS record
@@ -185,26 +220,28 @@ def _frames(data: bytes, cfg: Config) -> Analysis | None:
     the length bytes of the first frame must hold a byte outside printable ASCII, so that
     text which happens to add up never matches.
     """
-    n = len(data)
-    if n < 4:
+    if len(data) < 4:
         return None
+    best: list[tuple[int, int, int]] | None = None
     for offset, width in _FRAME_FORMS:
         orders: tuple[Literal["big", "little"], ...] = ("big", "little") if width > 1 else ("big",)
         for order in orders:
             for bias in (offset + width, 0):
                 frames = _tile(data, offset, width, order, bias)
-                if frames is None:
+                if frames is None or all(32 <= b < 127 for b in data[offset : offset + width]):
                     continue
-                first = data[offset : offset + width]
-                if all(32 <= b < 127 for b in first):
-                    continue
-                out = Analysis("frames")
-                for start, end, hdr in frames:
-                    out.records.append(Record(start, end, "frame"))
-                    if end - hdr >= cfg.fill_min:
-                        out.spans.append(Span(hdr, end, f"{{{{ fill({end - hdr}) }}}}", "payload"))
-                return out
-    return None
+                # Several layouts can tile the same bytes. The one with the fewest frames
+                # explains the most, so a one byte length never beats a two byte one.
+                if best is None or len(frames) < len(best):
+                    best = frames
+    if best is None:
+        return None
+    out = Analysis("frames")
+    for start, end, hdr in best:
+        out.records.append(Record(start, end, "frame"))
+        if end - hdr >= cfg.fill_min and cfg.detect_fields:
+            out.spans.append(Span(hdr, end, f"{{{{ fill({end - hdr}) }}}}", "payload"))
+    return out
 
 
 def _tile(
@@ -228,17 +265,19 @@ def analyze_framing(
 ) -> Analysis:
     """Return the framing of one unit and the payload regions that become ``fill(n)``.
 
-    A datagram skips the stream framing rules, because each datagram is one unit already.
+    The records of the framing always come back, because the receiving side needs them
+    to stop at the right place. With ``cfg.detect_fields`` off the unit keeps no spans,
+    so every byte is copied. A datagram skips the stream framing rules, because each
+    datagram is one unit already.
     """
-    if cfg.detect_fields:
-        found = None if datagram else _http(data, direction, cfg, alloc) or _frames(data, cfg)
-        if found is not None:
-            return found
-        if len(data) >= cfg.opaque_min and _printable_share(data) < 0.85:
-            # Guard: only binary data is replaced; text stays as it was captured.
-            return Analysis(
-                "opaque", [], [Span(0, len(data), f"{{{{ fill({len(data)}) }}}}", "opaque")]
-            )
+    found = None if datagram else _http(data, direction, cfg, alloc) or _frames(data, cfg)
+    if found is not None:
+        return found
+    if cfg.detect_fields and len(data) >= cfg.opaque_min and _printable_share(data) < 0.85:
+        # Guard: only binary data is replaced; text stays as it was captured.
+        return Analysis(
+            "opaque", [], [Span(0, len(data), f"{{{{ fill({len(data)}) }}}}", "opaque")]
+        )
     return Analysis()
 
 
@@ -345,7 +384,7 @@ UUID = re.compile(
     rb"(?<![0-9A-Za-z\-])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     rb"[0-9a-fA-F]{12}(?![0-9A-Za-z\-])"
 )
-TOKEN = re.compile(rb"(?<![A-Za-z0-9_\-.@])[A-Za-z0-9][A-Za-z0-9_\-]{7,127}(?![A-Za-z0-9_\-.@])")
+TOKEN = re.compile(rb"(?<![A-Za-z0-9_\-.@])[A-Za-z0-9][A-Za-z0-9_\-]{7,63}(?![A-Za-z0-9_\-.@])")
 _REQUEST_LINE = re.compile(rb"^[A-Z]{3,10} [^\r\n ]+ HTTP/1\.[01]\r\n")
 
 
@@ -353,10 +392,10 @@ def random_looking(token: str, *, strong: bool) -> bool:
     """Whether ``token`` looks like a random identifier.
 
     Guard against words, versions, and dates: it needs a letter and a digit (or at least
-    twelve digits), six distinct characters, no run of four equal characters, and a
-    character entropy of at least 3.0 bits. ``strong`` raises the bar for a token that
-    appears only once, to 16 characters and 3.3 bits, because a single occurrence has no
-    request/response echo to confirm it.
+    twelve digits), six distinct characters, no run of four equal characters, no long run
+    of letters (a keyword with a number in front, such as ``250-ENHANCEDSTATUSCODES``,
+    has one), and a character entropy of at least 3.0 bits. ``strong`` raises the bar for
+    a token that nobody echoes, to 16 characters and 3.3 bits.
     """
     digits = sum(c.isdigit() for c in token)
     letters = sum(c.isalpha() for c in token)
@@ -367,6 +406,11 @@ def random_looking(token: str, *, strong: bool) -> bool:
         return False
     if len(set(token)) < 6 or re.search(r"(.)\1{3}", token):
         return False
+    runs = re.findall(r"[A-Za-z]+", token)
+    if max((len(r) for r in runs), default=0) >= max(10, 0.6 * len(token)):
+        return False
+    if any(len(r) >= 6 and sum(c in "aeiouAEIOU" for c in r) >= 0.4 * len(r) for r in runs):
+        return False  # a pronounceable run is a word or a name, as in Tst-Noutrouk9797
     if strong and len(token) < 16:
         return False
     return entropy(token) >= (3.3 if strong else 3.0)
@@ -551,11 +595,14 @@ def _identifiers(
 ) -> list[Field]:
     """UUIDs and random looking tokens.
 
-    A UUID always counts. Any other token must pass ``random_looking``, and a token that
-    occurs in one unit only must pass its strong form. A token in the request target of
-    an HTTP request is a resource name, so it counts only when it also appears in another
-    unit (a redirect or an echo). Tokens next to a dot or an at sign are host names and
-    addresses, which the pattern skips.
+    A UUID always counts. Any other token must pass ``random_looking``, and it must pass
+    the strong form unless both sides of the conversation carry it, which is the echo of
+    a request and its response. A token on a line of nothing but token characters (a line of a
+    base64 attachment or a hash list), and a token in the middle of binary data, are content,
+    not identifiers. A token in the request
+    target of an HTTP request is a resource name, so it counts only when it appears in
+    another unit as well. Tokens next to a dot or an at sign are host names and
+    addresses, which the pattern skips, and tokens longer than 64 characters are blobs.
     """
     cands: dict[str, list[Occurrence]] = {}
     in_target: set[tuple[int, int]] = set()
@@ -567,20 +614,26 @@ def _identifiers(
                 for m in pattern.finditer(data, seg_start, seg_end):
                     if not claims.free(u, m.start(), m.end()):
                         continue
-                    text = m.group(0).decode("ascii")
-                    if not is_uuid and UUID.fullmatch(m.group(0)):
+                    if not is_uuid and (
+                        UUID.fullmatch(m.group(0))
+                        or _whole_line(data, m)
+                        or _printable_share(data[max(0, m.start() - 8) : m.end() + 8]) < 0.9
+                    ):
                         continue
-                    cands.setdefault(text, []).append(Occurrence(u, m.start(), m.end()))
+                    cands.setdefault(m.group(0).decode("ascii"), []).append(
+                        Occurrence(u, m.start(), m.end())
+                    )
                     if request and m.start() < line_end:
                         in_target.add((u, m.start()))
     out = []
     for text, occ in cands.items():
         is_uuid = bool(UUID.fullmatch(text.encode()))
-        spread = len({o.unit for o in occ}) > 1
+        repeats = len({o.unit for o in occ}) > 1
+        echoed = len({units[o.unit][0] for o in occ}) > 1
         if not is_uuid:
-            if len(text) < cfg.id_min_len or not random_looking(text, strong=not spread):
+            if len(text) < cfg.id_min_len or not random_looking(text, strong=not echoed):
                 continue
-            if not spread and all((o.unit, o.start) in in_target for o in occ):
+            if not repeats and all((o.unit, o.start) in in_target for o in occ):
                 continue
         occ = [o for o in occ if claims.free(o.unit, o.start, o.end)]
         if not occ:
@@ -590,3 +643,16 @@ def _identifiers(
             claims.take(o.unit, o.start, o.end)
         out.append(Field("id", alloc.unique("id"), text, occ, id_template(text)))
     return out
+
+
+_BLOB_LINE = re.compile(rb"[A-Za-z0-9+/=_\-]{16,}")
+
+
+def _whole_line(data: bytes, m: re.Match[bytes]) -> bool:
+    """Whether the match sits on a line that is nothing but token characters, at least 16
+    of them: a line of a base64 attachment or a hash list. ``+`` and ``/`` cut such a
+    line into several tokens, so the test looks at the line and not at the token."""
+    start = data.rfind(b"\n", 0, m.start()) + 1
+    end = data.find(b"\n", m.end())
+    line = data[start : len(data) if end < 0 else end].rstrip(b"\r")
+    return _BLOB_LINE.fullmatch(line) is not None

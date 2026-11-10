@@ -34,16 +34,21 @@ def hex_placeholder(data: bytes) -> str:
     )
 
 
+_BRACES = (0x7B, 0x7D)
+
+
 def _needs_hex(data: bytes, i: int) -> bool:
     b = data[i]
     if b not in _PRINTABLE:
         return True
+    if b not in _BRACES:  # "{" and "}"
+        return False
+    # A brace is literal only inside plain text. Next to a placeholder or to another brace it
+    # could join with a brace of a neighbouring run once the placeholders are cut out, and the
+    # validator (and a reader that looks for "{{" and "}}") would see a stray pair.
+    prev = data[i - 1] if i > 0 else None
     nxt = data[i + 1] if i + 1 < len(data) else None
-    if b == 0x7B:  # "{": a pair opens a placeholder, and one at the end could join the next
-        return nxt is None or nxt == 0x7B
-    if b == 0x7D:  # "}": a pair would close a placeholder early
-        return nxt == 0x7D
-    return False
+    return prev not in _PRINTABLE or nxt not in _PRINTABLE or prev in _BRACES or nxt in _BRACES
 
 
 def escape_literal(data: bytes) -> str:
