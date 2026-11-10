@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FixingPointSystem Controller API
-  version: 0.8.0
+  version: 0.9.0
   summary: Contract v0.2 for the controller REST API.
   description: >
     The controller stores test configurations, installs modules, starts runs on
@@ -775,6 +775,21 @@ components:
         value: { type: number }
         observed: { type: number, description: "Value of the metric over the whole run, absent when the metric has no value." }
         passed: { type: boolean, description: "Outcome of the comparison, absent when the metric has no value." }
+        where:
+          type: object
+          minProperties: 1
+          description: >
+            The label filter of the criterion, exactly as `criteria[].where` of
+            the test configuration states it: label names with the values that a
+            series must carry for the criterion to count it, for example
+            `{application: dns}`. Absent when the criterion has no filter. The
+            controller does not add a `side` entry that the configuration left
+            out, and a criterion without one counts the client side only for a
+            metric that has the side label. Two results with the same metric,
+            op, and value that differ only in their filter are told apart by
+            this field.
+          additionalProperties: { type: string }
+          examples: [{ application: dns, side: server }]
         reason:
           type: string
           description: Why the criterion passed, failed, or has no result, in words for an operator.
@@ -826,16 +841,80 @@ components:
       required: [run, realism]
       properties:
         run: { $ref: "#/components/schemas/Run" }
+        scenarios:
+          type: array
+          description: >
+            The counts of the run for each scenario of each application, ordered
+            by application and then by scenario name. They are the client side
+            series of the metric view `scenario` (the key of a sample there is
+            `<application>/<scenario>`), so each session and each byte counts
+            once, and the sum of an entry property over all entries equals the
+            property of `run.summary` with the same name. A scenario appears
+            once the run has recorded a counter for it. A controller of 0.9.0 or
+            later always sends the property, empty when the run has recorded no
+            scenario counter, and an older controller does not send it. For the
+            totals of one application, sum the entries of that application.
+          items: { $ref: "#/components/schemas/ScenarioTotals" }
         realism:
           type: array
-          items:
-            type: object
-            required: [property, observed, target, passed]
-            properties:
-              property: { type: string }
-              observed: { type: number }
-              target: { type: string }
-              passed: { type: boolean }
+          description: >
+            The realism results that the controller holds for the run, in the
+            order of the realism report that carried them. The controller does
+            not measure realism itself. The realism runner (`python3 -m realism
+            score`, whose report format is
+            `realism/schema/realism-report.schema.json`) scores the capture of
+            the run with independent classifiers and parsers, and each metric of
+            a check of its report, with the verdict of the check, becomes one
+            entry here. The same values are the `realism.` gauges of the metric
+            view `realism`, and `mix.` gauges with `source: classifier`, when
+            the controller holds them as series. Until the controller receives
+            such a report for the run the array is empty, which is also the
+            answer for a run whose capture was never scored. The contract has no
+            operation that delivers the report to the controller, so the way it
+            arrives is the business of the controller and does not change this
+            schema.
+          items: { $ref: "#/components/schemas/RealismResult" }
+    ScenarioTotals:
+      type: object
+      description: >
+        The counts of one scenario of one application over the whole run. The
+        property names follow RunSummary, and each names its metric in
+        contracts/metrics/catalog.yaml through x-fps-metric. A count is 0 when
+        the run recorded no event for it.
+      required: [application, scenario, sessions_attempted, sessions_succeeded, sessions_failed, bytes_tx, bytes_rx]
+      properties:
+        application: { type: string, description: "Module name of the application, for example http1." }
+        scenario: { type: string, description: "Scenario name within the module, for example web_get." }
+        sessions_attempted: { type: integer, minimum: 0, x-fps-metric: sessions.attempted }
+        sessions_succeeded: { type: integer, minimum: 0, x-fps-metric: sessions.succeeded }
+        sessions_failed:
+          type: integer
+          minimum: 0
+          x-fps-metric: sessions.failed
+          description: Sessions that failed for any reason, which is the sum over the reason label.
+        bytes_tx: { type: integer, minimum: 0, x-fps-metric: bytes.tx }
+        bytes_rx: { type: integer, minimum: 0, x-fps-metric: bytes.rx }
+    RealismResult:
+      type: object
+      description: >
+        One realism measurement of the run with its target and outcome. A
+        reader that pairs results of two runs pairs them by `metric` and
+        `labels` when the result has them, and by `property` otherwise.
+      required: [property, observed, target, passed]
+      properties:
+        property:
+          type: string
+          description: Name of what was measured, in words for an operator, for example `conformance of http1 by ndpi`.
+        observed: { type: number, description: The measured value. }
+        target: { type: string, description: "The rule that the value must meet, such as `>= 0.99`." }
+        passed: { type: boolean, description: True when the value meets the target. }
+        metric:
+          type: string
+          description: Metric name from contracts/metrics/catalog.yaml that the result belongs to, for example `realism.conformance_ratio`.
+        labels:
+          type: object
+          description: "The labels of the series, for example application http1 and classifier ndpi. Together with `metric` it is unique within one report."
+          additionalProperties: { type: string }
     Capture:
       type: object
       required: [id, port, state]

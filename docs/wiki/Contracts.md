@@ -6,7 +6,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 
 | File | Contract |
 |---|---|
-| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.8.0 |
+| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.9.0 |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.4 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
@@ -241,3 +241,15 @@ CON-20 moves the controller API from 0.7.0 to 0.8.0, the metric catalog from 0.3
 | `provenance.capture_sha256`, `scrub_rules`, `scrubbed_at` | Optional fields of the manifest provenance. The digest is 64 lowercase hexadecimal digits, `scrub_rules` is a unique list of `{id, version}`, and `scrubbed_at` is a date or an RFC 3339 UTC time. They hold what the scrub record of `capture scrub` already has, so CAP can stop writing it into `notes`. The rule for `source: capture` is unchanged |
 
 The controller embeds a byte copy of the catalog, the engine mirrors it in `fps-stats`, and `api.APIVersion` follows the document, so the coordinator refreshes them, regenerates the Go code, the Python SDK, and the UI schema, and updates the version assertion in `tools/contracts/test_contracts.py`.
+
+## Scenario totals, criterion filters, and realism results in the report
+
+CON-21 moves the controller API from 0.8.0 to 0.9.0. The owner approved the change on 2026-11-10. Every part is additive, and the entry `contracts/changes/CON-21.md` records the reasons, the compatibility, the consumers, and the follow up work.
+
+| Change | Rule |
+|---|---|
+| `RunReport.scenarios` | Optional array of `ScenarioTotals`, ordered by application and scenario. Each entry holds `application`, `scenario`, `sessions_attempted`, `sessions_succeeded`, `sessions_failed`, `bytes_tx`, and `bytes_rx`, named like `RunSummary` and counted on the client side, so the sum over the entries equals the summary. A controller of 0.9.0 or later always sends it, empty when the run recorded no scenario counter |
+| `CriterionResult.where` | Optional label filter of the criterion as the test configuration states it, absent for a criterion without one. Criteria that differ only in their filter can now be told apart, and the `side` rule of CON-15 is unchanged |
+| `RunReport.realism` | The item type is the named schema `RealismResult`, with the optional `metric` and `labels` beside `property`, `observed`, `target`, and `passed`. The controller does not measure realism: each metric of a check of the realism report of the run (`realism/schema/realism-report.schema.json`) is one entry, and the array stays empty until the controller receives such a report. The contract has no operation that delivers it |
+
+The consumers are CTL-39 (fills the properties from the scenario table of CTL-38), the Web UI, the Python SDK, and the realism runner. The controller `APIVersion`, the generated Go code, the SDK, and `ui/src/api/schema.d.ts` follow the document, and the coordinator refreshes them.
