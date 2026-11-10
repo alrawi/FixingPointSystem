@@ -21,5 +21,8 @@ h2 = "0.4"
 http = "1"
 bytes = "1"
 tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }
+# The flow test runs both sides of a scenario through the interpreter.
+fps-interp = { path = "../../../engine/fps-interp" }
+fps-io = { path = "../../../engine/fps-io" }
 # serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
 serde_yaml = { package = "serde_norway", version = "0.9" }

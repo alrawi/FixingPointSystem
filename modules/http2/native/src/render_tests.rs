@@ -37,8 +37,29 @@ fn text(v: &str) -> ArgValue<'_> {
     ArgValue::Text(v)
 }
 
+/// Feeds concatenated frames to `headers_decode` one payload at a time, as a
+/// flow does after each pair of `expect` actions, and returns what it rendered.
+fn feed(server: &mut Http2, frames: &[u8]) -> Result<Vec<u8>, FnError> {
+    let mut rest = frames;
+    let mut out = Vec::new();
+    while !rest.is_empty() {
+        let (f, tail) = frame::split(rest).unwrap();
+        out.extend(call(
+            server,
+            "headers_decode",
+            &[bytes(f.payload)],
+            &[
+                named("flags", int(i64::from(f.header.flags))),
+                named("type", int(i64::from(f.header.ty))),
+            ],
+        )?);
+        rest = tail;
+    }
+    Ok(out)
+}
+
 fn server_decode(server: &mut Http2, frames: &[u8]) -> Vec<u8> {
-    call(server, "headers_decode", &[bytes(frames)], &[]).unwrap()
+    feed(server, frames).unwrap()
 }
 
 #[test]
@@ -118,7 +139,8 @@ fn settings_values_come_back_out_of_a_frame() {
     )
     .unwrap();
     let get = |h: &mut Http2, n: &str| {
-        String::from_utf8(call(h, "settings_value", &[bytes(&s), text(n)], &[]).unwrap()).unwrap()
+        String::from_utf8(call(h, "settings_value", &[bytes(&s[9..]), text(n)], &[]).unwrap())
+            .unwrap()
     };
     assert_eq!(get(&mut h, "initial_window_size"), "1000");
     assert_eq!(get(&mut h, "max_concurrent_streams"), "7");
@@ -126,12 +148,18 @@ fn settings_values_come_back_out_of_a_frame() {
     assert_eq!(get(&mut h, "max_frame_size"), "16384");
     assert_eq!(get(&mut h, "header_table_size"), "4096");
     assert_eq!(get(&mut h, "max_header_list_size"), "-1");
-    let e = call(&mut h, "settings_value", &[bytes(&s), text("colour")], &[]).unwrap_err();
+    let e = call(
+        &mut h,
+        "settings_value",
+        &[bytes(&s[9..]), text("colour")],
+        &[],
+    )
+    .unwrap_err();
     assert_eq!(e.kind, FnErrorKind::InvalidArgument);
     let e = call(
         &mut h,
         "settings_value",
-        &[bytes(&s[..10]), text("enable_push")],
+        &[bytes(&s[9..10]), text("enable_push")],
         &[],
     )
     .unwrap_err();
@@ -314,8 +342,15 @@ fn data_frames_carry_binary_bytes_and_split_at_the_frame_size() {
         let (fr, r) = frame::split(rest).unwrap();
         assert!(fr.payload.len() <= 400);
         ends += usize::from(fr.header.has(flag::END_STREAM));
-        let one = &rest[..9 + fr.payload.len()];
-        got.extend(call(&mut Http2::default(), "data_payload", &[bytes(one)], &[]).unwrap());
+        got.extend(
+            call(
+                &mut Http2::default(),
+                "data_payload",
+                &[bytes(fr.payload)],
+                &[named("flags", int(i64::from(fr.header.flags)))],
+            )
+            .unwrap(),
+        );
         rest = r;
     }
     assert_eq!(got, body);
@@ -380,7 +415,7 @@ fn ping_takes_its_octets_from_the_session_generator_and_is_answered() {
         "same generator state, same octets"
     );
     assert_eq!(&a[..9], [0, 0, 8, 6, 0, 0, 0, 0, 0]);
-    let ack = call(&mut h, "ping_ack", &[bytes(&a)], &[]).unwrap();
+    let ack = call(&mut h, "ping_ack", &[bytes(&a[9..])], &[]).unwrap();
     assert_eq!(&ack[..9], [0, 0, 8, 6, 1, 0, 0, 0, 0]);
     assert_eq!(ack[9..], a[9..]);
     let fixed = call(&mut h, "ping", &[bytes(b"12345678")], &[]).unwrap();
@@ -391,15 +426,14 @@ fn ping_takes_its_octets_from_the_session_generator_and_is_answered() {
             .kind,
         FnErrorKind::InvalidArgument
     );
-    let settings = call(&mut h, "settings_ack", &[], &[]).unwrap();
     assert_eq!(
-        call(&mut h, "ping_ack", &[bytes(&settings)], &[])
+        call(&mut h, "ping_ack", &[bytes(b"")], &[])
             .unwrap_err()
             .kind,
         FnErrorKind::Protocol
     );
     assert_eq!(
-        call(&mut h, "ping_ack", &[bytes(&a[..12])], &[])
+        call(&mut h, "ping_ack", &[bytes(&a[9..12])], &[])
             .unwrap_err()
             .kind,
         FnErrorKind::Protocol
@@ -452,26 +486,41 @@ fn frame_headers_read_back() {
 #[test]
 fn decoding_garbage_is_a_protocol_error_and_not_a_panic() {
     let mut h = Http2::default();
-    let protocol_error = |h: &mut Http2, frame: &[u8]| {
-        call(h, "headers_decode", &[bytes(frame)], &[])
-            .unwrap_err()
-            .kind
-    };
+    let kind = |h: &mut Http2, frame: &[u8]| feed(h, frame).unwrap_err().kind;
     let mut hdr = Vec::new();
     frame::raw(&mut hdr, ty::HEADERS, flag::END_HEADERS, 1, &[0xff, 0xff]).unwrap();
-    assert_eq!(protocol_error(&mut h, &hdr), FnErrorKind::Protocol);
+    assert_eq!(kind(&mut h, &hdr), FnErrorKind::Protocol);
+    // A DATA frame is no header block.
     let mut data = Vec::new();
     frame::raw(&mut data, ty::DATA, 0, 1, b"x").unwrap();
-    assert_eq!(protocol_error(&mut h, &data), FnErrorKind::Protocol);
-    // END_HEADERS missing and no CONTINUATION follows.
-    let mut open = Vec::new();
-    frame::raw(&mut open, ty::HEADERS, 0, 1, &[0x82]).unwrap();
-    assert_eq!(protocol_error(&mut h, &open), FnErrorKind::Protocol);
+    assert_eq!(kind(&mut h, &data), FnErrorKind::Protocol);
+    // A CONTINUATION frame without an open block.
+    let mut cont = Vec::new();
+    frame::raw(&mut cont, ty::CONTINUATION, flag::END_HEADERS, 1, &[0x82]).unwrap();
+    assert_eq!(kind(&mut h, &cont), FnErrorKind::Protocol);
     // A value with a line break cannot go into the text form.
     let mut lf = Vec::new();
     let block = [0x00, 0x01, b'a', 0x03, b'b', b'\n', b'c'];
     frame::raw(&mut lf, ty::HEADERS, flag::END_HEADERS, 1, &block).unwrap();
-    assert_eq!(protocol_error(&mut h, &lf), FnErrorKind::Protocol);
+    assert_eq!(kind(&mut h, &lf), FnErrorKind::Protocol);
+    // A block that stays open renders nothing, and a second HEADERS frame
+    // before its END_HEADERS is an error.
+    let mut open = Vec::new();
+    frame::raw(&mut open, ty::HEADERS, 0, 1, &[0x82]).unwrap();
+    let mut h = Http2::default();
+    assert!(feed(&mut h, &open).unwrap().is_empty());
+    assert_eq!(kind(&mut h, &open), FnErrorKind::Protocol);
+    // A bad flags or type argument.
+    for (name, v) in [("flags", 256), ("type", -1)] {
+        let e = call(
+            &mut h,
+            "headers_decode",
+            &[bytes(b"")],
+            &[named(name, int(v))],
+        )
+        .unwrap_err();
+        assert_eq!(e.kind, FnErrorKind::InvalidArgument, "{name}");
+    }
 }
 
 #[test]
@@ -493,9 +542,122 @@ fn a_table_size_in_settings_limits_what_the_decoder_accepts() {
     )
     .unwrap();
     assert_eq!(
-        call(&mut server, "headers_decode", &[bytes(&f)], &[])
-            .unwrap_err()
-            .kind,
+        feed(&mut server, &f).unwrap_err().kind,
         FnErrorKind::Protocol
     );
+}
+
+fn count(function: &'static str, positional: &[ArgValue<'_>], named: &[NamedArg<'_>]) -> usize {
+    let out = call(&mut Http2::default(), function, positional, named).unwrap();
+    String::from_utf8(out).unwrap().parse().unwrap()
+}
+
+#[test]
+fn data_frames_counts_the_frames_that_data_renders() {
+    for (size, max, padding) in [
+        (0, 16384, -1),
+        (1, 16384, -1),
+        (100, 100, -1),
+        (101, 100, -1),
+        (40000, 100, -1),
+        (1000, 100, 9),
+        (5000, 16384, 255),
+    ] {
+        let n = count(
+            "data_frames",
+            &[int(size)],
+            &[
+                named("max_frame_size", int(max)),
+                named("padding", int(padding)),
+            ],
+        );
+        let body = vec![7u8; size as usize];
+        let f = call(
+            &mut Http2::default(),
+            "data",
+            &[int(1), bytes(&body)],
+            &[
+                named("max_frame_size", int(max)),
+                named("padding", int(padding)),
+            ],
+        )
+        .unwrap();
+        let mut rest = &f[..];
+        let mut frames = 0;
+        while !rest.is_empty() {
+            rest = frame::split(rest).unwrap().1;
+            frames += 1;
+        }
+        assert_eq!(n, frames, "size {size} max {max} padding {padding}");
+    }
+}
+
+#[test]
+fn data_frames_rejects_bad_arguments() {
+    let bad = |size, max, padding| {
+        call(
+            &mut Http2::default(),
+            "data_frames",
+            &[int(size)],
+            &[
+                named("max_frame_size", int(max)),
+                named("padding", int(padding)),
+            ],
+        )
+        .unwrap_err()
+        .kind
+    };
+    assert_eq!(bad(-1, 16384, -1), FnErrorKind::InvalidArgument);
+    assert_eq!(bad(1, 0, -1), FnErrorKind::InvalidArgument);
+    assert_eq!(bad(1, 16384, 300), FnErrorKind::InvalidArgument);
+    assert_eq!(bad(1, 100, 99), FnErrorKind::InvalidArgument);
+}
+
+#[test]
+fn headers_frames_counts_the_frames_that_headers_renders() {
+    let list = "\
+:method: POST
+:path: /upload
+:authority: www.example.test
+user-agent: fps-http2-test/1.0
+x-request-id: 0123456789abcdef0123456789abcdef
+";
+    for (max, padding, dep, huffman) in [
+        (16384, -1, -1, "auto"),
+        (100, -1, -1, "never"),
+        (50, -1, -1, "never"),
+        (60, 5, 0, "never"),
+        (40, -1, 3, "always"),
+    ] {
+        let n = count(
+            "headers_frames",
+            &[bytes(list.as_bytes())],
+            &[
+                named("max_frame_size", int(max)),
+                named("huffman", text(huffman)),
+                named("padding", int(padding)),
+                named("priority_dependency", int(dep)),
+            ],
+        );
+        let f = call(
+            &mut Http2::default(),
+            "headers",
+            &[int(1), bytes(list.as_bytes())],
+            &[
+                named("max_frame_size", int(max)),
+                named("huffman", text(huffman)),
+                named("index", text("off")),
+                named("padding", int(padding)),
+                named("priority_dependency", int(dep)),
+            ],
+        )
+        .unwrap();
+        let mut rest = &f[..];
+        let mut frames = 0;
+        while !rest.is_empty() {
+            rest = frame::split(rest).unwrap().1;
+            frames += 1;
+        }
+        assert_eq!(n, frames, "max {max} padding {padding} dep {dep} {huffman}");
+    }
 }

@@ -476,7 +476,7 @@ pub fn settings_ack(out: &mut Vec<u8>) -> Result<(), FrameError> {
 
 /// Reads the pairs of a SETTINGS payload.
 pub fn settings_pairs(payload: &[u8]) -> Result<Vec<(u16, u32)>, FrameError> {
-    if payload.len() % 6 != 0 {
+    if !payload.len().is_multiple_of(6) {
         return Err(invalid(format!(
             "a SETTINGS payload of {} octets is not a multiple of 6",
             payload.len()
@@ -495,8 +495,8 @@ pub fn settings_pairs(payload: &[u8]) -> Result<Vec<(u16, u32)>, FrameError> {
 
 /// Returns the payload of a padded frame without its pad length field and
 /// padding, or the payload itself when the PADDED flag is clear.
-pub fn strip_padding<'a>(header: &FrameHeader, payload: &'a [u8]) -> Result<&'a [u8], FrameError> {
-    if !header.has(flag::PADDED) {
+pub fn strip_padding(flags: u8, payload: &[u8]) -> Result<&[u8], FrameError> {
+    if flags & flag::PADDED == 0 {
         return Ok(payload);
     }
     let Some((&pad, body)) = payload.split_first() else {
@@ -512,11 +512,12 @@ pub fn strip_padding<'a>(header: &FrameHeader, payload: &'a [u8]) -> Result<&'a 
     Ok(&body[..body.len() - pad])
 }
 
-/// Returns the header block fragment of a HEADERS or CONTINUATION frame, the
-/// payload without the padding and the priority fields.
-pub fn block_fragment<'a>(header: &FrameHeader, payload: &'a [u8]) -> Result<&'a [u8], FrameError> {
-    let body = strip_padding(header, payload)?;
-    if header.ty == ty::HEADERS && header.has(flag::PRIORITY) {
+/// Returns the header block fragment of a HEADERS or CONTINUATION frame of
+/// type `frame_type` with `flags`, which is the payload without the padding and
+/// the priority fields.
+pub fn block_fragment(frame_type: u8, flags: u8, payload: &[u8]) -> Result<&[u8], FrameError> {
+    let body = strip_padding(flags, payload)?;
+    if frame_type == ty::HEADERS && flags & flag::PRIORITY != 0 {
         return body.get(5..).ok_or_else(|| {
             invalid("a HEADERS frame with PRIORITY has fewer than 5 octets of priority fields")
         });
@@ -619,7 +620,7 @@ mod tests {
         assert_eq!(a.header.flags, flag::PADDED);
         assert_eq!(a.payload, [3, b'a', b'b', b'c', b'd', 0, 0, 0]);
         assert_eq!(b.payload, [3, b'e', b'f', 0, 0, 0]);
-        assert_eq!(strip_padding(&a.header, a.payload).unwrap(), b"abcd");
+        assert_eq!(strip_padding(a.header.flags, a.payload).unwrap(), b"abcd");
         let mut out = Vec::new();
         assert!(data(&mut out, 1, b"x", false, Some(255), 100).is_err());
     }
@@ -668,7 +669,10 @@ mod tests {
             flag::END_HEADERS | flag::PRIORITY | flag::PADDED
         );
         assert_eq!(a.payload, [2, 0x80, 0, 0, 7, 255, b'x', b'y', b'z', 0, 0]);
-        assert_eq!(block_fragment(&a.header, a.payload).unwrap(), b"xyz");
+        assert_eq!(
+            block_fragment(a.header.ty, a.header.flags, a.payload).unwrap(),
+            b"xyz"
+        );
     }
 
     #[test]
@@ -713,9 +717,9 @@ mod tests {
             flags: flag::PADDED,
             stream: 1,
         };
-        assert!(strip_padding(&h, &[]).is_err());
-        assert!(strip_padding(&h, &[5, 1, 2]).is_err());
-        assert_eq!(strip_padding(&h, &[2, 9, 0, 0]).unwrap(), [9]);
+        assert!(strip_padding(h.flags, &[]).is_err());
+        assert!(strip_padding(h.flags, &[5, 1, 2]).is_err());
+        assert_eq!(strip_padding(h.flags, &[2, 9, 0, 0]).unwrap(), [9]);
     }
 
     #[test]

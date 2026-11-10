@@ -23,6 +23,8 @@
 //! 4. Any other field becomes a literal field with incremental indexing
 //!    (section 6.2.1) and joins the dynamic table, as browsers and nghttp2 do.
 //!
+//! [`IndexMode::All`] skips rule 2 and indexes sensitive fields too.
+//!
 //! A literal takes the name from the tables when it can, and a string literal
 //! is Huffman coded when [`HuffmanMode::Auto`] finds the coding strictly
 //! shorter, always with [`HuffmanMode::Always`], and never with
@@ -78,6 +80,10 @@ pub enum IndexMode {
     Auto,
     /// Write literals without indexing, so the table does not grow.
     Off,
+    /// Index every field that fits, also the ones that [`IndexMode::Auto`]
+    /// keeps out of the table because they carry secrets. The RFC 7541
+    /// Appendix C examples index a `set-cookie` field this way.
+    All,
 }
 
 /// Why a header block cannot be decoded. RFC 7541 section 2.3.3 treats each
@@ -250,8 +256,15 @@ impl Default for Encoder {
 impl Encoder {
     /// Returns an encoder with an empty table of [`DEFAULT_TABLE_SIZE`].
     pub fn new() -> Self {
+        Encoder::with_max_size(DEFAULT_TABLE_SIZE)
+    }
+
+    /// Returns an encoder with an empty table of `size` octets, for a peer
+    /// that announced that size before the first block, so the encoder writes
+    /// no size update. The size is capped at [`MAX_TABLE_SIZE`].
+    pub fn with_max_size(size: usize) -> Self {
         Encoder {
-            table: DynTable::new(DEFAULT_TABLE_SIZE),
+            table: DynTable::new(size.min(MAX_TABLE_SIZE)),
         }
     }
 
@@ -324,7 +337,7 @@ impl Encoder {
             put_int(out, 0x80, 7, i);
             return;
         }
-        let sensitive = SENSITIVE.contains(&name);
+        let sensitive = SENSITIVE.contains(&name) && index != IndexMode::All;
         let fits = entry_size(name, value) <= self.table.max;
         let (pattern, prefix) = if sensitive {
             (0x10, 4)
@@ -417,9 +430,17 @@ impl Decoder {
     /// Returns a decoder with an empty table of [`DEFAULT_TABLE_SIZE`] that
     /// accepts size updates up to the same size.
     pub fn new() -> Self {
+        Decoder::with_max_size(DEFAULT_TABLE_SIZE)
+    }
+
+    /// Returns a decoder with an empty table of `size` octets that accepts
+    /// size updates up to the same size. The size is capped at
+    /// [`MAX_TABLE_SIZE`].
+    pub fn with_max_size(size: usize) -> Self {
+        let size = size.min(MAX_TABLE_SIZE);
         Decoder {
-            table: DynTable::new(DEFAULT_TABLE_SIZE),
-            allowed: DEFAULT_TABLE_SIZE,
+            table: DynTable::new(size),
+            allowed: size,
         }
     }
 
@@ -433,6 +454,12 @@ impl Decoder {
     /// Returns the current maximum size of the dynamic table.
     pub fn max_size(&self) -> usize {
         self.table.max
+    }
+
+    /// Returns the number of octets that the dynamic table holds, counted as
+    /// RFC 7541 section 4.1 counts them.
+    pub fn size(&self) -> usize {
+        self.table.size
     }
 
     /// Returns the number of entries of the dynamic table.
