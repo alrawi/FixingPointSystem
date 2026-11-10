@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels for the mix accuracy check. The mix section maps each scenario of the test
+# configuration to the application whose nDPI names the conformance check already knows
+# (http1 and dns have built in names, other applications need an applications entry).
+# Run it with:
+#   python3 -m realism score --pcap run.pcapng --labels mix.labels.yaml \
+#     --test-config test.yaml --run-report run-scenario-metrics.json
+# realism/schema/labels.schema.json defines the format.
+labels: fps-realism-labels
+version: 1
+sessions:
+  - application: http1
+    match: {transport: tcp, server_port: 80}
+  - application: dns
+    match: {transport: udp, server_port: 53}
+mix:
+  scenarios:
+    http1/web_get: http1
+    dns/lookup: dns
+    # A scenario may list the nDPI names of its own: ftp/get: {application: ftp, ndpi: [FTP_CONTROL]}
+  tolerance_points: 2      # default
+  basis: both              # sessions, bytes, or both; default: profile.basis of the test configuration
+  # test_config: test.yaml  # or --test-config; relative to this file
+  # run_report: run.json    # or --run-report; relative to this file

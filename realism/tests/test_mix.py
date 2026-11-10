@@ -759,3 +759,12 @@ def test_real_ndpi_gives_the_mix_of_a_synthetic_capture(tmp_path: Path) -> None:
         row = entry["bases"][0]["applications"][0]
         assert row["ndpi_pct"] == 80.0 and row["ndpi_passed"] is True
         assert entry["passed"] is expected
+
+
+def test_the_example_labels_file_loads_and_validates() -> None:
+    path = Path(__file__).resolve().parents[1] / "examples" / "mix.labels.yaml"
+    doc = yaml.safe_load(path.read_text())
+    jsonschema.validate(doc, json.loads(LABELS_SCHEMA_PATH.read_text()))
+    labels = parse(doc)
+    assert labels.mix is not None and labels.mix.basis == "both"
+    assert labels.mix.scenarios["dns/lookup"].application == "dns"
