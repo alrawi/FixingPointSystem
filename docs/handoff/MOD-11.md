@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #178 |
 | Branch | `wp/MOD-11` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 83% (5 of 6 plan steps) |
+| Pull request | #386 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-3cddb6 (the lease on the status card renews at every checkpoint) |
 | Last verified commit | see git log |
 
@@ -23,7 +23,7 @@ Ship ssh scenarios with real key exchange through a native extension backed by a
 - [x] 3. Write the scenarios (shell, file copy) and the interpreter, catalog, and transcript tests
 - [x] 4. Write capture.sh, expected.yaml, and the Zeek check
 - [x] 5. Write the README and the log entry with the shared page notes
-- [ ] 6. Run the checks, open the PR, and wait for CI
+- [x] 6. Run the checks, open the PR, and wait for CI
 
 ## Done and verified
 
