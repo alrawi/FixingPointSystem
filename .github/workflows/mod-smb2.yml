@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Workflow of the smb2 module under modules/smb2/. The rust job of ci.yml runs
+# the Rust tests of the native crate, but there the tshark test skips itself.
+# The tshark job installs tshark and runs it with FPS_REQUIRE_CAPTURE_TOOLS=1,
+# so tshark must parse every message that the functions encode (MOD-12
+# acceptance). The fuzz job runs the 60 s fuzz test.
+name: mod-smb2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - modules/smb2/**
+      - engine/fps-flow/**
+      - Cargo.lock
+      - mk/mod-smb2.mk
+      - .github/workflows/mod-smb2.yml
+  pull_request:
+    paths:
+      - modules/smb2/**
+      - engine/fps-flow/**
+      - Cargo.lock
+      - mk/mod-smb2.mk
+      - .github/workflows/mod-smb2.yml
+
+permissions:
+  contents: read
+
+jobs:
+  tshark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install tshark
+        run: |
+          echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
+          tools/ci/apt-install.sh tshark
+      - name: Parse every encoded message with tshark
+        env:
+          FPS_REQUIRE_CAPTURE_TOOLS: "1"
+        run: cargo test -p fps-module-smb2 --test tshark -- --nocapture
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Fuzz the readers and the functions for 60 seconds
+        run: cargo test -p fps-module-smb2 --release --test fuzz -- --ignored fuzz_60s --nocapture
