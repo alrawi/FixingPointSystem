@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #424 |
 | Branch | `wp/ENG-27` |
-| Pull request | none yet |
+| Pull request | none |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-e27a41, lease until 2026-11-11T00:05:31Z |
 | Last verified commit | none |
 
@@ -18,22 +18,22 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Plan
 
-- [ ] 1. Split the counter in `engine/fps-capture/src/lib.rs` and document it.
-- [ ] 2. Tests: an overflowing queue and a stop during a run, with literal counts.
-- [ ] 3. Checks, log entry, Engine page update.
+- [x] 1. Split the counter in `engine/fps-capture/src/lib.rs` and document it.
+- [x] 2. Tests: an overflowing queue and a stop during a run, with literal counts.
+- [x] 3. Checks, log entry, Engine page update.
 - [ ] 4. Pull request and CI.
 
 ## Done and verified
 
-Nothing yet.
+- `cargo test -p fps-capture` passes (22 unit, 15 component, 1 doc test); `cargo clippy -p fps-capture --all-targets -D warnings` and `cargo fmt --check` are clean; `plan.py check`, `render --check`, `lint` pass.
 
 ## Remaining
 
-Everything above.
+Pull request and CI.
 
 ## Next action
 
-Edit `Shared::drop` in `engine/fps-capture/src/lib.rs`.
+Open the pull request and wait for CI.
 
 ## Blockers and open questions
 
@@ -45,7 +45,7 @@ none
 
 ## Pitfalls
 
-none yet
+none
 
 ## Verify the current state
 
