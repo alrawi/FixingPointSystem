@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #392 |
 | Branch | `wp/RLM-13` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #414 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-d73749, lease until 2026-11-10T18:55:18Z |
-| Last verified commit | none |
+| Last verified commit | 804a402 (CI green on #414) |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -27,7 +27,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Metric series in the mix entry, schema, report version 0.10.0
 - [x] 2. REST report scenarios table input
 - [x] 3. Tests on a fixture with a known mix, catalog 0.4.0 validation
-- [ ] 4. README, Realism page, log entry, PR
+- [x] 4. README, Realism page, log entry, PR
 
 ## Done and verified
 
@@ -35,11 +35,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Step 4: pull request and CI.
+Nothing.
 
 ## Next action
 
-Open the pull request, wait for CI, then run `fps_swarm.py review 392 --pr N`.
+Review and merge by the coordinator.
 
 ## Blockers and open questions
 
@@ -69,3 +69,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-10T18:15Z | claude-d73749 | claim | - | claimed #392 |
 | 2026-11-10T18:50Z | claude-d73749 | checkpoint | - | series, REST form, tests, docs done |
+| 2026-11-10T19:00Z | claude-d73749 | finish | 804a402 | PR #414, CI green, ready for review |
