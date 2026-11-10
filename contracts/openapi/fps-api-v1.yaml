@@ -435,12 +435,20 @@ paths:
         `p value >= ` followed by the `alpha` of the comparison of the same
         application and property (`request_bytes` and `response_bytes` are the
         `payload_size` comparisons of the direction `client` and `server`), and
-        `passed` is true when its `status` is `pass`. Any other metric that a
-        later version of the report format carries gets the target
-        `check passed` and the `passed` of its check. A check whose `metrics`
-        array is empty adds no result, so the results are not a full account of
-        the report: a check such as `parser_errors` that fails but has no metric
-        shows in the report document only.
+        `passed` is true when its `status` is `pass`. The metrics that the
+        other check kinds carry follow the table of `contracts/changes/CON-23.md`:
+        `realism.check_failures` (every check carries one) has the target
+        `== 0` and the `passed` of its check, `realism.parser_errors`,
+        `realism.structure_failures`, and `realism.transport_deviations` have
+        the target `== 0`, `realism.decrypted_ratio` has `>= ` followed by
+        `min_decrypted`, `realism.ja4_match_ratio` has `>= 1`,
+        `realism.duplicate_ratio` has `<= ` followed by `max_duplicate_ratio`,
+        and the `mix.` metrics have a target that names `tolerance_points`. In
+        each case `passed` is true when the value meets the target. Any other
+        metric that a later version of the report format carries gets the
+        target `check passed` and the `passed` of its check. Every check of
+        the report carries `realism.check_failures`, so a check that fails
+        always adds a result that shows it.
 
         The operation replaces. A run holds at most one realism report, a
         second call with a valid report replaces the first as a whole, and the
@@ -1003,7 +1011,8 @@ components:
             answer for a run whose capture was never scored. The operation
             attachRealismReport (`PUT /runs/{id}/realism`) delivers the report,
             replaces an earlier one, and describes how its metrics become the
-            entries. The checks of the report that carry no metric add no entry.
+            entries. Every check of the report carries the metric
+            `realism.check_failures`, so a failing check always adds an entry.
           items: { $ref: "#/components/schemas/RealismResult" }
     ScenarioTotals:
       type: object

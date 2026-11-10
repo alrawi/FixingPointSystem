@@ -1,0 +1,208 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Examples of CON-23: for every check kind of the realism report, the metrics a
+# check carries and the RealismResult entries that the controller builds from
+# them, once for a passing and once for a failing check. The rules that give
+# `target` and `passed` are in contracts/changes/CON-23.md, and a controller
+# test (CTL-41) and a realism runner test (RLM) can read the cases as literals.
+#
+# `report` holds the fields of the check entry that the target text uses.
+# `metrics` is what the report carries, in the form of the report schema
+# (name, labels, value). `results` is the matching RunReport.realism, in the
+# same order, with the fields of RealismResult. The wording in `property` is
+# for an operator and takes no part in the pairing of results.
+examples:
+  - check: conformance
+    report: {classifier: ndpi, threshold: 0.99}
+    cases:
+      - name: passing
+        check_passed: true
+        metrics:
+          - {name: realism.conformance_ratio, labels: {application: http1, classifier: ndpi}, value: 1.0}
+          - {name: realism.check_failures, labels: {check: conformance}, value: 0}
+        results:
+          - {metric: realism.conformance_ratio, labels: {application: http1, classifier: ndpi}, property: conformance of http1 by ndpi, observed: 1.0, target: ">= 0.99", passed: true}
+          - {metric: realism.check_failures, labels: {check: conformance}, property: failures of the conformance check, observed: 0, target: "== 0", passed: true}
+      - name: failing
+        check_passed: false
+        metrics:
+          - {name: realism.conformance_ratio, labels: {application: dns, classifier: ndpi}, value: 0.93}
+          - {name: realism.check_failures, labels: {check: conformance}, value: 1}
+        results:
+          - {metric: realism.conformance_ratio, labels: {application: dns, classifier: ndpi}, property: conformance of dns by ndpi, observed: 0.93, target: ">= 0.99", passed: false}
+          - {metric: realism.check_failures, labels: {check: conformance}, property: failures of the conformance check, observed: 1, target: "== 0", passed: false}
+
+  - check: temporal
+    report: {alpha: 0.05}
+    cases:
+      - name: passing
+        check_passed: true
+        metrics:
+          - {name: realism.ks_statistic, labels: {application: http1, property: inter_arrival}, value: 0.08}
+          - {name: realism.ks_p_value, labels: {application: http1, property: inter_arrival}, value: 0.41}
+          - {name: realism.check_failures, labels: {check: temporal}, value: 0}
+        results:
+          - {metric: realism.ks_statistic, labels: {application: http1, property: inter_arrival}, property: KS statistic of inter_arrival of http1, observed: 0.08, target: "p value >= 0.05", passed: true}
+          - {metric: realism.ks_p_value, labels: {application: http1, property: inter_arrival}, property: KS p value of inter_arrival of http1, observed: 0.41, target: "p value >= 0.05", passed: true}
+          - {metric: realism.check_failures, labels: {check: temporal}, property: failures of the temporal check, observed: 0, target: "== 0", passed: true}
+      - name: failing
+        check_passed: false
+        metrics:
+          - {name: realism.ks_statistic, labels: {application: http1, property: inter_arrival}, value: 0.31}
+          - {name: realism.ks_p_value, labels: {application: http1, property: inter_arrival}, value: 0.003}
+          - {name: realism.check_failures, labels: {check: temporal}, value: 1}
+        results:
+          - {metric: realism.ks_statistic, labels: {application: http1, property: inter_arrival}, property: KS statistic of inter_arrival of http1, observed: 0.31, target: "p value >= 0.05", passed: false}
+          - {metric: realism.ks_p_value, labels: {application: http1, property: inter_arrival}, property: KS p value of inter_arrival of http1, observed: 0.003, target: "p value >= 0.05", passed: false}
+          - {metric: realism.check_failures, labels: {check: temporal}, property: failures of the temporal check, observed: 1, target: "== 0", passed: false}
+
+  - check: parser_errors
+    report: {parsers: [tshark]}
+    cases:
+      - name: passing
+        check_passed: true
+        metrics:
+          - {name: realism.parser_errors, labels: {application: http1, parser: tshark}, value: 0}
+          - {name: realism.parser_errors, labels: {application: all, parser: tshark}, value: 0}
+          - {name: realism.check_failures, labels: {check: parser_errors}, value: 0}
+        results:
+          - {metric: realism.parser_errors, labels: {application: http1, parser: tshark}, property: parser errors of http1 by tshark, observed: 0, target: "== 0", passed: true}
+          - {metric: realism.parser_errors, labels: {application: all, parser: tshark}, property: parser errors of all applications by tshark, observed: 0, target: "== 0", passed: true}
+          - {metric: realism.check_failures, labels: {check: parser_errors}, property: failures of the parser_errors check, observed: 0, target: "== 0", passed: true}
+      - name: failing
+        check_passed: false
+        note: Three errors in http1 sessions and one in a session that no labels rule names, so errors_total is 4.
+        metrics:
+          - {name: realism.parser_errors, labels: {application: http1, parser: tshark}, value: 3}
+          - {name: realism.parser_errors, labels: {application: all, parser: tshark}, value: 4}
+          - {name: realism.check_failures, labels: {check: parser_errors}, value: 4}
+        results:
+          - {metric: realism.parser_errors, labels: {application: http1, parser: tshark}, property: parser errors of http1 by tshark, observed: 3, target: "== 0", passed: false}
+          - {metric: realism.parser_errors, labels: {application: all, parser: tshark}, property: parser errors of all applications by tshark, observed: 4, target: "== 0", passed: false}
+          - {metric: realism.check_failures, labels: {check: parser_errors}, property: failures of the parser_errors check, observed: 4, target: "== 0", passed: false}
+      - name: failing without a parser
+        check_passed: false
+        note: No parser ran, so no parser_errors series exists, and check_failures alone shows the failure (1 for no parser).
+        metrics:
+          - {name: realism.check_failures, labels: {check: parser_errors}, value: 1}
+        results:
+          - {metric: realism.check_failures, labels: {check: parser_errors}, property: failures of the parser_errors check, observed: 1, target: "== 0", passed: false}
+
+  - check: encryption
+    report: {min_decrypted: 0.9}
+    cases:
+      - name: passing
+        check_passed: true
+        metrics:
+          - {name: realism.decrypted_ratio, labels: {}, value: 1.0}
+          - {name: realism.ja4_match_ratio, labels: {}, value: 1.0}
+          - {name: realism.check_failures, labels: {check: encryption}, value: 0}
+        results:
+          - {metric: realism.decrypted_ratio, labels: {}, property: decrypted TLS sessions, observed: 1.0, target: ">= 0.9", passed: true}
+          - {metric: realism.ja4_match_ratio, labels: {}, property: JA4 matched TLS sessions, observed: 1.0, target: ">= 1", passed: true}
+          - {metric: realism.check_failures, labels: {check: encryption}, property: failures of the encryption check, observed: 0, target: "== 0", passed: true}
+      - name: failing
+        check_passed: false
+        note: Five of ten sampled sessions decrypt (one failure sentence) and one JA4 mismatches (one sentence).
+        metrics:
+          - {name: realism.decrypted_ratio, labels: {}, value: 0.5}
+          - {name: realism.ja4_match_ratio, labels: {}, value: 0.9}
+          - {name: realism.check_failures, labels: {check: encryption}, value: 2}
+        results:
+          - {metric: realism.decrypted_ratio, labels: {}, property: decrypted TLS sessions, observed: 0.5, target: ">= 0.9", passed: false}
+          - {metric: realism.ja4_match_ratio, labels: {}, property: JA4 matched TLS sessions, observed: 0.9, target: ">= 1", passed: false}
+          - {metric: realism.check_failures, labels: {check: encryption}, property: failures of the encryption check, observed: 2, target: "== 0", passed: false}
+
+  - check: content
+    report: {max_duplicate_ratio: 0.01}
+    cases:
+      - name: passing
+        check_passed: true
+        metrics:
+          - {name: realism.duplicate_ratio, labels: {application: http1}, value: 0.0}
+          - {name: realism.check_failures, labels: {check: content}, value: 0}
+        results:
+          - {metric: realism.duplicate_ratio, labels: {application: http1}, property: duplicate payloads of http1, observed: 0.0, target: "<= 0.01", passed: true}
+          - {metric: realism.check_failures, labels: {check: content}, property: failures of the content check, observed: 0, target: "== 0", passed: true}
+      - name: failing
+        check_passed: false
+        metrics:
+          - {name: realism.duplicate_ratio, labels: {application: http1}, value: 0.2}
+          - {name: realism.check_failures, labels: {check: content}, value: 1}
+        results:
+          - {metric: realism.duplicate_ratio, labels: {application: http1}, property: duplicate payloads of http1, observed: 0.2, target: "<= 0.01", passed: false}
+          - {metric: realism.check_failures, labels: {check: content}, property: failures of the content check, observed: 1, target: "== 0", passed: false}
+
+  - check: session_structure
+    report: {}
+    cases:
+      - name: passing
+        check_passed: true
+        metrics:
+          - {name: realism.structure_failures, labels: {scenario: web_browse}, value: 0}
+          - {name: realism.check_failures, labels: {check: session_structure}, value: 0}
+        results:
+          - {metric: realism.structure_failures, labels: {scenario: web_browse}, property: structure failures of web_browse, observed: 0, target: "== 0", passed: true}
+          - {metric: realism.check_failures, labels: {check: session_structure}, property: failures of the session_structure check, observed: 0, target: "== 0", passed: true}
+      - name: failing
+        check_passed: false
+        note: Two broken rules in the instances of web_browse, so failures_total is 2.
+        metrics:
+          - {name: realism.structure_failures, labels: {scenario: web_browse}, value: 2}
+          - {name: realism.check_failures, labels: {check: session_structure}, value: 2}
+        results:
+          - {metric: realism.structure_failures, labels: {scenario: web_browse}, property: structure failures of web_browse, observed: 2, target: "== 0", passed: false}
+          - {metric: realism.check_failures, labels: {check: session_structure}, property: failures of the session_structure check, observed: 2, target: "== 0", passed: false}
+
+  - check: mix_accuracy
+    report: {classifier: ndpi, tolerance_points: 2, metrics_basis: sessions}
+    cases:
+      - name: passing
+        check_passed: true
+        note: The configured share of http1 is 60 percent.
+        metrics:
+          - {name: mix.share_pct, labels: {application: http1, source: classifier, classifier: ndpi}, value: 60.4}
+          - {name: mix.abs_error_pp, labels: {application: http1, source: classifier, classifier: ndpi}, value: 0.4}
+          - {name: mix.max_abs_error_pp, labels: {source: classifier, classifier: ndpi}, value: 0.4}
+          - {name: realism.check_failures, labels: {check: mix_accuracy}, value: 0}
+        results:
+          - {metric: mix.share_pct, labels: {application: http1, source: classifier, classifier: ndpi}, property: mix share of http1 by ndpi, observed: 60.4, target: within 2 points of 60, passed: true}
+          - {metric: mix.abs_error_pp, labels: {application: http1, source: classifier, classifier: ndpi}, property: mix error of http1 by ndpi, observed: 0.4, target: "<= 2", passed: true}
+          - {metric: mix.max_abs_error_pp, labels: {source: classifier, classifier: ndpi}, property: largest mix error by ndpi, observed: 0.4, target: "<= 2", passed: true}
+          - {metric: realism.check_failures, labels: {check: mix_accuracy}, property: failures of the mix_accuracy check, observed: 0, target: "== 0", passed: true}
+      - name: failing
+        check_passed: false
+        metrics:
+          - {name: mix.share_pct, labels: {application: http1, source: classifier, classifier: ndpi}, value: 52.0}
+          - {name: mix.abs_error_pp, labels: {application: http1, source: classifier, classifier: ndpi}, value: 8.0}
+          - {name: mix.max_abs_error_pp, labels: {source: classifier, classifier: ndpi}, value: 8.0}
+          - {name: realism.check_failures, labels: {check: mix_accuracy}, value: 1}
+        results:
+          - {metric: mix.share_pct, labels: {application: http1, source: classifier, classifier: ndpi}, property: mix share of http1 by ndpi, observed: 52.0, target: within 2 points of 60, passed: false}
+          - {metric: mix.abs_error_pp, labels: {application: http1, source: classifier, classifier: ndpi}, property: mix error of http1 by ndpi, observed: 8.0, target: "<= 2", passed: false}
+          - {metric: mix.max_abs_error_pp, labels: {source: classifier, classifier: ndpi}, property: largest mix error by ndpi, observed: 8.0, target: "<= 2", passed: false}
+          - {metric: realism.check_failures, labels: {check: mix_accuracy}, property: failures of the mix_accuracy check, observed: 1, target: "== 0", passed: false}
+
+  - check: transport_behavior
+    report: {strict: false}
+    cases:
+      - name: passing
+        check_passed: true
+        metrics:
+          - {name: realism.transport_deviations, labels: {property: ttl, side: client}, value: 0}
+          - {name: realism.transport_deviations, labels: {property: mss, side: server}, value: 0}
+          - {name: realism.check_failures, labels: {check: transport_behavior}, value: 0}
+        results:
+          - {metric: realism.transport_deviations, labels: {property: ttl, side: client}, property: ttl deviations of client SYN packets, observed: 0, target: "== 0", passed: true}
+          - {metric: realism.transport_deviations, labels: {property: mss, side: server}, property: mss deviations of server SYN-ACK packets, observed: 0, target: "== 0", passed: true}
+          - {metric: realism.check_failures, labels: {check: transport_behavior}, property: failures of the transport_behavior check, observed: 0, target: "== 0", passed: true}
+      - name: failing
+        check_passed: false
+        note: Five SYN packets carry another TTL than the profile, which is one deviation entry and so one failure sentence.
+        metrics:
+          - {name: realism.transport_deviations, labels: {property: ttl, side: client}, value: 5}
+          - {name: realism.transport_deviations, labels: {property: mss, side: server}, value: 0}
+          - {name: realism.check_failures, labels: {check: transport_behavior}, value: 1}
+        results:
+          - {metric: realism.transport_deviations, labels: {property: ttl, side: client}, property: ttl deviations of client SYN packets, observed: 5, target: "== 0", passed: false}
+          - {metric: realism.transport_deviations, labels: {property: mss, side: server}, property: mss deviations of server SYN-ACK packets, observed: 0, target: "== 0", passed: true}
+          - {metric: realism.check_failures, labels: {check: transport_behavior}, property: failures of the transport_behavior check, observed: 1, target: "== 0", passed: false}

@@ -10,7 +10,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.4 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
-| `metrics/catalog.yaml` | Metric catalog 0.4.0 |
+| `metrics/catalog.yaml` | Metric catalog 0.5.0 |
 | `examples/` | Example modules, tests, and plans that every validator run checks |
 
 ## Agent control protocol
@@ -266,3 +266,17 @@ CON-22 moves the controller API from 0.9.0 to 0.10.0. The owner approved the cha
 | `Agent.reserved_by` | Optional holder of the reservation: `operator`, or the run identifier. It is present whenever a reservation exists, also while the state is `offline` or `busy` |
 
 The consumers are the controller, the realism runner (a way to deliver), the CLI, the Web UI, and the Python SDK. The controller `APIVersion`, the generated Go code with the `AttachRealismReport` stubs of `api.Unimplemented` and `wiring.pending`, the SDK, and `ui/src/api/schema.d.ts` follow the document, and the coordinator refreshes them.
+
+## Catalog metrics for every realism check
+
+CON-23 moves the metric catalog from 0.4.0 to 0.5.0. The owner approved the change on 2026-11-10 and chose catalog metrics per check kind over a separate verdict list. Every part is additive, and the entry `contracts/changes/CON-23.md` records the metrics, the mapping rule, the compatibility, the consumers, and the follow up work. The OpenAPI document stays at 0.10.0, because only the text of two descriptions changes.
+
+| Change | Rule |
+|---|---|
+| `realism.check_failures` | New gauge with the label `check`. Every check of the realism report carries one series, with the number of reasons for which the check failed. It is 0 exactly when the check passed, so a failing check always shows in `RunReport.realism`, also when no parser ran or no session was sampled |
+| `realism.parser_errors`, `realism.decrypted_ratio`, `realism.ja4_match_ratio`, `realism.duplicate_ratio`, `realism.structure_failures`, `realism.transport_deviations` | New gauges for the checks `parser_errors`, `encryption`, `content`, `session_structure`, and `transport_behavior`. They sit at the end of the catalog, so the engine identifiers of the earlier metrics do not move |
+| Labels | New `check` and `parser`. `property` gains `ttl`, `df`, `mss`, `window_scale`, `sack`, `timestamps`, `options`, and `syn_window` for the transport check, and the text of `side` and `scenario` names the new uses |
+| Mapping | Each new metric has a target (`== 0`, `>= min_decrypted`, `>= 1`, `<= max_duplicate_ratio`) and a rule for `passed`. The `mix.` series get the targets `within tolerance_points points of the configured share` and `<= tolerance_points`. A metric that no row names keeps the target `check passed` |
+| Report schema | The schema under `realism/` is not part of this package. The change entry holds its exact change as a patch, which the runner package applies together with the emitters, and it moves the report format to 0.11.0 |
+
+The controller embeds a byte copy of the catalog, the engine mirrors it in `fps-stats`, and two tests pin the version, so the coordinator refreshes them and regenerates the Go code, the Python SDK, and the UI schema for the two descriptions.

@@ -6,7 +6,7 @@
 | Branch | `wp/CON-23` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-0540fd, lease until 2026-11-11T00:05:13Z |
 | Last verified commit | none |
 
@@ -18,22 +18,25 @@ Every check kind of `realism/schema/realism-report.schema.json` reports at least
 
 ## Plan
 
-- [ ] 1. Read what each realism check computes and design the metrics.
-- [ ] 2. Edit the catalog (version bump), the examples, and write `contracts/changes/CON-23.md`.
-- [ ] 3. Run `validate.py`, the contract tests, and the plan checks.
+- [x] 1. Read what each realism check computes and design the metrics.
+- [x] 2. Edit the catalog (version bump), the examples, and write `contracts/changes/CON-23.md`.
+- [x] 3. Run `validate.py`, the contract tests, and the plan checks.
 - [ ] 4. Open the PR, wait for CI, and request review.
 
 ## Done and verified
 
-Nothing yet.
+- Catalog 0.5.0 (seven gauges, labels `check` and `parser`, `property` values), OpenAPI description text, `contracts/changes/CON-23.md`, the schema patch, `contracts/examples/realism/check-metrics.yaml`, Contracts page, and log entry are written.
+- `python3 tools/contracts/validate.py`: 0 errors. `python3 -m pytest -q tools/contracts`: 288 passed, 2 failed as expected (version pin 0.4.0 and the byte copy of the catalog in `controller/`), until the coordinator applies the follow up.
+- `plan.py check`, `render --check`, and `lint`: ok.
+- Throwaway scripts checked every example case against the catalog and against the patched schema (the patch applies with `patch -p1` and gives the schema that the cases were tested with), including rejections.
 
 ## Remaining
 
-All steps.
+Open the PR, wait for CI, and request review. The follow up outside `contracts/` is for the coordinator.
 
 ## Next action
 
-Read `realism/parser_errors.py`, `encryption.py`, `content.py`, `structure.py`, `transport.py`, and `mix.py` for the values each check computes.
+Open the pull request and wait for CI.
 
 ## Blockers and open questions
 
@@ -41,7 +44,10 @@ none
 
 ## Decisions taken in this package
 
-none yet
+- A uniform `realism.check_failures` series for every check, because several checks fail with no per thing metric (no parser ran, no TLS session sampled, no profiled handshake, run counters off in the mix). Its value is 0 exactly when the check passed.
+- New metrics sit at the end of the catalog so the engine metric identifiers (catalog positions) do not move.
+- The OpenAPI version stays 0.10.0: only descriptions change (precedent CON-16).
+- The schema change is a patch file in `contracts/changes/`, because the schema is outside this package.
 
 ## Pitfalls
 
@@ -59,3 +65,4 @@ python3 -m pytest -q tools/contracts
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10 | claude-0540fd | claim | none | Claimed issue 430, branch wp/CON-23 from origin/main |
+| 2026-11-10 | claude-0540fd | checkpoint | see branch | Catalog, change entry, examples, patch, and wiki written; contract checks green except the two expected pins |
