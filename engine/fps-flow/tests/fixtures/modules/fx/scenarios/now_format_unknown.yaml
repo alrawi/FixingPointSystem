@@ -1,0 +1,8 @@
+scenario: now_format_unknown
+vars: { n: 7, width: 2, order: little, format: epoch_s }
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ now('rfc3339') }}"

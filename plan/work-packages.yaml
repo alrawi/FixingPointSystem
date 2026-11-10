@@ -2971,6 +2971,7 @@ work_packages:
     deliverables:
       - The agent runs multi flow scenarios through the ENG-23 worker, and modules.rs reads extension.wasm once, digests those bytes with the module tree, and compiles the same bytes.
       - Per ENG-23 - remove the one flow refusal in assemble.rs, refuse multi flow scenarios with a UDP flow, and compile with Scenario::parse_instance; register fps-module-http2 (a stateful Http2 value, see the MOD-05 log entry) in the module registry.
+      - Per ENG-24 and MOD-06 - build client connectors through TlsProfiles::with_client_factory (one per session, so server profiles may issue tickets again), set FlowRef::port to the plan port name, and offer the TRN-15 profiles (mail client without ALPN, server-tls13-h2).
     acceptance:
       - The controller e2e test runs an ftp plan through the real agent, and a test shows a swapped extension.wasm after the digest is never compiled.
 
@@ -3037,5 +3038,87 @@ work_packages:
       approval as a contract change.
     deliverables:
       - Built in functions for integer to bytes (width, endianness) and the current time (HTTP date, epoch seconds and milliseconds); the rule for variables across after; optional arrival and size distributions in the test configuration that realism targets can follow; an all value or property for the KS metrics. contracts/changes/CON-19.md.
+    acceptance:
+      - The contract checks pass and every change is additive.
+
+  # Batch 23 follow-ups (2026-11-10).
+
+  - id: RLM-12
+    title: A current nDPI and a shared decrypted view in the realism runner
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [MOD-20]
+    paths: [realism/]
+    summary: >-
+      The realism CI installs libndpi-bin 4.2.0, which has no HTTP/2 protocol, so the http2 module fails
+      conformance; nDPI 4.14 writes its CSV with a pipe separator and exits 1 on -h. Three modules carry
+      copies of decrypted_check.py. MOD-06 waits on this package; the apt hang of the install step is fixed separately (branch ci/apt-hang).
+    deliverables:
+      - realism/ci/install-tools.sh builds or installs a pinned nDPI 4.14 (cached), the classifier reads both CSV dialects and tolerates the -h exit code.
+      - python3 -m realism decrypted --pcap F --labels L that builds the decrypted view and scores it with nDPI and Zeek, replacing the copies in http1, smtp, imap, and http2.
+    acceptance:
+      - nDPI 4.14 classifies at least 99 percent of the cleartext sessions of the http2 fixture on wp/MOD-06 as HTTP2 (evidence in the PR), and http1, smtp, and imap pass with the shared decrypted check; the module workflows switch to it in the coordinator wrap-up.
+
+  - id: TRN-15
+    title: TLS plaintext backpressure and mail and h2 profiles
+    phase: 2
+    workstream: TRN
+    size: S
+    depends_on: [TRN-05]
+    paths: [modules/tls/]
+    summary: >-
+      TlsSession::poll_fill fails with "received plaintext buffer full" when one ciphertext chunk completes
+      more than 16 KiB of plaintext while earlier plaintext is unread (MOD-06), and there is no mail client
+      profile without ALPN and no h2 server profile (MOD-20, MOD-06).
+    deliverables:
+      - Treat a full plaintext buffer as backpressure (stop reading, keep the ciphertext, retry after the application drains); a mail client profile without ALPN; server profiles server-tls13-h2 and server-tls13-noalpn.
+    acceptance:
+      - A TLS test moves a 1 MiB body in one burst both ways, and handshakes with the new profiles negotiate the expected ALPN.
+
+  - id: ENG-25
+    title: int_bytes and now in the engine
+    phase: 2
+    workstream: ENG
+    size: S
+    depends_on: [CON-19]
+    paths: [engine/fps-flow/, engine/fps-interp/]
+    summary: >-
+      CON-19 defined the built in functions int_bytes and now; the engine does not implement them.
+    deliverables:
+      - int_bytes(value, width, endianness) and now(format) with a clock seam that tests pin; verdicts.yaml parity fixtures for both.
+    acceptance:
+      - Unit tests cover every width, both endiannesses, the error cases, and the three now formats under a pinned clock, and the parity fixtures pass in Rust and Python.
+
+  - id: CTL-38
+    title: Distributions in the compiler and scenario counts in the run report
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CON-19]
+    paths: [controller/internal/compiler/, controller/internal/registry/, controller/internal/report/]
+    summary: >-
+      A test configuration with the CON-19 arrival or size fields passes the store's schema but fails the
+      compiler's strict decoder; the registry does not type int_bytes and now; and the run report has no
+      per scenario counts, so the RLM-07 mix check needs the metric series (RLM-07 finding).
+    deliverables:
+      - The compiler accepts arrival and size (carried through to the report for realism targets), the registry types int_bytes and now, and the run report has a scenarios table with sessions and bytes.
+    acceptance:
+      - Golden plans for a configuration with distributions, and a report test with the scenarios table that the RLM-07 check reads.
+
+  - id: CON-20
+    title: Stream events, metric source label, and provenance fields
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [CON-19]
+    paths: [contracts/]
+    summary: >-
+      UI-04 found the SSE end event, the retry field, the event ids, and the 501 of a controller without a
+      stream undocumented; RLM-07 found the mix metrics cannot say their source; CAP-03 found the manifest
+      provenance has no fields for the capture digest, scrub rules, and date. Needs owner approval as a
+      contract change.
+    deliverables:
+      - Document the stream's event names, ids, retry, and 501; add a source label to the mix metrics; add optional provenance fields (capture_sha256, scrub_rules with versions, scrubbed_at). contracts/changes/CON-20.md.
     acceptance:
       - The contract checks pass and every change is additive.

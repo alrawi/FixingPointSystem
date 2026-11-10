@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# Metric catalog, contract v0.2. Every metric that the agent records, the
+# Metric catalog, contract v0.3. Every metric that the agent records, the
 # controller derives, the API serves, or a test criterion names appears here
 # once. contracts/metrics/catalog.schema.json defines the format, and
 # tools/contracts/validate.py checks every metric reference against this file.
 catalog: fps-metrics
-version: 0.2.0
+version: 0.3.0
 
 # A reference to a histogram, in a test criterion or a report, appends one of
 # these statistic suffixes to the histogram name, for example
@@ -13,7 +13,11 @@ histogram_statistics: [p50, p90, p99, p999, min, max, mean, count]
 
 labels:
   application:
-    description: Module name of the application, for example http1.
+    description: >-
+      Module name of the application, for example http1, or the value all for
+      a total over every application of the run. A metric that documents the
+      value all reports it next to the per application series, and no module
+      may be named all.
   scenario:
     description: Scenario name within the module, for example web_get.
   flow:
@@ -53,8 +57,12 @@ labels:
     description: Independent classifier of the realism pipeline.
     values: [ndpi, zeek]
   property:
-    description: Distribution that the realism pipeline compares with the target model.
-    values: [session_bytes, request_bytes, response_bytes, inter_arrival, session_duration]
+    description: >-
+      Distribution that the realism pipeline compares with the target model.
+      request_bytes holds the payload sizes of the client to server direction,
+      response_bytes those of the server to client direction, and both the
+      payload sizes of the two directions pooled.
+    values: [session_bytes, request_bytes, response_bytes, inter_arrival, session_duration, both]
   alert:
     description: TLS alert description name in lower snake case, for example handshake_failure.
   port:
@@ -98,14 +106,14 @@ metrics:
     level: application
     view: realism
     labels: [application, property]
-    description: Kolmogorov Smirnov statistic between the observed distribution and the target model.
+    description: Kolmogorov Smirnov statistic between the observed distribution and the target model. The application value all compares the sessions of every application together.
   - name: realism.ks_p_value
     type: gauge
     unit: ratio
     level: application
     view: realism
     labels: [application, property]
-    description: p value of the Kolmogorov Smirnov test for the same comparison as realism.ks_statistic.
+    description: p value of the Kolmogorov Smirnov test for the same comparison as realism.ks_statistic, with the same application values and properties.
 
   # --- scenario level --------------------------------------------------------
   # The application view of the API also serves these metrics, summed over the

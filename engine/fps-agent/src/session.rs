@@ -53,6 +53,7 @@ use crate::convert::{self, plan_from_pb, snapshot_to_pb};
 use crate::identity::{self, Identity, IdentityError, TlsConfig};
 use crate::modules::ModuleError;
 use crate::pb::{self, AgentState, ErrorCode};
+use crate::portfilter::{self, PortNets};
 use crate::run::{self, Prepared, RunError, SERVER_RAMP_DOWN};
 use crate::trust::ModulePolicy;
 
@@ -411,6 +412,8 @@ struct Core {
 struct Live {
     /// The names of the port bindings of the plan.
     ports: Vec<String>,
+    /// The host pool prefixes of the plan by port, which a capture port name selects.
+    pools: Vec<PortNets>,
     /// The seed of the plan, which seeds the capture.
     seed: u64,
     /// The rate registries, once the workers run.
@@ -823,10 +826,9 @@ impl Shared {
                 Err(e) => return error(reply, ErrorCode::InvalidArgument, e.to_string()),
             },
         };
-        let (ports, seed) = core
-            .live
-            .as_ref()
-            .map_or((Vec::new(), 0), |l| (l.ports.clone(), l.seed));
+        let (ports, pools, seed) = core.live.as_ref().map_or((Vec::new(), Vec::new(), 0), |l| {
+            (l.ports.clone(), l.pools.clone(), l.seed)
+        });
         let started = self.captures.start(
             &cmd.plan_id,
             &cmd.capture_id,
@@ -836,6 +838,7 @@ impl Shared {
             cmd.max_bytes,
             max_duration,
             &ports,
+            &pools,
             seed,
             cmd.export_tls_keys,
         );
@@ -1089,6 +1092,7 @@ impl Shared {
                 .iter()
                 .map(|p| p.name.clone())
                 .collect(),
+            pools: portfilter::port_nets(prepared.plan()),
             seed: prepared.plan().seed,
             rates: None,
         });

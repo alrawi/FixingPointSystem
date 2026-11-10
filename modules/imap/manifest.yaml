@@ -3,7 +3,7 @@ kind: Module
 name: imap
 version: 0.1.0
 type: app
-summary: IMAP clients and servers with LOGIN, SELECT, EXAMINE, FETCH with literals, SEARCH, STORE, APPEND, IDLE, and LOGOUT, tag sequencing, and continuation responses.
+summary: IMAP clients and servers with STARTTLS, LOGIN, SELECT, EXAMINE, FETCH with literals, SEARCH, STORE, APPEND, IDLE, and LOGOUT, tag sequencing, and continuation responses.
 engine_api: ">=0.2, <0.3"
 license: GPL-3.0-only
 provides:
@@ -111,6 +111,7 @@ scenarios:
   - scenarios/search_store.yaml
   - scenarios/login_append.yaml
   - scenarios/idle_push.yaml
+  - scenarios/starttls_mailbox.yaml
 fixtures:
   - { capture: fixtures/imap.pcapng, expect: { ndpi: [IMAP] } }
 provenance:

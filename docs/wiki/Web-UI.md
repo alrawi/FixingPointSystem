@@ -18,7 +18,7 @@ The record accepts the larger React bundle in exchange for the most widely teste
 
 ## Live metrics
 
-The API streams metrics as Server Sent Events and authenticates with bearer tokens. The browser `EventSource` interface cannot send an `Authorization` header, so the UI reads the stream with `fetch()` and a local parser. The UI keeps samples outside React state and pushes them to uPlot directly, so a once per second stream does not re-render the page.
+The API streams metrics as Server Sent Events and authenticates with bearer tokens. The browser `EventSource` interface cannot send an `Authorization` header, so the UI reads the stream with `fetch()` and a local parser. The UI keeps samples outside React state, so a once per second stream does not re-render the page once per event. D11 names uPlot for the drawing, and UI-04 draws with a small SVG chart instead, as the section on the run views explains.
 
 ## Where to read more
 
@@ -127,3 +127,82 @@ Unit tests cover the text model, the schema messages, and the round trip of the 
 ### Choices and limits
 
 We added `ajv` and `yaml` as runtime dependencies, which were development dependencies at UI-02. Both are MIT and ISC, and `npm run check:licenses` passes. Ajv compiles the schema with `new Function`, so a future Content-Security-Policy for the UI that forbids `unsafe-eval` needs a precompiled validator. The controller sets no such policy on the UI today.
+
+## Run launch and live metrics
+
+UI-04 added the run views. `/runs` starts a run and lists the runs, and `/runs/{id}` follows one run live. The main navigation gained the entry Runs. The run views are part of the initial bundle, which grew from 112.2 kB to 119.6 kB gzip against the budget of 250 kB.
+
+### Views
+
+| Path | View | Behavior |
+|---|---|---|
+| `/runs` | `ui/src/pages/RunsPage.tsx` | A form with a select of the stored configurations (`listConfigs`) and a checkbox for each agent (`listAgents`), and a table of the runs, newest first (`listRuns`). Leaving every agent unchecked sends no `agents` field, and the controller then picks the reserved agents. Offline and busy agents cannot be checked. `/runs?config={id}` preselects a configuration. A refusal of `startRun` shows the detail of the problem. The list reads again on every visit and every few seconds while a run is active |
+| `/runs/{id}` | `ui/src/pages/RunPage.tsx` | The state of the run, the states that the view saw in order, the reason and the degraded flag, the start and end times, a Stop run button with a Force box, nine counters, and five charts |
+
+`startRun` opens the view of the new run. The run state comes from `getRun`, which the view polls once per second until the state is final, and from the answer of `stopRun`. The API has no log of state transitions, so the list of transitions holds the states that the view saw, which are all of them when the view opens at the start of a run. Stop run shows while the run is pending, preparing, or running. A stop request moves the run to stopping, and the button gives way to a sentence. A forced stop sends `force: true`.
+
+### Counters and charts
+
+The view reads the `application` view of the metrics with `side=client`. Its samples carry the scenario metrics summed over scenarios, keyed by the application, which is the module name. The counters add each metric over the applications of the newest tick: sessions attempted, succeeded, and failed, the failed ratio (failed over attempted), sessions per second, concurrent sessions, throughput, and bytes sent and received. Until the first sample arrives the counters show the `summary` of the run. The five charts show the response time and the session duration with the statistics p50, p90, and p99, which belong to one application, so a select picks the application when the run has more than one, and the rates, the concurrency, and the throughput, summed over applications. The charts read the histogram statistics as the catalog names them, for example `sessions.response_time.p99`, in microseconds.
+
+Every chart is a small SVG line chart written for the project in `ui/src/runs/LineChart.tsx`, and it shows the newest 300 points. Each line differs by color and by dash pattern. A legend lists the newest value of each line as text, and a disclosure under the chart opens a table with the newest ten samples, so the chart is never the only way to read a value. The picture has a title and a description that name the newest values.
+
+### Choice of the chart
+
+D11 names uPlot, which is not in the lock file. The charts of the run view have at most three lines of a few hundred points, so we wrote the SVG chart instead of adding a dependency. It adds no license question and no weight beyond a few kilobytes, and a test can read its points in jsdom, which has no canvas. The rule of D11 that samples stay outside React state still holds: `ui/src/runs/metricsStore.ts` keeps a ring of the newest 600 ticks and tells the page once per flush. The page renders when a tick completes and not once per event, because the store flushes 100 ms after the last event of a tick. If a later package needs charts with many thousands of points, it can put uPlot behind the same `LineChart` props. We list this deviation from D11 for the owner in the log entry of UI-04.
+
+### Event stream, reconnect, and polling
+
+`ui/src/runs/useRunMetrics.ts` follows the metrics of one run.
+
+1. It reads `getRunMetrics` for the `application` view once, so a view that opens in the middle of a run has history.
+2. It reads `GET /runs/{id}/metrics:stream?view=application&side=client` with the fetch based reader of UI-01, which sends the bearer token. The stream carries one event per application and tick, whose `data` is a `MetricSample`, and whose `id` is the tick number of the connection. The event `end` carries the run state in its data and closes the stream. The reader follows the `retry` field.
+3. After a dropped connection the reader reconnects with `Last-Event-ID`, and the view then reads `getRunMetrics` from the newest tick that it holds, because the stream sends only the newest tick of each connection, so the ticks of the gap would be lost otherwise. Samples merge by time and application, so overlaps do no harm. When the run reaches a final state while the connection is down, the view reads the metrics once more and stops.
+4. A 501 answer to the stream means that the controller has no stream, as the CLI treats it in `fps watch`. The view then polls `getRunMetrics` every second with `from` set to the newest tick until the run is final and one more poll has run. Any other client error ends the feed with a message, and a 401 or 403 signs the user out.
+
+A line above the counters says which mode applies, which are connecting, live, reconnecting, polling, ended, and failed.
+
+### Mock server
+
+The mock serves `listRuns`, `startRun`, `getRun`, `stopRun`, `getRunMetrics`, and `streamRunMetrics` in `ui/mock/runs.ts`. A run follows a fixed script on a clock that a test can replace: pending, preparing, running for a set number of ticks, and then completed. A stop request moves it through stopping to aborted, and a forced stop aborts it at once. The mock fills the `application` and `scenario` views and answers every other view with no samples. Every value is a function of the tick number, and every timestamp is the tick number added to a fixed start time, so the tests state the expected numbers as literals. The option `runs` sets the clock, the length of a tick, and the length of a run, `streamDrops` cuts the first connections of the stream, and the `faults` option can answer the stream with 501 or 401. `mock/runs.test.ts` validates every response against the OpenAPI document, parses the stream with the reader of the UI, and checks every `data` field against the `MetricSample` schema and the event names `message` and `end`.
+
+### Tests
+
+`ui/src/runs/fixtures/run-stream.sse` is a recording of the stream of a mock run of `http_smoke`: the retry field, ten ticks, and the end event. `npm run record:stream` makes it again from the mock server over HTTP. The acceptance test in `ui/src/pages/Runs.test.tsx` replays it into the run view in two chunks per event that cut the events in the middle, checks the counters and the chart points after three ticks and after the end event, and checks that the bearer token went out with the stream request. Further component tests cover the start form with agents, the states from pending to aborted with a stop, a forced stop, a run that opens in the middle, a missing run, an error of the list, a reconnect with `Last-Event-ID` and no missing tick, the polling fallback on 501, and a rejected token on the stream. Unit tests cover the store, the chart geometry, and the number formats. The Playwright test `ui/e2e/runs.spec.ts` starts a run against the mock in Chromium, waits for live values, stops the run, and runs axe-core with the contrast rule. The development sandbox has no browser, so CI runs it.
+
+### Limits
+
+The charts read the `application` view only. The views `port`, `tcp`, `tls`, and `realism` are not drawn yet, and the server side of the sessions (`side=server`) has no switch. A run that outlives the ring shows its newest ten minutes.
+
+## Reports and run comparison
+
+UI-05 added the report view `/runs/{id}/report` and the comparison view `/compare`. Both read `GET /runs/{id}/report` through `fetchRunReport` and use no other endpoint, apart from `GET /runs` for the run selects. The Runs page links every run to its report and to the comparison, and the live view of a run links to its report. The two views are part of the initial bundle, which grew from 119.6 kB to 123.0 kB gzip against the budget of 250 kB, and no dependency was added.
+
+### Views
+
+| Path | View | Behavior |
+|---|---|---|
+| `/runs/{id}/report` | `ui/src/pages/ReportPage.tsx` | The verdict as one word (Passed, Failed, or No verdict) with the reason and the degraded notice, the run facts (state, configuration, times, duration, seed, engine version, modules), a table of the criteria with the observed value, the result, and the reason, a table of the realism results with observed value, target, and result, and the totals of the run. A run that is still active shows a sentence in place of results and reads the report again every few seconds until the run is final |
+| `/compare?a={id}&b={id}` | `ui/src/pages/ComparePage.tsx` | Two selects for run A and run B, kept in the query string so the link can be shared, and tables that put the runs side by side: the run facts, the totals with the change from A to B, the criteria, and the realism results, each criteria and realism row with a Change column. A summary sentence above the tables counts the results that got worse. The same run on both sides, a run that does not exist, and a report that fails to load each show a message |
+
+Every outcome is a word, so color never carries the meaning alone. The words are Passed, Failed, and No value for a criterion, and Same, Now fails, Now passes, Differs, Only in run A, and Only in run B for a change. The tables carry row and column headers, and both views run axe-core in the component tests.
+
+### What the report holds
+
+The comparison model is in `ui/src/reports/compare.ts`, and its functions are pure.
+
+1. A criterion with `passed` and `observed` shows both. A criterion whose metric has no value carries neither and shows No value with its reason. This follows the `CriterionResult` schema, and the controller reports a missing metric this way, as `controller/internal/report` documents.
+2. The criteria of two runs pair by metric, operator, and value. The API does not carry the `where` filter of a criterion, so two criteria that agree in those three fields pair in order of appearance, and the view cannot tell which label each one selects.
+3. The realism results pair by property name, and the Target column shows both targets when the runs differ.
+4. A change is Now fails when a result passed in A and failed in B, and Now passes for the reverse. A pair with a missing value on one side is Differs, and a row that only one run has is Only in run A or Only in run B.
+5. The totals are the `RunSummary` fields plus the failed ratio, which the view derives as failed over attempted. The change column shows the difference with a sign and a percentage of A, and the failed ratio shows percentage points. A change from zero shows no percentage.
+
+The controller returns `realism: []` today (`Report.API` fills only the verdict), so the realism sections show a sentence for runs of that controller. They already draw results that a later controller package fills in. The report endpoint also serves CSV and HTML, which a browser needs the bearer token to download, so the views do not link them. A later package can fetch them with `fetch()` and save the body.
+
+### Mock server
+
+`mock/reports.ts` evaluates the criteria of the configuration against the summary of a finished run with the wording of the controller (`observed 0.02 == 0 does not hold`), and `mock/runs.ts` serves the report through `runs.report`. The mock knows one metric, `sessions.failed_ratio`, so a criterion on any other metric, such as a mix error, has no value. The realism results are fixed, and a run with failed sessions also fails `response_bytes.ks_statistic`. Two options of `MockRunOptions` make a passing and a failing run in one server. `failedEvery(ordinal, configId)` sets every how many sessions one fails, and 0 means none, with 50 as the default that earlier tests expect. `verdictStates` makes a run whose criteria fail end in `failed` with the reason of the controller, as the real controller does, and it is off by default, so the scripts of UI-04 still end in `completed`. The report of an active or aborted run has no verdict and no realism results. The mock answers `format=csv` and `format=html` with 501, as the controller does for HTML when no renderer is set. `mock/runs.test.ts` validates every report against the OpenAPI document.
+
+### Tests
+
+`ui/src/pages/Reports.test.tsx` runs the whole UI against the mock and states every number as a literal. It covers a passing run (verdict, criteria, realism, totals, facts), a failing run (reason, failed criterion, failed realism result, totals), a criterion without a value, a run in progress, an aborted run, a missing run, a server error, a rejected token, the links from the run list and the run view, and the comparison: the totals and the changes, the swapped order, runs of different configurations whose criteria only one run has, the two selects with the query string, a link that preselects run A, a missing run, and a run in progress. Unit tests in `ui/src/reports/compare.test.ts` cover the outcomes, the pairing, the change words, and the totals. The development sandbox has no browser, so no Playwright test covers the report views yet.

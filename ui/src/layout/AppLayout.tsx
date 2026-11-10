@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: "/", label: "Capabilities", end: true },
   { to: "/modules", label: "Modules", end: false },
   { to: "/configs", label: "Configurations", end: false },
+  { to: "/runs", label: "Runs", end: false },
 ] as const;
 
 /**

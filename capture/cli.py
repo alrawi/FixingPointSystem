@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
 import json
 import sys
 from collections import Counter
@@ -13,6 +15,7 @@ from typing import Any
 from .decode import Packet, Skip, decode
 from .fields import Config
 from .pcapio import CaptureError, open_capture
+from .profile import BASES, DEFAULT_MIN_SAMPLES, ProfileError, build_profile
 from .scenario import (
     ScenarioError,
     generate,
@@ -20,7 +23,16 @@ from .scenario import (
     provenance_record,
     select_sessions,
 )
+from .scrub import ScrubError, check_record, scrub_document, sha256_bytes
 from .sessions import DEFAULT_UDP_IDLE_S, build_document
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def extract(
@@ -57,6 +69,7 @@ def extract(
         source = {
             "file": path.name,
             "format": reader.format,
+            "sha256": _file_sha256(path),
             "frames": frames,
             "packets": len(packets),
             "skipped_frames": dict(sorted(skipped.items())),
@@ -114,14 +127,19 @@ def _add_scenario_parser(sub: Any) -> None:
                    help="license of the generated module (default %(default)s)")  # fmt: skip
     p.add_argument("--synthetic", action="store_true",
                    help="record the provenance as synthetic, for your own traffic")  # fmt: skip
-    p.add_argument("--consent", metavar="TEXT",
-                   help="consent note for the provenance of a real capture")  # fmt: skip
-    p.add_argument("--scrubbed", action="store_true",
-                   help="state that the sessions went through scrubbing (CAP-03)")  # fmt: skip
+    for removed in ("--consent", "--scrubbed"):
+        p.add_argument(removed, nargs="?", const="", default=None, help=argparse.SUPPRESS)
     p.add_argument("--report", type=Path, help="write the generation report as JSON")
 
 
 def _run_scenario(args: argparse.Namespace) -> int:
+    if args.consent is not None or args.scrubbed is not None:
+        print(
+            "capture: --consent and --scrubbed are gone: run `python3 -m capture scrub "
+            "--consent TEXT` on the sessions, and the manifest takes both from its record",
+            file=sys.stderr,
+        )
+        return 1
     cfg = Config(
         fill_min=args.fill_min,
         opaque_min=args.opaque_min,
@@ -133,10 +151,11 @@ def _run_scenario(args: argparse.Namespace) -> int:
     try:
         doc = load_sessions(args.sessions)
         sessions = select_sessions(doc, None if args.all else args.session)
+        record, problems = check_record(doc)
         prov, notes = provenance_record(
             synthetic=args.synthetic,
-            consent=args.consent,
-            scrubbed=args.scrubbed,
+            scrub=record,
+            problems=problems,
             source_name=doc["source"]["file"],
         )
         files, report = generate(
@@ -173,11 +192,169 @@ def _run_scenario(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_scrub_parser(sub: Any) -> None:
+    p = sub.add_parser(
+        "scrub",
+        help="remove personal data and credentials from extracted sessions",
+        description="Rewrite a sessions document that was written with `sessions --payloads` so "
+        "that it holds no real addresses, user names, passwords, tokens or email addresses, "
+        "and add the scrub record that `scenario` needs for a manifest that validates.",
+    )
+    p.add_argument("--sessions", type=Path, required=True, help="session JSON to scrub")
+    p.add_argument("--out", type=Path, help="scrubbed JSON, default standard output")
+    p.add_argument("--consent", required=True, metavar="TEXT",
+                   help="who allowed the use of the capture, recorded in the manifest")  # fmt: skip
+    p.add_argument("--hostnames", action="store_true",
+                   help="also replace host names (Host, URLs, EHLO)")  # fmt: skip
+    p.add_argument("--hostname", action="append", default=[], metavar="NAME",
+                   help="replace this host name everywhere (repeatable)")  # fmt: skip
+    p.add_argument("--redact", action="append", default=[], metavar="TEXT",
+                   help="replace this text everywhere, such as a name (repeatable)")  # fmt: skip
+    p.add_argument("--redact-file", type=Path, metavar="FILE",
+                   help="like --redact, one text per line, so it stays out of the shell "
+                   "history")  # fmt: skip
+    p.add_argument("--drop-port", type=int, action="append", default=[], metavar="PORT",
+                   help="remove the sessions that use this port, for protocols that "
+                   "the scrubber cannot read (repeatable)")  # fmt: skip
+    p.add_argument("--seed", type=int, default=1, help="seed of the replacements (default 1)")
+    p.add_argument("--date", metavar="YYYY-MM-DD", help="date in the record (default today, UTC)")
+    p.add_argument("--report", type=Path, help="write the scrub record as JSON")
+
+
+def _run_scrub(args: argparse.Namespace) -> int:
+    try:
+        raw = args.sessions.read_bytes()
+        doc = json.loads(raw)
+        literals = list(args.redact)
+        if args.redact_file is not None:
+            literals += [
+                ln for ln in args.redact_file.read_text(encoding="utf-8").splitlines() if ln
+            ]
+        date = args.date or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        if not isinstance(doc, dict) or not str(doc.get("schema_version", "")).startswith("1."):
+            raise ScrubError(f"{args.sessions} is not a session document of schema version 1.x")
+        out = scrub_document(
+            doc,
+            consent=args.consent,
+            input_sha256=sha256_bytes(raw),
+            date=date,
+            seed=args.seed,
+            hostnames=args.hostnames,
+            extra_hosts=args.hostname,
+            literals=literals,
+            drop_ports=args.drop_port,
+        )
+        text = json.dumps(out, indent=2) + "\n"
+        if args.out is None:
+            sys.stdout.write(text)
+        else:
+            args.out.write_text(text, encoding="utf-8")
+        if args.report is not None:
+            args.report.write_text(json.dumps(out["scrub"], indent=2) + "\n", encoding="utf-8")
+    except (ScrubError, OSError, ValueError) as exc:
+        print(f"capture: cannot scrub: {exc}", file=sys.stderr)
+        return 1
+    rec = out["scrub"]
+    pb = rec["payload_bytes"]
+    done = ", ".join(f"{r['id']} {r['applied']}" for r in rec["rules"] if r["applied"]) or "none"
+    print(
+        f"capture: scrubbed: {done}; payload bytes {pb['before']} to {pb['after']} "
+        f"({pb['delta']:+d}); {rec['opaque_bytes']} bytes of binary payload were only swept",
+        file=sys.stderr,
+    )
+    if rec["opaque_bytes"]:
+        print(
+            "capture: warning: binary payloads (DNS names, TLS handshakes, other binary "
+            "protocols) are not parsed; check them or remove them with --drop-port",
+            file=sys.stderr,
+        )
+    return 0
+
+
+def _add_profile_parser(sub: Any) -> None:
+    p = sub.add_parser(
+        "profile",
+        help="derive an application mix and temporal models from a capture",
+        description="Read a sessions document (or a capture, which is extracted first) and "
+        "write a test profile: the mix of applications, the arrival model of sessions, and "
+        "the size models of requests and responses, fitted per application. The profile "
+        "holds counts, times, and sizes only, never payload bytes or addresses.",
+    )
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--sessions", type=Path, help="session JSON, scrubbed or not")
+    src.add_argument("--pcap", type=Path, help="pcap or pcapng capture")
+    p.add_argument("--out", type=Path, help="output file, default standard output")
+    p.add_argument("--basis", choices=BASES, default="sessions",
+                   help="weight the mix by sessions or by payload bytes "
+                   "(default %(default)s)")  # fmt: skip
+    p.add_argument("--app", action="append", default=[], metavar="RULE",
+                   help="name an application: [tcp:|udp:]PORT[-PORT]=NAME on the server "
+                   "port, for example 8443-8446=https (repeatable, wins over the "
+                   "built-in ports)")  # fmt: skip
+    p.add_argument("--no-default-apps", action="store_true",
+                   help="use only the --app rules, not the table of well known ports")  # fmt: skip
+    p.add_argument("--min-samples", type=int, default=DEFAULT_MIN_SAMPLES, metavar="N",
+                   help="fit a model only from at least this many observations "
+                   "(default %(default)s)")  # fmt: skip
+    p.add_argument("--profile-only", action="store_true",
+                   help="write only the `profile` object, to paste into a test "
+                   "configuration")  # fmt: skip
+    p.add_argument("--udp-idle-timeout", type=float, default=DEFAULT_UDP_IDLE_S,
+                   metavar="SECONDS", help="with --pcap: a UDP flow idle for longer "
+                   "starts a new session (default %(default)s)")  # fmt: skip
+
+
+def _run_profile(args: argparse.Namespace) -> int:
+    try:
+        if args.sessions is not None:
+            try:
+                doc = json.loads(args.sessions.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise ProfileError(f"cannot read {args.sessions}: {exc}") from exc
+        else:
+            if args.udp_idle_timeout <= 0:
+                raise ProfileError("--udp-idle-timeout must be positive")
+            doc = extract(args.pcap, udp_idle_s=args.udp_idle_timeout)
+        out = build_profile(
+            doc,
+            basis=args.basis,
+            app_rules=args.app,
+            defaults=not args.no_default_apps,
+            min_samples=args.min_samples,
+        )
+        body = out["profile"] if args.profile_only else out
+        text = json.dumps(body, indent=2) + "\n"
+        if args.out is None:
+            sys.stdout.write(text)
+        else:
+            args.out.write_text(text, encoding="utf-8")
+    except (ProfileError, CaptureError) as exc:
+        print(f"capture: cannot profile: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"capture: cannot write the profile: {exc}", file=sys.stderr)
+        return 1
+    mix = ", ".join(f"{e['scenario']} {e['weight']:g}" for e in out["profile"]["mix"])
+    print(f"capture: profile on {args.basis}: {mix}", file=sys.stderr)
+    lost = out["unclassified"]["sessions"]
+    if lost:
+        print(
+            f"capture: warning: {lost} sessions match no application and stay out of the "
+            "mix; name their server ports with --app",
+            file=sys.stderr,
+        )
+    for note in out["notes"]:
+        print(f"capture: warning: {note}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command line and return the exit code."""
     parser = argparse.ArgumentParser(prog="python3 -m capture", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     _add_scenario_parser(sub)
+    _add_scrub_parser(sub)
+    _add_profile_parser(sub)
     p = sub.add_parser("sessions", help="extract TCP sessions and UDP flows as JSON")
     p.add_argument("--pcap", type=Path, required=True, help="pcap or pcapng capture")
     p.add_argument("--out", type=Path, help="output file, default standard output")
@@ -193,6 +370,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "scenario":
         return _run_scenario(args)
+    if args.command == "scrub":
+        return _run_scrub(args)
+    if args.command == "profile":
+        return _run_profile(args)
     if args.udp_idle_timeout <= 0:
         parser.error("--udp-idle-timeout must be positive")
     try:

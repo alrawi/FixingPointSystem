@@ -36,9 +36,25 @@
 # demands a server side volume that no run reaches and must end failed, which
 # shows that the criterion with the label decides the verdict. No SMTP STARTTLS
 # scenario exists before MOD-20, so the STARTTLS path is tested by the runtime
-# tests of ENG-20, and the agent tests of AGT-14 cover https. A capture of the
-# run is not part of this script, because the REST capture needs a port that
-# the agent refuses (AGT-12); tests/tls.rs decrypts the capture of an https run.
+# tests of ENG-20, and the agent tests of AGT-14 cover https.
+#
+# A fifth test (AGT-12) captures through the REST API of the controller. On a dns
+# run it starts a capture with the server port of the run, stops it with
+# POST /v1/runs/{id}/captures/{capture_id}:stop, downloads it, and checks the
+# digest, size, and packet count against Capture.files, and that the pcapng
+# holds only UDP packets of that port. A port with no session leaves a valid file
+# with no packet, and a port name of the test configuration records the sessions
+# of its pools. On an https run a capture with export_tls_keys true must hold a
+# decryption secrets block (pcapng type 0x0A) with the TLS key log, which closes
+# the loop of AGT-14, and one without must hold none. A small reader in this
+# script parses the files, and tshark reads them as well when it is installed.
+#
+# A sixth test (AGT-16) runs the ftp/mixed_session scenario of the first party ftp
+# module, which has a control flow and three spawned data flows. The agent runs
+# it as a scenario instance, so every instance gives four succeeded sessions of
+# the application ftp, the control connection and one data connection for each
+# of the three transfers. The run passes only when the agent lifts the check on
+# the number of flows and compiles the scenario with its `spawn` actions.
 #
 # The tail of the script checks the handshake failures. An agent that trusts
 # another CA ends with exit code 2 and a TLS error before it spends its
@@ -173,6 +189,9 @@ cp -r "$here/../../../modules/smtp" "$modules/smtp"
 # The manifest names fixtures/smtp.pcapng, and the registry checks that the
 # tree holds every file that the manifest names, so the fixtures stay.
 rm -r "$modules/smtp/native" "$modules/smtp/tests"
+# ftp requires content, which is installed above (AGT-16).
+cp -r "$here/../../../modules/ftp" "$modules/ftp"
+rm -r "$modules/ftp/native" "$modules/ftp/tests"
 cat >"$modules/dns/zones/e2e.test.zone" <<'EOF'
 $ORIGIN e2e.test.
 $TTL 60
@@ -196,7 +215,7 @@ done
 [[ $(stat -c %a "$work/agent-pki/agent.key") == 600 ]] || fail "the agent key is not mode 0600"
 
 # content goes before smtp, which requires it.
-for name in http1 dns content smtp; do
+for name in http1 dns content smtp ftp; do
   (cd "$modules/$name" && tar -czf "$work/$name.tar.gz" -- *)
   call POST /v1/modules "$admin" -H 'Content-Type: application/gzip' --data-binary "@$work/$name.tar.gz" >/dev/null
 done
@@ -378,6 +397,46 @@ smtp_succeeded=$(succeeded_of smtp)
 [[ $smtp_succeeded -gt 0 ]] || fail "the smtp run $run counted no succeeded sessions: $metrics"
 echo "controller_e2e: run $run relayed mail through the first party smtp and content modules with $smtp_succeeded succeeded sessions, verdict passed"
 
+# The ftp session of AGT-16: one control connection that spawns three data
+# connections, a listing, a download, and an upload. The data ports come from a
+# range of the scenario variables. The criteria bound the failed ratio, which
+# allows for an instance that the stop of the run cuts, and the script checks
+# that at least one whole instance of four sessions succeeded.
+cat >"$work/ftp_mixed.yaml" <<EOF
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: ftp_mixed
+  description: FTP sessions with spawned data flows of the first party ftp module.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/$iface }
+    - { name: server0, location: local/$iface }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 127.99.0.0/24, count: 16 }
+    - { name: servers, port: server0, role: server, ipv4: 127.100.0.0/24, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - scenario: ftp/mixed_session
+      weight: 1
+      params: { server_port: 18684, server_ip: 127.100.0.1, data_port_min: 53000, data_port_max: 53999 }
+load:
+  objective: { type: sessions_per_second, value: 5 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: 13 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "<=", value: 0.1 }
+  - { metric: sessions.succeeded, op: ">", value: 3 }
+EOF
+run_test "$work/ftp_mixed.yaml"
+[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the ftp run $run did not pass: $summary"
+ftp_succeeded=$(succeeded_of ftp)
+[[ $ftp_succeeded -ge 4 ]] || fail "the ftp run $run counted $ftp_succeeded succeeded sessions, want at least one instance of four: $metrics"
+echo "controller_e2e: run $run ran ftp scenario instances with $ftp_succeeded succeeded sessions (control and data connections), verdict passed"
+
 # The https fetch of AGT-14. Both sides of every session upgrade to TLS at
 # once: the client with the browser profile chrome-136, the server with
 # server-tls13, whose certificate comes from the authority that the agent
@@ -431,6 +490,154 @@ run_test "$work/https_fetch_fail.yaml" failed
 grep -q "\"run_id\":\"$run\".*criteria failed" "$work/controller.log" || fail "the https run $run did not fail its criteria"
 [[ $(succeeded_of http1) -gt 0 ]] || fail "the https run $run counted no succeeded sessions: $metrics"
 echo "controller_e2e: run $run ended failed on its server side criterion while its TLS sessions succeeded"
+
+# pcap_report FILE PORT prints a JSON object that describes the pcapng FILE: the
+# number of section headers, enhanced packet blocks, decryption secrets blocks,
+# TCP and UDP packets, the packets with PORT as source or destination port, and
+# whether a secrets block holds a TLS key log with a client traffic secret. It
+# checks every block length, and fails on a file that is not a valid pcapng
+# file of Ethernet frames. It reads the file with no code of the agent.
+pcap_report() {
+  python3 -I - "$1" "$2" <<'EOF'
+import json, struct, sys
+
+data = open(sys.argv[1], "rb").read()
+want = int(sys.argv[2])
+r = dict(sections=0, packets=0, secrets=0, tcp=0, udp=0, on_port=0, keylog=False)
+at = 0
+while at < len(data):
+    if at + 12 > len(data):
+        sys.exit("block at %d is cut" % at)
+    kind, length = struct.unpack_from("<II", data, at)
+    if length < 12 or length % 4 or at + length > len(data):
+        sys.exit("block at %d has the length %d" % (at, length))
+    if struct.unpack_from("<I", data, at + length - 4)[0] != length:
+        sys.exit("block at %d has two lengths" % at)
+    if kind == 0x0A0D0D0A:
+        if data[at + 8:at + 12] != b"\x4d\x3c\x2b\x1a":
+            sys.exit("section at %d is not little endian" % at)
+        r["sections"] += 1
+    elif kind == 6:
+        r["packets"] += 1
+        cap = struct.unpack_from("<I", data, at + 20)[0]
+        f = data[at + 28:at + 28 + cap]
+        if f[12:14] == b"\x08\x00":
+            proto, l4 = f[23], f[14 + (f[14] & 15) * 4:]
+        elif f[12:14] == b"\x86\xdd":
+            proto, l4 = f[20], f[54:]
+        else:
+            sys.exit("packet %d is no IP frame" % r["packets"])
+        if proto not in (6, 17):
+            sys.exit("packet %d has the protocol %d" % (r["packets"], proto))
+        r["tcp" if proto == 6 else "udp"] += 1
+        sport, dport = struct.unpack_from(">HH", l4, 0)
+        if want in (sport, dport):
+            r["on_port"] += 1
+    elif kind == 0x0A:
+        r["secrets"] += 1
+        stype, slen = struct.unpack_from("<II", data, at + 8)
+        text = data[at + 16:at + 16 + slen]
+        if stype == 0x544C534B and b"CLIENT_TRAFFIC_SECRET_0" in text:
+            r["keylog"] = True
+    at += length
+print(json.dumps(r))
+EOF
+}
+
+# begin_run FILE stores the test configuration FILE, starts a run on the agent
+# `local`, and waits until the agent runs it. It sets run.
+begin_run() {
+  local config report
+  config=$(call POST /v1/configs "$runner" -H 'Content-Type: application/yaml' --data-binary "@$1" | json_field id)
+  report=$(call POST "/v1/configs/$config:validate" "$runner")
+  [[ $(json_field valid <<<"$report") == True ]] || fail "the configuration $1 is not valid: $report"
+  run=$(call POST /v1/runs "$runner" -H 'Content-Type: application/json' -d "{\"config_id\":\"$config\",\"agents\":[\"local\"]}" | json_field id)
+  wait_run running
+  sleep 2
+}
+
+# end_run stops the run of begin_run and waits for the completed run.
+end_run() {
+  call POST "/v1/runs/$run:stop" "$runner" -H 'Content-Type: application/json' -d '{}' >/dev/null
+  wait_run completed
+}
+
+# take_capture LABEL PORT KEYS NUMBER starts a capture with PORT and
+# export_tls_keys KEYS (true or false) on the running run, lets traffic flow,
+# stops it, downloads it, and checks the download against Capture.files: the
+# state, the content type, the size, the SHA-256, and the packet count. It sets
+# report to the pcap_report of the file, which counts the packets of port NUMBER.
+take_capture() {
+  local label=$1 port=$2 keys=$3 number=$4 started cap stopped out want got
+  out="$work/capture-$label.pcapng"
+  started=$(call POST "/v1/runs/$run/captures" "$runner" -H 'Content-Type: application/json' \
+    -d "{\"port\":\"$port\",\"export_tls_keys\":$keys}")
+  cap=$(json_field id <<<"$started")
+  [[ -n $cap ]] || fail "$label: no capture id in $started"
+  [[ $(json_field port <<<"$started") == "$port" ]] || fail "$label: the capture answered another port: $started"
+  [[ $(json_field state <<<"$started") == running ]] || fail "$label: the capture is not running: $started"
+  sleep 2
+  stopped=$(call POST "/v1/runs/$run/captures/$cap:stop" "$runner")
+  [[ $(json_field state <<<"$stopped") == completed ]] || fail "$label: the stopped capture is not completed: $stopped"
+  [[ $(json_field files.0.agent <<<"$stopped") == local ]] || fail "$label: the file is not of the agent local: $stopped"
+  call GET "/v1/runs/$run/captures/$cap" "$runner" -D "$work/capture.headers" -o "$out"
+  grep -qi '^content-type: application/vnd.tcpdump.pcap' "$work/capture.headers" ||
+    fail "$label: the download has another content type: $(cat "$work/capture.headers")"
+  want=$(json_field files.0.digest <<<"$stopped")
+  got="sha256:$(sha256sum "$out" | cut -d' ' -f1)"
+  [[ $want == "$got" ]] || fail "$label: the SHA-256 of the download is $got, Capture.files says '$want'"
+  [[ $(stat -c %s "$out") == "$(json_field files.0.bytes <<<"$stopped")" ]] ||
+    fail "$label: the download has $(stat -c %s "$out") bytes, Capture.files says: $stopped"
+  report=$(pcap_report "$out" "$number") || fail "$label: the download is not a valid pcapng file"
+  [[ $(json_field sections <<<"$report") -ge 1 ]] || fail "$label: the download has no section header: $report"
+  [[ $(json_field packets <<<"$report") == "$(json_field files.0.packets <<<"$stopped")" ]] ||
+    fail "$label: the file holds a different number of packets than Capture.files: $report $stopped"
+  if command -v tshark >/dev/null; then
+    [[ $(tshark -r "$out" -T fields -e frame.number 2>/dev/null | wc -l) == "$(json_field packets <<<"$report")" ]] ||
+      fail "$label: tshark reads another number of packets: $report"
+  fi
+}
+
+# The dns capture of AGT-12. The port of the capture is the server port of the
+# run, which the agent matches against the server end of every session.
+dns_test 'modules:
+  dns:
+    settings:
+      zone_file: zones/e2e.test.zone' >"$work/dns_capture.yaml"
+begin_run "$work/dns_capture.yaml"
+take_capture dns 18681 false 18681
+[[ $(json_field packets <<<"$report") -gt 0 ]] || fail "the dns capture holds no packet: $report"
+[[ $(json_field tcp <<<"$report") == 0 && $(json_field udp <<<"$report") == "$(json_field packets <<<"$report")" ]] ||
+  fail "the dns capture holds more than UDP: $report"
+[[ $(json_field on_port <<<"$report") == "$(json_field packets <<<"$report")" ]] ||
+  fail "the dns capture holds packets of another port: $report"
+[[ $(json_field secrets <<<"$report") == 0 ]] || fail "the dns capture holds a secrets block: $report"
+dns_packets=$(json_field packets <<<"$report")
+# A port that no session uses leaves a valid file with no packet.
+take_capture dns_none 9 false 9
+[[ $(json_field packets <<<"$report") == 0 ]] || fail "the capture of port 9 holds packets: $report"
+# The name of a port of the test configuration records the sessions of its pools.
+take_capture dns_name server0 false 18681
+[[ $(json_field packets <<<"$report") -gt 0 && $(json_field tcp <<<"$report") == 0 ]] ||
+  fail "the capture of the port server0 holds no dns packet: $report"
+end_run
+echo "controller_e2e: run $run captured $dns_packets dns packets of port 18681 through the REST API, and the digest, size, and packet count of Capture.files held"
+
+# The https capture of AGT-12 and AGT-14: with export_tls_keys the file holds the
+# TLS key log as a decryption secrets block, and without it the file holds none.
+https_test 4000 >"$work/https_capture.yaml"
+begin_run "$work/https_capture.yaml"
+take_capture https_keys 18683 true 18683
+https_packets=$(json_field packets <<<"$report")
+[[ $https_packets -gt 0 && $(json_field udp <<<"$report") == 0 ]] || fail "the https capture holds no TCP packet: $report"
+[[ $(json_field on_port <<<"$report") == "$https_packets" ]] || fail "the https capture holds packets of another port: $report"
+[[ $(json_field secrets <<<"$report") -ge 1 && $(json_field keylog <<<"$report") == True ]] ||
+  fail "the https capture with export_tls_keys holds no TLS key log block: $report"
+take_capture https_plain client0 false 18683
+[[ $(json_field packets <<<"$report") -gt 0 && $(json_field secrets <<<"$report") == 0 ]] ||
+  fail "the https capture without export_tls_keys holds a secrets block or no packet: $report"
+end_run
+echo "controller_e2e: run $run captured $https_packets https packets, and the file with export_tls_keys held a TLS key log in a decryption secrets block"
 
 # A CA that is not the controller CA. The agent checks the enrollment endpoint
 # against it, so the handshake fails before the token leaves the agent.

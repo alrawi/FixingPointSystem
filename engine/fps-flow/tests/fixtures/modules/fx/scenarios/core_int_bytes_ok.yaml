@@ -1,0 +1,16 @@
+scenario: core_int_bytes_ok
+vars: { n: 7, width: 2, order: little, format: epoch_s }
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ int_bytes(258, 2) }}"
+      - send: "{{ int_bytes(258, 2, 'little') }}"
+      - send: "{{ int_bytes(value=vars.n, width=4, endianness='big') }}"
+      - send: "{{ int_bytes(9223372036854775807, 8) }}"
+      - send: "{{ int_bytes(255, 1) }}"
+      - send: "{{ int_bytes(0, 1) }}"
+      - send: "{{ int_bytes(rand_int(1, 200), vars.n) }}"
+      - send: "{{ int_bytes(vars.n, 2, vars.order) }}"
+      - send: "{{ int_bytes(vars.n, vars.width) }}"

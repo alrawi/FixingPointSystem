@@ -1,0 +1,12 @@
+## [2026-11-10] ingest | UI-05 Reports and run comparison
+
+The UI has a report view at `/runs/{id}/report` and a comparison view at `/compare?a=&b=`. The report shows the verdict, the run facts, a table of the criteria with observed value, result, and reason, a table of the realism results, and the totals. The comparison puts two runs side by side with the facts, the totals and their change from A to B, the criteria, and the realism results, marks every row as Same, Now fails, Now passes, Differs, or only in one run, and counts the results that got worse. Both views read only `GET /runs/{id}/report`, and the comparison selects read `GET /runs`. The Runs page and the live run view link to the report. The mock server serves `getRunReport` with a verdict that it computes from the configuration criteria, and `mock/runs.test.ts` validates the reports against the OpenAPI document. Component tests cover a passing run, a failing run, and a comparison, with literal numbers. We described the views, the model, the mock, and the tests in [Web UI](Web-UI.md).
+
+No dependency was added. The initial JavaScript grew from 119.6 kB to 123.0 kB gzip against 250 kB.
+
+### Shared page notes
+
+- Testing: the UI level gains `ui/src/pages/Reports.test.tsx`, `ui/src/reports/compare.test.ts`, `ui/src/runs/format.test.ts`, and report cases in `ui/mock/runs.test.ts`. All run inside the existing `make test-ui`, so no target changes. No Playwright test covers the report views, because the sandbox has no browser. UI-07 can cover them through the labels in `Reports.test.tsx`.
+- Contracts: no change. Observations for the owner. `CriterionResult` has no `where`, so a report cannot tell two criteria that differ only in their label filter apart, and the UI pairs them in order of appearance. `RunReport.realism` is always empty in the controller today (`controller/internal/report/report.go`, `Report.API`), so the UI shows a sentence in place of the realism table for real runs until a package fills it. `RunReport` has no per application or per scenario breakdown, so the comparison covers run totals only. `GET /runs/{id}/report` answers any run, including one that is still active, and its verdict is absent until the run ends, which the UI treats as No verdict.
+- Decisions: none.
+- Implementation Plan: UI-05 is done once merged. UI-07 can use the headings and table names of the report and comparison views.

@@ -1,0 +1,182 @@
+scenario: scp_download
+description: "A file download with scp, in which the server is the source. The key exchange and the authentication are the same as in interactive_shell. The client runs scp -f in an exec channel and follows the scp protocol: the sink starts with a zero byte, the source announces C0644 size name, the sink answers, and the source sends vars.file_bytes bytes in packets of vars.chunk bytes and ends with a zero byte that the sink answers. The client grants vars.window_step bytes with SSH_MSG_CHANNEL_WINDOW_ADJUST after every vars.batch packets. Then the server sends the exit status, EOF, and close."
+vars:
+  server_port: 22
+  client_banner: OpenSSH_9.6p1 Ubuntu-3ubuntu13.5
+  server_banner: OpenSSH_9.6p1 Ubuntu-3ubuntu13.5
+  host_key_seed: 1
+  window: 2097152
+  max_packet: 32768
+  exec_command: scp -f /srv/export/report-202611.tar.gz
+  file_name: report-202611.tar.gz
+  file_bytes: 262144
+  chunk: 32768
+  batch: 32
+  window_step: 1048576
+flows:
+  - id: session
+    module: ssh
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ ssh.banner(vars.client_banner) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { peer: "{{ ssh.peer_banner(last) }}" }
+      - send: "{{ ssh.kexinit() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'kexinit') }}" }
+      - send: "{{ ssh.ecdh_init() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'ecdh_reply') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'newkeys') }}" }
+      - send: "{{ ssh.newkeys() }}"
+      - set: { user: "{{ ssh.credential('user') }}" }
+      - send: "{{ ssh.service_request() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'service_accept') }}" }
+      - send: "{{ ssh.auth_none(vars.user) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'userauth_failure') }}" }
+      - send: "{{ ssh.auth_password(vars.user, ssh.credential('password')) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'userauth_success') }}" }
+      - send: "{{ ssh.channel_open(vars.window, vars.max_packet) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_confirm') }}" }
+      - send: "{{ ssh.channel_request('exec', vars.exec_command) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_success') }}" }
+      - set: { full: "{{ ssh.div(vars.file_bytes, vars.chunk) }}", tail: "{{ ssh.rem(vars.file_bytes, vars.chunk) }}" }
+      - set: { rounds: "{{ ssh.div(vars.full, vars.batch) }}", left: "{{ ssh.rem(vars.full, vars.batch) }}", tail_n: "{{ ssh.flag(vars.tail) }}" }
+      # the scp sink starts with a zero byte, then the source announces the file
+      - send: "{{ ssh.channel_data(hex('00')) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_data') }}" }
+      - send: "{{ ssh.channel_data(hex('00')) }}"
+      - loop:
+          count: "{{ vars.rounds }}"
+          do:
+            - loop:
+                count: "{{ vars.batch }}"
+                do:
+                  - expect: { bytes: 4, timeout_ms: 10000 }
+                  - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+                  - set: { got: "{{ ssh.recv(last, 'channel_data') }}" }
+            - send: "{{ ssh.window_adjust(vars.window_step) }}"
+      - loop:
+          count: "{{ vars.left }}"
+          do:
+            - expect: { bytes: 4, timeout_ms: 10000 }
+            - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+            - set: { got: "{{ ssh.recv(last, 'channel_data') }}" }
+      - loop:
+          count: "{{ vars.tail_n }}"
+          do:
+            - expect: { bytes: 4, timeout_ms: 10000 }
+            - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+            - set: { got: "{{ ssh.recv(last, 'channel_data') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_data') }}" }
+      - send: "{{ ssh.channel_data(hex('00')) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_request') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_eof') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_close') }}" }
+      - send: "{{ ssh.channel_close() }}"
+      - send: "{{ ssh.disconnect() }}"
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "{{ ssh.banner(vars.server_banner) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { peer: "{{ ssh.peer_banner(last) }}" }
+      - send: "{{ ssh.kexinit() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'kexinit') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'ecdh_init') }}" }
+      - send: "{{ ssh.ecdh_reply(vars.host_key_seed) }}"
+      - send: "{{ ssh.newkeys() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'newkeys') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'service_request') }}" }
+      - send: "{{ ssh.service_accept() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'userauth_request') }}" }
+      - send: "{{ ssh.auth_failure() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'userauth_request') }}" }
+      - delay: { ms: "{{ rand_int(5, 25) }}" }
+      - send: "{{ ssh.auth_success() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_open') }}" }
+      - send: "{{ ssh.channel_confirm(vars.window, vars.max_packet) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_request') }}" }
+      - send: "{{ ssh.channel_success() }}"
+      - set: { full: "{{ ssh.div(vars.file_bytes, vars.chunk) }}", tail: "{{ ssh.rem(vars.file_bytes, vars.chunk) }}" }
+      - set: { rounds: "{{ ssh.div(vars.full, vars.batch) }}", left: "{{ ssh.rem(vars.full, vars.batch) }}", tail_n: "{{ ssh.flag(vars.tail) }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_data') }}" }
+      - send: "{{ ssh.channel_data(ssh.scp_header(vars.file_bytes, vars.file_name)) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_data') }}" }
+      - loop:
+          count: "{{ vars.rounds }}"
+          do:
+            - loop:
+                count: "{{ vars.batch }}"
+                do:
+                  - send: "{{ ssh.channel_data(ssh.chunk(vars.chunk, 'binary')) }}"
+            - expect: { bytes: 4, timeout_ms: 10000 }
+            - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+            - set: { got: "{{ ssh.recv(last, 'window_adjust') }}" }
+      - loop:
+          count: "{{ vars.left }}"
+          do:
+            - send: "{{ ssh.channel_data(ssh.chunk(vars.chunk, 'binary')) }}"
+      - loop:
+          count: "{{ vars.tail_n }}"
+          do:
+            - send: "{{ ssh.channel_data(ssh.chunk(vars.tail, 'binary')) }}"
+      - send: "{{ ssh.channel_data(hex('00')) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_data') }}" }
+      - delay: { ms: "{{ rand_int(5, 30) }}" }
+      - send: "{{ ssh.exit_status(0) }}"
+      - send: "{{ ssh.channel_eof() }}"
+      - send: "{{ ssh.channel_close() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'channel_close') }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ssh.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ssh.recv(last, 'disconnect') }}" }
+      - close: fin

@@ -1,0 +1,113 @@
+* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ STARTTLS LOGINDISABLED] imap.example.test Dovecot ready.
+* CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ STARTTLS LOGINDISABLED
+A001 OK Pre-login capabilities listed, post-login capabilities have more (0.005 + 0.002 secs).
+A002 OK Begin TLS negotiation now.
+* CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ AUTH=PLAIN
+A003 OK Pre-login capabilities listed, post-login capabilities have more (0.009 + 0.001 secs).
+A004 OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE SORT UIDPLUS MOVE NAMESPACE CHILDREN] Logged in
+* FLAGS (\Answered \Flagged \Deleted \Seen \Draft)
+* OK [PERMANENTFLAGS (\Answered \Flagged \Deleted \Seen \Draft \*)] Flags permitted.
+* 3 EXISTS
+* 0 RECENT
+* OK [UNSEEN 1] First unseen.
+* OK [UIDVALIDITY 1021807414] UIDs valid
+* OK [UIDNEXT 1004] Predicted next UID
+A005 OK [READ-WRITE] Select completed (0.003 + 0.001 secs).
+* 1 FETCH (UID 1001 FLAGS (\Seen) RFC822.SIZE 21580)
+* 2 FETCH (UID 1002 FLAGS (\Answered \Seen) RFC822.SIZE 66223)
+* 3 FETCH (UID 1003 FLAGS (\Seen) RFC822.SIZE 107918)
+A006 OK Fetch completed (0.006 + 0.003 secs).
+* 2 FETCH (UID 1002 FLAGS (\Answered \Seen) BODY[] {1473}
+From: noklizer.geiliduk@example.test
+To: stihusou.mahi@example.test
+Subject: Documents 8891
+Date: Sat, 07 Nov 2026 22:50:47 +0000
+Message-ID: <51a7075a44a65ec7f325d61f@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_d6bc441a26596db68925"
+
+This is a multi-part message in MIME format.
+--=_fps_d6bc441a26596db68925
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Dunae,
+
+A patient teacher shares the results with the group before the winter begins
+(9671). The old bridge repairs the broken clocks. A small workshop shares
+the results with the group near the harbour (4525).
+
+Ref: CASE-470268
+
+Kind regards,
+Iloquapel Orara
+Support desk
+iloquapel.orara@example.test
+--=_fps_d6bc441a26596db68925
+Content-Type: application/zip; name="archive.zip"
+Content-Disposition: attachment; filename="archive.zip"
+Content-Transfer-Encoding: base64
+
+UEsDBBQAAAAAAAAAIVoTQEqz0wAAANMAAAATAAAAcmVwb3J0LTJkMWU4OTJmLnR4dFRoZSBxdWll
+dCByaXZlciB3ZWxjb21lcyBldmVyeSB2aXNpdG9yLiBUaGUgb2xkIGJyaWRnZSB3ZWxjb21lcyBl
+dmVyeSB2aXNpdG9yLiBUaGUgcXVpZXQgcml2ZXIgb3BlbnMgdGhlIGRvb3JzIGF0IGRhd24gYmVm
+b3JlIHRoZSB3aW50ZXIgYmVnaW5zICgxMzgzKS4KClRoZSBub3J0aGVybiBzdGF0aW9uIGtlZXBz
+IHRoZSByZWNvcmRzIGluIG9yZGVyICgxNDU0KS4gVGhQSwECFAAUAAAAAAAAACFaE0BKs9MAAADT
+AAAAEwAAAAAAAAAAAAAAAAAAAAAAcmVwb3J0LTJkMWU4OTJmLnR4dFBLBQYAAAAAAQABAEEAAAAE
+AQAAAAA=
+--=_fps_d6bc441a26596db68925--
+)
+A007 OK Fetch completed (0.006 + 0.001 secs).
+* 2 FETCH (UID 1002 FLAGS (\Answered \Seen) BODY[] {2014}
+From: gouhul.kaidokloun@example.test
+To: bele.vude@example.test
+Cc: boudratral.hailil@example.test
+Subject: Documents 8865
+Date: Mon, 14 Dec 2026 07:15:22 +0000
+Message-ID: <fd3d6da95c96dcf4b317d61c@example.test>
+MIME-Version: 1.0
+X-Mailer: FixingPointSystem Mail 0.1
+Content-Type: multipart/mixed; boundary="=_fps_9d704964541186660288"
+
+This is a multi-part message in MIME format.
+--=_fps_9d704964541186660288
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Tenka,
+
+The morning market measures the water each week with great care. A small
+workshop keeps the records in order with great care (4564). The old bridge
+carries a long list of notes. The northern station opens the doors at dawn
+with great care.
+
+Ref: BKG-225100
+
+Kind regards,
+Pelra Dupel
+Support desk
+pelra.dupel@example.test
+--=_fps_9d704964541186660288
+Content-Type: application/pdf; name="statement.pdf"
+Content-Disposition: attachment; filename="statement.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4K
+ZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4K
+ZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAg
+MCA2MTIgNzkyXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAw
+IFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAxNDUgPj4Kc3RyZWFtCkJUIC9G
+MSAxNCBUZiA1MCA3ODAgVGQgKERvY3VtZW50IGI3MTQ2ZTlmMzYpIFRqIEVUCkJUIC9GMSAxMCBU
+ZiA1MCA3NjAgVGQgKFRoZSBvbGQgYnJpZGdlIHJlcGFpcnMgdGhlIGJyb2tlbiBjbG9ja3MgaW4g
+dGhlIGVhcmx5IGV2ZW5pbmcuKSBUaiBFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5
+cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4
+cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMTUgMDAwMDAgbiAKMDAwMDAwMDA2
+NCAwMDAwMCBuIAowMDAwMDAwMTIxIDAwMDAwIG4gCjAwMDAwMDAyNDcgMDAwMDAgbiAKMDAwMDAw
+MDQ0MiAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDYgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVm
+CjUxMgolJUVPRgo=
+--=_fps_9d704964541186660288--
+)
+A008 OK Fetch completed (0.004 + 0.000 secs).
+* BYE Logging out
+A009 OK Logout completed (0.004 + 0.003 secs).

@@ -166,6 +166,7 @@ fn expected_responses(s: &Scenario, seed: u64, session_id: u64, n: usize) -> Vec
             rng: &mut rng,
             filler: &filler,
             functions: &mut none,
+            clock: &fps_flow::SystemClock,
         };
         send.render_into(&mut ctx, &mut out).unwrap();
     }

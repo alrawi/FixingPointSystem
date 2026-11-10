@@ -3,7 +3,7 @@ kind: Module
 name: smtp
 version: 0.1.0
 type: app
-summary: SMTP clients and servers for relay and authenticated submission with EHLO, AUTH PLAIN and LOGIN, pipelining, and MIME messages with base64 attachments.
+summary: SMTP clients and servers for relay and authenticated submission with EHLO, STARTTLS, AUTH PLAIN and LOGIN, pipelining, and MIME messages with base64 attachments.
 engine_api: ">=0.2, <0.3"
 license: GPL-3.0-only
 provides:
@@ -76,13 +76,14 @@ functions:
     params:
       - { name: message, type: bytes }
   - name: ehlo_reply
-    summary: Multi line 250 reply to EHLO that advertises PIPELINING, SIZE, ETRN, AUTH, 8BITMIME, ENHANCEDSTATUSCODES, and SMTPUTF8. An empty auth leaves out the AUTH line.
+    summary: Multi line 250 reply to EHLO that advertises PIPELINING, SIZE, ETRN, 8BITMIME, ENHANCEDSTATUSCODES, and SMTPUTF8, plus STARTTLS when starttls is true and AUTH when auth names mechanisms.
     params:
       - { name: domain, type: text }
       - { name: client, type: text }
       - { name: auth, type: text, default: "" }
       - { name: pipelining, type: boolean, default: true }
       - { name: size, type: int, default: 35882577 }
+      - { name: starttls, type: boolean, default: false }
   - name: repeat_line
     summary: The line written count times, each with a CRLF, for the answers to a pipelined batch of commands.
     params:
@@ -95,6 +96,7 @@ scenarios:
   - scenarios/submission_plain.yaml
   - scenarios/submission_login.yaml
   - scenarios/submission_batch.yaml
+  - scenarios/starttls_submission.yaml
 fixtures:
   - { capture: fixtures/smtp.pcapng, expect: { ndpi: [SMTP], zeek: [smtp] } }
 provenance:

@@ -1,0 +1,8 @@
+scenario: now_http_date_is_text
+vars: { n: 7, width: 2, order: little, format: epoch_s }
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ fill(now('http_date')) }}"

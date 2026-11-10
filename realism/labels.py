@@ -48,7 +48,11 @@ _TOP_LEVEL = {
     "content",
     "structure",
     "temporal",
+    "mix",
 }
+_MIX_FIELDS = {"test_config", "run_report", "basis", "tolerance_points", "weights", "scenarios"}
+_MIX_SCENARIO_FIELDS = {"application", "ndpi"}
+MIX_BASES = ("sessions", "bytes", "both")
 _STRUCTURE_FIELDS = {"scenarios", "max_gap_s", "tolerance_s"}
 _STRUCTURE_SCENARIO_FIELDS = {"file", "vars", "match", "expected_instances"}
 DEFAULT_STRUCTURE_TOLERANCE_S = 0.0
@@ -243,6 +247,39 @@ class TemporalLabels:
     targets: tuple[TemporalTarget, ...] = ()
 
 
+@dataclass(frozen=True)
+class MixScenario:
+    """The application that one scenario of the mix stands for.
+
+    ``application`` names the application as the session rules and the ``applications``
+    section do, so the nDPI names of the conformance check apply. ``ndpi`` lists protocol
+    names for this application instead, and it is absent when the conformance names apply.
+    """
+
+    application: str
+    ndpi: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class MixLabels:
+    """Settings of the mix accuracy check.
+
+    ``scenarios`` maps each scenario of the mix to its application. The configured weights come
+    from ``test_config`` (a test configuration file, relative to the labels file) or from
+    ``weights`` (scenario to weight). ``run_report`` is the file with the achieved counts per
+    scenario, relative to the labels file. ``basis`` is ``sessions``, ``bytes``, or ``both`` and
+    defaults to ``profile.basis`` of the test configuration. ``tolerance_points`` is the largest
+    difference in percentage points, 2 when absent.
+    """
+
+    scenarios: Mapping[str, MixScenario] = field(default_factory=dict)
+    test_config: str | None = None
+    run_report: str | None = None
+    basis: str | None = None
+    tolerance_points: float | None = None
+    weights: Mapping[str, float] = field(default_factory=dict)
+
+
 @dataclass
 class Labels:
     """The expected labels of one capture."""
@@ -255,6 +292,7 @@ class Labels:
     content: ContentLabels | None = None
     structure: StructureLabels | None = None
     temporal: TemporalLabels | None = None
+    mix: MixLabels | None = None
     base_dir: Path | None = None
 
     def tls_profile_of(self, session: Session) -> str | None:
@@ -354,6 +392,7 @@ def parse(doc: Any, source: str = "<labels>") -> Labels:
         content=_content(doc["content"], where) if "content" in doc else None,
         structure=_structure(doc["structure"], where) if "structure" in doc else None,
         temporal=_temporal(doc["temporal"], where) if "temporal" in doc else None,
+        mix=_mix(doc["mix"], where) if "mix" in doc else None,
     )
 
 
@@ -456,6 +495,63 @@ def _structure(value: Any, where: str) -> StructureLabels:
         scenarios=tuple(scenarios),
         max_gap_s=float(gap) if gap is not None else None,
         tolerance_s=float(tolerance),
+    )
+
+
+def _mix(value: Any, where: str) -> MixLabels:
+    """Validate the mix section of the mix accuracy check."""
+    here = f"{where} mix"
+    if not isinstance(value, dict) or set(value) - _MIX_FIELDS:
+        raise LabelsError(f"{here}: must be a mapping with only {sorted(_MIX_FIELDS)}")
+    raw = value.get("scenarios")
+    if not isinstance(raw, dict) or not raw:
+        raise LabelsError(f"{here}.scenarios: must be a non empty mapping from scenario to entry")
+    scenarios: dict[str, MixScenario] = {}
+    for name, entry in raw.items():
+        if isinstance(entry, str):
+            entry = {"application": entry}
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(entry, dict)
+            or set(entry) - _MIX_SCENARIO_FIELDS
+            or not _is_name(entry.get("application"))
+        ):
+            raise LabelsError(
+                f"{here}.scenarios.{name}: must be an application name or a mapping with an "
+                f"application and only {sorted(_MIX_SCENARIO_FIELDS)}"
+            )
+        ndpi = entry.get("ndpi")
+        if ndpi is not None and (
+            not isinstance(ndpi, list) or not ndpi or not all(_is_name(n) for n in ndpi)
+        ):
+            raise LabelsError(f"{here}.scenarios.{name}.ndpi: must be a list of protocol names")
+        scenarios[name] = MixScenario(entry["application"], tuple(ndpi) if ndpi else None)
+    for key in ("test_config", "run_report"):
+        if key in value and not _is_name(value[key]):
+            raise LabelsError(f"{here}.{key}: must be a file path")
+    basis = value.get("basis")
+    if basis is not None and basis not in MIX_BASES:
+        raise LabelsError(f"{here}.basis: must be one of {', '.join(MIX_BASES)}")
+    tolerance = value.get("tolerance_points")
+    if tolerance is not None and (not _finite(tolerance) or not 0 <= tolerance <= 100):
+        raise LabelsError(f"{here}.tolerance_points: must be a number from 0 to 100")
+    weights = value.get("weights", {})
+    if not isinstance(weights, dict) or not all(
+        isinstance(k, str) and k and _finite(w) and w > 0 for k, w in weights.items()
+    ):
+        raise LabelsError(f"{here}.weights: must map scenario names to numbers above 0")
+    if "test_config" in value and weights:
+        raise LabelsError(f"{here}: give test_config or weights, not both")
+    if weights and basis is None:
+        raise LabelsError(f"{here}.basis: is required with weights, because no test says it")
+    return MixLabels(
+        scenarios=scenarios,
+        test_config=value.get("test_config"),
+        run_report=value.get("run_report"),
+        basis=basis,
+        tolerance_points=float(tolerance) if tolerance is not None else None,
+        weights={k: float(w) for k, w in weights.items()},
     )
 
 

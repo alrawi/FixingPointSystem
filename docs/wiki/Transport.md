@@ -9,7 +9,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | Crate | Contents | Next package |
 |---|---|---|
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `Connector`, `KernelListener`, and `KernelStream`, which implement `SessionIo` over kernel TCP sockets, the operating system profiles of TRN-03, and `KernelDatagram`, `KernelDatagramListener`, and the two datagram openers of TRN-02, see [Kernel UDP backend](#kernel-udp-backend) | TRN-04 added TLS, see below |
-| [`fps-module-tls`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/tls) | `TlsConnector`, `TlsAcceptor`, and `TlsSession`, which wrap any `SessionIo` in TLS 1.2 or 1.3, the client and server profiles, `RunAuthority`, and `NssKeyLog`, see [TLS module](#tls-module) | TRN-05 added the browser profiles, see [Browser profiles and JA4](#browser-profiles-and-ja4) |
+| [`fps-module-tls`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/tls) | `TlsConnector`, `TlsAcceptor`, and `TlsSession`, which wrap any `SessionIo` in TLS 1.2 or 1.3, the client and server profiles, `RunAuthority`, and `NssKeyLog`, see [TLS module](#tls-module) | TRN-05 added the browser profiles, see [Browser profiles and JA4](#browser-profiles-and-ja4), and TRN-15 the mail and h2 profiles, see [Mail and h2 profiles](#mail-and-h2-profiles) |
 
 The `test-eng` target and the `rust` job of `ci.yml` run the tests of every crate under `engine/`, so the backend needs no make file or workflow of its own.
 
@@ -292,6 +292,18 @@ Because only the signature scheme order differs, three of the four profiles shar
 
 The Python tests run in the `rust` job of `ci.yml` through `cargo test --workspace`. The `mod-tls` workflow runs only `--test capture`, so the tshark test does not run there until the workflow has the step `cargo test -p fps-module-tls --test ja4` with `FPS_REQUIRE_CAPTURE_TOOLS: "1"`, see the log entry of TRN-05.
 
+### Mail and h2 profiles
+
+TRN-15 added `fps_module_tls::mail` with three profiles whose names are part of the interface with the agent.
+
+| Name | Side | ALPN | Result |
+|---|---|---|---|
+| `mail-client` | client | none | The ClientHello has no ALPN extension. Suites, groups, signature schemes, and versions are those of `firefox-139`, because Thunderbird shares its TLS library, so the profile differs from `firefox-139` in the ALPN list alone and has the gaps of [Browser profiles and JA4](#browser-profiles-and-ja4) |
+| `server-tls13-h2` | server | `h2`, `http/1.1` | A client that offers `h2` gets it, a client that offers only `http/1.1` gets that, and a client without ALPN gets none |
+| `server-tls13-noalpn` | server | none | The handshake of a client that offers ids completes and selects none, so the report holds no ALPN |
+
+Both servers accept TLS 1.3 only and issue no tickets, as `server-tls13` of the agent does. A caller that builds one connector per session sets `resumption` on the value that `mail::server_tls13_h2` or `mail::server_profile` returns. The tests of `modules/tls/tests/burst.rs` handshake six pairings of these profiles with `chrome-136`, `firefox-139`, `mail-client`, and an `http/1.1` only client, check the ALPN of both reports, and parse the ClientHello of `mail-client` to show that it carries no ALPN extension.
+
 ### Certificates
 
 `RunAuthority::generate` makes an ECDSA P-256 authority with a fresh key, and `issue(names, LeafKey)` signs a server certificate for DNS names with the key type `EcdsaP256`, `EcdsaP384`, `Ed25519`, or `RsaPem`. The ring provider cannot generate RSA keys, so `RsaPem` takes a PKCS#8 PEM key that the caller made, for example with `openssl genpkey`, as spike S2 does. The chain holds the leaf and the authority. `root_store` returns a store that trusts only the authority of the run, so a client verifies the server as a browser would, and a client of another run fails with `unknown_ca`. Key generation draws from the system random source, which no run seed controls, so certificates differ between runs by design.
@@ -302,12 +314,13 @@ The Python tests run in the `rust` job of `ci.yml` through `cargo test --workspa
 
 A failure is a `TlsError::Handshake` that names the side and peer, keeps the rustls error behind `source`, and carries the alerts as the lower snake case names of the `alert` label: `alert_received` for `tls.alerts.rx` and `alert_sent` for `tls.alerts.tx`. `failure_reason` returns `tls_failure`. Rustls sends some alerts encrypted, so `alert_sent` comes from the plaintext record when there is one and from the error otherwise, and it covers `unknown_ca`, `bad_certificate`, `certificate_expired`, `handshake_failure`, `no_application_protocol`, and `bad_record_mac`. The module does not depend on `fps-stats`. The interpreter or runtime that owns the counters calls `TransportCounters::tls_handshake`, `tls_resumption`, and `tls_handshake_failure` from the report and the error.
 
-The session wrapper is written directly over `rustls::Connection`, so the module needs no `tokio-rustls`. Four behaviors follow from it.
+The session wrapper is written directly over `rustls::Connection`, so the module needs no `tokio-rustls`. Five behaviors follow from it.
 
 1. The wrapper flushes pending records before it waits for more ciphertext, so a key update or an alert never waits behind a read.
 2. The last handshake flight goes out in full, except the two session tickets of a TLS 1.3 server, which go out as far as the transport takes them. The next read, write, flush, or shutdown sends the rest. Waiting for them deadlocks two peers over a transport whose buffer is smaller than the tickets, and the test `large_transfers_survive_one_byte_reads_and_back_pressure` found this with a 37 byte pipe.
 3. A TLS 1.3 client stores its tickets when it reads them, which is with its next read after the handshake. A client that closes right after the handshake therefore does not resume next time.
 4. A transport that ends without `close_notify` reads as end of stream, because many servers close that way. `shutdown` sends `close_notify` and then shuts the transport down.
+5. A full plaintext buffer is backpressure (TRN-15). Rustls holds at most 16 KiB of received plaintext and refuses more ciphertext with an `ErrorKind::Other` error until the application reads. A ciphertext chunk of 16.5 KiB can complete more than that, for example a full 16 KiB record followed by small records, as HTTP/2 frames produce them, and the wrapper used to fail the read with "received plaintext buffer full" (MOD-06). It now keeps the part of the chunk that rustls refused in its read buffer, returns the plaintext first, and feeds the rest before it reads the transport again. The tests `bursts_of_full_and_tiny_records_survive_a_slow_reader`, `frame_shaped_bursts_survive_a_slow_reader`, and `a_burst_that_ends_with_close_notify_reads_to_the_end` failed with that error before the change, and `one_mebibyte_in_one_burst_both_ways` moves 1 MiB each way with both writers finished before either reader starts, on TLS 1.3 and 1.2. A handshake that meets a full buffer fails, because no plaintext exists before it ends.
 
 ### Resumption
 

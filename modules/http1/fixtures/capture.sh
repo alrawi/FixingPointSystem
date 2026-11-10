@@ -87,6 +87,26 @@ editcap --inject-secrets "tls,$keys" "$out/http1.pcapng" "$work/keyed.pcapng"
 mv "$work/keyed.pcapng" "$out/http1.pcapng"
 
 cd "$root"
+# Every session must have its own 5-tuple. A source port that comes up twice for
+# one destination merges two sessions in the session table and makes Zeek report
+# a parser error (MOD-21). The peer assigns a source port per session, and this
+# check names the cause when a capture still holds fewer sessions than it ran.
+expected=$(( sessions * $(find "$here/../scenarios" -name '*.yaml' | wc -l) ))
+python3 -I - "$out/http1.pcapng" "$expected" "$root" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[3])
+from realism.capture import summarize
+
+found = len(summarize(Path(sys.argv[1])).sessions)
+expected = int(sys.argv[2])
+if found != expected:
+    sys.exit(
+        f"capture.sh: the capture holds {found} sessions and the peers ran {expected}, "
+        "so sessions share a 5-tuple (a reused source port) or lost their packets"
+    )
+PY
 score_rc=0
 python3 -m realism score --pcap "$out/http1.pcapng" --labels "$here/expected.yaml" \
   --parsers tshark --output "$out/http1.report.json" || score_rc=$?

@@ -290,9 +290,9 @@ def test_manifest_without_consent_fails_the_validator_on_purpose(tmp_path: Path)
     module = generate(tmp_path, path, synthetic=False)
     errors = validation_errors(module)
     assert errors and all("provenance" in e for e in errors)
-    ok = generate(
-        tmp_path, path, "--consent", "owner approved", "--scrubbed", synthetic=False, module="ok"
-    )
+    scrubbed = tmp_path / "scrubbed.json"
+    assert main(["scrub", "--sessions", str(path), "--out", str(scrubbed), "--consent", "ok"]) == 0
+    ok = generate(tmp_path, scrubbed, synthetic=False, module="ok")
     assert validation_errors(ok) == []
 
 

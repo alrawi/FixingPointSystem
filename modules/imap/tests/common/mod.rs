@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! Shared helpers that load the imap scenarios and run both sides of a flow
 //! against each other over the in memory duplex of `fps-io`.
+//!
+//! A flow with `tls_upgrade` (the STARTTLS scenarios of MOD-20) runs with the
+//! TLS profiles of [`tls`] and a fresh authority. [`run`] then returns the
+//! logical IMAP dialogue in `c2s` and `s2c`, which is what each side wrote
+//! before the upgrade followed by what it wrote above the TLS layer, and
+//! [`TlsRun`] returns the TLS records that crossed the transport.
 #![allow(dead_code)] // Each test file uses a different subset of the helpers.
+
+pub mod tls;
 
 use std::future::Future;
 use std::io;
@@ -10,16 +18,19 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
+use fps_flow::program::{Op, TlsRole};
 use fps_flow::template::Filler;
 use fps_flow::{FnCall, FnError, FnErrorKind, TemplateFn};
 use fps_flow::{Manifest, ModuleSet, Scenario, Value};
 use fps_interp::{
-    session_rng, Failure, Limits, OpenRequest, Opener, Session, SessionCtx, Side, SideStats,
+    session_rng, BoxedIo, Failure, Limits, OpenRequest, Opener, Session, SessionCtx, Side,
+    SideStats, TlsUpgrader, UpgradeFuture, UpgradeRequest,
 };
 use fps_io::memory::duplex;
 use fps_io::SessionIo;
 use fps_module_content::Content;
 use fps_module_imap::Imap;
+use fps_module_tls::{HandshakeReport, NssKeyLog};
 use rand::RngCore;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
@@ -65,9 +76,19 @@ pub fn manifest() -> Manifest {
     Manifest::load(&module_dir().join("manifest.yaml")).unwrap()
 }
 
-/// Loads every scenario that the manifest lists, checking module calls
-/// against the manifest catalog, and folds constants as the engine does once
-/// per run. Each entry carries the scenario file stem.
+/// True when a side of a flow of `s` upgrades its transport to TLS.
+pub fn uses_tls(s: &Scenario) -> bool {
+    let upgrades = |ops: &[Op]| ops.iter().any(|op| matches!(op, Op::UpgradeTls(_)));
+    s.flows
+        .iter()
+        .any(|f| upgrades(&f.client.ops) || f.server.as_ref().is_some_and(|p| upgrades(&p.ops)))
+}
+
+/// Loads every scenario of the manifest that stays in plain text, checking
+/// module calls against the manifest catalog, and folds constants as the
+/// engine does once per run. Each entry carries the scenario file stem. The
+/// STARTTLS scenarios are left out, because the tests of `scenarios.rs` parse
+/// one plain dialogue. [`all_scenarios_with`] has them.
 pub fn scenarios() -> Vec<(String, Scenario)> {
     scenarios_with(&[])
 }
@@ -75,6 +96,14 @@ pub fn scenarios() -> Vec<(String, Scenario)> {
 /// Like [`scenarios`], and first replaces each listed variable in every
 /// scenario that declares it.
 pub fn scenarios_with(overrides: &[(&str, Value)]) -> Vec<(String, Scenario)> {
+    all_scenarios_with(overrides)
+        .into_iter()
+        .filter(|(_, s)| !uses_tls(s))
+        .collect()
+}
+
+/// Like [`scenarios_with`], and keeps the scenarios that upgrade to TLS.
+pub fn all_scenarios_with(overrides: &[(&str, Value)]) -> Vec<(String, Scenario)> {
     let m = manifest();
     let mut set = ModuleSet::default();
     set.insert(m.clone());
@@ -189,7 +218,32 @@ impl<S: SessionIo> Opener for OneShot<S> {
     }
 }
 
+/// What a session over TLS adds to its [`Run`].
+#[derive(Debug)]
+pub struct TlsRun {
+    /// What the client negotiated.
+    pub client: HandshakeReport,
+    /// What the server negotiated.
+    pub server: HandshakeReport,
+    /// The bytes the client wrote on the transport after the upgrade, which
+    /// are TLS records. The plaintext before the upgrade is not in them.
+    pub wire_c2s: Vec<u8>,
+    /// The bytes the server wrote on the transport after the upgrade.
+    pub wire_s2c: Vec<u8>,
+    /// How many bytes of `Run::c2s` the client wrote before the upgrade.
+    pub plain_before_c2s: usize,
+    /// How many bytes of `Run::s2c` the server wrote before the upgrade.
+    pub plain_before_s2c: usize,
+    /// The NSS key log of the client, which holds the secrets of the session.
+    pub key_log: String,
+}
+
 /// The outcome of both sides of one session and the bytes each side wrote.
+///
+/// `c2s` and `s2c` hold the dialogue as the application wrote it. For a
+/// session that upgrades to TLS that is the plaintext before the upgrade
+/// followed by the plaintext above the TLS layer, so the STARTTLS command and
+/// its 220 reply are in it, and `tls` holds the records on the wire.
 #[derive(Debug)]
 pub struct Run {
     pub client: Result<(), Failure>,
@@ -198,10 +252,11 @@ pub struct Run {
     pub server_stats: SideStats,
     pub c2s: Vec<u8>,
     pub s2c: Vec<u8>,
-    /// Stream offsets after each write of the client.
+    /// Stream offsets after each write of the client, in the offsets of `c2s`.
     pub c2s_ends: Vec<usize>,
-    /// Stream offsets after each write of the server.
+    /// Stream offsets after each write of the server, in the offsets of `s2c`.
     pub s2c_ends: Vec<usize>,
+    pub tls: Option<TlsRun>,
 }
 
 /// Returns true when one write carried the bytes `from..to` of a stream whose
@@ -217,8 +272,91 @@ pub fn in_one_write(ends: &[usize], from: usize, to: usize) -> bool {
     false
 }
 
+/// What one side wrote above its TLS layer.
+struct Above {
+    role: TlsRole,
+    /// Bytes the side had written on the transport when it started the upgrade.
+    before: usize,
+    written: Arc<Mutex<Vec<u8>>>,
+    ends: Arc<Mutex<Vec<usize>>>,
+}
+
+/// Serves the `tls_upgrade` actions with the profiles of [`tls`], notes how
+/// much each side had written when it upgraded, and taps the plaintext above
+/// the TLS layer of each side.
+struct Upgrades<'a> {
+    inner: &'a tls::Profiles,
+    client_wire: Arc<Mutex<Vec<u8>>>,
+    server_wire: Arc<Mutex<Vec<u8>>>,
+    above: Arc<Mutex<Vec<Above>>>,
+}
+
+impl TlsUpgrader for Upgrades<'_> {
+    fn upgrade<'io>(&self, io: BoxedIo<'io>, request: UpgradeRequest<'_>) -> UpgradeFuture<'io> {
+        let role = request.role;
+        let wire = match role {
+            TlsRole::Client => &self.client_wire,
+            TlsRole::Server => &self.server_wire,
+        };
+        let before = wire.lock().unwrap().len();
+        let secured = self.inner.upgrade(io, request);
+        let above = Arc::clone(&self.above);
+        Box::pin(async move {
+            let session = secured.await?;
+            let (tapped, written) = Tap::new(session);
+            above.lock().unwrap().push(Above {
+                role,
+                before,
+                written,
+                ends: tapped.ends(),
+            });
+            Ok(Box::new(tapped) as BoxedIo<'io>)
+        })
+    }
+}
+
+/// What one side wrote, split at its upgrade.
+struct Joined {
+    /// The plaintext before the upgrade followed by the plaintext above TLS.
+    stream: Vec<u8>,
+    /// Offsets after each write, in the offsets of `stream`.
+    ends: Vec<usize>,
+    /// The records on the transport after the upgrade.
+    records: Vec<u8>,
+    /// Bytes of `stream` that came before the upgrade.
+    before: usize,
+}
+
+/// Joins what a side wrote before its upgrade, the first `before` bytes of the
+/// transport, with what it wrote above the TLS layer.
+fn join(wire: &[u8], wire_ends: &[usize], above: Option<&Above>) -> Joined {
+    let Some(a) = above else {
+        return Joined {
+            stream: wire.to_vec(),
+            ends: wire_ends.to_vec(),
+            records: Vec::new(),
+            before: wire.len(),
+        };
+    };
+    let mut stream = wire[..a.before].to_vec();
+    let mut ends: Vec<usize> = wire_ends
+        .iter()
+        .copied()
+        .filter(|&e| e <= a.before)
+        .collect();
+    stream.extend_from_slice(&a.written.lock().unwrap());
+    ends.extend(a.ends.lock().unwrap().iter().map(|e| e + a.before));
+    Joined {
+        stream,
+        ends,
+        records: wire[a.before..].to_vec(),
+        before: a.before,
+    }
+}
+
 /// Runs the first flow of `s` with both sides over one duplex, with the imap
-/// functions on both sides.
+/// functions on both sides. A flow with `tls_upgrade` runs with the TLS
+/// profiles of [`tls`] and a fresh authority.
 pub async fn run(s: &Scenario, seed: u64, session_id: u64) -> Run {
     let filler = Filler::new(seed);
     let flow = &s.flows[0];
@@ -248,24 +386,76 @@ pub async fn run(s: &Scenario, seed: u64, session_id: u64) -> Run {
         functions: &mut server_fns,
         limits: Limits::default(),
     });
+    let key_log = Arc::new(NssKeyLog::in_memory());
+    let profiles = uses_tls(s).then(|| {
+        let authority = tls::authority().unwrap();
+        let identity = tls::identity(&authority).unwrap();
+        let roots = authority.root_store().unwrap();
+        tls::Profiles::default()
+            .with_clients(&roots, &key_log)
+            .unwrap()
+            .with_servers(&identity)
+            .unwrap()
+    });
+    let upgrades = profiles.as_ref().map(|p| Upgrades {
+        inner: p,
+        client_wire: Arc::clone(&c2s),
+        server_wire: Arc::clone(&s2c),
+        above: Arc::default(),
+    });
+    if let Some(u) = &upgrades {
+        client.set_tls_upgrader(u);
+        server.set_tls_upgrader(u);
+    }
     let server_program = flow.server.as_ref().unwrap();
     let (mut client_open, mut server_open) = (OneShot(Some(a)), OneShot(Some(b)));
     let (c, sv) = tokio::join!(
         client.run_program(&mut client_open, &flow.client, std::future::pending()),
         server.run_program(&mut server_open, server_program, std::future::pending()),
     );
-    let c2s = std::mem::take(&mut *c2s.lock().unwrap());
-    let s2c = std::mem::take(&mut *s2c.lock().unwrap());
-    let c2s_ends_taken = std::mem::take(&mut *c2s_ends.lock().unwrap());
-    let s2c_ends_taken = std::mem::take(&mut *s2c_ends.lock().unwrap());
+    let wire_c2s = std::mem::take(&mut *c2s.lock().unwrap());
+    let wire_s2c = std::mem::take(&mut *s2c.lock().unwrap());
+    let wire_c2s_ends = std::mem::take(&mut *c2s_ends.lock().unwrap());
+    let wire_s2c_ends = std::mem::take(&mut *s2c_ends.lock().unwrap());
+    let (client_stats, server_stats) = (client.stats(), server.stats());
+    let (mut reports, mut above_c, mut above_s) = (None, None, None);
+    if let (Some(u), Some(p)) = (&upgrades, &profiles) {
+        let mut above = u.above.lock().unwrap();
+        above_c = above
+            .iter()
+            .position(|a| a.role == TlsRole::Client)
+            .map(|i| above.swap_remove(i));
+        above_s = above
+            .iter()
+            .position(|a| a.role == TlsRole::Server)
+            .map(|i| above.swap_remove(i));
+        let all = p.reports();
+        let by_side = |side| all.iter().find(|r| r.side == side).cloned();
+        if c.is_ok() {
+            reports =
+                by_side(fps_module_tls::Side::Client).zip(by_side(fps_module_tls::Side::Server));
+        }
+    }
+    let client_side = join(&wire_c2s, &wire_c2s_ends, above_c.as_ref());
+    let server_side = join(&wire_s2c, &wire_s2c_ends, above_s.as_ref());
+    let tls = reports.map(|(client, server)| TlsRun {
+        client,
+        server,
+        wire_c2s: client_side.records.clone(),
+        wire_s2c: server_side.records.clone(),
+        plain_before_c2s: client_side.before,
+        plain_before_s2c: server_side.before,
+        key_log: key_log.contents(),
+    });
     Run {
         client: c,
         server: sv,
-        client_stats: client.stats(),
-        server_stats: server.stats(),
-        c2s,
-        s2c,
-        c2s_ends: c2s_ends_taken,
-        s2c_ends: s2c_ends_taken,
+        client_stats,
+        server_stats,
+        c2s: client_side.stream,
+        s2c: server_side.stream,
+        c2s_ends: client_side.ends,
+        s2c_ends: server_side.ends,
+        tls,
     }
 }

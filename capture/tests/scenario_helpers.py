@@ -29,6 +29,8 @@ def tcp_session(
     sport: int = 40000,
     dport: int = 8080,
     pause: float = 0.01,
+    client: str = C,
+    server: str = S,
 ) -> list[Rec]:
     """Records of one TCP connection: handshake, one segment per turn, and a FIN close.
 
@@ -36,36 +38,56 @@ def tcp_session(
     recs: list[Rec] = []
     t = t0
     cs, ss = 1000 + sport, 5000 + sport
-    recs.append(Rec(t, tcp_frame(C, S, sport, dport, seq=cs, flags=SYN)))
-    recs.append(Rec(t + 0.001, tcp_frame(S, C, dport, sport, seq=ss, ack=cs + 1, flags=SYN | ACK)))
-    recs.append(Rec(t + 0.002, tcp_frame(C, S, sport, dport, seq=cs + 1, ack=ss + 1, flags=ACK)))
+    recs.append(Rec(t, tcp_frame(client, server, sport, dport, seq=cs, flags=SYN)))
+    recs.append(
+        Rec(t + 0.001, tcp_frame(server, client, dport, sport, seq=ss, ack=cs + 1, flags=SYN | ACK))
+    )
+    recs.append(
+        Rec(t + 0.002, tcp_frame(client, server, sport, dport, seq=cs + 1, ack=ss + 1, flags=ACK))
+    )
     t += 0.003
     co, so = cs + 1, ss + 1
     for who, data in turns:
         t += pause
         if who == "c":
-            frame = tcp_frame(C, S, sport, dport, seq=co, ack=so, flags=ACK | PSH, payload=data)
+            frame = tcp_frame(
+                client, server, sport, dport, seq=co, ack=so, flags=ACK | PSH, payload=data
+            )
             co += len(data)
         else:
-            frame = tcp_frame(S, C, dport, sport, seq=so, ack=co, flags=ACK | PSH, payload=data)
+            frame = tcp_frame(
+                server, client, dport, sport, seq=so, ack=co, flags=ACK | PSH, payload=data
+            )
             so += len(data)
         recs.append(Rec(t, frame))
-    recs.append(Rec(t + 0.001, tcp_frame(C, S, sport, dport, seq=co, ack=so, flags=FIN | ACK)))
-    recs.append(Rec(t + 0.002, tcp_frame(S, C, dport, sport, seq=so, ack=co + 1, flags=FIN | ACK)))
-    recs.append(Rec(t + 0.003, tcp_frame(C, S, sport, dport, seq=co + 1, ack=so + 1, flags=ACK)))
+    recs.append(
+        Rec(t + 0.001, tcp_frame(client, server, sport, dport, seq=co, ack=so, flags=FIN | ACK))
+    )
+    recs.append(
+        Rec(t + 0.002, tcp_frame(server, client, dport, sport, seq=so, ack=co + 1, flags=FIN | ACK))
+    )
+    recs.append(
+        Rec(t + 0.003, tcp_frame(client, server, sport, dport, seq=co + 1, ack=so + 1, flags=ACK))
+    )
     return recs
 
 
 def udp_session(
-    datagrams: list[tuple[str, bytes]], t0: float = T0, *, sport: int = 50000, dport: int = 5353
+    datagrams: list[tuple[str, bytes]],
+    t0: float = T0,
+    *,
+    sport: int = 50000,
+    dport: int = 5353,
+    client: str = C,
+    server: str = S,
 ) -> list[Rec]:
     """Records of one UDP flow."""
     recs = []
     for n, (who, data) in enumerate(datagrams):
         if who == "c":
-            frame = udp_frame(C, S, sport, dport, data)
+            frame = udp_frame(client, server, sport, dport, data)
         else:
-            frame = udp_frame(S, C, dport, sport, data)
+            frame = udp_frame(server, client, dport, sport, data)
         recs.append(Rec(t0 + 0.01 * n, frame))
     return recs
 

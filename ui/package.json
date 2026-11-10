@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "vite",
     "mock": "tsx mock/main.ts",
+    "record:stream": "tsx mock/record-stream.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "gen:api": "node scripts/gen-api.mjs",

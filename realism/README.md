@@ -23,6 +23,10 @@ python3 -m realism score --pcap run.pcapng --labels expected.yaml --output repor
 | `--scenario FILE` | Scenario file whose flow graph the session structure check compares with the capture; repeat it for several scenarios; adds the check next to the `structure` section of the labels |
 | `--ks-alpha A` | Significance level of the KS tests, above 0 and below 1; adds the temporal distribution check and overrides the labels file, whose default is 0.01 |
 | `--ks-min-samples N` | Fewest observations that a KS comparison needs, 2 or more; adds the temporal distribution check and overrides the labels file, whose default is 30 |
+| `--test-config FILE` | Test configuration whose `profile.mix` weights and `profile.basis` the mix accuracy check compares with the achieved mix; adds the check next to the `mix` section of the labels |
+| `--run-report FILE` | File with the achieved sessions and bytes per scenario (see [Mix accuracy](#mix-accuracy)); adds the check |
+| `--mix-tolerance P` | Largest difference between an achieved and a configured share in percentage points, 0 to 100, default 2; adds the check and overrides the labels |
+| `--mix-basis B` | `sessions`, `bytes`, or `both`; default `profile.basis` of the test configuration; adds the check and overrides the labels |
 | `--tshark PATH` | tshark program; defaults to `FPS_TSHARK` and then to `tshark` on the search path |
 | `--zeek PATH` | Zeek program; defaults to `FPS_ZEEK`, then to `zeek` on the search path, and then to `/opt/zeek/bin/zeek` |
 
@@ -181,13 +185,70 @@ A target is `constant`, `exponential`, `uniform`, `lognormal`, `pareto`, or `emp
 
 Each comparison reports its status, which is `pass` when the p value is at least `alpha`, `fail` below it, and `insufficient_data` when a sample has fewer than `min_samples` observations. It also reports the statistic, the p value, the method (`exact` or `asymptotic`), the sample size, the observed minimum, median, mean, and maximum, and a reason in words for anything but a pass. A comparison that is not a pass fails the check, and so does a section without targets. Constants are exact: the observations must lie within `tolerance` of the value. The p value is exact for up to 100 observations (one sample) or 10000 pairs (two samples), and asymptotic above that. [`ks.py`](ks.py) implements the tests with the standard library only. The KS statistic and p value of each application go into the report as `realism.ks_statistic` and `realism.ks_p_value`, with the properties `inter_arrival`, `request_bytes`, and `response_bytes`.
 
+## Mix accuracy
+
+The mix accuracy check compares the traffic mix that a run achieved with the weights of its test configuration, in two independent ways: from the run metrics and from nDPI on the capture. It runs when the labels file has a `mix` section or when the command has `--test-config`, `--run-report`, `--mix-tolerance`, or `--mix-basis`, so a labels file without either behaves as before. [`examples/mix.labels.yaml`](examples/mix.labels.yaml) shows the section.
+
+```yaml
+mix:
+  scenarios:                     # explicit: each scenario of the mix and the application it stands for
+    http1/web_get: http1         # the nDPI names are those of the conformance check (applications section)
+    http1/web_browse: http1      # scenarios of one application form one row
+    ftp/get: {application: ftp, ndpi: [FTP_CONTROL]}   # or list nDPI names for this entry
+  test_config: test.yaml         # or --test-config; or weights: {scenario: weight} with basis
+  run_report: run.json           # or --run-report
+  basis: both                    # sessions, bytes, or both; default profile.basis of the test configuration
+  tolerance_points: 2            # default 2
+```
+
+**Inputs.** The weights come from `profile.mix` of the test configuration (a scenario listed twice counts with the sum of its weights). The achieved counts per scenario come from the run report file, in JSON or YAML, in one of three forms:
+
+* the metric series of `GET /v1/runs/{id}/metrics?view=scenario`, from which the check takes the last sample of every key `<application>/<scenario>` and reads `sessions.attempted`, `bytes.tx`, and `bytes.rx` (fetch it with the default `side=client`, which counts each byte once),
+* a bundle object with that series under `metrics`, next to the `run` of `GET /v1/runs/{id}/report`, and
+* a table `{"scenarios": [{"scenario": "http1/web_get", "sessions": 600, "bytes": 123456}]}`.
+
+The `RunReport` that `GET /v1/runs/{id}/report` serves holds only the totals of the run and its verdict, and no counts per scenario, so the check cannot use it alone and says so.
+
+**Shares.** Per basis the configured share of an application is the sum of the weights of its scenarios over all weights. The metrics share is its sessions (or bytes) over all scenarios of the run report. The nDPI share is the sessions (or application payload bytes, both directions) that nDPI names as the application over all labelled sessions of the capture, or all sessions when the labels have no rules and no default. Sessions that nDPI names as no application of the mix, `Unknown` included, form the row `(unmatched)` with a configured share of 0, so unrecognised traffic lowers the other shares and fails on its own when it exceeds the tolerance. A scenario in the run report that the mix does not list fails too. Two applications that accept the same nDPI name are refused.
+
+**Comparison.** Each share, from each source, must lie within the tolerance of the configured share, inclusive and exact (a difference of 2.0 points passes at the default). The report gives for each application and basis the configured share, the share from the metrics, the share from nDPI, both deltas in points, the counts, and a reason in words for each source that failed, for example `http1: the sessions share from the run metrics is 57.00% (57 sessions), 3.00 points below the configured 60.00% (tolerance 2.00 points)`. The entry leaves `metrics` empty, because the catalog's `mix.share_pct` and `mix.abs_error_pp` describe the run and have no label for the source.
+
+**Limits.** A scenario that opens several connections per session, such as `web_browse` with its lookup and page fetch, has more sessions in a capture than in the metrics. Use the bytes basis for it, or give the helper connections their own application. The nDPI side needs a capture that holds the whole run, so a capture with a packet limit or a port filter that leaves out an application fails for that application.
+
 ## Classifiers
 
-`realism/classifier.py` defines the `Classifier` protocol, which takes a capture and its sessions and returns a protocol name per session. `NdpiClassifier` runs ndpiReader and parses its CSV output by column name, so it reads nDPI 4.2 and later layouts. `StubClassifier` labels sessions with a function and serves the tests.
+`realism/classifier.py` defines the `Classifier` protocol, which takes a capture and its sessions and returns a protocol name per session. `NdpiClassifier` runs ndpiReader and parses its CSV output by column name, so it reads nDPI 4.2 and later layouts. nDPI 4.2 separates the fields with commas and nDPI 4.14 with `|`, and the parser takes the separator that the header line uses most. nDPI 4.14 ends `ndpiReader -h` with exit code 1 after its usage text, so the classifier accepts the exit codes 0 and 1 for that one call and reads the version from the banner `Welcome to nDPI 4.14.0-...`. CI builds the pinned release, see [Pinned nDPI](#pinned-ndpi).
+
+## Pinned nDPI
+
+Ubuntu 24.04 ships nDPI 4.2.0, which has no HTTP/2 protocol and names an h2c session `Unknown`. [`ci/ndpi.version`](ci/ndpi.version) pins a release and the commit of its tag (`4.14 90090b9a...`), and no other file names them. [`ci/build-ndpi.sh`](ci/build-ndpi.sh) fetches that commit, checks the checkout against the id, builds `libndpi.a` and `ndpiReader`, installs the reader under `/opt/ndpi`, links it into `/usr/local/bin` ahead of the `libndpi-bin` package, and fails when the reader reports another release. [`ci/install-tools.sh`](ci/install-tools.sh) calls it, so the `rlm` and `realism` workflows use one nDPI. The script does nothing but the link when `/opt/ndpi` already holds the pinned reader. `FPS_NDPI_VERSION` and `FPS_NDPI_PREFIX` override the pin and the prefix for a trial run. The build needs `git`, a C compiler, the autotools, `libpcap-dev`, and `libjson-c-dev`, and it takes a few minutes.
+
+## Decrypted view
+
+nDPI and Zeek cannot read inside TLS, so on a capture they name every TLS session `TLS`. `python3 -m realism decrypted` decrypts the capture with tshark and the TLS keys that it embeds (or `--keylog`), writes the plaintext of every TLS session as a capture of plain TCP sessions with the same addresses, and scores that view with the labels file, as `score` scores a capture: nDPI must name the sessions of the view, and with `--parsers` the parsers must report no error. The view is synthetic, built from the output of tshark with correct checksums, so it shows that the decrypted bytes are a protocol that nDPI and the parsers recognize and nothing about the TLS record layer.
+
+```bash
+python3 -m realism decrypted --pcap modules/http1/fixtures/http1.pcapng \
+  --labels realism/examples/decrypted/http1.labels.yaml --sessions 80
+```
+
+| Option | Meaning |
+|---|---|
+| `--pcap FILE`, `--labels FILE` | The capture and the labels of the *view*: its session rules match the server ports of the TLS sessions (or `--view-port`), and its applications name the protocol inside TLS, for example `{ndpi: [HTTP]}`. A `tls` section would run the encryption check on a view that has no TLS, so leave it out |
+| `--keylog FILE` | TLS key log in the NSS format, in addition to the keys that a pcapng capture embeds |
+| `--plaintext inside` | Default. The view carries what both sides sent inside TLS |
+| `--plaintext upgrade` | For STARTTLS dialogues. The plain start of the session comes first, without the `STARTTLS` (or `STLS`) command and its reply, because nDPI and Zeek stop reading a stream at that command |
+| `--view-port P` | Server port of every session of the view, for example the well known port of the protocol when the capture uses another |
+| `--sessions N` | Number of TLS sessions that the capture must hold |
+| `--view FILE` | Keep the view as a pcap file |
+| `--output FILE` | Result path; standard output when absent |
+| `--threshold`, `--ndpi-reader`, `--timeout`, `--parsers`, `--tshark`, `--zeek` | As for `score`; `--parsers` defaults to `auto`, which scores the view with every installed parser |
+
+The result is JSON with the number of TLS sessions, how many decrypted, the reason for each failure, and the full realism report of the view under `report`. The command exits with 0 when every TLS session decrypts, the count matches `--sessions`, and the view passes every check, with 1 when not, and with 2 when an input or a tool fails. A capture without keys fails with `only 0 of N TLS sessions decrypt`. tshark finds the ClientHello of a session by its port or by a heuristic, and the heuristic misses the first TLS session on a port that tshark does not know when the hello spans two segments, so `--sessions` is the guard against a session that never shows up. [`examples/decrypted/`](examples/decrypted) holds the labels of the http1, smtp, imap, and http2 fixtures, whose `decrypted_check.py` scripts the command replaces. `StubClassifier` labels sessions with a function and serves the tests.
 
 ## Tests
 
-The tests build every capture in code with [`tests/pcapgen.py`](tests/pcapgen.py), so the repository holds no captured traffic. They replace ndpiReader, tshark, and Zeek with stubs or with fake programs that print fixed output. Three optional modules run the real tools and skip each tool that is not installed. `tests/test_ndpi_reader.py` runs ndpiReader, `tests/test_parser_tools.py` runs tshark and Zeek on a capture with one malformed DNS message and on clean captures, and `tests/test_encryption.py` runs tshark on TLS captures that `tests/tlsgen.py` builds from real handshakes of the Python `ssl` module (with `openssl` for the certificate). `tests/test_content.py` builds every content capture in code, with repeated and with varied bodies, segmented and reordered TCP, and encrypted sessions. `tests/test_structure.py` builds web_browse, ftp, and dns captures in code and reads the first-party scenario files under `modules/`. `tests/test_ks.py` checks the KS tests against known values, and `tests/test_temporal.py` builds captures whose arrivals and sizes come from seeded generators, from the target and from shifted distributions. `tests/test_ja4.py` checks the JA4 code against the worked example of the specification. The `rlm` workflow installs `libndpi-bin` and `tshark` from Ubuntu and `zeek-core` from the package repository of the Zeek project, so CI runs every optional test.
+The tests build every capture in code with [`tests/pcapgen.py`](tests/pcapgen.py), so the repository holds no captured traffic. They replace ndpiReader, tshark, and Zeek with stubs or with fake programs that print fixed output. Several optional modules run the real tools and skip each tool that is not installed. `tests/test_ndpi_reader.py` runs ndpiReader, `tests/test_ndpi_http2.py` runs the nDPI 4.14 reader on h2c sessions and on the http2 fixture, `tests/test_decrypted.py` and `tests/test_decrypted_fixtures.py` run the decrypted command on generated TLS captures and on the committed module fixtures, `tests/test_pinned_ndpi.py` checks the pin and the build script, `tests/test_parser_tools.py` runs tshark and Zeek on a capture with one malformed DNS message and on clean captures, and `tests/test_encryption.py` runs tshark on TLS captures that `tests/tlsgen.py` builds from real handshakes of the Python `ssl` module (with `openssl` for the certificate). `tests/test_content.py` builds every content capture in code, with repeated and with varied bodies, segmented and reordered TCP, and encrypted sessions. `tests/test_structure.py` builds web_browse, ftp, and dns captures in code and reads the first-party scenario files under `modules/`. `tests/test_ks.py` checks the KS tests against known values, and `tests/test_temporal.py` builds captures whose arrivals and sizes come from seeded generators, from the target and from shifted distributions. `tests/test_mix.py` builds captures with known session and byte shares and synthetic run reports, and its optional test runs the real ndpiReader. `tests/test_ja4.py` checks the JA4 code against the worked example of the specification. The `rlm` workflow installs `tshark` from Ubuntu, nDPI 4.14 from source, and `zeek-core` from the package repository of the Zeek project, so CI runs every optional test. The tests of nDPI 4.14 fail instead of skipping on a runner of GitHub Actions that has an older reader.
 
 ```bash
 python3 -m pip install -r realism/requirements-dev.txt

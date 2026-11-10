@@ -2,10 +2,14 @@
 # SPDX-License-Identifier: GPL-3.0-only
 #
 # Installs the harness and realism tools of the module realism job on an Ubuntu
-# 24.04 runner. nDPI, tshark, and the harness tools come from Ubuntu, and Zeek
-# comes from the package repository of the Zeek project on the openSUSE Build
-# Service, because Ubuntu does not ship it. Both the realism and the rlm workflow
-# call this script, so they share one repository and one Zeek version. The
+# 24.04 runner. tshark and the harness tools come from Ubuntu, nDPI comes from
+# source (see below), and Zeek comes from the package repository of the Zeek
+# project on the openSUSE Build Service, because Ubuntu does not ship it. Both the
+# realism and the rlm workflow call this script, so they share one repository, one
+# Zeek version, and one nDPI release. Ubuntu ships nDPI 4.2.0, which has no HTTP/2
+# protocol, so realism/ci/build-ndpi.sh builds the release that
+# realism/ci/ndpi.version pins and links its ndpiReader into /usr/local/bin, ahead
+# of the libndpi-bin package of the line below. The Zeek
 # version is the package version in realism/ci/zeek.version, which is the only
 # place that names it, and FPS_ZEEK_VERSION overrides it for a trial run. The
 # script fails when the repository no longer offers that version, or when the
@@ -36,3 +40,6 @@ if [[ $installed != *"version ${zeek_version%%-*}"* ]]; then
   echo "install-tools.sh: expected Zeek ${zeek_version%%-*}, found: $installed" >&2
   exit 1
 fi
+
+# nDPI comes last so that its ndpiReader is the one that the workflows find.
+"$here/build-ndpi.sh"

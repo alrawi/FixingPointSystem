@@ -150,4 +150,20 @@ describe("readEventStream", () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("stops without a retry on a status that the caller calls fatal", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response("{}", { status: 501 })));
+    const onFatalStatus = vi.fn();
+    await readEventStream({
+      url: "/stream",
+      token: "t",
+      onEvent: () => undefined,
+      fetch: fetchMock,
+      isFatalStatus: (status) => status === 501,
+      onFatalStatus,
+      sleep: () => Promise.resolve(),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onFatalStatus).toHaveBeenCalledWith(501);
+  });
 });

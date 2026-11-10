@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Labels of the decrypted view of modules/smtp/fixtures/smtp.pcapng. The STARTTLS sessions
+# run on port 5587 in the capture. The view puts them on port 587, where Zeek starts its
+# SMTP analyzer, and joins the plain start of each dialogue (without STARTTLS and its reply)
+# to the dialogue inside TLS, so nDPI must name every session SMTP.
+#
+#   python3 -m realism decrypted --pcap modules/smtp/fixtures/smtp.pcapng \
+#     --labels realism/examples/decrypted/smtp.labels.yaml \
+#     --plaintext upgrade --view-port 587 --sessions 8
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: starttls_decrypted
+    match: {transport: tcp, server_port: 587}
+applications:
+  starttls_decrypted: {ndpi: [SMTP]}

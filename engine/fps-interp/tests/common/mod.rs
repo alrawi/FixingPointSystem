@@ -188,6 +188,8 @@ pub struct Opts {
     pub server_limits: Limits,
     pub client_stop: Option<Duration>,
     pub client_functions: Box<dyn TemplateFn>,
+    /// The clock that both sides read for `now()`, the wall clock by default.
+    pub clock: Option<Arc<dyn fps_flow::Clock>>,
 }
 
 impl Default for Opts {
@@ -200,6 +202,7 @@ impl Default for Opts {
             server_limits: Limits::default(),
             client_stop: None,
             client_functions: Box::new(NoFunctions),
+            clock: None,
         }
     }
 }
@@ -250,6 +253,10 @@ pub async fn run_with<C: Opener, S: Opener>(
         functions: &mut server_functions,
         limits: opts.server_limits,
     });
+    if let Some(clock) = opts.clock.as_deref() {
+        client.set_clock(clock);
+        server.set_clock(clock);
+    }
     let server_program = flow.server.as_ref().unwrap();
     let (c, sv) = tokio::join!(
         client.run_program(client_opener, &flow.client, stop_after(opts.client_stop)),

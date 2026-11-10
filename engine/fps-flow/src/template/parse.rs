@@ -22,6 +22,12 @@ const RESERVED_ROOTS: [&str; 7] = [
 const FILL: &[(&str, ValueType)] = &[("n", ValueType::Int)];
 const HEX: &[(&str, ValueType)] = &[("s", ValueType::Text)];
 const RAND_INT: &[(&str, ValueType)] = &[("a", ValueType::Int), ("b", ValueType::Int)];
+const INT_BYTES: &[(&str, ValueType)] = &[
+    ("value", ValueType::Int),
+    ("width", ValueType::Int),
+    ("endianness", ValueType::Text),
+];
+const NOW: &[(&str, ValueType)] = &[("format", ValueType::Text)];
 
 #[derive(Clone, Debug, PartialEq)]
 enum Tok {
@@ -300,13 +306,23 @@ fn lower(node: Node) -> Result<Expr, TemplateError> {
                 "fill" => FILL,
                 "hex" => HEX,
                 "rand_int" => RAND_INT,
+                "int_bytes" => INT_BYTES,
+                "now" => NOW,
                 _ => return Err(TemplateError::UnknownFunction(name)),
             };
-            let mut args = bind_core(&name, params, &[], positional, keywords)?.into_iter();
+            // `int_bytes` takes the network byte order unless told otherwise.
+            let defaults = if name == "int_bytes" {
+                vec![Expr::Const(Const::Text("big".into()))]
+            } else {
+                vec![]
+            };
+            let mut args = bind_core(&name, params, &defaults, positional, keywords)?.into_iter();
             let mut next = || Box::new(args.next().unwrap_or(Expr::Const(Const::Int(0))));
             Ok(match name.as_str() {
                 "fill" => Expr::Fill(next()),
                 "hex" => Expr::Hex(next()),
+                "int_bytes" => lower_int_bytes(next(), next(), next())?,
+                "now" => lower_now(next())?,
                 _ => Expr::RandInt(next(), next()),
             })
         }
@@ -345,6 +361,44 @@ fn lower(node: Node) -> Result<Expr, TemplateError> {
             })))
         }
     }
+}
+
+/// Checks the literal arguments of `int_bytes()`, which the validator reports
+/// at load time. An argument that is not a literal waits for render time.
+fn lower_int_bytes(
+    value: Box<Expr>,
+    width: Box<Expr>,
+    order: Box<Expr>,
+) -> Result<Expr, TemplateError> {
+    let width_lit = match *width {
+        Expr::Const(Const::Int(w)) => {
+            if !(1..=8).contains(&w) {
+                return Err(TemplateError::IntBytesWidth(w));
+            }
+            Some(w)
+        }
+        _ => None,
+    };
+    if let Expr::Const(Const::Text(o)) = &*order {
+        if o != "big" && o != "little" {
+            return Err(TemplateError::IntBytesEndianness(o.clone()));
+        }
+    }
+    if let Expr::Const(Const::Int(v)) = &*value {
+        // Without a literal width the value must at least fit 8 bytes.
+        super::int_bytes(*v, width_lit.unwrap_or(8), "big")?;
+    }
+    Ok(Expr::IntBytes(value, width, order))
+}
+
+/// Checks the literal format of `now()`.
+fn lower_now(format: Box<Expr>) -> Result<Expr, TemplateError> {
+    if let Expr::Const(Const::Text(f)) = &*format {
+        if !matches!(f.as_str(), "http_date" | "epoch_s" | "epoch_ms") {
+            return Err(TemplateError::NowFormat(f.clone()));
+        }
+    }
+    Ok(Expr::Now(format))
 }
 
 /// Binds a `dist` call and checks the range of its literal arguments.

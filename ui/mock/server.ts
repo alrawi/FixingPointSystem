@@ -14,6 +14,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { parse } from "yaml";
 import type { Finding, Problem, ValidationReport } from "../src/api/client";
 import { CONTRACTS_DIR, loadMockData, type MockData, type StoredConfig } from "./fixtures";
+import { MockRuns, unknownAgents, type MockRunOptions } from "./runs";
 
 /** The token that the mock server accepts unless the options name others. */
 export const MOCK_TOKEN = "fps-mock-token";
@@ -35,6 +36,13 @@ export interface MockServerOptions {
   data?: MockData;
   /** Errors to answer in place of the normal answers, checked after the token. */
   faults?: MockFault[];
+  /** The clock, tick length, and run length of the mock runs. */
+  runs?: MockRunOptions;
+  /**
+   * The number of metric stream connections that the server cuts after two ticks without an
+   * end event, oldest first, to test reconnects.
+   */
+  streamDrops?: number;
 }
 
 /** A running mock server. */
@@ -157,7 +165,31 @@ function decodeBody(input: RequestInput): { value: unknown } | { error: string }
   return { error: "Send the configuration as application/json or application/yaml." };
 }
 
-function routes(data: MockData): [string, RegExp, Handler][] {
+/** The application name of a scenario reference such as `http1/web_get`. */
+function moduleOf(ref: string, data: MockData): string {
+  if (ref.includes("/")) return ref.split("/")[0] ?? ref;
+  const found = data.modules.find((module) => (module.summary.scenarios ?? []).includes(ref));
+  return found?.summary.name ?? ref;
+}
+
+const VIEWS = ["application", "scenario", "port", "tcp", "tls", "realism"] as const;
+type View = (typeof VIEWS)[number];
+
+function isView(value: string | null): value is View {
+  return VIEWS.some((view) => view === value);
+}
+
+const RUN_STATES = [
+  "pending",
+  "preparing",
+  "running",
+  "stopping",
+  "completed",
+  "failed",
+  "aborted",
+];
+
+function routes(data: MockData, runs: MockRuns): [string, RegExp, Handler][] {
   const configs = [...data.configs];
   let created = 0;
   return [
@@ -264,7 +296,115 @@ function routes(data: MockData): [string, RegExp, Handler][] {
       },
     ],
     ["GET", /^\/v1\/agents$/, () => ({ status: 200, body: data.agents })],
-    ["GET", /^\/v1\/runs$/, () => ({ status: 200, body: { items: [] } })],
+    [
+      "GET",
+      /^\/v1\/runs$/,
+      (_match, url) => {
+        const state = url.searchParams.get("state");
+        if (state !== null && !RUN_STATES.includes(state)) {
+          return {
+            status: 400,
+            body: problem(400, "Bad Request", `state ${state} is not a run state.`),
+          };
+        }
+        return paginate(runs.list(state), url);
+      },
+    ],
+    [
+      "POST",
+      /^\/v1\/runs$/,
+      (_match, _url, input) => {
+        const decoded = decodeBody(input);
+        if ("error" in decoded) {
+          return { status: 400, body: problem(400, "Bad Request", decoded.error) };
+        }
+        const request = decoded.value as { config_id?: unknown; agents?: unknown };
+        if (typeof request.config_id !== "string") {
+          return { status: 400, body: problem(400, "Bad Request", "config_id is required.") };
+        }
+        const agents = Array.isArray(request.agents) ? (request.agents as string[]) : [];
+        const config = configs.find((candidate) => candidate.id === request.config_id);
+        if (!config) {
+          return { status: 404, body: problem(404, "Not Found", "No configuration has this id.") };
+        }
+        const unknown = unknownAgents(agents, data.agents);
+        if (unknown.length > 0) {
+          return {
+            status: 404,
+            body: problem(404, "Not Found", `No agent has the id ${unknown.join(", ")}.`),
+          };
+        }
+        const run = runs.create(config, (ref) => moduleOf(ref, data));
+        return { status: 202, body: run, headers: { Location: `/v1/runs/${run.id}` } };
+      },
+    ],
+    [
+      "GET",
+      /^\/v1\/runs\/([^/:]+)$/,
+      (match) => {
+        const found = runs.find(decodeURIComponent(match[1] ?? ""));
+        return found
+          ? { status: 200, body: runs.view(found) }
+          : { status: 404, body: problem(404, "Not Found", "No run has this id.") };
+      },
+    ],
+    [
+      "POST",
+      /^\/v1\/runs\/([^/:]+):stop$/,
+      (match, _url, input) => {
+        const found = runs.find(decodeURIComponent(match[1] ?? ""));
+        if (!found) return { status: 404, body: problem(404, "Not Found", "No run has this id.") };
+        const decoded = input.body.trim() === "" ? { value: {} } : decodeBody(input);
+        if ("error" in decoded) {
+          return { status: 400, body: problem(400, "Bad Request", decoded.error) };
+        }
+        const force = (decoded.value as { force?: unknown }).force === true;
+        const stopped = runs.stop(found, force);
+        return stopped
+          ? { status: 202, body: stopped }
+          : { status: 409, body: problem(409, "Conflict", "The run has ended already.") };
+      },
+    ],
+    [
+      "GET",
+      /^\/v1\/runs\/([^/:]+)\/report$/,
+      (match, url) => {
+        const found = runs.find(decodeURIComponent(match[1] ?? ""));
+        if (!found) return { status: 404, body: problem(404, "Not Found", "No run has this id.") };
+        const format = url.searchParams.get("format") ?? "json";
+        if (format !== "json") {
+          return {
+            status: 501,
+            body: problem(
+              501,
+              "Not Implemented",
+              `The mock serves only the json report, not ${format}.`,
+            ),
+          };
+        }
+        return { status: 200, body: runs.report(found) };
+      },
+    ],
+    [
+      "GET",
+      /^\/v1\/runs\/([^/:]+)\/metrics$/,
+      (match, url) => {
+        const found = runs.find(decodeURIComponent(match[1] ?? ""));
+        if (!found) return { status: 404, body: problem(404, "Not Found", "No run has this id.") };
+        const view = url.searchParams.get("view");
+        if (!isView(view)) {
+          return {
+            status: 400,
+            body: problem(400, "Bad Request", `view must be one of ${VIEWS.join(", ")}.`),
+          };
+        }
+        const from = url.searchParams.get("from");
+        if (from !== null && Number.isNaN(Date.parse(from))) {
+          return { status: 400, body: problem(400, "Bad Request", "from is not a date-time.") };
+        }
+        return { status: 200, body: { view, samples: runs.series(found, view, from) } };
+      },
+    ],
   ];
 }
 
@@ -283,10 +423,56 @@ function send(
   res.end(JSON.stringify(body));
 }
 
+/**
+ * Answers the metrics stream as the controller does: a retry field, then one event per sample
+ * and tick with the connection's tick number as its id, and an `end` event that names the run
+ * state after the final samples.
+ */
+function streamMetrics(
+  res: ServerResponse,
+  runs: MockRuns,
+  run: NonNullable<ReturnType<MockRuns["find"]>>,
+  views: View[],
+  behavior: { drop: boolean },
+): void {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-store",
+  });
+  res.write(`retry: ${String(runs.stepMs)}\n\n`);
+  let tick = 0;
+  const timer = setInterval(() => {
+    emit();
+  }, runs.stepMs);
+  const stop = (): void => {
+    clearInterval(timer);
+  };
+  function emit(): void {
+    tick += 1;
+    for (const sample of runs.latest(run, views)) {
+      res.write(`id: ${String(tick)}\ndata: ${JSON.stringify(sample)}\n\n`);
+    }
+    const { state, final } = runs.stateOf(run);
+    if (final) {
+      res.write(`event: end\ndata: ${JSON.stringify({ state })}\n\n`);
+      stop();
+      res.end();
+    } else if (behavior.drop && tick >= 2) {
+      stop();
+      res.destroy();
+    }
+  }
+  res.on("close", stop);
+  emit();
+}
+
 /** Creates the request handler of the mock server. */
 export function createMockHandler(options: MockServerOptions = {}) {
   const tokens = new Set(options.tokens ?? [MOCK_TOKEN]);
-  const table = routes(options.data ?? loadMockData());
+  const data = options.data ?? loadMockData();
+  const runs = new MockRuns(options.runs);
+  const table = routes(data, runs);
+  let connections = 0;
   const faults = options.faults ?? [];
   const handle = (req: IncomingMessage, res: ServerResponse, input: RequestInput): void => {
     const url = new URL(req.url ?? "/", "http://mock.invalid");
@@ -303,6 +489,20 @@ export function createMockHandler(options: MockServerOptions = {}) {
     if (fault) {
       const detail = fault.detail ?? `The mock answers ${below} with HTTP ${fault.status}.`;
       send(res, fault.status, problem(fault.status, "Mock Fault", detail));
+      return;
+    }
+    const streamMatch = /^\/v1\/runs\/([^/:]+)\/metrics:stream$/.exec(url.pathname);
+    if (streamMatch && method === "GET") {
+      const run = runs.find(decodeURIComponent(streamMatch[1] ?? ""));
+      if (!run) {
+        send(res, 404, problem(404, "Not Found", "No run has this id."));
+        return;
+      }
+      connections += 1;
+      const views = url.searchParams.getAll("view").filter(isView);
+      streamMetrics(res, runs, run, views.length > 0 ? views : [...VIEWS], {
+        drop: connections <= (options.streamDrops ?? 0),
+      });
       return;
     }
     let pathMatched = false;

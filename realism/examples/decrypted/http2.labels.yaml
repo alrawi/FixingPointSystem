@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Labels of the decrypted view of modules/http2/fixtures/http2.pcapng. The view keeps the
+# server ports 8443 and 8444 of the two https scenarios, whose ALPN is h2. nDPI 4.2 has no
+# HTTP/2, so the view needs the nDPI 4.14 that realism/ci/build-ndpi.sh installs, and every
+# session must be HTTP2.
+#
+#   python3 -m realism decrypted --pcap modules/http2/fixtures/http2.pcapng \
+#     --labels realism/examples/decrypted/http2.labels.yaml --sessions 40
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: https2_decrypted
+    match: {transport: tcp, server_port: 8443}
+  - application: https2_decrypted
+    match: {transport: tcp, server_port: 8444}
+applications:
+  https2_decrypted: {ndpi: [HTTP2]}

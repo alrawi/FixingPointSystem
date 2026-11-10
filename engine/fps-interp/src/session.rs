@@ -14,7 +14,7 @@ use std::time::Duration;
 use bytes::{Buf, BytesMut};
 use fps_flow::program::{CloseMode, Op, Program, StopRule, TlsRole, TlsUpgrade};
 use fps_flow::template::{Filler, Part, RenderCtx};
-use fps_flow::{Template, TemplateFn, Value, Vars};
+use fps_flow::{Clock, SystemClock, Template, TemplateFn, Value, Vars};
 use fps_io::{DatagramIo, DatagramIoExt, SessionIo, MAX_DATAGRAM};
 use rand::Rng;
 use rand_pcg::Pcg64Mcg;
@@ -131,9 +131,16 @@ pub struct Session<'a> {
     max_datagram: usize,
     spawns: Option<SpawnQueue>,
     upgrader: Option<&'a dyn TlsUpgrader>,
+    clock: &'a dyn Clock,
 }
 
 impl<'a> Session<'a> {
+    /// Makes `now()` read `clock` instead of the wall clock of the host. A
+    /// test, a golden, or a replay pins the clock to get equal bytes.
+    pub fn set_clock(&mut self, clock: &'a dyn Clock) {
+        self.clock = clock;
+    }
+
     /// Creates a session side.
     pub fn new(ctx: SessionCtx<'a>) -> Self {
         Session {
@@ -158,6 +165,7 @@ impl<'a> Session<'a> {
             max_datagram: MAX_DATAGRAM,
             spawns: None,
             upgrader: None,
+            clock: &SystemClock,
         }
     }
 
@@ -886,6 +894,7 @@ impl<'a> Session<'a> {
             overlay,
             last,
             wbuf,
+            clock,
             ..
         } = self;
         (
@@ -898,6 +907,7 @@ impl<'a> Session<'a> {
                 rng,
                 filler,
                 functions: &mut **functions,
+                clock: *clock,
             },
             wbuf,
         )

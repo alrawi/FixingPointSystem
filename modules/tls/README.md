@@ -10,6 +10,7 @@ The [Transport](../../docs/wiki/Transport.md#tls-module) wiki page explains the 
 |---|---|
 | `native/src/profile.rs` | `ClientProfile` and `ServerProfile` with `TlsVersion`, `Group`, `CipherSuite`, and the resumption policies |
 | `native/src/browser.rs` | `BrowserProfile` and `BROWSER_PROFILES`, the Chrome, Edge, Firefox, and Safari profiles with their expected and real JA4 and the gaps between them |
+| `native/src/mail.rs` | The `mail-client` profile and the server profiles `server-tls13-h2` and `server-tls13-noalpn` (TRN-15) |
 | `native/src/authority.rs` | `RunAuthority`, which generates a certificate authority per run and issues `ServerIdentity` chains with `LeafKey` |
 | `native/src/session.rs` | `TlsConnector`, `TlsAcceptor`, `TlsSession`, and `HandshakeReport` |
 | `native/src/keylog.rs` | `NssKeyLog`, which writes the NSS key log format |
@@ -18,6 +19,7 @@ The [Transport](../../docs/wiki/Transport.md#tls-module) wiki page explains the 
 | `tests/sessions.rs` | Component tests over in memory sessions and kernel TCP |
 | `tests/capture.rs`, `tests/decrypt_tls13.py` | Capture and key log tests with tshark and with an independent Python decryption |
 | `tests/ja4.rs`, `tests/ja4_of_hello.py` | JA4 tests of the browser profiles, computed with `realism/ja4.py` and cross checked with tshark |
+| `tests/burst.rs` | Plaintext backpressure under 1 MiB bursts in both directions, and the ALPN of the mail and h2 profiles (TRN-15) |
 | `bench/` | `run_s2.sh` and `compare_s2.py`, which compare the module with the S2 spike on one machine |
 | `results/phase2-sandbox/` | The raw benchmark results of the package, see the wiki page |
 

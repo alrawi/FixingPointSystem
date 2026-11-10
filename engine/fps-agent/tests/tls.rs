@@ -27,7 +27,10 @@ use fps_agent::control::{CaptureSettings, Captures};
 use fps_agent::modules::{sha256_digest, tree_digest};
 use fps_agent::plan::Plan;
 use fps_agent::run::{prepare, prepare_with};
-use fps_agent::tls::{self, KeyTap, Needs, SERVER_TLS12, SERVER_TLS13};
+use fps_agent::tls::{
+    self, KeyTap, Needs, MAIL_CLIENT, SERVER_TLS12, SERVER_TLS13, SERVER_TLS13_H2,
+    SERVER_TLS13_NOALPN,
+};
 use fps_agent::trust::ModulePolicy;
 use fps_agent::{run, Outcome, RunOptions};
 use fps_flow::program::TlsRole;
@@ -175,6 +178,34 @@ fn https_scenarios_run_through_the_agent_and_a_server_criterion_counts_the_serve
         summary.criteria[1].value,
         server.counter_total(metric::SESSIONS_SUCCEEDED) as f64
     );
+
+    // AGT-16: the tls series carry the port of the plan on which each side
+    // runs, `client0` for the clients and `server0` for the servers, and not
+    // the `default` of a flow without a port name.
+    for (snapshot, port, side) in [(client, "client0", "client"), (server, "server0", "server")] {
+        let handshakes: u64 = snapshot
+            .iter()
+            .filter(|(k, _)| k.metric() == metric::TLS_HANDSHAKES)
+            .filter(|(k, _)| {
+                let has = |l: &str, v: &str| k.labels().iter().any(|(n, x)| *n == l && x == v);
+                has("port", port) && has("side", side)
+            })
+            .map(|(_, v)| match v {
+                fps_stats::SeriesValue::Count(c) => *c,
+                _ => 0,
+            })
+            .sum();
+        assert!(handshakes > 0, "no {side} handshake on port {port}\n{log}");
+    }
+    let on_default = client
+        .iter()
+        .filter(|(k, _)| k.metric() == metric::TLS_HANDSHAKES)
+        .any(|(k, _)| {
+            k.labels()
+                .iter()
+                .any(|(n, v)| *n == "port" && v == "default")
+        });
+    assert!(!on_default, "a tls series is labeled with the default port");
 }
 
 #[test]
@@ -322,7 +353,19 @@ fn captured_run(
     )
     .expect("prepare");
     let entry = caps
-        .start(plan_id, capture_id, "", "", 0, 0, None, &[], seed, export)
+        .start(
+            plan_id,
+            capture_id,
+            "",
+            "",
+            0,
+            0,
+            None,
+            &[],
+            &[],
+            seed,
+            export,
+        )
         .expect("start capture");
     let active = prepared
         .start_with(Duration::from_millis(500), caps.cell())
@@ -571,8 +614,14 @@ fn hello_extensions(bytes: &[u8]) -> Vec<u16> {
     out
 }
 
+/// AGT-16: every client profile is registered with a factory, so each session
+/// builds its own connector and never holds a ticket. The server profile
+/// issues tickets, which a shared connector would store and offer in its next
+/// ClientHello as `pre_shared_key` (41). `tests/tls_sessions.rs` of
+/// `fps-runtime` holds the control that a shared connector does.
 #[tokio::test]
-async fn every_handshake_of_a_shared_connector_keeps_the_client_hello_of_the_profile() {
+async fn every_handshake_against_a_server_that_issues_tickets_keeps_the_client_hello_of_the_profile(
+) {
     let tap = KeyTap::new();
     let profiles = tls::build(7, &needs("chrome-136", SERVER_TLS13), &tap)
         .expect("profiles")
@@ -586,12 +635,63 @@ async fn every_handshake_of_a_shared_connector_keeps_the_client_hello_of_the_pro
         shapes.push(ext);
     }
     // session_ticket (35) is in the first ClientHello, and no later one adds
-    // pre_shared_key (41), because no server of the run issues a ticket.
+    // pre_shared_key (41), although the server issues tickets.
     assert!(shapes[0].contains(&35), "{:?}", shapes[0]);
     for s in &shapes {
         assert!(!s.contains(&41), "{s:?}");
         assert_eq!(s, &shapes[0]);
     }
+}
+
+/// ALPN is extension 16 of the ClientHello.
+const ALPN: u16 = 16;
+
+#[tokio::test]
+async fn the_mail_client_sends_no_alpn_and_the_new_server_profiles_accept_clients_with_and_without()
+{
+    let tap = KeyTap::new();
+    let mut hello = BTreeMap::new();
+    for (client, server) in [
+        ("firefox-139", SERVER_TLS13_H2),
+        (MAIL_CLIENT, SERVER_TLS13_H2),
+        (MAIL_CLIENT, SERVER_TLS13_NOALPN),
+        ("firefox-139", SERVER_TLS13_NOALPN),
+        (MAIL_CLIENT, SERVER_TLS13),
+        (MAIL_CLIENT, SERVER_TLS12),
+    ] {
+        let profiles = tls::build(9, &needs(client, server), &tap)
+            .expect("profiles")
+            .expect("some");
+        let (result, sent) = handshake(&*profiles, &*profiles, client, server).await;
+        result.unwrap_or_else(|e| panic!("{client} to {server}: {e:?}"));
+        let mut ext = hello_extensions(&sent);
+        ext.sort_unstable();
+        hello.insert(client, ext);
+    }
+    // The browser offers ALPN, the mail client does not, and the rest of the
+    // ClientHello is that of its base profile.
+    let (browser, mail) = (&hello["firefox-139"], &hello[MAIL_CLIENT]);
+    assert!(browser.contains(&ALPN), "{browser:?}");
+    assert!(!mail.contains(&ALPN), "{mail:?}");
+    let without: Vec<u16> = browser.iter().copied().filter(|e| *e != ALPN).collect();
+    assert_eq!(mail, &without);
+}
+
+#[test]
+fn the_server_profiles_select_the_alpn_ids_that_they_document() {
+    let ids = |names: &[&[u8]]| names.iter().map(|n| n.to_vec()).collect::<Vec<_>>();
+    assert_eq!(tls::server_alpn(SERVER_TLS13), Some(ids(&[b"http/1.1"])));
+    assert_eq!(tls::server_alpn(SERVER_TLS12), Some(ids(&[b"http/1.1"])));
+    assert_eq!(
+        tls::server_alpn(SERVER_TLS13_H2),
+        Some(ids(&[b"h2", b"http/1.1"]))
+    );
+    assert_eq!(tls::server_alpn(SERVER_TLS13_NOALPN), Some(ids(&[])));
+    assert_eq!(tls::server_alpn("server-tls99"), None);
+    for name in tls::server_profiles() {
+        assert!(tls::server_alpn(name).is_some(), "{name}");
+    }
+    assert!(tls::client_profiles().contains(&MAIL_CLIENT));
 }
 
 #[tokio::test]

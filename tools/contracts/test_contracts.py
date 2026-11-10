@@ -437,8 +437,8 @@ def test_schema_rejects_a_malformed_transport(body, web_get):
     assert not v.schema_errors(v.load_schema("scenario.schema.json"), web_get, report, Path("s.yaml"))
 
 
-def test_scenario_schema_is_v0_5():
-    assert "v0.5" in v.load_schema("scenario.schema.json")["description"]
+def test_scenario_schema_is_v0_6():
+    assert "v0.6" in v.load_schema("scenario.schema.json")["description"]
 
 
 # --- scenario semantics -----------------------------------------------------
@@ -773,3 +773,272 @@ def test_dist_result_is_int():
 
 def test_dist_and_profiles_are_reserved_module_names():
     assert {"dist", "profiles"} <= v.RESERVED_ROOTS
+
+
+# --- int_bytes and now (scenario contract v0.6, CON-19) ----------------------
+
+@pytest.mark.parametrize("text", [
+    "{{ int_bytes(258, 2) }}", "{{ int_bytes(258, 2, 'little') }}", "{{ int_bytes(value=1, width=1, endianness='big') }}",
+    "{{ int_bytes(vars.size, 4) }}", "{{ int_bytes(rand_int(0, 65535), 2) }}", "{{ int_bytes(255, 1) }}",
+    "{{ int_bytes(0, 8) }}", "{{ int_bytes(9223372036854775807, 8) }}", "{{ int_bytes(vars.size, vars.size) }}",
+    "{{ int_bytes(1, 2, vars.order) }}",
+    "{{ now('http_date') }}", "{{ now('epoch_s') }}", "{{ now(format='epoch_ms') }}", "{{ now(vars.order) }}",
+    "Date: {{ now('http_date') }}\\r\\nX-Time: {{ now('epoch_ms') }}",
+])
+def test_int_bytes_and_now_accept(text):
+    issues = v.check_template(text, {"size", "order"})
+    assert [i for i in issues if i.severity == "error"] == []
+
+
+@pytest.mark.parametrize("text,needle", [
+    ("{{ int_bytes(1) }}", "misses required parameter 'width'"),
+    ("{{ int_bytes(width=2) }}", "misses required parameter 'value'"),
+    ("{{ int_bytes(1, 2, 'big', 4) }}", "at most 3 positional argument"),
+    ("{{ int_bytes(1, 0) }}", "width from 1 to 8"),
+    ("{{ int_bytes(1, 9) }}", "width from 1 to 8"),
+    ("{{ int_bytes(1, 2, 'middle') }}", "'big' or 'little'"),
+    ("{{ int_bytes(-1, 2) }}", "does not fit 2 byte(s)"),
+    ("{{ int_bytes(256, 1) }}", "does not fit 1 byte(s)"),
+    ("{{ int_bytes(65536, 2) }}", "does not fit 2 byte(s)"),
+    ("{{ int_bytes(-1, vars.size) }}", "does not fit"),
+    ("{{ int_bytes('1', 2) }}", "takes int, got text"),
+    ("{{ int_bytes(1, 2.5) }}", "takes int, got float"),
+    ("{{ int_bytes(1, 2, 7) }}", "takes text, got int"),
+    ("{{ int_bytes(1, 2, bits=3) }}", "has no parameter 'bits'"),
+    ("{{ now() }}", "misses required parameter 'format'"),
+    ("{{ now('iso') }}", "unknown format 'iso' of now()"),
+    ("{{ now('http_date', 1) }}", "at most 1 positional argument"),
+    ("{{ now(1) }}", "takes text, got int"),
+    ("{{ now(zone='utc') }}", "has no parameter 'zone'"),
+])
+def test_int_bytes_and_now_reject(text, needle):
+    issues = v.check_template(text, {"size"})
+    assert any(needle in i.message for i in issues if i.severity == "error"), issues
+
+
+def test_int_bytes_value_limits_follow_the_width():
+    ok = ["{{ int_bytes(255, 1) }}", "{{ int_bytes(65535, 2) }}", "{{ int_bytes(16777215, 3) }}",
+          "{{ int_bytes(4294967295, 4) }}", "{{ int_bytes(9223372036854775807, 8) }}"]
+    bad = ["{{ int_bytes(256, 1) }}", "{{ int_bytes(65536, 2) }}", "{{ int_bytes(16777216, 3) }}",
+           "{{ int_bytes(4294967296, 4) }}", "{{ int_bytes(9223372036854775808, 8) }}"]
+    for text in ok:
+        assert not v.check_template(text, set()), text
+    for text in bad:
+        assert any("does not fit" in i.message for i in v.check_template(text, set())), text
+
+
+@pytest.mark.parametrize("call,result", [
+    ("now('http_date')", "text"), ("now('epoch_s')", "int"), ("now(format='epoch_ms')", "int"),
+    ("now(vars.order)", "any"), ("int_bytes(1, 2)", "bytes"),
+])
+def test_result_types_of_the_new_core_functions(call, result):
+    node = v.parse_expression(call)
+    scope = v.TemplateScope(vars={"order": "text"})
+    assert v._check_node(node, scope, []) == result
+
+
+def test_now_feeds_int_and_text_parameters():
+    scope = v.TemplateScope()
+    # epoch_s is an int, so it binds fill(n) and int_bytes(value). http_date is text, so it cannot.
+    assert v.check_template("{{ fill(now('epoch_s')) }}", scope) == []
+    assert v.check_template("{{ int_bytes(now('epoch_s'), 4) }}", scope) == []
+    assert any("takes int, got text" in i.message for i in v.check_template("{{ fill(now('http_date')) }}", scope))
+
+
+def test_new_core_functions_are_in_the_documented_table():
+    readme = (v.CONTRACTS / "README.md").read_text()
+    assert "| `int_bytes(value, width, endianness)` |" in readme
+    assert "| `now(format)` |" in readme
+    assert set(v.CORE_FUNCTIONS) == {"fill", "hex", "rand_int", "int_bytes", "now"}
+
+
+def test_int_bytes_and_now_in_a_scenario(web_get, http_manifest):
+    web_get["flows"][0]["client"].insert(1, {"send": "{{ int_bytes(vars.n, 2) }}{{ now('http_date') }}"})
+    web_get["vars"]["n"] = 7
+    assert not check_scenario(web_get, http_manifest).errors
+
+
+# --- variables across after (scenario contract v0.6, CON-19) -----------------
+
+def two_flow_scenario(web_get: dict) -> dict:
+    """The first flow binds `token` with set, and a second flow, which runs
+    after it, sends the token."""
+    first = web_get["flows"][0]
+    first["client"].insert(1, {"set": {"token": "{{ rand_int(1000, 9999) }}"}})
+    second = copy.deepcopy(first)
+    second["id"] = "second"
+    second["after"] = first["id"]
+    second["client"] = [a for a in second["client"] if "set" not in a]
+    second["client"].insert(1, {"send": "T={{ vars.token }}"})
+    web_get["flows"].append(second)
+    return web_get
+
+
+def test_flow_after_another_reads_its_variables(web_get, http_manifest):
+    assert not check_scenario(two_flow_scenario(web_get), http_manifest).errors
+
+
+def test_flow_after_a_chain_reads_the_first_flows_variables(web_get, http_manifest):
+    doc = two_flow_scenario(web_get)
+    third = copy.deepcopy(doc["flows"][1])
+    third["id"] = "third"
+    third["after"] = ["second"]
+    doc["flows"].append(third)
+    assert not check_scenario(doc, http_manifest).errors
+
+
+def test_a_variable_that_nothing_binds_is_still_undefined(web_get, http_manifest):
+    doc = two_flow_scenario(web_get)
+    doc["flows"][1]["client"][1] = {"send": "T={{ vars.nothing }}"}
+    assert any("undefined variable 'nothing'" in m for m in messages(check_scenario(doc, http_manifest)))
+
+
+def test_the_after_rule_is_in_the_readme_and_the_schema():
+    readme = (v.CONTRACTS / "README.md").read_text()
+    assert "### Variables across `after`" in readme
+    flow = v.load_schema("scenario.schema.json")["$defs"]["flow"]["properties"]["after"]
+    assert "variable" in flow["description"]
+
+
+# --- arrival and size distributions (test configuration v0.3, CON-19) --------
+
+ARRIVALS = [
+    {"dist": "constant", "ms": 100},
+    {"dist": "constant", "ms": 100, "tolerance_ms": 5},
+    {"dist": "exponential", "mean_ms": 250},
+    {"dist": "uniform", "min_ms": 10, "max_ms": 90},
+    {"dist": "lognormal", "mu": -1.2, "sigma": 0.8},
+    {"dist": "lognormal", "mu": 4.5, "sigma": 0.8, "unit": "ms"},
+    {"dist": "pareto", "alpha": 1.5, "scale_ms": 20},
+]
+SIZES = [
+    {"dist": "constant", "value": 512},
+    {"dist": "constant", "value": 512, "tolerance": 16},
+    {"dist": "exponential", "mean": 2048},
+    {"dist": "uniform", "min": 100, "max": 900},
+    {"dist": "lognormal", "mu": 8.1, "sigma": 1.1},
+    {"dist": "pareto", "alpha": 1.2, "scale": 4096},
+]
+
+
+def test_test_config_schema_is_v0_3():
+    assert "v0.3" in v.load_schema("test-config.schema.json")["description"]
+
+
+@pytest.mark.parametrize("arrival", ARRIVALS)
+def test_arrival_validates_at_profile_and_entry_level(arrival, smoke, index):
+    smoke["profile"]["arrival"] = arrival
+    smoke["profile"]["mix"][0]["arrival"] = copy.deepcopy(arrival)
+    assert not check_test(smoke, index).errors
+
+
+@pytest.mark.parametrize("size", SIZES)
+def test_size_validates_at_profile_and_entry_level(size, smoke, index):
+    smoke["profile"]["size"] = {"request": size, "response": copy.deepcopy(size), "both": copy.deepcopy(size)}
+    smoke["profile"]["mix"][0]["size"] = {"response": copy.deepcopy(size)}
+    assert not check_test(smoke, index).errors
+
+
+def test_configurations_without_distributions_stay_valid(smoke, index):
+    assert "arrival" not in smoke["profile"] and "size" not in smoke["profile"]
+    assert not check_test(smoke, index).errors
+
+
+@pytest.mark.parametrize("arrival,needle", [
+    ({"dist": "zipf", "mean_ms": 1}, "is not valid under any of the given schemas"),
+    ({"dist": "exponential"}, "is not valid under any"),
+    ({"dist": "exponential", "mean_ms": 0}, "is not valid under any"),
+    ({"dist": "exponential", "mean_ms": 5, "extra": 1}, "is not valid under any"),
+    ({"dist": "exponential", "mean": 5}, "is not valid under any"),
+    ({"mean_ms": 5}, "is not valid under any"),
+    ({"dist": "constant", "ms": 0}, "is not valid under any"),
+    ({"dist": "lognormal", "mu": 1, "sigma": 0}, "is not valid under any"),
+    ({"dist": "lognormal", "mu": 1, "sigma": 1, "unit": "h"}, "is not valid under any"),
+    ({"dist": "pareto", "alpha": 1, "scale": 3}, "is not valid under any"),
+    ({"dist": "uniform", "min_ms": 9, "max_ms": 3}, "min_ms greater than max_ms"),
+    ({"dist": "uniform", "min_ms": -1, "max_ms": 3}, "is not valid under any"),
+    ({"ms": 5}, "is not valid under any"),
+    ("exponential", "is not valid under any"),
+])
+def test_malformed_arrival_is_rejected(arrival, needle, smoke, index):
+    smoke["profile"]["arrival"] = arrival
+    found = messages(check_test(smoke, index))
+    assert any(needle in m for m in found), found
+
+
+@pytest.mark.parametrize("size,needle", [
+    ({}, "should be non-empty"),
+    ({"both": {"dist": "constant", "value": 1}, "extra": {"dist": "constant", "value": 1}},
+     "Additional properties are not allowed"),
+    ({"request": {"dist": "exponential", "mean_ms": 5}}, "is not valid under any"),
+    ({"request": {"dist": "pareto", "alpha": 1, "scale": 0}}, "is not valid under any"),
+    ({"response": {"dist": "uniform", "min": 9, "max": 3}}, "min greater than max"),
+    ({"request": {"dist": "constant", "value": -4}}, "is not valid under any"),
+    ({"request": 4}, "is not valid under any"),
+])
+def test_malformed_size_is_rejected(size, needle, smoke, index):
+    smoke["profile"]["mix"][0]["size"] = size
+    found = messages(check_test(smoke, index))
+    assert any(needle in m for m in found), found
+
+
+def test_distributions_are_not_accepted_elsewhere(smoke, index):
+    smoke["load"]["arrival"] = {"dist": "exponential", "mean_ms": 5}
+    assert messages(check_test(smoke, index))
+
+
+def test_uniform_bounds_are_reported_at_the_entry_pointer(smoke, index):
+    smoke["profile"]["mix"][0]["size"] = {"request": {"dist": "uniform", "min": 9, "max": 3}}
+    report = check_test(smoke, index)
+    assert any(f.path == "/profile/mix/0/size/request" for f in report.findings), report.findings
+
+
+# --- application all and property both (metric catalog 0.3.0, CON-19) ---------
+
+def test_catalog_is_0_3_0_with_property_both(catalog_doc):
+    assert catalog_doc["version"] == "0.3.0"
+    values = catalog_doc["labels"]["property"]["values"]
+    assert "both" in values
+    # Every value that 0.2.0 had stays, in its place.
+    assert values[:5] == ["session_bytes", "request_bytes", "response_bytes", "inter_arrival", "session_duration"]
+
+
+def test_catalog_documents_the_application_value_all(catalog_doc):
+    assert "all" in catalog_doc["labels"]["application"]["description"].split()
+    for name in ("realism.ks_statistic", "realism.ks_p_value"):
+        metric = next(m for m in catalog_doc["metrics"] if m["name"] == name)
+        assert metric["labels"] == ["application", "property"]
+
+
+def test_ks_criteria_may_select_all_and_both(smoke, index):
+    smoke["criteria"].append({"metric": "realism.ks_p_value", "op": ">=", "value": 0.01,
+                              "where": {"application": "all", "property": "both"}})
+    assert not check_test(smoke, index).errors
+
+
+def test_the_module_name_all_is_reserved(tmp_path):
+    mod = tmp_path / "all"
+    shutil.copytree(EXAMPLES / "modules/dns", mod)
+    manifest = v.load_yaml(mod / "manifest.yaml")
+    manifest["name"] = "all"
+    (mod / "manifest.yaml").write_text(yaml.safe_dump(manifest))
+    report = v.Report()
+    v.check_module_dir(mod, report, v.ModuleIndex())
+    assert any("reserved for the application label value" in m for m in messages(report))
+
+
+def test_no_shipped_module_is_named_all():
+    names = {m.name for m in (v.REPO / "modules").iterdir() if m.is_dir()}
+    names |= {m.name for m in (EXAMPLES / "modules").iterdir()}
+    assert "all" not in names
+
+
+# --- embedded copies ----------------------------------------------------------
+
+@pytest.mark.parametrize("source,copy_path", [
+    ("contracts/schemas/scenario.schema.json", "controller/internal/registry/schema/scenario.schema.json"),
+    ("contracts/schemas/test-config.schema.json", "controller/internal/store/schema/test-config.schema.json"),
+    ("contracts/metrics/catalog.yaml", "controller/internal/metrics/catalog.yaml"),
+])
+def test_controller_copies_are_byte_identical(source, copy_path):
+    assert (v.REPO / source).read_bytes() == (v.REPO / copy_path).read_bytes(), copy_path
