@@ -103,7 +103,9 @@ run_case() {
 	shift
 	: >"$work/calls.log"
 	status=0
-	out="$(env PATH="$work/bin:$PATH" FAKE_BOOT="$work/fake-boot" FAKE_MODE="$mode" FAKE_LOG="$work/calls.log" "${envs[@]}" \
+	# One boot and no negative boot unless the case says otherwise, whatever the defaults of the script are.
+	out="$(env PATH="$work/bin:$PATH" FAKE_BOOT="$work/fake-boot" FAKE_MODE="$mode" FAKE_LOG="$work/calls.log" \
+		FPS_TEST_REPEAT=1 FPS_TEST_NEGATIVE= FPS_TEST_ARTIFACT_DIR= FPS_TEST_AGENT_UNREACHABLE= "${envs[@]}" \
 		"$work/image/boot-test.sh" "$@" "$work/disk.qcow2" 2>&1)" || status=$?
 	calls="$(wc -l <"$work/calls.log")"
 	echo "NOTE case: $name (status $status, $calls boots)"

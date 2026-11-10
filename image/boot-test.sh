@@ -136,8 +136,8 @@ fi
 image="$(readlink -f "$image")"
 
 # --- IMG-07: boots in a row and the negative boot. Each boot is a full run of this script. ---
-repeat="${FPS_TEST_REPEAT:-1}"
-negative="${FPS_TEST_NEGATIVE:-}"
+repeat="${FPS_TEST_REPEAT:-10}"                # TEMP IMG-07: the PR run loops, a later commit reverts this
+negative="${FPS_TEST_NEGATIVE-agent-unreachable}" # TEMP IMG-07: same
 if ! [[ "$repeat" =~ ^[1-9][0-9]*$ ]]; then
 	echo "FAIL FPS_TEST_REPEAT must be a positive number, not '$repeat'" >&2
 	exit 2
