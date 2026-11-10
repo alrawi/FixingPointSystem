@@ -1,0 +1,46 @@
+[package]
+name = "fps-module-ssh"
+description = "Native template functions of the ssh module, with a real SSH 2.0 key exchange (decision D10)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+fps-flow = { path = "../../../engine/fps-flow" }
+# RngCore appears in the signature of the TemplateFn trait.
+rand = { version = "0.8", default-features = false }
+# The RustCrypto SSH libraries (Apache-2.0 OR MIT, compatible with GPL-3.0):
+# keys and signatures, the wire encoding, and the OpenSSH ChaCha20-Poly1305 cipher.
+ssh-key = { version = "=0.6.7", default-features = false, features = ["alloc", "ed25519"] }
+ssh-encoding = { version = "0.2", default-features = false, features = ["alloc"] }
+chacha20 = "0.9"
+poly1305 = "0.8"
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
+sha2 = { version = "0.10", default-features = false }
+signature = { version = "2", default-features = false }
+
+[dev-dependencies]
+fps-backend-kernel = { path = "../../../engine/fps-backend-kernel" }
+fps-golden = { path = "../../../tests/golden/rust" }
+fps-interp = { path = "../../../engine/fps-interp" }
+fps-io = { path = "../../../engine/fps-io" }
+rand_pcg = "0.3"
+# serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
+serde_yaml = { package = "serde_norway", version = "0.9" }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
+
+# The module layout keeps tests in modules/ssh/tests, next to the scenarios
+# they exercise, so the targets point one directory up.
+[[test]]
+name = "catalog"
+path = "../tests/catalog.rs"
+
+[[test]]
+name = "scenarios"
+path = "../tests/scenarios.rs"
+
+[[test]]
+name = "transcript"
+path = "../tests/transcript.rs"

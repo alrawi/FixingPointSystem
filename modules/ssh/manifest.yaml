@@ -1,0 +1,182 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: ssh
+version: 0.1.0
+type: app
+summary: SSH 2.0 clients and servers with a real curve25519-sha256 key exchange and an encrypted transport, for interactive shells, remote commands, and scp transfers.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: ssh, transport: tcp, port: 22 }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 22, description: TCP port of the server side. }
+    client_banner: { type: string, minLength: 1, default: OpenSSH_9.6p1 Ubuntu-3ubuntu13.5, description: Software version and comments after SSH-2.0- in the identification line of the client. It starts with a version that has no hyphen or space. }
+    server_banner: { type: string, minLength: 1, default: OpenSSH_9.6p1 Ubuntu-3ubuntu13.5, description: Software version and comments after SSH-2.0- in the identification line of the server. It starts with a version that has no hyphen or space. }
+    host_key_seed: { type: integer, default: 1, description: Seed of the ssh-ed25519 host key of the server. One seed gives one host key in every session, as a real server shows one key, and another seed gives another server identity. }
+    window: { type: integer, minimum: 1, maximum: 4294967295, default: 2097152, description: Initial window of the session channel in bytes, which both sides announce. }
+    max_packet: { type: integer, minimum: 1, maximum: 32768, default: 32768, description: Largest SSH_MSG_CHANNEL_DATA payload that both sides announce, in bytes. }
+    commands: { type: integer, minimum: 0, maximum: 5000, default: 6, description: Commands that the operator types in interactive_shell. Each command is typed key by key. The session length grows with this number. }
+    typed: { type: integer, minimum: 1, maximum: 200, default: 14, description: Keys that the operator types for each command in interactive_shell. Every key is one packet in each direction. }
+    think_min_ms: { type: integer, minimum: 0, default: 300, description: Shortest pause before the operator starts a command in interactive_shell. }
+    think_max_ms: { type: integer, minimum: 0, default: 2500, description: Longest pause before the operator starts a command in interactive_shell. The pause must stay below the 120 s that the server waits for a key. }
+    key_gap_min_ms: { type: integer, minimum: 0, default: 40, description: Shortest gap between two keys in interactive_shell. }
+    key_gap_max_ms: { type: integer, minimum: 0, default: 220, description: Longest gap between two keys in interactive_shell. }
+    motd_min: { type: integer, minimum: 0, maximum: 32768, default: 260, description: Smallest message of the day plus prompt that the server prints after the shell starts, in bytes. }
+    motd_max: { type: integer, minimum: 0, maximum: 32768, default: 900, description: Largest message of the day plus prompt, in bytes. }
+    output_min: { type: integer, minimum: 0, maximum: 32768, default: 150, description: Smallest output of one command in interactive_shell, in bytes. }
+    output_max: { type: integer, minimum: 0, maximum: 32768, default: 6000, description: Largest output of one command in interactive_shell, in bytes. The client grants every output back, so the session length is not limited by the window. }
+    chunk: { type: integer, minimum: 1, maximum: 32768, default: 32768, description: Bytes of data in each SSH_MSG_CHANNEL_DATA packet of remote_command, scp_upload, and scp_download. It must not exceed max_packet. }
+    output_bytes: { type: integer, minimum: 0, maximum: 2000000, default: 8000, description: Output of the command in remote_command, in bytes. It must stay below window, because the server does not wait for window adjustments there. }
+    file_bytes: { type: integer, minimum: 0, maximum: 4294967295, default: 262144, description: Size of the file that scp_upload and scp_download move, in bytes. The session length grows with this number. }
+    batch: { type: integer, minimum: 1, maximum: 1000, default: 32, description: Packets that the sink receives before it grants window_step more bytes with SSH_MSG_CHANNEL_WINDOW_ADJUST in the scp scenarios. }
+    window_step: { type: integer, minimum: 1, maximum: 4294967295, default: 1048576, description: Bytes that each window adjustment of the scp scenarios grants. It equals chunk times batch for the default values, and it must not exceed that product. }
+    exec_command: { type: string, minLength: 1, description: Command line of the exec request in the scp scenarios, which is scp -t /srv/upload for scp_upload and scp -f /srv/export/report-202611.tar.gz for scp_download. }
+    file_name: { type: string, minLength: 1, default: report-202611.tar.gz, description: Name that the server announces in scp_download. }
+functions:
+  - name: credential
+    summary: Synthetic user name (two invented words joined by a dot) or password (it starts with Tst-). A seed of zero or more fixes the value, and -1 draws from the session generator.
+    params:
+      - { name: field, type: text }
+      - { name: seed, type: int, default: -1 }
+  - name: file_name
+    summary: Synthetic file name of the form word_word-2026MM.ext. The same seed and extension always give the same name.
+    params:
+      - { name: seed, type: int }
+      - { name: ext, type: text, default: bin }
+  - name: command
+    summary: A command line that an operator types, such as df -h. A seed of zero or more fixes the choice, and -1 draws from the session generator.
+    params:
+      - { name: seed, type: int, default: -1 }
+  - name: banner
+    summary: The identification line SSH-2.0-software that this side sends first, ending in CRLF. The line also enters the exchange hash.
+    params:
+      - { name: software, type: text, default: OpenSSH_9.6p1 Ubuntu-3ubuntu13.5 }
+  - name: peer_banner
+    summary: Checks the identification line of the peer, stores it for the exchange hash, and returns its software and comments part.
+    params:
+      - { name: line, type: bytes }
+  - name: kexinit
+    summary: SSH_MSG_KEXINIT packet with a random cookie that offers curve25519-sha256, ssh-ed25519, and chacha20-poly1305@openssh.com. The payload enters the exchange hash.
+    params: []
+  - name: ecdh_init
+    summary: Client SSH_MSG_KEX_ECDH_INIT packet with a fresh X25519 public key from the session generator.
+    params: []
+  - name: ecdh_reply
+    summary: Server SSH_MSG_KEX_ECDH_REPLY packet with the ssh-ed25519 host key of the seed, the X25519 public key, and the signature of the exchange hash. It derives the session keys.
+    params:
+      - { name: host_key_seed, type: int, default: 1 }
+  - name: newkeys
+    summary: SSH_MSG_NEWKEYS packet. Every packet that this side sends after it is encrypted with the session keys.
+    params: []
+  - name: size
+    summary: The number of bytes that follow the 4 byte head of a packet, given those 4 bytes. It decrypts the length field when the direction is encrypted.
+    params:
+      - { name: head, type: bytes }
+  - name: recv
+    summary: Opens the packet after its head, checks the tag and the message that expect names, and applies it to the session. It returns the channel data bytes of the packet, and 0 for other messages.
+    params:
+      - { name: packet, type: bytes }
+      - { name: expect, type: text, default: any }
+  - name: service_request
+    summary: SSH_MSG_SERVICE_REQUEST packet for a service name.
+    params:
+      - { name: name, type: text, default: ssh-userauth }
+  - name: service_accept
+    summary: SSH_MSG_SERVICE_ACCEPT packet for a service name.
+    params:
+      - { name: name, type: text, default: ssh-userauth }
+  - name: auth_none
+    summary: SSH_MSG_USERAUTH_REQUEST packet with the method none, which asks the server for its methods.
+    params:
+      - { name: user, type: text }
+  - name: auth_password
+    summary: SSH_MSG_USERAUTH_REQUEST packet with the method password and the given credentials.
+    params:
+      - { name: user, type: text }
+      - { name: password, type: bytes }
+  - name: auth_failure
+    summary: SSH_MSG_USERAUTH_FAILURE packet that lists the methods that can continue, without partial success.
+    params:
+      - { name: methods, type: text, default: "publickey,password" }
+  - name: auth_success
+    summary: SSH_MSG_USERAUTH_SUCCESS packet.
+    params: []
+  - name: channel_open
+    summary: SSH_MSG_CHANNEL_OPEN packet for the session channel 0 with the given window and maximum packet size.
+    params:
+      - { name: window, type: int, default: 2097152 }
+      - { name: max_packet, type: int, default: 32768 }
+  - name: channel_confirm
+    summary: SSH_MSG_CHANNEL_OPEN_CONFIRMATION packet for channel 0 with the given window and maximum packet size.
+    params:
+      - { name: window, type: int, default: 2097152 }
+      - { name: max_packet, type: int, default: 32768 }
+  - name: channel_request
+    summary: SSH_MSG_CHANNEL_REQUEST packet for the kind pty-req (xterm-256color, 80 by 24), shell, or exec, which takes the command text.
+    params:
+      - { name: kind, type: text }
+      - { name: command, type: bytes, default: "" }
+      - { name: reply, type: boolean, default: true }
+  - name: channel_success
+    summary: SSH_MSG_CHANNEL_SUCCESS packet.
+    params: []
+  - name: exit_status
+    summary: SSH_MSG_CHANNEL_REQUEST packet with exit-status and no reply, which a server sends when the command ends.
+    params:
+      - { name: code, type: int, default: 0 }
+  - name: channel_data
+    summary: SSH_MSG_CHANNEL_DATA packet that carries the given bytes, at most 32768 of them.
+    params:
+      - { name: data, type: bytes }
+  - name: window_adjust
+    summary: SSH_MSG_CHANNEL_WINDOW_ADJUST packet that grants count more bytes.
+    params:
+      - { name: count, type: int }
+  - name: channel_eof
+    summary: SSH_MSG_CHANNEL_EOF packet.
+    params: []
+  - name: channel_close
+    summary: SSH_MSG_CHANNEL_CLOSE packet.
+    params: []
+  - name: disconnect
+    summary: SSH_MSG_DISCONNECT packet with reason code 11, by application.
+    params:
+      - { name: reason, type: text, default: disconnected by user }
+  - name: chunk
+    summary: Exactly size bytes, at most 32768. The kind text gives printable output lines that end in CR LF, keys gives typed letters, and binary gives random bytes.
+    params:
+      - { name: size, type: int }
+      - { name: kind, type: text, default: text }
+  - name: scp_header
+    summary: The line C<mode> <size> <name> and a line feed, with which an scp source announces a file.
+    params:
+      - { name: size, type: int }
+      - { name: name, type: text }
+      - { name: mode, type: text, default: "0644" }
+  - name: div
+    summary: The integer quotient a / b, for loop counts. The divisor must be above zero.
+    params:
+      - { name: a, type: int }
+      - { name: b, type: int }
+  - name: rem
+    summary: The remainder of a / b. The divisor must be above zero.
+    params:
+      - { name: a, type: int }
+      - { name: b, type: int }
+  - name: flag
+    summary: 1 when n is above zero and 0 otherwise, for a loop that runs once or not at all.
+    params:
+      - { name: n, type: int }
+scenarios:
+  - scenarios/interactive_shell.yaml
+  - scenarios/remote_command.yaml
+  - scenarios/scp_upload.yaml
+  - scenarios/scp_download.yaml
+fixtures:
+  - { capture: fixtures/ssh.pcapng, expect: { ndpi: [SSH], zeek: [ssh] } }
+provenance:
+  source: synthetic
+  notes: The transport follows RFC 4253 for the packets and the key derivation, RFC 4252 for the authentication, RFC 4254 for the channels, RFC 8731 for curve25519-sha256, and the OpenSSH protocol notes for chacha20-poly1305@openssh.com and for the scp protocol, with the exchanges of OpenSSH 9.6 as the model. The host keys come from a seed and are never used outside the fixtures. Every user name, password, file name, command, and line of output is synthetic.
