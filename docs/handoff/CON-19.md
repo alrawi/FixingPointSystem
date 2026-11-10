@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #362 |
 | Branch | `wp/CON-19` |
-| Pull request | #0 |
+| Pull request | #364 |
 | Status | in progress |
 | Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-51af6f, lease until 2026-11-10T06:15:04Z |
