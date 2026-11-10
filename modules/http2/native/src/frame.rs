@@ -482,8 +482,9 @@ pub fn settings_pairs(payload: &[u8]) -> Result<Vec<(u16, u32)>, FrameError> {
             payload.len()
         )));
     }
-    Ok(payload
-        .chunks_exact(6)
+    let (pairs, _) = payload.as_chunks::<6>();
+    Ok(pairs
+        .iter()
         .map(|c| {
             (
                 u16::from_be_bytes([c[0], c[1]]),
