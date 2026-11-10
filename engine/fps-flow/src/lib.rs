@@ -19,6 +19,7 @@
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod check;
+pub mod clock;
 mod error;
 pub mod function;
 pub mod location;
@@ -27,6 +28,7 @@ pub mod program;
 pub mod template;
 
 pub use check::MAX_DATAGRAM;
+pub use clock::{Clock, PinnedClock, SystemClock};
 pub use function::{ArgValue, CallArgs, FnCall, FnError, FnErrorKind, TemplateFn, ValueType};
 pub use location::{Location, Side, Step};
 pub use manifest::{Manifest, ManifestError, ModuleContext, ModuleSet};

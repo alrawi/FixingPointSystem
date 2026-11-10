@@ -214,3 +214,64 @@ cases:
     error: TlsUpgradeOnUdp
     pointer: /flows/0/transport
     about: "transport on a UDP flow, which is sugar for tls_upgrade."
+  - scenario: fx/scenarios/core_int_bytes_ok.yaml
+    verdict: accept
+    about: "int_bytes with every width, both byte orders, keyword arguments, and arguments from variables and calls (scenario contract v0.6)."
+  - scenario: fx/scenarios/core_now_ok.yaml
+    verdict: accept
+    about: "now with the three formats, a format from a variable, and the int formats as int arguments (scenario contract v0.6)."
+  - scenario: fx/scenarios/int_bytes_width_high.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A literal width of 9, above the 8 bytes of an int."
+  - scenario: fx/scenarios/int_bytes_width_zero.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A literal width of 0."
+  - scenario: fx/scenarios/int_bytes_value_negative.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A negative literal value, which the engine never encodes."
+  - scenario: fx/scenarios/int_bytes_value_overflow.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A literal value of 256 that does not fit one byte, which the engine never truncates."
+  - scenario: fx/scenarios/int_bytes_endianness.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A literal endianness other than big or little."
+  - scenario: fx/scenarios/int_bytes_value_type.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A text literal binds the int parameter value."
+  - scenario: fx/scenarios/int_bytes_missing_width.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A call that omits the required width."
+  - scenario: fx/scenarios/int_bytes_arity.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "Too many positional arguments."
+  - scenario: fx/scenarios/now_format_unknown.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A literal format that is none of the three."
+  - scenario: fx/scenarios/now_format_missing.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A call that omits the required format."
+  - scenario: fx/scenarios/now_http_date_is_text.yaml
+    verdict: reject
+    error: Template
+    pointer: /flows/0/client/1/send
+    about: "A literal http_date fixes the result type text, which the int parameter of fill does not take."

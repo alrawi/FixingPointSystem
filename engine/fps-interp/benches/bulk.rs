@@ -194,6 +194,7 @@ fn render(vars: &Vars, filler: &Filler, t: &Template, session_id: u64) -> Vec<u8
         rng: &mut rng,
         filler,
         functions: &mut none,
+        clock: &fps_flow::SystemClock,
     };
     let mut out = Vec::new();
     t.render_into(&mut ctx, &mut out).unwrap();
@@ -314,6 +315,7 @@ async fn handwritten_session(
                     rng: &mut rng,
                     filler: &setup.filler,
                     functions: &mut none,
+                    clock: &fps_flow::SystemClock,
                 };
                 setup.response_template.render_into(ctx, &mut wbuf).unwrap();
                 io.write_all(&wbuf).await.unwrap();

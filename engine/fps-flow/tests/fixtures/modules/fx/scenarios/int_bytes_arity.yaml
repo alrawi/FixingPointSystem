@@ -1,0 +1,8 @@
+scenario: int_bytes_arity
+vars: { n: 7, width: 2, order: little, format: epoch_s }
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ int_bytes(7, 2, 'big', 1) }}"
