@@ -1,0 +1,15 @@
+scenario: core_now_ok
+vars: { n: 7, width: 2, order: little, format: epoch_s }
+flows:
+  - id: a
+    module: fx
+    client:
+      - connect: { port: 80 }
+      - send: "{{ now('http_date') }}"
+      - send: "{{ now('epoch_s') }}"
+      - send: "{{ now(format='epoch_ms') }}"
+      - send: "{{ now(vars.format) }}"
+      - send: "{{ fill(now('epoch_s')) }}"
+      - send: "{{ int_bytes(now('epoch_s'), 4) }}"
+      - send: "{{ fx.greet(now('http_date')) }}"
+      - send: "{{ fill(now(vars.format)) }}"

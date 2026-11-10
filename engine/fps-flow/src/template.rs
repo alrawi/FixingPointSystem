@@ -25,6 +25,7 @@ use rand::{Rng, RngCore};
 use rand_pcg::Pcg64Mcg;
 use serde_yaml::Value as Yaml;
 
+use crate::clock::{self, Clock};
 use crate::function::{ArgValue, CallArgs, FnCall, FnErrorKind, NamedArg, TemplateFn, ValueType};
 
 use dist::Dist;
@@ -132,6 +133,28 @@ pub enum TemplateError {
         /// Upper bound.
         hi: i64,
     },
+    /// `int_bytes()` received a width outside 1 to 8.
+    #[error("int_bytes() takes a width from 1 to 8 bytes, got {0}")]
+    IntBytesWidth(i64),
+    /// `int_bytes()` received an endianness other than `'big'` or `'little'`.
+    #[error("int_bytes() takes the endianness 'big' or 'little', got '{0}'")]
+    IntBytesEndianness(String),
+    /// `int_bytes()` received a negative value or one that does not fit.
+    #[error("int_bytes() value {value} does not fit {width} byte(s) as an unsigned integer")]
+    IntBytesRange {
+        /// The value.
+        value: i64,
+        /// The width in bytes.
+        width: i64,
+    },
+    /// `now()` received a format other than `'http_date'`, `'epoch_s'`, or
+    /// `'epoch_ms'`.
+    #[error("unknown format '{0}' of now(), expected one of http_date, epoch_s, epoch_ms")]
+    NowFormat(String),
+    /// The clock is at an instant that `now('http_date')` cannot write with a
+    /// four digit year.
+    #[error("the clock reads {0} ms since the epoch, which has no four digit year")]
+    NowRange(i64),
     /// A reference names a profile that the scenario does not declare, or the
     /// template renders without the profiles of its scenario.
     #[error("undefined profile '{0}'")]
@@ -332,6 +355,9 @@ pub struct RenderCtx<'a, R: RngCore> {
     pub filler: &'a Filler,
     /// Module functions of the session.
     pub functions: &'a mut dyn TemplateFn,
+    /// The clock that `now()` reads, [`SystemClock`](crate::SystemClock) in a
+    /// production run and a pinned clock in a test or a golden.
+    pub clock: &'a dyn Clock,
 }
 
 impl<'a, R: RngCore> RenderCtx<'a, R> {
@@ -406,6 +432,10 @@ enum Expr {
     Fill(Box<Expr>),
     Hex(Box<Expr>),
     RandInt(Box<Expr>, Box<Expr>),
+    /// `int_bytes(value, width, endianness)` with the default bound.
+    IntBytes(Box<Expr>, Box<Expr>, Box<Expr>),
+    /// `now(format)`.
+    Now(Box<Expr>),
     /// A profile of the scenario. The loader folds it into text.
     Profile(String),
     /// A `dist` call with every parameter bound in declaration order,
@@ -429,7 +459,8 @@ impl Expr {
             Expr::Var(_) => ValueType::Any,
             Expr::SessionId | Expr::RandInt(..) | Expr::Dist(..) => ValueType::Int,
             Expr::SessionFlow | Expr::Fill(_) | Expr::Profile(_) => ValueType::Text,
-            Expr::Last | Expr::Hex(_) | Expr::Call(_) => ValueType::Bytes,
+            Expr::Last | Expr::Hex(_) | Expr::IntBytes(..) | Expr::Call(_) => ValueType::Bytes,
+            Expr::Now(format) => now_type(format),
         }
     }
 
@@ -459,6 +490,22 @@ impl Expr {
             },
             Expr::Fill(n) => Expr::Fill(fold_box(n)?),
             Expr::RandInt(a, b) => Expr::RandInt(fold_box(a)?, fold_box(b)?),
+            Expr::IntBytes(value, width, order) => {
+                let (value, width, order) = (fold_box(value)?, fold_box(width)?, fold_box(order)?);
+                // A call whose arguments are all known and valid renders the
+                // same bytes in every session. An invalid one stays, so that
+                // it fails when rendered.
+                if let (Expr::Const(v), Expr::Const(w), Expr::Const(o)) =
+                    (&*value, &*width, &*order)
+                {
+                    if let Some(bytes) = fold_int_bytes(v, w, o) {
+                        return Ok(Expr::Const(Const::Bytes(bytes)));
+                    }
+                }
+                Expr::IntBytes(value, width, order)
+            }
+            // The clock differs between sessions, so `now()` never folds.
+            Expr::Now(format) => Expr::Now(fold_box(format)?),
             Expr::Call(call) => {
                 let ModuleCall {
                     module,
@@ -486,7 +533,12 @@ impl Expr {
     fn visit<'e>(&'e self, f: &mut dyn FnMut(&'e Expr)) {
         f(self);
         match self {
-            Expr::Fill(e) | Expr::Hex(e) => e.visit(f),
+            Expr::Fill(e) | Expr::Hex(e) | Expr::Now(e) => e.visit(f),
+            Expr::IntBytes(a, b, c) => {
+                a.visit(f);
+                b.visit(f);
+                c.visit(f);
+            }
             Expr::RandInt(a, b) => {
                 a.visit(f);
                 b.visit(f);
@@ -520,6 +572,8 @@ impl Expr {
             Expr::Fill(_) => "fill()".into(),
             Expr::Hex(_) => "hex()".into(),
             Expr::RandInt(..) => "rand_int()".into(),
+            Expr::IntBytes(..) => "int_bytes()".into(),
+            Expr::Now(_) => "now()".into(),
             Expr::Profile(n) => format!("profiles.{n}"),
             Expr::Dist(d, _) => format!("{}()", d.qualified()),
             Expr::Call(c) => format!("{}.{}()", c.module, c.function),
@@ -922,6 +976,16 @@ fn eval<'v, 'a: 'v, R: RngCore>(
             }
             Val::Int(ctx.rng.gen_range(lo..=hi))
         }
+        Expr::IntBytes(value, width, order) => {
+            let value = eval_int(value, ctx)?;
+            let width = eval_int(width, ctx)?;
+            let order = eval_text(order, "int_bytes", "endianness", ctx)?;
+            Val::Bytes(Cow::Owned(int_bytes(value, width, &order)?))
+        }
+        Expr::Now(format) => {
+            let format = eval_text(format, "now", "format", ctx)?;
+            now(&format, ctx.clock)?
+        }
         Expr::Profile(name) => return Err(TemplateError::UndefinedProfile(name.clone())),
         Expr::Dist(d, args) => Val::Int(draw_dist(*d, args, ctx)?),
         Expr::Call(c) => {
@@ -929,6 +993,84 @@ fn eval<'v, 'a: 'v, R: RngCore>(
             call_module(c, ctx, &mut buf)?;
             Val::Bytes(Cow::Owned(buf))
         }
+    })
+}
+
+/// Evaluates a text argument of a core function.
+fn eval_text<R: RngCore>(
+    e: &Expr,
+    function: &str,
+    param: &str,
+    ctx: &mut RenderCtx<'_, R>,
+) -> Result<String, TemplateError> {
+    match eval(e, ctx)? {
+        Val::Text(s) => Ok(s.into_owned()),
+        other => Err(TemplateError::ArgumentType {
+            function: function.into(),
+            param: param.into(),
+            expected: ValueType::Text,
+            got: other.arg().value_type(),
+        }),
+    }
+}
+
+/// The static type of `now(format)`, which a literal format fixes.
+fn now_type(format: &Expr) -> ValueType {
+    match format {
+        Expr::Const(Const::Text(f)) if f == "http_date" => ValueType::Text,
+        Expr::Const(Const::Text(f)) if f == "epoch_s" || f == "epoch_ms" => ValueType::Int,
+        _ => ValueType::Any,
+    }
+}
+
+/// Writes `value` as exactly `width` bytes, for `int_bytes()`.
+///
+/// The value must be unsigned and fit the width. The function never
+/// truncates, wraps, or encodes a negative value.
+pub fn int_bytes(value: i64, width: i64, endianness: &str) -> Result<Vec<u8>, TemplateError> {
+    let w = usize::try_from(width)
+        .ok()
+        .filter(|w| (1..=8).contains(w))
+        .ok_or(TemplateError::IntBytesWidth(width))?;
+    let big = match endianness {
+        "big" => true,
+        "little" => false,
+        other => return Err(TemplateError::IntBytesEndianness(other.to_string())),
+    };
+    let range = || TemplateError::IntBytesRange { value, width };
+    let v = u64::try_from(value).map_err(|_| range())?;
+    // A width of 8 holds every non negative `i64`.
+    if w < 8 && v >> (8 * w) != 0 {
+        return Err(range());
+    }
+    Ok(if big {
+        v.to_be_bytes()[8 - w..].to_vec()
+    } else {
+        v.to_le_bytes()[..w].to_vec()
+    })
+}
+
+/// Folds `int_bytes()` for constant arguments, and returns `None` when the
+/// arguments are not valid constants of the right type.
+fn fold_int_bytes(value: &Const, width: &Const, order: &Const) -> Option<Vec<u8>> {
+    match (value, width, order) {
+        (Const::Int(v), Const::Int(w), Const::Text(o)) => int_bytes(*v, *w, o).ok(),
+        _ => None,
+    }
+}
+
+/// Reads the clock for `now()` and renders `format`.
+fn now(format: &str, clock: &dyn Clock) -> Result<Val<'static>, TemplateError> {
+    if !matches!(format, "http_date" | "epoch_s" | "epoch_ms") {
+        return Err(TemplateError::NowFormat(format.to_string()));
+    }
+    let ms = clock.now_ms();
+    Ok(match format {
+        "epoch_s" => Val::Int(ms / 1000),
+        "epoch_ms" => Val::Int(ms),
+        _ => Val::Text(Cow::Owned(
+            clock::http_date(ms).ok_or(TemplateError::NowRange(ms))?,
+        )),
     })
 }
 
@@ -1038,5 +1180,7 @@ pub fn decode_hex(s: &str) -> Result<Vec<u8>, TemplateError> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_core;
 #[cfg(test)]
 mod tests_dist;

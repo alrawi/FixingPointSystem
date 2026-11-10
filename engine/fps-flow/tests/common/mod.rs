@@ -109,6 +109,7 @@ pub fn render(
         rng: &mut rng,
         filler: filler(),
         functions: &mut echo,
+        clock: &fps_flow::SystemClock,
     };
     t.render_to_vec(&mut ctx)
 }

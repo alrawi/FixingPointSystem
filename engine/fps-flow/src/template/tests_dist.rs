@@ -24,6 +24,7 @@ fn draws_with(src: &str, seed: u64, n: usize, vars: &Vars) -> Result<Vec<i64>, T
             rng: &mut rng,
             filler: &filler,
             functions: &mut none,
+            clock: &crate::SystemClock,
         };
         let text = t.render_to_vec(&mut ctx)?;
         let text = String::from_utf8(text).unwrap();
@@ -173,6 +174,7 @@ fn a_call_draws_a_fixed_number_of_words() {
             rng: &mut rng,
             filler: &filler,
             functions: &mut none,
+            clock: &crate::SystemClock,
         };
         t.render_to_vec(&mut ctx).unwrap();
         rng.next_u64()
@@ -225,6 +227,7 @@ fn a_draw_can_size_a_fill() {
         rng: &mut rng,
         filler: &filler,
         functions: &mut none,
+        clock: &crate::SystemClock,
     };
     assert_eq!(t.render_to_vec(&mut ctx).unwrap().len(), 8);
 }

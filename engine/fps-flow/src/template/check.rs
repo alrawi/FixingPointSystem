@@ -150,6 +150,22 @@ impl Checker<'_, '_> {
                 arg_type("rand_int", "b", ValueType::Int, tb)?;
                 ValueType::Int
             }
+            Expr::IntBytes(value, width, order) => {
+                for (param, ty, e) in [
+                    ("value", ValueType::Int, value),
+                    ("width", ValueType::Int, width),
+                    ("endianness", ValueType::Text, order),
+                ] {
+                    let t = self.node(e)?;
+                    arg_type("int_bytes", param, ty, t)?;
+                }
+                ValueType::Bytes
+            }
+            Expr::Now(format) => {
+                let t = self.node(format)?;
+                arg_type("now", "format", ValueType::Text, t)?;
+                e.value_type()
+            }
             Expr::Call(call) => {
                 self.call(call)?;
                 ValueType::Bytes

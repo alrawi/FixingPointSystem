@@ -60,6 +60,7 @@ pub(super) fn render_with(
         rng: &mut rng,
         filler: &filler,
         functions: &mut echo,
+        clock: &crate::SystemClock,
     };
     t.render_to_vec(&mut ctx)
 }
@@ -185,6 +186,7 @@ fn module_errors_name_the_call() {
         rng: &mut rng,
         filler: &filler,
         functions: &mut none,
+        clock: &crate::SystemClock,
     };
     assert!(matches!(
         t.render_to_vec(&mut ctx),
@@ -425,6 +427,7 @@ impl Template {
             rng: &mut rng,
             filler: &filler,
             functions: &mut none,
+            clock: &crate::SystemClock,
         };
         self.render_int(&mut ctx)
     }
@@ -451,6 +454,7 @@ fn render_both(t: &Template, min_ref: usize) -> (Vec<u8>, Vec<u8>, Vec<Part>, (u
             rng: &mut rng,
             filler: &filler,
             functions: &mut echo,
+            clock: &crate::SystemClock,
         };
         if i == 0 {
             t.render_into(&mut ctx, out).unwrap();
@@ -529,6 +533,7 @@ fn render_parts_reports_a_negative_fill() {
         rng: &mut rng,
         filler: &filler,
         functions: &mut none,
+        clock: &crate::SystemClock,
     };
     let t = Template::compile("{{ fill(-1) }}").unwrap();
     let err = t
