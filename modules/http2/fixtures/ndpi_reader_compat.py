@@ -11,7 +11,8 @@ arguments to the reader that ``FPS_NDPI_REAL_READER`` names and rewrites the
     FPS_NDPI_REAL_READER=/path/to/ndpiReader \\
     FPS_NDPI_READER=modules/http2/fixtures/ndpi_reader_compat.py
 
-It exits with the code of the reader.
+It exits with the code of the reader, except for ``-h``, which newer readers end
+with 1 after the usage text and which the runner calls to read the version.
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ def main(argv: list[str]) -> int:
     except OSError as exc:
         print(f"ndpi_reader_compat: {reader}: {exc.strerror}", file=sys.stderr)
         return 127
+    if argv in (['-h'], ['-H']):
+        return 0
     if "-C" in argv[:-1]:
         out = Path(argv[argv.index("-C") + 1])
         try:
