@@ -3122,3 +3122,111 @@ work_packages:
       - Document the stream's event names, ids, retry, and 501; add a source label to the mix metrics; add optional provenance fields (capture_sha256, scrub_rules with versions, scrubbed_at). contracts/changes/CON-20.md.
     acceptance:
       - The contract checks pass and every change is additive.
+
+  - id: AGT-17
+    title: SSH in the agent and TLS profiles from the TLS module
+    phase: 2
+    workstream: AGT
+    size: S
+    depends_on: [MOD-11, TRN-15, AGT-16]
+    paths: [engine/fps-agent/]
+    summary: >-
+      The agent registry has no ssh entry (MOD-11), its TLS profiles mail-client, server-tls13-h2 and
+      server-tls13-noalpn are local copies of the ones TRN-15 added to modules/tls, and manifest.yaml is
+      still read separately from the digest pass, the check-then-use gap AGT-16 closed for extension.wasm.
+    deliverables:
+      - The ssh registry entry with one Ssh value per flow side; the TLS profile lookup reads the TLS module's registry; manifest.yaml is read once and the digested bytes are parsed.
+    acceptance:
+      - A controller e2e plan runs ssh/interactive_shell and ssh/scp_upload through the real agent with succeeded sessions, a test shows the agent's profiles are the TLS module's, and a manifest swapped after the digest is never parsed.
+
+  - id: AGT-18
+    title: The run_control capture flake
+    phase: 2
+    workstream: AGT
+    size: S
+    depends_on: [AGT-12]
+    paths: [engine/fps-agent/]
+    summary: >-
+      engine/fps-agent/tests/run_control.rs:758 (a_fake_controller_changes_rates_and_reads_a_capture)
+      failed twice in batch 24 with dropped 1 and passed on rerun (CAP-04, MOD-11).
+    deliverables:
+      - The cause of the dropped packet found and fixed, in the test or the capture path, with the reasoning in the PR.
+    acceptance:
+      - The test passes 50 times in a row in CI (a loop step in the PR run) and still fails when a packet is really dropped.
+
+  - id: CON-21
+    title: Scenario totals, criterion filters, and realism results in the REST report
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [CON-20]
+    paths: [contracts/]
+    summary: >-
+      RunReport has no per application or per scenario totals, CriterionResult has no where, so criteria that
+      differ only in a label filter cannot be told apart, and nothing says how realism results reach the
+      report (UI-05 findings). Needs owner approval as a contract change.
+    deliverables:
+      - Additive OpenAPI fields RunReport.scenarios (sessions, bytes, failures per scenario and application) and CriterionResult.where, and the documented source of RunReport.realism.
+    acceptance:
+      - validate.py and the openapi-breaking check pass, and the change entry lists the consumers (CTL-39, UI, SDK).
+
+  - id: CTL-39
+    title: Scenario totals and realism results in the REST report
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CON-21, CTL-38]
+    paths: [controller/internal/report/, controller/internal/api/]
+    summary: >-
+      Report.API returns realism as an empty list and has no scenario table, so the UI report and comparison
+      views show totals only (UI-05).
+    deliverables:
+      - The REST report carries the CTL-38 scenario table, criterion where, and the realism results of the run when the controller has them.
+    acceptance:
+      - A report API test with literal scenario totals and a realism result, and the UI mock still validates against the OpenAPI.
+
+  - id: RLM-13
+    title: Mix accuracy from the classifier as metric series
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [CON-20, RLM-07]
+    paths: [realism/]
+    summary: >-
+      CON-20 added the source label so the mix metrics can carry what the classifier saw in the capture beside
+      the run's counters; the RLM-07 mix check still prints them only in its own report.
+    deliverables:
+      - The realism report and its metric output carry mix.share_pct, mix.abs_error_pp and mix.max_abs_error_pp with source=classifier and the classifier label.
+    acceptance:
+      - A test on a committed fixture with a known mix gives the literal series, and the output validates against metric catalog 0.4.0.
+
+  - id: CAP-05
+    title: Provenance fields from the scrub record
+    phase: 2
+    workstream: CAP
+    size: S
+    depends_on: [CON-20, CAP-04]
+    paths: [capture/]
+    summary: >-
+      CON-20 added optional module manifest provenance fields capture_sha256, scrub_rules and scrubbed_at, and
+      the capture tools still describe the scrub in a notes sentence.
+    deliverables:
+      - The capture tools write the three provenance fields from an intact scrub record and refuse a record that does not match the capture.
+    acceptance:
+      - A test scrubs a committed fixture and the written provenance validates against module manifest schema v0.4 with literal values.
+
+  - id: MOD-22
+    title: Shared decrypted check in the module capture scripts
+    phase: 2
+    workstream: MOD
+    size: S
+    depends_on: [RLM-12, MOD-06]
+    paths: [modules/http1/, modules/http2/, modules/smtp/, modules/imap/]
+    summary: >-
+      The module workflows call python3 -m realism decrypted since batch 24, but the capture.sh scripts of
+      http1, http2, smtp and imap still call their own decrypted_check.py copies, and http2 keeps
+      ndpi_reader_compat.py although the runner reads the pipe CSV of nDPI 4.14.
+    deliverables:
+      - The four capture.sh scripts call python3 -m realism decrypted, and the decrypted_check.py copies, their tests and ndpi_reader_compat.py are removed.
+    acceptance:
+      - The realism workflow passes for the four modules, and no module file names decrypted_check.py.

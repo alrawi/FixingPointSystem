@@ -78,7 +78,9 @@ jobs:
             --labels modules/http2/fixtures/expected.yaml --parsers tshark --output report.json
           python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))'
       - name: Check the decrypted HTTPS sessions of the committed fixture
-        run: python modules/http2/fixtures/decrypted_check.py modules/http2/fixtures/http2.pcapng
+        run: |
+          python -m realism decrypted --pcap modules/http2/fixtures/http2.pcapng \
+            --labels realism/examples/decrypted/http2.labels.yaml --sessions 40 --parsers tshark
 
   harness:
     runs-on: ubuntu-24.04

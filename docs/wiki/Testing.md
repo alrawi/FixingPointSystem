@@ -299,6 +299,8 @@ A workstream workflow follows six rules.
 5. **Grant least privilege.** The workflow sets `permissions` to `contents: read` unless a job must write.
 6. **Keep slow levels apart.** End to end, realism, and performance jobs live in their own workflow files with the triggers that the levels table names, so the fast workflow stays within five minutes.
 
+**Realism tools in CI.** `realism/ci/install-tools.sh` installs tshark and Zeek and builds the pinned nDPI 4.14 (`realism/ci/ndpi.version`, by tag and commit) with `realism/ci/build-ndpi.sh`, because the Ubuntu nDPI 4.2.0 has no HTTP/2. The module workflows check the decrypted view of their TLS fixtures with the shared `python3 -m realism decrypted --pcap F --labels L` (RLM-12), whose labels live in `realism/examples/decrypted/`. On 2026-11-10 runner image 20261101.360 let `apt-get update` stall for six hours in 14 jobs; the owner's branch `ci/apt-hang` bounds apt with a timeout and retry helper and gives every hosted job a `timeout-minutes`.
+
 A path filtered workflow does not run on pull requests that miss its paths, and GitHub then reports a required check as pending. The owner therefore marks only `ci.yml` jobs as required checks, or marks a workstream job as required only after removing its path filter.
 
 ## Namespace harness
