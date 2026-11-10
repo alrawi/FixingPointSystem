@@ -151,7 +151,6 @@ fn succeeded(line: &Json, application: &str) -> u64 {
 /// loader of single flow sessions refuses, and the `content` module through
 /// `requires`.
 #[test]
-#[ignore = "TEMP: the repeat tests run it"]
 fn an_ftp_scenario_with_data_flows_runs_through_the_agent() {
     ftp_run();
 }
@@ -194,7 +193,6 @@ fn ftp_run() {
 /// that two sessions shared would carry the keys and the packet counters of
 /// one session into the next and fail its first encrypted packet.
 #[test]
-#[ignore = "TEMP: the repeat tests run it"]
 fn ssh_scenarios_with_a_real_key_exchange_run_through_the_agent() {
     ssh_run();
 }
@@ -239,7 +237,6 @@ fn ssh_run() {
 }
 
 #[test]
-#[ignore = "TEMP: the repeat tests run it"]
 fn smtp_imap_and_pop3_scenarios_run_through_the_agent() {
     mail_run();
 }
@@ -306,16 +303,19 @@ fn repeat(name: &str, body: fn()) {
 // the same server ports and the same plan file, so the second one fails to bind.
 
 #[test]
+#[ignore = "repeats a three second run 50 times"]
 fn repeat_the_ftp_test() {
     repeat("ftp", ftp_run);
 }
 
 #[test]
+#[ignore = "repeats a three second run 50 times"]
 fn repeat_the_ssh_test() {
     repeat("ssh", ssh_run);
 }
 
 #[test]
+#[ignore = "repeats a three second run 50 times"]
 fn repeat_the_mail_test() {
     repeat("mail", mail_run);
 }
