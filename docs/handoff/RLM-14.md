@@ -5,10 +5,10 @@
 | Issue | #409 |
 | Branch | `wp/RLM-14` |
 | Pull request | #436 |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-790651, lease until 2026-11-11T00:05:08Z |
-| Last verified commit | none |
+| Last verified commit | f97bd53 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ MOD-22 replaced the module copies of `decrypted_check.py` with `python3 -m reali
 - [x] 1. Claim commit, handoff
 - [x] 2. Labels section `messages` (parser, schema) and the `messages` check with a tshark probe and stub, with unit tests
 - [x] 3. Report schema and format 0.11.0, `realism decrypted` wiring, example labels with literal counts, fixture tests
-- [ ] 4. README, Realism page, log entry, checks, pull request, CI
+- [x] 4. README, Realism page, log entry, checks, pull request, CI
 
 ## Done and verified
 
@@ -31,13 +31,17 @@ MOD-22 replaced the module copies of `decrypted_check.py` with `python3 -m reali
 - `tests/test_messages.py` cuts one session of each fixture in half and requires a `missing` reason.
 - `python3 tools/plan/plan.py check`, `render --check`, `lint`: ok.
 
+## CI
+
+All 30 checks of commit f97bd53 passed on #436, including the `realism` module jobs and the `rlm` tests.
+
 ## Remaining
 
-Pull request and CI.
+Review by the coordinator.
 
 ## Next action
 
-Open the pull request and wait for CI.
+Review and merge #436.
 
 ## Blockers and open questions
 
@@ -65,4 +69,5 @@ python3 -m pytest realism -q
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T22:40Z | claude-790651 | claim | a38b08d | Claimed #409, started the branch from origin/main |
-| 2026-11-10T23:20Z | claude-790651 | checkpoint | see PR | Check, labels, schemas, tests, docs, log entry |
+| 2026-11-10T23:20Z | claude-790651 | checkpoint | 4479261 | Check, labels, schemas, tests, docs, log entry, PR #436 |
+| 2026-11-10T23:45Z | claude-790651 | review | f97bd53 | CI green, ready for review |
