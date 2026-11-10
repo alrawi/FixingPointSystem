@@ -65,6 +65,8 @@ jobs:
           ./autogen.sh >/dev/null
           make -j"$(nproc)" >/dev/null
           ./example/ndpiReader -H 2>&1 | grep -w HTTP2 || { ./example/ndpiReader -H 2>&1 | grep -i http | head; exit 1; }
+          ./example/ndpiReader -q -d -i "$GITHUB_WORKSPACE/modules/http2/fixtures/http2.pcapng" -C "$RUNNER_TEMP/flows.csv" >/dev/null 2>&1 || true
+          head -3 "$RUNNER_TEMP/flows.csv" | cut -c1-600
           echo "FPS_NDPI_READER=$RUNNER_TEMP/ndpi/example/ndpiReader" >> "$GITHUB_ENV"
       - run: python -m pip install -r tools/contracts/requirements.txt
       - run: make lint-mod-http2 PYTHON=python
