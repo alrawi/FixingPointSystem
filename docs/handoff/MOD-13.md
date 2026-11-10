@@ -6,7 +6,7 @@
 | Branch | `wp/MOD-13` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 40% (2 of 5 plan steps) |
 | Current holder | claude-9c41d7, lease until 2026-11-10T18:55:07Z |
 | Last verified commit | none |
 
@@ -18,23 +18,23 @@ Ship smb2 scenarios for file browsing, download, and upload, with client and ser
 
 ## Plan
 
-- [ ] 1. `manifest.yaml` with the catalog of the crate and the parameter schema, and the three scenarios `browse`, `download`, `upload`.
-- [ ] 2. Tests that run both sides of each scenario through the interpreter, and the golden transcripts.
+- [x] 1. `manifest.yaml` with the catalog of the crate and the parameter schema, and the three scenarios `browse`, `download`, `upload`.
+- [x] 2. Tests that run both sides of each scenario through the interpreter, and the golden transcripts.
 - [ ] 3. The `fixture_peer` example, `capture.sh`, and `expected.yaml`.
 - [ ] 4. Record the fixture in a network namespace, score it with nDPI, check how nDPI treats the 4 octet direct TCP header.
 - [ ] 5. README, log entry, wiki page notes, checks, pull request, CI.
 
 ## Done and verified
 
-Nothing yet.
+Steps 1 and 2: `cargo test -p fps-module-smb2` passes (all test binaries, 12 in scenarios.rs, catalog test compares the manifest).
 
 ## Remaining
 
-Everything.
+Steps 3 to 5.
 
 ## Next action
 
-Write `modules/smb2/manifest.yaml`.
+Write the fixture_peer example, capture.sh, and expected.yaml.
 
 ## Blockers and open questions
 

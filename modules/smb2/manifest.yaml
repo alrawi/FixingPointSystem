@@ -1,0 +1,355 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: smb2
+version: 0.1.0
+type: app
+summary: SMB2 clients and servers over direct TCP on port 445 that browse a share, download a file, and upload a file, with a synthetic NTLMv2 session setup and configurable file sizes.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: smb2, transport: tcp, port: 445 }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 445, description: TCP port of the server side. nDPI recognizes SMB on any port from the payload, but port 445 is the port of direct TCP. }
+    share: { type: string, minLength: 1, default: '\\fps-files.example.test\data', description: UNC path that TREE_CONNECT names. The host name lies under the reserved .test domain. }
+    user: { type: string, minLength: 1, default: alice, description: User name of the synthetic NTLMv2 authentication. }
+    password: { type: string, minLength: 1, default: Tst-quartz-meadow-41, description: Password from which the client computes its NTLMv2 response. It is synthetic. }
+    domain: { type: string, minLength: 1, default: FPS, description: NetBIOS domain that the client names and the server reports as its target. }
+    workstation: { type: string, minLength: 1, default: WS-0417, description: Workstation name in the NTLM negotiate and authenticate messages. }
+    dialects: { type: string, minLength: 1, default: '2.0.2,2.1', description: "Comma separated dialects that the client offers, from 2.0.2, 2.1, 3.0, 3.0.2, and 3.1.1. A list with 3.1.1 adds the negotiate contexts. The module writes no SMB 3.x signing or encryption." }
+    dialect: { type: string, minLength: 1, default: '2.1', description: Dialect that the server selects. It must be one of dialects. }
+    subdir: { type: string, minLength: 1, default: Projects, description: Directory that the browse scenario opens after the root directory. }
+    listing: { type: string, minLength: 1, default: "0 directory .\n0 directory ..\n0 directory Projects\n0 directory Archive\n18432 file budget-2026.xlsx\n2048 file notes.txt\n524288 file site-survey.pdf\n731 file readme.md", description: "Entries of the root directory, one per line as 'size kind name' where kind is file or directory." }
+    subdir_listing: { type: string, minLength: 1, default: "0 directory .\n0 directory ..\n40960 file plan-v2.docx\n1310 file todo.txt\n8388 file schedule.csv", description: Entries of the directory subdir, in the format of listing. }
+    file_name: { type: string, minLength: 1, default: 'Projects\site-survey.pdf', description: Path of the file that the download scenario reads, relative to the share. }
+    file_size: { type: integer, minimum: 1, maximum: 1073741824, default: 1048576, description: Size of the downloaded file in bytes. The server reports it in its CREATE response. }
+    read_size: { type: integer, minimum: 1, maximum: 8388608, default: 65536, description: Octets of each READ request, which is the READ size that the server grants. The client charges one credit per 64 KiB of it. }
+    tail_size: { type: integer, minimum: 1, maximum: 8388608, default: 65536, description: "Octets of the last READ. It must be file_size minus the full reads, that is file_size modulo read_size, or read_size when read_size divides file_size, because a flow has no arithmetic. The default fits the default sizes." }
+    upload_name: { type: string, minLength: 1, default: 'Projects\backup-2026-11.bin', description: Path of the file that the upload scenario creates, relative to the share. }
+    upload_size: { type: integer, minimum: 1, maximum: 1073741824, default: 1048576, description: Size of the uploaded file in bytes. }
+    write_size: { type: integer, minimum: 1, maximum: 8388608, default: 65536, description: Octets of each WRITE request. }
+    upload_tail: { type: integer, minimum: 1, maximum: 8388608, default: 65536, description: "Octets of the last WRITE. It must be upload_size modulo write_size, or write_size when write_size divides upload_size. The default fits the default sizes." }
+functions:
+  - name: negotiate
+    summary: "A NEGOTIATE request that offers the dialects in the comma separated list, such as '2.0.2,2.1,3.0,3.0.2,3.1.1'. A list with 3.1.1 adds the preauthentication and encryption contexts. signing: disabled, enabled, required. A capabilities value of -1 chooses 0 for 2.x and DFS, leasing, and large MTU for 3.x. An empty client_guid draws 16 random octets."
+    params:
+      - { name: dialects, type: text, default: "2.1" }
+      - { name: message_id, type: int, default: 0 }
+      - { name: signing, type: text, default: "enabled" }
+      - { name: capabilities, type: int, default: -1 }
+      - { name: client_guid, type: bytes, default: "" }
+      - { name: credits, type: int, default: 1 }
+  - name: session_setup
+    summary: "A SESSION_SETUP request that carries the security buffer, a SPNEGO token such as the result of ntlm_negotiate or ntlm_authenticate. A session_id of 0 opens a session, and the second request of an exchange carries the id that the server chose."
+    params:
+      - { name: security, type: bytes }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int, default: 0 }
+      - { name: previous_session_id, type: int, default: 0 }
+      - { name: signing, type: text, default: "enabled" }
+      - { name: binding, type: boolean, default: false }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: tree_connect
+    summary: "A TREE_CONNECT request for a share path such as '\\\\server\\share'."
+    params:
+      - { name: path, type: text }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: create
+    summary: "A CREATE request for a path below the share, with backslashes, or an empty name for the root of the share. The defaults open an existing file for reading (read data, attributes, and read control, share all, FILE_OPEN, FILE_NON_DIRECTORY_FILE). Use options 1 for a directory, disposition 2 to create a file that must not exist, and disposition 5 to overwrite or create."
+    params:
+      - { name: name, type: text }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: desired_access, type: int, default: 1179785 }
+      - { name: file_attributes, type: int, default: 0 }
+      - { name: share_access, type: int, default: 7 }
+      - { name: disposition, type: int, default: 1 }
+      - { name: options, type: int, default: 64 }
+      - { name: oplock, type: int, default: 0 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: read
+    summary: "A READ request for length octets at offset from the file with the 32 digit hexadecimal file id of a create response. A credit_charge of -1 charges one credit per 64 KiB."
+    params:
+      - { name: file_id, type: text }
+      - { name: length, type: int }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: offset, type: int, default: 0 }
+      - { name: minimum_count, type: int, default: 0 }
+      - { name: remaining, type: int, default: 0 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: write
+    summary: "A WRITE request that carries data at offset into the file with the 32 digit hexadecimal file id. The data is binary, so a nested call such as content.binary fits. A credit_charge of -1 charges one credit per 64 KiB."
+    params:
+      - { name: file_id, type: text }
+      - { name: data, type: bytes }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: offset, type: int, default: 0 }
+      - { name: remaining, type: int, default: 0 }
+      - { name: flags, type: int, default: 0 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: close
+    summary: "A CLOSE request for the file with the 32 digit hexadecimal file id. A flags value of 1 asks for the attributes in the response."
+    params:
+      - { name: file_id, type: text }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: flags, type: int, default: 0 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: tree_disconnect
+    summary: "A TREE_DISCONNECT request."
+    params:
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: logoff
+    summary: "A LOGOFF request, which ends the session."
+    params:
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: query_directory
+    summary: "A QUERY_DIRECTORY request for the entries that match the pattern in the open directory with the 32 digit hexadecimal file id, as FileIdBothDirectoryInformation. restart starts the scan again, and single returns one entry."
+    params:
+      - { name: file_id, type: text }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: pattern, type: text, default: "*" }
+      - { name: restart, type: boolean, default: true }
+      - { name: single, type: boolean, default: false }
+      - { name: output_length, type: int, default: 65536 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: negotiate_response
+    summary: "A NEGOTIATE response that selects the dialect, such as '2.1' or '3.1.1'. An empty security buffer stands for the SPNEGO token that offers NTLMSSP alone, which is what a server without Kerberos sends. A capabilities value of -1 chooses 0 for 2.x and DFS, leasing, and large MTU for 3.x. An empty server_guid draws 16 random octets. A time of -1 is the fixed time of the module."
+    params:
+      - { name: dialect, type: text, default: "2.1" }
+      - { name: message_id, type: int, default: 0 }
+      - { name: signing, type: text, default: "enabled" }
+      - { name: server_guid, type: bytes, default: "" }
+      - { name: max_size, type: int, default: 8388608 }
+      - { name: capabilities, type: int, default: -1 }
+      - { name: security, type: bytes, default: "" }
+      - { name: system_time, type: int, default: -1 }
+      - { name: start_time, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: session_setup_response
+    summary: "A SESSION_SETUP response with the security buffer and a status such as more_processing_required, which answers the first request of an exchange, or success. session_flags: 1 guest, 2 null, 4 encrypt data."
+    params:
+      - { name: security, type: bytes }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: status, type: text, default: "success" }
+      - { name: session_flags, type: int, default: 0 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: tree_connect_response
+    summary: "A TREE_CONNECT response whose header carries the tree id that the server assigns. share_type: disk, pipe, print."
+    params:
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: share_type, type: text, default: "disk" }
+      - { name: share_flags, type: int, default: 0 }
+      - { name: capabilities, type: int, default: 0 }
+      - { name: maximal_access, type: int, default: 2032127 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: create_response
+    summary: "A CREATE response for a file of size octets. An empty file_id draws a random 32 digit hexadecimal id, and an allocation_size of -1 rounds the size up to 4096. The attributes are 32 for a file and 16 for a directory. A time of -1 is the fixed time of the module."
+    params:
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: file_id, type: text, default: "" }
+      - { name: size, type: int, default: 0 }
+      - { name: attributes, type: int, default: 32 }
+      - { name: action, type: int, default: 1 }
+      - { name: oplock, type: int, default: 0 }
+      - { name: time, type: int, default: -1 }
+      - { name: allocation_size, type: int, default: -1 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: read_response
+    summary: "A READ response that carries data, with the number of octets that remain in the file after it."
+    params:
+      - { name: data, type: bytes }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: remaining, type: int, default: 0 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: write_response
+    summary: "A WRITE response that acknowledges count octets."
+    params:
+      - { name: count, type: int }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: remaining, type: int, default: 0 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: close_response
+    summary: "A CLOSE response. The times, sizes, and attributes are zero unless flags is 1. A time of -1 is the fixed time of the module, and an allocation_size of -1 rounds the size up to 4096."
+    params:
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: flags, type: int, default: 0 }
+      - { name: size, type: int, default: 0 }
+      - { name: attributes, type: int, default: 32 }
+      - { name: time, type: int, default: -1 }
+      - { name: allocation_size, type: int, default: -1 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: tree_disconnect_response
+    summary: "A TREE_DISCONNECT response."
+    params:
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: logoff_response
+    summary: "A LOGOFF response."
+    params:
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: query_directory_response
+    summary: "A QUERY_DIRECTORY response for the entries, one per line as 'size kind name' where kind is file or directory and the name may hold spaces. A time of -1 is the fixed time of the module."
+    params:
+      - { name: entries, type: text }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int }
+      - { name: tree_id, type: int }
+      - { name: time, type: int, default: -1 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: error_response
+    summary: "An error response to a request of the named command, with a status such as access_denied, object_name_not_found, end_of_file, no_more_files, or logon_failure, or a number such as 0xC0000022."
+    params:
+      - { name: command, type: text }
+      - { name: status, type: text }
+      - { name: message_id, type: int }
+      - { name: session_id, type: int, default: 0 }
+      - { name: tree_id, type: int, default: 0 }
+      - { name: credit_charge, type: int, default: -1 }
+      - { name: credits, type: int, default: 1 }
+  - name: ntlm_negotiate
+    summary: "The NTLMSSP NEGOTIATE_MESSAGE of a client, wrapped in a SPNEGO NegTokenInit unless spnego is false. A flags value of -1 is what a Windows client offers."
+    params:
+      - { name: domain, type: text, default: "" }
+      - { name: workstation, type: text, default: "" }
+      - { name: flags, type: int, default: -1 }
+      - { name: spnego, type: boolean, default: true }
+  - name: ntlm_challenge
+    summary: "The NTLMSSP CHALLENGE_MESSAGE of a server with target information that names the domain and computer, wrapped in a SPNEGO NegTokenResp with the state accept-incomplete unless spnego is false. An empty server_challenge draws 8 random octets. A time of -1 is the fixed time of the module."
+    params:
+      - { name: target, type: text, default: "FPS" }
+      - { name: computer, type: text, default: "FPSSERVER" }
+      - { name: dns_domain, type: text, default: "" }
+      - { name: dns_computer, type: text, default: "" }
+      - { name: server_challenge, type: bytes, default: "" }
+      - { name: time, type: int, default: -1 }
+      - { name: flags, type: int, default: -1 }
+      - { name: spnego, type: boolean, default: true }
+  - name: ntlm_authenticate
+    summary: "The NTLMSSP AUTHENTICATE_MESSAGE of a client that answers a challenge, with a full NTLMv2 response computed from the user and the password, wrapped in a SPNEGO NegTokenResp unless spnego is false. The challenge is the security buffer of the session setup response, or a bare challenge message. An empty client_challenge draws 8 random octets."
+    params:
+      - { name: challenge, type: bytes }
+      - { name: user, type: text }
+      - { name: password, type: text }
+      - { name: domain, type: text, default: "" }
+      - { name: workstation, type: text, default: "" }
+      - { name: client_challenge, type: bytes, default: "" }
+      - { name: time, type: int, default: -1 }
+      - { name: spnego, type: boolean, default: true }
+  - name: spnego_accept
+    summary: "The SPNEGO NegTokenResp with the state accept-completed, which a server sends in the final SESSION_SETUP response."
+    params: []
+  - name: ntlm_session_key
+    summary: "The 16 octet session key, as 32 hexadecimal digits, that follows from an AUTHENTICATE_MESSAGE and the password. Both sides derive the same key, which SMB 2.x signs with."
+    params:
+      - { name: authenticate, type: bytes }
+      - { name: password, type: text }
+  - name: sign
+    summary: "The SMB2 message with the signed flag set and the signature written as SMB 2.x computes it, HMAC-SHA256 over the message with the session key of 32 hexadecimal digits. A transport header in front of the message stays in front."
+    params:
+      - { name: message, type: bytes }
+      - { name: key, type: text }
+  - name: message_length
+    summary: "The length of the SMB2 message that follows a 4 octet transport header, as decimal digits. A flow reads 4 octets, then this many."
+    params:
+      - { name: header, type: bytes }
+  - name: header_field
+    summary: "A field of the SMB2 header of a message: command, command_code, status, status_code, message_id, session_id, tree_id, credits, credit_charge, flags, response, signed, async, or next_command. The message may start with a transport header."
+    params:
+      - { name: message, type: bytes }
+      - { name: field, type: text }
+  - name: body_field
+    summary: "A field of the body of a message, by command. negotiate: dialects or dialect, security_mode, capabilities, guid, max_read, max_write. session_setup: session_flags, previous_session_id, binding. tree_connect: path, share_type, maximal_access. create: name, file_id, size, attributes, action, desired_access, disposition, options. read, write, and close: file_id, offset, length, count, remaining, flags. query_directory: pattern, flags, output_length, entries, and entry_count."
+    params:
+      - { name: message, type: bytes }
+      - { name: field, type: text }
+  - name: security_blob
+    summary: "The security buffer of a NEGOTIATE response or a SESSION_SETUP request or response, as octets."
+    params:
+      - { name: message, type: bytes }
+  - name: ntlm_field
+    summary: "A field of the NTLMSSP message inside a security buffer: type, flags, user, domain, workstation, target, challenge, computer, dns_domain, dns_computer, time, or nt_response."
+    params:
+      - { name: security, type: bytes }
+      - { name: field, type: text }
+  - name: data
+    summary: "The data of a READ response or a WRITE request, as octets."
+    params:
+      - { name: message, type: bytes }
+  - name: hex
+    summary: "The octets as lowercase hexadecimal digits, which a set action keeps without loss, unlike octets."
+    params:
+      - { name: bytes, type: bytes }
+  - name: unhex
+    summary: "The octets of hexadecimal digits, the inverse of hex."
+    params:
+      - { name: text, type: text }
+  - name: chunks
+    summary: "The number of requests of at most size octets that move total octets, at least 1, as decimal digits."
+    params:
+      - { name: total, type: int }
+      - { name: size, type: int }
+  - name: add
+    summary: "The sum of a and b as decimal digits. A flow has no arithmetic and no loop counter, so a set action numbers the messages of a loop with it."
+    params:
+      - { name: a, type: int }
+      - { name: b, type: int, default: 1 }
+scenarios:
+  - scenarios/browse.yaml
+  - scenarios/download.yaml
+  - scenarios/upload.yaml
+fixtures:
+  - { capture: fixtures/smb2.pcapng, expect: { ndpi: [SMB] } }
+provenance:
+  source: synthetic
+  notes: Messages follow MS-SMB2 for the headers, the bodies, and the direct TCP transport header, RFC 4178 for the SPNEGO tokens, and MS-NLMP for the NTLMv2 exchange, whose vectors the tests of the functions check. Every user name, password, domain, workstation, and host name is synthetic, the host names lie under the reserved .test domain, and every file body comes from the seeded fill() generator.
