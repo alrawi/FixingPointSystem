@@ -61,11 +61,8 @@ impl PinnedClock {
 
 impl Clock for PinnedClock {
     fn now_ms(&self) -> i64 {
-        self.next
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |t| {
-                Some(t.saturating_add(self.step_ms))
-            })
-            .unwrap_or_default()
+        // `fetch_add` wraps at the ends of the range, which a test never reaches.
+        self.next.fetch_add(self.step_ms, Ordering::Relaxed)
     }
 }
 
