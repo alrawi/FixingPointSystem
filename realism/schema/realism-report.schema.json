@@ -106,6 +106,10 @@
         {
           "if": {"properties": {"check": {"const": "session_structure"}}, "required": ["check"]},
           "then": {"$ref": "#/$defs/session_structure"}
+        },
+        {
+          "if": {"properties": {"check": {"const": "temporal"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/temporal"}
         }
       ]
     },
@@ -722,6 +726,133 @@
           "description": "One sentence for each broken rule, at most 50. failures_total counts them all.",
           "type": "array",
           "maxItems": 50,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "temporal": {
+      "description": "Inter arrival times and payload sizes against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. The check passes when there is at least one comparison and every one passed. failures names each reason in words.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "alpha", "min_samples", "sessions_total",
+        "skipped_encrypted_sessions", "comparisons", "insufficient_comparisons", "failures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "temporal"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads). Comparisons over all sessions and over both directions have no catalog label and are only in comparisons.",
+          "type": "array",
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/metric"},
+              {
+                "properties": {
+                  "name": {"enum": ["realism.ks_statistic", "realism.ks_p_value"]},
+                  "labels": {
+                    "required": ["application", "property"],
+                    "properties": {
+                      "application": {"type": "string", "minLength": 1},
+                      "property": {"enum": ["inter_arrival", "request_bytes", "response_bytes"]}
+                    },
+                    "additionalProperties": false
+                  },
+                  "value": {"minimum": 0, "maximum": 1}
+                }
+              }
+            ]
+          }
+        },
+        "alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+        "min_samples": {"type": "integer", "minimum": 2},
+        "sessions_total": {"type": "integer", "minimum": 0},
+        "skipped_encrypted_sessions": {
+          "description": "TLS sessions, which the size comparisons do not read because the check has no plaintext. Zero when no comparison reads sizes.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "comparisons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "property", "application", "direction", "unit", "target", "test", "method", "alpha",
+              "n", "reference_n", "statistic", "p_value", "status", "reason", "observed"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "property": {"enum": ["inter_arrival", "payload_size"]},
+              "application": {
+                "description": "Application of the comparison, or null for all sessions.",
+                "type": ["string", "null"]
+              },
+              "direction": {
+                "description": "Payloads that count in a size comparison, null for arrivals.",
+                "enum": ["client", "server", "both", null]
+              },
+              "unit": {"enum": ["seconds", "bytes"]},
+              "target": {
+                "type": "object",
+                "required": ["dist", "parameters", "median", "source"],
+                "additionalProperties": false,
+                "properties": {
+                  "dist": {"enum": ["constant", "exponential", "uniform", "lognormal", "pareto", "empirical"]},
+                  "parameters": {
+                    "description": "Parameters in seconds or bytes: value, mean, min, max, mu, sigma, alpha, scale. Empty for an empirical target.",
+                    "type": "object",
+                    "additionalProperties": {"type": "number"}
+                  },
+                  "median": {"type": ["number", "null"]},
+                  "source": {
+                    "description": "Where an empirical target sample came from, null for a parametric target.",
+                    "enum": ["sample", "sample_file", "reference", null]
+                  }
+                }
+              },
+              "test": {"enum": ["ks_one_sample", "ks_two_sample", "constant"]},
+              "method": {
+                "description": "How the p value came about: exact, asymptotic, or constant. Null when the comparison had insufficient data.",
+                "enum": ["exact", "asymptotic", "constant", null]
+              },
+              "alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+              "n": {"description": "Observations in the capture.", "type": "integer", "minimum": 0},
+              "reference_n": {
+                "description": "Observations of the target sample in a two sample test, otherwise null.",
+                "type": ["integer", "null"],
+                "minimum": 0
+              },
+              "statistic": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "p_value": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "status": {"enum": ["pass", "fail", "insufficient_data"]},
+              "reason": {
+                "description": "Why the comparison did not pass, null for a pass.",
+                "type": ["string", "null"]
+              },
+              "observed": {
+                "description": "Minimum, median, mean, and maximum of the observations, null without observations.",
+                "oneOf": [
+                  {"type": "null"},
+                  {
+                    "type": "object",
+                    "required": ["min", "median", "mean", "max"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "min": {"type": "number"},
+                      "median": {"type": "number"},
+                      "mean": {"type": "number"},
+                      "max": {"type": "number"}
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "insufficient_comparisons": {"type": "integer", "minimum": 0},
+        "failures": {
+          "description": "One sentence for each comparison that did not pass, and one when the labels name no target.",
+          "type": "array",
           "items": {"type": "string", "minLength": 1}
         }
       }

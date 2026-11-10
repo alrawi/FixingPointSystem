@@ -168,6 +168,52 @@
         }
       }
     },
+    "temporal": {
+      "description": "Target distributions of the temporal distribution check, which compares the inter arrival times of sessions and the payload sizes with them through the Kolmogorov Smirnov test. The check runs when this section is present.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "description": "Significance level of every KS test. A comparison fails when its p value is below it. The default is 0.01.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "min_samples": {
+          "description": "Fewest observations that a comparison needs, in each of its samples. A smaller sample reports insufficient data and fails the check. The default is 30.",
+          "type": "integer",
+          "minimum": 2
+        },
+        "arrivals": {
+          "description": "Targets for the gaps in seconds between the first packets of consecutive sessions. Parameters have the names of a scenario delay. A Poisson process of r sessions per second is exponential with mean_ms 1000 / r.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "overall": {
+              "description": "Target for all sessions of the capture, labelled or not.",
+              "$ref": "#/$defs/time_distribution"
+            },
+            "applications": {
+              "description": "Target for the sessions of each application.",
+              "type": "object",
+              "additionalProperties": {"$ref": "#/$defs/time_distribution"}
+            }
+          }
+        },
+        "sizes": {
+          "description": "Targets for the size in bytes of each payload unit, as the content check defines it. An application can have one target per direction, written as a list.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "overall": {"$ref": "#/$defs/size_target_entry"},
+            "applications": {
+              "type": "object",
+              "additionalProperties": {"$ref": "#/$defs/size_target_entry"}
+            }
+          }
+        }
+      }
+    },
     "sessions": {
       "type": "array",
       "items": {
@@ -197,6 +243,157 @@
     }
   },
   "$defs": {
+    "empirical": {
+      "description": "An empirical target: a list of values, a file of numbers separated by white space or commas, or a reference capture whose own sessions give the sample. The check runs the two sample test.",
+      "type": "object",
+      "required": ["dist"],
+      "properties": {
+        "dist": {"const": "empirical"},
+        "direction": {"description": "Payloads that count, for a size target.", "enum": ["client", "server", "both"]},
+        "sample": {"type": "array", "minItems": 1, "items": {"type": "number"}},
+        "sample_file": {"description": "File name relative to the labels file.", "type": "string", "minLength": 1},
+        "reference": {
+          "type": "object",
+          "required": ["pcap"],
+          "additionalProperties": false,
+          "properties": {
+            "pcap": {"description": "Reference capture, relative to the labels file.", "type": "string", "minLength": 1},
+            "labels": {
+              "description": "Labels file of the reference capture, relative to the labels file. Without it the rules of this file label the sessions of the reference.",
+              "type": "string"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        {"required": ["sample"]},
+        {"required": ["sample_file"]},
+        {"required": ["reference"]}
+      ]
+    },
+    "time_distribution": {
+      "description": "A distribution of times in the vocabulary of a scenario delay: ms alone or with dist constant, exponential with mean_ms, uniform with min_ms and max_ms, lognormal with mu, sigma, and unit (mu is the natural logarithm of the value in the unit), pareto with alpha and scale_ms, or an empirical target in seconds.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["ms"],
+          "additionalProperties": false,
+          "properties": {
+            "dist": {"const": "constant"},
+            "ms": {"type": "number", "minimum": 0},
+            "tolerance_ms": {"description": "Distance that still counts as equal. The default is 0.", "type": "number", "minimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "mean_ms"],
+          "additionalProperties": false,
+          "properties": {
+            "dist": {"const": "exponential"},
+            "mean_ms": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "min_ms", "max_ms"],
+          "additionalProperties": false,
+          "properties": {
+            "dist": {"const": "uniform"},
+            "min_ms": {"type": "number", "minimum": 0},
+            "max_ms": {"type": "number", "minimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "mu", "sigma"],
+          "additionalProperties": false,
+          "properties": {
+            "dist": {"const": "lognormal"},
+            "mu": {"type": "number"},
+            "sigma": {"type": "number", "exclusiveMinimum": 0},
+            "unit": {"enum": ["s", "ms"], "default": "s"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "alpha", "scale_ms"],
+          "additionalProperties": false,
+          "properties": {
+            "dist": {"const": "pareto"},
+            "alpha": {"type": "number", "exclusiveMinimum": 0},
+            "scale_ms": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        {"$ref": "#/$defs/empirical", "not": {"required": ["direction"]}}
+      ]
+    },
+    "size_distribution": {
+      "description": "A distribution of sizes in bytes, with an optional direction. lognormal takes mu as the natural logarithm of the size in bytes, and pareto takes alpha and scale, the smallest size.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["dist", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "direction": {"enum": ["client", "server", "both"]},
+            "dist": {"const": "constant"},
+            "value": {"type": "number", "minimum": 0},
+            "tolerance": {"description": "Distance in bytes that still counts as equal. The default is 0.", "type": "number", "minimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "mean"],
+          "additionalProperties": false,
+          "properties": {
+            "direction": {"enum": ["client", "server", "both"]},
+            "dist": {"const": "exponential"},
+            "mean": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "min", "max"],
+          "additionalProperties": false,
+          "properties": {
+            "direction": {"enum": ["client", "server", "both"]},
+            "dist": {"const": "uniform"},
+            "min": {"type": "number", "minimum": 0},
+            "max": {"type": "number", "minimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "mu", "sigma"],
+          "additionalProperties": false,
+          "properties": {
+            "direction": {"enum": ["client", "server", "both"]},
+            "dist": {"const": "lognormal"},
+            "mu": {"type": "number"},
+            "sigma": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "alpha", "scale"],
+          "additionalProperties": false,
+          "properties": {
+            "direction": {"enum": ["client", "server", "both"]},
+            "dist": {"const": "pareto"},
+            "alpha": {"type": "number", "exclusiveMinimum": 0},
+            "scale": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        {"$ref": "#/$defs/empirical"}
+      ]
+    },
+    "size_target_entry": {
+      "oneOf": [
+        {"$ref": "#/$defs/size_distribution"},
+        {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/size_distribution"}}
+      ]
+    },
     "ja4": {
       "description": "A JA4 fingerprint in the form a_b_c.",
       "type": "string",
