@@ -87,6 +87,15 @@ class CheckTest(unittest.TestCase):
         errors = zeek_check.check(logs, 2, 1)
         self.assertTrue(any("smtp_nested_mail_transaction" in e for e in errors), errors)
 
+    def test_the_start_of_a_starttls_session_is_not_a_message(self) -> None:
+        logs = good_logs()
+        logs["smtp"].append({"uid": "C9", "helo": "client.example.test", "tls": True})
+        self.assertEqual(zeek_check.check(logs, 2, 1), [])
+        # A message that was sent after the switch to TLS is a message.
+        logs["smtp"].append({**message(3, ["F3"]), "tls": True})
+        errors = zeek_check.check(logs, 2, 1)
+        self.assertTrue(any("3 messages, expected 2" in e for e in errors), errors)
+
     def test_files_of_other_protocols_do_not_count(self) -> None:
         logs = good_logs()
         logs["files"].append({"fuid": "F9", "source": "HTTP", "filename": "x.png", "seen_bytes": 1})

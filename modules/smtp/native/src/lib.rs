@@ -110,6 +110,12 @@ fn ehlo_reply(a: &args::Args<'_>, out: &mut Vec<u8>) -> Result<(), FnError> {
     }
     lines.push(format!("SIZE {size}"));
     lines.push("ETRN".into());
+    // Postfix lists STARTTLS between ETRN and AUTH. A server that offers it
+    // leaves AUTH out of this reply, and a scenario shows the same server
+    // after the upgrade with AUTH and without STARTTLS.
+    if a.boolean("starttls")? {
+        lines.push("STARTTLS".into());
+    }
     if !mechanisms.is_empty() {
         lines.push(format!("AUTH {}", mechanisms.join(" ")));
     }
@@ -387,6 +393,7 @@ mod tests {
         .unwrap();
         assert!(!plain.contains("PIPELINING") && !plain.contains("AUTH"));
         assert!(plain.contains("250-SIZE 1000\r\n"));
+        assert!(!plain.contains("STARTTLS"));
         assert!(render(
             "ehlo_reply",
             &[ArgValue::Text("m.test"), ArgValue::Text("c.test")],
@@ -402,6 +409,43 @@ mod tests {
             &[]
         )
         .is_err());
+    }
+
+    #[test]
+    fn ehlo_reply_offers_starttls_between_etrn_and_auth() {
+        let s = render(
+            "ehlo_reply",
+            &[ArgValue::Text("mx.example.test"), ArgValue::Text("c.test")],
+            &[NamedArg {
+                name: "starttls",
+                value: ArgValue::Boolean(true),
+            }],
+        )
+        .unwrap();
+        let lines: Vec<&str> = s.split_terminator("\r\n").collect();
+        let at = |needle: &str| lines.iter().position(|l| l.contains(needle)).unwrap();
+        assert_eq!(lines[at("STARTTLS")], "250-STARTTLS");
+        assert_eq!(at("STARTTLS"), at("ETRN") + 1);
+        assert!(lines.last().unwrap().starts_with("250 "));
+        // With a mechanism list the line follows STARTTLS, in the order of Postfix.
+        let both = render(
+            "ehlo_reply",
+            &[ArgValue::Text("mx.example.test"), ArgValue::Text("c.test")],
+            &[
+                NamedArg {
+                    name: "starttls",
+                    value: ArgValue::Boolean(true),
+                },
+                NamedArg {
+                    name: "auth",
+                    value: ArgValue::Text("PLAIN"),
+                },
+            ],
+        )
+        .unwrap();
+        let lines: Vec<&str> = both.split_terminator("\r\n").collect();
+        let at = |needle: &str| lines.iter().position(|l| l.contains(needle)).unwrap();
+        assert_eq!(at("AUTH PLAIN"), at("STARTTLS") + 1);
     }
 
     #[test]

@@ -10,7 +10,7 @@
 | Branch | `wp/MOD-20` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 40% (2 of 5 plan steps) |
 | Current holder | claude-m20a7c, lease until 2026-11-10T06:15:05Z |
 | Last verified commit | none |
 
@@ -24,23 +24,24 @@ Add the STARTTLS variants to the smtp module (submission on 587) and the imap mo
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Read the context, claim, and study the https scenarios and fixtures of MOD-04
-- [ ] 2. smtp scenario starttls_submission with tests
+- [x] 1. Read the context, claim, and study the https scenarios and fixtures of MOD-04
+- [x] 2. smtp scenario starttls_submission with tests
 - [ ] 3. imap scenario starttls with tests
 - [ ] 4. Fixtures, labels, decrypted checks, Zeek
 - [ ] 5. READMEs, Modules page, log entry, PR, CI
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Step 2: `cargo test -p fps-module-smtp` passes (starttls.rs, goldens, fixture.rs); `cargo clippy -p fps-module-smtp --all-targets -D warnings` clean; capture.sh recorded smtp.pcapng with 8 STARTTLS sessions on port 5587; realism encryption check 8/8 decrypted and 8/8 JA4; nDPI 4.2.0 says SMTP for the STARTTLS sessions; decrypted_check.py passes (Zeek not installed here).
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+- imap scenario, fixture, READMEs, Modules page, log entry, PR.
+- Zeek on the decrypted view cannot run here (no zeek); CI is the only proof.
 
 ## Next action
 
-Study modules/http1 https scenarios and write modules/smtp/scenarios/starttls_submission.yaml.
+Write modules/imap/scenarios/starttls_mailbox.yaml (safari-18.5 client, server-tls12), its tests, peer, fixture, and decrypted_check.py (copy modules/smtp/fixtures/decrypted_check.py).
 
 ## Blockers and open questions
 
@@ -67,3 +68,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T04:45Z | claude-m20a7c | claim | none | claimed #325 |
+| 2026-11-10T00:10Z | claude-m20a7c | checkpoint | see git log | smtp STARTTLS scenario, tests, fixture |

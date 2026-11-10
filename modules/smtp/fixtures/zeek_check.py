@@ -12,6 +12,12 @@ parser error kind. This check adds what the runner does not read:
   bytes of each file arrived whole, and
 * ``weird.log`` holds no entry whose name starts with ``smtp``.
 
+A capture with STARTTLS sessions (MOD-20) may hold rows of those sessions too.
+Zeek stops reading a session at ``STARTTLS`` and may log the plaintext start as a
+row with ``tls`` true and no sender, which this check leaves out of the message
+count, because the messages of those sessions are inside TLS and Zeek cannot read
+them. ``decrypted_check.py`` reads them on a decrypted view with this same check.
+
 Usage::
 
     zeek_check.py CAPTURE --messages N --attachments M [--zeek PROGRAM]
@@ -54,7 +60,8 @@ def as_list(value: object) -> list:
 def check(logs: dict[str, list[dict]], messages: int, attachments: int) -> list[str]:
     """Return one line for each failed check, or an empty list when all pass."""
     errors: list[str] = []
-    smtp = logs.get("smtp", [])
+    # A session that switched to TLS before any mail transaction has no message.
+    smtp = [r for r in logs.get("smtp", []) if not (r.get("tls") and not r.get("mailfrom"))]
     files = [f for f in logs.get("files", []) if "SMTP" in as_list(f.get("source"))]
     weird = [w for w in logs.get("weird", []) if str(w.get("name", "")).startswith("smtp")]
 

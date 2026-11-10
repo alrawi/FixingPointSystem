@@ -1,0 +1,72 @@
+scenario: starttls_submission
+description: Message submission on port 587 with STARTTLS, as a desktop mail client such as Thunderbird does it. The server greets in the clear and answers EHLO with a capability list that offers STARTTLS and no AUTH. The client sends STARTTLS, the server answers 220, and both sides upgrade the connection to TLS 1.3, the client with the profile firefox-139 (Thunderbird shares the TLS library of Firefox) and the SNI submit.example.test, the server with the profile server-tls13. The client then sends EHLO again, as RFC 3207 requires, and the server answers with a list that offers AUTH and no STARTTLS. The client authenticates with AUTH PLAIN and submits one message with a PDF attachment to two recipients, all inside TLS. The user name and password are synthetic values of the smtp module and no real secret. The server name of tls_upgrade is a literal that equals the default of the variable server_name, so a run that changes one must change the other too.
+vars:
+  server_port: 587
+  client_name: laptop-23.example.test
+  server_name: submit.example.test
+  body_size: 1500
+  attachment_min: 24000
+  attachment_max: 160000
+flows:
+  - id: starttls_submission
+    module: smtp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "EHLO {{ vars.client_name }}\r\n"
+      - expect: { pattern: "\r\n250 ", timeout_ms: 5000 }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "STARTTLS\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - tls_upgrade: { profile: firefox-139, server_name: submit.example.test }
+      - send: "EHLO {{ vars.client_name }}\r\n"
+      - expect: { pattern: "\r\n250 ", timeout_ms: 5000 }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set:
+          login: "{{ smtp.credential('user') }}"
+          secret: "{{ smtp.credential('password') }}"
+      - send: "AUTH PLAIN {{ smtp.auth_plain(vars.login, vars.secret) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - set: { sid: "{{ rand_int(1, 2000000000) }}" }
+      - set:
+          subject: "Invoice {{ rand_int(1000, 9999) }} attached"
+          text: "{{ content.email(size=vars.body_size) }}\n.\nThe line above holds a single dot.\n"
+      - send: "MAIL FROM:<{{ vars.login }}>\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.rcpt_to(vars.sid, 1, 1) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.rcpt_to(vars.sid, 1, 2) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "DATA\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.data(smtp.message(vars.login, smtp.recipients(vars.sid, 2), vars.subject, vars.text, attachment=content.binary(kind='pdf', size=rand_int(vars.attachment_min, vars.attachment_max)), filename='invoice.pdf', content_type='application/pdf')) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 30000 }
+      - send: "QUIT\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - send: "220 {{ vars.server_name }} ESMTP ready\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.ehlo_reply(vars.server_name, vars.client_name, starttls=true) }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "220 2.0.0 Ready to start TLS\r\n"
+      - tls_upgrade: { profile: server-tls13 }
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "{{ smtp.ehlo_reply(vars.server_name, vars.client_name, auth='PLAIN LOGIN') }}"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "235 2.7.0 Authentication successful\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "250 2.1.0 Ok\r\n"
+      - loop:
+          count: 2
+          do:
+            - expect: { pattern: "\r\n", timeout_ms: 5000 }
+            - send: "250 2.1.5 Ok\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "354 End data with <CR><LF>.<CR><LF>\r\n"
+      - expect: { pattern: "\r\n.\r\n", timeout_ms: 30000 }
+      - send: "250 2.0.0 Ok: queued as {{ rand_int(100000, 999999) }}\r\n"
+      - expect: { pattern: "\r\n", timeout_ms: 5000 }
+      - send: "221 2.0.0 Bye\r\n"
+      - close: fin

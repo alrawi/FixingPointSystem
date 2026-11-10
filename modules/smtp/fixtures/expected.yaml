@@ -1,16 +1,42 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Expected labels of smtp.pcapng, which capture.sh records in the QA-01 harness.
-# Every session of the fixture is SMTP on TCP port 25 for the relay scenarios
-# or on port 587 for the submission scenarios, and nDPI must classify at least
-# 99% of them as SMTP from payload alone. realism/schema/labels.schema.json
-# defines the format.
+# realism/schema/labels.schema.json defines the format.
+#
+# The plain sessions run on TCP port 25 for the relay scenarios and on port 587
+# for the submission scenarios, and nDPI must classify at least 99% of them as
+# SMTP from payload alone.
+#
+# The STARTTLS sessions (MOD-20) run on TCP port 5587, because the labels tell
+# sessions apart by port and port 587 carries the plain submission sessions. See
+# the README for why they are not 587 in the fixture. nDPI 4.2.0 classifies
+# these sessions as SMTP, as it does a plain session, because it settles on
+# SMTP at the greeting and the first EHLO and keeps that result through the
+# handshake (it reads the SNI of the ClientHello but does not revise the
+# protocol). SMTPS, which a later nDPI may give, counts as well. The encryption
+# check decrypts these sessions with the keys that the capture embeds and
+# compares the JA4 of every ClientHello with the expected value of its profile.
+# The messages inside the TLS sessions are measured by decrypted_check.py, which
+# decrypts the capture with tshark and scores a decrypted view with nDPI and,
+# where it is installed, Zeek, see the README.
+#
+# The ja4 value is the expected_ja4 of the browser profile in
+# modules/tls/native/src/browser.rs, which modules/smtp/tests/starttls.rs checks
+# against real ClientHello bytes.
 labels: fps-realism-labels
 version: 1
 threshold: 0.99
+tls:
+  min_decrypted: 1
+  profiles:
+    firefox-139: {ja4: t13d1011h2_61a7ad8aa9b6_f674693fb0dc}
 sessions:
   - application: smtp
     match: {transport: tcp, server_port: 25}
   - application: smtp
     match: {transport: tcp, server_port: 587}
+  - application: smtp_starttls
+    tls_profile: firefox-139
+    match: {transport: tcp, server_port: 5587}
 applications:
   smtp: {ndpi: [SMTP]}
+  smtp_starttls: {ndpi: [SMTP, SMTPS]}
