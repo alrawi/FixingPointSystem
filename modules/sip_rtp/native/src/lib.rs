@@ -48,6 +48,8 @@ pub const PTIME_RANGE: std::ops::RangeInclusive<i64> = 10..=120;
 #[derive(Clone, Debug, Default)]
 pub struct SipRtp {
     stream: Option<rtp::Stream>,
+    /// When the next RTP packet is due, which `pace` advances by one packet time.
+    due: Option<tokio::time::Instant>,
 }
 
 fn invalid(message: String) -> FnError {
@@ -218,6 +220,20 @@ impl TemplateFn for SipRtp {
                 }
                 let ptime = i64::from(ptime_arg("packets", a.int("ptime")?)?);
                 push(out, &(talk / ptime).max(1).to_string());
+            }
+            "pace" => {
+                let a = args::bind(&catalog::PACE, &call.args)?;
+                let ptime = u64::from(ptime_arg("pace", a.int("ptime")?)?);
+                let step = std::time::Duration::from_millis(ptime);
+                let now = tokio::time::Instant::now();
+                // The first call comes right after the first packet. Every later call
+                // sleeps until the next slot of the schedule, so the sleeps do not add
+                // their rounding up to a drift, and a late wake shortens the next sleep.
+                let due = self.due.map_or(now + step, |d| d + step);
+                self.due = Some(due);
+                let wait = due.saturating_duration_since(now);
+                let ms = (wait.as_micros() + 500) / 1000;
+                push(out, &ms.to_string());
             }
             "hangup_ms" => {
                 let a = args::bind(&catalog::HANGUP_MS, &call.args)?;
@@ -400,6 +416,21 @@ mod tests {
     }
 
     #[test]
+    fn an_opus_packet_starts_with_a_valid_table_of_contents_byte() {
+        let args = [NamedArg {
+            name: "codec",
+            value: ArgValue::Text("opus"),
+        }];
+        let mut f = SipRtp::default();
+        let mut rng = rand_pcg::Pcg64Mcg::new(5);
+        for _ in 0..50 {
+            let p = call_with(&mut f, &mut rng, "rtp", &[], &args).unwrap();
+            // SILK wideband, 20 ms, mono, one frame (code 0).
+            assert_eq!(p.get(rtp::HEADER_LEN), Some(&0x48));
+        }
+    }
+
+    #[test]
     fn the_stream_state_belongs_to_the_value() {
         let args = [NamedArg {
             name: "codec",
@@ -418,6 +449,24 @@ mod tests {
         let mut rng2 = rand_pcg::Pcg64Mcg::new(4);
         let q = call_with(&mut b, &mut rng2, "rtp", &[], &args).unwrap();
         assert_ne!(rtp::parse(&q).unwrap().ssrc, h1.ssrc);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pace_keeps_the_schedule_when_a_sleep_wakes_late() {
+        let mut f = SipRtp::default();
+        let pace = |f: &mut SipRtp| {
+            text(call(f, "pace", &[ArgValue::Int(20)], &[]).unwrap())
+                .parse::<u64>()
+                .unwrap()
+        };
+        assert_eq!(pace(&mut f), 20);
+        // The sleep wakes 1.5 ms late, so the next sleep is 1.5 ms shorter.
+        tokio::time::advance(std::time::Duration::from_micros(21_500)).await;
+        assert_eq!(pace(&mut f), 19);
+        // A late wake of more than a whole packet time leaves no sleep at all.
+        tokio::time::advance(std::time::Duration::from_millis(60)).await;
+        assert_eq!(pace(&mut f), 0);
+        assert!(call(&mut f, "pace", &[ArgValue::Int(25)], &[]).is_err());
     }
 
     #[test]

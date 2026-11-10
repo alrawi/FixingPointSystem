@@ -74,6 +74,10 @@ functions:
     params:
       - { name: talk_ms, type: int }
       - { name: ptime, type: int, default: 20 }
+  - name: pace
+    summary: Milliseconds to sleep until the next RTP packet of this flow side is due, as text. Each call moves the due time on by one packet time, so a late wake shortens the next sleep.
+    params:
+      - { name: ptime, type: int, default: 20 }
   - name: hangup_ms
     summary: Time from the start of the media to the BYE in milliseconds, as text. It is talk_ms plus a tenth plus 200 ms, so the BYE follows the last RTP packet.
     params:

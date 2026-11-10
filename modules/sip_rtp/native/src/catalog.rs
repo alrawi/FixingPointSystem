@@ -141,6 +141,12 @@ pub const PACKETS: FunctionSpec = FunctionSpec {
     ],
 };
 
+/// `sip_rtp.pace`, the sleep until the next RTP packet of the schedule.
+pub const PACE: FunctionSpec = FunctionSpec {
+    name: "pace",
+    params: &[opt("ptime", ValueType::Int, DefaultValue::Int(20))],
+};
+
 /// `sip_rtp.hangup_ms`, the time from the start of the media to the BYE.
 pub const HANGUP_MS: FunctionSpec = FunctionSpec {
     name: "hangup_ms",
@@ -149,5 +155,5 @@ pub const HANGUP_MS: FunctionSpec = FunctionSpec {
 
 /// Every template function of the module, in the order of the manifest.
 pub const FUNCTIONS: &[FunctionSpec] = &[
-    PORT, INVITE, RESPONSE, ACK, BYE, SDP_PORT, CODEC, RTP, PACKETS, HANGUP_MS,
+    PORT, INVITE, RESPONSE, ACK, BYE, SDP_PORT, CODEC, RTP, PACKETS, PACE, HANGUP_MS,
 ];

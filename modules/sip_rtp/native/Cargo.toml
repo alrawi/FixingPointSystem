@@ -11,10 +11,10 @@ publish.workspace = true
 fps-flow = { path = "../../../engine/fps-flow" }
 # RngCore appears in the signature of the TemplateFn trait.
 rand = { version = "0.8", default-features = false }
+# The pacing function reads the clock of the runtime, which tests pause.
+tokio = { version = "1", default-features = false, features = ["time"] }
 
 [dev-dependencies]
-# The fixture_peer example runs the scenarios over kernel sockets.
-fps-backend-kernel = { path = "../../../engine/fps-backend-kernel" }
 fps-golden = { path = "../../../tests/golden/rust" }
 fps-interp = { path = "../../../engine/fps-interp" }
 fps-io = { path = "../../../engine/fps-io" }

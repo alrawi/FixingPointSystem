@@ -1,5 +1,5 @@
 scenario: call_g729
-description: A call between two user agents with G.729 audio. The client sends an INVITE over UDP with an SDP offer of G729 and PCMU, the server answers 100 Trying and 180 Ringing, and after the ring time it answers 200 OK with an SDP answer that picks G729. The client sends the ACK and opens the media flow. Both sides then send RTP packets of 20 bytes every 20 ms for the talk time, in lock step on one pair of ports, and the client ends the call with a BYE that the server answers with 200 OK. The server spawns its media flow before the 200 OK, so the RTP port is open when the client learns it.
+description: A call between two user agents with G.729 audio. The client sends an INVITE over UDP with an SDP offer of G729 and PCMU, the server answers 100 Trying and 180 Ringing, and after the ring time it answers 200 OK with an SDP answer that picks G729. The client sends the ACK and opens the media flow. Both sides then send RTP packets of 20 bytes every 20 ms for the talk time, in lock step on one pair of ports, and the client ends the call with a BYE that the server answers with 200 OK. The server spawns its media flow before the ring time, so the RTP port is open long before the client learns it, and the pacing function keeps the packets at the configured interval.
 vars:
   server_ip: 192.0.2.20
   client_ip: 192.0.2.10
@@ -40,8 +40,8 @@ flows:
       - send: "{{ sip_rtp.response(last, 100, server=vars.server_ip, sip_port=vars.sip_port) }}"
       - delay: { dist: uniform, min_ms: 5, max_ms: 25 }
       - send: "{{ sip_rtp.response(last, 180, server=vars.server_ip, sip_port=vars.sip_port) }}"
-      - delay: { ms: "{{ vars.ring_ms }}" }
       - spawn: { flow: media }
+      - delay: { ms: "{{ vars.ring_ms }}" }
       - send: "{{ sip_rtp.response(last, 200, server=vars.server_ip, rtp_port=vars.rtp_port, accept=vars.accept, sip_port=vars.sip_port) }}"
       - expect: { pattern: "ACK ", max_datagram: 4096, timeout_ms: 5000 }
       - expect: { pattern: "BYE ", max_datagram: 4096, timeout_ms: 3600000 }
@@ -58,7 +58,7 @@ flows:
           do:
             - send: "{{ sip_rtp.rtp(codec=vars.codec, ptime=vars.ptime_ms) }}"
             - expect: { min_bytes: 12, max_datagram: 1500, timeout_ms: 2000 }
-            - delay: { ms: "{{ vars.ptime_ms }}" }
+            - delay: { ms: "{{ sip_rtp.pace(vars.ptime_ms) }}" }
       - close: fin
     server:
       - accept: { port: "{{ vars.rtp_port }}" }

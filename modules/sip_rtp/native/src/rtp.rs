@@ -55,6 +55,20 @@ impl Stream {
         out.resize(at + n, 0);
         if let Some(payload) = out.get_mut(at..) {
             rng.fill_bytes(payload);
+            // An Opus packet starts with a table of contents byte, and dissectors reject a
+            // random one (RFC 6716, section 3.1). Config 8 to 11 is SILK wideband with
+            // 10, 20, 40, and 60 ms, and code 0 is one frame that fills the rest.
+            if codec.name == "opus" {
+                if let Some(toc) = payload.first_mut() {
+                    let config: u8 = match ptime {
+                        10 => 8,
+                        40 => 10,
+                        60 => 11,
+                        _ => 9,
+                    };
+                    *toc = config << 3;
+                }
+            }
         }
         self.first = false;
         self.seq = self.seq.wrapping_add(1);

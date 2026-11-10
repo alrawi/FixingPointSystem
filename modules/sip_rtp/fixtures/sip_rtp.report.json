@@ -1,0 +1,126 @@
+{
+  "report": "fps-realism-report",
+  "version": "0.9.0",
+  "generator": "fps-realism 0.1.0",
+  "passed": true,
+  "capture": {
+    "file": "sip_rtp.pcapng",
+    "sha256": "439fd2dbf228208d5d59be85f2ae695811325342da0eec709ab4795f666deebf",
+    "format": "pcapng",
+    "link_types": [
+      1
+    ],
+    "frames": 2298,
+    "skipped_frames": 6,
+    "sessions": 27
+  },
+  "labels": {
+    "file": "expected.yaml",
+    "sha256": "4b64a0767f89add6a87dfa97d4c997550af101ef143a50cae51e359e72b75fe3"
+  },
+  "checks": [
+    {
+      "check": "conformance",
+      "passed": true,
+      "classifier": "ndpi",
+      "classifier_version": "4.2.0",
+      "threshold": 0.99,
+      "metrics": [
+        {
+          "name": "realism.conformance_ratio",
+          "labels": {
+            "application": "rtp",
+            "classifier": "ndpi"
+          },
+          "value": 1.0
+        },
+        {
+          "name": "realism.conformance_ratio",
+          "labels": {
+            "application": "sip",
+            "classifier": "ndpi"
+          },
+          "value": 1.0
+        }
+      ],
+      "applications": [
+        {
+          "application": "rtp",
+          "accepted": [
+            "RTP"
+          ],
+          "sessions": 12,
+          "conforming": 12,
+          "ratio": 1.0,
+          "passed": true,
+          "observed": {
+            "RTP": 12
+          }
+        },
+        {
+          "application": "sip",
+          "accepted": [
+            "SIP"
+          ],
+          "sessions": 15,
+          "conforming": 15,
+          "ratio": 1.0,
+          "passed": true,
+          "observed": {
+            "SIP": 15
+          }
+        }
+      ],
+      "unlabelled_sessions": 0,
+      "mismatches": [],
+      "mismatches_total": 0
+    },
+    {
+      "check": "parser_errors",
+      "passed": true,
+      "metrics": [],
+      "parsers": [
+        {
+          "parser": "tshark",
+          "version": "4.2.2"
+        }
+      ],
+      "missing_parsers": [],
+      "skipped_parsers": [],
+      "applications": [
+        {
+          "application": "rtp",
+          "sessions": 12,
+          "parser_errors": 0,
+          "malformed_packets": 0,
+          "by_parser": {
+            "tshark": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            }
+          }
+        },
+        {
+          "application": "sip",
+          "sessions": 15,
+          "parser_errors": 0,
+          "malformed_packets": 0,
+          "by_parser": {
+            "tshark": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            }
+          }
+        }
+      ],
+      "unlabelled_errors": {
+        "tshark": 0
+      },
+      "unattributed_errors": {
+        "tshark": 0
+      },
+      "errors": [],
+      "errors_total": 0
+    }
+  ]
+}

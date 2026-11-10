@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of sip_rtp.pcapng, which capture.sh records in the QA-01 harness.
+# The signaling session of every call is SIP on UDP port 5060. The media session
+# of a call runs between two dynamic ports, so no rule names it and the default
+# labels it as RTP. nDPI must classify at least 99% of the sessions of each
+# application from payload alone. realism/schema/labels.schema.json defines the
+# format.
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: sip
+    match: {transport: udp, server_port: 5060}
+default: rtp
+applications:
+  sip: {ndpi: [SIP]}
+  rtp: {ndpi: [RTP]}

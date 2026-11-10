@@ -1147,7 +1147,6 @@ dependencies = [
 name = "fps-module-sip-rtp"
 version = "0.0.1"
 dependencies = [
- "fps-backend-kernel",
  "fps-flow",
  "fps-golden",
  "fps-interp",
