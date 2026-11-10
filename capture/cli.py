@@ -15,6 +15,7 @@ from typing import Any
 from .decode import Packet, Skip, decode
 from .fields import Config
 from .pcapio import CaptureError, open_capture
+from .profile import BASES, DEFAULT_MIN_SAMPLES, ProfileError, build_profile
 from .scenario import (
     ScenarioError,
     generate,
@@ -270,12 +271,90 @@ def _run_scrub(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_profile_parser(sub: Any) -> None:
+    p = sub.add_parser(
+        "profile",
+        help="derive an application mix and temporal models from a capture",
+        description="Read a sessions document (or a capture, which is extracted first) and "
+        "write a test profile: the mix of applications, the arrival model of sessions, and "
+        "the size models of requests and responses, fitted per application. The profile "
+        "holds counts, times, and sizes only, never payload bytes or addresses.",
+    )
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument("--sessions", type=Path, help="session JSON, scrubbed or not")
+    src.add_argument("--pcap", type=Path, help="pcap or pcapng capture")
+    p.add_argument("--out", type=Path, help="output file, default standard output")
+    p.add_argument("--basis", choices=BASES, default="sessions",
+                   help="weight the mix by sessions or by payload bytes "
+                   "(default %(default)s)")  # fmt: skip
+    p.add_argument("--app", action="append", default=[], metavar="RULE",
+                   help="name an application: [tcp:|udp:]PORT[-PORT]=NAME on the server "
+                   "port, for example 8443-8446=https (repeatable, wins over the "
+                   "built-in ports)")  # fmt: skip
+    p.add_argument("--no-default-apps", action="store_true",
+                   help="use only the --app rules, not the table of well known ports")  # fmt: skip
+    p.add_argument("--min-samples", type=int, default=DEFAULT_MIN_SAMPLES, metavar="N",
+                   help="fit a model only from at least this many observations "
+                   "(default %(default)s)")  # fmt: skip
+    p.add_argument("--profile-only", action="store_true",
+                   help="write only the `profile` object, to paste into a test "
+                   "configuration")  # fmt: skip
+    p.add_argument("--udp-idle-timeout", type=float, default=DEFAULT_UDP_IDLE_S,
+                   metavar="SECONDS", help="with --pcap: a UDP flow idle for longer "
+                   "starts a new session (default %(default)s)")  # fmt: skip
+
+
+def _run_profile(args: argparse.Namespace) -> int:
+    try:
+        if args.sessions is not None:
+            try:
+                doc = json.loads(args.sessions.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise ProfileError(f"cannot read {args.sessions}: {exc}") from exc
+        else:
+            if args.udp_idle_timeout <= 0:
+                raise ProfileError("--udp-idle-timeout must be positive")
+            doc = extract(args.pcap, udp_idle_s=args.udp_idle_timeout)
+        out = build_profile(
+            doc,
+            basis=args.basis,
+            app_rules=args.app,
+            defaults=not args.no_default_apps,
+            min_samples=args.min_samples,
+        )
+        body = out["profile"] if args.profile_only else out
+        text = json.dumps(body, indent=2) + "\n"
+        if args.out is None:
+            sys.stdout.write(text)
+        else:
+            args.out.write_text(text, encoding="utf-8")
+    except (ProfileError, CaptureError) as exc:
+        print(f"capture: cannot profile: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"capture: cannot write the profile: {exc}", file=sys.stderr)
+        return 1
+    mix = ", ".join(f"{e['scenario']} {e['weight']:g}" for e in out["profile"]["mix"])
+    print(f"capture: profile on {args.basis}: {mix}", file=sys.stderr)
+    lost = out["unclassified"]["sessions"]
+    if lost:
+        print(
+            f"capture: warning: {lost} sessions match no application and stay out of the "
+            "mix; name their server ports with --app",
+            file=sys.stderr,
+        )
+    for note in out["notes"]:
+        print(f"capture: warning: {note}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command line and return the exit code."""
     parser = argparse.ArgumentParser(prog="python3 -m capture", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     _add_scenario_parser(sub)
     _add_scrub_parser(sub)
+    _add_profile_parser(sub)
     p = sub.add_parser("sessions", help="extract TCP sessions and UDP flows as JSON")
     p.add_argument("--pcap", type=Path, required=True, help="pcap or pcapng capture")
     p.add_argument("--out", type=Path, help="output file, default standard output")
@@ -293,6 +372,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_scenario(args)
     if args.command == "scrub":
         return _run_scrub(args)
+    if args.command == "profile":
+        return _run_profile(args)
     if args.udp_idle_timeout <= 0:
         parser.error("--udp-idle-timeout must be positive")
     try:

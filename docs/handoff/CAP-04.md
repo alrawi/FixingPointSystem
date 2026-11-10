@@ -6,7 +6,7 @@
 | Branch | `wp/CAP-04` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-211a73, lease until 2026-11-10T14:16:51Z |
 | Last verified commit | none |
 
@@ -16,22 +16,22 @@ Derive an application mix and temporal models from a capture and write a test pr
 
 ## Plan
 
-- [ ] 1. Read the sessions document, scrub record and fixtures; design the profile format
-- [ ] 2. Implement classification, mix shares, arrival and size models
-- [ ] 3. Add the `profile` command, tests with literal values from committed fixtures
+- [x] 1. Read the sessions document, scrub record and fixtures; design the profile format
+- [x] 2. Implement classification, mix shares, arrival and size models
+- [x] 3. Add the `profile` command, tests with literal values from committed fixtures
 - [ ] 4. Docs, log entry, checks, PR
 
 ## Done and verified
 
-Nothing yet.
+Steps 1 to 3: `capture/profile.py`, the `profile` command in `capture/cli.py`, and `capture/tests/test_profile.py` (28 tests). `ruff format --check`, `ruff check`, `mypy` and `pytest -q capture` pass locally (167 passed).
 
 ## Remaining
 
-Everything.
+Capture wiki page, README, log entry, PR, CI.
 
 ## Next action
 
-Read `capture/sessions.py`, `capture/scrub.py`, and the committed fixtures.
+Update `docs/wiki/Capture.md` and `capture/README.md`, add the log entry, run the plan checks, open the PR.
 
 ## Blockers and open questions
 
@@ -39,11 +39,14 @@ none
 
 ## Decisions taken in this package
 
-none yet
+- The mix names applications by server port (table plus `--app` rules) because the compiler reads no protocol. Unnamed sessions stay out of the mix and are reported, as in the realism labels (FTP data connections).
+- Models: exponential, uniform, lognormal, pareto, constant; the smallest KS distance wins. Lognormal arrivals are written in seconds with `unit: s`.
+- TCP size unit is a whole direction of a session, UDP is a datagram, as the contract allows.
+- UDP sessions that continue after an idle split add bytes but are not new sessions.
 
 ## Pitfalls
 
-none yet
+none
 
 ## Verify the current state
 
@@ -56,3 +59,4 @@ python3 -m pytest capture/tests -q
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T12:47Z | claude-211a73 | claim | none | Claimed #196 with card 6767705449 |
+| 2026-11-10T13:20Z | claude-211a73 | checkpoint | see git log | Steps 1 to 3 done |
