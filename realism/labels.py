@@ -547,7 +547,7 @@ def _distribution(spec: Any, quantity: str, where: str) -> Distribution:
         raise LabelsError(f"{where}: must be a mapping with dist")
     table = _TIME_PARAMS if quantity == "time" else _SIZE_PARAMS
     kind = spec.get("dist")
-    if kind is None and quantity == "time" and set(spec) == {"ms"}:
+    if kind is None and quantity == "time" and "ms" in spec:
         kind = "constant"  # the constant delay of a scenario, written without dist
     if kind == "empirical":
         return _empirical(spec, where)
