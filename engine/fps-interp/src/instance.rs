@@ -36,6 +36,7 @@ use crate::failure::{Failure, FailureKind, Reason};
 use crate::open::{DatagramOpener, Opener};
 use crate::rng::{session_rng, Side};
 use crate::session::{Limits, Session, SessionCtx, SideStats};
+use crate::upgrade::TlsUpgrader;
 
 /// A `spawn` that a session side ran.
 #[derive(Clone, Debug, PartialEq)]
@@ -130,6 +131,17 @@ pub trait FlowEnv {
 
     /// Returns the module functions of one flow side.
     fn functions(&mut self, flow: &Flow, side: Side) -> Box<dyn TemplateFn>;
+
+    /// Returns the upgrader that serves the `tls_upgrade` actions of one TCP
+    /// flow side, or `None` when the engine has no TLS profiles.
+    ///
+    /// The instance asks once for every side that it starts, right after
+    /// [`FlowEnv::functions`], and the side owns the upgrader until it ends.
+    /// A side without an upgrader fails at its first `tls_upgrade` with
+    /// reason `internal`. The default returns `None`.
+    fn tls_upgrader(&mut self, _flow: &Flow, _side: Side) -> Option<Box<dyn TlsUpgrader>> {
+        None
+    }
 }
 
 /// The state of one flow of an instance.
@@ -251,6 +263,7 @@ struct SideJob<'a> {
     vars: Vars,
     filler: &'a Filler,
     functions: Box<dyn TemplateFn>,
+    upgrader: Option<Box<dyn TlsUpgrader>>,
     config: InstanceConfig,
     queue: SpawnQueue,
     abort: watch::Receiver<bool>,
@@ -293,10 +306,14 @@ async fn run_stream<O: Opener>(mut job: SideJob<'_>, mut opener: O) -> SideDone 
         &mut job.functions,
         Box::new(fps_flow::function::NoFunctions),
     );
+    let upgrader = job.upgrader.take();
     let stop = aborted(job.abort.clone());
     let (result, stats, overlay) = {
         let mut session = Session::new(job.ctx(functions.as_mut()));
         session.set_spawn_queue(job.queue.clone());
+        if let Some(upgrader) = upgrader.as_deref() {
+            session.set_tls_upgrader(upgrader);
+        }
         let result = session.run_program(&mut opener, job.program, stop).await;
         (result, session.stats(), session.overlay().clone())
     };
@@ -540,6 +557,10 @@ impl<'s> ScenarioInstance<'s> {
             vars,
             filler: starter.filler,
             functions: env.functions(flow, side),
+            upgrader: match flow.l4 {
+                L4::Tcp => env.tls_upgrader(flow, side),
+                L4::Udp => None,
+            },
             config: self.config,
             queue: starter.queue.clone(),
             abort: starter.abort.clone(),

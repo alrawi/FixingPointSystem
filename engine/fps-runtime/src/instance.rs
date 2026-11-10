@@ -49,13 +49,14 @@ use fps_flow::program::{Flow, L4};
 use fps_flow::{FnCall, FnError, Scenario, TemplateFn};
 use fps_interp::{
     DatagramOpener, FlowEnv, InstanceConfig, OpenKind, OpenRequest, Opener, Reason,
-    ScenarioInstance, Side, Sides,
+    ScenarioInstance, Side, Sides, TlsUpgrader,
 };
 use rand::RngCore;
 use tokio::time::{sleep, Instant};
 
 use crate::extension::close_reason_of;
 use crate::opener::{destination, global_session_id, invalid, source_address, TapOpener};
+use crate::tls::SessionTls;
 use crate::worker::{ClientCtx, Worker};
 use crate::{SessionExtensions, SessionKey, Transport};
 
@@ -116,6 +117,9 @@ pub(crate) struct InstanceEnv {
     net: Net,
     first_id: u64,
     log: Vec<SideLog>,
+    /// The upgrader that every TCP flow side of the instance shares, which
+    /// collects the handshakes of the instance for the metrics.
+    tls: Option<SessionTls>,
 }
 
 /// Opens one flow side.
@@ -359,6 +363,12 @@ impl FlowEnv for InstanceEnv {
         NoDatagrams
     }
 
+    fn tls_upgrader(&mut self, _flow: &Flow, _side: Side) -> Option<Box<dyn TlsUpgrader>> {
+        self.tls
+            .clone()
+            .map(|tls| Box::new(tls) as Box<dyn TlsUpgrader>)
+    }
+
     fn functions(&mut self, flow: &Flow, side: Side) -> Box<dyn TemplateFn> {
         let w = Rc::clone(&self.worker);
         let index = self.index_of(flow);
@@ -434,6 +444,7 @@ pub(crate) async fn run(worker: Rc<Worker>, local_id: u64, peer: Peer) {
         net,
         first_id,
         log: Vec::new(),
+        tls: worker.session_tls(),
     };
     let mut instance = ScenarioInstance::new(
         &scenario,
@@ -454,6 +465,9 @@ pub(crate) async fn run(worker: Rc<Worker>, local_id: u64, peer: Peer) {
 
 /// Records the end of every started side, and ends its extensions.
 fn finish(worker: &Worker, env: &InstanceEnv, instance: &ScenarioInstance<'_>, first_id: u64) {
+    if let Some(tls) = &env.tls {
+        worker.record_tls(tls.take_events());
+    }
     let mut recorded = vec![false; env.log.len()];
     let now = Instant::now();
     let micros = |log: &SideLog| {
