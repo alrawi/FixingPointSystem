@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #195 |
 | Branch | `wp/CAP-03` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Pull request | #365 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-f353e8, lease until 2026-11-10T06:14:57Z |
-| Last verified commit | 31cb7b4 |
+| Last verified commit | e48e52a |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Remove personal data and credentials from extracted sessions before scenario gen
 - [x] 2. Scrubber core (`capture/scrub.py`): addresses, protocol credentials, tokens, emails, names
 - [x] 3. CLI `scrub`, provenance in the manifest, scenario reads the scrub record
 - [x] 4. Seeded capture tests (raw, base64, percent decoded search), lint
-- [ ] 5. Wiki page, README, log entry (done), pull request, CI
+- [x] 5. Wiki page, README, log entry, pull request, CI
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ Remove personal data and credentials from extracted sessions before scenario gen
 
 ## Remaining
 
-Pull request and CI.
+Nothing in this package.
 
 ## Next action
 
-Open the pull request, wait for CI, then run `fps_swarm.py review`.
+Coordinator review of pull request #365.
 
 ## Blockers and open questions
 
@@ -67,3 +67,4 @@ make lint-cap test-cap PYTHON=python3
 |---|---|---|---|---|
 | 2026-11-10T04:45Z | claude-f353e8 | claim | 917f745 | claimed #195, branch wp/CAP-03 |
 | 2026-11-10T05:25Z | claude-f353e8 | checkpoint | 895712b | scrubber, CLI, provenance, seeded tests |
+| 2026-11-10T06:20Z | claude-f353e8 | ready for review | e48e52a | PR #365, CI green |
