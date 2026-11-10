@@ -69,8 +69,10 @@ flows:
       - close: fin
     server:
       - accept: { port: "{{ vars.server_port }}" }
-      - send: "{{ http2.settings(max_concurrent_streams=128, initial_window_size=vars.window) }}{{ http2.window_update(0, 2147418112) }}"
+      # The server speaks after the client preface, as servers do, so the client is the first
+      # side to send on the connection.
       - expect: { bytes: 24, timeout_ms: 5000 }
+      - send: "{{ http2.settings(max_concurrent_streams=128, initial_window_size=vars.window) }}{{ http2.window_update(0, 2147418112) }}"
       - expect: { bytes: 9, timeout_ms: 5000 }
       - expect: { bytes: "{{ http2.frame_length(last) }}", timeout_ms: 5000 }
       - set: { client_window: "{{ http2.settings_value(last, 'initial_window_size') }}" }

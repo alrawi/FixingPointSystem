@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of http2.pcapng, which capture.sh records in the QA-01 harness.
+# realism/schema/labels.schema.json defines the format.
+#
+# HTTP/2 with prior knowledge (h2c) runs on TCP ports 8080 and 8081. nDPI must
+# classify at least 99% of those sessions as HTTP2, its name for HTTP/2, from
+# payload alone. nDPI 4.2.0, the libndpi-bin of Ubuntu 24.04, has no HTTP/2
+# protocol and reports these sessions as Unknown, so scoring needs a newer
+# ndpiReader, selected with FPS_NDPI_READER. The server of every scenario waits
+# for the client preface, because nDPI reads the client as the first sender.
+#
+# HTTP/2 over TLS runs on TCP ports 8443 and 8444, one port and one browser
+# profile per scenario, with ALPN h2. nDPI cannot read inside TLS, so on the
+# capture it classifies these sessions as TLS, and the encryption check
+# decrypts them with the keys that the capture embeds and compares the JA4 of
+# every ClientHello with the expected value of its profile. The HTTP/2 inside
+# the TLS sessions is measured on the decrypted capture by
+# decrypted_check.py, see the README.
+#
+# The ja4 values are the expected_ja4 of the browser profiles in
+# modules/tls/native/src/browser.rs, which modules/http2/tests/https.rs checks
+# against real ClientHello bytes.
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+tls:
+  min_decrypted: 1
+  profiles:
+    chrome-136: {ja4: t13d1011h2_61a7ad8aa9b6_6d021c4c45cd}
+    firefox-139: {ja4: t13d1011h2_61a7ad8aa9b6_f674693fb0dc}
+sessions:
+  - application: http2
+    match: {transport: tcp, server_port: 8080}
+  - application: http2
+    match: {transport: tcp, server_port: 8081}
+  - application: https2
+    tls_profile: chrome-136
+    match: {transport: tcp, server_port: 8443}
+  - application: https2
+    tls_profile: firefox-139
+    match: {transport: tcp, server_port: 8444}
+applications:
+  http2: {ndpi: [HTTP2]}
+  https2: {ndpi: [TLS]}

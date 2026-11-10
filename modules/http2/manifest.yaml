@@ -157,7 +157,7 @@ scenarios:
   - scenarios/https_browse.yaml
   - scenarios/https_upload.yaml
 fixtures:
-  - { capture: fixtures/http2.pcapng, expect: { ndpi: [HTTP/2, TLS] } }
+  - { capture: fixtures/http2.pcapng, expect: { ndpi: [HTTP2, TLS] } }
 provenance:
   source: synthetic
   notes: Frames follow RFC 9113 and header blocks follow RFC 7541. Every body comes from the seeded fill() generator, and every host name lies under the reserved .test domain. The SETTINGS values of the clients follow the shape of curl, Chrome, and Firefox, and the server SETTINGS follow nginx, without being captures of those programs.
