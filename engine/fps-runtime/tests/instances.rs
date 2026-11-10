@@ -619,7 +619,8 @@ fn every_flow_of_an_instance_calls_its_extensions() {
 }
 
 #[test]
-fn the_config_check_refuses_an_instance_that_a_worker_cannot_run() {
+fn the_config_check_accepts_a_udp_flow_and_refuses_a_spawned_entry_flow() {
+    // A UDP flow among TCP flows is a flow that a worker opens (ENG-26).
     let udp = compile(
         r#"
 scenario: mixed
@@ -642,12 +643,13 @@ flows:
       - accept: { port: 9001 }
 "#,
     );
-    let err = Runtime::start(RuntimeConfig::new(
+    let server = Runtime::start(RuntimeConfig::new(
         SEED,
         vec![server_worker(flow_ref(&udp, None), v4(72, 0, 1))],
     ))
-    .unwrap_err();
-    assert!(err.to_string().contains("UDP flow media"), "{err}");
+    .unwrap();
+    server.stop(Duration::from_millis(100));
+    server.join();
 
     let scenario = compile(LATE);
     let mut spawned_entry = flow_ref(&scenario, None);
@@ -658,4 +660,81 @@ flows:
     ))
     .unwrap_err();
     assert!(err.to_string().contains("spawned"), "{err}");
+}
+
+/// A free TCP port, which two concurrent instances then draw every time.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Every instance draws the same data port for all of its transfers, so
+/// concurrent instances meet one listener (AGT-18). Each instance dials from
+/// its own source host and takes the connection of that host, and all of them
+/// succeed.
+#[test]
+fn concurrent_instances_that_draw_the_same_data_port_all_succeed() {
+    let server_ip = v4(64, 0, 1);
+    let port = i64::from(free_port());
+    let vars = [
+        ("server_ip", Value::Str(server_ip.to_string())),
+        ("data_port_min", Value::Int(port)),
+        ("data_port_max", Value::Int(port)),
+    ];
+    let scenario = ftp_scenario("mixed_session.yaml", &vars);
+    let server = Runtime::start(RuntimeConfig::new(
+        SEED,
+        vec![server_worker(
+            flow_ref(&scenario, Some(ftp_functions())),
+            server_ip,
+        )],
+    ))
+    .unwrap();
+    let control = server.listen_addrs()[0];
+    // Eight instances start within one second, and each runs for at least
+    // 120 ms of delays, so most of them overlap.
+    let config = client_config(
+        flow_ref(&scenario, Some(ftp_functions())),
+        control,
+        65,
+        INSTANCES as f64,
+        1,
+    );
+    let capture = start_capture("instances-same-port");
+    config.capture.set(capture.clone());
+    let (client, server) = run_pair(server, config);
+    let sessions = INSTANCES * FLOW_SESSIONS;
+    for (report, worker, side) in [(&client, 0, "client"), (&server, 10, "server")] {
+        let s = exit(report, worker);
+        let side = ("side", side);
+        assert_eq!(
+            counted(s, metric::SESSIONS_SUCCEEDED, side),
+            sessions,
+            "{side:?}"
+        );
+        assert_eq!(s.counter_total(metric::SESSIONS_FAILED), 0, "{side:?}");
+    }
+    // The capture shows that every data connection went to the one port and
+    // that none was reset.
+    let files = capture.flush();
+    let stats = capture.stop();
+    assert_eq!(stats.sessions_dropped_queue, 0, "{stats:?}");
+    let packets: Vec<_> = read_pcapng(&files[0])
+        .packets
+        .iter()
+        .map(|(ts, f)| parse_frame(*ts, f))
+        .collect();
+    assert!(packets.iter().all(|p| p.flags & RST == 0), "no reset");
+    let to_data = packets
+        .iter()
+        .filter(|p| p.flags & SYN != 0 && p.flags & ACK == 0 && i64::from(p.dport) == port)
+        .count() as u64;
+    assert_eq!(
+        to_data,
+        INSTANCES * TRANSFERS,
+        "every transfer dialed the one port"
+    );
 }
