@@ -22,7 +22,7 @@ NDPI_READER_HTTP2 = $(or $(FPS_NDPI_READER),ndpiReader)
 TEST_TARGETS += test-mod-http2
 test-mod-http2:
 	$(CARGO) test -p fps-module-http2
-	@if command -v tshark >/dev/null 2>&1 && $(NDPI_READER_HTTP2) -h 2>&1 | grep -qw HTTP2; then \
+	@if command -v tshark >/dev/null 2>&1 && { $(NDPI_READER_HTTP2) -h; $(NDPI_READER_HTTP2) -H; } 2>&1 | grep -qw HTTP2; then \
 	  mkdir -p $(MOD_HTTP2_OUT); \
 	  echo "$(PYTHON) -m realism score --pcap modules/http2/fixtures/http2.pcapng --labels modules/http2/fixtures/expected.yaml --parsers tshark"; \
 	  $(PYTHON) -m realism score --pcap modules/http2/fixtures/http2.pcapng \

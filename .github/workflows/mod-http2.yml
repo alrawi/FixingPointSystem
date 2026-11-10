@@ -64,8 +64,7 @@ jobs:
           cd "$RUNNER_TEMP/ndpi"
           ./autogen.sh >/dev/null
           make -j"$(nproc)" >/dev/null
-          ./example/ndpiReader -h 2>&1 | grep -iE 'http' | head -20
-          ./example/ndpiReader -h 2>&1 | grep -qw HTTP2
+          ./example/ndpiReader -H 2>&1 | grep -w HTTP2 || { ./example/ndpiReader -H 2>&1 | grep -i http | head; exit 1; }
           echo "FPS_NDPI_READER=$RUNNER_TEMP/ndpi/example/ndpiReader" >> "$GITHUB_ENV"
       - run: python -m pip install -r tools/contracts/requirements.txt
       - run: make lint-mod-http2 PYTHON=python
@@ -96,8 +95,7 @@ jobs:
           cd "$RUNNER_TEMP/ndpi"
           ./autogen.sh >/dev/null
           make -j"$(nproc)" >/dev/null
-          ./example/ndpiReader -h 2>&1 | grep -iE 'http' | head -20
-          ./example/ndpiReader -h 2>&1 | grep -qw HTTP2
+          ./example/ndpiReader -H 2>&1 | grep -w HTTP2 || { ./example/ndpiReader -H 2>&1 | grep -i http | head; exit 1; }
       - run: cargo build -p fps-module-http2 --example fixture_peer
       - name: Record and score a fresh capture in the namespace harness
         run: |

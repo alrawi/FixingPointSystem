@@ -17,21 +17,24 @@ fn available(program: &str) -> bool {
     Command::new(program).arg("--version").output().is_ok()
 }
 
-/// Whether the ndpiReader lists the HTTP2 protocol in its help text.
+/// Whether the ndpiReader lists the HTTP2 protocol, in its help text (nDPI 4.2)
+/// or with `-H` (newer nDPI).
 fn knows_http2(reader: &str) -> bool {
-    Command::new(reader)
-        .arg("-h")
-        .output()
-        .map(|out| {
-            let text = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            text.lines()
-                .any(|line| line.split_whitespace().any(|word| word == "HTTP2"))
-        })
-        .unwrap_or(false)
+    ["-h", "-H"].iter().any(|flag| {
+        Command::new(reader)
+            .arg(flag)
+            .output()
+            .map(|out| {
+                let text = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                text.lines()
+                    .any(|line| line.split_whitespace().any(|word| word == "HTTP2"))
+            })
+            .unwrap_or(false)
+    })
 }
 
 #[test]
