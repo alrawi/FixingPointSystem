@@ -15,14 +15,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from realism import __version__, conformance, content, encryption, parser_errors, structure
+from realism import (
+    __version__,
+    conformance,
+    content,
+    encryption,
+    parser_errors,
+    structure,
+    temporal,
+)
 from realism.capture import summarize
 from realism.classifier import Classifier
 from realism.labels import load
 from realism.parsers import ParserRunner
 
 REPORT_FORMAT = "fps-realism-report"
-REPORT_VERSION = "0.6.0"
+REPORT_VERSION = "0.7.0"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "realism-report.schema.json"
 LABELS_SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "labels.schema.json"
 
@@ -77,6 +85,8 @@ def score(
     keylog: Path | None = None,
     max_duplicate_ratio: float | None = None,
     scenario_files: Sequence[Path] = (),
+    ks_alpha: float | None = None,
+    ks_min_samples: int | None = None,
 ) -> Report:
     """Score a capture against its labels and return the realism report.
 
@@ -97,6 +107,11 @@ def score(
     Labels with a ``structure`` section, or ``scenario_files`` (paths of scenario files),
     add the session structure check, which compares the connections of each scenario
     instance with the flow graph of the scenario.
+
+    Labels with a ``temporal`` section, or a ``ks_alpha`` or ``ks_min_samples`` argument,
+    add the temporal distribution check, which compares inter arrival times and payload
+    sizes with the target distributions of the labels through the KS test. The arguments
+    override the significance level (default 0.01) and the fewest observations (default 30).
     """
     labels = load(labels_path)
     summary = summarize(pcap)
@@ -118,6 +133,10 @@ def score(
         checks.append(content.check(pcap, summary.sessions, labels, max_duplicate_ratio).to_dict())
     if labels.structure is not None or scenario_files:
         checks.append(structure.check(pcap, summary.sessions, labels, scenario_files).to_dict())
+    if labels.temporal is not None or ks_alpha is not None or ks_min_samples is not None:
+        checks.append(
+            temporal.check(pcap, summary.sessions, labels, ks_alpha, ks_min_samples).to_dict()
+        )
     return Report(
         capture={
             "file": pcap.name,

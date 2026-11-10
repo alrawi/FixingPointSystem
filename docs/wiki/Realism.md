@@ -1,6 +1,6 @@
 # Realism
 
-This page describes the realism runner under `realism/`, which the RLM workstream owns. The runner scores a capture against the applications that the traffic was meant to carry and writes a JSON realism report. RLM-01 created the runner with the conformance check, RLM-02 added the parser error check, and RLM-04 added the encryption check, RLM-05 added the content variety check, and RLM-08 added the session structure check. The [runner README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md) gives the command, the options, and the report fields in full.
+This page describes the realism runner under `realism/`, which the RLM workstream owns. The runner scores a capture against the applications that the traffic was meant to carry and writes a JSON realism report. RLM-01 created the runner with the conformance check, RLM-02 added the parser error check, and RLM-04 added the encryption check, RLM-05 added the content variety check, RLM-08 added the session structure check, and RLM-06 added the temporal distribution check. The [runner README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md) gives the command, the options, and the report fields in full.
 
 ## Checks
 
@@ -13,6 +13,7 @@ The [specification](https://github.com/alrawi/FixingPointSystem/blob/main/docs/s
 | `encryption` | tshark with the exported TLS keys, and JA4 computed by the runner | Every sampled TLS session decrypts and every sampled ClientHello has the JA4 of its client profile | RLM-04 |
 | `content` | Payloads reassembled by the runner, no external tool | No application has more than 1% duplicate payloads, and the size distribution agrees with the labels where they give one | RLM-05 |
 | `session_structure` | Scenario files and the sessions of the capture, no external tool | Every scenario instance has the connections that its flow graph allows, in the order of its `after` and `spawn` edges | RLM-08 |
+| `temporal` | Session start times and payloads read by the runner, no external tool | Every inter arrival time and payload size sample that the labels give a target for agrees with it in a KS test at α (default 0.01), and none has too few observations | RLM-06 |
 
 Every tool runs as a separate process, so the runner links none of their code. We chose the counting rules of the parser error check for three reasons.
 
@@ -24,7 +25,7 @@ The parser error check leaves `metrics` empty, because the [metric catalog](http
 
 ## Report
 
-[`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) defines the report, which is the seam to the controller and the gate suites. A new check adds a definition under `$defs` and one `if` and `then` entry in `$defs.check.allOf`. The report format is at version 0.6.0. Version 0.2.0 added the `parser_errors` entry, version 0.3.0 added `skipped_parsers` to it, version 0.4.0 added the `encryption` entry, version 0.5.0 added the `content` entry, and version 0.6.0 added the `session_structure` entry.
+[`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) defines the report, which is the seam to the controller and the gate suites. A new check adds a definition under `$defs` and one `if` and `then` entry in `$defs.check.allOf`. The report format is at version 0.7.0. Version 0.2.0 added the `parser_errors` entry, version 0.3.0 added `skipped_parsers` to it, version 0.4.0 added the `encryption` entry, version 0.5.0 added the `content` entry, version 0.6.0 added the `session_structure` entry, and version 0.7.0 added the `temporal` entry.
 
 ## Seams for tests
 
@@ -80,6 +81,56 @@ A scenario instance opens several connections. The `web_browse` scenario of the 
 **Rules.** Per instance and flow, the number of connections must lie within what the graph allows. Per `after` edge, every connection of the later flow must start no earlier than every connection of the earlier flow completed, where a session completes at its last packet with payload, FIN, or RST. We leave out the closing ACK, because the engine starts the next flow when the close action returns. Per `spawn` edge, every connection of the child must start between the first and the last packet of a connection of its parent. `structure.tolerance_s` (default 0) loosens both. The check also fails when a scenario matches no session and when `expected_instances` disagrees. A failure names the scenario, the instance with its client address and first packet, and the violated edge with both sessions, for example `edge after lookup -> page violated: page (session 1, tcp 10.0.0.10:40001 -> 10.0.1.80:8080) starts at +0.000000 s, before lookup (session 2, udp 10.0.0.10:40000 -> 10.0.1.53:53) completes at +0.030999 s`. The entry leaves `metrics` empty until the catalog has a metric for it.
 
 **The ftp fixture check.** [`modules/ftp/fixtures/structure_check.py`](https://github.com/alrawi/FixingPointSystem/blob/main/modules/ftp/fixtures/structure_check.py) cannot be replaced yet. This check covers its count of one data connection per transfer and its rule that a data connection starts while the control connection is open, and the tests run it on the `mixed_session` scenario. It does not read the 227 and 229 replies, so it cannot check that a data connection goes to the announced port. It does not require that each session ends with a FIN of both sides, and it does not reject active mode commands. The committed `ftp.pcapng` records five scenarios on one address and one control port, so no one scenario file describes it. A replacement needs the fixture script to record one scenario per capture, or a `match` that separates them, and the port and FIN rules would stay in a script or move into a later check.
+
+## Temporal distribution check
+
+Real users arrive at random and fetch objects of very different sizes, and a generator that opens sessions on a metronome, or whose object sizes cluster around one value, does not look like that population. The specification asks for configurable arrival processes, think times, and heavy tailed object sizes, tested against the target distribution with the Kolmogorov Smirnov (KS) test. RLM-06 implements the check in [`realism/temporal.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/temporal.py) and the tests in [`realism/ks.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/ks.py). It runs when the labels have a `temporal` section or the command has `--ks-alpha` or `--ks-min-samples`, so a labels file without either behaves as before.
+
+**What it compares.** Two properties, each per application and for all sessions together.
+
+* `inter_arrival` is the gap in seconds between the first packets of consecutive sessions, in order of those first packets. An application takes the sessions that the labels name as that application, and `overall` takes every session of the capture, labelled or not. A Poisson process of `r` sessions per second has exponential gaps with `mean_ms` of `1000 / r`, and the sum of Poisson processes is Poisson with the summed rate, so one labels file can give a target for each application and one for the whole capture.
+* `payload_size` is the size in bytes of each payload unit of the [content check](#content-variety-check), which is one HTTP/1 message with its headers, one UDP datagram, or one whole TCP direction, for the `client` direction, the `server` direction, or `both`. TLS sessions are skipped and counted, as in the content check, because the runner has no plaintext for them.
+
+**Targets.** The labels write a target with the vocabulary of a scenario `delay` in [`contracts/schemas/scenario.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/schemas/scenario.schema.json), so a delay that a scenario uses can be pasted as the target of the arrivals it should produce.
+
+| `dist` | Arrival parameters | Size parameters |
+|---|---|---|
+| `constant` (or `ms` alone) | `ms`, `tolerance_ms` | `value`, `tolerance` |
+| `exponential` | `mean_ms` | `mean` |
+| `uniform` | `min_ms`, `max_ms` | `min`, `max` |
+| `lognormal` | `mu`, `sigma`, `unit` (`s` or `ms`) | `mu`, `sigma` |
+| `pareto` | `alpha`, `scale_ms` | `alpha`, `scale` |
+| `empirical` | `sample`, `sample_file`, or `reference` | the same, in bytes |
+
+`mu` is the natural logarithm of the value in the `unit`, and a size `mu` is the logarithm of the size in bytes. A Pareto distribution has the density of the scenario schema, with `scale` as its smallest value. An `empirical` target is a list of values in seconds or bytes, a file of numbers separated by white space or commas, or a reference capture (`reference: {pcap: ..., labels: ...}`, both relative to the labels file) whose own sessions give the sample. The test is then the two sample KS test. The test configuration has no arrival process or size distribution of its own. It holds a load objective and phases, and the scenario schema holds `delay` for think times, so the target distributions are an input of the labels and the check does not read them from the test configuration.
+
+```yaml
+temporal:
+  alpha: 0.01          # default
+  min_samples: 30      # default
+  arrivals:
+    overall: {dist: exponential, mean_ms: 142.9}
+    applications:
+      http1: {dist: exponential, mean_ms: 200}
+      dns: {dist: uniform, min_ms: 100, max_ms: 900}
+  sizes:
+    applications:
+      http1:
+        - {direction: client, dist: lognormal, mu: 5.5, sigma: 0.4}
+        - {direction: server, dist: pareto, alpha: 1.8, scale: 500}
+```
+
+**Decision.** A comparison passes when the p value of the KS test is at least α (`--ks-alpha`, `temporal.alpha`, default 0.01, and the option wins). The statistic, the p value, the sample size, and the method go into the report beside a failure reason in words, for example `inter-arrival times of application http1: the KS test rejects exponential (mean 0.2) at alpha 0.01 (statistic 0.2133, p value 0.0012, n 200); the observed median is 0.2412 s, the target median is 0.138629 s`. The p value is exact for up to 100 one sample observations and for two samples with up to 10000 pairs, and it is the asymptotic Kolmogorov distribution with the correction of Stephens above that. We wrote the test in pure Python, as the runner needs only the standard library, and we checked it against the table of critical values and against `scipy.stats` values that the tests state. The specification names α = 0.05 for the gate and the check defaults to 0.01, so the gate suite passes `--ks-alpha 0.05` or sets `temporal.alpha`.
+
+**Too little data.** A comparison with fewer than `min_samples` observations (`--ks-min-samples`, `temporal.min_samples`, default 30) in the capture, or in its reference sample, reports `insufficient_data` with the counts, and it fails the check, because a pass on a handful of points proves nothing. The same holds for an application that has no session. The check also fails when the labels name no target, so asking for it with no target never passes.
+
+**Constants.** A constant has no spread, so the check is exact. The observations must all lie within `tolerance` of the value, the statistic is the larger share of observations below or above that band, and the p value is 1 or 0. Capture timestamps have the resolution of the file, so a constant gap needs a tolerance of at least that resolution.
+
+**Limits.** Each comparison is a test at level α, so a report with many targets rejects about α of them by chance even when the traffic is right. Byte sizes are discrete, which makes the KS test against a continuous target conservative, and ties make the exact p values approximate. The gaps come from the first packet of a session in the capture, so a mirror that drops or reorders frames changes them. The check does not yet compare the think times between the actions of one session, which would need the timing of the actions inside a session.
+
+**Metrics.** The entry reports `realism.ks_statistic` and `realism.ks_p_value` for each application whose property the [metric catalog](https://github.com/alrawi/FixingPointSystem/blob/main/contracts/metrics/catalog.yaml) names, `inter_arrival` for arrivals, `request_bytes` for client payloads, and `response_bytes` for server payloads. The comparisons over all sessions and over both directions have no label in the catalog, so they stay in `comparisons` only.
+
+**Evidence.** [`realism/tests/test_ks.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/tests/test_ks.py) holds the known values of the KS tests and checks that exponential samples reject at the rate of α and shifted ones nearly always. [`realism/tests/test_temporal.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/tests/test_temporal.py) builds pcapgen captures whose arrivals and sizes come from seeded Poisson, uniform, lognormal, and Pareto generators. Captures from the target pass, and captures with a 75% longer mean gap, a metronome, a shifted lognormal size, or a wrong constant fail with their reason.
 
 ## Pinned Zeek and skipped parsers
 

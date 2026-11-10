@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import ipaddress
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +47,7 @@ _TOP_LEVEL = {
     "tls",
     "content",
     "structure",
+    "temporal",
 }
 _STRUCTURE_FIELDS = {"scenarios", "max_gap_s", "tolerance_s"}
 _STRUCTURE_SCENARIO_FIELDS = {"file", "vars", "match", "expected_instances"}
@@ -55,6 +57,27 @@ _SIZE_FIELDS = {"direction", "median", "cv", "tolerance"}
 DIRECTIONS = ("client", "server", "both")
 DEFAULT_MAX_DUPLICATE_RATIO = 0.01
 DEFAULT_SIZE_TOLERANCE = 0.25
+_TEMPORAL_FIELDS = {"alpha", "min_samples", "arrivals", "sizes"}
+_TEMPORAL_TARGET_FIELDS = {"overall", "applications"}
+DEFAULT_KS_ALPHA = 0.01
+DEFAULT_KS_MIN_SAMPLES = 30
+# Parameters of each parametric distribution, by quantity. Times use the names of a
+# scenario ``delay`` (milliseconds), sizes use bytes.
+_TIME_PARAMS: dict[str, tuple[str, ...]] = {
+    "constant": ("ms", "tolerance_ms"),
+    "exponential": ("mean_ms",),
+    "uniform": ("min_ms", "max_ms"),
+    "lognormal": ("mu", "sigma", "unit"),
+    "pareto": ("alpha", "scale_ms"),
+}
+_SIZE_PARAMS: dict[str, tuple[str, ...]] = {
+    "constant": ("value", "tolerance"),
+    "exponential": ("mean",),
+    "uniform": ("min", "max"),
+    "lognormal": ("mu", "sigma"),
+    "pareto": ("alpha", "scale"),
+}
+_EMPIRICAL_SOURCES = ("sample", "sample_file", "reference")
 _TLS_FIELDS = {"profiles", "sample", "min_decrypted"}
 DEFAULT_TLS_SAMPLE = 100
 DEFAULT_MIN_DECRYPTED = 1.0
@@ -154,6 +177,72 @@ class StructureLabels:
     tolerance_s: float = DEFAULT_STRUCTURE_TOLERANCE_S
 
 
+@dataclass(frozen=True)
+class Reference:
+    """A reference capture whose observed distribution is the target of an empirical test.
+
+    ``pcap`` and ``labels`` are paths relative to the labels file. The sessions of the
+    reference capture get their application from ``labels``, or from the rules of the
+    labels file that holds the reference when ``labels`` is absent.
+    """
+
+    pcap: str
+    labels: str | None = None
+
+
+@dataclass(frozen=True)
+class Distribution:
+    """A target distribution of the temporal check, in seconds or in bytes.
+
+    ``kind`` is ``constant``, ``exponential``, ``uniform``, ``lognormal``, ``pareto``, or
+    ``empirical``. ``params`` holds the parameters in seconds for inter arrival times and in
+    bytes for sizes, under the names ``value`` (constant), ``mean`` (exponential), ``min``
+    and ``max`` (uniform), ``mu`` and ``sigma`` (lognormal, of the natural logarithm of the
+    value), and ``alpha`` and ``scale`` (pareto, the shape and the smallest value).
+    ``tolerance`` is the distance that still counts as equal to a constant. An empirical
+    distribution has exactly one of ``sample`` (the values), ``sample_file`` (a path
+    relative to the labels file), or ``reference`` (a capture). ``declared`` is the
+    distribution as the labels file wrote it.
+    """
+
+    kind: str
+    params: Mapping[str, float] = field(default_factory=dict)
+    tolerance: float = 0.0
+    sample: tuple[float, ...] | None = None
+    sample_file: str | None = None
+    reference: Reference | None = None
+    declared: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TemporalTarget:
+    """One distribution that the temporal check compares with the capture.
+
+    ``prop`` is ``inter_arrival`` (the gaps between the first packets of consecutive
+    sessions) or ``payload_size``. ``application`` is None for all sessions of the capture.
+    ``direction`` selects the payloads of a size target, and it is ``both`` for arrivals.
+    """
+
+    prop: str
+    application: str | None
+    direction: str
+    distribution: Distribution
+
+
+@dataclass(frozen=True)
+class TemporalLabels:
+    """Settings of the temporal distribution check.
+
+    ``alpha`` is the significance level of every KS test, which rejects a target when the p
+    value falls below it. ``min_samples`` is the fewest observations (in each sample of a
+    two sample test) that a comparison needs, and a smaller sample reports insufficient data.
+    """
+
+    alpha: float = DEFAULT_KS_ALPHA
+    min_samples: int = DEFAULT_KS_MIN_SAMPLES
+    targets: tuple[TemporalTarget, ...] = ()
+
+
 @dataclass
 class Labels:
     """The expected labels of one capture."""
@@ -165,6 +254,7 @@ class Labels:
     tls: TlsLabels | None = None
     content: ContentLabels | None = None
     structure: StructureLabels | None = None
+    temporal: TemporalLabels | None = None
     base_dir: Path | None = None
 
     def tls_profile_of(self, session: Session) -> str | None:
@@ -263,6 +353,7 @@ def parse(doc: Any, source: str = "<labels>") -> Labels:
         tls=tls,
         content=_content(doc["content"], where) if "content" in doc else None,
         structure=_structure(doc["structure"], where) if "structure" in doc else None,
+        temporal=_temporal(doc["temporal"], where) if "temporal" in doc else None,
     )
 
 
@@ -365,6 +456,179 @@ def _structure(value: Any, where: str) -> StructureLabels:
         scenarios=tuple(scenarios),
         max_gap_s=float(gap) if gap is not None else None,
         tolerance_s=float(tolerance),
+    )
+
+
+def _finite(value: Any) -> TypeGuard[int | float]:
+    return _number(value) and math.isfinite(value)
+
+
+def _temporal(value: Any, where: str) -> TemporalLabels:
+    """Validate the temporal section, whose targets name the expected distributions."""
+    if not isinstance(value, dict) or set(value) - _TEMPORAL_FIELDS:
+        raise LabelsError(
+            f"{where} temporal: must be a mapping with only {sorted(_TEMPORAL_FIELDS)}"
+        )
+    alpha = value.get("alpha", DEFAULT_KS_ALPHA)
+    if not _finite(alpha) or not 0 < alpha < 1:
+        raise LabelsError(f"{where} temporal.alpha: must be a number above 0 and below 1")
+    minimum = value.get("min_samples", DEFAULT_KS_MIN_SAMPLES)
+    if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 2:
+        raise LabelsError(f"{where} temporal.min_samples: must be an integer of 2 or more")
+    targets: list[TemporalTarget] = []
+    for section, prop, quantity in (
+        ("arrivals", "inter_arrival", "time"),
+        ("sizes", "payload_size", "size"),
+    ):
+        if section not in value:
+            continue
+        raw = value[section]
+        here = f"{where} temporal.{section}"
+        if not isinstance(raw, dict) or set(raw) - _TEMPORAL_TARGET_FIELDS:
+            raise LabelsError(
+                f"{here}: must be a mapping with only {sorted(_TEMPORAL_TARGET_FIELDS)}"
+            )
+        if "overall" in raw:
+            targets += _temporal_entries(raw["overall"], None, prop, quantity, f"{here}.overall")
+        apps = raw.get("applications", {})
+        if not isinstance(apps, dict):
+            raise LabelsError(f"{here}.applications: must be a mapping from application name")
+        for name, entry in apps.items():
+            if not isinstance(name, str) or not name:
+                raise LabelsError(f"{here}.applications: names must be non empty strings")
+            targets += _temporal_entries(entry, name, prop, quantity, f"{here}.applications.{name}")
+    seen: set[tuple[str, str | None, str]] = set()
+    for target in targets:
+        key = (target.prop, target.application, target.direction)
+        if key in seen:
+            raise LabelsError(
+                f"{where} temporal: {target.prop} of {target.application or 'overall'} "
+                f"({target.direction}) has two targets"
+            )
+        seen.add(key)
+    return TemporalLabels(alpha=float(alpha), min_samples=minimum, targets=tuple(targets))
+
+
+def _temporal_entries(
+    entry: Any, application: str | None, prop: str, quantity: str, where: str
+) -> list[TemporalTarget]:
+    """Read one target, or a list of targets for the two directions of an application."""
+    items = entry if isinstance(entry, list) and quantity == "size" else [entry]
+    if not items:
+        raise LabelsError(f"{where}: must not be an empty list")
+    out = []
+    for index, item in enumerate(items):
+        here = where if len(items) == 1 else f"{where}[{index}]"
+        direction = "both"
+        if quantity == "size":
+            if not isinstance(item, dict):
+                raise LabelsError(f"{here}: must be a mapping")
+            item = dict(item)
+            direction = item.pop("direction", "both")
+            if direction not in DIRECTIONS:
+                raise LabelsError(f"{here}.direction: must be one of {', '.join(DIRECTIONS)}")
+        out.append(
+            TemporalTarget(prop, application, direction, _distribution(item, quantity, here))
+        )
+    return out
+
+
+def _param(spec: Mapping[str, Any], name: str, here: str, strict: bool) -> float:
+    """Read a required finite parameter that is above 0, or 0 or more when not strict."""
+    value = spec.get(name)
+    if _finite(value) and (value > 0 if strict else value >= 0):
+        return float(value)
+    raise LabelsError(f"{here}.{name}: must be a number {'above 0' if strict else '0 or more'}")
+
+
+def _distribution(spec: Any, quantity: str, where: str) -> Distribution:
+    """Validate a target distribution and convert its parameters to seconds or bytes."""
+    if not isinstance(spec, dict):
+        raise LabelsError(f"{where}: must be a mapping with dist")
+    table = _TIME_PARAMS if quantity == "time" else _SIZE_PARAMS
+    kind = spec.get("dist")
+    if kind is None and quantity == "time" and "ms" in spec:
+        kind = "constant"  # the constant delay of a scenario, written without dist
+    if kind == "empirical":
+        return _empirical(spec, where)
+    if kind not in table:
+        raise LabelsError(f"{where}.dist: must be one of {', '.join([*table, 'empirical'])}")
+    unknown = set(spec) - {"dist", *table[kind]}
+    if unknown:
+        raise LabelsError(
+            f"{where}: {kind} takes only dist and {', '.join(table[kind])}, not {sorted(unknown)}"
+        )
+    scale = 0.001 if quantity == "time" else 1.0  # milliseconds to seconds
+    suffix = "_ms" if quantity == "time" else ""
+    params: dict[str, float] = {}
+    tolerance = 0.0
+    if kind == "constant":
+        params["value"] = (
+            _param(spec, "ms" if quantity == "time" else "value", where, False) * scale
+        )
+        if "tolerance" + suffix in spec:
+            tolerance = _param(spec, "tolerance" + suffix, where, False) * scale
+    elif kind == "exponential":
+        params["mean"] = _param(spec, "mean" + suffix, where, True) * scale
+    elif kind == "uniform":
+        low = _param(spec, "min" + suffix, where, False) * scale
+        high = _param(spec, "max" + suffix, where, False) * scale
+        if high <= low:
+            raise LabelsError(f"{where}: max{suffix} must be above min{suffix}")
+        params.update(min=low, max=high)
+    elif kind == "lognormal":
+        mu = spec.get("mu")
+        if not _finite(mu):
+            raise LabelsError(f"{where}.mu: must be a number")
+        params["sigma"] = _param(spec, "sigma", where, True)
+        unit = spec.get("unit", "s")
+        if unit not in ("s", "ms"):
+            raise LabelsError(f"{where}.unit: must be s or ms")
+        # mu is the logarithm of the value in the unit, so ms values shift it by ln 1000.
+        params["mu"] = float(mu) - (math.log(1000.0) if unit == "ms" else 0.0)
+    else:  # pareto
+        params["alpha"] = _param(spec, "alpha", where, True)
+        params["scale"] = _param(spec, "scale" + suffix, where, True) * scale
+    return Distribution(kind, params, tolerance, declared=dict(spec) | {"dist": kind})
+
+
+def _empirical(spec: Mapping[str, Any], where: str) -> Distribution:
+    """Validate an empirical target, given as values, a file of values, or a capture."""
+    unknown = set(spec) - {"dist", *_EMPIRICAL_SOURCES}
+    given = [name for name in _EMPIRICAL_SOURCES if name in spec]
+    if unknown or len(given) != 1:
+        raise LabelsError(
+            f"{where}: an empirical target has dist and exactly one of "
+            f"{', '.join(_EMPIRICAL_SOURCES)}"
+        )
+    source = given[0]
+    value = spec[source]
+    if source == "sample":
+        if not isinstance(value, list) or not value or not all(_finite(v) for v in value):
+            raise LabelsError(f"{where}.sample: must be a non empty list of numbers")
+        return Distribution(
+            "empirical",
+            sample=tuple(float(v) for v in value),
+            declared={"dist": "empirical", "sample_size": len(value)},
+        )
+    if source == "sample_file":
+        if not isinstance(value, str) or not value:
+            raise LabelsError(f"{where}.sample_file: must be a file name")
+        return Distribution(
+            "empirical", sample_file=value, declared={"dist": "empirical", "sample_file": value}
+        )
+    if (
+        not isinstance(value, dict)
+        or set(value) - {"pcap", "labels"}
+        or not isinstance(value.get("pcap"), str)
+        or not value["pcap"]
+        or not isinstance(value.get("labels", ""), str)
+    ):
+        raise LabelsError(f"{where}.reference: must be a mapping with pcap and optional labels")
+    return Distribution(
+        "empirical",
+        reference=Reference(value["pcap"], value.get("labels") or None),
+        declared={"dist": "empirical", "reference": dict(value)},
     )
 
 

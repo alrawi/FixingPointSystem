@@ -40,6 +40,26 @@ def _threshold(text: str) -> float:
     return value
 
 
+def _alpha(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not a number: {text}") from exc
+    if not 0.0 < value < 1.0:
+        raise argparse.ArgumentTypeError("alpha must be above 0 and below 1")
+    return value
+
+
+def _min_samples(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not an integer: {text}") from exc
+    if value < 2:
+        raise argparse.ArgumentTypeError("the minimum must be 2 or more")
+    return value
+
+
 def _parser_list(text: str) -> tuple[str, ...] | None:
     """Read the value of ``--parsers``, where None means every installed parser."""
     if text == "auto":
@@ -107,6 +127,18 @@ def _parser() -> argparse.ArgumentParser:
         help="scenario file whose flow graph the session structure check compares with the "
         "capture; repeat it for several scenarios; adds the check next to the structure "
         "section of the labels file",
+    )
+    score_cmd.add_argument(
+        "--ks-alpha",
+        type=_alpha,
+        help="significance level of the KS tests, above 0 and below 1; adds the temporal "
+        "distribution check and overrides the labels file, whose default is 0.01",
+    )
+    score_cmd.add_argument(
+        "--ks-min-samples",
+        type=_min_samples,
+        help="fewest observations that a KS comparison needs, 2 or more; adds the temporal "
+        "distribution check and overrides the labels file, whose default is 30",
     )
     score_cmd.add_argument("--tshark", help="path of tshark, defaults to FPS_TSHARK or the path")
     score_cmd.add_argument("--zeek", help="path of zeek, defaults to FPS_ZEEK or the path")
@@ -186,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
             keylog=args.keylog,
             max_duplicate_ratio=args.max_duplicate_ratio,
             scenario_files=args.scenario,
+            ks_alpha=args.ks_alpha,
+            ks_min_samples=args.ks_min_samples,
         )
     except (CaptureError, LabelsError, ClassifierError, ParserError, ScenarioError) as exc:
         print(f"realism score failed: {exc}", file=sys.stderr)
