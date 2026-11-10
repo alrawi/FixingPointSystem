@@ -5,10 +5,10 @@
 | Issue | #180 |
 | Branch | `wp/MOD-13` |
 | Pull request | #416 |
-| Status | in progress |
-| Progress | 95% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-9c41d7, lease until 2026-11-10T19:08:16Z |
-| Last verified commit | 29405af |
+| Last verified commit | 3bfb360 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Ship smb2 scenarios for file browsing, download, and upload, with client and ser
 - [x] 2. Tests that run both sides of each scenario through the interpreter, and the golden transcripts.
 - [x] 3. The `fixture_peer` example, `capture.sh`, and `expected.yaml`.
 - [x] 4. Record the fixture in a network namespace, score it with nDPI, check how nDPI treats the 4 octet direct TCP header.
-- [ ] 5. README, log entry, wiki page notes, checks, pull request, CI.
+- [x] 5. README, log entry, wiki page notes, checks, pull request, CI.
 
 ## Done and verified
 
@@ -33,11 +33,11 @@ Ship smb2 scenarios for file browsing, download, and upload, with client and ser
 
 ## Remaining
 
-Wait for CI on the new head and set the handoff to ready for review.
+Nothing. CI is green on 3bfb360.
 
 ## Next action
 
-Poll the check runs of PR #416.
+Review PR #416.
 
 ## Blockers and open questions
 
@@ -70,3 +70,4 @@ python3 -m realism score --pcap modules/smb2/fixtures/smb2.pcapng --labels modul
 | 2026-11-10T17:25Z | claude-9c41d7 | claim | none | Claimed #180, branch wp/MOD-13 from origin/main |
 | 2026-11-10T17:45Z | claude-9c41d7 | checkpoint | 484a2e3 | Manifest, three scenarios, tests, golden transcripts |
 | 2026-11-10T18:15Z | claude-9c41d7 | checkpoint | 29405af | fixture_peer, capture.sh, fixture, README, log entry, PR #416 opened |
+| 2026-11-10T18:45Z | claude-9c41d7 | ready for review | 3bfb360 | CI green on PR #416 |
