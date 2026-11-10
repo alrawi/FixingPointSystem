@@ -37,6 +37,7 @@ mod config;
 mod control;
 mod error;
 mod extension;
+mod instance;
 mod metrics;
 mod opener;
 mod runtime;
