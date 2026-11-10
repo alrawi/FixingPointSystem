@@ -227,3 +227,25 @@ func TestHTMLReportIs501WithoutRenderer(t *testing.T) {
 		t.Errorf("status %d, want 501", rec.Code)
 	}
 }
+
+func TestRendererShowsTheRealismResultsOfTheReport(t *testing.T) {
+	rep := report.Report{
+		Run: runs.Run{ID: "run-realism", State: runs.Completed},
+		Realism: []api.RealismResult{
+			{Observed: 0.9, Passed: false, Property: "conformance of dns by ndpi", Target: ">= 0.99"},
+		},
+	}
+	page, err := Renderer(rep, report.HTMLInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(page)
+	for _, want := range []string{"conformance of dns by ndpi", "&gt;= 0.99", ">0.9<"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page lacks %q", want)
+		}
+	}
+	if strings.Contains(body, "reported no realism results") {
+		t.Error("the page says that the run reported no realism results")
+	}
+}

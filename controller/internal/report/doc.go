@@ -28,7 +28,15 @@
 // application and scenario with the three session counts and both byte
 // directions of the client side, and the label filter of each criterion as
 // where. Its realism list holds the stored realism results of the run, which
-// is empty until the controller stores any.
+// is empty until a client attaches a realism report.
+//
+// PUT /v1/runs/{id}/realism (CTL-41) stores the realism report of a run that
+// has ended. It validates the body against an embedded copy of
+// realism/schema/realism-report.schema.json (refreshed by go generate and
+// compared with the source by a test), maps each metric of each check to a
+// RealismResult by the rules of contracts/changes/CON-22.md, and keeps the
+// report in a RealismStore, in memory by default. A second report replaces the
+// first as a whole.
 //
 // The binary wires the package with two calls.
 //

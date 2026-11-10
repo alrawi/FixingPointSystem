@@ -59,7 +59,8 @@ type Handlers struct {
 	// Metrics serves the two metrics operations of a run. Nil answers them
 	// with 501 until the metrics package of CTL-08 is wired.
 	Metrics MetricsHandler
-	// Report serves GET /v1/runs/{id}/report. Nil answers it with 501.
+	// Report serves GET /v1/runs/{id}/report and PUT /v1/runs/{id}/realism.
+	// Nil answers them with 501.
 	Report ReportHandler
 	// Captures serves the four capture operations of a run. Nil answers them
 	// with 501.
@@ -88,11 +89,15 @@ type MetricsHandler interface {
 	StreamRunMetrics(w http.ResponseWriter, r *http.Request, id api.Id, params api.StreamRunMetricsParams)
 }
 
-// ReportHandler serves the report operation of a run, which CTL-09 adds in
-// internal/report. Controller.SetReport replaces the handler that New sets.
+// ReportHandler serves the report operations of a run, which CTL-09 and
+// CTL-41 add in internal/report. Controller.SetReport replaces the handler
+// that New sets. One handler serves both operations, because the report that
+// attachRealismReport stores is the one that getRunReport reads.
 type ReportHandler interface {
 	// GetRunReport serves GET /v1/runs/{id}/report.
 	GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, params api.GetRunReportParams)
+	// AttachRealismReport serves PUT /v1/runs/{id}/realism.
+	AttachRealismReport(w http.ResponseWriter, r *http.Request, id api.Id)
 }
 
 // CaptureHandler serves the capture operations of a run, which CTL-14 adds in
@@ -145,15 +150,7 @@ func (p pending) DownloadCapture(w http.ResponseWriter, r *http.Request, id api.
 	p.captures.DownloadCapture(w, r, id, captureID)
 }
 
-// StopCapture forwards stopCapture to the capture handler, or answers 501. It
-// also resolves the method that every embedded handler inherits from
-// api.Unimplemented.
-// AttachRealismReport resolves the selector that the embedded handlers make
-// ambiguous; no handler serves it yet (CON-22).
-func (p pending) AttachRealismReport(w http.ResponseWriter, r *http.Request, id api.Id) {
-	api.Unimplemented{}.AttachRealismReport(w, r, id)
-}
-
+// StopCapture forwards stopCapture to the capture handler, or answers 501.
 func (p pending) StopCapture(w http.ResponseWriter, r *http.Request, id api.Id, captureID string) {
 	if p.captures == nil {
 		api.Unimplemented{}.StopCapture(w, r, id, captureID)
@@ -169,6 +166,17 @@ func (p pending) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id,
 		return
 	}
 	p.report.GetRunReport(w, r, id, params)
+}
+
+// AttachRealismReport forwards attachRealismReport to the report handler, or
+// answers 501. It also resolves the method that every embedded handler inherits
+// from api.Unimplemented.
+func (p pending) AttachRealismReport(w http.ResponseWriter, r *http.Request, id api.Id) {
+	if p.report == nil {
+		api.Unimplemented{}.AttachRealismReport(w, r, id)
+		return
+	}
+	p.report.AttachRealismReport(w, r, id)
 }
 
 // GetRunMetrics forwards getRunMetrics to the metrics handler, or answers 501.

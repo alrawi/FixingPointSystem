@@ -1,0 +1,144 @@
+{
+  "report": "fps-realism-report",
+  "version": "0.5.0",
+  "generator": "fps-realism 0.1.0",
+  "passed": false,
+  "capture": {
+    "file": "run-pass.pcapng",
+    "sha256": "b501f54771cff9df7a8a58461f0ebaf1f8008731eba422e8344f80aa249842e6",
+    "format": "pcapng",
+    "link_types": [1],
+    "frames": 3176,
+    "skipped_frames": 2,
+    "sessions": 220
+  },
+  "labels": {
+    "file": "expected.yaml",
+    "sha256": "2050f46bff4a6ec0575e2290abdc01e9746e136d1a3293923505377bd66d524d"
+  },
+  "checks": [
+    {
+      "check": "conformance",
+      "passed": false,
+      "metrics": [
+        {"name": "realism.conformance_ratio", "labels": {"application": "http1", "classifier": "ndpi"}, "value": 1.0},
+        {"name": "realism.conformance_ratio", "labels": {"application": "dns", "classifier": "ndpi"}, "value": 0.9}
+      ],
+      "classifier": "ndpi",
+      "classifier_version": "4.8.0",
+      "threshold": 0.99,
+      "applications": [
+        {"application": "http1", "accepted": ["HTTP"], "sessions": 200, "conforming": 200, "ratio": 1.0, "passed": true, "observed": {"HTTP": 200}},
+        {"application": "dns", "accepted": ["DNS"], "sessions": 20, "conforming": 18, "ratio": 0.9, "passed": false, "observed": {"DNS": 18, "Unknown": 2}}
+      ],
+      "unlabelled_sessions": 0,
+      "mismatches": [
+        {
+          "session": 201,
+          "transport": "udp",
+          "client": {"ip": "10.0.0.2", "port": 40001},
+          "server": {"ip": "10.0.0.3", "port": 53},
+          "application": "dns",
+          "observed": "Unknown"
+        },
+        {
+          "session": 202,
+          "transport": "udp",
+          "client": {"ip": "10.0.0.2", "port": 40002},
+          "server": {"ip": "10.0.0.3", "port": 53},
+          "application": "dns",
+          "observed": "Unknown"
+        }
+      ],
+      "mismatches_total": 2
+    },
+    {
+      "check": "temporal",
+      "passed": false,
+      "metrics": [
+        {"name": "realism.ks_statistic", "labels": {"application": "http1", "property": "inter_arrival"}, "value": 0.08},
+        {"name": "realism.ks_p_value", "labels": {"application": "http1", "property": "inter_arrival"}, "value": 0.42},
+        {"name": "realism.ks_statistic", "labels": {"application": "http1", "property": "request_bytes"}, "value": 0.31},
+        {"name": "realism.ks_p_value", "labels": {"application": "http1", "property": "request_bytes"}, "value": 0.01},
+        {"name": "realism.ks_statistic", "labels": {"application": "http1", "property": "response_bytes"}, "value": 0.05},
+        {"name": "realism.ks_p_value", "labels": {"application": "http1", "property": "response_bytes"}, "value": 0.5}
+      ],
+      "alpha": 0.05,
+      "min_samples": 30,
+      "sessions_total": 220,
+      "skipped_encrypted_sessions": 0,
+      "comparisons": [
+        {
+          "property": "inter_arrival",
+          "application": "http1",
+          "direction": null,
+          "unit": "seconds",
+          "target": {"dist": "exponential", "parameters": {"mean": 0.5}, "median": 0.3466, "source": null},
+          "test": "ks_one_sample",
+          "method": "asymptotic",
+          "alpha": 0.05,
+          "n": 199,
+          "reference_n": null,
+          "statistic": 0.08,
+          "p_value": 0.42,
+          "status": "pass",
+          "reason": null,
+          "observed": {"min": 0.01, "median": 0.35, "mean": 0.51, "max": 3.2}
+        },
+        {
+          "property": "payload_size",
+          "application": "http1",
+          "direction": "client",
+          "unit": "bytes",
+          "target": {"dist": "lognormal", "parameters": {"mu": 6.0, "sigma": 0.5}, "median": 403.4, "source": null},
+          "test": "ks_one_sample",
+          "method": "asymptotic",
+          "alpha": 0.05,
+          "n": 200,
+          "reference_n": null,
+          "statistic": 0.31,
+          "p_value": 0.01,
+          "status": "fail",
+          "reason": "p value 0.01 is below alpha 0.05",
+          "observed": {"min": 120, "median": 220, "mean": 260, "max": 900}
+        },
+        {
+          "property": "payload_size",
+          "application": "http1",
+          "direction": "server",
+          "unit": "bytes",
+          "target": {"dist": "lognormal", "parameters": {"mu": 8.0, "sigma": 1.0}, "median": 2980.9, "source": null},
+          "test": "ks_one_sample",
+          "method": "asymptotic",
+          "alpha": 0.05,
+          "n": 200,
+          "reference_n": null,
+          "statistic": 0.05,
+          "p_value": 0.5,
+          "status": "pass",
+          "reason": null,
+          "observed": {"min": 300, "median": 3000, "mean": 4100, "max": 40000}
+        },
+        {
+          "property": "payload_size",
+          "application": "http1",
+          "direction": "both",
+          "unit": "bytes",
+          "target": {"dist": "empirical", "parameters": {}, "median": null, "source": "sample"},
+          "test": "ks_two_sample",
+          "method": "asymptotic",
+          "alpha": 0.05,
+          "n": 400,
+          "reference_n": 400,
+          "statistic": 0.04,
+          "p_value": 0.9,
+          "status": "pass",
+          "reason": null,
+          "observed": {"min": 120, "median": 900, "mean": 2200, "max": 40000}
+        }
+      ],
+      "insufficient_comparisons": 0,
+      "failures": ["payload_size client of http1: p value 0.01 is below alpha 0.05"]
+    }
+  ]
+}

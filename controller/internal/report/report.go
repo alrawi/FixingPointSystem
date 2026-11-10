@@ -46,9 +46,8 @@ type Report struct {
 	ScenarioTotals []api.ScenarioTotals
 	// Realism holds the realism results that the controller stores for the
 	// run, in the order of the realism report that carried them, or nil when
-	// it holds none. API sends them as RunReport.realism. Nothing in this
-	// package fills the field yet, because the operation that delivers a
-	// realism report to a run belongs to CON-22 and its controller package.
+	// it holds none. API sends them as RunReport.realism. GetRunReport fills
+	// the field from the RealismStore that attachRealismReport writes (CTL-41).
 	Realism []api.RealismResult
 	// Declared holds the arrival and size declarations of the test
 	// configuration, which are the targets of the realism check. It is nil
@@ -128,8 +127,8 @@ func (e *Evaluator) report(run runs.Run, totals map[string]float64, d Data) Repo
 //
 // The scenarios property is always present, as the contract requires of a
 // controller of 0.9.0 or later, and empty for a report without labeled
-// series. The realism property is always present too, and empty until the
-// controller stores realism results for the run.
+// series. The realism property is always present too, and empty until a client
+// attaches a realism report to the run.
 func (r Report) API() api.RunReport {
 	out := api.RunReport{Run: runs.ToAPI(r.Run)}
 	out.Run.Summary = summary(r.Totals)
