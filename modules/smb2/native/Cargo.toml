@@ -1,0 +1,31 @@
+[package]
+name = "fps-module-smb2"
+description = "Native template functions of the smb2 module: SMB2 messages and synthetic NTLM exchanges (decision D10)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+fps-flow = { path = "../../../engine/fps-flow" }
+# RngCore appears in the signature of the TemplateFn trait.
+rand = { version = "0.8", default-features = false }
+# NTLMv2 needs MD4 for the NT hash and HMAC-MD5 for the responses, and SMB2
+# signing needs HMAC-SHA256. All four crates are MIT or Apache-2.0 (RustCrypto).
+md4 = "0.10"
+md-5 = "0.10"
+hmac = "0.12"
+sha2 = "0.10"
+
+[dev-dependencies]
+# The fuzz tests draw their inputs from a seeded generator.
+rand_pcg = "0.3"
+# The flow test runs both sides of a scenario through the interpreter.
+fps-interp = { path = "../../../engine/fps-interp" }
+fps-io = { path = "../../../engine/fps-io" }
+# The golden bytes live in tests/testdata.
+fps-golden = { path = "../../../tests/golden/rust" }
+# The catalog test parses the rendered catalog.
+serde_yaml = { package = "serde_norway", version = "0.9" }
+tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }

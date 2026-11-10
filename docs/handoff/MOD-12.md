@@ -10,9 +10,9 @@
 | Branch | `wp/MOD-12` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 50% (3 of 6 plan steps) |
 | Current holder | claude-281119, lease until 2026-11-10T15:53:05Z |
-| Last verified commit | none |
+| Last verified commit | see session log |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -24,24 +24,24 @@ Implement SMB2 message encoding and parsing for negotiate, session setup, tree c
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Crate skeleton, args, catalog
-- [ ] 2. SMB2 header, negotiate, close, and other encoders
-- [ ] 3. Synthetic NTLM (NEGOTIATE, CHALLENGE, AUTHENTICATE) and session setup
+- [x] 1. Crate skeleton, args, catalog
+- [x] 2. SMB2 header, negotiate, close, and other encoders
+- [x] 3. Synthetic NTLM (NEGOTIATE, CHALLENGE, AUTHENTICATE) and session setup
 - [ ] 4. Readers and golden bytes tests
 - [ ] 5. Fuzz, catalog test, tshark script
 - [ ] 6. Log entry, Modules page, checks, PR, CI
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Steps 1 to 3 (and the tshark test of step 4): crate `fps-module-smb2` (`modules/smb2/native/`) with `wire.rs` (header and bodies), `ntlm.rs` (NTLMSSP, NTLMv2, SPNEGO), `read.rs` (readers), `catalog.rs` (36 functions). `cargo test -p fps-module-smb2 --test tshark` passes with tshark 4.2.2 on four sessions (2.0.2, 2.1, 3.0.2, 3.1.1) and `--test ntlm` passes with the MS-NLMP 4.2.4 vectors.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Tests: messages (golden), catalog, fuzz, flow. Docs: log entry with Shared page notes, Modules page section, README of the crate if needed.
 
 ## Next action
 
-Step 1: create the crate.
+Write tests/messages.rs (round trips, golden bytes), tests/catalog.rs, tests/fuzz.rs, tests/flow.rs, then the log entry and the Modules page row.
 
 ## Blockers and open questions
 
