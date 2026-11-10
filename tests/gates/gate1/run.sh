@@ -71,6 +71,9 @@ score_and_report() {
   (cd "$root" && python3 -m realism score --pcap "$dir/gate1.pcapng" --labels "$here/expected.yaml" \
     --threshold "$realism_threshold" --parsers "$parsers" --output "$dir/realism.json") || rc=$?
   [[ $rc -ne 2 && -s $dir/realism.json ]] || die "the realism runner could not score $dir/gate1.pcapng"
+  # The parser findings stay in OUT as files, so an artifact upload carries
+  # them when the parser error check fails. A fault here never decides the gate.
+  python3 -I "$here/parser_findings.py" --out-dir "$dir" || log "the parser findings of $dir could not be written"
   rc=0
   python3 -I "$here/gate1_report.py" --out-dir "$dir" --threshold "$threshold" \
     --min-sessions "$min_sessions" || rc=$?
