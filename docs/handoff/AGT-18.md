@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #389 |
 | Branch | `wp/AGT-18` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #418 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-048417, lease until 2026-11-10T19:14:44Z |
 | Last verified commit | none |
 
@@ -21,7 +21,7 @@ Find and fix the cause of the dropped packet in `a_fake_controller_changes_rates
 - [x] 1. Reproduce and fix the capture flake
 - [x] 2. Reproduce the ftp session loss and fix it, remove the mutex
 - [x] 3. Repeat tests for the loop proof, checks, wiki log entry
-- [ ] 4. Open the PR, run the repeat tests in CI, CI green, review
+- [x] 4. Open the PR, run the repeat tests in CI, CI green, review
 
 ## Done and verified
 
@@ -29,13 +29,15 @@ Find and fix the cause of the dropped packet in `a_fake_controller_changes_rates
 2. ftp sessions. The 2 lost sessions are one instance: two instances drew the same data port and one connection was reset (failed counters: one `unexpected_reset` and one `aborted` per side). The plan seed makes the 72 draws of the test identical in every run, and the old range of 200 ports drew 9 ports twice. A temporary log of bound and connected data ports showed the port with two connects before one accept. The range is now 53000 to 62999, where the 72 draws are all different, and the mutex is gone. With the three tests in parallel and three busy loops beside them, the old range failed 11 of 69 runs, the new one 0 of 44. The ignored repeat tests run each test 50 times side by side: 150 rounds passed under three busy loops, 281 s.
 3. Checks: `cargo fmt -p fps-agent -- --check` and `cargo clippy -p fps-agent --all-targets -- -D warnings` pass.
 
+4. CI proof. Commit baf1495 (the temporary commits removed the `#[ignore]` of the repeat tests and ignored the single tests, because a test and its repeat share ports and a plan file): job `rust` 130041905692 passed, with `repeat_the_ftp_test`, `repeat_the_ssh_test`, and `repeat_the_mail_test` ok (50 rounds each, side by side, 3 min 19 s) and `repeat_stopping_a_capture_at_rest` ok (50 rounds, 102 s). The first attempt of the temporary commit failed because the single tests and the repeat tests ran together on the same ports, which is why they are ignored there. The temporary commits are reverted.
+
 ## Remaining
 
-Open the PR. Run the repeat tests in the PR run through a temporary commit that removes their `#[ignore]`, and revert that commit. The full capture test 50 times needs a workflow step (21 minutes), which the coordinator adds: see the PR description.
+The full body of the capture test 50 times (21 minutes) needs a workflow step that the coordinator adds, in the PR description.
 
 ## Next action
 
-Open the PR and watch CI.
+Review.
 
 ## Blockers and open questions
 
@@ -63,4 +65,5 @@ CARGO_BUILD_JOBS=1 CARGO_PROFILE_DEV_DEBUG=0 cargo test -p fps-agent --test firs
 |---|---|---|---|---|
 | 2026-11-10T17:55Z | claude-048417 | claim | none | claimed #389 with 4 steps |
 | 2026-11-10T18:14Z | claude-048417 | checkpoint | f6e53de | capture flake fixed in the test |
-| 2026-11-10T18:23Z | claude-048417 | checkpoint | see branch | ftp cause found, mutex removed, repeat tests added |
+| 2026-11-10T18:23Z | claude-048417 | checkpoint | b942d4b | ftp cause found, mutex removed, repeat tests added |
+| 2026-11-10T18:50Z | claude-048417 | finish | see branch | repeat tests passed in CI, temporary commits reverted, ready for review |
