@@ -21,6 +21,8 @@ python3 -m realism score --pcap run.pcapng --labels expected.yaml --output repor
 | `--parsers LIST` | `auto` by default, which runs every installed parser; `none`, which leaves out the parser error check; or a comma separated list of `tshark` and `zeek`, each of which must be installed |
 | `--max-duplicate-ratio R` | Largest share of duplicate payloads per application, from 0 to 1; adds the content variety check and overrides the labels file, whose default is 0.01 |
 | `--scenario FILE` | Scenario file whose flow graph the session structure check compares with the capture; repeat it for several scenarios; adds the check next to the `structure` section of the labels |
+| `--ks-alpha A` | Significance level of the KS tests, above 0 and below 1; adds the temporal distribution check and overrides the labels file, whose default is 0.01 |
+| `--ks-min-samples N` | Fewest observations that a KS comparison needs, 2 or more; adds the temporal distribution check and overrides the labels file, whose default is 30 |
 | `--tshark PATH` | tshark program; defaults to `FPS_TSHARK` and then to `tshark` on the search path |
 | `--zeek PATH` | Zeek program; defaults to `FPS_ZEEK`, then to `zeek` on the search path, and then to `/opt/zeek/bin/zeek` |
 
@@ -155,13 +157,37 @@ The grouping has limits.
 
 A failure names the scenario, the instance with its client address and first packet, and the broken edge with both sessions and their times relative to the instance, for example `scenario web_browse instance 1 (client 10.0.0.10, first packet 1700000000.001000): edge after lookup -> page violated: page (session 1, tcp 10.0.0.10:40001 -> 10.0.1.80:8080) starts at +0.000000 s, before lookup (session 2, udp 10.0.0.10:40000 -> 10.0.1.53:53) completes at +0.030999 s`. The entry lists the flows with their allowed and observed connection counts, the edges, the first 50 failed instances with their connections, and the first 50 failures (`failures_total` counts all). It leaves `metrics` empty until the catalog has a metric for it.
 
+## Temporal distribution
+
+The temporal check compares the inter arrival times of sessions and the payload sizes with target distributions of the labels through the KS test. It runs when the labels file has a `temporal` section, or when `--ks-alpha` or `--ks-min-samples` is given.
+
+```yaml
+temporal:
+  alpha: 0.01          # default; a comparison fails when its p value is below it
+  min_samples: 30      # default; fewer observations report insufficient_data
+  arrivals:            # gaps in seconds between the first packets of consecutive sessions
+    overall: {dist: exponential, mean_ms: 142.9}     # every session of the capture
+    applications:
+      http1: {dist: exponential, mean_ms: 200}       # Poisson, 5 sessions per second
+      dns: {dist: uniform, min_ms: 100, max_ms: 900}
+  sizes:               # bytes of each payload unit, as the content check defines it
+    applications:
+      http1:
+        - {direction: client, dist: lognormal, mu: 5.5, sigma: 0.4}
+        - {direction: server, dist: pareto, alpha: 1.8, scale: 500}
+```
+
+A target is `constant`, `exponential`, `uniform`, `lognormal`, `pareto`, or `empirical`. Arrivals use the parameter names of a scenario `delay` (`mean_ms`, `min_ms`, `max_ms`, `mu` with `sigma` and `unit`, `alpha` with `scale_ms`, and `ms` for a constant, which may stand without `dist`), and sizes use bytes (`value`, `mean`, `min`, `max`, `mu`, `sigma`, `alpha`, `scale`). An `empirical` target gives `sample` (a list of values), `sample_file` (numbers separated by white space or commas), or `reference` (`{pcap, labels}`, a capture whose sessions give the sample), all relative to the labels file, and runs the two sample test. An application can have one size target per direction, written as a list.
+
+Each comparison reports its status, which is `pass` when the p value is at least `alpha`, `fail` below it, and `insufficient_data` when a sample has fewer than `min_samples` observations. It also reports the statistic, the p value, the method (`exact` or `asymptotic`), the sample size, the observed minimum, median, mean, and maximum, and a reason in words for anything but a pass. A comparison that is not a pass fails the check, and so does a section without targets. Constants are exact: the observations must lie within `tolerance` of the value. The p value is exact for up to 100 observations (one sample) or 10000 pairs (two samples), and asymptotic above that. [`ks.py`](ks.py) implements the tests with the standard library only. The KS statistic and p value of each application go into the report as `realism.ks_statistic` and `realism.ks_p_value`, with the properties `inter_arrival`, `request_bytes`, and `response_bytes`.
+
 ## Classifiers
 
 `realism/classifier.py` defines the `Classifier` protocol, which takes a capture and its sessions and returns a protocol name per session. `NdpiClassifier` runs ndpiReader and parses its CSV output by column name, so it reads nDPI 4.2 and later layouts. `StubClassifier` labels sessions with a function and serves the tests.
 
 ## Tests
 
-The tests build every capture in code with [`tests/pcapgen.py`](tests/pcapgen.py), so the repository holds no captured traffic. They replace ndpiReader, tshark, and Zeek with stubs or with fake programs that print fixed output. Three optional modules run the real tools and skip each tool that is not installed. `tests/test_ndpi_reader.py` runs ndpiReader, `tests/test_parser_tools.py` runs tshark and Zeek on a capture with one malformed DNS message and on clean captures, and `tests/test_encryption.py` runs tshark on TLS captures that `tests/tlsgen.py` builds from real handshakes of the Python `ssl` module (with `openssl` for the certificate). `tests/test_content.py` builds every content capture in code, with repeated and with varied bodies, segmented and reordered TCP, and encrypted sessions. `tests/test_structure.py` builds web_browse, ftp, and dns captures in code and reads the first-party scenario files under `modules/`. `tests/test_ja4.py` checks the JA4 code against the worked example of the specification. The `rlm` workflow installs `libndpi-bin` and `tshark` from Ubuntu and `zeek-core` from the package repository of the Zeek project, so CI runs every optional test.
+The tests build every capture in code with [`tests/pcapgen.py`](tests/pcapgen.py), so the repository holds no captured traffic. They replace ndpiReader, tshark, and Zeek with stubs or with fake programs that print fixed output. Three optional modules run the real tools and skip each tool that is not installed. `tests/test_ndpi_reader.py` runs ndpiReader, `tests/test_parser_tools.py` runs tshark and Zeek on a capture with one malformed DNS message and on clean captures, and `tests/test_encryption.py` runs tshark on TLS captures that `tests/tlsgen.py` builds from real handshakes of the Python `ssl` module (with `openssl` for the certificate). `tests/test_content.py` builds every content capture in code, with repeated and with varied bodies, segmented and reordered TCP, and encrypted sessions. `tests/test_structure.py` builds web_browse, ftp, and dns captures in code and reads the first-party scenario files under `modules/`. `tests/test_ks.py` checks the KS tests against known values, and `tests/test_temporal.py` builds captures whose arrivals and sizes come from seeded generators, from the target and from shifted distributions. `tests/test_ja4.py` checks the JA4 code against the worked example of the specification. The `rlm` workflow installs `libndpi-bin` and `tshark` from Ubuntu and `zeek-core` from the package repository of the Zeek project, so CI runs every optional test.
 
 ```bash
 python3 -m pip install -r realism/requirements-dev.txt
