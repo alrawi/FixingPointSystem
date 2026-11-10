@@ -50,9 +50,10 @@ type API struct {
 	totals TotalsSource
 
 	// html, samples, and objectives serve format=html. See serve.go.
-	html       HTMLRenderer
-	samples    SampleSource
-	objectives ObjectiveSource
+	html         HTMLRenderer
+	samples      SampleSource
+	objectives   ObjectiveSource
+	declarations DeclarationSource
 }
 
 var _ api.ServerInterface = (*API)(nil)
@@ -125,6 +126,13 @@ func (a *API) GetRunReport(w http.ResponseWriter, r *http.Request, id api.Id, pa
 		rep = a.eval.BuildSeries(run, series)
 	} else {
 		rep = a.eval.Build(run, merged)
+	}
+	if a.declarations != nil {
+		// A configuration that is gone or unreadable leaves the report
+		// without declarations, as the HTML report does for the objective.
+		if d, derr := a.declarations.Declarations(r.Context(), run.ConfigID); derr == nil {
+			rep.Declared = d
+		}
 	}
 	var body []byte
 	contentType := JSONContentType

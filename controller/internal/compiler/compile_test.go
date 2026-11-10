@@ -174,6 +174,11 @@ func goldenCases() []goldenCase {
 			config: filepath.Join("testdata", "module_settings.yaml"),
 			agents: []Agent{{ID: "local", Cores: 1, Interfaces: []string{"lo"}}},
 		},
+		{
+			name:   "distributions",
+			config: filepath.Join("testdata", "distributions.yaml"),
+			agents: []Agent{{ID: "local", Cores: 1, Interfaces: []string{"lo"}}},
+		},
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/api"
+	"github.com/alrawi/FixingPointSystem/controller/internal/compiler"
 	"github.com/alrawi/FixingPointSystem/controller/internal/metrics"
 	"github.com/alrawi/FixingPointSystem/controller/internal/runs"
 )
@@ -34,6 +35,15 @@ type Report struct {
 	// Passed is the verdict of the report. It holds when the evaluation
 	// passed and at least one agent of the run survived.
 	Passed bool
+	// Scenarios is the scenarios table, with the sessions and the bytes of
+	// every scenario of the run, or nil for a report that has no labeled
+	// series. The REST report does not carry it yet. FileJSON and the CSV
+	// report do.
+	Scenarios []ScenarioCount
+	// Declared holds the arrival and size declarations of the test
+	// configuration, which are the targets of the realism check. It is nil
+	// when the test declares none or the report has no source for them.
+	Declared *compiler.Declarations
 
 	cat *metrics.Catalog
 }
@@ -74,7 +84,9 @@ func (e *Evaluator) Build(run runs.Run, merged map[string]float64) Report {
 // only run.Totals holds join the series without labels.
 func (e *Evaluator) BuildSeries(run runs.Run, agg []*metrics.Series) Report {
 	series := e.mergeSeries(agg, run.Series, run.Totals)
-	return e.report(run, e.seriesTotals(series), Data{Series: series, Labeled: true})
+	rep := e.report(run, e.seriesTotals(series), Data{Series: series, Labeled: true})
+	rep.Scenarios = scenarioTable(series)
+	return rep
 }
 
 // report evaluates the criteria of run over d and assembles the report with
@@ -132,7 +144,9 @@ var CSVHeader = []string{"kind", "name", "op", "threshold", "value", "result", "
 // CSV renders the report as one table with the columns of CSVHeader. Rows
 // of kind run describe the run in name and value, rows of kind criterion hold
 // one criterion with its observed value, result, and reason, and rows of
-// kind metric hold one run total in catalog order.
+// kind scenario hold one row of the scenarios table with the scenario in name,
+// the sessions in value, and the payload bytes as bytes=<n> in detail, and rows
+// of kind metric hold one run total in catalog order.
 func (r Report) CSV() ([]byte, error) {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
@@ -171,6 +185,9 @@ func (r Report) CSV() ([]byte, error) {
 			}
 			rows = append(rows, []string{"criterion", res.Metric, res.Op, formatNumber(res.Value), value, string(res.Status), cellText(res.Reason)})
 		}
+	}
+	for _, sc := range r.Scenarios {
+		rows = append(rows, []string{"scenario", sc.Scenario, "", "", strconv.FormatUint(sc.Sessions, 10), "", "bytes=" + strconv.FormatUint(sc.Bytes, 10)})
 	}
 	for _, name := range r.metricOrder() {
 		rows = append(rows, []string{"metric", name, "", "", formatNumber(r.Totals[name]), "", ""})
