@@ -5,10 +5,10 @@
 | Issue | #172 |
 | Branch | `wp/MOD-05` |
 | Pull request | #356 |
-| Status | in progress |
-| Progress | 90% (5 of 6 plan steps) |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-5d1c7a, lease until 2026-11-10T02:38:09Z |
-| Last verified commit | none |
+| Last verified commit | 42c161b |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -23,7 +23,7 @@ Implement the HTTP/2 frame and HPACK functions that the http2 scenarios of MOD-0
 - [x] 3. Template functions (`http2.*`) on top of the frame and HPACK code, with unit tests
 - [x] 4. RFC 7541 Appendix C vectors, frame round trips, `h2` crate interop, catalog test, interpreter flow test
 - [x] 5. Fuzz tests (short run with every `cargo test`, 60 s run marked `#[ignore]`) and the lints
-- [ ] 6. Modules page, log entry, pull request, CI
+- [x] 6. Modules page, log entry, pull request, CI
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ Implement the HTTP/2 frame and HPACK functions that the http2 scenarios of MOD-0
 
 ## Remaining
 
-Step 6, and the plan, render, and lint checks of the repository.
+Nothing, the pull request awaits review.
 
 ## Next action
 
-Update `docs/wiki/Modules.md`, write the log entry, run the repository checks, and open the pull request.
+Review and merge pull request #356, then MOD-06 adds the manifest and the agent registry entry.
 
 ## Blockers and open questions
 
@@ -66,4 +66,5 @@ CARGO_TARGET_DIR=$PWD/target-MOD-05 CARGO_BUILD_JOBS=1 cargo test -p fps-module-
 |---|---|---|---|---|
 | 2026-11-10T01:08Z | claude-5d1c7a | claim | none | Claimed #172 with 6 plan steps |
 | 2026-11-10T01:21Z | claude-5d1c7a | checkpoint | ec8adfa | Steps 1 to 3 done |
-| 2026-11-10T01:38Z | claude-5d1c7a | checkpoint | pending | Steps 4 and 5 done |
+| 2026-11-10T01:38Z | claude-5d1c7a | checkpoint | 78154e8 | Steps 4 and 5 done |
+| 2026-11-10T01:54Z | claude-5d1c7a | review | 42c161b | PR #356 open, 27 of 27 checks green, ready for review |
