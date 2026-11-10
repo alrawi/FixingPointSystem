@@ -37,9 +37,19 @@ type Report struct {
 	Passed bool
 	// Scenarios is the scenarios table, with the sessions and the bytes of
 	// every scenario of the run, or nil for a report that has no labeled
-	// series. The REST report does not carry it yet. FileJSON and the CSV
-	// report do.
+	// series. FileJSON and the CSV report carry it in this form.
 	Scenarios []ScenarioCount
+	// ScenarioTotals is the same table in the form of the REST report, with
+	// the application and the scenario apart, the three session counts, and
+	// both byte directions, or nil for a report that has no labeled series.
+	// API sends it as RunReport.scenarios.
+	ScenarioTotals []api.ScenarioTotals
+	// Realism holds the realism results that the controller stores for the
+	// run, in the order of the realism report that carried them, or nil when
+	// it holds none. API sends them as RunReport.realism. Nothing in this
+	// package fills the field yet, because the operation that delivers a
+	// realism report to a run belongs to CON-22 and its controller package.
+	Realism []api.RealismResult
 	// Declared holds the arrival and size declarations of the test
 	// configuration, which are the targets of the realism check. It is nil
 	// when the test declares none or the report has no source for them.
@@ -85,7 +95,9 @@ func (e *Evaluator) Build(run runs.Run, merged map[string]float64) Report {
 func (e *Evaluator) BuildSeries(run runs.Run, agg []*metrics.Series) Report {
 	series := e.mergeSeries(agg, run.Series, run.Totals)
 	rep := e.report(run, e.seriesTotals(series), Data{Series: series, Labeled: true})
-	rep.Scenarios = scenarioTable(series)
+	rows := scenarioRows(series)
+	rep.Scenarios = scenarioTable(rows)
+	rep.ScenarioTotals = scenarioTotals(rows)
 	return rep
 }
 
@@ -111,13 +123,27 @@ func (e *Evaluator) report(run runs.Run, totals map[string]float64, d Data) Repo
 // API returns the RunReport schema of the REST contract. The criteria of the
 // verdict carry observed and passed only when they compared a value, so a
 // missing metric shows neither and an invalid criterion shows passed false.
-// Each criterion also carries its reason.
+// Each criterion also carries its reason and, when the configuration gives
+// the criterion a label filter, that filter as where.
+//
+// The scenarios property is always present, as the contract requires of a
+// controller of 0.9.0 or later, and empty for a report without labeled
+// series. The realism property is always present too, and empty until the
+// controller stores realism results for the run.
 func (r Report) API() api.RunReport {
 	out := api.RunReport{Run: runs.ToAPI(r.Run)}
 	out.Run.Summary = summary(r.Totals)
-	// The scenarios property of the contract (CON-21) stays absent, as an
-	// older controller leaves it, until CTL-39 fills it from r.Scenarios.
-	out.Realism = []api.RealismResult{}
+	if v, stored := out.Run.Verdict, r.Run.Verdict; v != nil && v.Criteria != nil && stored != nil {
+		cs := *v.Criteria
+		for i, c := range stored.Criteria {
+			if len(c.Where) > 0 && i < len(cs) {
+				cs[i].Where = ptr(maps.Clone(c.Where))
+			}
+		}
+	}
+	scenarios := make([]api.ScenarioTotals, 0, len(r.ScenarioTotals))
+	out.Scenarios = ptr(append(scenarios, r.ScenarioTotals...))
+	out.Realism = append(make([]api.RealismResult, 0, len(r.Realism)), r.Realism...)
 	return out
 }
 
