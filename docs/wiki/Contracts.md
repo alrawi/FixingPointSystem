@@ -6,11 +6,11 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 
 | File | Contract |
 |---|---|
-| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.7.0 |
+| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.8.0 |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3, unreleased |
-| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3 |
+| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.4 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
-| `metrics/catalog.yaml` | Metric catalog 0.3.0 |
+| `metrics/catalog.yaml` | Metric catalog 0.4.0 |
 | `examples/` | Example modules, tests, and plans that every validator run checks |
 
 ## Agent control protocol
@@ -226,3 +226,18 @@ CON-19 moves the scenario contract from v0.5 to v0.6, the test configuration fro
 | `application: all` and `property: both` | The KS metrics `realism.ks_statistic` and `realism.ks_p_value` can total every application and pool both directions. The module name `all` is reserved, and the `LABEL_VALUES` mirror in `fps-stats` gains `both` |
 
 The engine does not implement `int_bytes` and `now` yet, the controller compiler does not accept `arrival` and `size` yet, and the realism runner does not read them yet. Until an ENG, a CTL, and an RLM package land, a scenario that calls the functions fails to load in the engine, and a configuration that declares the distributions fails in the compiler. The follow up list is in the change entry.
+
+## Stream events, source label, and provenance fields
+
+CON-20 moves the controller API from 0.7.0 to 0.8.0, the metric catalog from 0.3.0 to 0.4.0, and the module manifest schema from v0.3 to v0.4. The owner approved the change on 2026-11-10. Every part is additive, and the entry `contracts/changes/CON-20.md` records the reasons, the compatibility, and the follow up work.
+
+| Change | Rule |
+|---|---|
+| `streamRunMetrics` events | The stream starts with `retry: <ms>` (the event period, 1000 ms by default). Each tick sends one event per current sample of each requested view, with no `event` field (type `message`), the tick number as `id` (from 1 on each connection, equal for all events of a tick), and a `MetricSample` as `data`. The text of the operation says it, and `x-event-stream` lists the events for tools |
+| `end` event | Sent after the samples of the final tick when the run is `completed`, `failed`, or `aborted`, or the controller no longer knows the run. It has no `id`, its `data` is the new schema `MetricStreamEnd` (`state`: a `RunState` value, or `unknown`), and the controller closes the stream. A client does not reconnect after it |
+| Reconnect | The controller ignores `Last-Event-ID` and does not replay ticks. A client reads `getRunMetrics` for the gap, and `getRun` when it was disconnected before the end, since no `end` event follows then |
+| `streamRunMetrics` 501 | A controller without a stream answers problem details with the status 501, and the client polls `getRunMetrics` and does not retry. The UI (UI-04) and `fps watch` do this |
+| `source` label | New catalog label with the values `metrics` (the counters of the run) and `classifier` (the sessions of the capture, labeled by the classifier that the `classifier` label names). `mix.share_pct` and `mix.abs_error_pp` take `[application, source, classifier]`, and `mix.max_abs_error_pp` takes `[source, classifier]`. A series without `source` is a run metrics series, so no existing reader changes. RLM-07 can report its measurement under it |
+| `provenance.capture_sha256`, `scrub_rules`, `scrubbed_at` | Optional fields of the manifest provenance. The digest is 64 lowercase hexadecimal digits, `scrub_rules` is a unique list of `{id, version}`, and `scrubbed_at` is a date or an RFC 3339 UTC time. They hold what the scrub record of `capture scrub` already has, so CAP can stop writing it into `notes`. The rule for `source: capture` is unchanged |
+
+The controller embeds a byte copy of the catalog, the engine mirrors it in `fps-stats`, and `api.APIVersion` follows the document, so the coordinator refreshes them, regenerates the Go code, the Python SDK, and the UI schema, and updates the version assertion in `tools/contracts/test_contracts.py`.
