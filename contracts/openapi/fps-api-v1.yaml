@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FixingPointSystem Controller API
-  version: 0.9.0
+  version: 0.10.0
   summary: Contract v0.2 for the controller REST API.
   description: >
     The controller stores test configurations, installs modules, starts runs on
@@ -407,6 +407,105 @@ paths:
             text/html:
               schema: { type: string }
         default: { $ref: "#/components/responses/Problem" }
+  /runs/{id}/realism:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    put:
+      tags: [runs]
+      operationId: attachRealismReport
+      x-required-scope: run
+      summary: Attach the realism report of the run.
+      description: >
+        Delivers the realism report that the realism runner wrote for the
+        capture of the run (`python3 -m realism score`), so that `realism` of
+        `getRunReport` holds its results. The controller measures no realism
+        itself.
+
+        The body is the report document as the runner writes it, validated
+        against `realism/schema/realism-report.schema.json`, and it is not
+        rewritten into another form. The controller reads the metrics of every
+        check of the report, in the order of the checks and then of their
+        metrics, and keeps one `RealismResult` for each. `metric` and `labels`
+        are the name and the labels of the metric, and `observed` is its value.
+        `target` and `passed` come from the check that holds the metric. For
+        `realism.conformance_ratio` the target is `>= ` followed by the
+        `threshold` of the check, and `passed` is the `passed` of the entry of
+        `applications` whose `application` equals the label of the same name.
+        For `realism.ks_statistic` and `realism.ks_p_value` the target is
+        `p value >= ` followed by the `alpha` of the comparison of the same
+        application and property (`request_bytes` and `response_bytes` are the
+        `payload_size` comparisons of the direction `client` and `server`), and
+        `passed` is true when its `status` is `pass`. Any other metric that a
+        later version of the report format carries gets the target
+        `check passed` and the `passed` of its check. A check whose `metrics`
+        array is empty adds no result, so the results are not a full account of
+        the report: a check such as `parser_errors` that fails but has no metric
+        shows in the report document only.
+
+        The operation replaces. A run holds at most one realism report, a
+        second call with a valid report replaces the first as a whole, and the
+        response says so with `replaced`. A client that scores again, for
+        example with other labels or a newer runner, therefore needs no
+        delete. A report that the controller refuses leaves the earlier one
+        unchanged. The operation is idempotent: the same document twice gives
+        the same state.
+
+        The run must have ended, which is the state `completed`, `failed`, or
+        `aborted`, because the capture that the report scored is complete only
+        then. A run in any other state answers 409. The controller does not
+        compare `capture.sha256` with the digests of the capture files of the
+        run, since the runner may have scored a merged or scrubbed copy, and it
+        stores the digest as given. A token with the scope `run` may attach a
+        report, so the results are what the client reported and not a
+        measurement of the controller.
+
+        The body is at most 4 MiB (4194304 bytes). Content type is
+        `application/json` only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "../../realism/schema/realism-report.schema.json" }
+      responses:
+        "200":
+          description: Attached. The report holds the results from now on.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RealismAttachment" }
+        "400":
+          description: The body is not JSON.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404":
+          description: The run does not exist.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "409":
+          description: The run has not ended, so its state is pending, preparing, running, or stopping. The problem detail names the state.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "413":
+          description: The body is larger than 4 MiB.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "415":
+          description: The content type is not application/json.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422":
+          description: >
+            The document breaks the schema of the realism report, or two
+            results of it have the same metric and labels. Each finding names a
+            JSON Pointer into the document in `errors`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
   /runs/{id}/captures:
     parameters:
       - { $ref: "#/components/parameters/Id" }
@@ -543,12 +642,35 @@ paths:
       tags: [agents]
       operationId: reserveAgent
       x-required-scope: run
+      description: >
+        Reserves the agent for the operator, so that the state of the agent is
+        `reserved` and `reserved_by` is `operator`. Reserving an agent that the
+        operator already holds is not an error: the operation is idempotent and
+        answers 200 with the agent. The controller refuses with 409 when the
+        agent is held by another holder (a run holds the agents that it uses, and
+        `reserved_by` of the agent is the run identifier), when it has no open
+        control session (state `offline`), and when it holds a plan that is not
+        finished (state `busy`). The refusal is checked in this order, and the
+        problem detail names the reason. The agent stays as it was.
       responses:
         "200":
-          description: Reserved.
+          description: Reserved, or already reserved for the operator.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Agent" }
+        "404":
+          description: The agent is unknown.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "409":
+          description: >
+            The agent cannot be reserved because another holder has it, it is
+            offline, or it is busy with a plan. Read the agent with listAgents
+            for its state and `reserved_by`, and release it or wait.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /agents/{id}:release:
     parameters:
@@ -663,6 +785,15 @@ components:
         id: { type: string, description: Agent identity from its client certificate. }
         address: { type: string, description: Peer address of the open control session and absent while the agent is offline. }
         state: { type: string, enum: [online, offline, reserved, busy] }
+        reserved_by:
+          type: string
+          description: >
+            Holder of the reservation of the agent: `operator` for a reservation
+            through reserveAgent, and the identifier of the run for an agent that
+            a run uses. Present while any reservation exists, so it can also be
+            present when `state` is `offline` or `busy`, which take precedence
+            over `reserved`. A controller older than 0.10.0 does not send it.
+          examples: ["operator"]
         version: { type: string }
         cores: { type: integer, minimum: 1 }
         backend: { type: string, enum: [kernel, af_xdp, dpdk] }
@@ -869,10 +1000,10 @@ components:
             view `realism`, and `mix.` gauges with `source: classifier`, when
             the controller holds them as series. Until the controller receives
             such a report for the run the array is empty, which is also the
-            answer for a run whose capture was never scored. The contract has no
-            operation that delivers the report to the controller, so the way it
-            arrives is the business of the controller and does not change this
-            schema.
+            answer for a run whose capture was never scored. The operation
+            attachRealismReport (`PUT /runs/{id}/realism`) delivers the report,
+            replaces an earlier one, and describes how its metrics become the
+            entries. The checks of the report that carry no metric add no entry.
           items: { $ref: "#/components/schemas/RealismResult" }
     ScenarioTotals:
       type: object
@@ -894,6 +1025,16 @@ components:
           description: Sessions that failed for any reason, which is the sum over the reason label.
         bytes_tx: { type: integer, minimum: 0, x-fps-metric: bytes.tx }
         bytes_rx: { type: integer, minimum: 0, x-fps-metric: bytes.rx }
+    RealismAttachment:
+      type: object
+      description: The answer to attachRealismReport.
+      required: [realism, replaced]
+      properties:
+        realism:
+          type: array
+          description: The results that the controller now holds for the run, the same entries as `realism` of the report and in the same order.
+          items: { $ref: "#/components/schemas/RealismResult" }
+        replaced: { type: boolean, description: True when the run held a realism report before and this one replaced it. }
     RealismResult:
       type: object
       description: >

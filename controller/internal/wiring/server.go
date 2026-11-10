@@ -148,6 +148,12 @@ func (p pending) DownloadCapture(w http.ResponseWriter, r *http.Request, id api.
 // StopCapture forwards stopCapture to the capture handler, or answers 501. It
 // also resolves the method that every embedded handler inherits from
 // api.Unimplemented.
+// AttachRealismReport resolves the selector that the embedded handlers make
+// ambiguous; no handler serves it yet (CON-22).
+func (p pending) AttachRealismReport(w http.ResponseWriter, r *http.Request, id api.Id) {
+	api.Unimplemented{}.AttachRealismReport(w, r, id)
+}
+
 func (p pending) StopCapture(w http.ResponseWriter, r *http.Request, id api.Id, captureID string) {
 	if p.captures == nil {
 		api.Unimplemented{}.StopCapture(w, r, id, captureID)

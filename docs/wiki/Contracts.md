@@ -253,3 +253,16 @@ CON-21 moves the controller API from 0.8.0 to 0.9.0. The owner approved the chan
 | `RunReport.realism` | The item type is the named schema `RealismResult`, with the optional `metric` and `labels` beside `property`, `observed`, `target`, and `passed`. The controller does not measure realism: each metric of a check of the realism report of the run (`realism/schema/realism-report.schema.json`) is one entry, and the array stays empty until the controller receives such a report. The contract has no operation that delivers it |
 
 The consumers are CTL-39 (fills the properties from the scenario table of CTL-38), the Web UI, the Python SDK, and the realism runner. The controller `APIVersion`, the generated Go code, the SDK, and `ui/src/api/schema.d.ts` follow the document, and the coordinator refreshes them.
+
+## Realism report delivery and reservation conflicts
+
+CON-22 moves the controller API from 0.9.0 to 0.10.0. The owner approved the change on 2026-11-10. Every part is additive, and the entry `contracts/changes/CON-22.md` records the reasons, the compatibility, the consumers, and the follow up work.
+
+| Change | Rule |
+|---|---|
+| `attachRealismReport` (`PUT /v1/runs/{id}/realism`, scope `run`) | The body is the realism report as the runner writes it, referenced from `realism/schema/realism-report.schema.json` and not copied. A repeat upload replaces the earlier report as a whole. Only a run in `completed`, `failed`, or `aborted` accepts it. The body is at most 4 MiB. Errors are problem documents: 400, 404, 409 (run not ended), 413, 415, and 422 (the document breaks the schema or repeats a `metric` and `labels` pair). The answer is `RealismAttachment` with `realism` and `replaced` |
+| Mapping to `RealismResult` | One entry for each metric of each check. `realism.conformance_ratio` has the target `>= threshold` and the `passed` of its application. The KS metrics have the target `p value >= alpha` and the outcome of their comparison. A check without metrics adds no entry, which today holds for six of the eight check kinds |
+| `reserveAgent` | Documents 404 and 409. The controller refuses with 409 when another holder has the agent, when it is offline, and when it is busy with a plan, in this order. The operation is idempotent for the operator |
+| `Agent.reserved_by` | Optional holder of the reservation: `operator`, or the run identifier. It is present whenever a reservation exists, also while the state is `offline` or `busy` |
+
+The consumers are the controller, the realism runner (a way to deliver), the CLI, the Web UI, and the Python SDK. The controller `APIVersion`, the generated Go code with the `AttachRealismReport` stubs of `api.Unimplemented` and `wiring.pending`, the SDK, and `ui/src/api/schema.d.ts` follow the document, and the coordinator refreshes them.

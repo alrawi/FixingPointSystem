@@ -228,6 +228,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{id}/realism": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Attach the realism report of the run.
+         * @description Delivers the realism report that the realism runner wrote for the capture of the run (`python3 -m realism score`), so that `realism` of `getRunReport` holds its results. The controller measures no realism itself.
+         *     The body is the report document as the runner writes it, validated against `realism/schema/realism-report.schema.json`, and it is not rewritten into another form. The controller reads the metrics of every check of the report, in the order of the checks and then of their metrics, and keeps one `RealismResult` for each. `metric` and `labels` are the name and the labels of the metric, and `observed` is its value. `target` and `passed` come from the check that holds the metric. For `realism.conformance_ratio` the target is `>= ` followed by the `threshold` of the check, and `passed` is the `passed` of the entry of `applications` whose `application` equals the label of the same name. For `realism.ks_statistic` and `realism.ks_p_value` the target is `p value >= ` followed by the `alpha` of the comparison of the same application and property (`request_bytes` and `response_bytes` are the `payload_size` comparisons of the direction `client` and `server`), and `passed` is true when its `status` is `pass`. Any other metric that a later version of the report format carries gets the target `check passed` and the `passed` of its check. A check whose `metrics` array is empty adds no result, so the results are not a full account of the report: a check such as `parser_errors` that fails but has no metric shows in the report document only.
+         *     The operation replaces. A run holds at most one realism report, a second call with a valid report replaces the first as a whole, and the response says so with `replaced`. A client that scores again, for example with other labels or a newer runner, therefore needs no delete. A report that the controller refuses leaves the earlier one unchanged. The operation is idempotent: the same document twice gives the same state.
+         *     The run must have ended, which is the state `completed`, `failed`, or `aborted`, because the capture that the report scored is complete only then. A run in any other state answers 409. The controller does not compare `capture.sha256` with the digests of the capture files of the run, since the runner may have scored a merged or scrubbed copy, and it stores the digest as given. A token with the scope `run` may attach a report, so the results are what the client reported and not a measurement of the controller.
+         *     The body is at most 4 MiB (4194304 bytes). Content type is `application/json` only.
+         */
+        put: operations["attachRealismReport"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{id}/captures": {
         parameters: {
             query?: never;
@@ -313,6 +339,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description Reserves the agent for the operator, so that the state of the agent is `reserved` and `reserved_by` is `operator`. Reserving an agent that the operator already holds is not an error: the operation is idempotent and answers 200 with the agent. The controller refuses with 409 when the agent is held by another holder (a run holds the agents that it uses, and `reserved_by` of the agent is the run identifier), when it has no open control session (state `offline`), and when it holds a plan that is not finished (state `busy`). The refusal is checked in this order, and the problem detail names the reason. The agent stays as it was. */
         post: operations["reserveAgent"];
         delete?: never;
         options?: never;
@@ -408,6 +435,11 @@ export interface components {
             address?: string;
             /** @enum {string} */
             state: "online" | "offline" | "reserved" | "busy";
+            /**
+             * @description Holder of the reservation of the agent: `operator` for a reservation through reserveAgent, and the identifier of the run for an agent that a run uses. Present while any reservation exists, so it can also be present when `state` is `offline` or `busy`, which take precedence over `reserved`. A controller older than 0.10.0 does not send it.
+             * @example operator
+             */
+            reserved_by?: string;
             version?: string;
             cores?: number;
             /** @enum {string} */
@@ -566,7 +598,7 @@ export interface components {
             run: components["schemas"]["Run"];
             /** @description The counts of the run for each scenario of each application, ordered by application and then by scenario name. They are the client side series of the metric view `scenario` (the key of a sample there is `<application>/<scenario>`), so each session and each byte counts once, and the sum of an entry property over all entries equals the property of `run.summary` with the same name. A scenario appears once the run has recorded a counter for it. A controller of 0.9.0 or later always sends the property, empty when the run has recorded no scenario counter, and an older controller does not send it. For the totals of one application, sum the entries of that application. */
             scenarios?: components["schemas"]["ScenarioTotals"][];
-            /** @description The realism results that the controller holds for the run, in the order of the realism report that carried them. The controller does not measure realism itself. The realism runner (`python3 -m realism score`, whose report format is `realism/schema/realism-report.schema.json`) scores the capture of the run with independent classifiers and parsers, and each metric of a check of its report, with the verdict of the check, becomes one entry here. The same values are the `realism.` gauges of the metric view `realism`, and `mix.` gauges with `source: classifier`, when the controller holds them as series. Until the controller receives such a report for the run the array is empty, which is also the answer for a run whose capture was never scored. The contract has no operation that delivers the report to the controller, so the way it arrives is the business of the controller and does not change this schema. */
+            /** @description The realism results that the controller holds for the run, in the order of the realism report that carried them. The controller does not measure realism itself. The realism runner (`python3 -m realism score`, whose report format is `realism/schema/realism-report.schema.json`) scores the capture of the run with independent classifiers and parsers, and each metric of a check of its report, with the verdict of the check, becomes one entry here. The same values are the `realism.` gauges of the metric view `realism`, and `mix.` gauges with `source: classifier`, when the controller holds them as series. Until the controller receives such a report for the run the array is empty, which is also the answer for a run whose capture was never scored. The operation attachRealismReport (`PUT /runs/{id}/realism`) delivers the report, replaces an earlier one, and describes how its metrics become the entries. The checks of the report that carry no metric add no entry. */
             realism: components["schemas"]["RealismResult"][];
         };
         /** @description The counts of one scenario of one application over the whole run. The property names follow RunSummary, and each names its metric in contracts/metrics/catalog.yaml through x-fps-metric. A count is 0 when the run recorded no event for it. */
@@ -581,6 +613,13 @@ export interface components {
             sessions_failed: number;
             bytes_tx: number;
             bytes_rx: number;
+        };
+        /** @description The answer to attachRealismReport. */
+        RealismAttachment: {
+            /** @description The results that the controller now holds for the run, the same entries as `realism` of the report and in the same order. */
+            realism: components["schemas"]["RealismResult"][];
+            /** @description True when the run held a realism report before and this one replaced it. */
+            replaced: boolean;
         };
         /** @description One realism measurement of the run with its target and outcome. A reader that pairs results of two runs pairs them by `metric` and `labels` when the result has them, and by `property` otherwise. */
         RealismResult: {
@@ -992,6 +1031,1149 @@ export interface components {
                     mac_base?: string;
                     os_profile?: string;
                 } | unknown | unknown;
+            };
+        };
+        /** @description One metric value. The name is a metric of contracts/metrics/catalog.yaml, and labels are labels that the catalog declares for it. */
+        metric: {
+            name: string;
+            labels: {
+                [key: string]: string;
+            };
+            value: number;
+        };
+        endpoint: {
+            ip: string;
+            port: number;
+        };
+        /** @description Share of labelled sessions that one classifier names as the intended application. */
+        conformance: {
+            /** @constant */
+            check: "conformance";
+            /** @description True when at least one application was scored and every application passed. */
+            passed: boolean;
+            metrics: (components["schemas"]["metric"] & {
+                /** @constant */
+                name?: "realism.conformance_ratio";
+                labels?: {
+                    application: string;
+                    classifier: string;
+                };
+                value?: unknown;
+            })[];
+            /** @enum {unknown} */
+            classifier: "ndpi" | "zeek" | "stub";
+            classifier_version: string;
+            threshold: number;
+            applications: {
+                application: string;
+                /** @description Classifier protocol names that count as the application. An empty list fails the application. */
+                accepted: string[];
+                sessions: number;
+                conforming: number;
+                ratio: number;
+                passed: boolean;
+                /** @description Session count per classifier protocol name. */
+                observed: {
+                    [key: string]: number;
+                };
+            }[];
+            unlabelled_sessions: number;
+            /** @description The first 100 labelled sessions that the classifier did not name as the intended application. */
+            mismatches: {
+                session: number;
+                /** @enum {unknown} */
+                transport: "tcp" | "udp";
+                client: components["schemas"]["endpoint"];
+                server: components["schemas"]["endpoint"];
+                application: string;
+                observed: string;
+            }[];
+            mismatches_total: number;
+        };
+        parser_counts: {
+            parser_errors: number;
+            malformed_packets: number;
+        };
+        /** @description Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran and no parser reported an error. */
+        parser_errors: {
+            /** @constant */
+            check: "parser_errors";
+            passed: boolean;
+            /** @description Empty until the metric catalog defines a parser error metric. */
+            metrics: unknown[];
+            /** @description The parsers that ran, in run order. */
+            parsers: {
+                /** @enum {unknown} */
+                parser: "tshark" | "zeek" | "stub";
+                version: string;
+            }[];
+            /** @description Names of the parsers that the runner looked for and did not find. Report format 0.2.0 introduced this field, and skipped_parsers carries the same parsers with their reasons. */
+            missing_parsers: ("tshark" | "zeek")[];
+            /** @description Every parser that the run skipped, which in auto mode is each parser that is not installed, with the reason. Empty when every requested parser ran. */
+            skipped_parsers: {
+                /** @enum {unknown} */
+                parser: "tshark" | "zeek";
+                reason: string;
+            }[];
+            applications: {
+                application: string;
+                sessions: number;
+                /** @description The largest parser error count of any one parser. */
+                parser_errors: number;
+                /** @description The largest malformed packet count of any one parser. */
+                malformed_packets: number;
+                by_parser: {
+                    [key: string]: components["schemas"]["parser_counts"];
+                };
+            }[];
+            /** @description Parser errors per parser in sessions that no labels rule names. */
+            unlabelled_errors: {
+                [key: string]: number;
+            };
+            /** @description Parser errors per parser that belong to no TCP or UDP session of the capture. */
+            unattributed_errors: {
+                [key: string]: number;
+            };
+            /** @description The first 100 parser errors in parser order. */
+            errors: {
+                /** @enum {unknown} */
+                parser: "tshark" | "zeek" | "stub";
+                /** @enum {unknown} */
+                kind: "malformed" | "error" | "weird";
+                /** @description The protocol of the faulty layer for tshark, and the weird names for Zeek. */
+                name: string;
+                message: string;
+                frame: number | null;
+                timestamp: number | null;
+                session: number | null;
+                application: string | null;
+                /** @enum {unknown} */
+                transport: "tcp" | "udp" | null;
+                client: components["schemas"]["endpoint"] | null;
+                server: components["schemas"]["endpoint"] | null;
+            }[];
+            errors_total: number;
+        };
+        /** @description Decryption and JA4 check of a sample of TLS sessions. The check passes when at least min_decrypted of the sampled sessions decrypt with the exported keys and every sampled ClientHello has a JA4 fingerprint that its client profile lists. failures names each reason in words. */
+        encryption: {
+            /** @constant */
+            check: "encryption";
+            passed: boolean;
+            /** @description Empty until the metric catalog defines metrics for the decrypted and JA4 matched shares. */
+            metrics: unknown[];
+            /** @description The program that decrypted the sample, or null when none ran. */
+            tool: {
+                /** @enum {unknown} */
+                tool: "tshark" | "stub";
+                version: string;
+            } | null;
+            keys: {
+                /** @description True when the capture holds a decryption secrets block. */
+                embedded: boolean;
+                /** @description Base name of the key log file that the run passed, or null. */
+                sidecar: string | null;
+            };
+            /** @description Sessions whose rule names a tls_profile. */
+            labelled_sessions: number;
+            sample_limit: number;
+            sampled_sessions: number;
+            decrypted_sessions: number;
+            decrypted_ratio: number;
+            min_decrypted: number;
+            ja4_matched_sessions: number;
+            ja4_mismatched_sessions: number;
+            profiles: {
+                profile: string;
+                expected_ja4: string[];
+                sessions: number;
+                matched: number;
+                decrypted: number;
+            }[];
+            /** @description One sentence for each reason that the check failed. Empty when it passed. */
+            failures: string[];
+            /** @description The first 100 sampled sessions. */
+            sessions: {
+                session: number;
+                profile: string;
+                client: components["schemas"]["endpoint"];
+                server: components["schemas"]["endpoint"];
+                server_name: string | null;
+                decrypted: boolean;
+                ja4: string | null;
+                tshark_ja4: string | null;
+                expected_ja4: string[];
+                ja4_matched: boolean;
+                reasons: string[];
+            }[];
+        };
+        /** @description Size distribution of payload units in bytes. cv is the population standard deviation over the mean, and the quantiles use linear interpolation. */
+        "$defs-size_distribution": {
+            count: number;
+            min: number;
+            max: number;
+            mean: number;
+            stddev: number;
+            cv: number;
+            quantiles: {
+                p5: number;
+                p25: number;
+                p50: number;
+                p75: number;
+                p95: number;
+                p99: number;
+            };
+        };
+        /** @description Duplicate counts and size distribution of the payload units of one group. */
+        payload_group: {
+            units: number;
+            distinct_units: number;
+            duplicate_units: number;
+            duplicate_ratio: number;
+            size: components["schemas"]["$defs-size_distribution"];
+        };
+        /** @description Content variety of the application payloads. Every application has at most max_duplicate_ratio of duplicate payloads, the observed size distribution agrees with expected_sizes where the labels give one, and at least one payload was analysed. failures names each reason in words. */
+        content: {
+            /** @constant */
+            check: "content";
+            passed: boolean;
+            /** @description Empty until the metric catalog defines a duplicate ratio metric. */
+            metrics: unknown[];
+            max_duplicate_ratio: number;
+            /** @description HTTP header names that the check drops before it hashes a message. */
+            ignored_headers: string[];
+            sessions_total: number;
+            sessions_analysed: number;
+            /** @description TLS sessions, which the check does not read because it has no plaintext. */
+            skipped_encrypted_sessions: number;
+            sessions_without_payload: number;
+            /** @description TCP directions with a hole in their sequence numbers, which the check cut at the hole. */
+            incomplete_directions: number;
+            /** @description HTTP messages that the end of the stream cut short and that the check dropped. */
+            truncated_units: number;
+            /** @description TCP directions of an HTTP session whose end did not parse as a message. */
+            unparsed_tails: number;
+            units: number;
+            duplicate_units: number;
+            duplicate_ratio: number;
+            applications: {
+                application: string;
+                units: number;
+                distinct_units: number;
+                duplicate_units: number;
+                duplicate_ratio: number;
+                passed: boolean;
+                size: components["schemas"]["$defs-size_distribution"];
+                directions: {
+                    client?: components["schemas"]["payload_group"];
+                    server?: components["schemas"]["payload_group"];
+                };
+            }[];
+            /** @description The comparison with the size distribution that the labels expect, one entry per application with an expectation. */
+            expected_sizes: {
+                application: string;
+                /** @enum {unknown} */
+                direction: "client" | "server" | "both";
+                units: number;
+                tolerance: number;
+                expected_median: number;
+                observed_median: number;
+                expected_cv: number | null;
+                observed_cv: number;
+                passed: boolean;
+            }[];
+            /** @description The most repeated payloads, at most 20. */
+            duplicates: {
+                application: string;
+                /** @enum {unknown} */
+                direction: "client" | "server";
+                copies: number;
+                size: number;
+                sha256: string;
+                /** @description The first 5 sessions that carry a copy. */
+                sessions: number[];
+            }[];
+            /** @description One sentence for each reason that the check failed. Empty when it passed. */
+            failures: string[];
+        };
+        /** @description Connection count and ordering of each scenario instance against the flow graph of its scenario. The check passes when at least one instance was found for every scenario, every flow has a number of connections that the scenario allows, every after edge holds (the later flow starts once the earlier flow completed), every spawn edge holds (the spawned flow starts while its parent runs), and the number of instances agrees with expected_instances where the labels give one. failures names the instance and the violated edge in words. */
+        session_structure: {
+            /** @constant */
+            check: "session_structure";
+            passed: boolean;
+            /** @description Empty until the metric catalog defines a session structure metric. */
+            metrics: unknown[];
+            /** @description Silence of a client, in seconds, that starts a new instance. Null when no gap splits instances. */
+            max_gap_s: number | null;
+            tolerance_s: number;
+            sessions_total: number;
+            sessions_assigned: number;
+            /** @description Sessions that match no flow of any scenario or that no scenario entry may claim. The check does not judge them. */
+            sessions_unassigned: number;
+            instances: number;
+            failed_instances: number;
+            scenarios: {
+                scenario: string;
+                source: string;
+                expected_instances: number | null;
+                instances: number;
+                failed_instances: number;
+                sessions: number;
+                flows: {
+                    id: string;
+                    module: string;
+                    /** @enum {unknown} */
+                    transport: "tcp" | "udp";
+                    /** @description Server port that the scenario fixes, null when the flow matches any port that no other flow fixes. */
+                    server_port: number | null;
+                    spawned: boolean;
+                    after: string[];
+                    min_connections: number;
+                    max_connections: number | null;
+                    /** @description Connections that the capture holds for the flow, over all instances. */
+                    connections: number;
+                }[];
+                edges: {
+                    /** @enum {unknown} */
+                    kind: "after" | "spawn";
+                    from: string;
+                    to: string;
+                }[];
+            }[];
+            /** @description The first 50 instances with a failure, with their connections in start order. */
+            failed_instance_details: {
+                scenario: string;
+                instance: number;
+                client_ip: string;
+                /** @description Capture time of the first packet, in seconds. */
+                start: number;
+                /** @description Why this instance opened when the one before it had no room, or null for the first instance of a client. */
+                opened_by: string | null;
+                connections: {
+                    flow: string;
+                    session: number;
+                    /** @description Seconds after the first packet of the instance. */
+                    start: number;
+                    /** @description Seconds after the first packet of the instance at which the session completes. */
+                    end: number;
+                }[];
+                failures: string[];
+            }[];
+            failures_total: number;
+            /** @description One sentence for each broken rule, at most 50. failures_total counts them all. */
+            failures: string[];
+        };
+        /** @description Inter arrival times and payload sizes against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. The check passes when there is at least one comparison and every one passed. failures names each reason in words. */
+        temporal: {
+            /** @constant */
+            check: "temporal";
+            passed: boolean;
+            /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads). Comparisons over all sessions and over both directions have no catalog label and are only in comparisons. */
+            metrics: (components["schemas"]["metric"] & {
+                /** @enum {unknown} */
+                name?: "realism.ks_statistic" | "realism.ks_p_value";
+                labels?: {
+                    application: string;
+                    /** @enum {unknown} */
+                    property: "inter_arrival" | "request_bytes" | "response_bytes";
+                };
+                value?: unknown;
+            })[];
+            alpha: number;
+            min_samples: number;
+            sessions_total: number;
+            /** @description TLS sessions, which the size comparisons do not read because the check has no plaintext. Zero when no comparison reads sizes. */
+            skipped_encrypted_sessions: number;
+            comparisons: {
+                /** @enum {unknown} */
+                property: "inter_arrival" | "payload_size";
+                /** @description Application of the comparison, or null for all sessions. */
+                application: string | null;
+                /**
+                 * @description Payloads that count in a size comparison, null for arrivals.
+                 * @enum {unknown}
+                 */
+                direction: "client" | "server" | "both" | null;
+                /** @enum {unknown} */
+                unit: "seconds" | "bytes";
+                target: {
+                    /** @enum {unknown} */
+                    dist: "constant" | "exponential" | "uniform" | "lognormal" | "pareto" | "empirical";
+                    /** @description Parameters in seconds or bytes: value, mean, min, max, mu, sigma, alpha, scale. Empty for an empirical target. */
+                    parameters: {
+                        [key: string]: number;
+                    };
+                    median: number | null;
+                    /**
+                     * @description Where an empirical target sample came from, null for a parametric target.
+                     * @enum {unknown}
+                     */
+                    source: "sample" | "sample_file" | "reference" | null;
+                };
+                /** @enum {unknown} */
+                test: "ks_one_sample" | "ks_two_sample" | "constant";
+                /**
+                 * @description How the p value came about: exact, asymptotic, or constant. Null when the comparison had insufficient data.
+                 * @enum {unknown}
+                 */
+                method: "exact" | "asymptotic" | "constant" | null;
+                alpha: number;
+                /** @description Observations in the capture. */
+                n: number;
+                /** @description Observations of the target sample in a two sample test, otherwise null. */
+                reference_n: number | null;
+                statistic: number | null;
+                p_value: number | null;
+                /** @enum {unknown} */
+                status: "pass" | "fail" | "insufficient_data";
+                /** @description Why the comparison did not pass, null for a pass. */
+                reason: string | null;
+                /** @description Minimum, median, mean, and maximum of the observations, null without observations. */
+                observed: null | {
+                    min: number;
+                    median: number;
+                    mean: number;
+                    max: number;
+                };
+            }[];
+            insufficient_comparisons: number;
+            /** @description One sentence for each comparison that did not pass, and one when the labels name no target. */
+            failures: string[];
+        };
+        /** @description One application of one basis. A share is null when its source has no total. A delta is the achieved share minus the configured share, in percentage points. */
+        mix_row: {
+            application: string;
+            scenarios: string[];
+            configured_pct: number;
+            metrics_pct: number | null;
+            ndpi_pct: number | null;
+            metrics_delta_pp: number | null;
+            ndpi_delta_pp: number | null;
+            /** @description Sessions or bytes that the run metrics count for the application, null for the unmatched row. */
+            metrics_count: number | null;
+            /** @description Sessions or payload bytes that nDPI assigned to the application. */
+            ndpi_count: number | null;
+            metrics_passed: boolean;
+            ndpi_passed: boolean;
+            passed: boolean;
+            /** @description One sentence for each source that is outside the tolerance. */
+            reasons: string[];
+            /** @description Only on the unmatched row: the sessions per protocol name that nDPI gave them. */
+            observed?: {
+                [key: string]: number;
+            };
+        };
+        /** @description The achieved mix, from run metrics and from nDPI, against the configured weights, per basis and application. Each source must lie within tolerance_points of the configured share. The row unmatched holds the sessions or bytes that nDPI named as no application of the mix and has a configured share of 0. */
+        mix_accuracy: {
+            /** @constant */
+            check: "mix_accuracy";
+            passed: boolean;
+            /** @description The shares that the classifier found in the capture, with source classifier, for the basis in metrics_basis. Empty when metrics_basis is null or no application has a share. */
+            metrics: (components["schemas"]["metric"] & {
+                /** @enum {unknown} */
+                name: "mix.share_pct" | "mix.abs_error_pp" | "mix.max_abs_error_pp";
+                labels: {
+                    application?: string;
+                    /** @constant */
+                    source: "classifier";
+                    classifier: string;
+                };
+                value?: unknown;
+            } & unknown & unknown)[];
+            /**
+             * @description The basis that the series describe, which is profile.basis of the test configuration, or the only basis that ran. null when neither tells it, for weights in the labels with both bases, and then metrics is empty.
+             * @enum {unknown}
+             */
+            metrics_basis: "sessions" | "bytes" | null;
+            classifier: string;
+            classifier_version: string;
+            tolerance_points: number;
+            /** @enum {unknown} */
+            basis_source: "command line" | "labels" | "test configuration";
+            /** @description The test configuration that gave the weights, null when the labels list them. */
+            test_config: null | {
+                file: string;
+                /** @enum {unknown} */
+                basis: "sessions" | "bytes";
+            };
+            run_report: {
+                file: string;
+                /** @enum {unknown} */
+                form: "metric_series" | "bundle" | "table" | "rest_report";
+            };
+            mapping: {
+                application: string;
+                scenarios: string[];
+                ndpi: string[];
+            }[];
+            unlabelled_sessions: number;
+            bases: {
+                /** @enum {unknown} */
+                basis: "sessions" | "bytes";
+                passed: boolean;
+                metrics_total: number;
+                ndpi_total: number;
+                applications: components["schemas"]["mix_row"][];
+                unmatched: components["schemas"]["mix_row"];
+                failures: string[];
+            }[];
+            failures_total: number;
+            /** @description One sentence for each broken rule, at most 50. failures_total counts them all. */
+            failures: string[];
+        };
+        /** @description The TTL and the TCP options of the SYN and SYN-ACK of every connection against the operating system profile of the sending host. The check passes when no enforced field differs and at least one handshake of a profiled host was compared. The option order and the SYN window are enforced only when strict is true, and they appear in deviations either way. */
+        transport_behavior: {
+            /** @constant */
+            check: "transport_behavior";
+            passed: boolean;
+            metrics: unknown[];
+            strict: boolean;
+            client_hops: number;
+            server_hops: number;
+            /** @description The values of the labels that replace the profile. */
+            expect: {
+                [key: string]: number;
+            };
+            /** @description The profiles that the check read, with the values it compared (after expect). */
+            profiles: {
+                name: string;
+                file: string;
+                ttl: number;
+                mss: number;
+                window_scale: number | null;
+                syn_window: number;
+                options: ("eol" | "nop" | "mss" | "ws" | "sok" | "ts")[];
+                dont_fragment: boolean;
+            }[];
+            /** @description Each profiled host that sent a SYN or a SYN-ACK, with the profile it was compared with. */
+            hosts: {
+                host: string;
+                profile: string;
+                syns: number;
+                syn_acks: number;
+            }[];
+            /** @description Connections with a SYN in the capture, one per 4 tuple. */
+            syns_total: number;
+            /** @description Connections with a SYN-ACK in the capture, one per 4 tuple. */
+            syn_acks_total: number;
+            /** @description SYN and SYN-ACK packets from hosts that no profile covers, which the check leaves out. */
+            unprofiled_handshakes: number;
+            /** @description Every field of a host and role that differs from the profile in at least one packet. */
+            deviations: {
+                host: string;
+                profile: string;
+                /** @enum {unknown} */
+                role: "syn" | "syn-ack";
+                /** @enum {unknown} */
+                field: "ttl" | "df" | "mss" | "window_scale" | "sack" | "timestamps" | "options" | "syn_window";
+                expected: string;
+                /** @description The values that differ from expected, with the packets that show each. */
+                observed: {
+                    [key: string]: number;
+                };
+                /** @description Packets of this role that the field was compared in. */
+                handshakes: number;
+                mismatched: number;
+                /** @description False for the option order and the SYN window without strict. */
+                enforced: boolean;
+            }[];
+            failures_total: number;
+            /** @description One sentence for each enforced deviation and for an empty comparison, at most 50. failures_total counts them all. */
+            failures: string[];
+        };
+        "$defs-name": string;
+        sha256: string;
+        /** @description Fields that every check carries. The allOf entries add the fields of each known check kind. */
+        check: {
+            check: components["schemas"]["$defs-name"];
+            passed: boolean;
+            metrics: components["schemas"]["metric"][];
+        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
+        /**
+         * FixingPointSystem realism report
+         * @description Report of the realism runner for one capture. Every check adds one entry to checks. A new check kind adds a definition under $defs and one if/then entry to $defs.check.allOf, and keeps the common check fields.
+         */
+        "realism-report.schema": {
+            /** @constant */
+            report: "fps-realism-report";
+            /** @description Report format version. Additive changes raise the minor version. */
+            version: string;
+            generator: string;
+            /** @description True when checks is not empty and every check passed. */
+            passed: boolean;
+            capture: {
+                /** @description Base name of the capture file. */
+                file: string;
+                sha256: components["schemas"]["sha256"];
+                /** @enum {unknown} */
+                format: "pcap" | "pcapng";
+                /** @description Link types of the capture, numbered as in the tcpdump link type registry. */
+                link_types: number[];
+                frames: number;
+                /** @description Frames that carry no IPv4 or IPv6 TCP or UDP packet the runner decodes. */
+                skipped_frames: number;
+                sessions: number;
+            };
+            labels: {
+                file: string;
+                sha256: components["schemas"]["sha256"];
+            };
+            checks: components["schemas"]["check"][];
+            $defs: {
+                sha256: string;
+                name: string;
+                endpoint: {
+                    ip: string;
+                    port: number;
+                };
+                /** @description One metric value. The name is a metric of contracts/metrics/catalog.yaml, and labels are labels that the catalog declares for it. */
+                metric: {
+                    name: string;
+                    labels: {
+                        [key: string]: string;
+                    };
+                    value: number;
+                };
+                /** @description Fields that every check carries. The allOf entries add the fields of each known check kind. */
+                check: {
+                    check: components["schemas"]["$defs-name"];
+                    passed: boolean;
+                    metrics: components["schemas"]["metric"][];
+                } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
+                /** @description Share of labelled sessions that one classifier names as the intended application. */
+                conformance: {
+                    /** @constant */
+                    check: "conformance";
+                    /** @description True when at least one application was scored and every application passed. */
+                    passed: boolean;
+                    metrics: (components["schemas"]["metric"] & {
+                        /** @constant */
+                        name?: "realism.conformance_ratio";
+                        labels?: {
+                            application: string;
+                            classifier: string;
+                        };
+                        value?: unknown;
+                    })[];
+                    /** @enum {unknown} */
+                    classifier: "ndpi" | "zeek" | "stub";
+                    classifier_version: string;
+                    threshold: number;
+                    applications: {
+                        application: string;
+                        /** @description Classifier protocol names that count as the application. An empty list fails the application. */
+                        accepted: string[];
+                        sessions: number;
+                        conforming: number;
+                        ratio: number;
+                        passed: boolean;
+                        /** @description Session count per classifier protocol name. */
+                        observed: {
+                            [key: string]: number;
+                        };
+                    }[];
+                    unlabelled_sessions: number;
+                    /** @description The first 100 labelled sessions that the classifier did not name as the intended application. */
+                    mismatches: {
+                        session: number;
+                        /** @enum {unknown} */
+                        transport: "tcp" | "udp";
+                        client: components["schemas"]["endpoint"];
+                        server: components["schemas"]["endpoint"];
+                        application: string;
+                        observed: string;
+                    }[];
+                    mismatches_total: number;
+                };
+                parser_counts: {
+                    parser_errors: number;
+                    malformed_packets: number;
+                };
+                /** @description Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran and no parser reported an error. */
+                parser_errors: {
+                    /** @constant */
+                    check: "parser_errors";
+                    passed: boolean;
+                    /** @description Empty until the metric catalog defines a parser error metric. */
+                    metrics: unknown[];
+                    /** @description The parsers that ran, in run order. */
+                    parsers: {
+                        /** @enum {unknown} */
+                        parser: "tshark" | "zeek" | "stub";
+                        version: string;
+                    }[];
+                    /** @description Names of the parsers that the runner looked for and did not find. Report format 0.2.0 introduced this field, and skipped_parsers carries the same parsers with their reasons. */
+                    missing_parsers: ("tshark" | "zeek")[];
+                    /** @description Every parser that the run skipped, which in auto mode is each parser that is not installed, with the reason. Empty when every requested parser ran. */
+                    skipped_parsers: {
+                        /** @enum {unknown} */
+                        parser: "tshark" | "zeek";
+                        reason: string;
+                    }[];
+                    applications: {
+                        application: string;
+                        sessions: number;
+                        /** @description The largest parser error count of any one parser. */
+                        parser_errors: number;
+                        /** @description The largest malformed packet count of any one parser. */
+                        malformed_packets: number;
+                        by_parser: {
+                            [key: string]: components["schemas"]["parser_counts"];
+                        };
+                    }[];
+                    /** @description Parser errors per parser in sessions that no labels rule names. */
+                    unlabelled_errors: {
+                        [key: string]: number;
+                    };
+                    /** @description Parser errors per parser that belong to no TCP or UDP session of the capture. */
+                    unattributed_errors: {
+                        [key: string]: number;
+                    };
+                    /** @description The first 100 parser errors in parser order. */
+                    errors: {
+                        /** @enum {unknown} */
+                        parser: "tshark" | "zeek" | "stub";
+                        /** @enum {unknown} */
+                        kind: "malformed" | "error" | "weird";
+                        /** @description The protocol of the faulty layer for tshark, and the weird names for Zeek. */
+                        name: string;
+                        message: string;
+                        frame: number | null;
+                        timestamp: number | null;
+                        session: number | null;
+                        application: string | null;
+                        /** @enum {unknown} */
+                        transport: "tcp" | "udp" | null;
+                        client: components["schemas"]["endpoint"] | null;
+                        server: components["schemas"]["endpoint"] | null;
+                    }[];
+                    errors_total: number;
+                };
+                /** @description Decryption and JA4 check of a sample of TLS sessions. The check passes when at least min_decrypted of the sampled sessions decrypt with the exported keys and every sampled ClientHello has a JA4 fingerprint that its client profile lists. failures names each reason in words. */
+                encryption: {
+                    /** @constant */
+                    check: "encryption";
+                    passed: boolean;
+                    /** @description Empty until the metric catalog defines metrics for the decrypted and JA4 matched shares. */
+                    metrics: unknown[];
+                    /** @description The program that decrypted the sample, or null when none ran. */
+                    tool: {
+                        /** @enum {unknown} */
+                        tool: "tshark" | "stub";
+                        version: string;
+                    } | null;
+                    keys: {
+                        /** @description True when the capture holds a decryption secrets block. */
+                        embedded: boolean;
+                        /** @description Base name of the key log file that the run passed, or null. */
+                        sidecar: string | null;
+                    };
+                    /** @description Sessions whose rule names a tls_profile. */
+                    labelled_sessions: number;
+                    sample_limit: number;
+                    sampled_sessions: number;
+                    decrypted_sessions: number;
+                    decrypted_ratio: number;
+                    min_decrypted: number;
+                    ja4_matched_sessions: number;
+                    ja4_mismatched_sessions: number;
+                    profiles: {
+                        profile: string;
+                        expected_ja4: string[];
+                        sessions: number;
+                        matched: number;
+                        decrypted: number;
+                    }[];
+                    /** @description One sentence for each reason that the check failed. Empty when it passed. */
+                    failures: string[];
+                    /** @description The first 100 sampled sessions. */
+                    sessions: {
+                        session: number;
+                        profile: string;
+                        client: components["schemas"]["endpoint"];
+                        server: components["schemas"]["endpoint"];
+                        server_name: string | null;
+                        decrypted: boolean;
+                        ja4: string | null;
+                        tshark_ja4: string | null;
+                        expected_ja4: string[];
+                        ja4_matched: boolean;
+                        reasons: string[];
+                    }[];
+                };
+                /** @description Size distribution of payload units in bytes. cv is the population standard deviation over the mean, and the quantiles use linear interpolation. */
+                size_distribution: {
+                    count: number;
+                    min: number;
+                    max: number;
+                    mean: number;
+                    stddev: number;
+                    cv: number;
+                    quantiles: {
+                        p5: number;
+                        p25: number;
+                        p50: number;
+                        p75: number;
+                        p95: number;
+                        p99: number;
+                    };
+                };
+                /** @description Duplicate counts and size distribution of the payload units of one group. */
+                payload_group: {
+                    units: number;
+                    distinct_units: number;
+                    duplicate_units: number;
+                    duplicate_ratio: number;
+                    size: components["schemas"]["$defs-size_distribution"];
+                };
+                /** @description Content variety of the application payloads. Every application has at most max_duplicate_ratio of duplicate payloads, the observed size distribution agrees with expected_sizes where the labels give one, and at least one payload was analysed. failures names each reason in words. */
+                content: {
+                    /** @constant */
+                    check: "content";
+                    passed: boolean;
+                    /** @description Empty until the metric catalog defines a duplicate ratio metric. */
+                    metrics: unknown[];
+                    max_duplicate_ratio: number;
+                    /** @description HTTP header names that the check drops before it hashes a message. */
+                    ignored_headers: string[];
+                    sessions_total: number;
+                    sessions_analysed: number;
+                    /** @description TLS sessions, which the check does not read because it has no plaintext. */
+                    skipped_encrypted_sessions: number;
+                    sessions_without_payload: number;
+                    /** @description TCP directions with a hole in their sequence numbers, which the check cut at the hole. */
+                    incomplete_directions: number;
+                    /** @description HTTP messages that the end of the stream cut short and that the check dropped. */
+                    truncated_units: number;
+                    /** @description TCP directions of an HTTP session whose end did not parse as a message. */
+                    unparsed_tails: number;
+                    units: number;
+                    duplicate_units: number;
+                    duplicate_ratio: number;
+                    applications: {
+                        application: string;
+                        units: number;
+                        distinct_units: number;
+                        duplicate_units: number;
+                        duplicate_ratio: number;
+                        passed: boolean;
+                        size: components["schemas"]["$defs-size_distribution"];
+                        directions: {
+                            client?: components["schemas"]["payload_group"];
+                            server?: components["schemas"]["payload_group"];
+                        };
+                    }[];
+                    /** @description The comparison with the size distribution that the labels expect, one entry per application with an expectation. */
+                    expected_sizes: {
+                        application: string;
+                        /** @enum {unknown} */
+                        direction: "client" | "server" | "both";
+                        units: number;
+                        tolerance: number;
+                        expected_median: number;
+                        observed_median: number;
+                        expected_cv: number | null;
+                        observed_cv: number;
+                        passed: boolean;
+                    }[];
+                    /** @description The most repeated payloads, at most 20. */
+                    duplicates: {
+                        application: string;
+                        /** @enum {unknown} */
+                        direction: "client" | "server";
+                        copies: number;
+                        size: number;
+                        sha256: string;
+                        /** @description The first 5 sessions that carry a copy. */
+                        sessions: number[];
+                    }[];
+                    /** @description One sentence for each reason that the check failed. Empty when it passed. */
+                    failures: string[];
+                };
+                /** @description Connection count and ordering of each scenario instance against the flow graph of its scenario. The check passes when at least one instance was found for every scenario, every flow has a number of connections that the scenario allows, every after edge holds (the later flow starts once the earlier flow completed), every spawn edge holds (the spawned flow starts while its parent runs), and the number of instances agrees with expected_instances where the labels give one. failures names the instance and the violated edge in words. */
+                session_structure: {
+                    /** @constant */
+                    check: "session_structure";
+                    passed: boolean;
+                    /** @description Empty until the metric catalog defines a session structure metric. */
+                    metrics: unknown[];
+                    /** @description Silence of a client, in seconds, that starts a new instance. Null when no gap splits instances. */
+                    max_gap_s: number | null;
+                    tolerance_s: number;
+                    sessions_total: number;
+                    sessions_assigned: number;
+                    /** @description Sessions that match no flow of any scenario or that no scenario entry may claim. The check does not judge them. */
+                    sessions_unassigned: number;
+                    instances: number;
+                    failed_instances: number;
+                    scenarios: {
+                        scenario: string;
+                        source: string;
+                        expected_instances: number | null;
+                        instances: number;
+                        failed_instances: number;
+                        sessions: number;
+                        flows: {
+                            id: string;
+                            module: string;
+                            /** @enum {unknown} */
+                            transport: "tcp" | "udp";
+                            /** @description Server port that the scenario fixes, null when the flow matches any port that no other flow fixes. */
+                            server_port: number | null;
+                            spawned: boolean;
+                            after: string[];
+                            min_connections: number;
+                            max_connections: number | null;
+                            /** @description Connections that the capture holds for the flow, over all instances. */
+                            connections: number;
+                        }[];
+                        edges: {
+                            /** @enum {unknown} */
+                            kind: "after" | "spawn";
+                            from: string;
+                            to: string;
+                        }[];
+                    }[];
+                    /** @description The first 50 instances with a failure, with their connections in start order. */
+                    failed_instance_details: {
+                        scenario: string;
+                        instance: number;
+                        client_ip: string;
+                        /** @description Capture time of the first packet, in seconds. */
+                        start: number;
+                        /** @description Why this instance opened when the one before it had no room, or null for the first instance of a client. */
+                        opened_by: string | null;
+                        connections: {
+                            flow: string;
+                            session: number;
+                            /** @description Seconds after the first packet of the instance. */
+                            start: number;
+                            /** @description Seconds after the first packet of the instance at which the session completes. */
+                            end: number;
+                        }[];
+                        failures: string[];
+                    }[];
+                    failures_total: number;
+                    /** @description One sentence for each broken rule, at most 50. failures_total counts them all. */
+                    failures: string[];
+                };
+                /** @description Inter arrival times and payload sizes against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. The check passes when there is at least one comparison and every one passed. failures names each reason in words. */
+                temporal: {
+                    /** @constant */
+                    check: "temporal";
+                    passed: boolean;
+                    /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads). Comparisons over all sessions and over both directions have no catalog label and are only in comparisons. */
+                    metrics: (components["schemas"]["metric"] & {
+                        /** @enum {unknown} */
+                        name?: "realism.ks_statistic" | "realism.ks_p_value";
+                        labels?: {
+                            application: string;
+                            /** @enum {unknown} */
+                            property: "inter_arrival" | "request_bytes" | "response_bytes";
+                        };
+                        value?: unknown;
+                    })[];
+                    alpha: number;
+                    min_samples: number;
+                    sessions_total: number;
+                    /** @description TLS sessions, which the size comparisons do not read because the check has no plaintext. Zero when no comparison reads sizes. */
+                    skipped_encrypted_sessions: number;
+                    comparisons: {
+                        /** @enum {unknown} */
+                        property: "inter_arrival" | "payload_size";
+                        /** @description Application of the comparison, or null for all sessions. */
+                        application: string | null;
+                        /**
+                         * @description Payloads that count in a size comparison, null for arrivals.
+                         * @enum {unknown}
+                         */
+                        direction: "client" | "server" | "both" | null;
+                        /** @enum {unknown} */
+                        unit: "seconds" | "bytes";
+                        target: {
+                            /** @enum {unknown} */
+                            dist: "constant" | "exponential" | "uniform" | "lognormal" | "pareto" | "empirical";
+                            /** @description Parameters in seconds or bytes: value, mean, min, max, mu, sigma, alpha, scale. Empty for an empirical target. */
+                            parameters: {
+                                [key: string]: number;
+                            };
+                            median: number | null;
+                            /**
+                             * @description Where an empirical target sample came from, null for a parametric target.
+                             * @enum {unknown}
+                             */
+                            source: "sample" | "sample_file" | "reference" | null;
+                        };
+                        /** @enum {unknown} */
+                        test: "ks_one_sample" | "ks_two_sample" | "constant";
+                        /**
+                         * @description How the p value came about: exact, asymptotic, or constant. Null when the comparison had insufficient data.
+                         * @enum {unknown}
+                         */
+                        method: "exact" | "asymptotic" | "constant" | null;
+                        alpha: number;
+                        /** @description Observations in the capture. */
+                        n: number;
+                        /** @description Observations of the target sample in a two sample test, otherwise null. */
+                        reference_n: number | null;
+                        statistic: number | null;
+                        p_value: number | null;
+                        /** @enum {unknown} */
+                        status: "pass" | "fail" | "insufficient_data";
+                        /** @description Why the comparison did not pass, null for a pass. */
+                        reason: string | null;
+                        /** @description Minimum, median, mean, and maximum of the observations, null without observations. */
+                        observed: null | {
+                            min: number;
+                            median: number;
+                            mean: number;
+                            max: number;
+                        };
+                    }[];
+                    insufficient_comparisons: number;
+                    /** @description One sentence for each comparison that did not pass, and one when the labels name no target. */
+                    failures: string[];
+                };
+                /** @description The TTL and the TCP options of the SYN and SYN-ACK of every connection against the operating system profile of the sending host. The check passes when no enforced field differs and at least one handshake of a profiled host was compared. The option order and the SYN window are enforced only when strict is true, and they appear in deviations either way. */
+                transport_behavior: {
+                    /** @constant */
+                    check: "transport_behavior";
+                    passed: boolean;
+                    metrics: unknown[];
+                    strict: boolean;
+                    client_hops: number;
+                    server_hops: number;
+                    /** @description The values of the labels that replace the profile. */
+                    expect: {
+                        [key: string]: number;
+                    };
+                    /** @description The profiles that the check read, with the values it compared (after expect). */
+                    profiles: {
+                        name: string;
+                        file: string;
+                        ttl: number;
+                        mss: number;
+                        window_scale: number | null;
+                        syn_window: number;
+                        options: ("eol" | "nop" | "mss" | "ws" | "sok" | "ts")[];
+                        dont_fragment: boolean;
+                    }[];
+                    /** @description Each profiled host that sent a SYN or a SYN-ACK, with the profile it was compared with. */
+                    hosts: {
+                        host: string;
+                        profile: string;
+                        syns: number;
+                        syn_acks: number;
+                    }[];
+                    /** @description Connections with a SYN in the capture, one per 4 tuple. */
+                    syns_total: number;
+                    /** @description Connections with a SYN-ACK in the capture, one per 4 tuple. */
+                    syn_acks_total: number;
+                    /** @description SYN and SYN-ACK packets from hosts that no profile covers, which the check leaves out. */
+                    unprofiled_handshakes: number;
+                    /** @description Every field of a host and role that differs from the profile in at least one packet. */
+                    deviations: {
+                        host: string;
+                        profile: string;
+                        /** @enum {unknown} */
+                        role: "syn" | "syn-ack";
+                        /** @enum {unknown} */
+                        field: "ttl" | "df" | "mss" | "window_scale" | "sack" | "timestamps" | "options" | "syn_window";
+                        expected: string;
+                        /** @description The values that differ from expected, with the packets that show each. */
+                        observed: {
+                            [key: string]: number;
+                        };
+                        /** @description Packets of this role that the field was compared in. */
+                        handshakes: number;
+                        mismatched: number;
+                        /** @description False for the option order and the SYN window without strict. */
+                        enforced: boolean;
+                    }[];
+                    failures_total: number;
+                    /** @description One sentence for each enforced deviation and for an empty comparison, at most 50. failures_total counts them all. */
+                    failures: string[];
+                };
+                /** @description One application of one basis. A share is null when its source has no total. A delta is the achieved share minus the configured share, in percentage points. */
+                mix_row: {
+                    application: string;
+                    scenarios: string[];
+                    configured_pct: number;
+                    metrics_pct: number | null;
+                    ndpi_pct: number | null;
+                    metrics_delta_pp: number | null;
+                    ndpi_delta_pp: number | null;
+                    /** @description Sessions or bytes that the run metrics count for the application, null for the unmatched row. */
+                    metrics_count: number | null;
+                    /** @description Sessions or payload bytes that nDPI assigned to the application. */
+                    ndpi_count: number | null;
+                    metrics_passed: boolean;
+                    ndpi_passed: boolean;
+                    passed: boolean;
+                    /** @description One sentence for each source that is outside the tolerance. */
+                    reasons: string[];
+                    /** @description Only on the unmatched row: the sessions per protocol name that nDPI gave them. */
+                    observed?: {
+                        [key: string]: number;
+                    };
+                };
+                /** @description The achieved mix, from run metrics and from nDPI, against the configured weights, per basis and application. Each source must lie within tolerance_points of the configured share. The row unmatched holds the sessions or bytes that nDPI named as no application of the mix and has a configured share of 0. */
+                mix_accuracy: {
+                    /** @constant */
+                    check: "mix_accuracy";
+                    passed: boolean;
+                    /** @description The shares that the classifier found in the capture, with source classifier, for the basis in metrics_basis. Empty when metrics_basis is null or no application has a share. */
+                    metrics: (components["schemas"]["metric"] & {
+                        /** @enum {unknown} */
+                        name: "mix.share_pct" | "mix.abs_error_pp" | "mix.max_abs_error_pp";
+                        labels: {
+                            application?: string;
+                            /** @constant */
+                            source: "classifier";
+                            classifier: string;
+                        };
+                        value?: unknown;
+                    } & unknown & unknown)[];
+                    /**
+                     * @description The basis that the series describe, which is profile.basis of the test configuration, or the only basis that ran. null when neither tells it, for weights in the labels with both bases, and then metrics is empty.
+                     * @enum {unknown}
+                     */
+                    metrics_basis: "sessions" | "bytes" | null;
+                    classifier: string;
+                    classifier_version: string;
+                    tolerance_points: number;
+                    /** @enum {unknown} */
+                    basis_source: "command line" | "labels" | "test configuration";
+                    /** @description The test configuration that gave the weights, null when the labels list them. */
+                    test_config: null | {
+                        file: string;
+                        /** @enum {unknown} */
+                        basis: "sessions" | "bytes";
+                    };
+                    run_report: {
+                        file: string;
+                        /** @enum {unknown} */
+                        form: "metric_series" | "bundle" | "table" | "rest_report";
+                    };
+                    mapping: {
+                        application: string;
+                        scenarios: string[];
+                        ndpi: string[];
+                    }[];
+                    unlabelled_sessions: number;
+                    bases: {
+                        /** @enum {unknown} */
+                        basis: "sessions" | "bytes";
+                        passed: boolean;
+                        metrics_total: number;
+                        ndpi_total: number;
+                        applications: components["schemas"]["mix_row"][];
+                        unmatched: components["schemas"]["mix_row"];
+                        failures: string[];
+                    }[];
+                    failures_total: number;
+                    /** @description One sentence for each broken rule, at most 50. failures_total counts them all. */
+                    failures: string[];
+                };
             };
         };
     };
@@ -1472,6 +2654,87 @@ export interface operations {
             default: components["responses"]["Problem"];
         };
     };
+    attachRealismReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["realism-report.schema"];
+            };
+        };
+        responses: {
+            /** @description Attached. The report holds the results from now on. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RealismAttachment"];
+                };
+            };
+            /** @description The body is not JSON. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The run does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The run has not ended, so its state is pending, preparing, running, or stopping. The problem detail names the state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The body is larger than 4 MiB. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The content type is not application/json. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The document breaks the schema of the realism report, or two results of it have the same metric and labels. Each finding names a JSON Pointer into the document in `errors`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
     listCaptures: {
         parameters: {
             query?: never;
@@ -1645,13 +2908,31 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Reserved. */
+            /** @description Reserved, or already reserved for the operator. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["Agent"];
+                };
+            };
+            /** @description The agent is unknown. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The agent cannot be reserved because another holder has it, it is offline, or it is busy with a plan. Read the agent with listAgents for its state and `reserved_by`, and release it or wait. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             default: components["responses"]["Problem"];

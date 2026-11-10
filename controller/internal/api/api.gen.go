@@ -299,8 +299,11 @@ type Agent struct {
 		Name      string  `json:"name"`
 		SpeedMbps *int    `json:"speed_mbps,omitempty"`
 	} `json:"ports,omitempty"`
-	State   AgentState `json:"state"`
-	Version *string    `json:"version,omitempty"`
+
+	// ReservedBy Holder of the reservation of the agent: `operator` for a reservation through reserveAgent, and the identifier of the run for an agent that a run uses. Present while any reservation exists, so it can also be present when `state` is `offline` or `busy`, which take precedence over `reserved`. A controller older than 0.10.0 does not send it.
+	ReservedBy *string    `json:"reserved_by,omitempty"`
+	State      AgentState `json:"state"`
+	Version    *string    `json:"version,omitempty"`
 }
 
 // AgentBackend defines model for Agent.Backend.
@@ -480,6 +483,15 @@ type Problem struct {
 	Type     *string    `json:"type,omitempty"`
 }
 
+// RealismAttachment The answer to attachRealismReport.
+type RealismAttachment struct {
+	// Realism The results that the controller now holds for the run, the same entries as `realism` of the report and in the same order.
+	Realism []RealismResult `json:"realism"`
+
+	// Replaced True when the run held a realism report before and this one replaced it.
+	Replaced bool `json:"replaced"`
+}
+
 // RealismResult One realism measurement of the run with its target and outcome. A reader that pairs results of two runs pairs them by `metric` and `labels` when the result has them, and by `property` otherwise.
 type RealismResult struct {
 	// Labels The labels of the series, for example application http1 and classifier ndpi. Together with `metric` it is unique within one report.
@@ -531,7 +543,7 @@ type Run struct {
 
 // RunReport defines model for RunReport.
 type RunReport struct {
-	// Realism The realism results that the controller holds for the run, in the order of the realism report that carried them. The controller does not measure realism itself. The realism runner (`python3 -m realism score`, whose report format is `realism/schema/realism-report.schema.json`) scores the capture of the run with independent classifiers and parsers, and each metric of a check of its report, with the verdict of the check, becomes one entry here. The same values are the `realism.` gauges of the metric view `realism`, and `mix.` gauges with `source: classifier`, when the controller holds them as series. Until the controller receives such a report for the run the array is empty, which is also the answer for a run whose capture was never scored. The contract has no operation that delivers the report to the controller, so the way it arrives is the business of the controller and does not change this schema.
+	// Realism The realism results that the controller holds for the run, in the order of the realism report that carried them. The controller does not measure realism itself. The realism runner (`python3 -m realism score`, whose report format is `realism/schema/realism-report.schema.json`) scores the capture of the run with independent classifiers and parsers, and each metric of a check of its report, with the verdict of the check, becomes one entry here. The same values are the `realism.` gauges of the metric view `realism`, and `mix.` gauges with `source: classifier`, when the controller holds them as series. Until the controller receives such a report for the run the array is empty, which is also the answer for a run whose capture was never scored. The operation attachRealismReport (`PUT /runs/{id}/realism`) delivers the report, replaces an earlier one, and describes how its metrics become the entries. The checks of the report that carry no metric add no entry.
 	Realism []RealismResult `json:"realism"`
 	Run     Run             `json:"run"`
 
@@ -683,6 +695,9 @@ type StreamRunMetricsParams struct {
 // StreamRunMetricsParamsSide defines parameters for StreamRunMetrics.
 type StreamRunMetricsParamsSide string
 
+// AttachRealismReportJSONBody defines parameters for AttachRealismReport.
+type AttachRealismReportJSONBody = map[string]interface{}
+
 // GetRunReportParams defines parameters for GetRunReport.
 type GetRunReportParams struct {
 	Format *GetRunReportParamsFormat `form:"format,omitempty" json:"format,omitempty"`
@@ -708,6 +723,9 @@ type StartRunJSONRequestBody StartRunJSONBody
 
 // StartCaptureJSONRequestBody defines body for StartCapture for application/json ContentType.
 type StartCaptureJSONRequestBody StartCaptureJSONBody
+
+// AttachRealismReportJSONRequestBody defines body for AttachRealismReport for application/json ContentType.
+type AttachRealismReportJSONRequestBody = AttachRealismReportJSONBody
 
 // StopRunJSONRequestBody defines body for StopRun for application/json ContentType.
 type StopRunJSONRequestBody StopRunJSONBody
@@ -780,6 +798,9 @@ type ServerInterface interface {
 	// Live metrics as Server Sent Events, one event per second per view.
 	// (GET /runs/{id}/metrics:stream)
 	StreamRunMetrics(w http.ResponseWriter, r *http.Request, id Id, params StreamRunMetricsParams)
+	// Attach the realism report of the run.
+	// (PUT /runs/{id}/realism)
+	AttachRealismReport(w http.ResponseWriter, r *http.Request, id Id)
 
 	// (GET /runs/{id}/report)
 	GetRunReport(w http.ResponseWriter, r *http.Request, id Id, params GetRunReportParams)
@@ -1609,6 +1630,37 @@ func (siw *ServerInterfaceWrapper) StreamRunMetrics(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// AttachRealismReport operation middleware
+func (siw *ServerInterfaceWrapper) AttachRealismReport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id Id
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerTokenScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AttachRealismReport(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetRunReport operation middleware
 func (siw *ServerInterfaceWrapper) GetRunReport(w http.ResponseWriter, r *http.Request) {
 
@@ -1824,6 +1876,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/runs/{id}/captures/{capture_id}:stop", wrapper.StopCapture)
 	m.HandleFunc("GET "+options.BaseURL+"/runs/{id}/metrics", wrapper.GetRunMetrics)
 	m.HandleFunc("GET "+options.BaseURL+"/runs/{id}/metrics:stream", wrapper.StreamRunMetrics)
+	m.HandleFunc("PUT "+options.BaseURL+"/runs/{id}/realism", wrapper.AttachRealismReport)
 	m.HandleFunc("GET "+options.BaseURL+"/runs/{id}/report", wrapper.GetRunReport)
 	m.HandleFunc("POST "+options.BaseURL+"/runs/{id}:stop", wrapper.StopRun)
 

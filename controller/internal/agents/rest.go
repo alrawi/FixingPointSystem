@@ -132,6 +132,9 @@ func ToAPI(ag Agent) api.Agent {
 	if len(ag.Labels) > 0 {
 		out.Labels = ptr(ag.Labels)
 	}
+	if ag.ReservedBy != "" {
+		out.ReservedBy = ptr(ag.ReservedBy)
+	}
 	c := ag.Capabilities
 	if c == nil {
 		return out

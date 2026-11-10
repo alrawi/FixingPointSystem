@@ -144,8 +144,11 @@ func TestRESTAgents(t *testing.T) {
 	}
 
 	rec = rh.call(t, http.MethodPost, "/agents/{id}:reserve", id, "")
-	if rec.Code != http.StatusOK || decode[api.Agent](t, rec).State != api.AgentStateReserved {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("reserve: %d %s", rec.Code, rec.Body)
+	}
+	if got := decode[api.Agent](t, rec); got.State != api.AgentStateReserved || got.ReservedBy == nil || *got.ReservedBy != "operator" {
+		t.Fatalf("reserve: %s", rec.Body)
 	}
 	if _, err := h.mgr.Reserve("agent-a", "run-1"); !errors.Is(err, agents.ErrAgentReserved) {
 		t.Fatalf("a run reserved an agent that the operator holds: %v", err)
