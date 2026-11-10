@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #172 |
 | Branch | `wp/MOD-05` |
-| Pull request | #0 |
+| Pull request | #356 |
 | Status | in progress |
-| Progress | 83% (5 of 6 plan steps) |
+| Progress | 90% (5 of 6 plan steps) |
 | Current holder | claude-5d1c7a, lease until 2026-11-10T02:38:09Z |
 | Last verified commit | none |
 
