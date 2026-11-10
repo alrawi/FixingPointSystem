@@ -1,0 +1,163 @@
+scenario: smb2_flow
+description: >-
+  Test scenario for the smb2 functions, not a module scenario. A client
+  negotiates SMB 2.1, authenticates with a synthetic NTLM exchange, connects to
+  a share, reads a file in chunks, writes a new file, and tears the session
+  down. The server reads every message with two expect actions (the 4 octet
+  transport header, then the message of the length that the header announces)
+  and answers each one. It shows how a flow reads messages, numbers them in a
+  loop, and keeps an authenticate token in a variable, which is the pattern that
+  the smb2 module scenarios of MOD-13 follow.
+vars:
+  server_port: 4450
+  user: alice
+  password: "Passw0rd!"
+  domain: FPS
+  workstation: WS01
+  share: '\\fpsserver\share'
+  read_name: 'docs\report.bin'
+  write_name: 'upload\new.bin'
+  chunk: 65536
+  # Three chunks. A reply of the server is as long as the request asks, so the
+  # size is a multiple of the chunk here.
+  file_size: 196608
+  write_size: 40000
+  # The ids that the server assigns.
+  session: 4611686018427387905
+  tree: 7
+  read_file_id: "0100000000000000ffffffff00000000"
+  write_file_id: "0200000000000000feffffff00000000"
+flows:
+  - id: smb
+    module: smb2
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ smb2.negotiate(dialects='2.0.2,2.1', message_id=0) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { dialect: "{{ smb2.body_field(last, 'dialect') }}" }
+      # The session setup exchange. The server chooses the session id.
+      - send: "{{ smb2.session_setup(smb2.ntlm_negotiate(workstation=vars.workstation), 1) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set:
+          sid: "{{ smb2.header_field(last, 'session_id') }}"
+          # A set action keeps text, so the token travels as hexadecimal digits.
+          auth: "{{ smb2.hex(smb2.ntlm_authenticate(smb2.security_blob(last), vars.user, vars.password, domain=vars.domain, workstation=vars.workstation)) }}"
+      - send: "{{ smb2.session_setup(smb2.unhex(vars.auth), 2, session_id=vars.sid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - send: "{{ smb2.tree_connect(vars.share, 3, vars.sid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { tid: "{{ smb2.header_field(last, 'tree_id') }}" }
+      - send: "{{ smb2.create(vars.read_name, 4, vars.sid, vars.tid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set:
+          fid: "{{ smb2.body_field(last, 'file_id') }}"
+          size: "{{ smb2.body_field(last, 'size') }}"
+          mid: "{{ smb2.add(4) }}"
+          offset: 0
+      # One read request per chunk, with the message id and the offset counted up.
+      - loop:
+          count: "{{ smb2.chunks(vars.size, vars.chunk) }}"
+          do:
+            - send: "{{ smb2.read(vars.fid, vars.chunk, vars.mid, vars.sid, vars.tid, offset=vars.offset) }}"
+            - expect: { bytes: 4, timeout_ms: 5000 }
+            - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+            - set:
+                mid: "{{ smb2.add(vars.mid) }}"
+                offset: "{{ smb2.add(vars.offset, vars.chunk) }}"
+      - send: "{{ smb2.close(vars.fid, vars.mid, vars.sid, vars.tid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { mid: "{{ smb2.add(vars.mid) }}" }
+      # Create a file and write to it.
+      - send: "{{ smb2.create(vars.write_name, vars.mid, vars.sid, vars.tid, desired_access=1180063, disposition=2, file_attributes=128) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set:
+          wfid: "{{ smb2.body_field(last, 'file_id') }}"
+          mid: "{{ smb2.add(vars.mid) }}"
+      - send: "{{ smb2.write(vars.wfid, fill(vars.write_size), vars.mid, vars.sid, vars.tid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { mid: "{{ smb2.add(vars.mid) }}" }
+      - send: "{{ smb2.close(vars.wfid, vars.mid, vars.sid, vars.tid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { mid: "{{ smb2.add(vars.mid) }}" }
+      - send: "{{ smb2.tree_disconnect(vars.mid, vars.sid, vars.tid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { mid: "{{ smb2.add(vars.mid) }}" }
+      - send: "{{ smb2.logoff(vars.mid, vars.sid) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      # NEGOTIATE.
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - send: "{{ smb2.negotiate_response(dialect='2.1') }}"
+      # The NTLM negotiate message, answered with a challenge.
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { workstation_seen: "{{ smb2.ntlm_field(smb2.security_blob(last), 'workstation') }}" }
+      - send: "{{ smb2.session_setup_response(smb2.ntlm_challenge(target=vars.domain), 1, vars.session, status='more_processing_required') }}"
+      # The authenticate message, whose user and session key the server reads.
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set:
+          user_seen: "{{ smb2.ntlm_field(smb2.security_blob(last), 'user') }}"
+          key: "{{ smb2.ntlm_session_key(smb2.security_blob(last), vars.password) }}"
+      - send: "{{ smb2.session_setup_response(smb2.spnego_accept(), 2, vars.session) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { path_seen: "{{ smb2.body_field(last, 'path') }}" }
+      - send: "{{ smb2.tree_connect_response(3, vars.session, vars.tree) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - send: "{{ smb2.create_response(4, vars.session, vars.tree, file_id=vars.read_file_id, size=vars.file_size) }}"
+      - loop:
+          count: "{{ smb2.chunks(vars.file_size, vars.chunk) }}"
+          do:
+            - expect: { bytes: 4, timeout_ms: 5000 }
+            - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+            - set:
+                rid: "{{ smb2.header_field(last, 'message_id') }}"
+                want: "{{ smb2.body_field(last, 'length') }}"
+            - send: "{{ smb2.read_response(fill(vars.want), vars.rid, vars.session, vars.tree) }}"
+      # CLOSE of the read file.
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.close_response(vars.rid, vars.session, vars.tree) }}"
+      # CREATE of the new file.
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.create_response(vars.rid, vars.session, vars.tree, file_id=vars.write_file_id, action=2) }}"
+      # WRITE, answered with the count of the request.
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set:
+          rid: "{{ smb2.header_field(last, 'message_id') }}"
+          count: "{{ smb2.body_field(last, 'length') }}"
+      - send: "{{ smb2.write_response(vars.count, vars.rid, vars.session, vars.tree) }}"
+      # CLOSE, TREE_DISCONNECT, and LOGOFF.
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.close_response(vars.rid, vars.session, vars.tree) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.tree_disconnect_response(vars.rid, vars.session, vars.tree) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ smb2.message_length(last) }}", timeout_ms: 5000 }
+      - set: { rid: "{{ smb2.header_field(last, 'message_id') }}" }
+      - send: "{{ smb2.logoff_response(vars.rid, vars.session) }}"
+      - close: fin

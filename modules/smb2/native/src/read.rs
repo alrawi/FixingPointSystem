@@ -7,9 +7,8 @@
 //! readers that return octets for a nested call.
 
 use crate::wire::{
-    cmd, command_code, command_name, dialect_name, from_utf16le, invalid, share_type_name,
-    slice, status_name, to_hex, u16_at, u32_at, u64_at, u8_at, Message, WireError,
-    HEADER_LEN,
+    cmd, command_code, command_name, dialect_name, from_utf16le, invalid, share_type_name, slice,
+    status_name, to_hex, u16_at, u32_at, u64_at, u8_at, Message, WireError, HEADER_LEN,
 };
 
 fn flag_text(b: bool) -> String {
@@ -58,14 +57,24 @@ fn file_id(body: &[u8], at: usize) -> Result<String, WireError> {
     Ok(to_hex(slice(body, at, 16, "a file id")?))
 }
 
-fn text_at(m: &Message<'_>, body: &[u8], off_at: usize, len_at: usize, what: &'static str) -> Result<String, WireError> {
+fn text_at(
+    m: &Message<'_>,
+    body: &[u8],
+    off_at: usize,
+    len_at: usize,
+    what: &'static str,
+) -> Result<String, WireError> {
     let offset = usize::from(u16_at(body, off_at, what)?);
     let len = usize::from(u16_at(body, len_at, what)?);
     from_utf16le(m.buffer(offset, len, what)?, what)
 }
 
 fn no_field(m: &Message<'_>, field: &str) -> WireError {
-    let side = if m.header.is_response() { "response" } else { "request" };
+    let side = if m.header.is_response() {
+        "response"
+    } else {
+        "request"
+    };
     invalid(format!(
         "the field '{field}' is not defined for a {} {side}",
         command_name(m.header.command)
@@ -245,9 +254,11 @@ pub fn body_field(m: &Message<'_>, field: &str) -> Result<String, WireError> {
             match field {
                 "length" => len.to_string(),
                 "entry_count" | "entries" => {
-                    let entries = crate::wire::parse_directory_information(
-                        m.buffer(offset, len, "the directory listing")?,
-                    )?;
+                    let entries = crate::wire::parse_directory_information(m.buffer(
+                        offset,
+                        len,
+                        "the directory listing",
+                    )?)?;
                     if field == "entry_count" {
                         entries.len().to_string()
                     } else {
@@ -294,7 +305,11 @@ pub fn security_blob<'a>(m: &Message<'a>) -> Result<&'a [u8], WireError> {
             return Err(invalid(format!(
                 "a {} {} has no security buffer",
                 command_name(m.header.command),
-                if m.header.is_response() { "response" } else { "request" }
+                if m.header.is_response() {
+                    "response"
+                } else {
+                    "request"
+                }
             )))
         }
     };
@@ -308,17 +323,27 @@ pub fn data<'a>(m: &Message<'a>) -> Result<&'a [u8], WireError> {
     let (offset, len) = match (m.header.command, m.header.is_response()) {
         (cmd::READ, true) => {
             m.check_structure(17, "read response")?;
-            (usize::from(u8_at(body, 2, what)?), u32_at(body, 4, what)? as usize)
+            (
+                usize::from(u8_at(body, 2, what)?),
+                u32_at(body, 4, what)? as usize,
+            )
         }
         (cmd::WRITE, false) => {
             m.check_structure(49, "write request")?;
-            (usize::from(u16_at(body, 2, what)?), u32_at(body, 4, what)? as usize)
+            (
+                usize::from(u16_at(body, 2, what)?),
+                u32_at(body, 4, what)? as usize,
+            )
         }
         _ => {
             return Err(invalid(format!(
                 "a {} {} carries no data",
                 command_name(m.header.command),
-                if m.header.is_response() { "response" } else { "request" }
+                if m.header.is_response() {
+                    "response"
+                } else {
+                    "request"
+                }
             )))
         }
     };

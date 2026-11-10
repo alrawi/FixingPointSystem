@@ -61,7 +61,6 @@ const fn opt(name: &'static str, ty: ValueType, default: DefaultValue) -> ParamS
     }
 }
 
-
 use DefaultValue::{Boolean as B, Bytes as Y, Int as I, Text as T};
 use ValueType::{Boolean, Bytes, Int, Text};
 
@@ -119,9 +118,18 @@ function!(SESSION_SETUP, "session_setup",
         CREDITS,
     ]);
 
-function!(TREE_CONNECT, "tree_connect",
+function!(
+    TREE_CONNECT,
+    "tree_connect",
     "A TREE_CONNECT request for a share path such as '\\\\server\\share'.",
-    [req("path", Text), MESSAGE_ID, SESSION_ID, CREDIT_CHARGE, CREDITS]);
+    [
+        req("path", Text),
+        MESSAGE_ID,
+        SESSION_ID,
+        CREDIT_CHARGE,
+        CREDITS
+    ]
+);
 
 function!(CREATE, "create",
     "A CREATE request for a path below the share, with backslashes, or an empty name for the root of the share. The defaults open an existing file for reading (read data, attributes, and read control, share all, FILE_OPEN, FILE_NON_DIRECTORY_FILE). Use options 1 for a directory, disposition 2 to create a file that must not exist, and disposition 5 to overwrite or create.",
@@ -182,13 +190,19 @@ function!(CLOSE, "close",
         CREDITS,
     ]);
 
-function!(TREE_DISCONNECT, "tree_disconnect",
+function!(
+    TREE_DISCONNECT,
+    "tree_disconnect",
     "A TREE_DISCONNECT request.",
-    [MESSAGE_ID, SESSION_ID, TREE_ID, CREDIT_CHARGE, CREDITS]);
+    [MESSAGE_ID, SESSION_ID, TREE_ID, CREDIT_CHARGE, CREDITS]
+);
 
-function!(LOGOFF, "logoff",
+function!(
+    LOGOFF,
+    "logoff",
     "A LOGOFF request, which ends the session.",
-    [MESSAGE_ID, SESSION_ID, CREDIT_CHARGE, CREDITS]);
+    [MESSAGE_ID, SESSION_ID, CREDIT_CHARGE, CREDITS]
+);
 
 function!(QUERY_DIRECTORY, "query_directory",
     "A QUERY_DIRECTORY request for the entries that match the pattern in the open directory with the 32 digit hexadecimal file id, as FileIdBothDirectoryInformation. restart starts the scan again, and single returns one entry.",
@@ -277,7 +291,9 @@ function!(READ_RESPONSE, "read_response",
         CREDITS,
     ]);
 
-function!(WRITE_RESPONSE, "write_response",
+function!(
+    WRITE_RESPONSE,
+    "write_response",
     "A WRITE response that acknowledges count octets.",
     [
         req("count", Int),
@@ -287,7 +303,8 @@ function!(WRITE_RESPONSE, "write_response",
         opt("remaining", Int, I(0)),
         CREDIT_CHARGE,
         CREDITS,
-    ]);
+    ]
+);
 
 function!(CLOSE_RESPONSE, "close_response",
     "A CLOSE response. The times, sizes, and attributes are zero unless flags is 1. A time of -1 is the fixed time of the module, and an allocation_size of -1 rounds the size up to 4096.",
@@ -304,13 +321,19 @@ function!(CLOSE_RESPONSE, "close_response",
         CREDITS,
     ]);
 
-function!(TREE_DISCONNECT_RESPONSE, "tree_disconnect_response",
+function!(
+    TREE_DISCONNECT_RESPONSE,
+    "tree_disconnect_response",
     "A TREE_DISCONNECT response.",
-    [MESSAGE_ID, SESSION_ID, TREE_ID, CREDIT_CHARGE, CREDITS]);
+    [MESSAGE_ID, SESSION_ID, TREE_ID, CREDIT_CHARGE, CREDITS]
+);
 
-function!(LOGOFF_RESPONSE, "logoff_response",
+function!(
+    LOGOFF_RESPONSE,
+    "logoff_response",
     "A LOGOFF response.",
-    [MESSAGE_ID, SESSION_ID, CREDIT_CHARGE, CREDITS]);
+    [MESSAGE_ID, SESSION_ID, CREDIT_CHARGE, CREDITS]
+);
 
 function!(QUERY_DIRECTORY_RESPONSE, "query_directory_response",
     "A QUERY_DIRECTORY response for the entries, one per line as 'size kind name' where kind is file or directory and the name may hold spaces. A time of -1 is the fixed time of the module.",
@@ -407,21 +430,31 @@ function!(NTLM_FIELD, "ntlm_field",
     "A field of the NTLMSSP message inside a security buffer: type, flags, user, domain, workstation, target, challenge, computer, dns_domain, dns_computer, time, or nt_response.",
     [req("security", Bytes), req("field", Text)]);
 
-function!(DATA, "data",
+function!(
+    DATA,
+    "data",
     "The data of a READ response or a WRITE request, as octets.",
-    [req("message", Bytes)]);
+    [req("message", Bytes)]
+);
 
 function!(HEX, "hex",
     "The octets as lowercase hexadecimal digits, which a set action keeps without loss, unlike octets.",
     [req("bytes", Bytes)]);
 
-function!(UNHEX, "unhex",
+function!(
+    UNHEX,
+    "unhex",
     "The octets of hexadecimal digits, the inverse of hex.",
-    [req("text", Text)]);
+    [req("text", Text)]
+);
 
 function!(CHUNKS, "chunks",
     "The number of requests of at most size octets that move total octets, at least 1, as decimal digits.",
     [req("total", Int), req("size", Int)]);
+
+function!(ADD, "add",
+    "The sum of a and b as decimal digits. A flow has no arithmetic and no loop counter, so a set action numbers the messages of a loop with it.",
+    [req("a", Int), opt("b", Int, I(1))]);
 
 /// The template functions of the module, in the order of the manifest.
 pub const FUNCTIONS: &[FunctionSpec] = &[
@@ -461,6 +494,7 @@ pub const FUNCTIONS: &[FunctionSpec] = &[
     HEX,
     UNHEX,
     CHUNKS,
+    ADD,
 ];
 
 fn yaml_text(s: &str) -> String {

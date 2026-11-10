@@ -171,7 +171,11 @@ fn check_text(what: &str, s: &str) -> Result<(), WireError> {
 }
 
 /// The NEGOTIATE_MESSAGE of a client.
-pub fn negotiate_message(flags: u32, domain: &str, workstation: &str) -> Result<Vec<u8>, WireError> {
+pub fn negotiate_message(
+    flags: u32,
+    domain: &str,
+    workstation: &str,
+) -> Result<Vec<u8>, WireError> {
     check_text("the domain", domain)?;
     check_text("the workstation", workstation)?;
     let mut flags = flags;
@@ -289,7 +293,9 @@ pub fn parse_challenge(msg: &[u8]) -> Result<Challenge, WireError> {
 
 fn check_header(msg: &[u8], ty: u32) -> Result<(), WireError> {
     if slice(msg, 0, 8, "the NTLMSSP signature")? != SIGNATURE {
-        return Err(invalid("the message does not start with the NTLMSSP signature"));
+        return Err(invalid(
+            "the message does not start with the NTLMSSP signature",
+        ));
     }
     let got = u32_at(msg, 8, "the NTLM message type")?;
     if got != ty {
@@ -392,7 +398,13 @@ pub fn authenticate_message(
     } else {
         &challenge.target_info
     };
-    let (nt, _) = ntlmv2_response(cred, &challenge.server_challenge, &client_challenge, time, server_name);
+    let (nt, _) = ntlmv2_response(
+        cred,
+        &challenge.server_challenge,
+        &client_challenge,
+        time,
+        server_name,
+    );
     let domain = utf16le(cred.domain);
     let user = utf16le(cred.user);
     let workstation = utf16le(cred.workstation);
@@ -475,7 +487,9 @@ pub fn session_key(authenticate: &Authenticate, password: &str) -> Result<[u8; 1
 /// The message type of an NTLMSSP message.
 pub fn message_type(msg: &[u8]) -> Result<u32, WireError> {
     if slice(msg, 0, 8, "the NTLMSSP signature")? != SIGNATURE {
-        return Err(invalid("the message does not start with the NTLMSSP signature"));
+        return Err(invalid(
+            "the message does not start with the NTLMSSP signature",
+        ));
     }
     u32_at(msg, 8, "the NTLM message type")
 }

@@ -74,8 +74,22 @@ impl Pcap {
     /// Appends one segment. `flags` are the TCP flags.
     fn segment(&mut self, dir: Dir, flags: u8, payload: &[u8]) {
         let (src, dst, sport, dport, seq, ack) = match dir {
-            Dir::ToServer => (CLIENT, SERVER, CLIENT_PORT, SERVER_PORT, self.client_seq, self.server_seq),
-            Dir::ToClient => (SERVER, CLIENT, SERVER_PORT, CLIENT_PORT, self.server_seq, self.client_seq),
+            Dir::ToServer => (
+                CLIENT,
+                SERVER,
+                CLIENT_PORT,
+                SERVER_PORT,
+                self.client_seq,
+                self.server_seq,
+            ),
+            Dir::ToClient => (
+                SERVER,
+                CLIENT,
+                SERVER_PORT,
+                CLIENT_PORT,
+                self.server_seq,
+                self.client_seq,
+            ),
         };
         // A SYN carries no acknowledgment.
         let ack = if flags == 0x02 { 0 } else { ack };
@@ -109,8 +123,10 @@ impl Pcap {
         self.time += 1;
         self.bytes.extend_from_slice(&self.time.to_le_bytes());
         self.bytes.extend_from_slice(&0u32.to_le_bytes());
-        self.bytes.extend_from_slice(&(frame.len() as u32).to_le_bytes());
-        self.bytes.extend_from_slice(&(frame.len() as u32).to_le_bytes());
+        self.bytes
+            .extend_from_slice(&(frame.len() as u32).to_le_bytes());
+        self.bytes
+            .extend_from_slice(&(frame.len() as u32).to_le_bytes());
         self.bytes.extend_from_slice(&frame);
         let advance = payload.len() as u32 + u32::from(flags & 0x03 != 0);
         match dir {
@@ -139,10 +155,8 @@ impl Pcap {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::var_os("CARGO_TARGET_TMPDIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("fps-module-smb2");
+    // Cargo gives integration tests a scratch directory inside the target directory.
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("fps-module-smb2");
     std::fs::create_dir_all(&dir).expect("scratch directory");
     dir.join(name)
 }
@@ -190,17 +204,50 @@ fn check_session(name: &str, dialects: &str, dialect_name: &str, read_size: usiz
     // Every message is dissected as SMB2, once per message.
     let smb = tshark(
         &capture,
-        &["-Y", "smb2", "-T", "fields", "-e", "smb2.cmd", "-e", "smb2.flags.response", "-e", "smb2.nt_status", "-e", "smb2.msg_id"],
+        &[
+            "-Y",
+            "smb2",
+            "-T",
+            "fields",
+            "-e",
+            "smb2.cmd",
+            "-e",
+            "smb2.flags.response",
+            "-e",
+            "smb2.nt_status",
+            "-e",
+            "smb2.msg_id",
+        ],
     );
     let rows = rows(&smb);
-    assert_eq!(rows.len(), messages.len(), "tshark decoded {} of {} messages:\n{smb}", rows.len(), messages.len());
+    assert_eq!(
+        rows.len(),
+        messages.len(),
+        "tshark decoded {} of {} messages:\n{smb}",
+        rows.len(),
+        messages.len()
+    );
 
     // No packet is malformed, and the expert system raises nothing above a note.
-    let malformed = tshark(&capture, &["-Y", "_ws.malformed", "-T", "fields", "-e", "frame.number"]);
+    let malformed = tshark(
+        &capture,
+        &["-Y", "_ws.malformed", "-T", "fields", "-e", "frame.number"],
+    );
     assert_eq!(malformed.trim(), "", "malformed packets:\n{malformed}");
     let expert = tshark(
         &capture,
-        &["-T", "fields", "-e", "frame.number", "-e", "_ws.expert.severity", "-e", "_ws.expert.message", "-Y", "_ws.expert"],
+        &[
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
+            "-e",
+            "_ws.expert.severity",
+            "-e",
+            "_ws.expert.message",
+            "-Y",
+            "_ws.expert",
+        ],
     );
     for row in self::rows(&expert) {
         // 0x00100000 comment, 0x00200000 chat, 0x00400000 note, 0x00600000 warning, 0x00800000 error.
@@ -215,14 +262,20 @@ fn check_session(name: &str, dialects: &str, dialect_name: &str, read_size: usiz
 
     // The commands, directions, and message ids that the test encoded.
     let want_cmds: Vec<&str> = [
-        "0", "0", "1", "1", "1", "1", "3", "3", "5", "5", "8", "8", "5", "5", "9", "9", "6", "6", "5", "5", "14", "14", "14", "14",
-        "5", "5", "5", "5", "6", "6", "4", "4", "2", "2",
+        "0", "0", "1", "1", "1", "1", "3", "3", "5", "5", "8", "8", "5", "5", "9", "9", "6", "6",
+        "5", "5", "14", "14", "14", "14", "5", "5", "5", "5", "6", "6", "4", "4", "2", "2",
     ]
     .to_vec();
     let got_cmds: Vec<&str> = rows.iter().map(|r| r[0].as_str()).collect();
     assert_eq!(got_cmds, want_cmds);
     let responses: Vec<&str> = rows.iter().map(|r| r[1].as_str()).collect();
-    assert!(responses.iter().enumerate().all(|(i, r)| (*r == "True") == (i % 2 == 1)), "{responses:?}");
+    assert!(
+        responses
+            .iter()
+            .enumerate()
+            .all(|(i, r)| (*r == "True") == (i % 2 == 1)),
+        "{responses:?}"
+    );
     // Status of every response, in order: success except the staged ones.
     let statuses: Vec<&str> = rows.iter().map(|r| r[2].as_str()).collect();
     assert_eq!(statuses[3], "0xc0000016", "more processing required");
@@ -230,7 +283,12 @@ fn check_session(name: &str, dialects: &str, dialect_name: &str, read_size: usiz
     assert_eq!(statuses[25], "0xc0000034", "object name not found");
     assert_eq!(statuses[27], "0xc0000022", "access denied");
     // 17 responses, and four of them carry a status other than success.
-    let successes = statuses.iter().skip(1).step_by(2).filter(|s| **s == "0x00000000").count();
+    let successes = statuses
+        .iter()
+        .skip(1)
+        .step_by(2)
+        .filter(|s| **s == "0x00000000")
+        .count();
     assert_eq!(successes, 13, "{statuses:?}");
 
     // Field values that tshark decodes from the bytes.
@@ -243,13 +301,41 @@ fn check_session(name: &str, dialects: &str, dialect_name: &str, read_size: usiz
     );
     let r = self::rows(&fields);
     assert_eq!(r[0][0], "\\\\fpsserver\\share");
-    let names: Vec<&str> = r.iter().skip(1).map(|c| c.get(1).map_or("", String::as_str)).collect();
-    assert_eq!(names, ["docs\\report.bin", "upload\\new.txt", "", "docs\\missing.txt", "secret.txt"]);
+    let names: Vec<&str> = r
+        .iter()
+        .skip(1)
+        .map(|c| c.get(1).map_or("", String::as_str))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "docs\\report.bin",
+            "upload\\new.txt",
+            "",
+            "docs\\missing.txt",
+            "secret.txt"
+        ]
+    );
 
     // The NTLM exchange: tshark reads the three message types and the user.
     let ntlm = tshark(
         &capture,
-        &["-Y", "ntlmssp", "-T", "fields", "-e", "ntlmssp.messagetype", "-e", "ntlmssp.auth.username", "-e", "ntlmssp.auth.domain", "-e", "ntlmssp.auth.hostname", "-e", "ntlmssp.challenge.target_name"],
+        &[
+            "-Y",
+            "ntlmssp",
+            "-T",
+            "fields",
+            "-e",
+            "ntlmssp.messagetype",
+            "-e",
+            "ntlmssp.auth.username",
+            "-e",
+            "ntlmssp.auth.domain",
+            "-e",
+            "ntlmssp.auth.hostname",
+            "-e",
+            "ntlmssp.challenge.target_name",
+        ],
     );
     let n = self::rows(&ntlm);
     assert_eq!(n.len(), 3, "{ntlm}");
@@ -260,7 +346,17 @@ fn check_session(name: &str, dialects: &str, dialect_name: &str, read_size: usiz
     assert_eq!(&n[2][1..4], ["alice", "FPS", "WS01"]);
 
     // The negotiated dialect, and the sizes of the data that moved.
-    let selected = tshark(&capture, &["-Y", "smb2.cmd == 0 && smb2.flags.response == 1", "-T", "fields", "-e", "smb2.dialect"]);
+    let selected = tshark(
+        &capture,
+        &[
+            "-Y",
+            "smb2.cmd == 0 && smb2.flags.response == 1",
+            "-T",
+            "fields",
+            "-e",
+            "smb2.dialect",
+        ],
+    );
     let want = match dialect_name {
         "2.0.2" => "0x0202",
         "2.1" => "0x0210",
@@ -268,7 +364,19 @@ fn check_session(name: &str, dialects: &str, dialect_name: &str, read_size: usiz
         _ => "0x0311",
     };
     assert_eq!(selected.trim(), want);
-    let sizes = tshark(&capture, &["-Y", "smb2.cmd == 8 || smb2.cmd == 9", "-T", "fields", "-e", "smb2.read_length", "-e", "smb2.write_length"]);
+    let sizes = tshark(
+        &capture,
+        &[
+            "-Y",
+            "smb2.cmd == 8 || smb2.cmd == 9",
+            "-T",
+            "fields",
+            "-e",
+            "smb2.read_length",
+            "-e",
+            "smb2.write_length",
+        ],
+    );
     let s = self::rows(&sizes);
     assert_eq!(s.len(), 4);
     assert_eq!(s[0][0], read_size.to_string());

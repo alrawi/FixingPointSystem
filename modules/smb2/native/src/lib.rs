@@ -169,13 +169,22 @@ fn random<const N: usize>(rng: &mut dyn RngCore) -> [u8; N] {
 }
 
 /// Reads a 16 octet identifier argument, and draws one when the text is empty.
-fn guid(a: &Args<'_>, function: &str, name: &str, rng: &mut dyn RngCore) -> Result<[u8; 16], FnError> {
+fn guid(
+    a: &Args<'_>,
+    function: &str,
+    name: &str,
+    rng: &mut dyn RngCore,
+) -> Result<[u8; 16], FnError> {
     let given = a.bytes(name)?;
     if given.is_empty() {
         return Ok(random(rng));
     }
-    <[u8; 16]>::try_from(given)
-        .map_err(|_| invalid(format!("'{name}' of '{function}' must be 16 octets, not {}", given.len())))
+    <[u8; 16]>::try_from(given).map_err(|_| {
+        invalid(format!(
+            "'{name}' of '{function}' must be 16 octets, not {}",
+            given.len()
+        ))
+    })
 }
 
 fn file_id(a: &Args<'_>, function: &str) -> Result<wire::FileId, FnError> {
@@ -199,7 +208,9 @@ fn dialect_list(text: &str) -> Result<Vec<u16>, FnError> {
 fn status_arg(a: &Args<'_>, function: &str, name: &str) -> Result<u32, FnError> {
     let text = a.text(name)?;
     wire::status_code(text).ok_or_else(|| {
-        invalid(format!("'{name}' of '{function}' is not a status name or number: '{text}'"))
+        invalid(format!(
+            "'{name}' of '{function}' is not a status name or number: '{text}'"
+        ))
     })
 }
 
@@ -219,7 +230,11 @@ fn request(
         credits: ranged(a, function, "credits", 0, i64::from(u16::MAX))? as u16,
         message_id: u64_arg(a, function, "message_id")?,
         session_id: session_id(a)?,
-        tree_id: if tree { u32_arg(a, function, "tree_id")? } else { 0 },
+        tree_id: if tree {
+            u32_arg(a, function, "tree_id")?
+        } else {
+            0
+        },
     })
 }
 
@@ -347,7 +362,8 @@ impl Smb2 {
                 let salt = random(rng);
                 let body = wire::negotiate_request_body(&wire::NegotiateRequest {
                     dialects: &dialects,
-                    security_mode: wire::security_mode(a.text("signing")?).map_err(bad_arg("negotiate"))?,
+                    security_mode: wire::security_mode(a.text("signing")?)
+                        .map_err(bad_arg("negotiate"))?,
                     capabilities,
                     client_guid,
                     salt,
@@ -379,7 +395,8 @@ impl Smb2 {
             }
             "tree_connect" => {
                 let a = args::bind(&catalog::TREE_CONNECT, &call.args)?;
-                let body = wire::tree_connect_request_body(a.text("path")?).map_err(bad_arg("tree_connect"))?;
+                let body = wire::tree_connect_request_body(a.text("path")?)
+                    .map_err(bad_arg("tree_connect"))?;
                 let mut e = request(&a, "tree_connect", cmd::TREE_CONNECT, 1, false)?;
                 e.tree_id = 0;
                 finish(out, &e, &body, "tree_connect")?;
@@ -396,7 +413,12 @@ impl Smb2 {
                     options: u32_arg(&a, "create", "options")?,
                 })
                 .map_err(bad_arg("create"))?;
-                finish(out, &request(&a, "create", cmd::CREATE, 1, true)?, &body, "create")?;
+                finish(
+                    out,
+                    &request(&a, "create", cmd::CREATE, 1, true)?,
+                    &body,
+                    "create",
+                )?;
             }
             "read" => {
                 let a = args::bind(&catalog::READ, &call.args)?;
@@ -431,7 +453,12 @@ impl Smb2 {
                     ranged(&a, "close", "flags", 0, 0xFFFF)? as u16,
                     &file_id(&a, "close")?,
                 );
-                finish(out, &request(&a, "close", cmd::CLOSE, 1, true)?, &body, "close")?;
+                finish(
+                    out,
+                    &request(&a, "close", cmd::CLOSE, 1, true)?,
+                    &body,
+                    "close",
+                )?;
             }
             "tree_disconnect" => {
                 let a = args::bind(&catalog::TREE_DISCONNECT, &call.args)?;
@@ -498,7 +525,8 @@ impl Smb2 {
                 };
                 let body = wire::negotiate_response_body(&wire::NegotiateResponse {
                     dialect,
-                    security_mode: wire::security_mode(a.text("signing")?).map_err(bad_arg("negotiate_response"))?,
+                    security_mode: wire::security_mode(a.text("signing")?)
+                        .map_err(bad_arg("negotiate_response"))?,
                     server_guid,
                     capabilities,
                     max_size: u32_arg(&a, "negotiate_response", "max_size")?,
@@ -513,7 +541,8 @@ impl Smb2 {
                     response: true,
                     status: 0,
                     credit_charge: 0,
-                    credits: ranged(&a, "negotiate_response", "credits", 0, i64::from(u16::MAX))? as u16,
+                    credits: ranged(&a, "negotiate_response", "credits", 0, i64::from(u16::MAX))?
+                        as u16,
                     message_id: u64_arg(&a, "negotiate_response", "message_id")?,
                     session_id: 0,
                     tree_id: 0,
@@ -534,7 +563,8 @@ impl Smb2 {
             "tree_connect_response" => {
                 let a = args::bind(&catalog::TREE_CONNECT_RESPONSE, &call.args)?;
                 let body = wire::tree_connect_response_body(
-                    wire::share_type(a.text("share_type")?).map_err(bad_arg("tree_connect_response"))?,
+                    wire::share_type(a.text("share_type")?)
+                        .map_err(bad_arg("tree_connect_response"))?,
                     u32_arg(&a, "tree_connect_response", "share_flags")?,
                     u32_arg(&a, "tree_connect_response", "capabilities")?,
                     u32_arg(&a, "tree_connect_response", "maximal_access")?,
@@ -562,28 +592,51 @@ impl Smb2 {
             "read_response" => {
                 let a = args::bind(&catalog::READ_RESPONSE, &call.args)?;
                 let data = a.bytes("data")?;
-                let body = wire::read_response_body(data, u32_arg(&a, "read_response", "remaining")?)
-                    .map_err(bad_arg("read_response"))?;
-                let e = response(&a, "read_response", cmd::READ, credits_for(data.len()), true)?;
+                let body =
+                    wire::read_response_body(data, u32_arg(&a, "read_response", "remaining")?)
+                        .map_err(bad_arg("read_response"))?;
+                let e = response(
+                    &a,
+                    "read_response",
+                    cmd::READ,
+                    credits_for(data.len()),
+                    true,
+                )?;
                 finish(out, &e, &body, "read_response")?;
             }
             "write_response" => {
                 let a = args::bind(&catalog::WRITE_RESPONSE, &call.args)?;
                 let count = u32_arg(&a, "write_response", "count")?;
-                let body = wire::write_response_body(count, u32_arg(&a, "write_response", "remaining")?);
-                let e = response(&a, "write_response", cmd::WRITE, credits_for(count as usize), true)?;
+                let body =
+                    wire::write_response_body(count, u32_arg(&a, "write_response", "remaining")?);
+                let e = response(
+                    &a,
+                    "write_response",
+                    cmd::WRITE,
+                    credits_for(count as usize),
+                    true,
+                )?;
                 finish(out, &e, &body, "write_response")?;
             }
             "close_response" => {
                 let a = args::bind(&catalog::CLOSE_RESPONSE, &call.args)?;
                 let info = file_info(&a, "close_response")?;
-                let body = wire::close_response_body(ranged(&a, "close_response", "flags", 0, 0xFFFF)? as u16, &info);
+                let body = wire::close_response_body(
+                    ranged(&a, "close_response", "flags", 0, 0xFFFF)? as u16,
+                    &info,
+                );
                 let e = response(&a, "close_response", cmd::CLOSE, 1, true)?;
                 finish(out, &e, &body, "close_response")?;
             }
             "tree_disconnect_response" => {
                 let a = args::bind(&catalog::TREE_DISCONNECT_RESPONSE, &call.args)?;
-                let e = response(&a, "tree_disconnect_response", cmd::TREE_DISCONNECT, 1, true)?;
+                let e = response(
+                    &a,
+                    "tree_disconnect_response",
+                    cmd::TREE_DISCONNECT,
+                    1,
+                    true,
+                )?;
                 finish(out, &e, &wire::empty_body(), "tree_disconnect_response")?;
             }
             "logoff_response" => {
@@ -594,18 +647,31 @@ impl Smb2 {
             "query_directory_response" => {
                 let a = args::bind(&catalog::QUERY_DIRECTORY_RESPONSE, &call.args)?;
                 let entries = dir_entries(a.text("entries")?)?;
-                let info = wire::directory_information(&entries, time_arg(&a, "query_directory_response", "time")?)
+                let info = wire::directory_information(
+                    &entries,
+                    time_arg(&a, "query_directory_response", "time")?,
+                )
+                .map_err(bad_arg("query_directory_response"))?;
+                let body = wire::query_directory_response_body(&info)
                     .map_err(bad_arg("query_directory_response"))?;
-                let body = wire::query_directory_response_body(&info).map_err(bad_arg("query_directory_response"))?;
-                let e = response(&a, "query_directory_response", cmd::QUERY_DIRECTORY, 1, true)?;
+                let e = response(
+                    &a,
+                    "query_directory_response",
+                    cmd::QUERY_DIRECTORY,
+                    1,
+                    true,
+                )?;
                 finish(out, &e, &body, "query_directory_response")?;
             }
             "error_response" => {
                 let a = args::bind(&catalog::ERROR_RESPONSE, &call.args)?;
-                let command = read::command_of(a.text("command")?).map_err(bad_arg("error_response"))?;
+                let command =
+                    read::command_of(a.text("command")?).map_err(bad_arg("error_response"))?;
                 let status = status_arg(&a, "error_response", "status")?;
                 if status & 0x8000_0000 == 0 {
-                    return Err(invalid("'status' of 'error_response' must be a warning or an error status"));
+                    return Err(invalid(
+                        "'status' of 'error_response' must be a warning or an error status",
+                    ));
                 }
                 let charge = u64::from(command != cmd::NEGOTIATE);
                 let mut e = response(&a, "error_response", command, charge, true)?;
@@ -668,7 +734,8 @@ impl Smb2 {
             "ntlm_authenticate" => {
                 let a = args::bind(&catalog::NTLM_AUTHENTICATE, &call.args)?;
                 let challenge = ntlm::parse_challenge(
-                    ntlm::find_message(a.bytes("challenge")?).map_err(bad_msg("ntlm_authenticate"))?,
+                    ntlm::find_message(a.bytes("challenge")?)
+                        .map_err(bad_msg("ntlm_authenticate"))?,
                 )
                 .map_err(bad_msg("ntlm_authenticate"))?;
                 let given = a.bytes("client_challenge")?;
@@ -698,19 +765,29 @@ impl Smb2 {
             }
             "spnego_accept" => {
                 args::bind(&catalog::SPNEGO_ACCEPT, &call.args)?;
-                out.extend(ntlm::spnego_resp(Some(ntlm::NegState::AcceptCompleted), false, None));
+                out.extend(ntlm::spnego_resp(
+                    Some(ntlm::NegState::AcceptCompleted),
+                    false,
+                    None,
+                ));
             }
             "ntlm_session_key" => {
                 let a = args::bind(&catalog::NTLM_SESSION_KEY, &call.args)?;
-                let msg = ntlm::find_message(a.bytes("authenticate")?).map_err(bad_msg("ntlm_session_key"))?;
+                let msg = ntlm::find_message(a.bytes("authenticate")?)
+                    .map_err(bad_msg("ntlm_session_key"))?;
                 let auth = ntlm::parse_authenticate(msg).map_err(bad_msg("ntlm_session_key"))?;
-                let key = ntlm::session_key(&auth, a.text("password")?).map_err(bad_msg("ntlm_session_key"))?;
+                let key = ntlm::session_key(&auth, a.text("password")?)
+                    .map_err(bad_msg("ntlm_session_key"))?;
                 push(out, &wire::to_hex(&key));
             }
             "ntlm_field" => {
                 let a = args::bind(&catalog::NTLM_FIELD, &call.args)?;
-                let msg = ntlm::find_message(a.bytes("security")?).map_err(bad_msg("ntlm_field"))?;
-                push(out, &ntlm::field(msg, a.text("field")?).map_err(bad_msg("ntlm_field"))?);
+                let msg =
+                    ntlm::find_message(a.bytes("security")?).map_err(bad_msg("ntlm_field"))?;
+                push(
+                    out,
+                    &ntlm::field(msg, a.text("field")?).map_err(bad_msg("ntlm_field"))?,
+                );
             }
             _ => return Ok(false),
         }
@@ -755,18 +832,25 @@ impl TemplateFn for Smb2 {
             }
             "message_length" => {
                 let a = args::bind(&catalog::MESSAGE_LENGTH, &call.args)?;
-                let n = wire::transport_length(a.bytes("header")?).map_err(bad_msg("message_length"))?;
+                let n = wire::transport_length(a.bytes("header")?)
+                    .map_err(bad_msg("message_length"))?;
                 push(out, &n.to_string());
             }
             "header_field" => {
                 let a = args::bind(&catalog::HEADER_FIELD, &call.args)?;
                 let m = message(a.bytes("message")?, "header_field")?;
-                push(out, &read::header_field(&m, a.text("field")?).map_err(bad_msg("header_field"))?);
+                push(
+                    out,
+                    &read::header_field(&m, a.text("field")?).map_err(bad_msg("header_field"))?,
+                );
             }
             "body_field" => {
                 let a = args::bind(&catalog::BODY_FIELD, &call.args)?;
                 let m = message(a.bytes("message")?, "body_field")?;
-                push(out, &read::body_field(&m, a.text("field")?).map_err(bad_msg("body_field"))?);
+                push(
+                    out,
+                    &read::body_field(&m, a.text("field")?).map_err(bad_msg("body_field"))?,
+                );
             }
             "security_blob" => {
                 let a = args::bind(&catalog::SECURITY_BLOB, &call.args)?;
@@ -791,6 +875,14 @@ impl TemplateFn for Smb2 {
                 let total = u64_arg(&a, "chunks", "total")?;
                 let size = ranged(&a, "chunks", "size", 1, i64::MAX)? as u64;
                 push(out, &total.div_ceil(size).max(1).to_string());
+            }
+            "add" => {
+                let a = args::bind(&catalog::ADD, &call.args)?;
+                let sum = a
+                    .int("a")?
+                    .checked_add(a.int("b")?)
+                    .ok_or_else(|| invalid("'add' overflows a 64 bit integer"))?;
+                push(out, &sum.to_string());
             }
             other => {
                 return Err(FnError::new(

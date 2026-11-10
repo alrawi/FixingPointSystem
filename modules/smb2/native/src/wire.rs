@@ -280,7 +280,9 @@ pub fn from_hex(text: &str) -> Result<Vec<u8>, WireError> {
             let lo = (p[1] as char).to_digit(16);
             match (hi, lo) {
                 (Some(h), Some(l)) => Ok((h * 16 + l) as u8),
-                _ => Err(invalid("hexadecimal text has a character that is not a digit")),
+                _ => Err(invalid(
+                    "hexadecimal text has a character that is not a digit",
+                )),
             }
         })
         .collect()
@@ -408,7 +410,9 @@ impl<'a> Message<'a> {
             if id == [0xFF, b'S', b'M', b'B'] {
                 return Err(invalid("the message is SMB1, and the module reads SMB2"));
             }
-            return Err(invalid("the message does not start with the SMB2 protocol id"));
+            return Err(invalid(
+                "the message does not start with the SMB2 protocol id",
+            ));
         }
         let size = u16_at(b, 4, "the structure size")?;
         if usize::from(size) != HEADER_LEN {
@@ -461,7 +465,12 @@ impl<'a> Message<'a> {
     }
 
     /// Returns the buffer at `offset` from the header with `len` octets.
-    pub fn buffer(&self, offset: usize, len: usize, what: &'static str) -> Result<&'a [u8], WireError> {
+    pub fn buffer(
+        &self,
+        offset: usize,
+        len: usize,
+        what: &'static str,
+    ) -> Result<&'a [u8], WireError> {
         if len == 0 {
             return Ok(&[]);
         }
@@ -612,7 +621,9 @@ fn preauth_context(salt: &[u8]) -> Vec<u8> {
 /// The body of a NEGOTIATE request.
 pub fn negotiate_request_body(r: &NegotiateRequest<'_>) -> Result<Vec<u8>, WireError> {
     if r.dialects.is_empty() || r.dialects.len() > 64 {
-        return Err(invalid("a negotiate request lists between 1 and 64 dialects"));
+        return Err(invalid(
+            "a negotiate request lists between 1 and 64 dialects",
+        ));
     }
     let with_contexts = r.dialects.contains(&0x0311);
     let mut b = Vec::new();
@@ -682,7 +693,9 @@ pub struct NegotiateResponse<'a> {
 /// The body of a NEGOTIATE response.
 pub fn negotiate_response_body(r: &NegotiateResponse<'_>) -> Result<Vec<u8>, WireError> {
     if r.security.len() > usize::from(u16::MAX) {
-        return Err(invalid("the security buffer of a negotiate response is too long"));
+        return Err(invalid(
+            "the security buffer of a negotiate response is too long",
+        ));
     }
     let with_contexts = r.dialect == 0x0311;
     let mut b = Vec::new();
@@ -722,7 +735,9 @@ pub fn session_setup_request_body(
     previous_session_id: u64,
 ) -> Result<Vec<u8>, WireError> {
     if security.len() > usize::from(u16::MAX) {
-        return Err(invalid("the security buffer of a session setup is too long"));
+        return Err(invalid(
+            "the security buffer of a session setup is too long",
+        ));
     }
     let mut b = Vec::new();
     put16(&mut b, 25);
@@ -741,9 +756,14 @@ pub fn session_setup_request_body(
 }
 
 /// The body of a SESSION_SETUP response.
-pub fn session_setup_response_body(security: &[u8], session_flags: u16) -> Result<Vec<u8>, WireError> {
+pub fn session_setup_response_body(
+    security: &[u8],
+    session_flags: u16,
+) -> Result<Vec<u8>, WireError> {
     if security.len() > usize::from(u16::MAX) {
-        return Err(invalid("the security buffer of a session setup is too long"));
+        return Err(invalid(
+            "the security buffer of a session setup is too long",
+        ));
     }
     let mut b = Vec::new();
     put16(&mut b, 9);
@@ -761,7 +781,9 @@ pub fn session_setup_response_body(security: &[u8], session_flags: u16) -> Resul
 pub fn tree_connect_request_body(path: &str) -> Result<Vec<u8>, WireError> {
     let name = utf16le(path);
     if name.is_empty() || name.len() > usize::from(u16::MAX) {
-        return Err(invalid("a tree connect path has between 1 and 32767 characters"));
+        return Err(invalid(
+            "a tree connect path has between 1 and 32767 characters",
+        ));
     }
     let mut b = Vec::new();
     put16(&mut b, 9);
@@ -928,7 +950,13 @@ pub fn close_response_body(flags: u16, info: &FileInfo) -> Vec<u8> {
 }
 
 /// The body of a READ request.
-pub fn read_request_body(id: &FileId, length: u32, offset: u64, minimum: u32, remaining: u32) -> Vec<u8> {
+pub fn read_request_body(
+    id: &FileId,
+    length: u32,
+    offset: u64,
+    minimum: u32,
+    remaining: u32,
+) -> Vec<u8> {
     let mut b = Vec::new();
     put16(&mut b, 49);
     b.push(0x50); // Padding, the offset of the data in the response
@@ -1055,7 +1083,10 @@ pub fn directory_information(entries: &[DirEntry], time: u64) -> Result<Vec<u8>,
             put64(&mut b, time);
         }
         put64(&mut b, if e.directory { 0 } else { e.size });
-        put64(&mut b, (if e.directory { 0 } else { e.size }).div_ceil(4096) * 4096);
+        put64(
+            &mut b,
+            (if e.directory { 0 } else { e.size }).div_ceil(4096) * 4096,
+        );
         put32(&mut b, if e.directory { 0x10 } else { 0x20 });
         put32(&mut b, name.len() as u32);
         put32(&mut b, 0); // EaSize
@@ -1095,7 +1126,9 @@ pub fn parse_directory_information(mut buf: &[u8]) -> Result<Vec<DirEntry>, Wire
             return Ok(entries);
         }
         if next < DIR_ENTRY_FIXED {
-            return Err(invalid("a directory entry has a next offset below its size"));
+            return Err(invalid(
+                "a directory entry has a next offset below its size",
+            ));
         }
         buf = buf
             .get(next..)
@@ -1145,7 +1178,8 @@ pub fn sign_hmac_sha256(message: &mut [u8], key: &[u8]) -> Result<(), WireError>
             have: message.len(),
         });
     }
-    let flags = u32::from_le_bytes([message[16], message[17], message[18], message[19]]) | flag::SIGNED;
+    let flags =
+        u32::from_le_bytes([message[16], message[17], message[18], message[19]]) | flag::SIGNED;
     message[16..20].copy_from_slice(&flags.to_le_bytes());
     message[48..64].fill(0);
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key)
