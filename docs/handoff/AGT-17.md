@@ -66,4 +66,5 @@ Expected: every test passes.
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10T14:25Z | claude-1c4e6a | claim | n/a | Claimed card 6769807358 |
-| 2026-11-10T15:00Z | claude-1c4e6a | checkpoint | see branch | Manifest from the digest pass, profiles from the TLS module, ssh registered |
+| 2026-11-10T15:00Z | claude-1c4e6a | checkpoint | a943918 | Manifest from the digest pass, profiles from the TLS module, ssh registered; PR #401 opened |
+| 2026-11-10T15:20Z | claude-1c4e6a | checkpoint | see branch | CI rust job failed in tests/first_party.rs (ftp 2 of 95 sessions failed while the new ssh test ran beside it, not the AGT-18 flake); the tests of that file now run one at a time |

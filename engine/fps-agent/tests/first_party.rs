@@ -10,10 +10,23 @@
 //! of the content crate that the manifests require.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use fps_agent::modules::{sha256_digest, tree_digest};
 use fps_agent::{run, Outcome, RunOptions};
 use serde_json::Value as Json;
+
+/// The tests of this file share the loopback pools of `mail_plan` and run on a
+/// runner with two cores. Each run holds its criterion at a failed ratio of
+/// 0.001, so a single failed session fails the run. In CI the ftp test failed
+/// two of 95 sessions in the run where AGT-17 first ran a third test beside it,
+/// and it passed every time when it ran alone. The tests take this lock and run
+/// one after another.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 fn repo_modules() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules")
@@ -129,6 +142,7 @@ fn succeeded(line: &Json, application: &str) -> u64 {
 /// `requires`.
 #[test]
 fn an_ftp_scenario_with_data_flows_runs_through_the_agent() {
+    let _one_at_a_time = serial();
     let mut plan = mail_plan(&[("ftp/mixed_session", 18_021)]);
     plan["mix"][0]["params"] = serde_json::json!({
         "server_port": 18_021,
@@ -167,6 +181,7 @@ fn an_ftp_scenario_with_data_flows_runs_through_the_agent() {
 /// one session into the next and fail its first encrypted packet.
 #[test]
 fn ssh_scenarios_with_a_real_key_exchange_run_through_the_agent() {
+    let _one_at_a_time = serial();
     let mut plan = mail_plan(&[
         ("ssh/interactive_shell", 18_022),
         ("ssh/scp_upload", 18_023),
@@ -207,6 +222,7 @@ fn ssh_scenarios_with_a_real_key_exchange_run_through_the_agent() {
 
 #[test]
 fn smtp_imap_and_pop3_scenarios_run_through_the_agent() {
+    let _one_at_a_time = serial();
     let plan = mail_plan(&[
         ("smtp/relay", 18_825),
         ("imap/mailbox_sync", 18_143),
