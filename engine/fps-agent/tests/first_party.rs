@@ -301,19 +301,16 @@ fn repeat(name: &str, body: fn()) {
 // `cargo test -p fps-agent --test first_party -- --ignored repeat`.
 
 #[test]
-#[ignore = "repeats a three second run 50 times"]
 fn repeat_the_ftp_test() {
     repeat("ftp", ftp_run);
 }
 
 #[test]
-#[ignore = "repeats a three second run 50 times"]
 fn repeat_the_ssh_test() {
     repeat("ssh", ssh_run);
 }
 
 #[test]
-#[ignore = "repeats a three second run 50 times"]
 fn repeat_the_mail_test() {
     repeat("mail", mail_run);
 }

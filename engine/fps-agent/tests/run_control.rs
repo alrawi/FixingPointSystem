@@ -1117,7 +1117,6 @@ async fn a_capture_that_loses_sessions_reports_them_as_dropped() {
 /// default) in about four minutes. It is ignored by default:
 /// `cargo test -p fps-agent --test run_control -- --ignored repeat`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "repeats a capture round 50 times, about four minutes"]
 async fn repeat_stopping_a_capture_at_rest() {
     let rounds: usize = std::env::var("FPS_REPEAT")
         .ok()
