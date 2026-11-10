@@ -115,12 +115,9 @@ func (e *Evaluator) report(run runs.Run, totals map[string]float64, d Data) Repo
 func (r Report) API() api.RunReport {
 	out := api.RunReport{Run: runs.ToAPI(r.Run)}
 	out.Run.Summary = summary(r.Totals)
-	out.Realism = make([]struct {
-		Observed float32 `json:"observed"`
-		Passed   bool    `json:"passed"`
-		Property string  `json:"property"`
-		Target   string  `json:"target"`
-	}, 0)
+	// The scenarios property of the contract (CON-21) stays absent, as an
+	// older controller leaves it, until CTL-39 fills it from r.Scenarios.
+	out.Realism = []api.RealismResult{}
 	return out
 }
 

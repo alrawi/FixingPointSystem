@@ -510,6 +510,16 @@ export interface components {
             /** @description Outcome of the comparison, absent when the metric has no value. */
             passed?: boolean;
             /**
+             * @description The label filter of the criterion, exactly as `criteria[].where` of the test configuration states it: label names with the values that a series must carry for the criterion to count it, for example `{application: dns}`. Absent when the criterion has no filter. The controller does not add a `side` entry that the configuration left out, and a criterion without one counts the client side only for a metric that has the side label. Two results with the same metric, op, and value that differ only in their filter are told apart by this field.
+             * @example {
+             *       "application": "dns",
+             *       "side": "server"
+             *     }
+             */
+            where?: {
+                [key: string]: string;
+            };
+            /**
              * @description Why the criterion passed, failed, or has no result, in words for an operator.
              * @example observed 0.042 is not < 0.01
              * @example metric sessions.response_time.p99 has no value
@@ -554,12 +564,40 @@ export interface components {
         };
         RunReport: {
             run: components["schemas"]["Run"];
-            realism: {
-                property: string;
-                observed: number;
-                target: string;
-                passed: boolean;
-            }[];
+            /** @description The counts of the run for each scenario of each application, ordered by application and then by scenario name. They are the client side series of the metric view `scenario` (the key of a sample there is `<application>/<scenario>`), so each session and each byte counts once, and the sum of an entry property over all entries equals the property of `run.summary` with the same name. A scenario appears once the run has recorded a counter for it. A controller of 0.9.0 or later always sends the property, empty when the run has recorded no scenario counter, and an older controller does not send it. For the totals of one application, sum the entries of that application. */
+            scenarios?: components["schemas"]["ScenarioTotals"][];
+            /** @description The realism results that the controller holds for the run, in the order of the realism report that carried them. The controller does not measure realism itself. The realism runner (`python3 -m realism score`, whose report format is `realism/schema/realism-report.schema.json`) scores the capture of the run with independent classifiers and parsers, and each metric of a check of its report, with the verdict of the check, becomes one entry here. The same values are the `realism.` gauges of the metric view `realism`, and `mix.` gauges with `source: classifier`, when the controller holds them as series. Until the controller receives such a report for the run the array is empty, which is also the answer for a run whose capture was never scored. The contract has no operation that delivers the report to the controller, so the way it arrives is the business of the controller and does not change this schema. */
+            realism: components["schemas"]["RealismResult"][];
+        };
+        /** @description The counts of one scenario of one application over the whole run. The property names follow RunSummary, and each names its metric in contracts/metrics/catalog.yaml through x-fps-metric. A count is 0 when the run recorded no event for it. */
+        ScenarioTotals: {
+            /** @description Module name of the application, for example http1. */
+            application: string;
+            /** @description Scenario name within the module, for example web_get. */
+            scenario: string;
+            sessions_attempted: number;
+            sessions_succeeded: number;
+            /** @description Sessions that failed for any reason, which is the sum over the reason label. */
+            sessions_failed: number;
+            bytes_tx: number;
+            bytes_rx: number;
+        };
+        /** @description One realism measurement of the run with its target and outcome. A reader that pairs results of two runs pairs them by `metric` and `labels` when the result has them, and by `property` otherwise. */
+        RealismResult: {
+            /** @description Name of what was measured, in words for an operator, for example `conformance of http1 by ndpi`. */
+            property: string;
+            /** @description The measured value. */
+            observed: number;
+            /** @description The rule that the value must meet, such as `>= 0.99`. */
+            target: string;
+            /** @description True when the value meets the target. */
+            passed: boolean;
+            /** @description Metric name from contracts/metrics/catalog.yaml that the result belongs to, for example `realism.conformance_ratio`. */
+            metric?: string;
+            /** @description The labels of the series, for example application http1 and classifier ndpi. Together with `metric` it is unique within one report. */
+            labels?: {
+                [key: string]: string;
+            };
         };
         Capture: {
             id: string;
