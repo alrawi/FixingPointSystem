@@ -3235,6 +3235,22 @@ work_packages:
     acceptance:
       - The realism workflow passes for the four modules, and no module file names decrypted_check.py.
 
+
+  - id: MOD-23
+    title: The http2 module capture that missed one TLS session
+    phase: 2
+    workstream: MOD
+    size: S
+    depends_on: []
+    paths: [modules/http2/]
+    summary: >-
+      In batch 29 the mod-http2 module job recorded 39 of 40 TLS sessions once (realism decrypted: the capture has 39
+      TLS sessions, expected 40) on a pull request that did not touch http2, and passed on rerun.
+    deliverables:
+      - The cause of the missing session (capture start, a session still open at the stop, or the generator), and a fix.
+    acceptance:
+      - Three consecutive mod-http2 module runs with 40 of 40 TLS sessions.
+
   - id: TRN-16
     title: Per profile captures scored with the transport check
     phase: 2
@@ -3409,6 +3425,23 @@ work_packages:
     acceptance:
       - Tests for an overflowing ring and for a stop during a run give the two counts with literal values.
 
+
+  - id: ENG-28
+    title: The runtime instance test flakes of batch 29
+    phase: 2
+    workstream: ENG
+    size: S
+    depends_on: []
+    paths: [engine/fps-runtime/]
+    summary: >-
+      Two tests of engine/fps-runtime/tests/instances.rs failed once each in batch 29 on pull requests that did not
+      touch the runtime: mixed_session_runs_with_one_data_connection_per_transfer (line 318) and
+      concurrent_instances_that_draw_the_same_data_port_all_succeed (line 713). Both passed on rerun.
+    deliverables:
+      - The cause of each failure and a fix in the test or the runtime, with a temporary CI loop that runs both tests 200 times.
+    acceptance:
+      - 200 consecutive passes of both tests on the hosted runner, and cargo test -p fps-runtime passes.
+
   - id: RLM-15
     title: Packet inter arrival times inside a session
     phase: 2
@@ -3569,6 +3602,23 @@ work_packages:
     acceptance:
       - validate.py passes, openapi-breaking finds no breaking change, and the controller, UI and SDK clients are regenerated.
 
+
+  - id: CON-27
+    title: The host identity check in the metric catalog
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [CON-25, RLM-10]
+    paths: [contracts/]
+    summary: >-
+      RLM-10 added the host_identity check after CON-25, so the catalog label check has no value host_identity and its
+      failures never reach RunReport.realism. It also leaves open whether realism.check_failures passes when a document
+      holds two checks of one kind (CTL-42). Needs owner approval as a contract change.
+    deliverables:
+      - The value host_identity for the label check (catalog 0.7.0), its realism.check_failures defined as failures_total, a passing and a failing case in contracts/examples/realism/check-metrics.yaml, and the rule for two checks of one kind.
+    acceptance:
+      - validate.py passes, and the change entry lists the consumers (realism runner, fps-stats tables, controller catalog copy and its example count test).
+
   - id: CTL-42
     title: The CON-23 mapping table in the controller
     phase: 2
@@ -3600,6 +3650,7 @@ work_packages:
       - REUSE_WEIRDS and its branch in gate1_report.py go, the parser findings files stay, and the suite still fails on any other finding.
     acceptance:
       - The unit tests and three Gate 1 runs in a row pass, and the corruption proof still fails the gate.
+
 
   - id: CTL-43
     title: Renewal cannot outlive a revocation
@@ -3666,3 +3717,20 @@ work_packages:
       - Numeric prerelease identifiers compare with the arbitrary length decimal helper the file already has for core versions.
     acceptance:
       - The issue's cases and identifiers on both sides of the uint64 limit sort as SemVer 2.0.0 says. Issue #453 closes with the PR.
+
+
+  - id: CTL-46
+    title: One property wording for realism metrics
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CTL-42]
+    paths: [controller/internal/report/]
+    summary: >-
+      The controller writes the property of a KS metric as "inter arrival of http1, KS statistic", while the CON-23
+      examples say "KS statistic of inter_arrival of http1" (CTL-42). The pairing ignores property, but the run report
+      shows it to operators.
+    deliverables:
+      - MapRealism writes property as the examples do, and the CON-23 example test compares property too.
+    acceptance:
+      - go test ./internal/report passes in CI, and the HTML report test shows the new wording.
