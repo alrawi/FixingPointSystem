@@ -144,6 +144,98 @@ describe("mock agent reservations", () => {
     }
   });
 
+  it("records the operator as the holder and clears it on release, with valid agents", async () => {
+    const own = await startMockServer(0, "127.0.0.1");
+    try {
+      const call = async (action: string) => {
+        const response = await fetch(`${own.baseUrl}/agents/agent-local:${action}`, {
+          method: "POST",
+          headers,
+        });
+        return { status: response.status, body: (await response.json()) as unknown };
+      };
+      const list = async () =>
+        (await (await fetch(`${own.baseUrl}/agents`, { headers })).json()) as unknown;
+      const agentSchema = "components/schemas/Agent";
+
+      expect(((await list()) as { reserved_by?: string }[])[0]?.reserved_by).toBeUndefined();
+      const reserved = await call("reserve");
+      expectValid(ajv, agentSchema, reserved.body);
+      expect((reserved.body as { reserved_by?: string }).reserved_by).toBe("operator");
+      // The operator reserves again for 200, and the holder stays the operator.
+      const again = await call("reserve");
+      expect(again.status).toBe(200);
+      expect((again.body as { reserved_by?: string }).reserved_by).toBe("operator");
+      expectValid(ajv, agentSchema, ((await list()) as unknown[])[0]);
+
+      const released = await call("release");
+      expectValid(ajv, agentSchema, released.body);
+      expect((released.body as { reserved_by?: string }).reserved_by).toBeUndefined();
+    } finally {
+      await own.close();
+    }
+  });
+
+  it("refuses with 409 in the documented order: another holder, offline, busy", async () => {
+    const own = await startMockServer(0, "127.0.0.1", {
+      data: {
+        ...loadMockData(),
+        agents: [
+          { id: "held-run", state: "reserved", reserved_by: "run_mock0007" },
+          { id: "held-run-busy", state: "busy", reserved_by: "run_mock0008" },
+          { id: "held-run-down", state: "offline", reserved_by: "run_mock0009" },
+          { id: "held-op-down", state: "offline", reserved_by: "operator" },
+          { id: "held-op-busy", state: "busy", reserved_by: "operator" },
+        ],
+      },
+    });
+    try {
+      const expected: Record<string, [number, string]> = {
+        "held-run": [
+          409,
+          "reserve agent held-run for operator: held by run_mock0007: agent reserved by another holder",
+        ],
+        "held-run-busy": [
+          409,
+          "reserve agent held-run-busy for operator: held by run_mock0008: agent reserved by another holder",
+        ],
+        "held-run-down": [
+          409,
+          "reserve agent held-run-down for operator: held by run_mock0009: agent reserved by another holder",
+        ],
+        "held-op-down": [409, "reserve agent held-op-down: agent offline"],
+        "held-op-busy": [409, "reserve agent held-op-busy: plan loaded: agent busy"],
+      };
+      for (const [id, [status, detail]] of Object.entries(expected)) {
+        const response = await fetch(`${own.baseUrl}/agents/${id}:reserve`, {
+          method: "POST",
+          headers,
+        });
+        const body: unknown = await response.json();
+        expect(response.status).toBe(status);
+        expect(response.headers.get("content-type")).toBe("application/problem+json");
+        expectValid(ajv, "components/schemas/Problem", body);
+        expect((body as { detail: string }).detail).toBe(detail);
+      }
+      // A refusal leaves the agent as it was.
+      const list = (await (await fetch(`${own.baseUrl}/agents`, { headers })).json()) as {
+        id: string;
+        state: string;
+        reserved_by?: string;
+      }[];
+      expect(list.map((agent) => [agent.id, agent.state, agent.reserved_by])).toEqual([
+        ["held-run", "reserved", "run_mock0007"],
+        ["held-run-busy", "busy", "run_mock0008"],
+        ["held-run-down", "offline", "run_mock0009"],
+        ["held-op-down", "offline", "operator"],
+        ["held-op-busy", "busy", "operator"],
+      ]);
+      for (const agent of list) expectValid(ajv, "components/schemas/Agent", agent);
+    } finally {
+      await own.close();
+    }
+  });
+
   it("reserves a reserved agent again and releases an agent that is not reserved", async () => {
     const own = await startMockServer(0, "127.0.0.1");
     try {

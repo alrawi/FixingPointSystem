@@ -1,0 +1,15 @@
+GET /master.m3u8 HTTP/1.1
+Host: video.example.test
+User-Agent: AppleCoreMedia/1.0.0.22G90 (Macintosh; U; Intel Mac OS X 13_5; en_us)
+Accept: application/vnd.apple.mpegurl
+
+GET /v0/index.m3u8 HTTP/1.1
+Host: video.example.test
+User-Agent: AppleCoreMedia/1.0.0.22G90 (Macintosh; U; Intel Mac OS X 13_5; en_us)
+Accept: application/vnd.apple.mpegurl
+
+GET /v1/index.m3u8 HTTP/1.1
+Host: video.example.test
+User-Agent: AppleCoreMedia/1.0.0.22G90 (Macintosh; U; Intel Mac OS X 13_5; en_us)
+Accept: application/vnd.apple.mpegurl
+

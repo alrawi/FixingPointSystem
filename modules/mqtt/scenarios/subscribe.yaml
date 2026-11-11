@@ -1,0 +1,112 @@
+scenario: subscribe
+description: An actuator controller that subscribes and receives. After CONNECT and CONNACK the client sends one SUBSCRIBE for the comma separated vars.filters at vars.qos, and the broker answers with a SUBACK that grants each filter at most vars.max_qos. The broker then pushes vars.pushes pairs of messages to vars.push_topic with a random gap, a command at QoS 0 and a command at QoS 1, and the client acknowledges each QoS 1 message with a PUBACK for the identifier of the broker. The client ends the subscription with UNSUBSCRIBE and the broker with UNSUBACK, and the session ends with DISCONNECT. vars.version 4 runs MQTT 3.1.1 and 5 runs MQTT 5.0, where a vars.retain_handling above 0 and vars.no_local set the subscription options. Both sides read each packet with one expect of one byte and six expects of mqtt.feed(last) bytes, and mqtt.recv checks the packet against the standard.
+vars:
+  server_port: 1883
+  version: 4
+  keepalive: 60
+  session_expiry: -1
+  client_prefix: mqttjs_
+  user: valve-ctl-12
+  password: Tst-saffron-otter-83
+  filters: fps/site-3/commands/#,fps/site-3/config
+  qos: 1
+  max_qos: 1
+  no_local: false
+  retain_handling: 0
+  push_topic: fps/site-3/commands/valve-2
+  pushes: 3
+  push_min_ms: 400
+  push_max_ms: 2500
+flows:
+  - id: session
+    module: mqtt
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ mqtt.connect(mqtt.client_id(vars.client_prefix), version=vars.version, keepalive=vars.keepalive, user=vars.user, password=vars.password, session_expiry=vars.session_expiry) }}"
+      - expect: { bytes: 1, timeout_ms: 10000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ mqtt.recv('connack') }}" }
+      - send: "{{ mqtt.subscribe(vars.filters, qos=vars.qos, no_local=vars.no_local, retain_handling=vars.retain_handling) }}"
+      - expect: { bytes: 1, timeout_ms: 10000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ mqtt.recv('suback') }}" }
+      - loop:
+          count: "{{ vars.pushes }}"
+          do:
+            - expect: { bytes: 1, timeout_ms: 3600000 }
+            - loop:
+                count: 6
+                do:
+                  - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+            - set: { got: "{{ mqtt.recv('publish:0') }}" }
+            - expect: { bytes: 1, timeout_ms: 3600000 }
+            - loop:
+                count: 6
+                do:
+                  - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+            - set: { got: "{{ mqtt.recv('publish:1') }}" }
+            - delay: { ms: "{{ rand_int(1, 8) }}" }
+            - send: "{{ mqtt.puback() }}"
+      - delay: { ms: "{{ rand_int(vars.push_min_ms, vars.push_max_ms) }}" }
+      - send: "{{ mqtt.unsubscribe(vars.filters) }}"
+      - expect: { bytes: 1, timeout_ms: 10000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ mqtt.recv('unsuback') }}" }
+      - send: "{{ mqtt.disconnect() }}"
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { bytes: 1, timeout_ms: 10000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ mqtt.recv('connect') }}" }
+      - delay: { ms: "{{ rand_int(2, 12) }}" }
+      - send: "{{ mqtt.connack() }}"
+      - expect: { bytes: 1, timeout_ms: 10000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ mqtt.recv('subscribe') }}" }
+      - set: { nfilters: "{{ mqtt.field('filter_count') }}" }
+      - delay: { ms: "{{ rand_int(1, 6) }}" }
+      - send: "{{ mqtt.suback(mqtt.granted(vars.max_qos)) }}"
+      - loop:
+          count: "{{ vars.pushes }}"
+          do:
+            - delay: { ms: "{{ rand_int(vars.push_min_ms, vars.push_max_ms) }}" }
+            - send: "{{ mqtt.publish(vars.push_topic, 'open', qos=0) }}"
+            - delay: { ms: "{{ rand_int(20, 120) }}" }
+            - send: "{{ mqtt.publish(vars.push_topic, 'close', qos=1) }}"
+            - expect: { bytes: 1, timeout_ms: 10000 }
+            - loop:
+                count: 6
+                do:
+                  - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+            - set: { got: "{{ mqtt.recv('puback') }}" }
+      - expect: { bytes: 1, timeout_ms: 3600000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ mqtt.recv('unsubscribe') }}" }
+      - delay: { ms: "{{ rand_int(1, 6) }}" }
+      - send: "{{ mqtt.unsuback(vars.nfilters) }}"
+      - expect: { bytes: 1, timeout_ms: 10000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ mqtt.recv('disconnect') }}" }
+      - close: fin

@@ -909,6 +909,7 @@ dependencies = [
  "fps-module-http2",
  "fps-module-imap",
  "fps-module-pop3",
+ "fps-module-sip-rtp",
  "fps-module-smb2",
  "fps-module-smtp",
  "fps-module-ssh",
@@ -1074,6 +1075,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fps-module-hls"
+version = "0.0.1"
+dependencies = [
+ "fps-backend-kernel",
+ "fps-flow",
+ "fps-golden",
+ "fps-interp",
+ "fps-io",
+ "fps-module-http1",
+ "rand 0.8.8",
+ "rand_pcg",
+ "serde_norway",
+ "tokio",
+]
+
+[[package]]
 name = "fps-module-http1"
 version = "0.0.1"
 dependencies = [
@@ -1124,6 +1141,50 @@ dependencies = [
  "rand 0.8.8",
  "rand_pcg",
  "rustls",
+ "serde_norway",
+ "tokio",
+]
+
+[[package]]
+name = "fps-module-ldap"
+version = "0.0.1"
+dependencies = [
+ "fps-backend-kernel",
+ "fps-flow",
+ "fps-golden",
+ "fps-interp",
+ "fps-io",
+ "rand 0.8.8",
+ "rand_pcg",
+ "serde_norway",
+ "tokio",
+]
+
+[[package]]
+name = "fps-module-mqtt"
+version = "0.0.1"
+dependencies = [
+ "fps-backend-kernel",
+ "fps-flow",
+ "fps-golden",
+ "fps-interp",
+ "fps-io",
+ "rand 0.8.8",
+ "rand_pcg",
+ "serde_norway",
+ "tokio",
+]
+
+[[package]]
+name = "fps-module-ntp"
+version = "0.0.1"
+dependencies = [
+ "fps-flow",
+ "fps-golden",
+ "fps-interp",
+ "fps-io",
+ "rand 0.8.8",
+ "rand_pcg",
  "serde_norway",
  "tokio",
 ]

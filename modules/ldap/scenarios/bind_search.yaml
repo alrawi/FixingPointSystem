@@ -1,0 +1,73 @@
+scenario: bind_search
+description: An application that looks up a user, as a mail client or a web application does. The client first binds anonymously to test the connection, as many LDAP clients do. It then picks one account of the directory from a random seed, binds as that account with its password, searches the subtree below vars.search_base for the entry whose uid it bound as, reads every entry that the server returns, and unbinds. The server answers the bind from the userPassword of the entry that the request names and runs the search against the same directory. The client counts the entries that it must read with ldap.count on its own copy of the directory, because a flow cannot branch on the data that it receives. Both sides read each message with two expect actions, the 4 octet head of the BER sequence and then the octets that ldap.size works out from it, and a set action that calls ldap.recv. An empty vars.directory selects the directory that ships with the module.
+vars:
+  server_port: 389
+  directory: ""
+  search_base: dc=example,dc=test
+  search_scope: sub
+  user_attributes: cn,mail,telephoneNumber,title,departmentNumber
+flows:
+  - id: session
+    module: ldap
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - set:
+          seed: "{{ rand_int(0, 1000000) }}"
+      - set:
+          dn: "{{ ldap.account(vars.directory, 'dn', vars.seed) }}"
+          password: "{{ ldap.account(vars.directory, 'userPassword', vars.seed) }}"
+          uid: "{{ ldap.account(vars.directory, 'uid', vars.seed) }}"
+      # The client opens with an anonymous bind, as many LDAP clients do to test the connection, and binds as the account afterwards.
+      - send: "{{ ldap.bind_request(1, '', '') }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_response') }}" }
+      - delay: { dist: lognormal, mu: 3.5, sigma: 0.5, unit: ms }
+      - send: "{{ ldap.bind_request(2, vars.dn, vars.password) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_response') }}" }
+      - delay: { dist: lognormal, mu: 4.5, sigma: 0.6, unit: ms }
+      # A set action keeps the filter, because a call that another call nests has the type bytes.
+      - set:
+          who: "{{ ldap.filter_eq('uid', vars.uid) }}"
+      - set:
+          found: "{{ ldap.count(vars.directory, vars.search_base, vars.search_scope, vars.who) }}"
+      - send: "{{ ldap.search_request(3, vars.search_base, vars.search_scope, vars.who, vars.user_attributes) }}"
+      - loop:
+          count: "{{ vars.found }}"
+          do:
+            - expect: { bytes: 4, timeout_ms: 5000 }
+            - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+            - set: { got: "{{ ldap.recv(last, 'search_entry') }}" }
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+      - set: { got: "{{ ldap.recv(last, 'search_done') }}" }
+      - delay: { dist: lognormal, mu: 5.5, sigma: 0.7, unit: ms }
+      - send: "{{ ldap.unbind_request(4) }}"
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_request') }}" }
+      - send: "{{ ldap.bind_answer(vars.directory) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_request') }}" }
+      - send: "{{ ldap.bind_answer(vars.directory) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set:
+          got: "{{ ldap.recv(last, 'search_request') }}"
+      - set:
+          found: "{{ ldap.matches(vars.directory) }}"
+      - loop:
+          count: "{{ vars.found }}"
+          do:
+            - send: "{{ ldap.search_next() }}"
+      - send: "{{ ldap.search_end() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'unbind_request') }}" }
+      - close: fin

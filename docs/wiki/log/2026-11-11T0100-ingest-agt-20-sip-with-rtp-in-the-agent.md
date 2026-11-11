@@ -1,0 +1,11 @@
+## [2026-11-11] ingest | AGT-20 SIP with RTP in the agent
+
+The agent runs the call scenarios of the `sip_rtp` module. `assemble::check_flows` no longer refuses a scenario with a UDP flow among several flows, and it keeps refusing a scenario whose entry flow is `spawned`, the one case that the runtime still cannot open. The assembly sends a scenario with several flows to the runtime workers whatever the L4 protocol of its entry flow, because the UDP workers of the agent run one flow per session; only a scenario of one UDP flow stays on them (`assemble::udp_worker`). The registry holds `sip_rtp` with one `SipRtp` per flow side. `SipRtp` is `Clone` and its registry value never renders, so a clone starts without an RTP stream or a pacing clock and no wrapper like `SshSide` is needed.
+
+The evidence is two tests. `tests/first_party.rs` runs `call_pcmu` through `run` on loopback, with the SIP port 18026 and the RTP range 28000 to 28998, and the run passes with at least four succeeded client sessions of the application `sip_rtp`, two per whole call. A unit test in `modules.rs` shows that two sides of the factory and a later value do not share an RTP sequence. `tests/controller_e2e.sh` runs `sip_rtp/call_pcmu` under the real controller on the SIP port 18689 and checks the verdict and the succeeded sessions, then captures the port name `server0` on a second run and counts RTP packets (version 2, payload type 0, 160 bytes of payload) with a reader of its own, at least 20 of them, next to SIP packets of port 18689, with UDP only in the file. The e2e script could not run in the sandbox that built the package, because the controller is a Go binary and Go modules cannot be downloaded there, so the PR's CI is the first run of the new part (see the PR for its result).
+
+### Shared page notes
+
+- Cargo.lock gets one dependency line for `fps-agent` (`fps-module-sip-rtp`), and no third party package.
+- Modules page: the `sip_rtp` entry can drop its limit that the agent refuses the four call scenarios. `fps_module_sip_rtp::SipRtp` is `Clone` and is registered as is.
+- Testing page: `tests/first_party.rs` has a `sip_rtp` test (SIP port 18026), and `tests/controller_e2e.sh` has a `sip_rtp/call_pcmu` run and capture (SIP port 18689, RTP 28000 to 28998, host pools `127.105.0.0/24` and `127.106.0.0/24`).

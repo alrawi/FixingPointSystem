@@ -1,0 +1,79 @@
+scenario: failed_bind
+description: A user who mistypes the password, as a login form does. The client first binds anonymously to test the connection. The client binds with the name of one account of the directory and the wrong password vars.wrong_password, and the server answers invalidCredentials (49) with an empty diagnostic, as OpenLDAP does. The client then binds again with the right password, searches below vars.group_base for the groups whose member is the account, reads them, and unbinds. The server compares each password with the userPassword of the entry that the request names. The group search shows a filter that holds a distinguished name, which ldap.filter_eq escapes. An empty vars.directory selects the directory that ships with the module.
+vars:
+  server_port: 389
+  directory: ""
+  group_base: ou=Groups,dc=example,dc=test
+  wrong_password: Tst-not-the-password-00
+  group_attributes: cn
+flows:
+  - id: session
+    module: ldap
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - set:
+          seed: "{{ rand_int(0, 1000000) }}"
+      - set:
+          dn: "{{ ldap.account(vars.directory, 'dn', vars.seed) }}"
+          password: "{{ ldap.account(vars.directory, 'userPassword', vars.seed) }}"
+      # The client opens with an anonymous bind, as many LDAP clients do to test the connection, and binds as the account afterwards.
+      - send: "{{ ldap.bind_request(1, '', '') }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_response') }}" }
+      - delay: { dist: lognormal, mu: 3.5, sigma: 0.5, unit: ms }
+      - send: "{{ ldap.bind_request(2, vars.dn, vars.wrong_password) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_response', 49) }}" }
+      # The user types the password again.
+      - delay: { dist: lognormal, mu: 7.8, sigma: 0.5, unit: ms }
+      - send: "{{ ldap.bind_request(3, vars.dn, vars.password) }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_response') }}" }
+      - delay: { dist: lognormal, mu: 4.5, sigma: 0.6, unit: ms }
+      - set:
+          member_of: "{{ ldap.filter_eq('member', vars.dn) }}"
+      - set:
+          memberships: "{{ ldap.count(vars.directory, vars.group_base, 'sub', vars.member_of) }}"
+      - send: "{{ ldap.search_request(4, vars.group_base, 'sub', vars.member_of, vars.group_attributes) }}"
+      - loop:
+          count: "{{ vars.memberships }}"
+          do:
+            - expect: { bytes: 4, timeout_ms: 5000 }
+            - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+            - set: { got: "{{ ldap.recv(last, 'search_entry') }}" }
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+      - set: { got: "{{ ldap.recv(last, 'search_done') }}" }
+      - delay: { dist: lognormal, mu: 5.5, sigma: 0.7, unit: ms }
+      - send: "{{ ldap.unbind_request(5) }}"
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_request') }}" }
+      - send: "{{ ldap.bind_answer(vars.directory) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_request') }}" }
+      - send: "{{ ldap.bind_answer(vars.directory) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_request') }}" }
+      - send: "{{ ldap.bind_answer(vars.directory) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'search_request') }}" }
+      - set: { memberships: "{{ ldap.matches(vars.directory) }}" }
+      - loop:
+          count: "{{ vars.memberships }}"
+          do:
+            - send: "{{ ldap.search_next() }}"
+      - send: "{{ ldap.search_end() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'unbind_request') }}" }
+      - close: fin
