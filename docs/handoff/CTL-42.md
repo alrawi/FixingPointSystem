@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #459 |
 | Branch | `wp/CTL-42` |
-| Pull request | pending |
-| Status | in progress |
-| Progress | 80% (2 of 3 plan steps) |
-| Current holder | claude-c42a7e, lease until 2026-11-11T19:42:07Z |
-| Last verified commit | none |
+| Pull request | #472 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
+| Current holder | claude-c42a7e |
+| Last verified commit | 3b054ef (CI green: ctl `go test -race`, gofmt, vet, golangci-lint, and every other workflow) |
 
 ## Goal
 
@@ -18,7 +18,7 @@
 
 - [x] 1. Implement the table in `controller/internal/report/realism.go`.
 - [x] 2. Tests in `realism_con23_test.go`, update the fixture expectation, and the Controller page.
-- [ ] 3. Open the PR, get CI green, hand over for review.
+- [x] 3. Open the PR, get CI green, hand over for review.
 
 ## Done and verified
 
