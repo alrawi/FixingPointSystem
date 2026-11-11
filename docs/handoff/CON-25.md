@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #458 |
 | Branch | `wp/CON-25` |
-| Pull request | pending |
-| Status | in progress |
-| Progress | 80% (2 of 3 plan steps) |
+| Pull request | #471 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-c25a7e, lease until 2026-11-11T19:41:41Z |
 | Last verified commit | none |
 
@@ -18,7 +18,7 @@ Add the value `messages` to the catalog label `check` (catalog 0.6.0), define `r
 
 - [x] 1. Catalog 0.6.0, examples, change entry `contracts/changes/CON-25.md`
 - [x] 2. Contracts page, log entry, handoff
-- [ ] 3. PR and CI
+- [x] 3. PR and CI
 
 ## Done and verified
 
@@ -27,11 +27,11 @@ Add the value `messages` to the catalog label `check` (catalog 0.6.0), define `r
 
 ## Remaining
 
-PR, CI, review hand-off. The follow up outside `contracts/` is the coordinator's.
+CI on PR #471 is red only for the follow up outside `contracts/`: `contracts` (2 pins), controller `TestCatalogMatchesContract`, `realism` tests (5), and `ui` `lint-ui`, whose `schema.d.ts` was already out of date with the OpenAPI document before this change (a regeneration changes 300 lines unrelated to the catalog). The coordinator applies the follow up listed in `contracts/changes/CON-25.md`.
 
 ## Next action
 
-Open the PR and poll CI.
+Coordinator applies the follow up and merges.
 
 ## Blockers and open questions
 
