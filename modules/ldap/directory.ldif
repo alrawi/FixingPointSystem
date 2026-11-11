@@ -1,0 +1,324 @@
+# Synthetic directory of the ldap module. Every name, number, address, and password is invented.
+# The mail domain and the suffix lie under the reserved .test top level domain.
+# A bind compares the password with userPassword, and no search ever returns that attribute.
+dn:
+objectClass: top
+namingContexts: dc=example,dc=test
+supportedLDAPVersion: 3
+supportedSASLMechanisms: PLAIN
+subschemaSubentry: cn=Subschema
+vendorName: FixingPoint synthetic directory
+vendorVersion: 1.0
+
+dn: dc=example,dc=test
+objectClass: top
+objectClass: domain
+dc: example
+description: Example Test Corporation
+
+dn: ou=People,dc=example,dc=test
+objectClass: top
+objectClass: organizationalUnit
+ou: People
+
+dn: ou=Groups,dc=example,dc=test
+objectClass: top
+objectClass: organizationalUnit
+ou: Groups
+
+dn: uid=amarlowe,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: amarlowe
+cn: Alice Marlowe
+sn: Marlowe
+givenName: Alice
+mail: alice.marlowe@example.test
+telephoneNumber: +1 555 0110
+title: Network Engineer
+departmentNumber: Engineering
+employeeNumber: 4000
+userPassword: Tst-quartz-falcon-10
+
+dn: uid=bokafor,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: bokafor
+cn: Bruno Okafor
+sn: Okafor
+givenName: Bruno
+mail: bruno.okafor@example.test
+telephoneNumber: +1 555 0111
+title: Support Analyst
+departmentNumber: Finance
+employeeNumber: 4013
+userPassword: Tst-meadow-willow-17
+
+dn: uid=cbianchi,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: cbianchi
+cn: Chiara Bianchi
+sn: Bianchi
+givenName: Chiara
+mail: chiara.bianchi@example.test
+telephoneNumber: +1 555 0112
+title: Accountant
+departmentNumber: Operations
+employeeNumber: 4026
+userPassword: Tst-harbor-pebble-24
+
+dn: uid=dvolkov,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: dvolkov
+cn: Dmitri Volkov
+sn: Volkov
+givenName: Dmitri
+mail: dmitri.volkov@example.test
+telephoneNumber: +1 555 0113
+title: Site Reliability Engineer
+departmentNumber: People
+employeeNumber: 4039
+userPassword: Tst-falcon-harbor-31
+
+dn: uid=esantos,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: esantos
+cn: Elena Santos
+sn: Santos
+givenName: Elena
+mail: elena.santos@example.test
+telephoneNumber: +1 555 0114
+title: HR Partner
+departmentNumber: Security
+employeeNumber: 4052
+userPassword: Tst-cedar-summit-38
+
+dn: uid=fhaddad,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: fhaddad
+cn: Farid Haddad
+sn: Haddad
+givenName: Farid
+mail: farid.haddad@example.test
+telephoneNumber: +1 555 0115
+title: Security Analyst
+departmentNumber: Engineering
+employeeNumber: 4065
+userPassword: Tst-ember-orchid-45
+
+dn: uid=glindqvist,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: glindqvist
+cn: Grace Lindqvist
+sn: Lindqvist
+givenName: Grace
+mail: grace.lindqvist@example.test
+telephoneNumber: +1 555 0116
+title: Project Manager
+departmentNumber: Finance
+employeeNumber: 4078
+userPassword: Tst-lagoon-meadow-52
+
+dn: uid=htanaka,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: htanaka
+cn: Hiro Tanaka
+sn: Tanaka
+givenName: Hiro
+mail: hiro.tanaka@example.test
+telephoneNumber: +1 555 0117
+title: Database Administrator
+departmentNumber: Operations
+employeeNumber: 4091
+userPassword: Tst-summit-lagoon-59
+
+dn: uid=iduarte,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: iduarte
+cn: Ines Duarte
+sn: Duarte
+givenName: Ines
+mail: ines.duarte@example.test
+telephoneNumber: +1 555 0118
+title: Network Engineer
+departmentNumber: People
+employeeNumber: 4104
+userPassword: Tst-willow-maple-66
+
+dn: uid=jweber,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jweber
+cn: Jonas Weber
+sn: Weber
+givenName: Jonas
+mail: jonas.weber@example.test
+telephoneNumber: +1 555 0119
+title: Support Analyst
+departmentNumber: Security
+employeeNumber: 4117
+userPassword: Tst-copper-quartz-73
+
+dn: uid=kmensah,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: kmensah
+cn: Kofi Mensah
+sn: Mensah
+givenName: Kofi
+mail: kofi.mensah@example.test
+telephoneNumber: +1 555 0120
+title: Accountant
+departmentNumber: Engineering
+employeeNumber: 4130
+userPassword: Tst-tundra-ember-80
+
+dn: uid=lkowalski,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: lkowalski
+cn: Lena Kowalski
+sn: Kowalski
+givenName: Lena
+mail: lena.kowalski@example.test
+telephoneNumber: +1 555 0121
+title: Site Reliability Engineer
+departmentNumber: Finance
+employeeNumber: 4143
+userPassword: Tst-maple-tundra-87
+
+dn: uid=mortega,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: mortega
+cn: Mateo Ortega
+sn: Ortega
+givenName: Mateo
+mail: mateo.ortega@example.test
+telephoneNumber: +1 555 0122
+title: HR Partner
+departmentNumber: Operations
+employeeNumber: 4156
+userPassword: Tst-orchid-sierra-94
+
+dn: uid=nrahman,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: nrahman
+cn: Nadia Rahman
+sn: Rahman
+givenName: Nadia
+mail: nadia.rahman@example.test
+telephoneNumber: +1 555 0123
+title: Security Analyst
+departmentNumber: People
+employeeNumber: 4169
+userPassword: Tst-pebble-cedar-101
+
+dn: uid=onilsen,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: onilsen
+cn: Oskar Nilsen
+sn: Nilsen
+givenName: Oskar
+mail: oskar.nilsen@example.test
+telephoneNumber: +1 555 0124
+title: Project Manager
+departmentNumber: Security
+employeeNumber: 4182
+userPassword: Tst-raven-copper-108
+
+dn: uid=piyer,ou=People,dc=example,dc=test
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: piyer
+cn: Priya Iyer
+sn: Iyer
+givenName: Priya
+mail: priya.iyer@example.test
+telephoneNumber: +1 555 0125
+title: Database Administrator
+departmentNumber: Engineering
+employeeNumber: 4195
+userPassword: Tst-sierra-raven-115
+
+dn: cn=Engineering,ou=Groups,dc=example,dc=test
+objectClass: top
+objectClass: groupOfNames
+cn: Engineering
+member: uid=amarlowe,ou=People,dc=example,dc=test
+member: uid=fhaddad,ou=People,dc=example,dc=test
+member: uid=kmensah,ou=People,dc=example,dc=test
+member: uid=piyer,ou=People,dc=example,dc=test
+
+dn: cn=Finance,ou=Groups,dc=example,dc=test
+objectClass: top
+objectClass: groupOfNames
+cn: Finance
+member: uid=bokafor,ou=People,dc=example,dc=test
+member: uid=glindqvist,ou=People,dc=example,dc=test
+member: uid=lkowalski,ou=People,dc=example,dc=test
+
+dn: cn=Operations,ou=Groups,dc=example,dc=test
+objectClass: top
+objectClass: groupOfNames
+cn: Operations
+member: uid=cbianchi,ou=People,dc=example,dc=test
+member: uid=htanaka,ou=People,dc=example,dc=test
+member: uid=mortega,ou=People,dc=example,dc=test
+
+dn: cn=People,ou=Groups,dc=example,dc=test
+objectClass: top
+objectClass: groupOfNames
+cn: People
+member: uid=dvolkov,ou=People,dc=example,dc=test
+member: uid=iduarte,ou=People,dc=example,dc=test
+member: uid=nrahman,ou=People,dc=example,dc=test
+
+dn: cn=Security,ou=Groups,dc=example,dc=test
+objectClass: top
+objectClass: groupOfNames
+cn: Security
+member: uid=esantos,ou=People,dc=example,dc=test
+member: uid=jweber,ou=People,dc=example,dc=test
+member: uid=onilsen,ou=People,dc=example,dc=test
