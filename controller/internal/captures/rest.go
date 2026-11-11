@@ -85,11 +85,15 @@ func (a *API) StopCapture(w http.ResponseWriter, r *http.Request, id api.Id, cap
 }
 
 // DownloadCapture answers GET /v1/runs/{id}/captures/{capture_id} with the
-// pcapng file of the capture. A capture that still runs ends first. The
+// pcapng file of the capture. A capture that still runs ends first, but only
+// for a caller with scope run: the route needs only scope read, and a reader
+// must not end a capture that an operator runs (issue #452), so a read-scoped
+// caller gets 409 until the capture stops or its run ends. The
 // headers X-FPS-Capture-Agents and X-FPS-Capture-Missing name the agents whose
 // files the body holds and the agents whose files are missing.
 func (a *API) DownloadCapture(w http.ResponseWriter, r *http.Request, id api.Id, captureID string) {
-	d, err := a.svc.Prepare(r.Context(), id, captureID)
+	scope, _ := api.ScopeFromContext(r.Context())
+	d, err := a.svc.Prepare(r.Context(), id, captureID, scope.Allows(api.ScopeRun))
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -188,7 +192,7 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, ErrInvalidRequest):
 		status = http.StatusUnprocessableEntity
-	case errors.Is(err, ErrRunNotRunning), errors.Is(err, ErrStartFailed), errors.Is(err, ErrStopIncomplete),
+	case errors.Is(err, ErrRunNotRunning), errors.Is(err, ErrStartFailed), errors.Is(err, ErrStopIncomplete), errors.Is(err, ErrCaptureRunning),
 		errors.Is(err, agents.ErrAgentOffline), errors.Is(err, agents.ErrSessionLost):
 		status = http.StatusConflict
 	case errors.Is(err, agents.ErrCaptureUnsupported):
