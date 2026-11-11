@@ -1,0 +1,74 @@
+scenario: keepalive
+description: A long lived idle connection. The client connects with a keep alive of vars.keepalive seconds and then sends nothing but PINGREQ, one for each keep alive interval, and the broker answers each with PINGRESP. The client paces the pings with mqtt.pace on an absolute schedule, so a late wake does not stretch the interval and the pings keep their keepalive second spacing for as long as the session lasts, which is vars.pings times vars.keepalive seconds plus the handshake. After the last ping the client publishes one QoS 0 message and ends with DISCONNECT. vars.version 4 runs MQTT 3.1.1 and 5 runs MQTT 5.0. Both sides read each packet with one expect of one byte and six expects of mqtt.feed(last) bytes, and mqtt.recv checks the packet against the standard.
+vars:
+  server_port: 1883
+  version: 4
+  keepalive: 60
+  session_expiry: -1
+  client_prefix: mqttjs_
+  user: sensor-0412
+  password: Tst-amber-falcon-27
+  topic: fps/site-3/sensors/telemetry
+  pings: 3
+flows:
+  - id: session
+    module: mqtt
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ mqtt.connect(mqtt.client_id(vars.client_prefix), version=vars.version, keepalive=vars.keepalive, user=vars.user, password=vars.password, session_expiry=vars.session_expiry) }}"
+      - expect: { bytes: 1, timeout_ms: 10000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ mqtt.recv('connack') }}" }
+      - loop:
+          count: "{{ vars.pings }}"
+          do:
+            - delay: { ms: "{{ mqtt.pace(vars.keepalive) }}" }
+            - send: "{{ mqtt.pingreq() }}"
+            - expect: { bytes: 1, timeout_ms: 10000 }
+            - loop:
+                count: 6
+                do:
+                  - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+            - set: { got: "{{ mqtt.recv('pingresp') }}" }
+      - delay: { ms: "{{ rand_int(200, 900) }}" }
+      - send: "{{ mqtt.publish(vars.topic, mqtt.reading(), qos=0) }}"
+      - delay: { ms: "{{ rand_int(200, 900) }}" }
+      - send: "{{ mqtt.disconnect() }}"
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { bytes: 1, timeout_ms: 10000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ mqtt.recv('connect') }}" }
+      - delay: { ms: "{{ rand_int(2, 12) }}" }
+      - send: "{{ mqtt.connack() }}"
+      - loop:
+          count: "{{ vars.pings }}"
+          do:
+            - expect: { bytes: 1, timeout_ms: 3600000 }
+            - loop:
+                count: 6
+                do:
+                  - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+            - set: { got: "{{ mqtt.recv('pingreq') }}" }
+            - delay: { ms: "{{ rand_int(1, 6) }}" }
+            - send: "{{ mqtt.pingresp() }}"
+      - expect: { bytes: 1, timeout_ms: 3600000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ mqtt.recv('publish:0') }}" }
+      - expect: { bytes: 1, timeout_ms: 3600000 }
+      - loop:
+          count: 6
+          do:
+            - expect: { bytes: "{{ mqtt.feed(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ mqtt.recv('disconnect') }}" }
+      - close: fin

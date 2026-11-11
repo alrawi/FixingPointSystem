@@ -1,0 +1,20 @@
+{
+  "ladder": "160000@426x240,320000@640x360,640000@960x540",
+  "segment_ms": 400,
+  "ports": {
+    "vod_ladder": 8090,
+    "vod_segments": 8091,
+    "segments": 8092,
+    "live_refresh": 8093
+  },
+  "sessions": {
+    "vod_ladder": 3,
+    "vod_segments": 1,
+    "live_refresh": 3
+  },
+  "vars": {
+    "vod_ladder": {"stages": 3, "stage_segments": 3, "segments": 9},
+    "vod_segments": {"stages": 3, "stage_segments": 11, "segments": 33},
+    "live_refresh": {"cycles": 8, "window": 3, "rung": 1}
+  }
+}

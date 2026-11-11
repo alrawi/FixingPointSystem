@@ -1,0 +1,71 @@
+scenario: vod_segments
+description: A video on demand playback in which every segment has a connection of its own. The player fetches the master playlist and the media playlist of each stage on one keepalive connection to the playlist port, and it fetches each segment on a new connection to the segment port with Connection close, as an HTTP/1.1 player behind a load balancer that closes idle connections does. The playlist flow spawns the segment flow, one spawn per segment, on an absolute schedule at the segment duration, so the starts of the segment connections follow the segment cadence. The server side spawns the same flow at the same instants. A flow has no arithmetic, so segments must equal stages times stage_segments.
+vars:
+  host: video.example.test
+  server_port: 8091
+  segment_port: 8092
+  ladder: 800000@640x360,1600000@960x540,3000000@1280x720
+  segment_ms: 6000
+  segments: 12
+  stages: 3
+  stage_segments: 4
+flows:
+  - id: playlists
+    module: hls
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ http1.request('GET', '/master.m3u8', vars.host, accept='application/vnd.apple.mpegurl', user_agent='AppleCoreMedia/1.0.0.22G90 (Macintosh; U; Intel Mac OS X 13_5; en_us)') }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - set: { length: "{{ hls.content_length(last) }}" }
+      - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+      - set: { master: "{{ last }}", plan: "ramp:{{ vars.stage_segments }}" }
+      - loop:
+          count: "{{ vars.stages }}"
+          do:
+            - set: { at: "{{ hls.next(0) }}" }
+            - set: { rung: "{{ hls.rendition(vars.ladder, vars.plan, vars.at) }}" }
+            - set: { media_path: "{{ hls.resolve('/master.m3u8', hls.playlist_uri(vars.master, vars.rung)) }}" }
+            - send: "{{ http1.request('GET', vars.media_path, vars.host, accept='application/vnd.apple.mpegurl', user_agent='AppleCoreMedia/1.0.0.22G90 (Macintosh; U; Intel Mac OS X 13_5; en_us)') }}"
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+            - set: { length: "{{ hls.content_length(last) }}" }
+            - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+            - set: { media: "{{ last }}" }
+            - loop:
+                count: "{{ vars.stage_segments }}"
+                do:
+                  - delay: { ms: "{{ hls.pace(vars.segment_ms) }}" }
+                  - set: { n: "{{ hls.next() }}" }
+                  - set: { segment: "{{ hls.resolve(vars.media_path, hls.playlist_uri(vars.media, vars.n)) }}" }
+                  - spawn: { flow: segment }
+      - delay: { dist: exponential, mean_ms: 200 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "{{ http1.response(200, body=hls.master(vars.ladder), content_type='application/vnd.apple.mpegurl', server='fps-origin/0.1') }}"
+      - loop:
+          count: "{{ vars.stages }}"
+          do:
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 600000 }
+            - send: "{{ http1.response(200, body=hls.media(vars.segments, vars.segment_ms), content_type='application/vnd.apple.mpegurl', server='fps-origin/0.1') }}"
+            - loop:
+                count: "{{ vars.stage_segments }}"
+                do:
+                  - delay: { ms: "{{ hls.pace(vars.segment_ms) }}" }
+                  - spawn: { flow: segment }
+      - close: fin
+  - id: segment
+    module: hls
+    spawned: true
+    client:
+      - connect: { port: "{{ vars.segment_port }}" }
+      - send: "{{ http1.request('GET', vars.segment, vars.host, connection='close', user_agent='AppleCoreMedia/1.0.0.22G90 (Macintosh; U; Intel Mac OS X 13_5; en_us)') }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - set: { segment_length: "{{ hls.content_length(last) }}" }
+      - expect: { bytes: "{{ vars.segment_length }}", timeout_ms: 30000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.segment_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 30000 }
+      - send: "{{ http1.response(200, body=hls.segment(last, vars.ladder, vars.segment_ms), content_type='video/mp2t', connection='close', server='fps-origin/0.1') }}"
+      - close: fin

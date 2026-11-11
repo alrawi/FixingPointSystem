@@ -1,0 +1,9 @@
+## [2026-11-11] ingest | UI-09 Reservation holders in the agents view
+
+The agents view at `/agents` has a column Held by. It shows `operator`, a link `Run <id>` to `/runs/<id>` for a run, `none`, or `not reported` for a `reserved` agent from a controller older than 0.10.0. The holder shows in every state, because `reserved_by` stays while `busy` or `offline` take precedence in the state. An agent that a run holds shows `Held by a run` and no Release button, because the controller ends any reservation on release and would take the agent from the run. A 409 from `reserveAgent` reads `Agent <id> was not reserved because of a conflict.` followed by the `detail` of the problem (another holder, offline, or busy with a plan), and the list refreshes to the new state and holder. The mock sets and clears `reserved_by` and answers the documented 409 cases in the controller's order; `mock/agents.test.ts` validates the agents and all five conflict cases with Ajv against OpenAPI 0.10.0. `ui/src/pages/Agents.test.tsx` has component tests with literal holders (the operator and runs) and conflicts, and axe scans. No dependency changed, and `schema.d.ts` was already current (`npm run check:api` passes). The section Reservation holders of [Web UI](Web-UI.md) has the details.
+
+### Shared page notes
+
+- [Web UI](Web-UI.md): it is the component page of this package and already holds the new section.
+- Contract: `releaseAgent` takes no holder and ends a reservation of a run. A later revision could refuse a release of an agent that a run holds, or the UI could offer it after a confirmation. `reserveAgent` names no stable machine readable reason for a 409, so the view shows the `detail` text and does not branch on it.
+- [Testing](Testing.md), [Home](Home.md), and [Implementation Plan](Implementation-Plan.md): none.

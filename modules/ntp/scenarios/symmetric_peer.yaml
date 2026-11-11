@@ -1,0 +1,26 @@
+scenario: symmetric_peer
+description: Two time servers that peer with each other. The active side sends two mode 1 packets poll_interval_ms apart, each with its stratum 3, root error, reference identifier, and the time of its last clock update, and the passive side answers each in mode 2 as a stratum 2 server.
+vars:
+  server_port: 123
+  poll_interval_ms: 64000
+flows:
+  - id: peer
+    module: ntp
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ ntp.query(now_ms=now('epoch_ms'), mode=1, stratum=3, reference='198.51.100.4') }}"
+      - expect: { bytes: 48, max_datagram: 48, timeout_ms: 2000 }
+      - delay: { ms: "{{ vars.poll_interval_ms }}" }
+      - send: "{{ ntp.query(now_ms=now('epoch_ms'), mode=1, stratum=3, reference='198.51.100.4') }}"
+      - expect: { bytes: 48, max_datagram: 48, timeout_ms: 2000 }
+      - set: { peer_mode: "{{ ntp.field(last, 'mode') }}" }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - loop:
+          count: 2
+          do:
+            - expect: { min_bytes: 48, max_datagram: 1024, timeout_ms: 600000 }
+            - send: "{{ ntp.reply(last, now_ms=now('epoch_ms')) }}"
+      - close: fin
