@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# TEMPORARY (AGT-15): runs the enrollment test 200 times in a row. The same
+# branch removes this file after the run is green.
+name: agt-15-loop
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/agt-15-loop.yml
+
+permissions:
+  contents: read
+
+jobs:
+  loop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the test binary
+        run: cargo test -p fps-agent --test mtls --no-run
+      - name: Run the enrollment test 200 times
+        working-directory: engine/fps-agent
+        run: |
+          bin=$(ls -t ../../target/debug/deps/mtls-* | grep -v '\.d$' | head -1)
+          for i in $(seq 200); do
+            "$bin" --exact an_agent_enrolls_with_a_token_registers_and_renews >/dev/null 2>"$RUNNER_TEMP/err" \
+              || { cat "$RUNNER_TEMP/err"; echo "failed on run $i"; exit 1; }
+          done
+          echo "passed 200 runs in a row"

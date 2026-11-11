@@ -12,7 +12,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Command;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -33,7 +33,7 @@ use rustls::server::WebPkiClientVerifier;
 use rustls::RootCertStore;
 use rustls_pki_types::PrivatePkcs8KeyDer;
 use sha2::{Digest, Sha256};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Notify};
 use tokio_stream::wrappers::TcpListenerStream;
 use tokio_stream::Stream;
 use tonic::transport::{Certificate as TonicCert, Identity as TonicIdentity, ServerTlsConfig};
@@ -157,6 +157,30 @@ struct EnrollState {
     names: Mutex<Vec<String>>,
     /// How long after an enrollment `renew_at` lies, in milliseconds.
     renew_after_ms: Mutex<u64>,
+    /// While true, a `/renew` request waits before the endpoint counts or
+    /// answers it. A test sets it to read the state of the enrollment without
+    /// racing the renewal, which the agent starts on its own clock.
+    renew_held: AtomicBool,
+    /// Wakes the held `/renew` request when `renew_held` clears.
+    renew_released: Notify,
+}
+
+impl EnrollState {
+    /// Holds every `/renew` request until [`EnrollState::release_renewals`].
+    fn hold_renewals(&self) {
+        self.renew_held.store(true, Ordering::SeqCst);
+    }
+
+    fn release_renewals(&self) {
+        self.renew_held.store(false, Ordering::SeqCst);
+        self.renew_released.notify_one();
+    }
+
+    async fn renewal_may_proceed(&self) {
+        while self.renew_held.load(Ordering::SeqCst) {
+            self.renew_released.notified().await;
+        }
+    }
 }
 
 struct Enroller {
@@ -269,6 +293,7 @@ async fn handle(
             st.enrolls.fetch_add(1, Ordering::SeqCst);
         }
         "/renew" => {
+            st.renewal_may_proceed().await;
             if !has_cert {
                 return denied();
             }
@@ -279,11 +304,14 @@ async fn handle(
     let (cn, cert_pem) = issuer.issue(json["csr_pem"].as_str().expect("csr_pem"));
     st.names.lock().expect("names").push(cn.clone());
     let now = SystemTime::now();
-    let renew_in = Duration::from_millis(*st.renew_after_ms.lock().expect("renew_after"));
-    // A renewal pushes `renew_at` far out, so the test sees one renewal.
-    if path == "/renew" {
-        *st.renew_after_ms.lock().expect("renew_after") = 3_600_000;
-    }
+    // The answer to a renewal pushes `renew_at` far out, so the agent renews
+    // once. Resetting the delay after reading it would let the answer to the
+    // first renewal carry the short delay, and the agent would renew twice.
+    let renew_in = if path == "/renew" {
+        Duration::from_millis(3_600_000)
+    } else {
+        Duration::from_millis(*st.renew_after_ms.lock().expect("renew_after"))
+    };
     let answer = serde_json::json!({
         "agent_id": cn,
         "certificate_pem": cert_pem,
@@ -528,7 +556,12 @@ fn permanent(result: Result<(), SessionError>) -> String {
 async fn an_agent_enrolls_with_a_token_registers_and_renews() {
     let pki = Arc::new(Pki::new("test ca"));
     let enroll = enroller(&pki, Arc::clone(&pki), &["good.token"]).await;
-    *enroll.state.renew_after_ms.lock().expect("lock") = 1500;
+    // The agent renews on its own clock, so the endpoint holds the renewal
+    // until the test has read the state of the enrollment. A fixed delay
+    // would let a slow start overtake the assertions below, and the renewal
+    // would add a second name and replace the certificate under them.
+    *enroll.state.renew_after_ms.lock().expect("lock") = 100;
+    enroll.state.hold_renewals();
     let (addr, ctl) = controller(&pki.server(), &pki, false).await;
     let dir = TestDir::new("enroll");
     write(&dir.path("ca.crt"), &pki.pem());
@@ -554,6 +587,7 @@ async fn an_agent_enrolls_with_a_token_registers_and_renews() {
     assert_eq!(mode, 0o600);
     let first = std::fs::read_to_string(dir.path("pki/agent.crt")).expect("cert");
 
+    enroll.state.release_renewals();
     wait_for("the renewal at renew_at", || {
         enroll.state.renews.load(Ordering::SeqCst) == 1
     })
