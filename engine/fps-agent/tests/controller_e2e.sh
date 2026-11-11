@@ -73,6 +73,17 @@
 # succeeded sessions, not the classification. Both sizes are small multiples of
 # the 64 KiB read size, so a whole session finishes within the run.
 #
+# A ninth test (AGT-20) runs sip_rtp/call_pcmu of the first party sip_rtp module,
+# a SIP dialog over UDP that spawns an RTP media flow, so the agent runs it as
+# a scenario instance with two UDP flows. Every call gives two succeeded
+# sessions of the application sip_rtp. The SIP port (18689) and the RTP range
+# (28000 to 28998) lie above 1023 because the script runs without root. The run
+# parameters shorten the ring time and the talk time, so whole calls finish
+# within the three seconds of a run. A capture of the port server0 on a second
+# run must hold RTP packets: UDP packets with version 2, payload type 0 (PCMU),
+# and 160 bytes of payload after the 12 byte header, found by a reader in this
+# script that does not use the code of the agent.
+#
 # The tail of the script checks the handshake failures. An agent that trusts
 # another CA ends with exit code 2 and a TLS error before it spends its
 # token. After `fps-controller revoke`, the running agent ends with exit code
@@ -216,6 +227,9 @@ rm -r "$modules/smb2/native"
 # fixtures/ssh.pcapng, so the fixtures stay.
 cp -r "$here/../../../modules/ssh" "$modules/ssh"
 rm -r "$modules/ssh/native" "$modules/ssh/tests"
+# sip_rtp is the first party module of AGT-20. It keeps its fixtures too.
+cp -r "$here/../../../modules/sip_rtp" "$modules/sip_rtp"
+rm -r "$modules/sip_rtp/native"
 cat >"$modules/dns/zones/e2e.test.zone" <<'EOF'
 $ORIGIN e2e.test.
 $TTL 60
@@ -239,7 +253,7 @@ done
 [[ $(stat -c %a "$work/agent-pki/agent.key") == 600 ]] || fail "the agent key is not mode 0600"
 
 # content goes before smtp, which requires it.
-for name in http1 dns content smtp ftp ssh smb2; do
+for name in http1 dns content smtp ftp ssh smb2 sip_rtp; do
   (cd "$modules/$name" && tar -czf "$work/$name.tar.gz" -- *)
   call POST /v1/modules "$admin" -H 'Content-Type: application/gzip' --data-binary "@$work/$name.tar.gz" >/dev/null
 done
@@ -559,6 +573,51 @@ smb2_upload_succeeded=$(succeeded_of smb2)
 [[ $smb2_upload_succeeded -gt 0 ]] || fail "the smb2 upload run $run counted no succeeded sessions: $metrics"
 echo "controller_e2e: run $run ran smb2/upload with $smb2_upload_succeeded succeeded sessions, verdict passed"
 
+# The sip_rtp calls of AGT-20. sip_test prints a test configuration for
+# sip_rtp/call_pcmu with the SIP port 18689. The call is a UDP signaling flow
+# and a spawned UDP media flow, so each call gives two sessions. The criteria
+# bound the failed ratio, which allows for the calls that the stop of the run
+# cuts, and the script checks the succeeded sessions of the sip_rtp
+# application afterwards.
+sip_test() {
+  cat <<EOF
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: sip_rtp_call_pcmu
+  description: SIP calls with RTP media of the first party sip_rtp module.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/$iface }
+    - { name: server0, location: local/$iface }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 127.105.0.0/24, count: 16 }
+    - { name: servers, port: server0, role: server, ipv4: 127.106.0.0/24, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - scenario: sip_rtp/call_pcmu
+      weight: 1
+      params: { sip_port: 18689, server_ip: 127.106.0.1, client_ip: 127.105.0.1, rtp_port_min: 28000, rtp_port_max: 28998, ring_ms: 300, talk_ms: 600 }
+load:
+  objective: { type: sessions_per_second, value: 5 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: 31 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "<=", value: 0.5 }
+  - { metric: sessions.succeeded, op: ">", value: 3 }
+EOF
+}
+
+sip_test >"$work/sip_rtp.yaml"
+run_test "$work/sip_rtp.yaml"
+[[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the sip_rtp run $run did not pass: $summary"
+sip_succeeded=$(succeeded_of sip_rtp)
+[[ $sip_succeeded -ge 4 ]] || fail "the sip_rtp run $run counted $sip_succeeded succeeded sessions, want at least two whole calls of two sessions: $metrics"
+echo "controller_e2e: run $run ran sip_rtp/call_pcmu with $sip_succeeded succeeded sessions (SIP dialog and RTP media flow), verdict passed"
+
 # The https fetch of AGT-14. Both sides of every session upgrade to TLS at
 # once: the client with the browser profile chrome-136, the server with
 # server-tls13, whose certificate comes from the authority that the agent
@@ -744,6 +803,46 @@ take_capture dns_name server0 false 18681
   fail "the capture of the port server0 holds no dns packet: $report"
 end_run
 echo "controller_e2e: run $run captured $dns_packets dns packets of port 18681 through the REST API, and the digest, size, and packet count of Capture.files held"
+
+# rtp_count FILE prints the number of RTP packets of the pcapng FILE: UDP
+# packets whose payload has the version 2, the payload type 0 (PCMU), and 160
+# bytes after the 12 byte header, which is what call_pcmu sends every 20 ms.
+# take_capture has checked the block structure of the file by then.
+rtp_count() {
+  python3 -I - "$1" <<'EOF'
+import struct, sys
+
+data = open(sys.argv[1], "rb").read()
+at, n = 0, 0
+while at < len(data):
+    kind, length = struct.unpack_from("<II", data, at)
+    if kind == 6:
+        cap = struct.unpack_from("<I", data, at + 20)[0]
+        f = data[at + 28:at + 28 + cap]
+        if f[12:14] == b"\x08\x00" and f[23] == 17:
+            body = f[14 + (f[14] & 15) * 4 + 8:]
+            if len(body) == 172 and body[0] >> 6 == 2 and body[1] & 0x7F == 0:
+                n += 1
+    at += length
+print(n)
+EOF
+}
+
+# The sip_rtp capture of AGT-20. The name of the port of the servers records
+# the sessions of the pool, the SIP dialog on port 18689 and the RTP media flow
+# on the ports that the calls draw, so the file holds UDP only, SIP requests,
+# and RTP packets.
+begin_run "$work/sip_rtp.yaml"
+take_capture sip_rtp server0 false 18689
+sip_packets=$(json_field packets <<<"$report")
+[[ $sip_packets -gt 0 && $(json_field tcp <<<"$report") == 0 && $(json_field udp <<<"$report") == "$sip_packets" ]] ||
+  fail "the sip_rtp capture holds no packet or holds more than UDP: $report"
+[[ $(json_field on_port <<<"$report") -gt 0 ]] || fail "the sip_rtp capture holds no packet of the SIP port 18689: $report"
+[[ $(json_field on_port <<<"$report") -lt $sip_packets ]] || fail "the sip_rtp capture holds only packets of the SIP port, so the media flow is missing: $report"
+rtp_packets=$(rtp_count "$work/capture-sip_rtp.pcapng")
+[[ $rtp_packets -ge 20 ]] || fail "the sip_rtp capture holds $rtp_packets RTP packets of PCMU with 160 bytes, want at least 20 (one call): $report"
+end_run
+echo "controller_e2e: run $run captured $sip_packets sip_rtp packets, $rtp_packets of them RTP (PCMU, 160 byte payload)"
 
 # The https capture of AGT-12 and AGT-14: with export_tls_keys the file holds the
 # TLS key log as a decryption secrets block, and without it the file holds none.
