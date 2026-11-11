@@ -1,0 +1,29 @@
+scenario: iburst
+description: The initial burst of a daemon that has just started. The client sends 4 requests with the poll exponent 6, one after the previous answer plus a pause of burst_gap_ms, which is 2 seconds by default, and the server answers each as a stratum 2 server.
+vars:
+  server_port: 123
+  burst_gap_ms: 2000
+flows:
+  - id: burst
+    module: ntp
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - loop:
+          count: 3
+          do:
+            - send: "{{ ntp.query(now_ms=now('epoch_ms'), poll=6) }}"
+            - expect: { bytes: 48, max_datagram: 48, timeout_ms: 2000 }
+            - delay: { ms: "{{ vars.burst_gap_ms }}" }
+      - send: "{{ ntp.query(now_ms=now('epoch_ms'), poll=6) }}"
+      - expect: { bytes: 48, max_datagram: 48, timeout_ms: 2000 }
+      - set: { server_stratum: "{{ ntp.field(last, 'stratum') }}" }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - loop:
+          count: 4
+          do:
+            - expect: { min_bytes: 48, max_datagram: 1024, timeout_ms: 20000 }
+            - send: "{{ ntp.reply(last, now_ms=now('epoch_ms')) }}"
+      - close: fin

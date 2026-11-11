@@ -1,0 +1,30 @@
+scenario: poll_cycle
+description: A synchronized client that polls with a growing interval. It sends a request with the poll exponent 6, waits poll_interval_ms (64 seconds by default), sends another one with 6, waits poll_interval_long_ms (128 seconds), and sends a third with 7. The server stays a stratum 2 server and echoes each exponent, so the reply carries the interval that the client asked for.
+vars:
+  server_port: 123
+  poll_interval_ms: 64000
+  poll_interval_long_ms: 128000
+flows:
+  - id: poll
+    module: ntp
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ ntp.query(now_ms=now('epoch_ms'), poll=6) }}"
+      - expect: { bytes: 48, max_datagram: 48, timeout_ms: 2000 }
+      - delay: { ms: "{{ vars.poll_interval_ms }}" }
+      - send: "{{ ntp.query(now_ms=now('epoch_ms'), poll=6) }}"
+      - expect: { bytes: 48, max_datagram: 48, timeout_ms: 2000 }
+      - delay: { ms: "{{ vars.poll_interval_long_ms }}" }
+      - send: "{{ ntp.query(now_ms=now('epoch_ms'), poll=7) }}"
+      - expect: { bytes: 48, max_datagram: 48, timeout_ms: 2000 }
+      - set: { server_poll: "{{ ntp.field(last, 'poll') }}" }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - loop:
+          count: 3
+          do:
+            - expect: { min_bytes: 48, max_datagram: 1024, timeout_ms: 600000 }
+            - send: "{{ ntp.reply(last, now_ms=now('epoch_ms')) }}"
+      - close: fin
