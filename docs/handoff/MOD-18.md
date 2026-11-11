@@ -5,10 +5,10 @@
 | Issue | #185 |
 | Branch | `wp/MOD-18` |
 | Pull request | #448 |
-| Status | in progress |
-| Progress | 90% (5 of 6 plan steps) |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-4d2e91, lease until 2026-11-11T05:13:59Z |
-| Last verified commit | 42b2249 |
+| Last verified commit | aeb8c0a |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -23,7 +23,7 @@ Ship the `mqtt` module under `modules/mqtt/` with scenarios for connect, subscri
 - [x] 3. Scenarios and in memory interpreter tests with golden transcripts
 - [x] 4. `fixture_peer`, `capture.sh`, `expected.yaml`, the committed capture scored with nDPI and tshark
 - [x] 5. README, component page, log entry with shared page notes
-- [ ] 6. Checks, pull request, CI
+- [x] 6. Checks, pull request, CI
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ Ship the `mqtt` module under `modules/mqtt/` with scenarios for connect, subscri
 
 ## Remaining
 
-Step 6: open the pull request, wait for CI, fix failures inside the paths of the package, and request review.
+Nothing. The coordinator adds `mk/mod-mqtt.mk` and `mod-mqtt.yml` from the log entry and the agent registry line (AGT follow-up).
 
 ## Next action
 
-Push, open the pull request against main, and watch CI.
+Review and merge by the coordinator.
 
 ## Blockers and open questions
 
