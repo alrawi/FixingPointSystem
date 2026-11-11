@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #182 |
 | Branch | `wp/MOD-15` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (5 of 6 plan steps) |
+| Pull request | #455 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-fc5237, lease until 2026-11-11T05:13:47Z |
-| Last verified commit | none |
+| Last verified commit | 468eb46 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -23,7 +23,7 @@ Ship `hls` scenarios that fetch a master playlist, a media playlist, and then se
 - [x] 3. Write `fixture_peer`, `capture.sh`, and record and score the fixture in the QA-01 harness
 - [x] 4. Write the cadence and byte share check with its tests
 - [x] 5. Write the README, the log entry with the shared page notes, and the Modules page section
-- [ ] 6. Run the checks, open the PR, and wait for CI
+- [x] 6. Run the checks, open the PR, and wait for CI
 
 ## Done and verified
 
@@ -33,11 +33,11 @@ Steps 3 to 5: `fixture_peer`, `capture.sh`, `params.json`, `expected.yaml`, and 
 
 ## Remaining
 
-Step 6: open the PR, wait for CI, request review.
+Nothing. PR #455 is open and CI is green on 468eb46.
 
 ## Next action
 
-Push, open the PR, poll CI.
+Review PR #455.
 
 ## Blockers and open questions
 
