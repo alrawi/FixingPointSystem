@@ -282,6 +282,7 @@ export interface paths {
             };
             cookie?: never;
         };
+        /** @description Returns the pcapng file of the capture. A capture that still runs must end before its files can be served. A caller with scope run ends it first, as stopCapture does. A caller with scope read only may not end a capture that an operator runs, so the request answers 409 and no agent receives a command; the caller retries once the capture stopped or its run ended. A capture of a run that ended cannot go on, so it is finished and served for any caller. */
         get: operations["downloadCapture"];
         put?: never;
         post?: never;
@@ -303,7 +304,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Ends the capture on every agent without downloading it. The capture then has the state completed (or failed when no agent delivered an end), and its files are ready for downloadCapture. The operation is idempotent: a capture that already ended answers with its current state. Downloading a capture that still runs also ends it. */
+        /** @description Ends the capture on every agent without downloading it. The capture then has the state completed (or failed when no agent delivered an end), and its files are ready for downloadCapture. The operation is idempotent: a capture that already ended answers with its current state. Downloading a capture that still runs also ends it when the caller has scope run (see downloadCapture). */
         post: operations["stopCapture"];
         delete?: never;
         options?: never;
@@ -3134,6 +3135,15 @@ export interface operations {
                 };
                 content: {
                     "application/vnd.tcpdump.pcap": string;
+                };
+            };
+            /** @description The capture still runs, its run has not ended, and the caller lacks scope run, which ending the capture needs. The capture keeps running. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             default: components["responses"]["Problem"];

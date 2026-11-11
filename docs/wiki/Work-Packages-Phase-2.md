@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 142 work packages. Packages marked critical path gate the phase.
+This page lists 143 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -147,6 +147,7 @@ flowchart LR
   CON_24["CON-24<br/>Capture drop counts in the agent protocol and the REST API"]
   AGT_21["AGT-21<br/>NTP, MQTT, LDAP, and HLS in the agent"]
   CON_25["CON-25<br/>The messages check in the metric catalog"]
+  CON_26["CON-26<br/>A read-scoped capture download answers 409 for a running capture"]
   CTL_42["CTL-42<br/>The CON-23 mapping table in the controller"]
   QA_10["QA-10<br/>Gate 1 without its own reuse rule"]
   CTL_43["CTL-43<br/>Renewal cannot outlive a revocation"]
@@ -326,6 +327,7 @@ flowchart LR
   MOD_18 --> AGT_21
   CON_23 --> CON_25
   RLM_17 --> CON_25
+  CTL_44 --> CON_26
   CON_23 --> CTL_42
   CTL_41 --> CTL_42
   RLM_17 --> CTL_42
@@ -475,6 +477,7 @@ flowchart LR
 | [CON-24](#con-24-capture-drop-counts-in-the-agent-protocol-and-the-rest-api) | Capture drop counts in the agent protocol and the REST API | S | ENG-27 |  |
 | [AGT-21](#agt-21-ntp-mqtt-ldap-and-hls-in-the-agent) | NTP, MQTT, LDAP, and HLS in the agent | S | MOD-15, MOD-16, MOD-17, MOD-18 |  |
 | [CON-25](#con-25-the-messages-check-in-the-metric-catalog) | The messages check in the metric catalog | S | CON-23, RLM-17 |  |
+| [CON-26](#con-26-a-read-scoped-capture-download-answers-409-for-a-running-capture) | A read-scoped capture download answers 409 for a running capture | S | CTL-44 |  |
 | [CTL-42](#ctl-42-the-con-23-mapping-table-in-the-controller) | The CON-23 mapping table in the controller | S | CON-23, CTL-41, RLM-17 |  |
 | [QA-10](#qa-10-gate-1-without-its-own-reuse-rule) | Gate 1 without its own reuse rule | S | QA-09, RLM-17 |  |
 | [CTL-43](#ctl-43-renewal-cannot-outlive-a-revocation) | Renewal cannot outlive a revocation | S | none |  |
@@ -781,6 +784,23 @@ Deliverables.
 Acceptance.
 
 - [ ] validate.py passes, and the change entry lists the consumers (realism runner, fps-stats tables, controller catalog copy).
+
+### CON-26 A read-scoped capture download answers 409 for a running capture
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CTL-44
+- **Paths.** `contracts/openapi/`
+
+CTL-44 stopped a read-scoped download from ending a running capture (issue #452) and answers 409 instead. The contract still said a download ends a running capture, and listed no 409. The owner approved the change on 2026-11-11.
+
+Deliverables.
+
+- downloadCapture documents the scope rule and a 409 problem response, stopCapture's text names the rule, OpenAPI 0.12.0, and contracts/changes/CON-26.md.
+
+Acceptance.
+
+- [ ] validate.py passes, openapi-breaking finds no breaking change, and the controller, UI and SDK clients are regenerated.
 
 ## OPS Repository and swarm tooling
 

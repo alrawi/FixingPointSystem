@@ -6,7 +6,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 
 | File | Contract |
 |---|---|
-| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.11.0 |
+| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.12.0 |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.4, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.4 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
@@ -304,3 +304,7 @@ CON-24 moves the controller API from 0.10.0 to 0.11.0 and the agent protocol fro
 | `CaptureFile.dropped_overflow`, `dropped_oversize`, `cut_at_stop` | Optional integers with the same meaning. Absent until the agent reported the end, and absent for an agent of 0.2.3 or earlier |
 
 A capture that stops at rest reports `cut_at_stop` 0, so an operator reads a nonzero `dropped_overflow` as a capture that could not keep up and `cut_at_stop` as the effect of stopping during traffic. The agent fills the fields from the counters of `fps-capture` (ENG-27), the controller passes them through, and the Go code, the Python SDK, and the UI schema follow the contract.
+
+### CON-26: a read-scoped capture download
+
+CON-26 moves the controller API from 0.11.0 to 0.12.0. The owner approved it on 2026-11-11. `downloadCapture` needs only scope read, but it used to end a capture that still ran, which `stopCapture` guards with scope run (issue #452, fixed in CTL-44). The operation now documents the rule and a 409 response. A caller with scope run still ends the capture and gets the file. A caller with scope read gets 409 while the capture runs and its run has not ended, and no agent receives a command. A capture of an ended run is served to any caller. The entry `contracts/changes/CON-26.md` records the reasons, the compatibility, and the consumers.
