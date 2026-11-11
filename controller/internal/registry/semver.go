@@ -2,10 +2,7 @@
 
 package registry
 
-import (
-	"strconv"
-	"strings"
-)
+import "strings"
 
 // compareVersions orders two semantic versions by the precedence rules of
 // semver 2.0.0. Build metadata does not affect precedence, so ties break on the
@@ -39,15 +36,17 @@ func comparePrecedence(a, b string) int {
 	}
 	ap, bp := strings.Split(apre, "."), strings.Split(bpre, ".")
 	for i := 0; i < len(ap) && i < len(bp); i++ {
-		an, aerr := strconv.ParseUint(ap[i], 10, 64)
-		bn, berr := strconv.ParseUint(bp[i], 10, 64)
+		an, bn := isNumeric(ap[i]), isNumeric(bp[i])
 		var c int
 		switch {
-		case aerr == nil && berr == nil:
-			c = cmpUint(an, bn)
-		case aerr == nil:
+		case an && bn:
+			// Numeric identifiers have no leading zeros and no upper bound, so
+			// compare them as decimal strings rather than parse them into a
+			// uint64 that the larger ones overflow (issue #453).
+			c = compareNumeric(ap[i], bp[i])
+		case an:
 			c = -1
-		case berr == nil:
+		case bn:
 			c = 1
 		default:
 			c = strings.Compare(ap[i], bp[i])
@@ -71,12 +70,16 @@ func compareNumeric(a, b string) int {
 	return strings.Compare(a, b)
 }
 
-func cmpUint(a, b uint64) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
+// isNumeric reports whether a prerelease identifier consists of digits only,
+// which semver 2.0.0 compares numerically whatever its length.
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
 	}
-	return 0
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
