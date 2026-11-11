@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 143 work packages. Packages marked critical path gate the phase.
+This page lists 147 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -127,6 +127,7 @@ flowchart LR
   RLM_13["RLM-13<br/>Mix accuracy from the classifier as metric series"]
   CAP_05["CAP-05<br/>Provenance fields from the scrub record"]
   MOD_22["MOD-22<br/>Shared decrypted check in the module capture scripts"]
+  MOD_23["MOD-23<br/>The http2 module capture that missed one TLS session"]
   TRN_16["TRN-16<br/>Per profile captures scored with the transport check"]
   CON_22["CON-22<br/>Realism report delivery and reservation conflicts in the REST API"]
   UI_08["UI-08<br/>Scenario table, criterion filters, and realism results in the report views"]
@@ -138,6 +139,7 @@ flowchart LR
   ENG_26["ENG-26<br/>Datagram flows in multi flow instances and data ports without repeats"]
   AGT_20["AGT-20<br/>SIP with RTP in the agent"]
   ENG_27["ENG-27<br/>Dropped counts of a capture"]
+  ENG_28["ENG-28<br/>The runtime instance test flakes of batch 29"]
   RLM_15["RLM-15<br/>Packet inter arrival times inside a session"]
   RLM_16["RLM-16<br/>Deliver the realism report to the controller"]
   UI_09["UI-09<br/>Reservation holders in the agents view"]
@@ -148,12 +150,14 @@ flowchart LR
   AGT_21["AGT-21<br/>NTP, MQTT, LDAP, and HLS in the agent"]
   CON_25["CON-25<br/>The messages check in the metric catalog"]
   CON_26["CON-26<br/>A read-scoped capture download answers 409 for a running capture"]
+  CON_27["CON-27<br/>The host identity check in the metric catalog"]
   CTL_42["CTL-42<br/>The CON-23 mapping table in the controller"]
   QA_10["QA-10<br/>Gate 1 without its own reuse rule"]
   CTL_43["CTL-43<br/>Renewal cannot outlive a revocation"]
   CAP_06["CAP-06<br/>JSON credentials scrubbed whatever their spelling"]
   CTL_44["CTL-44<br/>A read-scoped download does not stop a capture"]
   CTL_45["CTL-45<br/>Numeric prerelease identifiers of any length"]
+  CTL_46["CTL-46<br/>One property wording for realism metrics"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -328,11 +332,14 @@ flowchart LR
   CON_23 --> CON_25
   RLM_17 --> CON_25
   CTL_44 --> CON_26
+  CON_25 --> CON_27
+  RLM_10 --> CON_27
   CON_23 --> CTL_42
   CTL_41 --> CTL_42
   RLM_17 --> CTL_42
   QA_09 --> QA_10
   RLM_17 --> QA_10
+  CTL_42 --> CTL_46
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -457,6 +464,7 @@ flowchart LR
 | [RLM-13](#rlm-13-mix-accuracy-from-the-classifier-as-metric-series) | Mix accuracy from the classifier as metric series | S | CON-20, RLM-07 |  |
 | [CAP-05](#cap-05-provenance-fields-from-the-scrub-record) | Provenance fields from the scrub record | S | CON-20, CAP-04 |  |
 | [MOD-22](#mod-22-shared-decrypted-check-in-the-module-capture-scripts) | Shared decrypted check in the module capture scripts | S | RLM-12, MOD-06 |  |
+| [MOD-23](#mod-23-the-http2-module-capture-that-missed-one-tls-session) | The http2 module capture that missed one TLS session | S | none |  |
 | [TRN-16](#trn-16-per-profile-captures-scored-with-the-transport-check) | Per profile captures scored with the transport check | S | RLM-09, TRN-03 |  |
 | [CON-22](#con-22-realism-report-delivery-and-reservation-conflicts-in-the-rest-api) | Realism report delivery and reservation conflicts in the REST API | S | CON-21 |  |
 | [UI-08](#ui-08-scenario-table-criterion-filters-and-realism-results-in-the-report-views) | Scenario table, criterion filters, and realism results in the report views | S | CTL-39, UI-05 |  |
@@ -468,6 +476,7 @@ flowchart LR
 | [ENG-26](#eng-26-datagram-flows-in-multi-flow-instances-and-data-ports-without-repeats) | Datagram flows in multi flow instances and data ports without repeats | M | AGT-16, MOD-14 |  |
 | [AGT-20](#agt-20-sip-with-rtp-in-the-agent) | SIP with RTP in the agent | S | ENG-26, MOD-14 |  |
 | [ENG-27](#eng-27-dropped-counts-of-a-capture) | Dropped counts of a capture | S | AGT-18 |  |
+| [ENG-28](#eng-28-the-runtime-instance-test-flakes-of-batch-29) | The runtime instance test flakes of batch 29 | S | none |  |
 | [RLM-15](#rlm-15-packet-inter-arrival-times-inside-a-session) | Packet inter arrival times inside a session | S | RLM-06, MOD-14 |  |
 | [RLM-16](#rlm-16-deliver-the-realism-report-to-the-controller) | Deliver the realism report to the controller | S | CON-22 |  |
 | [UI-09](#ui-09-reservation-holders-in-the-agents-view) | Reservation holders in the agents view | S | CON-22, UI-06 |  |
@@ -478,12 +487,14 @@ flowchart LR
 | [AGT-21](#agt-21-ntp-mqtt-ldap-and-hls-in-the-agent) | NTP, MQTT, LDAP, and HLS in the agent | S | MOD-15, MOD-16, MOD-17, MOD-18 |  |
 | [CON-25](#con-25-the-messages-check-in-the-metric-catalog) | The messages check in the metric catalog | S | CON-23, RLM-17 |  |
 | [CON-26](#con-26-a-read-scoped-capture-download-answers-409-for-a-running-capture) | A read-scoped capture download answers 409 for a running capture | S | CTL-44 |  |
+| [CON-27](#con-27-the-host-identity-check-in-the-metric-catalog) | The host identity check in the metric catalog | S | CON-25, RLM-10 |  |
 | [CTL-42](#ctl-42-the-con-23-mapping-table-in-the-controller) | The CON-23 mapping table in the controller | S | CON-23, CTL-41, RLM-17 |  |
 | [QA-10](#qa-10-gate-1-without-its-own-reuse-rule) | Gate 1 without its own reuse rule | S | QA-09, RLM-17 |  |
 | [CTL-43](#ctl-43-renewal-cannot-outlive-a-revocation) | Renewal cannot outlive a revocation | S | none |  |
 | [CAP-06](#cap-06-json-credentials-scrubbed-whatever-their-spelling) | JSON credentials scrubbed whatever their spelling | S | none |  |
 | [CTL-44](#ctl-44-a-read-scoped-download-does-not-stop-a-capture) | A read-scoped download does not stop a capture | S | none |  |
 | [CTL-45](#ctl-45-numeric-prerelease-identifiers-of-any-length) | Numeric prerelease identifiers of any length | S | none |  |
+| [CTL-46](#ctl-46-one-property-wording-for-realism-metrics) | One property wording for realism metrics | S | CTL-42 |  |
 
 ## CON Contracts
 
@@ -801,6 +812,23 @@ Deliverables.
 Acceptance.
 
 - [ ] validate.py passes, openapi-breaking finds no breaking change, and the controller, UI and SDK clients are regenerated.
+
+### CON-27 The host identity check in the metric catalog
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CON-25, RLM-10
+- **Paths.** `contracts/`
+
+RLM-10 added the host_identity check after CON-25, so the catalog label check has no value host_identity and its failures never reach RunReport.realism. It also leaves open whether realism.check_failures passes when a document holds two checks of one kind (CTL-42). Needs owner approval as a contract change.
+
+Deliverables.
+
+- The value host_identity for the label check (catalog 0.7.0), its realism.check_failures defined as failures_total, a passing and a failing case in contracts/examples/realism/check-metrics.yaml, and the rule for two checks of one kind.
+
+Acceptance.
+
+- [ ] validate.py passes, and the change entry lists the consumers (realism runner, fps-stats tables, controller catalog copy and its example count test).
 
 ## OPS Repository and swarm tooling
 
@@ -1155,6 +1183,23 @@ Deliverables.
 Acceptance.
 
 - [ ] Tests for an overflowing ring and for a stop during a run give the two counts with literal values.
+
+### ENG-28 The runtime instance test flakes of batch 29
+
+Phase 2 · size S · workstream ENG
+
+- **Depends on.** none
+- **Paths.** `engine/fps-runtime/`
+
+Two tests of engine/fps-runtime/tests/instances.rs failed once each in batch 29 on pull requests that did not touch the runtime: mixed_session_runs_with_one_data_connection_per_transfer (line 318) and concurrent_instances_that_draw_the_same_data_port_all_succeed (line 713). Both passed on rerun.
+
+Deliverables.
+
+- The cause of each failure and a fix in the test or the runtime, with a temporary CI loop that runs both tests 200 times.
+
+Acceptance.
+
+- [ ] 200 consecutive passes of both tests on the hosted runner, and cargo test -p fps-runtime passes.
 
 ## TRN Transport backends
 
@@ -2055,6 +2100,23 @@ Acceptance.
 
 - [ ] The issue's cases and identifiers on both sides of the uint64 limit sort as SemVer 2.0.0 says. Issue
 
+### CTL-46 One property wording for realism metrics
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CTL-42
+- **Paths.** `controller/internal/report/`
+
+The controller writes the property of a KS metric as "inter arrival of http1, KS statistic", while the CON-23 examples say "KS statistic of inter_arrival of http1" (CTL-42). The pairing ignores property, but the run report shows it to operators.
+
+Deliverables.
+
+- MapRealism writes property as the examples do, and the CON-23 example test compares property too.
+
+Acceptance.
+
+- [ ] go test ./internal/report passes in CI, and the HTML report test shows the new wording.
+
 ## CLI Python SDK and command line client
 
 ### CLI-01 Python SDK
@@ -2434,6 +2496,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The realism workflow passes for the four modules, and no module file names decrypted_check.py.
+
+### MOD-23 The http2 module capture that missed one TLS session
+
+Phase 2 · size S · workstream MOD
+
+- **Depends on.** none
+- **Paths.** `modules/http2/`
+
+In batch 29 the mod-http2 module job recorded 39 of 40 TLS sessions once (realism decrypted: the capture has 39 TLS sessions, expected 40) on a pull request that did not touch http2, and passed on rerun.
+
+Deliverables.
+
+- The cause of the missing session (capture start, a session still open at the stop, or the generator), and a fix.
+
+Acceptance.
+
+- [ ] Three consecutive mod-http2 module runs with 40 of 40 TLS sessions.
 
 ## RLM Realism validation
 
