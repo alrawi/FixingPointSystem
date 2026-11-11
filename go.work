@@ -4,7 +4,7 @@
 // module stands on its own, and a new module never needs a line here. Do not add
 // use lines in work packages; the coordinator refreshes this file between batches.
 
-go 1.24
+go 1.24.0
 
 use ./tests/golden/go
 use ./controller

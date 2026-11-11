@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 138 work packages. Packages marked critical path gate the phase.
+This page lists 142 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -149,6 +149,10 @@ flowchart LR
   CON_25["CON-25<br/>The messages check in the metric catalog"]
   CTL_42["CTL-42<br/>The CON-23 mapping table in the controller"]
   QA_10["QA-10<br/>Gate 1 without its own reuse rule"]
+  CTL_43["CTL-43<br/>Renewal cannot outlive a revocation"]
+  CAP_06["CAP-06<br/>JSON credentials scrubbed whatever their spelling"]
+  CTL_44["CTL-44<br/>A read-scoped download does not stop a capture"]
+  CTL_45["CTL-45<br/>Numeric prerelease identifiers of any length"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -473,6 +477,10 @@ flowchart LR
 | [CON-25](#con-25-the-messages-check-in-the-metric-catalog) | The messages check in the metric catalog | S | CON-23, RLM-17 |  |
 | [CTL-42](#ctl-42-the-con-23-mapping-table-in-the-controller) | The CON-23 mapping table in the controller | S | CON-23, CTL-41, RLM-17 |  |
 | [QA-10](#qa-10-gate-1-without-its-own-reuse-rule) | Gate 1 without its own reuse rule | S | QA-09, RLM-17 |  |
+| [CTL-43](#ctl-43-renewal-cannot-outlive-a-revocation) | Renewal cannot outlive a revocation | S | none |  |
+| [CAP-06](#cap-06-json-credentials-scrubbed-whatever-their-spelling) | JSON credentials scrubbed whatever their spelling | S | none |  |
+| [CTL-44](#ctl-44-a-read-scoped-download-does-not-stop-a-capture) | A read-scoped download does not stop a capture | S | none |  |
+| [CTL-45](#ctl-45-numeric-prerelease-identifiers-of-any-length) | Numeric prerelease identifiers of any length | S | none |  |
 
 ## CON Contracts
 
@@ -1976,6 +1984,57 @@ Acceptance.
 
 - [ ] Tests map every row of contracts/examples/realism/check-metrics.yaml to the literal target and passed it gives.
 
+### CTL-43 Renewal cannot outlive a revocation
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** none
+- **Paths.** `controller/internal/pki/`
+
+Security, High (issue #450, owner audit of 182821e). Renew in controller/internal/pki/enroll.go authorizes the presented certificate, releases the authority mutex, checks the CSR, and then takes the mutex again to issue. Revoke can delete the agent's certificates in that gap, and Renew never rechecks, so a holder of a valid agent certificate who races renewal with revocation keeps a newly valid certificate.
+
+Deliverables.
+
+- The CSR is checked outside the critical section, and the presented serial and identity are rechecked against the current revocation state under the same mutex immediately before issuance and persistence (a locked helper or an identity generation counter).
+
+Acceptance.
+
+- [ ] A controlled interleaving test (Authorize, Revoke, issue) fails on the old code and passes, Authorize refuses the replacement after Revoke, and the persisted state after a restart has no certificate for the revoked identity. Issue
+
+### CTL-44 A read-scoped download does not stop a capture
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** none
+- **Paths.** `controller/internal/captures/`
+
+Security, Medium (issue #452, owner audit of 182821e). GET capture download needs only read scope, but DownloadCapture calls Service.Prepare, which stops every agent's capture, so a read token can end another operator's active capture, while the explicit stop needs run scope.
+
+Deliverables.
+
+- Downloading an active capture no longer stops it. A read-scoped download of a capture that is still running answers 409 until an operator with run scope stops it, and the download of a stopped capture is unchanged. If the contract text of downloadCapture must change, the package says so for a CON follow-up and does not change contracts/.
+
+Acceptance.
+
+- [ ] Tests for read and run scope against an active and a stopped capture, asserting the exact number of StopCapture commands sent to the agents. Issue
+
+### CTL-45 Numeric prerelease identifiers of any length
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** none
+- **Paths.** `controller/internal/registry/`
+
+Bug, Low (issue #453, owner audit of 182821e). compareVersions in controller/internal/registry/semver.go parses numeric prerelease identifiers as uint64 and falls back to text order when both overflow, so module list order and pagination can break SemVer for large numeric prereleases.
+
+Deliverables.
+
+- Numeric prerelease identifiers compare with the arbitrary length decimal helper the file already has for core versions.
+
+Acceptance.
+
+- [ ] The issue's cases and identifiers on both sides of the uint64 limit sort as SemVer 2.0.0 says. Issue
+
 ## CLI Python SDK and command line client
 
 ### CLI-01 Python SDK
@@ -2667,6 +2726,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A test scrubs a committed fixture and the written provenance validates against module manifest schema v0.4 with literal values.
+
+### CAP-06 JSON credentials scrubbed whatever their spelling
+
+Phase 2 · size S · workstream CAP
+
+- **Depends on.** none
+- **Paths.** `capture/`
+
+Security, High (issue #451, owner audit of 182821e). capture/scrub.py finds JSON credential fields with a regular expression that needs the literal key and only spaces or tabs around the colon, so a line break at the colon or a Unicode escape in the key leaves the password in place while check_record accepts the scrub record.
+
+Deliverables.
+
+- Bounded JSON bodies are parsed and their decoded keys and values walked for sensitive fields, HTTP framing is kept or recomputed when a body is reserialized, an incomplete or unsupported body is handled explicitly, and the documentation keeps integrity verification apart from redaction assurance.
+
+Acceptance.
+
+- [ ] Tests with LF and CRLF around separators, escaped sensitive keys, nested arrays and objects, and secrets echoed elsewhere in the document leave no secret in any raw, decoded or base64 view of the output, and the issue's reproduction fails to find a password. Issue
 
 ## IMG Appliance image
 
