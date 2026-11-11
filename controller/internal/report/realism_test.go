@@ -69,15 +69,15 @@ func result(metric string, labels map[string]string, observed float32, property,
 // conformance ratios against the threshold 0.99, and the KS statistic and p
 // value of the three comparisons that the metric catalog labels, against the
 // alpha 0.05. The comparison over both directions has no metric. Each check
-// ends with its realism.check_failures series (CON-23), which takes the
-// generic rule until the controller implements the CON-23 table.
+// ends with its realism.check_failures series (CON-23), whose target is == 0
+// and whose outcome is that of the check.
 func fixtureResults() []api.RealismResult {
 	app := func(a, c string) map[string]string { return map[string]string{"application": a, "classifier": c} }
 	ks := func(p string) map[string]string { return map[string]string{"application": "http1", "property": p} }
 	const alpha = "p value >= 0.05"
 	failures := func(check string) api.RealismResult {
 		return result("realism.check_failures", map[string]string{"check": check}, 1,
-			"realism.check_failures of check "+check, "check passed", false)
+			"realism.check_failures of check "+check, "== 0", false)
 	}
 	return []api.RealismResult{
 		result("realism.conformance_ratio", app("http1", "ndpi"), 1, "conformance of http1 by ndpi", ">= 0.99", true),
