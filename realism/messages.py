@@ -272,8 +272,8 @@ class MessagesResult:
         shown = sorted(self.results, key=lambda r: r.passed)[:MAX_SESSIONS]
         return {
             "check": CHECK_NAME,
-            # TODO: report realism metrics for the message counts once the metric catalog has
-            # them, as issue #89 does for parser errors.
+            # The catalog label `check` has no value `messages` (catalog 0.5.0), so the check
+            # carries no realism.check_failures series until a catalog change adds one.
             "metrics": [],
             "passed": self.passed,
             "tool": self.tool,

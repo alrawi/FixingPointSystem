@@ -65,8 +65,10 @@ from typing import Any
 
 from realism.capture import Segment, Session, SessionKey, decode_segment, read_frames
 from realism.labels import ContentLabels, Labels, SizeExpectation
+from realism.series import failures_series
 
 CHECK_NAME = "content"
+METRIC = "realism.duplicate_ratio"
 UNLABELLED = "unlabelled"
 MAX_STREAM_BYTES = 16 * 1024 * 1024
 MAX_DUPLICATES_LISTED = 20
@@ -478,14 +480,26 @@ class ContentResult:
         """True when nothing in ``failures`` stands against the capture."""
         return not self.failures
 
+    def metrics(self) -> list[dict[str, Any]]:
+        """Return the duplicate ratio of each application with payloads, and the failures series."""
+        return [
+            *(
+                {
+                    "name": METRIC,
+                    "labels": {"application": entry["application"]},
+                    "value": entry["duplicate_ratio"],
+                }
+                for entry in self.applications
+            ),
+            failures_series(CHECK_NAME, len(self.failures), self.passed),
+        ]
+
     def to_dict(self) -> dict[str, Any]:
         """Return the check entry of the realism report."""
         s = self.stats
         return {
             "check": CHECK_NAME,
-            # TODO: report realism metrics for the duplicate ratio once the metric
-            # catalog has one, as issue #89 does for parser errors.
-            "metrics": [],
+            "metrics": self.metrics(),
             "passed": self.passed,
             "max_duplicate_ratio": self.max_duplicate_ratio,
             "ignored_headers": self.ignored_headers,
