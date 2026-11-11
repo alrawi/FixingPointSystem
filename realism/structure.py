@@ -65,8 +65,10 @@ from realism import scenario_graph
 from realism.capture import Session, SessionKey, decode, read_frames
 from realism.labels import Labels, Rule, StructureLabels, StructureScenario
 from realism.scenario_graph import Edge, FlowNode, ScenarioGraph
+from realism.series import failures_series
 
 CHECK_NAME = "session_structure"
+METRIC = "realism.structure_failures"
 MAX_FAILURES_LISTED = 50
 MAX_INSTANCES_LISTED = 50
 _TCP_FIN = 0x01
@@ -164,15 +166,31 @@ class StructureResult:
         """True when nothing in ``failures`` stands against the capture."""
         return not self.failures
 
+    def metrics(self) -> list[dict[str, Any]]:
+        """Return the broken rules of each scenario, and the failures series.
+
+        Two scenarios of one name are one series with the summed value, so the values add up to
+        ``failures_total``.
+        """
+        broken: dict[str, int] = {}
+        for scenario in self.scenarios:
+            name = scenario.graph.name
+            broken[name] = broken.get(name, 0) + len(scenario.failures)
+        return [
+            *(
+                {"name": METRIC, "labels": {"scenario": name}, "value": count}
+                for name, count in broken.items()
+            ),
+            failures_series(CHECK_NAME, len(self.failures), self.passed),
+        ]
+
     def to_dict(self) -> dict[str, Any]:
         """Return the check entry of the realism report."""
         instances_total = sum(len(s.instances) for s in self.scenarios)
         failed = [i for s in self.scenarios for i in s.instances if i.failures]
         return {
             "check": CHECK_NAME,
-            # TODO: report realism metrics for the failed instance share once the metric
-            # catalog has one, as issue #89 does for parser errors.
-            "metrics": [],
+            "metrics": self.metrics(),
             "passed": self.passed,
             "max_gap_s": self.max_gap_s,
             "tolerance_s": self.tolerance_s,

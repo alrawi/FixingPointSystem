@@ -397,7 +397,9 @@ def test_a_small_sample_reports_insufficient_data_and_fails(tmp_path: Path) -> N
     )
     entry = result.to_dict()
     assert entry["insufficient_comparisons"] == 1
-    assert entry["metrics"] == []
+    assert entry["metrics"] == [
+        {"name": "realism.check_failures", "labels": {"check": "temporal"}, "value": 1}
+    ]
 
 
 def test_the_minimum_is_a_parameter_and_n_at_the_minimum_is_judged(tmp_path: Path) -> None:
@@ -589,7 +591,8 @@ def test_metrics_carry_the_catalog_labels_for_applications_only(tmp_path: Path) 
         }
     )
     result = _run(tmp_path, _at(http=_poisson(rng, 5.0, 100)), labels)
-    seen = {(m["name"], m["labels"]["property"]) for m in result.metrics()}
+    series = [m for m in result.metrics() if m["name"] != "realism.check_failures"]
+    seen = {(m["name"], m["labels"]["property"]) for m in series}
     assert seen == {
         ("realism.ks_statistic", "inter_arrival"),
         ("realism.ks_p_value", "inter_arrival"),
@@ -599,7 +602,7 @@ def test_metrics_carry_the_catalog_labels_for_applications_only(tmp_path: Path) 
     catalog = yaml.safe_load(CATALOG.read_text())
     metrics = {m["name"]: m for m in catalog["metrics"]}
     allowed = set(catalog["labels"]["property"]["values"])
-    for metric in result.metrics():
+    for metric in series:
         assert set(metric["labels"]) == set(metrics[metric["name"]]["labels"])
         assert metric["labels"]["property"] in allowed
     request = _labels(
@@ -609,7 +612,8 @@ def test_metrics_carry_the_catalog_labels_for_applications_only(tmp_path: Path) 
             }
         }
     )
-    names = {m["labels"]["property"] for m in _run(tmp_path, _bulk([500] * 40), request).metrics()}
+    sized = _run(tmp_path, _bulk([500] * 40), request).metrics()
+    names = {m["labels"]["property"] for m in sized if m["name"] != "realism.check_failures"}
     assert names == {"request_bytes"}
 
 
@@ -787,7 +791,7 @@ def test_the_report_has_the_temporal_entry_and_validates(tmp_path: Path) -> None
     labels = _labels_file(tmp_path, EXPONENTIAL_200MS)
     report = score(good, labels, STUB).to_dict()
     _validate(report)
-    assert report["version"] == "0.11.0"
+    assert report["version"] == "0.12.0"
     assert [c["check"] for c in report["checks"]] == ["conformance", "temporal"]
     assert report["checks"][1]["passed"] is True
     assert report["passed"] is True

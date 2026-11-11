@@ -15,6 +15,7 @@ from realism.parsers import (
     KIND_ERROR,
     KIND_MALFORMED,
     KIND_WEIRD,
+    ZEEK_STATE_WEIRDS,
     Finding,
     ParserError,
     StubParser,
@@ -124,6 +125,7 @@ def test_zeek_weirds_of_one_packet_merge_and_state_weirds_do_not_count() -> None
             _weird(),
             _weird(name="dns_unmatched_msg", ts=11.0),
             _weird(uid="C2", ts=12.0, name="truncated_header"),
+            _weird(uid="C3", ts=13.0, name="premature_connection_reuse"),
         ]
     )
     conn = json.dumps({"uid": "C1", "proto": "udp"}) + "\n" + json.dumps({"uid": "C9"})
@@ -133,6 +135,16 @@ def test_zeek_weirds_of_one_packet_merge_and_state_weirds_do_not_count() -> None
     assert first.key == SessionKey.of("udp", "10.0.0.10", 50100, "10.0.1.53", 53)
     assert second.transport is None
     assert second.key is None
+
+
+def test_premature_connection_reuse_is_a_state_weird_but_merged_names_still_count() -> None:
+    assert "premature_connection_reuse" in ZEEK_STATE_WEIRDS
+    alone = _weird(name="premature_connection_reuse", uid="C1", ts=5.0)
+    assert parse_zeek_logs(alone) == []
+    # A weird of the same connection and instant that is a real fault keeps its finding.
+    both = alone + "\n" + _weird(name="truncated_header", uid="C1", ts=5.0)
+    (finding,) = parse_zeek_logs(both)
+    assert finding.name == "truncated_header"
 
 
 def test_zeek_weird_without_connection_is_unattributed() -> None:

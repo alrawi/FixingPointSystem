@@ -129,14 +129,15 @@ def test_report_names_only_catalog_metrics_and_labels(
 ) -> None:
     catalog = yaml.safe_load(CATALOG.read_text())
     metrics = {m["name"]: m for m in catalog["metrics"]}
-    classifiers = set(catalog["labels"]["classifier"]["values"])
     pcap = pcapgen.mixed_capture().write_pcap(tmp_path / "m.pcap")
     stub = StubClassifier.by_server_port({80: "HTTP", 53: "DNS"}, name="ndpi")
     for entry in score(pcap, labels_file(), stub).to_dict()["checks"]:
         for metric in entry["metrics"]:
             assert metric["name"] in metrics
             assert set(metric["labels"]) == set(metrics[metric["name"]]["labels"])
-            assert metric["labels"]["classifier"] in classifiers
+            for name, value in metric["labels"].items():
+                values = catalog["labels"][name].get("values")
+                assert values is None or value in values
 
 
 def test_schema_classifier_enum_covers_the_catalog() -> None:

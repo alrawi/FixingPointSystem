@@ -22,7 +22,8 @@
       "passed": false,
       "metrics": [
         {"name": "realism.conformance_ratio", "labels": {"application": "http1", "classifier": "ndpi"}, "value": 1.0},
-        {"name": "realism.conformance_ratio", "labels": {"application": "dns", "classifier": "ndpi"}, "value": 0.9}
+        {"name": "realism.conformance_ratio", "labels": {"application": "dns", "classifier": "ndpi"}, "value": 0.9},
+        {"name": "realism.check_failures", "labels": {"check": "conformance"}, "value": 1}
       ],
       "classifier": "ndpi",
       "classifier_version": "4.8.0",
@@ -61,7 +62,8 @@
         {"name": "realism.ks_statistic", "labels": {"application": "http1", "property": "request_bytes"}, "value": 0.31},
         {"name": "realism.ks_p_value", "labels": {"application": "http1", "property": "request_bytes"}, "value": 0.01},
         {"name": "realism.ks_statistic", "labels": {"application": "http1", "property": "response_bytes"}, "value": 0.05},
-        {"name": "realism.ks_p_value", "labels": {"application": "http1", "property": "response_bytes"}, "value": 0.5}
+        {"name": "realism.ks_p_value", "labels": {"application": "http1", "property": "response_bytes"}, "value": 0.5},
+        {"name": "realism.check_failures", "labels": {"check": "temporal"}, "value": 1}
       ],
       "alpha": 0.05,
       "min_samples": 30,

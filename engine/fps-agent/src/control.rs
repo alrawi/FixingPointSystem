@@ -193,10 +193,17 @@ pub struct Done {
     pub packets: u64,
     /// The size of the file in bytes.
     pub bytes: u64,
-    /// The number of sessions that the capture could not record, because the
-    /// writer queue was full or a session did not fit a ring file. The agent
-    /// cannot know how many packets they held.
+    /// The number of sessions that the capture could not record: the sum of
+    /// `dropped_overflow`, `dropped_oversize` and `cut_at_stop` (CON-24). The
+    /// agent cannot know how many packets they held.
     pub dropped: u64,
+    /// Sessions lost because the writer queue was full.
+    pub dropped_overflow: u64,
+    /// Sessions that did not fit a ring file.
+    pub dropped_oversize: u64,
+    /// Sessions still open when the capture stopped, counted when the file
+    /// is assembled; a session that ends later is not in the count.
+    pub cut_at_stop: u64,
     /// `sha256:` and the lowercase hex digest of the bytes of the file.
     pub digest: String,
     /// The file.
@@ -599,11 +606,15 @@ impl Captures {
                 "the TLS key log of the capture hit its limit, so later handshakes will not decrypt"
             );
         }
-        let result = assemble(
-            entry,
-            stats.sessions_dropped_queue + stats.sessions_dropped_oversize,
-            &keys.text,
-        );
+        // Sessions open at the stop end after it; read them as late as the
+        // file allows (ENG-27).
+        let cut = entry.capture.stats().sessions_cut_at_stop;
+        let drops = Drops {
+            overflow: stats.sessions_dropped_overflow,
+            oversize: stats.sessions_dropped_oversize,
+            cut_at_stop: cut.max(stats.sessions_cut_at_stop),
+        };
+        let result = assemble(entry, drops, &keys.text);
         if let Err(e) = &result {
             tracing::warn!(capture_id = %entry.id, error = %e, "capture ended without a file");
         } else if let Ok(d) = &result {
@@ -851,7 +862,15 @@ fn create_private_dir(p: &Path) -> io::Result<()> {
 /// stand ahead of every packet that they decrypt and the file decrypts with no
 /// key log beside it. Wireshark and tshark read such a block like the
 /// `tls.keylog_file` preference.
-fn assemble(entry: &Entry, dropped: u64, keys: &str) -> Result<Done, String> {
+/// The sessions that a capture could not record, by cause (CON-24).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Drops {
+    overflow: u64,
+    oversize: u64,
+    cut_at_stop: u64,
+}
+
+fn assemble(entry: &Entry, drops: Drops, keys: &str) -> Result<Done, String> {
     let err =
         |what: &str, p: &Path, e: &dyn std::fmt::Display| format!("{what} {}: {e}", p.display());
     let mut files: Vec<(u64, PathBuf)> = Vec::new();
@@ -934,7 +953,10 @@ fn assemble(entry: &Entry, dropped: u64, keys: &str) -> Result<Done, String> {
     Ok(Done {
         packets,
         bytes,
-        dropped,
+        dropped: drops.overflow + drops.oversize + drops.cut_at_stop,
+        dropped_overflow: drops.overflow,
+        dropped_oversize: drops.oversize,
+        cut_at_stop: drops.cut_at_stop,
         digest: format!("sha256:{}", hex(&hasher.finalize())),
         path: entry.out.clone(),
     })
@@ -1126,6 +1148,9 @@ mod tests {
                     packets: 0,
                     bytes: data.len() as u64,
                     dropped: 0,
+                    dropped_overflow: 0,
+                    dropped_oversize: 0,
+                    cut_at_stop: 0,
                     digest: format!("sha256:{}", hex(&Sha256::digest(data))),
                     path: path.clone(),
                 }),

@@ -6,8 +6,8 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 
 | File | Contract |
 |---|---|
-| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.9.0 |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.3, unreleased |
+| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.11.0 |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.4, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.4 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.5.0 |
@@ -280,3 +280,15 @@ CON-23 moves the metric catalog from 0.4.0 to 0.5.0. The owner approved the chan
 | Report schema | The schema under `realism/` is not part of this package. The change entry holds its exact change as a patch, which the runner package applies together with the emitters, and it moves the report format to 0.12.0, since RLM-14 had taken 0.11.0 (RLM-17) |
 
 The controller embeds a byte copy of the catalog, the engine mirrors it in `fps-stats`, and two tests pin the version, so the coordinator refreshes them and regenerates the Go code, the Python SDK, and the UI schema for the two descriptions.
+
+## Capture drop counts
+
+CON-24 moves the controller API from 0.10.0 to 0.11.0 and the agent protocol from 0.2.3 to 0.2.4. The owner approved the change on 2026-11-10 and asked for an additive one. `StopCaptureResult.dropped` and `CaptureFile.dropped` were documented as packets, but they count sessions, and they mixed three causes. The entry `contracts/changes/CON-24.md` records the reasons, the compatibility, and the consumers.
+
+| Change | Rule |
+|---|---|
+| `StopCaptureResult.dropped_overflow` (6), `dropped_oversize` (7), `cut_at_stop` (8) | Optional `uint64` fields. Sessions that ended while the writer queue was full, sessions that did not fit into one ring file, and sessions still open when the capture stopped. A field is absent for an agent of 0.2.3 or earlier, so absent differs from 0 |
+| `dropped` (4) | Keeps its number and type. It counts sessions, not packets, and stays the sum of the three fields, so a reader that knows only `dropped` sees what it saw before |
+| `CaptureFile.dropped_overflow`, `dropped_oversize`, `cut_at_stop` | Optional integers with the same meaning. Absent until the agent reported the end, and absent for an agent of 0.2.3 or earlier |
+
+A capture that stops at rest reports `cut_at_stop` 0, so an operator reads a nonzero `dropped_overflow` as a capture that could not keep up and `cut_at_stop` as the effect of stopping during traffic. The agent fills the fields from the counters of `fps-capture` (ENG-27), the controller passes them through, and the Go code, the Python SDK, and the UI schema follow the contract.

@@ -662,8 +662,14 @@ export interface components {
             packets?: number;
             /** @description Size of the agent file, known once the agent reported the end. */
             bytes?: number;
-            /** @description Packets that the agent dropped, known once the agent reported the end. */
+            /** @description Sessions, not packets, that the agent's capture did not record, known once the agent reported the end. It is the sum of `dropped_overflow`, `dropped_oversize`, and `cut_at_stop`, also when an agent of agent protocol 0.2.3 or earlier reports only the sum. */
             dropped?: number;
+            /** @description Sessions that ended while the writer queue of the capture was full, a loss of a capture that could not keep up. Absent until the agent reported the end, and absent for an agent of agent protocol 0.2.3 or earlier, which does not split `dropped`. A controller older than 0.11.0 does not send it. */
+            dropped_overflow?: number;
+            /** @description Sessions that did not fit into one ring file of the capture and so were not recorded. Absent until the agent reported the end, and absent for an agent of agent protocol 0.2.3 or earlier. A controller older than 0.11.0 does not send it. */
+            dropped_oversize?: number;
+            /** @description Sessions that were still open when the capture stopped, or that ended after its writer had ended. They are no loss of the writer, and a capture that stops at rest reports 0. Absent until the agent reported the end, and absent for an agent of agent protocol 0.2.3 or earlier. A controller older than 0.11.0 does not send it. */
+            cut_at_stop?: number;
             /** @description sha256: and 64 hex digits of the agent file, known once the agent reported the end. */
             digest?: string;
         };
