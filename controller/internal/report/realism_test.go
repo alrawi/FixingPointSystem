@@ -304,8 +304,8 @@ func TestAttachRealismReportOfEndedRuns(t *testing.T) {
 func TestAttachRealismReportAcceptsContentTypeParameters(t *testing.T) {
 	h := newRealismHarness(t)
 	rec := h.putRealism(t, "token-run", "run-pass", "application/json; charset=utf-8", realismFixture(t))
-	if got := attachment(t, rec); len(got.Realism) != 8 {
-		t.Fatalf("results %d, want 8", len(got.Realism))
+	if got := attachment(t, rec); len(got.Realism) != len(fixtureResults()) {
+		t.Fatalf("results %d, want %d", len(got.Realism), len(fixtureResults()))
 	}
 }
 
@@ -413,14 +413,14 @@ func TestAttachRealismReportSizeLimit(t *testing.T) {
 		return append(bytes.TrimRight(doc, "\n"), bytes.Repeat([]byte(" "), n-len(bytes.TrimRight(doc, "\n")))...)
 	}
 	// A report of exactly 4 MiB is served, and one byte more is not.
-	if got := attachment(t, h.attach(t, "run-pass", pad(MaxRealismBytes))); len(got.Realism) != 8 {
+	if got := attachment(t, h.attach(t, "run-pass", pad(MaxRealismBytes))); len(got.Realism) != len(fixtureResults()) {
 		t.Fatalf("a report of %d bytes holds %d results", MaxRealismBytes, len(got.Realism))
 	}
 	p := problemOf(t, h.attach(t, "run-pass", pad(MaxRealismBytes+1)), http.StatusRequestEntityTooLarge)
 	if p.Detail == nil || !strings.Contains(*p.Detail, "4194304") {
 		t.Errorf("detail %v does not name the limit", p.Detail)
 	}
-	if rep := realismOfReport(t, h, "run-pass"); len(rep) != 8 {
+	if rep := realismOfReport(t, h, "run-pass"); len(rep) != len(fixtureResults()) {
 		t.Errorf("the refused report changed the stored one: %d results", len(rep))
 	}
 }
