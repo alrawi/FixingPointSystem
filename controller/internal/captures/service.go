@@ -166,7 +166,12 @@ type AgentFile struct {
 	Packets uint64
 	Bytes   uint64
 	Dropped uint64
-	Digest  string
+	// DroppedOverflow, DroppedOversize, and CutAtStop split Dropped by cause
+	// (CON-24). They are nil for an agent older than protocol 0.2.4.
+	DroppedOverflow *uint64
+	DroppedOversize *uint64
+	CutAtStop       *uint64
+	Digest          string
 	// Lost is true when the agent cannot report an end, because it is gone
 	// or does not know the capture, so the capture has no file of it.
 	Lost bool
@@ -501,6 +506,7 @@ func (s *Service) stopAll(ctx context.Context, c *capture, runFinal bool) {
 		if err == nil {
 			f.Stopped, f.Error = true, ""
 			f.Packets, f.Bytes, f.Dropped, f.Digest = res.GetPackets(), res.GetBytes(), res.GetDropped(), res.GetDigest()
+			f.DroppedOverflow, f.DroppedOversize, f.CutAtStop = res.DroppedOverflow, res.DroppedOversize, res.CutAtStop
 		} else {
 			f.Error = err.Error()
 			var cerr *agents.CommandError

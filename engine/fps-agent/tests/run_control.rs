@@ -544,7 +544,20 @@ fn stop_capture(plan_id: &str, id: &str) -> session_response::Body {
 
 fn stop_result(r: &pb::CommandResult) -> &pb::StopCaptureResult {
     match &r.result {
-        Some(pb::command_result::Result::StopCapture(s)) => s,
+        Some(pb::command_result::Result::StopCapture(s)) => {
+            // CON-24: the agent reports each cause, and dropped is their sum.
+            let (Some(o), Some(z), Some(c)) =
+                (s.dropped_overflow, s.dropped_oversize, s.cut_at_stop)
+            else {
+                panic!("a stop result without the drop causes: {s:?}");
+            };
+            assert_eq!(
+                s.dropped,
+                o + z + c,
+                "dropped is not the sum of its causes: {s:?}"
+            );
+            s
+        }
         _ => panic!("stop_capture result {r:?}"),
     }
 }

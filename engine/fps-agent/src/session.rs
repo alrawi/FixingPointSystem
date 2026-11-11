@@ -898,6 +898,9 @@ impl Shared {
                             bytes: d.bytes,
                             dropped: d.dropped,
                             digest: d.digest,
+                            dropped_overflow: Some(d.dropped_overflow),
+                            dropped_oversize: Some(d.dropped_oversize),
+                            cut_at_stop: Some(d.cut_at_stop),
                         }),
                     ),
                     // Not INTERNAL, which would move a healthy run to FAILED.
