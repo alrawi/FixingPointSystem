@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #184 |
 | Branch | `wp/MOD-17` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (5 of 6 plan steps) |
+| Pull request | #449 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-e41a7f, lease until 2026-11-11T05:14:04Z |
 | Last verified commit | see the session log |
 
@@ -23,7 +23,7 @@ Ship ldap scenarios for bind, search, and unbind with BER encoding functions. Th
 - [x] 3. Manifest, scenarios, and the interpreter, catalog, and transcript tests
 - [x] 4. fixture_peer, capture.sh, expected.yaml, and a capture in a namespace harness
 - [x] 5. tshark test of every encoded message, README, Modules page, log entry with shared page notes
-- [ ] 6. Run the checks, open the PR, wait for CI, hand over for review
+- [x] 6. Run the checks, open the PR, wait for CI, hand over for review
 
 ## Done and verified
 
@@ -31,15 +31,15 @@ Ship ldap scenarios for bind, search, and unbind with BER encoding functions. Th
 - `cargo clippy -p fps-module-ldap --all-targets -- -D warnings` and `cargo fmt`: clean.
 - `tools/contracts/validate.py` over a directory of links (the lint-mod-ldap recipe): 0 errors.
 - `plan.py check`, `render --check`, `lint`: ok.
-- `modules/ldap/fixtures/capture.sh` in the namespace harness: 24 sessions, nDPI 4.2.0 labels 24 of 24 LDAP (ratio 1.0), tshark 4.2.2 reports no parser error. The report is committed as `ldap.report.json`.
+- `modules/ldap/fixtures/capture.sh` in the namespace harness: 24 sessions, nDPI 4.2.0 labels 24 of 24 LDAP (ratio 1.0), CI nDPI 4.14.0 labels 24 of 24 LDAP on a fresh capture, tshark 4.2.2 reports no parser error. The report is committed as `ldap.report.json`.
 
 ## Remaining
 
-- PR, CI with nDPI 4.14 (not available in the sandbox), review.
+- Review.
 
 ## Next action
 
-Open the pull request and poll CI.
+Review and merge. The coordinator adds mk/mod-ldap.mk, the workflow, and the registry entry from the log entry.
 
 ## Blockers and open questions
 
@@ -69,3 +69,4 @@ CARGO_TARGET_DIR=$PWD/target-MOD-17 cargo test -p fps-module-ldap
 |---|---|---|---|---|
 | 2026-11-11T03:46Z | claude-e41a7f | claim | pending | Claimed issue #184 with a 90 minute lease, branch from origin/main |
 | 2026-11-11T05:00Z | claude-e41a7f | checkpoint | see git log | Crate, scenarios, tests, fixture, docs complete locally |
+| 2026-11-11T05:35Z | claude-e41a7f | review | see git log | PR #449 opened, all CI jobs green including module (ldap) with nDPI 4.14.0 |
