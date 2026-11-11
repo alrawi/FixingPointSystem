@@ -1,6 +1,6 @@
 # Realism
 
-This page describes the realism runner under `realism/`, which the RLM workstream owns. The runner scores a capture against the applications that the traffic was meant to carry and writes a JSON realism report. RLM-01 created the runner with the conformance check, RLM-02 added the parser error check, and RLM-04 added the encryption check, RLM-05 added the content variety check, RLM-08 added the session structure check, RLM-06 added the temporal distribution check, and RLM-07 added the mix accuracy check, and RLM-14 added the message count check. The [runner README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md) gives the command, the options, and the report fields in full.
+This page describes the realism runner under `realism/`, which the RLM workstream owns. The runner scores a capture against the applications that the traffic was meant to carry and writes a JSON realism report. RLM-01 created the runner with the conformance check, RLM-02 added the parser error check, and RLM-04 added the encryption check, RLM-05 added the content variety check, RLM-08 added the session structure check, RLM-06 added the temporal distribution check, and RLM-07 added the mix accuracy check, RLM-14 added the message count check, and RLM-10 added the host identity check. The [runner README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md) gives the command, the options, and the report fields in full.
 
 ## Checks
 
@@ -17,6 +17,7 @@ The [specification](https://github.com/alrawi/FixingPointSystem/blob/main/docs/s
 | `mix_accuracy` | Run metrics per scenario and nDPI through `ndpiReader -d`, no other tool | Per basis (sessions, bytes, or both), the share of every application from the run metrics and from nDPI lies within 2 percentage points (configurable) of the configured weight | RLM-07 |
 | `transport_behavior` | The SYN and SYN-ACK of every connection read by the runner, and the OS profiles of the kernel backend, no external tool | The TTL, do not fragment flag, MSS, window scale, SACK permitted, and timestamps of every handshake equal those of the profile of the sending host (the option order and the SYN window too in strict mode) | RLM-09 |
 | `messages` | tshark on the capture, or on the decrypted view, no other tool | Every session that a rule of the `messages` labels selects has the expected number of requests, responses, commands, replies, or RFC 5322 messages, and every rule selects a session | RLM-14 |
+| `host_identity` | Ethernet frames, VLAN tags, and ARP packets read by the runner, no external tool | No IP address sends from more than one MAC address in one VLAN, the number of hosts lies in the range of the `hosts` labels (when they give one), and a frame has an Ethernet source address | RLM-10 |
 
 Every tool runs as a separate process, so the runner links none of their code. We chose the counting rules of the parser error check for three reasons.
 
@@ -193,6 +194,14 @@ nDPI names a session from its first packets, so a session can classify as HTTP, 
 **Verdict.** The check fails for each session outside its range, with a reason such as `missing smtp message: found 0, expected 1` or `surplus http1 request: found 5, expected 4`, for a rule that matches no TCP session, and when tshark is missing. `python3 -m realism decrypted` runs it on the view and prints the first five reasons under `messages:`. The entry leaves `metrics` empty, because the label `check` of the catalog (0.5.0) has no value `messages`, which `realism.check_failures` needs; a CON follow up adds it, and the schema and the runner then add the series (see [Metric series](#metric-series-of-each-check)).
 
 **Fixtures.** The example labels of `realism/examples/decrypted/` carry the counts that the committed fixtures pass: http1 80 sessions with 200 requests and 200 responses (one request on the ports 8443 and 8445, four on 8444 and 8446), http2 40 sessions with 180 of each (seven on port 8443, two on 8444), smtp 8 sessions that each show the two EHLO, the authentication, two recipients, six replies 250 and one message, and imap 8 sessions that each show seven commands completed with OK and two messages, which are the 16 literals of the old script. `realism/tests/test_messages.py` checks the labels with tshark alone, so it runs where nDPI 4.14 is missing, and it also cuts one session of each fixture in half and requires the failure and its reason. The Zeek check of the imap view and the SMTP message check of Zeek stay with the modules.
+
+## Host identity check
+
+The specification asks for a configured host count reached with zero address conflicts. RLM-10 implements the check in [`realism/hosts.py`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/hosts.py). It runs when the labels have a `hosts` section, or with `--host-identity` or `--host-count N`, and the [runner README](https://github.com/alrawi/FixingPointSystem/blob/main/realism/README.md#host-identity) shows the format.
+
+**Hosts and conflicts.** A host is an IP address per VLAN that is the source or destination of an IP packet or the sender of an ARP packet, without multicast, broadcast, reserved, and unspecified addresses. A conflict is an IP address that sends from two or more Ethernet source addresses in one VLAN. We key hosts by VLAN and address, because two VLANs may reuse an address, and we bind addresses to MACs only through the sender of a frame, because the destination MAC of a packet to a remote host is the router. One MAC with many IP addresses is no conflict, and the labels list router MACs under `gateway_macs` for a capture that sees both sides of a router. ARP senders count, because a duplicate address shows there first, but the probe sender 0.0.0.0 does not.
+
+**Verdict.** The check fails for each conflict, for a host count outside the range, for a capture without IP hosts, and for a capture without any Ethernet source address, so a raw IP capture never passes as free of conflicts. The entry leaves `metrics` empty, because the catalog (0.5.0) has no value `host_identity` for the label `check`, like the messages check.
 
 ## Pinned Zeek and skipped parsers
 
