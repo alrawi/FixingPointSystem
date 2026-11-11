@@ -384,11 +384,20 @@ type CaptureFile struct {
 	// Bytes Size of the agent file, known once the agent reported the end.
 	Bytes *int `json:"bytes,omitempty"`
 
+	// CutAtStop Sessions that were still open when the capture stopped, or that ended after its writer had ended. They are no loss of the writer, and a capture that stops at rest reports 0. Absent until the agent reported the end, and absent for an agent of agent protocol 0.2.3 or earlier. A controller older than 0.11.0 does not send it.
+	CutAtStop *int `json:"cut_at_stop,omitempty"`
+
 	// Digest sha256: and 64 hex digits of the agent file, known once the agent reported the end.
 	Digest *string `json:"digest,omitempty"`
 
-	// Dropped Packets that the agent dropped, known once the agent reported the end.
+	// Dropped Sessions, not packets, that the agent's capture did not record, known once the agent reported the end. It is the sum of `dropped_overflow`, `dropped_oversize`, and `cut_at_stop`, also when an agent of agent protocol 0.2.3 or earlier reports only the sum.
 	Dropped *int `json:"dropped,omitempty"`
+
+	// DroppedOverflow Sessions that ended while the writer queue of the capture was full, a loss of a capture that could not keep up. Absent until the agent reported the end, and absent for an agent of agent protocol 0.2.3 or earlier, which does not split `dropped`. A controller older than 0.11.0 does not send it.
+	DroppedOverflow *int `json:"dropped_overflow,omitempty"`
+
+	// DroppedOversize Sessions that did not fit into one ring file of the capture and so were not recorded. Absent until the agent reported the end, and absent for an agent of agent protocol 0.2.3 or earlier. A controller older than 0.11.0 does not send it.
+	DroppedOversize *int `json:"dropped_oversize,omitempty"`
 
 	// Error Why the agent did not start the capture. Absent when it started.
 	Error *string `json:"error,omitempty"`
