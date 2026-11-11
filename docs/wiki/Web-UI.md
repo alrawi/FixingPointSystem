@@ -210,7 +210,7 @@ A run with no realism report has `realism: []`, and the realism sections then sh
 
 ## Agents and ports
 
-UI-06 added the agents view. It uses `listAgents`, `reserveAgent`, and `releaseAgent` of REST OpenAPI 0.8.0 and no other endpoint and no field outside the `Agent` schema, so the generated types in `ui/src/api/schema.d.ts` stay as they were.
+UI-06 added the agents view. It uses `listAgents`, `reserveAgent`, and `releaseAgent` and no other endpoint, and UI-09 added the holder of a reservation (see Reservation holders below).
 
 ### View
 
@@ -224,7 +224,22 @@ The agent table shows the identity, the state (`online`, `reserved`, `busy`, or 
 
 A reserve or release call runs against the state that the controller holds, which may have changed since the list loaded. The view sends the call whatever the list shows and reports the answer. A success puts the returned agent in the list and says `Agent agent-local reserved. It is now reserved.` in a status region. A problem shows `Agent agent-local was not reserved.` and the `detail` of the problem in an alert, and a 409 or a 404 also reads the list again at once, so the stale button changes to the one that fits the real state. The next action clears the message. A 401 or 403 signs the user out as in the other views.
 
-The controller (`controller/internal/agents/rest.go`) reserves for the operator, so it reserves an agent again without error and it never refuses a reservation because another user holds the agent. It answers 409 when the agent is offline (`reserve agent a: agent offline`) or holds a plan (`reserve agent a: plan loaded: agent busy`), and 404 for an unknown agent. A release of an agent that is not reserved succeeds. The OpenAPI document names none of these statuses, so the view treats every problem alike and re-reads the list for 409 and 404.
+The controller (`controller/internal/agents/rest.go`) reserves for the operator, so it reserves an agent that the operator holds again without error. It answers 409 when a run holds the agent, when the agent is offline (`reserve agent a: agent offline`), or when it holds a plan (`reserve agent a: plan loaded: agent busy`), and 404 for an unknown agent. A release of an agent that is not reserved succeeds. Since UI-09 the OpenAPI document names 404 and 409 for `reserveAgent` (see Reservation holders below), and the view re-reads the list for both.
+
+### Reservation holders (UI-09)
+
+REST OpenAPI 0.10.0 (CON-22) added `Agent.reserved_by` and documented 404 and 409 for `reserveAgent`, and `ui/src/api/schema.d.ts` already carries both. The agent table has a column Held by, which reads `reserved_by` through `holderOf` in `ui/src/pages/agentFormat.ts`.
+
+| `reserved_by` | Column Held by | Reservation column |
+|---|---|---|
+| absent, any state but `reserved` | `none` | as before |
+| absent, state `reserved` (a controller older than 0.10.0) | `not reported` | Release |
+| `operator` | `operator` | Release when the state is `reserved` |
+| a run id, such as `run_mock0007` | the link `Run run_mock0007` to `/runs/run_mock0007` | `Held by a run` when the state is `reserved`, with no button |
+
+The field counts in every state, so an agent that is `busy` or `offline` still shows its holder, because the state takes precedence over `reserved` while the reservation exists. The view offers no Release for an agent that a run holds: the controller ends any reservation on release, which would take the agent from the run. A 409 from `reserveAgent` shows `Agent <id> was not reserved because of a conflict.` followed by the `detail` of the problem, which names the reason. The controller checks them in this order: another holder (`reserve agent a for operator: held by run_x: agent reserved by another holder`), no control session (`reserve agent a: agent offline`), and a plan that is not finished (`reserve agent a: plan loaded: agent busy`). The list is read again at once, so the Held by column then shows the run that took the agent. A reservation for the operator that the operator already holds answers 200. Other problems read `Agent <id> was not reserved.` and the detail, as before.
+
+The mock sets `reserved_by` to `operator` on reserve and clears it on release (which, as in the controller, ends any holder), answers 409 in the order above, and leaves a refused agent unchanged. `mock/agents.test.ts` validates the `Agent` bodies, the list, and all five 409 cases against the OpenAPI document with Ajv. `ui/src/pages/Agents.test.tsx` has a group Reservation holders with literal agents for the operator, a run, a busy agent held by a run, and an offline agent held by the operator, a conflict with a run that took the agent after the list loaded, an offline conflict, and axe scans of the listing and both conflicts.
 
 ### Mock server
 
