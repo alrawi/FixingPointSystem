@@ -1,0 +1,182 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: mqtt
+version: 0.1.0
+type: app
+summary: MQTT 3.1.1 and 5.0 clients and brokers on port 1883 for telemetry publishing at QoS 0, 1, and 2, subscriptions with pushed messages, and long lived keepalive sessions with absolutely paced pings.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: mqtt, transport: tcp, port: 1883 }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 1883, description: TCP port of the broker side. nDPI recognizes MQTT from the CONNECT packet on any port, and 1883 is the registered port of plain MQTT. }
+    version: { type: integer, enum: [4, 5], default: 4, description: Protocol level of the session, 4 for MQTT 3.1.1 and 5 for MQTT 5.0. The properties of 5.0 are written only at level 5, so the settings session_expiry, content_type, no_local, and retain_handling need 5. }
+    keepalive: { type: integer, minimum: 1, maximum: 65535, default: 60, description: Keep alive interval in seconds that the client announces in CONNECT. In the keepalive scenario it is also the spacing of the PINGREQ packets, so the session lasts pings times keepalive seconds. }
+    session_expiry: { type: integer, minimum: -1, maximum: 4294967295, default: -1, description: "Session Expiry Interval property of the CONNECT in seconds, MQTT 5.0 only. A value of -1 leaves the property out." }
+    client_prefix: { type: string, minLength: 1, maxLength: 15, default: mqttjs_, description: Prefix of the client identifier, which continues with eight random hexadecimal digits. The default is the prefix of the MQTT.js client. }
+    user: { type: string, minLength: 1, default: sensor-0412, description: User name in CONNECT. The broker accepts any user. }
+    password: { type: string, minLength: 1, default: Tst-amber-falcon-27, description: Password in CONNECT. It is synthetic, and the broker accepts any password. }
+    topic: { type: string, minLength: 1, default: fps/site-3/sensors/telemetry, description: Topic name of the published readings. It must hold no wildcard. }
+    status_topic: { type: string, minLength: 1, default: fps/site-3/sensors/status, description: Topic of the retained online message that publish_qos1 sends first. }
+    content_type: { type: string, default: "", description: "Content Type property of each reading in publish_qos1, MQTT 5.0 only. An empty value leaves the property out." }
+    messages: { type: integer, minimum: 0, maximum: 100000, default: 6, description: Number of readings that a publish scenario sends. }
+    interval_min_ms: { type: integer, minimum: 0, default: 500, description: Shortest gap between two PUBLISH packets of a publish scenario. }
+    interval_max_ms: { type: integer, minimum: 0, default: 3000, description: Longest gap between two PUBLISH packets of a publish scenario. }
+    filters: { type: string, minLength: 1, default: "fps/site-3/commands/#,fps/site-3/config", description: Comma separated topic filters that the subscribe scenario subscribes to and unsubscribes from. }
+    qos: { type: integer, minimum: 0, maximum: 2, default: 1, description: Maximum QoS that the subscribe scenario requests for every filter. }
+    max_qos: { type: integer, minimum: 0, maximum: 2, default: 1, description: Highest QoS that the broker of the subscribe scenario grants in its SUBACK. The scenario pushes one message at QoS 0 and one at QoS 1, so a value of 0 fails the session. }
+    no_local: { type: boolean, default: false, description: "The No Local option of the subscription, MQTT 5.0 only." }
+    retain_handling: { type: integer, minimum: 0, maximum: 2, default: 0, description: "The Retain Handling option of the subscription, MQTT 5.0 only." }
+    push_topic: { type: string, minLength: 1, default: fps/site-3/commands/valve-2, description: Topic of the messages that the broker pushes in the subscribe scenario. It must match one of the filters. }
+    pushes: { type: integer, minimum: 0, maximum: 100000, default: 3, description: Number of message pairs that the broker pushes in the subscribe scenario, each pair being one message at QoS 0 and one at QoS 1. }
+    push_min_ms: { type: integer, minimum: 0, default: 400, description: Shortest gap before a pushed pair in the subscribe scenario. }
+    push_max_ms: { type: integer, minimum: 0, default: 2500, description: Longest gap before a pushed pair in the subscribe scenario. }
+    pings: { type: integer, minimum: 0, maximum: 100000, default: 3, description: Number of PINGREQ packets in the keepalive scenario. }
+functions:
+  - name: connect
+    summary: "CONNECT packet. The version is 4 for MQTT 3.1.1 or 5 for 5.0, and later packets of the side follow it. Empty user, password, and will_topic are left out, and -1 leaves out a property of 5.0."
+    params:
+      - { name: client_id, type: bytes }
+      - { name: version, type: int, default: 4 }
+      - { name: keepalive, type: int, default: 60 }
+      - { name: clean, type: boolean, default: true }
+      - { name: user, type: text, default: "" }
+      - { name: password, type: text, default: "" }
+      - { name: will_topic, type: text, default: "" }
+      - { name: will_payload, type: bytes, default: "" }
+      - { name: will_qos, type: int, default: 0 }
+      - { name: will_retain, type: boolean, default: false }
+      - { name: session_expiry, type: int, default: -1 }
+      - { name: receive_max, type: int, default: -1 }
+      - { name: topic_alias_max, type: int, default: -1 }
+  - name: connack
+    summary: "CONNACK packet with the return code of MQTT 3.1.1 or the reason code of 5.0. A value of -1 leaves a property of 5.0 out, and the defaults are those of Mosquitto 2."
+    params:
+      - { name: code, type: int, default: 0 }
+      - { name: session_present, type: boolean, default: false }
+      - { name: receive_max, type: int, default: 20 }
+      - { name: topic_alias_max, type: int, default: 10 }
+      - { name: server_keepalive, type: int, default: -1 }
+      - { name: assigned_client_id, type: text, default: "" }
+      - { name: max_qos, type: int, default: -1 }
+      - { name: session_expiry, type: int, default: -1 }
+  - name: publish
+    summary: "PUBLISH packet. A packet_id of -1 takes the next identifier of this side, and QoS 0 has none. The last five parameters are properties of MQTT 5.0, and -1 or empty text leaves one out."
+    params:
+      - { name: topic, type: text }
+      - { name: payload, type: bytes }
+      - { name: qos, type: int, default: 0 }
+      - { name: retain, type: boolean, default: false }
+      - { name: packet_id, type: int, default: -1 }
+      - { name: dup, type: boolean, default: false }
+      - { name: message_expiry, type: int, default: -1 }
+      - { name: content_type, type: text, default: "" }
+      - { name: payload_format, type: int, default: -1 }
+      - { name: response_topic, type: text, default: "" }
+      - { name: user_property, type: text, default: "" }
+  - name: puback
+    summary: "PUBACK packet, the end of a QoS 1 flow. A packet_id of -1 answers the packet that this side read last. MQTT 5.0 leaves out the reason of a success."
+    params:
+      - { name: packet_id, type: int, default: -1 }
+      - { name: reason, type: int, default: 0 }
+  - name: pubrec
+    summary: "PUBREC packet, the first answer of a QoS 2 flow. A packet_id of -1 answers the packet that this side read last."
+    params:
+      - { name: packet_id, type: int, default: -1 }
+      - { name: reason, type: int, default: 0 }
+  - name: pubrel
+    summary: "PUBREL packet, the release of a QoS 2 flow. A packet_id of -1 answers the packet that this side read last."
+    params:
+      - { name: packet_id, type: int, default: -1 }
+      - { name: reason, type: int, default: 0 }
+  - name: pubcomp
+    summary: "PUBCOMP packet, the end of a QoS 2 flow. A packet_id of -1 answers the packet that this side read last."
+    params:
+      - { name: packet_id, type: int, default: -1 }
+      - { name: reason, type: int, default: 0 }
+  - name: subscribe
+    summary: "SUBSCRIBE packet for the comma separated topic filters, all with the same maximum QoS. A packet_id of -1 takes the next identifier of this side. The last three parameters are options of MQTT 5.0."
+    params:
+      - { name: filters, type: text }
+      - { name: qos, type: int, default: 0 }
+      - { name: packet_id, type: int, default: -1 }
+      - { name: no_local, type: boolean, default: false }
+      - { name: retain_as_published, type: boolean, default: false }
+      - { name: retain_handling, type: int, default: 0 }
+  - name: suback
+    summary: "SUBACK packet with the comma separated codes, one for each filter, which are the granted QoS 0 to 2 or a failure such as 128. A packet_id of -1 answers the packet that this side read last."
+    params:
+      - { name: codes, type: bytes }
+      - { name: packet_id, type: int, default: -1 }
+  - name: unsubscribe
+    summary: "UNSUBSCRIBE packet for the comma separated topic filters. A packet_id of -1 takes the next identifier of this side."
+    params:
+      - { name: filters, type: text }
+      - { name: packet_id, type: int, default: -1 }
+  - name: unsuback
+    summary: "UNSUBACK packet for count filters. MQTT 5.0 carries one reason code for each filter, and MQTT 3.1.1 carries none. A packet_id of -1 answers the packet that this side read last."
+    params:
+      - { name: count, type: int, default: 1 }
+      - { name: packet_id, type: int, default: -1 }
+      - { name: reason, type: int, default: 0 }
+  - name: pingreq
+    summary: "PINGREQ packet, which a client sends when its keep alive interval passes without another packet."
+    params: []
+  - name: pingresp
+    summary: "PINGRESP packet, the answer of a broker to a PINGREQ."
+    params: []
+  - name: disconnect
+    summary: "DISCONNECT packet. MQTT 3.1.1 has no reason, and MQTT 5.0 leaves out the reason 0 and an empty reason string."
+    params:
+      - { name: reason, type: int, default: 0 }
+      - { name: reason_string, type: text, default: "" }
+  - name: varint
+    summary: "A variable byte integer in the least number of bytes, which the Remaining Length, the property length, and the subscription identifier use. The value stays at or below 268435455."
+    params:
+      - { name: value, type: int }
+  - name: varint_value
+    summary: "The number that a variable byte integer at the start of the bytes holds, as text. Another byte count or a form that is not minimal is an error."
+    params:
+      - { name: data, type: bytes }
+  - name: client_id
+    summary: "A client identifier, the prefix and eight random lower case hexadecimal digits from the session generator, as the MQTT.js client draws them."
+    params:
+      - { name: prefix, type: text, default: "mqttjs_" }
+  - name: reading
+    summary: "A JSON sensor reading for the device with the next sequence number of this side and random values from the session generator, for the payload of a PUBLISH."
+    params:
+      - { name: device, type: text, default: "sensor-0412" }
+  - name: feed
+    summary: "Hands the bytes of the last read to the packet reader and returns the size of the next read as text. A flow reads one byte, then six reads of this size, and then calls recv."
+    params:
+      - { name: data, type: bytes }
+  - name: recv
+    summary: "Checks the collected packet against the standard and the kind in expect (any, connack, publish:1, and so on), stores its fields, and returns the kind. A CONNECT sets the version of the session."
+    params:
+      - { name: expect, type: text, default: "any" }
+  - name: field
+    summary: "A field of the packet that recv read last, as text, such as packet_id, qos, topic, payload, or filter_count, or a property of MQTT 5.0 by its snake case name. The README lists every name."
+    params:
+      - { name: name, type: text }
+  - name: granted
+    summary: "The comma separated codes that grant the QoS of each filter of the SUBSCRIBE that recv read last, each capped at max_qos, for the codes of a SUBACK."
+    params:
+      - { name: max_qos, type: int, default: 2 }
+  - name: pace
+    summary: "Milliseconds to sleep until the next keep alive slot of this flow side, as text. Each call moves the due time on by keepalive seconds, so a late wake shortens the next sleep."
+    params:
+      - { name: keepalive, type: int }
+scenarios:
+  - scenarios/publish_qos0.yaml
+  - scenarios/publish_qos1.yaml
+  - scenarios/publish_qos2.yaml
+  - scenarios/subscribe.yaml
+  - scenarios/keepalive.yaml
+fixtures:
+  - { capture: fixtures/mqtt.pcapng, expect: { ndpi: [MQTT] } }
+provenance:
+  source: synthetic
+  notes: The packets follow the OASIS standards MQTT Version 3.1.1 (2014) and MQTT Version 5.0 (2019) for the fixed header, the variable length integer, the packet bodies, the properties, and the flows of QoS 0, 1, and 2, with the exchanges of Mosquitto 2 and MQTT.js as the model. Every user name, password, client identifier, topic, and sensor reading is synthetic, and the readings come from the seeded session generator.
