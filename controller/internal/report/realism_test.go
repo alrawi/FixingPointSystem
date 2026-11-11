@@ -68,20 +68,28 @@ func result(metric string, labels map[string]string, observed float32, property,
 // fixtureResults are the entries that CON-22 maps the fixture to: the two
 // conformance ratios against the threshold 0.99, and the KS statistic and p
 // value of the three comparisons that the metric catalog labels, against the
-// alpha 0.05. The comparison over both directions has no metric.
+// alpha 0.05. The comparison over both directions has no metric. Each check
+// ends with its realism.check_failures series (CON-23), which takes the
+// generic rule until the controller implements the CON-23 table.
 func fixtureResults() []api.RealismResult {
 	app := func(a, c string) map[string]string { return map[string]string{"application": a, "classifier": c} }
 	ks := func(p string) map[string]string { return map[string]string{"application": "http1", "property": p} }
 	const alpha = "p value >= 0.05"
+	failures := func(check string) api.RealismResult {
+		return result("realism.check_failures", map[string]string{"check": check}, 1,
+			"realism.check_failures of check "+check, "check passed", false)
+	}
 	return []api.RealismResult{
 		result("realism.conformance_ratio", app("http1", "ndpi"), 1, "conformance of http1 by ndpi", ">= 0.99", true),
 		result("realism.conformance_ratio", app("dns", "ndpi"), 0.9, "conformance of dns by ndpi", ">= 0.99", false),
+		failures("conformance"),
 		result("realism.ks_statistic", ks("inter_arrival"), 0.08, "inter arrival of http1, KS statistic", alpha, true),
 		result("realism.ks_p_value", ks("inter_arrival"), 0.42, "inter arrival of http1, KS p value", alpha, true),
 		result("realism.ks_statistic", ks("request_bytes"), 0.31, "request bytes of http1, KS statistic", alpha, false),
 		result("realism.ks_p_value", ks("request_bytes"), 0.01, "request bytes of http1, KS p value", alpha, false),
 		result("realism.ks_statistic", ks("response_bytes"), 0.05, "response bytes of http1, KS statistic", alpha, true),
 		result("realism.ks_p_value", ks("response_bytes"), 0.5, "response bytes of http1, KS p value", alpha, true),
+		failures("temporal"),
 	}
 }
 
@@ -326,7 +334,7 @@ func TestAttachRealismReportReplaces(t *testing.T) {
 	}
 	top["checks"], _ = json.Marshal(checks[:1])
 	second, _ = json.Marshal(top)
-	want := fixtureResults()[:2]
+	want := fixtureResults()[:3]
 	want[1] = result("realism.conformance_ratio", map[string]string{"application": "dns", "classifier": "ndpi"}, 0.995,
 		"conformance of dns by ndpi", ">= 0.99", true)
 	if got := attachment(t, h.attach(t, "run-pass", second)); !got.Replaced || !reflect.DeepEqual(got.Realism, want) {
