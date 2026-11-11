@@ -996,7 +996,7 @@ def test_uniform_bounds_are_reported_at_the_entry_pointer(smoke, index):
 # --- application all and property both (metric catalog 0.3.0, CON-19; 0.4.0, CON-20) ---------
 
 def test_catalog_is_0_3_0_with_property_both(catalog_doc):
-    assert catalog_doc["version"] == "0.5.0"
+    assert catalog_doc["version"] == "0.6.0"
     values = catalog_doc["labels"]["property"]["values"]
     assert "both" in values
     # Every value that 0.2.0 had stays, in its place.

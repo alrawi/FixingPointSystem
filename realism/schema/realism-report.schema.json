@@ -303,11 +303,11 @@
           "then": {"$ref": "#/$defs/host_identity"}
         },
         {
-          "description": "Every check of a kind that the metric catalog names in its label check carries the realism.check_failures series, which is 0 for a check that passed and at least 1 for one that did not. The messages and host_identity checks are not in the list, because the catalog (0.5.0) has no such values for the label, so they carry no series yet (see contracts/changes/CON-23.md and the RLM-17 handoff).",
+          "description": "Every check of a kind that the metric catalog names in its label check carries the realism.check_failures series, which is 0 for a check that passed and at least 1 for one that did not. The host_identity check is not in the list, because the catalog (0.6.0) has no such value for the label, so it carries no series yet (see contracts/changes/CON-23.md and contracts/changes/CON-25.md).",
           "if": {
             "properties": {
               "check": {
-                "enum": ["conformance", "parser_errors", "encryption", "content", "session_structure", "temporal", "mix_accuracy", "transport_behavior"]
+                "enum": ["conformance", "parser_errors", "encryption", "content", "session_structure", "temporal", "mix_accuracy", "transport_behavior", "messages"]
               }
             },
             "required": ["check"]
@@ -1073,9 +1073,16 @@
         "check": {"const": "messages"},
         "passed": {"type": "boolean"},
         "metrics": {
-          "description": "Empty until the metric catalog (0.5.0 has no value messages for the label check) names this check, which gives it the realism.check_failures series.",
+          "description": "The realism.check_failures series of the check (metric catalog 0.6.0, contracts/changes/CON-25.md): its value is failures_total, so 0 exactly when the check passed. The check carries no other series.",
           "type": "array",
-          "maxItems": 0
+          "items": {"$ref": "#/$defs/failures_metric"},
+          "contains": {
+            "properties": {
+              "name": {"const": "realism.check_failures"},
+              "labels": {"properties": {"check": {"const": "messages"}}, "required": ["check"]}
+            },
+            "required": ["name", "labels"]
+          }
         },
         "tool": {
           "description": "The program that counted the messages, or null when none ran.",
@@ -1168,7 +1175,7 @@
         "check": {"const": "host_identity"},
         "passed": {"type": "boolean"},
         "metrics": {
-          "description": "Empty until the metric catalog (0.5.0 has no value host_identity for the label check) names this check, which gives it the realism.check_failures series.",
+          "description": "Empty until the metric catalog (0.6.0 has no value host_identity for the label check) names this check, which gives it the realism.check_failures series.",
           "type": "array",
           "maxItems": 0
         },

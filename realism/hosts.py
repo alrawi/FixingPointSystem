@@ -101,7 +101,7 @@ class HostsResult:
         """Return the check entry of the realism report."""
         return {
             "check": CHECK_NAME,
-            # The catalog label `check` has no value `host_identity` (catalog 0.5.0), so the check
+            # The catalog label `check` has no value `host_identity` (catalog 0.6.0), so the check
             # carries no realism.check_failures series until a catalog change adds one.
             "metrics": [],
             "passed": self.passed,
