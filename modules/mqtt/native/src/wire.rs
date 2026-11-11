@@ -870,7 +870,10 @@ pub fn subscribe(
         }
         let v5_options = s.no_local || s.retain_as_published || s.retain_handling != 0;
         if v5_options {
-            v5_only(version, "the subscription options No Local, Retain As Published, and Retain Handling")?;
+            v5_only(
+                version,
+                "the subscription options No Local, Retain As Published, and Retain Handling",
+            )?;
         }
         put_str(&mut body, s.filter)?;
         body.push(
@@ -938,12 +941,7 @@ pub fn unsubscribe(
 /// Appends an UNSUBACK packet. MQTT 3.1.1 carries only the identifier, and 5.0
 /// adds one reason code for each filter of the UNSUBSCRIBE, 0 for success and
 /// 17 for a filter without a subscription.
-pub fn unsuback(
-    out: &mut Vec<u8>,
-    version: Version,
-    packet_id: u16,
-    codes: &[u8],
-) -> Result<()> {
+pub fn unsuback(out: &mut Vec<u8>, version: Version, packet_id: u16, codes: &[u8]) -> Result<()> {
     check_id(packet_id)?;
     let mut body = Vec::with_capacity(codes.len() + 4);
     put_u16(&mut body, packet_id);

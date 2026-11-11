@@ -299,7 +299,8 @@ impl<'a> Cursor<'a> {
 
     fn str(&mut self) -> Result<String> {
         let raw = self.bin()?;
-        let s = String::from_utf8(raw).map_err(|_| WireError::new("a string is not valid UTF-8"))?;
+        let s =
+            String::from_utf8(raw).map_err(|_| WireError::new("a string is not valid UTF-8"))?;
         if s.contains('\0') {
             return err("a string contains the null character");
         }
@@ -424,9 +425,15 @@ pub fn parse(version: Version, packet: &[u8]) -> Result<Packet> {
             while c.at < c.b.len() {
                 let filter = c.str()?;
                 let options = c.u8()?;
-                let reserved = if version.is_v5() { 0b1100_0000 } else { 0b1111_1100 };
+                let reserved = if version.is_v5() {
+                    0b1100_0000
+                } else {
+                    0b1111_1100
+                };
                 if options & reserved != 0 || options & 0b11 == 3 || (options >> 4) & 0b11 == 3 {
-                    return err(format!("the subscription options {options:#04x} are not valid"));
+                    return err(format!(
+                        "the subscription options {options:#04x} are not valid"
+                    ));
                 }
                 p.filters.push(Filter { filter, options });
             }
@@ -622,7 +629,11 @@ fn bool_text(b: bool) -> Vec<u8> {
 }
 
 fn join<T: ToString>(items: impl Iterator<Item = T>, sep: &str) -> Vec<u8> {
-    items.map(|i| i.to_string()).collect::<Vec<_>>().join(sep).into_bytes()
+    items
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(sep)
+        .into_bytes()
 }
 
 /// Returns a field of a parsed packet, as the bytes of its text. The names are
@@ -646,9 +657,13 @@ pub fn field(p: &Packet, name: &str) -> Result<Vec<u8>> {
         "clean" if p.kind == Kind::Connect => bool_text(p.clean),
         "user" if p.kind == Kind::Connect => p.user.clone().ok_or_else(missing)?.into_bytes(),
         "password" if p.kind == Kind::Connect => p.password.clone().ok_or_else(missing)?,
-        "will_topic" if p.kind == Kind::Connect => {
-            p.will.as_ref().ok_or_else(missing)?.topic.clone().into_bytes()
-        }
+        "will_topic" if p.kind == Kind::Connect => p
+            .will
+            .as_ref()
+            .ok_or_else(missing)?
+            .topic
+            .clone()
+            .into_bytes(),
         "will_payload" if p.kind == Kind::Connect => {
             p.will.as_ref().ok_or_else(missing)?.payload.clone()
         }
@@ -658,7 +673,9 @@ pub fn field(p: &Packet, name: &str) -> Result<Vec<u8>> {
         "filters" if matches!(p.kind, Kind::Subscribe | Kind::Unsubscribe) => {
             join(p.filters.iter().map(|f| f.filter.as_str()), ",")
         }
-        "requested_qos" if p.kind == Kind::Subscribe => join(p.filters.iter().map(Filter::qos), ","),
+        "requested_qos" if p.kind == Kind::Subscribe => {
+            join(p.filters.iter().map(Filter::qos), ",")
+        }
         "filter_count" if matches!(p.kind, Kind::Subscribe | Kind::Unsubscribe) => {
             p.filters.len().to_string().into_bytes()
         }

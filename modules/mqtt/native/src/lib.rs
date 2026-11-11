@@ -191,14 +191,11 @@ fn utf8<'a>(function: &str, name: &str, b: &'a [u8]) -> Result<&'a str, FnError>
 }
 
 fn id_arg(function: &str, v: i64) -> Result<u16, FnError> {
-    u16::try_from(v)
-        .ok()
-        .filter(|id| *id > 0)
-        .ok_or_else(|| {
-            invalid(format!(
-                "'packet_id' of '{function}' must be -1 or between 1 and 65535, not {v}"
-            ))
-        })
+    u16::try_from(v).ok().filter(|id| *id > 0).ok_or_else(|| {
+        invalid(format!(
+            "'packet_id' of '{function}' must be -1 or between 1 and 65535, not {v}"
+        ))
+    })
 }
 
 impl Mqtt {
@@ -243,7 +240,9 @@ impl Mqtt {
         let spec = catalog::FUNCTIONS
             .iter()
             .find(|f| f.name == function)
-            .ok_or_else(|| FnError::new(FnErrorKind::Internal, "an acknowledgment without a spec"))?;
+            .ok_or_else(|| {
+                FnError::new(FnErrorKind::Internal, "an acknowledgment without a spec")
+            })?;
         let a = args::bind(spec, &call.args)?;
         let id = self.answered_id(&a, function)?;
         let reason = ranged(&a, function, "reason", 0, 255)? as u8;
@@ -335,7 +334,11 @@ impl Mqtt {
                 receive_max: prop("receive_max", 1, 65_535)?.map(|v| v as u16),
                 topic_alias_max: prop("topic_alias_max", 0, 65_535)?.map(|v| v as u16),
                 server_keepalive: prop("server_keepalive", 0, 65_535)?.map(|v| v as u16),
-                assigned_client_id: if v5 { nonempty(&a, "assigned_client_id")? } else { None },
+                assigned_client_id: if v5 {
+                    nonempty(&a, "assigned_client_id")?
+                } else {
+                    None
+                },
                 max_qos: prop("max_qos", 0, 1)?.map(|v| v as u8),
                 retain_available: None,
             },
@@ -410,7 +413,9 @@ impl Mqtt {
         let want = match name {
             "any" => None,
             n => Some(Kind::from_name(n).ok_or_else(|| {
-                invalid(format!("'expect' of 'recv' names '{n}', which is not a packet kind"))
+                invalid(format!(
+                    "'expect' of 'recv' names '{n}', which is not a packet kind"
+                ))
             })?),
         };
         let want_qos = match qos {
@@ -469,7 +474,12 @@ impl Mqtt {
         format!("{:08x}", rng.next_u32())
     }
 
-    fn reading(&mut self, call: &FnCall<'_>, rng: &mut dyn RngCore, out: &mut Vec<u8>) -> Result<(), FnError> {
+    fn reading(
+        &mut self,
+        call: &FnCall<'_>,
+        rng: &mut dyn RngCore,
+        out: &mut Vec<u8>,
+    ) -> Result<(), FnError> {
         let a = args::bind(&catalog::READING_SPEC, &call.args)?;
         let device = a.text("device")?;
         let ok = !device.is_empty()
@@ -529,7 +539,11 @@ impl TemplateFn for Mqtt {
             "suback" => {
                 let a = args::bind(&catalog::SUBACK_SPEC, &call.args)?;
                 let id = self.answered_id(&a, function)?;
-                let cs = codes(function, "codes", utf8(function, "codes", a.bytes("codes")?)?)?;
+                let cs = codes(
+                    function,
+                    "codes",
+                    utf8(function, "codes", a.bytes("codes")?)?,
+                )?;
                 wire::suback(out, self.version, id, &cs).map_err(bad_arg(function))?;
             }
             "unsubscribe" => {
@@ -562,7 +576,13 @@ impl TemplateFn for Mqtt {
             }
             "varint" => {
                 let a = args::bind(&catalog::VARINT_SPEC, &call.args)?;
-                let v = ranged(&a, function, "value", 0, i64::from(wire::MAX_REMAINING_LENGTH))?;
+                let v = ranged(
+                    &a,
+                    function,
+                    "value",
+                    0,
+                    i64::from(wire::MAX_REMAINING_LENGTH),
+                )?;
                 wire::put_varint(out, v as u32).map_err(bad_arg(function))?;
             }
             "varint_value" => {
@@ -590,7 +610,10 @@ impl TemplateFn for Mqtt {
             "reading" => self.reading(call, rng, out)?,
             "feed" => {
                 let a = args::bind(&catalog::FEED_SPEC, &call.args)?;
-                let n = self.assembler.feed(a.bytes("data")?).map_err(bad_msg(function))?;
+                let n = self
+                    .assembler
+                    .feed(a.bytes("data")?)
+                    .map_err(bad_msg(function))?;
                 push(out, &n.to_string());
             }
             "recv" => self.recv(call, out)?,
@@ -599,9 +622,7 @@ impl TemplateFn for Mqtt {
                 let p = self.last.as_ref().ok_or_else(|| {
                     invalid("'field' reads the packet that recv read last, and recv read none")
                 })?;
-                out.extend_from_slice(
-                    &read::field(p, a.text("name")?).map_err(bad_msg(function))?,
-                );
+                out.extend_from_slice(&read::field(p, a.text("name")?).map_err(bad_msg(function))?);
             }
             "granted" => {
                 let a = args::bind(&catalog::GRANTED_SPEC, &call.args)?;
@@ -613,8 +634,11 @@ impl TemplateFn for Mqtt {
                     .ok_or_else(|| {
                         invalid("'granted' needs a SUBSCRIBE as the packet that recv read last")
                     })?;
-                let granted: Vec<String> =
-                    p.filters.iter().map(|f| f.qos().min(max).to_string()).collect();
+                let granted: Vec<String> = p
+                    .filters
+                    .iter()
+                    .map(|f| f.qos().min(max).to_string())
+                    .collect();
                 push(out, &granted.join(","));
             }
             "pace" => self.pace(call, out)?,

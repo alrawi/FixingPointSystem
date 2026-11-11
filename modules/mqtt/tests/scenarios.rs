@@ -24,7 +24,10 @@ fn packets(wire: &[u8], version: Version) -> Vec<Packet> {
     while at < wire.len() {
         let (len, n) = get_varint(&wire[at + 1..]).expect("a Remaining Length");
         let end = at + 1 + n + len as usize;
-        assert!(end <= wire.len(), "a packet runs past the end of the stream");
+        assert!(
+            end <= wire.len(),
+            "a packet runs past the end of the stream"
+        );
         out.push(parse(version, &wire[at..end]).unwrap_or_else(|e| panic!("{e}")));
         at = end;
     }
@@ -76,11 +79,18 @@ fn version_of(n: i64) -> Version {
     }
 }
 
-async fn scenario(name: &str, version: i64, extra: &[(&'static str, Value)]) -> (Vec<Packet>, Vec<Packet>, Run) {
+async fn scenario(
+    name: &str,
+    version: i64,
+    extra: &[(&'static str, Value)],
+) -> (Vec<Packet>, Vec<Packet>, Run) {
     let mut vars = small(version);
     vars.extend(extra.iter().cloned());
     let all = scenarios_with(&vars);
-    let (_, s) = all.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("{name}"));
+    let (_, s) = all
+        .iter()
+        .find(|(n, _)| n == name)
+        .unwrap_or_else(|| panic!("{name}"));
     let r = run(s, SEED, 1).await;
     let (c, b) = check(name, &r, version_of(version));
     (c, b, r)
@@ -90,7 +100,16 @@ async fn scenario(name: &str, version: i64, extra: &[(&'static str, Value)]) -> 
 async fn the_manifest_lists_five_scenarios() {
     let all = scenarios_with(&[]);
     let names: Vec<&str> = all.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names, ["publish_qos0", "publish_qos1", "publish_qos2", "subscribe", "keepalive"]);
+    assert_eq!(
+        names,
+        [
+            "publish_qos0",
+            "publish_qos1",
+            "publish_qos2",
+            "subscribe",
+            "keepalive"
+        ]
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -102,8 +121,12 @@ async fn publish_qos0_sends_publishes_without_acknowledgments() {
         want.push(Kind::Disconnect);
         assert_eq!(kinds(&c), want, "version {v}");
         assert_eq!(kinds(&b), [Kind::Connack], "version {v}");
-        assert!(c[1..4].iter().all(|p| p.qos == 0 && p.packet_id.is_none() && !p.retain));
-        assert!(c[1..4].iter().all(|p| p.topic == "fps/site-3/sensors/telemetry"));
+        assert!(c[1..4]
+            .iter()
+            .all(|p| p.qos == 0 && p.packet_id.is_none() && !p.retain));
+        assert!(c[1..4]
+            .iter()
+            .all(|p| p.topic == "fps/site-3/sensors/telemetry"));
         // The payloads are JSON readings with a rising sequence number.
         for (i, p) in c[1..4].iter().enumerate() {
             let text = String::from_utf8(p.payload.clone()).unwrap();
@@ -115,7 +138,10 @@ async fn publish_qos0_sends_publishes_without_acknowledgments() {
 #[tokio::test(start_paused = true)]
 async fn the_connect_and_the_connack_follow_the_version() {
     let (c4, b4, _) = scenario("publish_qos0", 4, &[]).await;
-    assert_eq!((c4[0].version, c4[0].keepalive, c4[0].clean), (Version::V311, 7, true));
+    assert_eq!(
+        (c4[0].version, c4[0].keepalive, c4[0].clean),
+        (Version::V311, 7, true)
+    );
     assert_eq!(c4[0].user.as_deref(), Some("sensor-0412"));
     assert!(c4[0].client_id.starts_with("mqttjs_") && c4[0].client_id.len() == 15);
     assert!(c4[0].props.is_empty() && b4[0].props.is_empty());
@@ -133,7 +159,19 @@ async fn the_connect_and_the_connack_follow_the_version() {
 #[tokio::test(start_paused = true)]
 async fn publish_qos1_pairs_every_publish_with_its_puback() {
     for v in [4, 5] {
-        let (c, b, _) = scenario("publish_qos1", v, &[("content_type", Value::Str(if v == 5 { "application/json".into() } else { String::new() }))]).await;
+        let (c, b, _) = scenario(
+            "publish_qos1",
+            v,
+            &[(
+                "content_type",
+                Value::Str(if v == 5 {
+                    "application/json".into()
+                } else {
+                    String::new()
+                }),
+            )],
+        )
+        .await;
         // CONNECT, the retained status, three readings, DISCONNECT.
         let mut want = vec![Kind::Connect];
         want.extend([Kind::Publish; 4]);
@@ -146,7 +184,9 @@ async fn publish_qos1_pairs_every_publish_with_its_puback() {
         assert_eq!(ids, [Some(1), Some(2), Some(3), Some(4)]);
         let acked: Vec<Option<u16>> = b[1..].iter().map(|p| p.packet_id).collect();
         assert_eq!(acked, ids);
-        assert!(c[1].retain && c[1].topic == "fps/site-3/sensors/status" && c[1].payload == b"online");
+        assert!(
+            c[1].retain && c[1].topic == "fps/site-3/sensors/status" && c[1].payload == b"online"
+        );
         assert!(c[2..5].iter().all(|p| !p.retain && p.qos == 1));
         if v == 5 {
             assert_eq!(field(&c[2], "content_type").unwrap(), b"application/json");
@@ -192,7 +232,14 @@ async fn subscribe_grants_the_filters_and_pushes_both_qos() {
         // CONNECT, SUBSCRIBE, two PUBACKs, UNSUBSCRIBE, DISCONNECT.
         assert_eq!(
             kinds(&c),
-            [Kind::Connect, Kind::Subscribe, Kind::Puback, Kind::Puback, Kind::Unsubscribe, Kind::Disconnect],
+            [
+                Kind::Connect,
+                Kind::Subscribe,
+                Kind::Puback,
+                Kind::Puback,
+                Kind::Unsubscribe,
+                Kind::Disconnect
+            ],
             "version {v}"
         );
         // CONNACK, SUBACK, two pairs of messages, UNSUBACK.
@@ -236,7 +283,11 @@ async fn the_subscribe_options_of_5_0_reach_the_wire() {
     let (c, _, _) = scenario(
         "subscribe",
         5,
-        &[("no_local", Value::Bool(true)), ("retain_handling", Value::Int(2)), ("qos", Value::Int(2))],
+        &[
+            ("no_local", Value::Bool(true)),
+            ("retain_handling", Value::Int(2)),
+            ("qos", Value::Int(2)),
+        ],
     )
     .await;
     assert!(c[1].filters.iter().all(|f| f.options == 0b0010_0110));
@@ -253,25 +304,46 @@ async fn keepalive_pings_keep_the_schedule_of_the_interval() {
         let took = started.elapsed();
         assert_eq!(
             kinds(&c),
-            [Kind::Connect, Kind::Pingreq, Kind::Pingreq, Kind::Publish, Kind::Disconnect],
+            [
+                Kind::Connect,
+                Kind::Pingreq,
+                Kind::Pingreq,
+                Kind::Publish,
+                Kind::Disconnect
+            ],
             "version {v}"
         );
-        assert_eq!(kinds(&b), [Kind::Connack, Kind::Pingresp, Kind::Pingresp], "version {v}");
+        assert_eq!(
+            kinds(&b),
+            [Kind::Connack, Kind::Pingresp, Kind::Pingresp],
+            "version {v}"
+        );
         // Two pings 7 seconds apart: the schedule starts at the CONNACK, so
         // the session lasts 14 seconds plus the handshake and the last message.
         assert!(took >= Duration::from_secs(14), "{took:?}");
-        assert!(took < Duration::from_secs(14) + Duration::from_secs(3), "{took:?}");
+        assert!(
+            took < Duration::from_secs(14) + Duration::from_secs(3),
+            "{took:?}"
+        );
     }
 }
 
 #[tokio::test(start_paused = true)]
 async fn keepalive_survives_a_session_of_many_pings() {
     let started = tokio::time::Instant::now();
-    let (c, _, _) = scenario("keepalive", 4, &[("pings", Value::Int(200)), ("keepalive", Value::Int(30))]).await;
+    let (c, _, _) = scenario(
+        "keepalive",
+        4,
+        &[("pings", Value::Int(200)), ("keepalive", Value::Int(30))],
+    )
+    .await;
     assert_eq!(c.iter().filter(|p| p.kind == Kind::Pingreq).count(), 200);
     // 200 pings 30 seconds apart: a session of an hour and a half.
     let took = started.elapsed();
-    assert!(took >= Duration::from_secs(6000) && took < Duration::from_secs(6003), "{took:?}");
+    assert!(
+        took >= Duration::from_secs(6000) && took < Duration::from_secs(6003),
+        "{took:?}"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -321,11 +393,13 @@ async fn long_packets_use_longer_remaining_lengths() {
     // characters and to three bytes at 20000, and the reads of the broker follow.
     for (n, length_bytes) in [(200usize, 2usize), (20_000, 3)] {
         let topic = format!("fps/{}", "x".repeat(n));
-        let (c, _, run) = scenario("publish_qos0", 4, &[("topic", Value::Str(topic.clone()))]).await;
+        let (c, _, run) =
+            scenario("publish_qos0", 4, &[("topic", Value::Str(topic.clone()))]).await;
         assert_eq!(c[1].topic, topic);
         // Walk the fixed headers to the first PUBLISH.
         let wire = session(&run).c2s();
-        let first = 1 + get_varint(&wire[1..]).unwrap().1 + get_varint(&wire[1..]).unwrap().0 as usize;
+        let first =
+            1 + get_varint(&wire[1..]).unwrap().1 + get_varint(&wire[1..]).unwrap().0 as usize;
         assert_eq!(wire[first] >> 4, 3);
         assert_eq!(get_varint(&wire[first + 1..]).unwrap().1, length_bytes);
     }
@@ -354,7 +428,10 @@ async fn a_corrupt_packet_fails_the_session() {
 #[tokio::test(start_paused = true)]
 async fn a_scenario_that_runs_in_one_version_refuses_the_properties_of_the_other() {
     // content_type is a property of MQTT 5.0, and the session of 3.1.1 refuses it.
-    let all = scenarios_with(&[("content_type", Value::Str("text/plain".into())), ("messages", Value::Int(1))]);
+    let all = scenarios_with(&[
+        ("content_type", Value::Str("text/plain".into())),
+        ("messages", Value::Int(1)),
+    ]);
     let (_, s) = all.iter().find(|(n, _)| n == "publish_qos1").unwrap();
     let r = run(s, SEED, 1).await;
     assert!(r.result.is_err());

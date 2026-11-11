@@ -8,9 +8,8 @@ use rand::{RngCore, SeedableRng};
 use super::*;
 use crate::read::{field, parse, Assembler};
 use crate::wire::{
-    ack, connack, connect, disconnect, get_varint, pingreq, pingresp, publish, put_varint,
-    suback, subscribe, unsuback, unsubscribe, varint_len, Connack, Connect, Publish,
-    Subscription, Will,
+    ack, connack, connect, disconnect, get_varint, pingreq, pingresp, publish, put_varint, suback,
+    subscribe, unsuback, unsubscribe, varint_len, Connack, Connect, Publish, Subscription, Will,
 };
 
 fn varint(v: u32) -> Vec<u8> {
@@ -127,7 +126,11 @@ fn publish_and_acks_match_the_known_bytes() {
         enc(|o| publish(o, &p).unwrap()),
         [0x32, 0x09, 0x00, 0x03, b'a', b'/', b'b', 0x00, 0x0A, b'h', b'i']
     );
-    let q0 = Publish { qos: 0, retain: true, ..p };
+    let q0 = Publish {
+        qos: 0,
+        retain: true,
+        ..p
+    };
     assert_eq!(
         enc(|o| publish(o, &q0).unwrap()),
         [0x31, 0x07, 0x00, 0x03, b'a', b'/', b'b', b'h', b'i']
@@ -177,16 +180,28 @@ fn subscribe_ping_and_disconnect_match_the_known_bytes() {
         enc(|o| subscribe(o, Version::V5, 1, &[sub(2)]).unwrap()),
         [0x82, 0x09, 0x00, 0x01, 0x00, 0x00, 0x03, b'a', b'/', b'+', 0x02]
     );
-    assert_eq!(enc(|o| suback(o, Version::V311, 1, &[1]).unwrap()), [0x90, 0x03, 0x00, 0x01, 0x01]);
+    assert_eq!(
+        enc(|o| suback(o, Version::V311, 1, &[1]).unwrap()),
+        [0x90, 0x03, 0x00, 0x01, 0x01]
+    );
     assert_eq!(
         enc(|o| suback(o, Version::V5, 1, &[1, 128]).unwrap()),
         [0x90, 0x05, 0x00, 0x01, 0x00, 0x01, 0x80]
     );
     assert_eq!(enc(pingreq), [0xC0, 0x00]);
     assert_eq!(enc(pingresp), [0xD0, 0x00]);
-    assert_eq!(enc(|o| disconnect(o, Version::V311, 0, None).unwrap()), [0xE0, 0x00]);
-    assert_eq!(enc(|o| disconnect(o, Version::V5, 0, None).unwrap()), [0xE0, 0x00]);
-    assert_eq!(enc(|o| disconnect(o, Version::V5, 4, None).unwrap()), [0xE0, 0x01, 0x04]);
+    assert_eq!(
+        enc(|o| disconnect(o, Version::V311, 0, None).unwrap()),
+        [0xE0, 0x00]
+    );
+    assert_eq!(
+        enc(|o| disconnect(o, Version::V5, 0, None).unwrap()),
+        [0xE0, 0x00]
+    );
+    assert_eq!(
+        enc(|o| disconnect(o, Version::V5, 4, None).unwrap()),
+        [0xE0, 0x01, 0x04]
+    );
     assert_eq!(
         enc(|o| unsuback(o, Version::V311, 7, &[0]).unwrap()),
         [0xB0, 0x02, 0x00, 0x07]
@@ -237,10 +252,19 @@ fn every_packet_round_trips_in_both_versions() {
         assert_eq!(p.user.as_deref(), Some("sensor-0412"));
         assert_eq!(p.password.as_deref(), Some(&b"Tst-amber-falcon-27"[..]));
         let w = p.will.clone().unwrap();
-        assert_eq!((w.topic.as_str(), w.payload.as_slice(), w.qos, w.retain), ("fps/status", &b"offline"[..], 1, true));
+        assert_eq!(
+            (w.topic.as_str(), w.payload.as_slice(), w.qos, w.retain),
+            ("fps/status", &b"offline"[..], 1, true)
+        );
         if v.is_v5() {
-            assert_eq!(p.property("session_expiry_interval"), Some(&read::PropValue::U32(300)));
-            assert_eq!(p.property("receive_maximum"), Some(&read::PropValue::U16(20)));
+            assert_eq!(
+                p.property("session_expiry_interval"),
+                Some(&read::PropValue::U32(300))
+            );
+            assert_eq!(
+                p.property("receive_maximum"),
+                Some(&read::PropValue::U16(20))
+            );
         }
 
         let a = Connack {
@@ -260,7 +284,10 @@ fn every_packet_round_trips_in_both_versions() {
         assert_eq!(p.code, 0);
         if v.is_v5() {
             assert_eq!(field(&p, "server_keep_alive").unwrap(), b"45");
-            assert_eq!(field(&p, "assigned_client_identifier").unwrap(), b"auto-1234");
+            assert_eq!(
+                field(&p, "assigned_client_identifier").unwrap(),
+                b"auto-1234"
+            );
         }
 
         for qos in 0..=2u8 {
@@ -287,7 +314,10 @@ fn every_packet_round_trips_in_both_versions() {
                 continue;
             }
             let p = rt(v, &enc(|o| publish(o, &pb).unwrap()));
-            assert_eq!((p.qos, p.packet_id, p.dup, p.retain), (qos, Some(513), qos == 2, qos == 1));
+            assert_eq!(
+                (p.qos, p.packet_id, p.dup, p.retain),
+                (qos, Some(513), qos == 2, qos == 1)
+            );
             assert_eq!(p.topic, "fps/site-3/telemetry");
             assert_eq!(p.payload, [0, 255, 7, 8]);
             if v.is_v5() {
@@ -296,7 +326,12 @@ fn every_packet_round_trips_in_both_versions() {
             }
         }
 
-        for k in [AckKind::Puback, AckKind::Pubrec, AckKind::Pubrel, AckKind::Pubcomp] {
+        for k in [
+            AckKind::Puback,
+            AckKind::Pubrec,
+            AckKind::Pubrel,
+            AckKind::Pubcomp,
+        ] {
             for reason in [0u8, 146] {
                 if !v.is_v5() && reason != 0 {
                     continue;
@@ -311,8 +346,20 @@ fn every_packet_round_trips_in_both_versions() {
         }
 
         let subs = [
-            Subscription { filter: "fps/+/telemetry", qos: 1, no_local: v.is_v5(), retain_as_published: false, retain_handling: u8::from(v.is_v5()) },
-            Subscription { filter: "fps/#", qos: 2, no_local: false, retain_as_published: v.is_v5(), retain_handling: 0 },
+            Subscription {
+                filter: "fps/+/telemetry",
+                qos: 1,
+                no_local: v.is_v5(),
+                retain_as_published: false,
+                retain_handling: u8::from(v.is_v5()),
+            },
+            Subscription {
+                filter: "fps/#",
+                qos: 2,
+                no_local: false,
+                retain_as_published: v.is_v5(),
+                retain_handling: 0,
+            },
         ];
         let p = rt(v, &enc(|o| subscribe(o, v, 3, &subs).unwrap()));
         assert_eq!(p.filters.len(), 2);
@@ -322,13 +369,19 @@ fn every_packet_round_trips_in_both_versions() {
 
         let p = rt(v, &enc(|o| suback(o, v, 3, &[1, 2]).unwrap()));
         assert_eq!(p.codes, [1, 2]);
-        let p = rt(v, &enc(|o| unsubscribe(o, v, 4, &["fps/#", "a/b"]).unwrap()));
+        let p = rt(
+            v,
+            &enc(|o| unsubscribe(o, v, 4, &["fps/#", "a/b"]).unwrap()),
+        );
         assert_eq!(field(&p, "filters").unwrap(), b"fps/#,a/b");
         let p = rt(v, &enc(|o| unsuback(o, v, 4, &[0, 0]).unwrap()));
         assert_eq!(p.packet_id, Some(4));
         assert_eq!(rt(v, &enc(pingreq)).kind, Kind::Pingreq);
         assert_eq!(rt(v, &enc(pingresp)).kind, Kind::Pingresp);
-        assert_eq!(rt(v, &enc(|o| disconnect(o, v, 0, None).unwrap())).kind, Kind::Disconnect);
+        assert_eq!(
+            rt(v, &enc(|o| disconnect(o, v, 0, None).unwrap())).kind,
+            Kind::Disconnect
+        );
     }
 }
 
@@ -353,35 +406,131 @@ fn encoders_refuse_what_the_standard_forbids() {
         user_property: None,
     };
     // A packet identifier of 0, a topic name with a wildcard, QoS 3, DUP at QoS 0.
-    assert!(enc_err(|o| publish(o, &Publish { packet_id: 0, ..base(Version::V311) })));
-    assert!(enc_err(|o| publish(o, &Publish { topic: "a/+", ..base(Version::V311) })));
-    assert!(enc_err(|o| publish(o, &Publish { topic: "", ..base(Version::V311) })));
-    assert!(enc_err(|o| publish(o, &Publish { qos: 3, ..base(Version::V311) })));
-    assert!(enc_err(|o| publish(o, &Publish { qos: 0, dup: true, ..base(Version::V311) })));
+    assert!(enc_err(|o| publish(
+        o,
+        &Publish {
+            packet_id: 0,
+            ..base(Version::V311)
+        }
+    )));
+    assert!(enc_err(|o| publish(
+        o,
+        &Publish {
+            topic: "a/+",
+            ..base(Version::V311)
+        }
+    )));
+    assert!(enc_err(|o| publish(
+        o,
+        &Publish {
+            topic: "",
+            ..base(Version::V311)
+        }
+    )));
+    assert!(enc_err(|o| publish(
+        o,
+        &Publish {
+            qos: 3,
+            ..base(Version::V311)
+        }
+    )));
+    assert!(enc_err(|o| publish(
+        o,
+        &Publish {
+            qos: 0,
+            dup: true,
+            ..base(Version::V311)
+        }
+    )));
     // A property in a session of MQTT 3.1.1.
-    assert!(enc_err(|o| publish(o, &Publish { message_expiry: Some(5), ..base(Version::V311) })));
+    assert!(enc_err(|o| publish(
+        o,
+        &Publish {
+            message_expiry: Some(5),
+            ..base(Version::V311)
+        }
+    )));
     // A topic name with the null character.
-    assert!(enc_err(|o| publish(o, &Publish { topic: "a\0b", ..base(Version::V5) })));
+    assert!(enc_err(|o| publish(
+        o,
+        &Publish {
+            topic: "a\0b",
+            ..base(Version::V5)
+        }
+    )));
     // Filters.
-    let sub = |f| [Subscription { filter: f, qos: 0, no_local: false, retain_as_published: false, retain_handling: 0 }];
+    let sub = |f| {
+        [Subscription {
+            filter: f,
+            qos: 0,
+            no_local: false,
+            retain_as_published: false,
+            retain_handling: 0,
+        }]
+    };
     for bad in ["", "a/#/b", "a#", "a+", "a/b+/c", "#/a"] {
-        assert!(enc_err(|o| subscribe(o, Version::V311, 1, &sub(bad))), "{bad}");
+        assert!(
+            enc_err(|o| subscribe(o, Version::V311, 1, &sub(bad))),
+            "{bad}"
+        );
     }
     for good in ["#", "+", "+/+", "a/#", "/", "a//b", "$SYS/#"] {
-        assert!(!enc_err(|o| subscribe(o, Version::V311, 1, &sub(good))), "{good}");
+        assert!(
+            !enc_err(|o| subscribe(o, Version::V311, 1, &sub(good))),
+            "{good}"
+        );
     }
     // Subscription options of MQTT 5.0 in a session of 3.1.1.
-    let nl = [Subscription { filter: "a", qos: 0, no_local: true, retain_as_published: false, retain_handling: 0 }];
+    let nl = [Subscription {
+        filter: "a",
+        qos: 0,
+        no_local: true,
+        retain_as_published: false,
+        retain_handling: 0,
+    }];
     assert!(enc_err(|o| subscribe(o, Version::V311, 1, &nl)));
     // Codes.
     assert!(enc_err(|o| suback(o, Version::V311, 1, &[3])));
     assert!(enc_err(|o| suback(o, Version::V311, 1, &[0x83])));
-    assert!(enc_err(|o| connack(o, &Connack { version: Version::V311, session_present: false, code: 6, session_expiry: None, receive_max: None, topic_alias_max: None, server_keepalive: None, assigned_client_id: None, max_qos: None, retain_available: None })));
+    assert!(enc_err(|o| connack(
+        o,
+        &Connack {
+            version: Version::V311,
+            session_present: false,
+            code: 6,
+            session_expiry: None,
+            receive_max: None,
+            topic_alias_max: None,
+            server_keepalive: None,
+            assigned_client_id: None,
+            max_qos: None,
+            retain_available: None
+        }
+    )));
     assert!(enc_err(|o| disconnect(o, Version::V311, 4, None)));
-    assert!(enc_err(|o| ack(o, Version::V311, AckKind::Puback, 1, 16, None)));
+    assert!(enc_err(|o| ack(
+        o,
+        Version::V311,
+        AckKind::Puback,
+        1,
+        16,
+        None
+    )));
     // A 3.1.1 client with an empty identifier needs a clean session.
-    assert!(enc_err(|o| connect(o, &Connect { clean: false, ..base_connect(Version::V311) })));
-    assert!(!enc_err(|o| connect(o, &Connect { clean: false, ..base_connect(Version::V5) })));
+    assert!(enc_err(|o| connect(
+        o,
+        &Connect {
+            clean: false,
+            ..base_connect(Version::V311)
+        }
+    )));
+    assert!(!enc_err(|o| connect(
+        o,
+        &Connect {
+            clean: false,
+            ..base_connect(Version::V5)
+        }
+    )));
 }
 
 #[test]
@@ -425,10 +574,24 @@ fn the_reader_survives_random_bytes() {
     let mut rng = rand_pcg::Pcg64Mcg::new(77);
     let seeds: Vec<Vec<u8>> = vec![
         enc(|o| connect(o, &base_connect(Version::V5)).unwrap()),
-        enc(|o| subscribe(o, Version::V5, 3, &[Subscription { filter: "a/#", qos: 1, no_local: false, retain_as_published: false, retain_handling: 0 }]).unwrap()),
+        enc(|o| {
+            subscribe(
+                o,
+                Version::V5,
+                3,
+                &[Subscription {
+                    filter: "a/#",
+                    qos: 1,
+                    no_local: false,
+                    retain_as_published: false,
+                    retain_handling: 0,
+                }],
+            )
+            .unwrap()
+        }),
     ];
     for _ in 0..20_000 {
-        let mut b = if rng.next_u32() % 3 == 0 {
+        let mut b = if rng.next_u32().is_multiple_of(3) {
             let n = (rng.next_u32() % 40) as usize;
             let mut v = vec![0u8; n];
             rng.fill_bytes(&mut v);
@@ -474,7 +637,13 @@ fn call(
     positional: &[ArgValue<'_>],
     named: &[NamedArg<'_>],
 ) -> Result<Vec<u8>, FnError> {
-    call_with(m, &mut rand_pcg::Pcg64Mcg::new(42), function, positional, named)
+    call_with(
+        m,
+        &mut rand_pcg::Pcg64Mcg::new(42),
+        function,
+        positional,
+        named,
+    )
 }
 
 fn text(v: Vec<u8>) -> String {
@@ -491,7 +660,9 @@ fn flow_read(m: &mut Mqtt, packet: &[u8], expect: &'static str) -> Result<String
     let mut at = 1;
     let mut last: Vec<u8> = packet[..1].to_vec();
     for _ in 0..6 {
-        let n: usize = text(call(m, "feed", &[ArgValue::Bytes(&last)], &[])?).parse().unwrap();
+        let n: usize = text(call(m, "feed", &[ArgValue::Bytes(&last)], &[])?)
+            .parse()
+            .unwrap();
         last = packet[at..at + n].to_vec();
         at += n;
     }
@@ -525,7 +696,10 @@ fn the_assembler_reads_every_remaining_length_in_six_reads() {
         });
         let mut m = Mqtt::default();
         assert_eq!(flow_read(&mut m, &packet, "publish:0").unwrap(), "publish");
-        assert_eq!(text(call(&mut m, "field", &[ArgValue::Text("payload_length")], &[]).unwrap()), body.to_string());
+        assert_eq!(
+            text(call(&mut m, "field", &[ArgValue::Text("payload_length")], &[]).unwrap()),
+            body.to_string()
+        );
     }
 }
 
@@ -567,26 +741,50 @@ fn a_session_runs_between_two_values_at_every_qos() {
             &mut c,
             "connect",
             &[ArgValue::Text("mqttjs_00000001")],
-            &[named("version", ArgValue::Int(version)), named("keepalive", ArgValue::Int(30))],
+            &[
+                named("version", ArgValue::Int(version)),
+                named("keepalive", ArgValue::Int(30)),
+            ],
         )
         .unwrap();
         assert_eq!(flow_read(&mut b, &hello, "connect").unwrap(), "connect");
-        assert_eq!(text(call(&mut b, "field", &[ArgValue::Text("version")], &[]).unwrap()), version.to_string());
-        assert_eq!(text(call(&mut b, "field", &[ArgValue::Text("keepalive")], &[]).unwrap()), "30");
+        assert_eq!(
+            text(call(&mut b, "field", &[ArgValue::Text("version")], &[]).unwrap()),
+            version.to_string()
+        );
+        assert_eq!(
+            text(call(&mut b, "field", &[ArgValue::Text("keepalive")], &[]).unwrap()),
+            "30"
+        );
         let ack = call(&mut b, "connack", &[], &[]).unwrap();
         assert_eq!(flow_read(&mut c, &ack, "connack").unwrap(), "connack");
 
         // QoS 1: the identifier of the PUBACK comes from the PUBLISH that the broker read.
-        let p1 = call(&mut c, "publish", &[ArgValue::Text("a/b"), ArgValue::Bytes(b"x")], &[named("qos", ArgValue::Int(1))]).unwrap();
+        let p1 = call(
+            &mut c,
+            "publish",
+            &[ArgValue::Text("a/b"), ArgValue::Bytes(b"x")],
+            &[named("qos", ArgValue::Int(1))],
+        )
+        .unwrap();
         assert_eq!(flow_read(&mut b, &p1, "publish:1").unwrap(), "publish");
         let id = text(call(&mut b, "field", &[ArgValue::Text("packet_id")], &[]).unwrap());
         assert_eq!(id, "1");
         let pa = call(&mut b, "puback", &[], &[]).unwrap();
         assert_eq!(flow_read(&mut c, &pa, "puback").unwrap(), "puback");
-        assert_eq!(text(call(&mut c, "field", &[ArgValue::Text("packet_id")], &[]).unwrap()), "1");
+        assert_eq!(
+            text(call(&mut c, "field", &[ArgValue::Text("packet_id")], &[]).unwrap()),
+            "1"
+        );
 
         // QoS 2: PUBLISH, PUBREC, PUBREL, PUBCOMP with one identifier.
-        let p2 = call(&mut c, "publish", &[ArgValue::Text("a/b"), ArgValue::Bytes(b"y")], &[named("qos", ArgValue::Int(2))]).unwrap();
+        let p2 = call(
+            &mut c,
+            "publish",
+            &[ArgValue::Text("a/b"), ArgValue::Bytes(b"y")],
+            &[named("qos", ArgValue::Int(2))],
+        )
+        .unwrap();
         assert_eq!(flow_read(&mut b, &p2, "publish:2").unwrap(), "publish");
         let rec = call(&mut b, "pubrec", &[], &[]).unwrap();
         assert_eq!(flow_read(&mut c, &rec, "pubrec").unwrap(), "pubrec");
@@ -594,19 +792,34 @@ fn a_session_runs_between_two_values_at_every_qos() {
         assert_eq!(flow_read(&mut b, &rel, "pubrel").unwrap(), "pubrel");
         let comp = call(&mut b, "pubcomp", &[], &[]).unwrap();
         assert_eq!(flow_read(&mut c, &comp, "pubcomp").unwrap(), "pubcomp");
-        assert_eq!(text(call(&mut c, "field", &[ArgValue::Text("packet_id")], &[]).unwrap()), "2");
+        assert_eq!(
+            text(call(&mut c, "field", &[ArgValue::Text("packet_id")], &[]).unwrap()),
+            "2"
+        );
 
         // SUBSCRIBE with two filters at QoS 2, granted at most 1.
-        let sub = call(&mut c, "subscribe", &[ArgValue::Text("a/#,b/+")], &[named("qos", ArgValue::Int(2))]).unwrap();
+        let sub = call(
+            &mut c,
+            "subscribe",
+            &[ArgValue::Text("a/#,b/+")],
+            &[named("qos", ArgValue::Int(2))],
+        )
+        .unwrap();
         assert_eq!(flow_read(&mut b, &sub, "subscribe").unwrap(), "subscribe");
         let granted = call(&mut b, "granted", &[ArgValue::Int(1)], &[]).unwrap();
         assert_eq!(granted, b"1,1");
         let sa = call(&mut b, "suback", &[ArgValue::Bytes(&granted)], &[]).unwrap();
         assert_eq!(flow_read(&mut c, &sa, "suback").unwrap(), "suback");
-        assert_eq!(text(call(&mut c, "field", &[ArgValue::Text("codes")], &[]).unwrap()), "1,1");
+        assert_eq!(
+            text(call(&mut c, "field", &[ArgValue::Text("codes")], &[]).unwrap()),
+            "1,1"
+        );
 
         let un = call(&mut c, "unsubscribe", &[ArgValue::Text("a/#,b/+")], &[]).unwrap();
-        assert_eq!(flow_read(&mut b, &un, "unsubscribe").unwrap(), "unsubscribe");
+        assert_eq!(
+            flow_read(&mut b, &un, "unsubscribe").unwrap(),
+            "unsubscribe"
+        );
         let ua = call(&mut b, "unsuback", &[], &[named("count", ArgValue::Int(2))]).unwrap();
         assert_eq!(flow_read(&mut c, &ua, "unsuback").unwrap(), "unsuback");
 
@@ -623,7 +836,13 @@ fn a_session_runs_between_two_values_at_every_qos() {
 fn recv_fails_the_session_on_a_wrong_kind_or_qos() {
     let mut c = Mqtt::default();
     let mut b = Mqtt::default();
-    let p = call(&mut c, "publish", &[ArgValue::Text("a"), ArgValue::Bytes(b"")], &[named("qos", ArgValue::Int(1))]).unwrap();
+    let p = call(
+        &mut c,
+        "publish",
+        &[ArgValue::Text("a"), ArgValue::Bytes(b"")],
+        &[named("qos", ArgValue::Int(1))],
+    )
+    .unwrap();
     let e = flow_read(&mut b, &p, "puback").unwrap_err();
     assert_eq!(e.kind, FnErrorKind::Protocol);
     let e = flow_read(&mut b, &p, "publish:0").unwrap_err();
@@ -632,9 +851,24 @@ fn recv_fails_the_session_on_a_wrong_kind_or_qos() {
     let e = call(&mut b, "recv", &[], &[]).unwrap_err();
     assert_eq!(e.kind, FnErrorKind::Protocol);
     // field before recv.
-    assert_eq!(call(&mut Mqtt::default(), "field", &[ArgValue::Text("type")], &[]).unwrap_err().kind, FnErrorKind::InvalidArgument);
+    assert_eq!(
+        call(
+            &mut Mqtt::default(),
+            "field",
+            &[ArgValue::Text("type")],
+            &[]
+        )
+        .unwrap_err()
+        .kind,
+        FnErrorKind::InvalidArgument
+    );
     // An acknowledgment without a packet to answer.
-    assert_eq!(call(&mut Mqtt::default(), "puback", &[], &[]).unwrap_err().kind, FnErrorKind::InvalidArgument);
+    assert_eq!(
+        call(&mut Mqtt::default(), "puback", &[], &[])
+            .unwrap_err()
+            .kind,
+        FnErrorKind::InvalidArgument
+    );
 }
 
 #[test]
@@ -650,13 +884,31 @@ fn packet_identifiers_count_up_and_wrap() {
     assert_eq!(id(&mut m), 65_535);
     assert_eq!(id(&mut m), 1);
     // QoS 0 takes no identifier and leaves the counter alone.
-    call(&mut m, "publish", &[ArgValue::Text("a"), ArgValue::Bytes(b"")], &[]).unwrap();
+    call(
+        &mut m,
+        "publish",
+        &[ArgValue::Text("a"), ArgValue::Bytes(b"")],
+        &[],
+    )
+    .unwrap();
     assert_eq!(id(&mut m), 2);
     // An explicit identifier is checked and leaves the counter alone.
-    let p = call(&mut m, "subscribe", &[ArgValue::Text("a")], &[named("packet_id", ArgValue::Int(900))]).unwrap();
+    let p = call(
+        &mut m,
+        "subscribe",
+        &[ArgValue::Text("a")],
+        &[named("packet_id", ArgValue::Int(900))],
+    )
+    .unwrap();
     assert_eq!(u16::from_be_bytes([p[2], p[3]]), 900);
     for bad in [0, 65_536, -2] {
-        assert!(call(&mut m, "subscribe", &[ArgValue::Text("a")], &[named("packet_id", ArgValue::Int(bad))]).is_err());
+        assert!(call(
+            &mut m,
+            "subscribe",
+            &[ArgValue::Text("a")],
+            &[named("packet_id", ArgValue::Int(bad))]
+        )
+        .is_err());
     }
 }
 
@@ -672,14 +924,31 @@ fn a_session_of_3_1_1_refuses_the_properties_of_5_0() {
     )
     .unwrap_err();
     assert_eq!(e.kind, FnErrorKind::InvalidArgument);
-    assert!(call(&mut m, "connect", &[ArgValue::Text("c")], &[named("session_expiry", ArgValue::Int(5))]).is_err());
+    assert!(call(
+        &mut m,
+        "connect",
+        &[ArgValue::Text("c")],
+        &[named("session_expiry", ArgValue::Int(5))]
+    )
+    .is_err());
     // A broker of 3.1.1 leaves the defaults of the properties out and rejects a given one.
     let mut b = Mqtt::default();
-    assert_eq!(call(&mut b, "connack", &[], &[]).unwrap(), [0x20, 0x02, 0x00, 0x00]);
-    assert!(call(&mut b, "connack", &[], &[named("receive_max", ArgValue::Int(7))]).is_err());
+    assert_eq!(
+        call(&mut b, "connack", &[], &[]).unwrap(),
+        [0x20, 0x02, 0x00, 0x00]
+    );
+    assert!(call(
+        &mut b,
+        "connack",
+        &[],
+        &[named("receive_max", ArgValue::Int(7))]
+    )
+    .is_err());
     // A broker of 5.0 sends them.
-    let mut b = Mqtt::default();
-    b.version = Version::V5;
+    let mut b = Mqtt {
+        version: Version::V5,
+        ..Mqtt::default()
+    };
     let p = call(&mut b, "connack", &[], &[]).unwrap();
     let parsed = parse(Version::V5, &p).unwrap();
     assert_eq!(field(&parsed, "receive_maximum").unwrap(), b"20");
@@ -700,7 +969,10 @@ fn bad_arguments_fail_the_call_and_not_the_process() {
         ("pace", vec![ArgValue::Int(0)]),
         ("recv", vec![ArgValue::Text("teapot")]),
         ("recv", vec![ArgValue::Text("connect:1")]),
-        ("client_id", vec![ArgValue::Text("a-prefix-that-is-far-too-long")]),
+        (
+            "client_id",
+            vec![ArgValue::Text("a-prefix-that-is-far-too-long")],
+        ),
         ("reading", vec![ArgValue::Text("a\"b")]),
         ("feed", vec![ArgValue::Bytes(&[1, 2])]),
     ];
@@ -718,9 +990,22 @@ fn bad_arguments_fail_the_call_and_not_the_process() {
 #[test]
 fn varint_functions_agree_with_the_wire() {
     let mut m = Mqtt::default();
-    for v in [0i64, 1, 127, 128, 16_383, 16_384, 2_097_151, 2_097_152, 268_435_455] {
+    for v in [
+        0i64,
+        1,
+        127,
+        128,
+        16_383,
+        16_384,
+        2_097_151,
+        2_097_152,
+        268_435_455,
+    ] {
         let b = call(&mut m, "varint", &[ArgValue::Int(v)], &[]).unwrap();
-        assert_eq!(text(call(&mut m, "varint_value", &[ArgValue::Bytes(&b)], &[]).unwrap()), v.to_string());
+        assert_eq!(
+            text(call(&mut m, "varint_value", &[ArgValue::Bytes(&b)], &[]).unwrap()),
+            v.to_string()
+        );
     }
 }
 
@@ -734,10 +1019,22 @@ fn client_ids_and_readings_come_from_the_generator() {
     assert_ne!(a, b);
     let r1 = text(call_with(&mut m, &mut rng, "reading", &[], &[]).unwrap());
     let r2 = text(call_with(&mut m, &mut rng, "reading", &[], &[]).unwrap());
-    assert!(r1.contains("\"seq\":1,") && r2.contains("\"seq\":2,"), "{r1} {r2}");
+    assert!(
+        r1.contains("\"seq\":1,") && r2.contains("\"seq\":2,"),
+        "{r1} {r2}"
+    );
     assert!(r1.starts_with("{\"device\":\"sensor-0412\"") && r1.ends_with('}'));
     // A new side starts its own sequence.
-    let r = text(call_with(&mut Mqtt::default(), &mut rng, "reading", &[ArgValue::Text("gw-7")], &[]).unwrap());
+    let r = text(
+        call_with(
+            &mut Mqtt::default(),
+            &mut rng,
+            "reading",
+            &[ArgValue::Text("gw-7")],
+            &[],
+        )
+        .unwrap(),
+    );
     assert!(r.contains("\"device\":\"gw-7\"") && r.contains("\"seq\":1,"));
 }
 
