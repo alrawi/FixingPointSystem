@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 134 work packages. Packages marked critical path gate the phase.
+This page lists 138 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -145,6 +145,10 @@ flowchart LR
   CON_23["CON-23<br/>Catalog metrics for every realism check"]
   RLM_17["RLM-17<br/>The CON-23 metrics in the realism report"]
   CON_24["CON-24<br/>Capture drop counts in the agent protocol and the REST API"]
+  AGT_21["AGT-21<br/>NTP, MQTT, LDAP, and HLS in the agent"]
+  CON_25["CON-25<br/>The messages check in the metric catalog"]
+  CTL_42["CTL-42<br/>The CON-23 mapping table in the controller"]
+  QA_10["QA-10<br/>Gate 1 without its own reuse rule"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -312,6 +316,17 @@ flowchart LR
   CON_23 --> RLM_17
   RLM_14 --> RLM_17
   ENG_27 --> CON_24
+  MOD_15 --> AGT_21
+  MOD_16 --> AGT_21
+  MOD_17 --> AGT_21
+  MOD_18 --> AGT_21
+  CON_23 --> CON_25
+  RLM_17 --> CON_25
+  CON_23 --> CTL_42
+  CTL_41 --> CTL_42
+  RLM_17 --> CTL_42
+  QA_09 --> QA_10
+  RLM_17 --> QA_10
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -454,6 +469,10 @@ flowchart LR
 | [CON-23](#con-23-catalog-metrics-for-every-realism-check) | Catalog metrics for every realism check | S | CON-22 |  |
 | [RLM-17](#rlm-17-the-con-23-metrics-in-the-realism-report) | The CON-23 metrics in the realism report | M | CON-23, RLM-14 |  |
 | [CON-24](#con-24-capture-drop-counts-in-the-agent-protocol-and-the-rest-api) | Capture drop counts in the agent protocol and the REST API | S | ENG-27 |  |
+| [AGT-21](#agt-21-ntp-mqtt-ldap-and-hls-in-the-agent) | NTP, MQTT, LDAP, and HLS in the agent | S | MOD-15, MOD-16, MOD-17, MOD-18 |  |
+| [CON-25](#con-25-the-messages-check-in-the-metric-catalog) | The messages check in the metric catalog | S | CON-23, RLM-17 |  |
+| [CTL-42](#ctl-42-the-con-23-mapping-table-in-the-controller) | The CON-23 mapping table in the controller | S | CON-23, CTL-41, RLM-17 |  |
+| [QA-10](#qa-10-gate-1-without-its-own-reuse-rule) | Gate 1 without its own reuse rule | S | QA-09, RLM-17 |  |
 
 ## CON Contracts
 
@@ -738,6 +757,23 @@ Acceptance.
 
 - [ ] validate.py, the proto and openapi-breaking checks pass, and the change entry lists the consumers (agent, controller, UI, SDK).
 
+### CON-25 The messages check in the metric catalog
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** CON-23, RLM-17
+- **Paths.** `contracts/`
+
+RLM-14 added the messages check to the realism report after CON-23 listed the check kinds, so the catalog label check has no value messages and a failing messages check never reaches RunReport.realism (RLM-17). Needs owner approval as a contract change.
+
+Deliverables.
+
+- The value messages for the label check (catalog 0.6.0), its realism.check_failures defined as failures_total, and a passing and a failing case in contracts/examples/realism/check-metrics.yaml.
+
+Acceptance.
+
+- [ ] validate.py passes, and the change entry lists the consumers (realism runner, fps-stats tables, controller catalog copy).
+
 ## OPS Repository and swarm tooling
 
 ### OPS-05 Release workflow
@@ -792,6 +828,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The suite passes 10 times in a row in CI and still fails on a capture with a corrupted HTTP message.
+
+### QA-10 Gate 1 without its own reuse rule
+
+Phase 2 · size S · workstream QA
+
+- **Depends on.** QA-09, RLM-17
+- **Paths.** `tests/gates/gate1/`
+
+QA-09 made the Gate 1 suite skip the Zeek weird premature_connection_reuse in sessions of more than one connection. RLM-17 moved that weird into the runner's ZEEK_STATE_WEIRDS, so the suite's REUSE_WEIRDS rule is dead code.
+
+Deliverables.
+
+- REUSE_WEIRDS and its branch in gate1_report.py go, the parser findings files stay, and the suite still fails on any other finding.
+
+Acceptance.
+
+- [ ] The unit tests and three Gate 1 runs in a row pass, and the corruption proof still fails the gate.
 
 ## ENG Agent engine
 
@@ -1434,6 +1487,23 @@ Acceptance.
 
 - [ ] A controller e2e plan runs sip_rtp/basic_call through the real agent with succeeded sessions and RTP in the capture.
 
+### AGT-21 NTP, MQTT, LDAP, and HLS in the agent
+
+Phase 2 · size S · workstream AGT
+
+- **Depends on.** MOD-15, MOD-16, MOD-17, MOD-18
+- **Paths.** `engine/fps-agent/`
+
+Batch 28 added the ntp, mqtt, ldap and hls modules, and the agent registry has none of them. Their log entries give the registry code: ntp is stateless, mqtt and ldap are stateful like http2, and hls keeps the segment counter and pace of one flow side.
+
+Deliverables.
+
+- The four dependencies and registry entries, the modules in the registry list test, and controller_e2e.sh runs of one scenario each (hls/vod_segments for multi flow TCP) on unprivileged ports.
+
+Acceptance.
+
+- [ ] controller-e2e passes with succeeded sessions and a passed verdict for each of the four modules.
+
 ## CTL Controller
 
 ### CTL-21 Throughput rate calibration
@@ -1888,6 +1958,23 @@ Deliverables.
 Acceptance.
 
 - [ ] REST tests with literal results for a conformance and a temporal check, the replace and refusal cases, a byte-identical schema copy test, and attachRealismReport leaves the pending operations list.
+
+### CTL-42 The CON-23 mapping table in the controller
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CON-23, CTL-41, RLM-17
+- **Paths.** `controller/internal/report/`
+
+contracts/changes/CON-23.md gives every realism metric a target and a passed rule (realism.check_failures == 0, parser_errors == 0, decrypted_ratio >= min_decrypted, and so on). The controller maps every metric but the conformance and KS ones with the generic CON-22 rule, target check passed.
+
+Deliverables.
+
+- MapRealism implements the CON-23 table, with the generic rule kept for metrics the table does not name.
+
+Acceptance.
+
+- [ ] Tests map every row of contracts/examples/realism/check-metrics.yaml to the literal target and passed it gives.
 
 ## CLI Python SDK and command line client
 
@@ -2450,7 +2537,7 @@ Phase 2 · size S · workstream RLM
 - **Depends on.** RLM-06, MOD-14
 - **Paths.** `realism/`
 
-The temporal check measures session start gaps and payload sizes, not the gaps between the packets of one session, so the RTP pacing of sip_rtp is checked only by the module's own rtp_check.py.
+The temporal check measures session start gaps and payload sizes, not the gaps between the packets of one session, so the RTP pacing of sip_rtp is checked only by the module's own rtp_check.py, and the segment cadence inside an HLS keepalive connection only by hls_check.py (MOD-15).
 
 Deliverables.
 

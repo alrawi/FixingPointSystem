@@ -158,7 +158,7 @@ The acceptance asks for RTP inter arrival times at the configured interval. A `d
 
 The fixture holds 15 calls and 27 sessions with 27 different 5-tuples. nDPI 4.2.0 labels all 15 SIP sessions `SIP` and all 12 media sessions `RTP`, and tshark 4.2.2 reports no parser error. tshark rejected the first Opus capture, because a random first byte is not a valid Opus table of contents, so the Opus payload now starts with a valid byte. `fixtures/zeek_check.py` requires one `INVITE` row in `sip.log` for every call and no `sip` entry in `weird.log`. It needs Zeek, which the CI job installs, and the local run only tested it against synthetic logs.
 
-The agent cannot run the four call scenarios yet. It refuses a scenario with several flows of which one is UDP (AGT-16), because the instance runner of the runtime opens TCP connections only, so the scenarios run through the interpreter and `fixture_peer`. The follow up is a datagram opener in the runtime and a registry entry for `sip_rtp`. `busy` has one flow and runs in the agent once the registry dispatches `sip_rtp`.
+The agent runs the call scenarios since AGT-20: the runtime opens the datagram flows of a multi flow instance (ENG-26), and a scenario of several flows goes to the runtime workers whatever the transport of its entry flow. A late datagram of a finished call opens a new session on the UDP entry port that fails, so it counts in `sessions.failed`.
 
 ## The http2 module
 

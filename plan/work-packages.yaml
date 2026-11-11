@@ -3418,7 +3418,7 @@ work_packages:
     paths: [realism/]
     summary: >-
       The temporal check measures session start gaps and payload sizes, not the gaps between the packets of one
-      session, so the RTP pacing of sip_rtp is checked only by the module's own rtp_check.py.
+      session, so the RTP pacing of sip_rtp is checked only by the module's own rtp_check.py, and the segment cadence inside an HLS keepalive connection only by hls_check.py (MOD-15).
     deliverables:
       - A per application inter arrival property of the temporal check against a distribution of the labels, with the constant distribution for paced media.
     acceptance:
@@ -3521,3 +3521,67 @@ work_packages:
       - Additive fields for sessions dropped by overflow or size and sessions cut at the stop, and corrected text for dropped.
     acceptance:
       - validate.py, the proto and openapi-breaking checks pass, and the change entry lists the consumers (agent, controller, UI, SDK).
+
+  - id: AGT-21
+    title: NTP, MQTT, LDAP, and HLS in the agent
+    phase: 2
+    workstream: AGT
+    size: S
+    depends_on: [MOD-15, MOD-16, MOD-17, MOD-18]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Batch 28 added the ntp, mqtt, ldap and hls modules, and the agent registry has none of them. Their log
+      entries give the registry code: ntp is stateless, mqtt and ldap are stateful like http2, and hls keeps the
+      segment counter and pace of one flow side.
+    deliverables:
+      - The four dependencies and registry entries, the modules in the registry list test, and controller_e2e.sh runs of one scenario each (hls/vod_segments for multi flow TCP) on unprivileged ports.
+    acceptance:
+      - controller-e2e passes with succeeded sessions and a passed verdict for each of the four modules.
+
+  - id: CON-25
+    title: The messages check in the metric catalog
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [CON-23, RLM-17]
+    paths: [contracts/]
+    summary: >-
+      RLM-14 added the messages check to the realism report after CON-23 listed the check kinds, so the catalog
+      label check has no value messages and a failing messages check never reaches RunReport.realism (RLM-17).
+      Needs owner approval as a contract change.
+    deliverables:
+      - The value messages for the label check (catalog 0.6.0), its realism.check_failures defined as failures_total, and a passing and a failing case in contracts/examples/realism/check-metrics.yaml.
+    acceptance:
+      - validate.py passes, and the change entry lists the consumers (realism runner, fps-stats tables, controller catalog copy).
+
+  - id: CTL-42
+    title: The CON-23 mapping table in the controller
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CON-23, CTL-41, RLM-17]
+    paths: [controller/internal/report/]
+    summary: >-
+      contracts/changes/CON-23.md gives every realism metric a target and a passed rule (realism.check_failures
+      == 0, parser_errors == 0, decrypted_ratio >= min_decrypted, and so on). The controller maps every metric
+      but the conformance and KS ones with the generic CON-22 rule, target check passed.
+    deliverables:
+      - MapRealism implements the CON-23 table, with the generic rule kept for metrics the table does not name.
+    acceptance:
+      - Tests map every row of contracts/examples/realism/check-metrics.yaml to the literal target and passed it gives.
+
+  - id: QA-10
+    title: Gate 1 without its own reuse rule
+    phase: 2
+    workstream: QA
+    size: S
+    depends_on: [QA-09, RLM-17]
+    paths: [tests/gates/gate1/]
+    summary: >-
+      QA-09 made the Gate 1 suite skip the Zeek weird premature_connection_reuse in sessions of more than one
+      connection. RLM-17 moved that weird into the runner's ZEEK_STATE_WEIRDS, so the suite's REUSE_WEIRDS rule
+      is dead code.
+    deliverables:
+      - REUSE_WEIRDS and its branch in gate1_report.py go, the parser findings files stay, and the suite still fails on any other finding.
+    acceptance:
+      - The unit tests and three Gate 1 runs in a row pass, and the corruption proof still fails the gate.
