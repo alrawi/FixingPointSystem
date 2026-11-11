@@ -37,18 +37,43 @@ const RealismSchemaURL = "https://github.com/alrawi/FixingPointSystem/realism/sc
 // MaxRealismBytes bounds the body of attachRealismReport, as CON-22 sets it.
 const MaxRealismBytes = 4 << 20
 
-// Check kinds and metric names that the mapping of CON-22 treats apart.
+// Check kinds and metric names that the mappings of CON-22 and CON-23 treat
+// apart.
 const (
-	checkConformance = "conformance"
-	checkTemporal    = "temporal"
+	checkConformance      = "conformance"
+	checkTemporal         = "temporal"
+	checkParserErrors     = "parser_errors"
+	checkEncryption       = "encryption"
+	checkContent          = "content"
+	checkSessionStructure = "session_structure"
+	checkMixAccuracy      = "mix_accuracy"
+	checkTransport        = "transport_behavior"
 
-	metricConformanceRatio = "realism.conformance_ratio"
-	metricKSPValue         = "realism.ks_p_value"
-	metricKSStatistic      = "realism.ks_statistic"
+	metricConformanceRatio    = "realism.conformance_ratio"
+	metricKSPValue            = "realism.ks_p_value"
+	metricKSStatistic         = "realism.ks_statistic"
+	metricCheckFailures       = "realism.check_failures"
+	metricParserErrors        = "realism.parser_errors"
+	metricDecryptedRatio      = "realism.decrypted_ratio"
+	metricJA4MatchRatio       = "realism.ja4_match_ratio"
+	metricDuplicateRatio      = "realism.duplicate_ratio"
+	metricStructureFailures   = "realism.structure_failures"
+	metricTransportDeviations = "realism.transport_deviations"
+	metricMixShare            = "mix.share_pct"
+	metricMixAbsError         = "mix.abs_error_pp"
+	metricMixMaxAbsError      = "mix.max_abs_error_pp"
+
+	// sourceClassifier is the value of the label source of the series that the
+	// mix rows of CON-23 judge.
+	sourceClassifier = "classifier"
 
 	// targetCheckPassed is the target of every metric that has no rule of
 	// its own, whose outcome is the outcome of its check.
 	targetCheckPassed = "check passed"
+
+	// targetNone is the target of the metrics that count failures, deviations,
+	// or errors, which the check accepts at 0 only.
+	targetNone = "== 0"
 )
 
 // realismValidator checks realism reports against the embedded schema. It
@@ -205,9 +230,39 @@ type temporalCheck struct {
 	} `json:"comparisons"`
 }
 
+// encryptionCheck holds the fields of an encryption check that the mapping
+// reads.
+type encryptionCheck struct {
+	MinDecrypted float64 `json:"min_decrypted"`
+}
+
+// contentCheck holds the fields of a content check that the mapping reads.
+type contentCheck struct {
+	MaxDuplicateRatio float64 `json:"max_duplicate_ratio"`
+	Applications      []struct {
+		Application string `json:"application"`
+		Passed      bool   `json:"passed"`
+	} `json:"applications"`
+}
+
+// mixCheck holds the fields of a mix_accuracy check that the mapping reads.
+type mixCheck struct {
+	ToleranceP   float64 `json:"tolerance_points"`
+	MetricsBasis *string `json:"metrics_basis"`
+	Bases        []struct {
+		Basis        string `json:"basis"`
+		Applications []struct {
+			Application   string  `json:"application"`
+			ConfiguredPct float64 `json:"configured_pct"`
+			NDPIPassed    bool    `json:"ndpi_passed"`
+		} `json:"applications"`
+	} `json:"bases"`
+}
+
 // MapRealism returns the RealismResult entries of the realism report doc, which
 // the caller has validated against the report schema. It follows the mapping
-// of contracts/changes/CON-22.md: one entry for each metric of each check, in
+// of contracts/changes/CON-22.md, as contracts/changes/CON-23.md extends it to
+// the metrics of every check kind: one entry for each metric of each check, in
 // the order of the document, with the target and the outcome that the check
 // gives the metric. The findings name results that the API cannot hold, with
 // JSON Pointers into doc: a metric and labels pair that repeats, and a value
@@ -220,15 +275,26 @@ func MapRealism(doc []byte) ([]api.RealismResult, []api.Finding, error) {
 	if err := json.Unmarshal(doc, &top); err != nil {
 		return nil, nil, fmt.Errorf("read realism report: %w", err)
 	}
+	heads := make([]realismHead, len(top.Checks))
+	// passedBy holds the outcome of each check kind, which the metric
+	// realism.check_failures takes from the check that its label check names.
+	passedBy := map[string]bool{}
+	for i, raw := range top.Checks {
+		if err := json.Unmarshal(raw, &heads[i]); err != nil {
+			return nil, nil, fmt.Errorf("read check %d of the realism report: %w", i, err)
+		}
+		if was, ok := passedBy[heads[i].Check]; ok {
+			passedBy[heads[i].Check] = was && heads[i].Passed
+		} else {
+			passedBy[heads[i].Check] = heads[i].Passed
+		}
+	}
 	results := []api.RealismResult{}
 	var findings []api.Finding
 	seen := map[string]string{}
 	for i, raw := range top.Checks {
-		var head realismHead
-		if err := json.Unmarshal(raw, &head); err != nil {
-			return nil, nil, fmt.Errorf("read check %d of the realism report: %w", i, err)
-		}
-		rule, err := checkRule(head, raw)
+		head := heads[i]
+		rule, err := checkRule(head, raw, passedBy)
 		if err != nil {
 			return nil, nil, fmt.Errorf("read check %d of the realism report: %w", i, err)
 		}
@@ -268,13 +334,45 @@ func metricKey(m realismMetric) string {
 }
 
 // checkRule returns the function that builds the result of a metric of the
-// check head, whose JSON is raw. A metric that the check kind gives no rule,
-// and a metric that finds no entry to take its outcome from, gets the target
-// `check passed` and the outcome of the check, which is the rule of CON-22
-// for every check kind that follows the first two.
-func checkRule(head realismHead, raw json.RawMessage) (func(realismMetric) api.RealismResult, error) {
+// check head, whose JSON is raw, by the table of CON-23. passedBy gives the
+// outcome of each check kind. A metric that the table does not name, and a
+// metric that finds no entry to take its outcome from, gets the target
+// `check passed` and the outcome of the check, which is the last row of the
+// table and the rule of CON-22.
+func checkRule(head realismHead, raw json.RawMessage, passedBy map[string]bool) (func(realismMetric) api.RealismResult, error) {
 	generic := func(m realismMetric) api.RealismResult {
 		return newResult(m, genericProperty(m), targetCheckPassed, head.Passed)
+	}
+	rule, err := kindRule(head, raw, generic)
+	if err != nil {
+		return nil, err
+	}
+	return func(m realismMetric) api.RealismResult {
+		if m.Name != metricCheckFailures {
+			return rule(m)
+		}
+		// The check that the label names settles the series. A document that
+		// holds no such check leaves it to the check that carries the series.
+		passed, ok := passedBy[m.Labels["check"]]
+		if !ok {
+			passed = head.Passed
+		}
+		return newResult(m, genericProperty(m), targetNone, passed)
+	}, nil
+}
+
+// kindRule returns the rules of the metrics that CON-23 names for the check
+// kind of head, and generic for every other metric.
+func kindRule(head realismHead, raw json.RawMessage, generic func(realismMetric) api.RealismResult) (func(realismMetric) api.RealismResult, error) {
+	// none is the rule of the metrics that count what must be 0, which only
+	// the metric called name of the kind gets.
+	none := func(name string) func(realismMetric) api.RealismResult {
+		return func(m realismMetric) api.RealismResult {
+			if m.Name != name {
+				return generic(m)
+			}
+			return newResult(m, genericProperty(m), targetNone, m.Value == 0)
+		}
 	}
 	switch head.Check {
 	case checkConformance:
@@ -310,8 +408,88 @@ func checkRule(head realismHead, raw json.RawMessage) (func(realismMetric) api.R
 			}
 			return generic(m)
 		}, nil
+	case checkParserErrors:
+		return none(metricParserErrors), nil
+	case checkSessionStructure:
+		return none(metricStructureFailures), nil
+	case checkTransport:
+		return none(metricTransportDeviations), nil
+	case checkEncryption:
+		var c encryptionCheck
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, err
+		}
+		return func(m realismMetric) api.RealismResult {
+			switch m.Name {
+			case metricDecryptedRatio:
+				return newResult(m, genericProperty(m), ">= "+formatNumber(c.MinDecrypted), m.Value >= c.MinDecrypted)
+			case metricJA4MatchRatio:
+				return newResult(m, genericProperty(m), ">= 1", m.Value == 1)
+			}
+			return generic(m)
+		}, nil
+	case checkContent:
+		var c contentCheck
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, err
+		}
+		return func(m realismMetric) api.RealismResult {
+			if m.Name != metricDuplicateRatio {
+				return generic(m)
+			}
+			for _, a := range c.Applications {
+				if a.Application == m.Labels["application"] {
+					return newResult(m, genericProperty(m), "<= "+formatNumber(c.MaxDuplicateRatio), a.Passed)
+				}
+			}
+			return generic(m)
+		}, nil
+	case checkMixAccuracy:
+		var c mixCheck
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, err
+		}
+		return func(m realismMetric) api.RealismResult {
+			return mixResult(c, m, generic)
+		}, nil
 	}
 	return generic, nil
+}
+
+// mixResult builds the entry of a mix metric of the classifier, which the rows
+// of the basis metrics_basis judge by their ndpi_passed. A series with another
+// source, a check without that basis, and a label without a row map by the
+// last row of the table.
+func mixResult(c mixCheck, m realismMetric, generic func(realismMetric) api.RealismResult) api.RealismResult {
+	if m.Labels["source"] != sourceClassifier || c.MetricsBasis == nil {
+		return generic(m)
+	}
+	for _, b := range c.Bases {
+		if b.Basis != *c.MetricsBasis {
+			continue
+		}
+		tol := formatNumber(c.ToleranceP)
+		switch m.Name {
+		case metricMixShare, metricMixAbsError:
+			for _, a := range b.Applications {
+				if a.Application != m.Labels["application"] {
+					continue
+				}
+				target := "<= " + tol
+				if m.Name == metricMixShare {
+					target = "within " + tol + " points of " + formatNumber(a.ConfiguredPct)
+				}
+				return newResult(m, genericProperty(m), target, a.NDPIPassed)
+			}
+		case metricMixMaxAbsError:
+			passed := true
+			for _, a := range b.Applications {
+				passed = passed && a.NDPIPassed
+			}
+			return newResult(m, genericProperty(m), "<= "+tol, passed)
+		}
+	}
+	return generic(m)
 }
 
 // comparisonProperty returns the value of the property label that names a
