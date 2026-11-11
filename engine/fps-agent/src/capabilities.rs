@@ -28,7 +28,7 @@ use crate::proto::{Backend, Capabilities, PortInfo};
 use crate::sysroot::SystemRoot;
 
 /// The contract version of `agent.proto` that this crate implements.
-pub const ENGINE_API: &str = "0.2.3";
+pub const ENGINE_API: &str = "0.2.4";
 
 /// The agent build version.
 pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");

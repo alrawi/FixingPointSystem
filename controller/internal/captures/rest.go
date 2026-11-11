@@ -140,6 +140,7 @@ func fileToAPI(f AgentFile) api.CaptureFile {
 	if f.Started && f.Stopped {
 		packets, size, dropped := int(f.Packets), int(f.Bytes), int(f.Dropped) //nolint:gosec // G115: bounded by MaxFileBytes per agent
 		out.Packets, out.Bytes, out.Dropped = &packets, &size, &dropped
+		out.DroppedOverflow, out.DroppedOversize, out.CutAtStop = count(f.DroppedOverflow), count(f.DroppedOversize), count(f.CutAtStop)
 		if f.Digest != "" {
 			digest := f.Digest
 			out.Digest = &digest
@@ -209,4 +210,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	h.Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = w.Write(append(body, '\n'))
+}
+
+// count turns a count an agent may not report into the REST form: absent
+// stays absent, so an agent older than protocol 0.2.4 gives no zeros.
+func count(v *uint64) *int {
+	if v == nil {
+		return nil
+	}
+	n := int(*v) //nolint:gosec // G115: a session count
+	return &n
 }
