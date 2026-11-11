@@ -203,59 +203,26 @@ def finding(kind: str, reused: bool, session: int | None = 7) -> dict[str, Any]:
     }
 
 
-def test_zeek_weird_in_a_reused_tuple_is_not_counted() -> None:
+def test_gate_has_no_rule_of_its_own_for_reused_tuples() -> None:
+    assert not hasattr(g, "REUSE_WEIRDS")
+    assert not hasattr(g, "reused_findings")
+
+
+def test_every_finding_fails_the_check_that_the_report_failed() -> None:
+    # The realism runner decides which weirds are state weirds. A failed parser
+    # error check fails the gate, also for a finding in a reused tuple.
     r = realism(parsers_ok=False)
-    docs = findings_doc(finding("weird", True))
-    checks, _ = g.evaluate(run_report(), r, metrics(), 0.99, 100, docs)
-    assert failed(checks) == []
+    checks, _ = g.evaluate(run_report(), r, metrics(), 0.99, 100)
+    assert failed(checks) == ["Parser error check"]
     [parser] = [c for c in checks if c.name == "Parser error check"]
-    assert parser.measured.startswith(
-        "0 findings from tshark, zeek, 1 premature_connection_reuse weirds not counted"
-    )
-
-
-@pytest.mark.parametrize(
-    "entries",
-    [
-        # A malformed packet of tshark counts even in a reused tuple.
-        [finding("malformed", True)],
-        # A weird of another name counts, also when Zeek merges it with the reuse weird.
-        [{**finding("weird", True), "name": "HTTP_bad_chunk_size"}],
-        [
-            {
-                **finding("weird", True),
-                "name": "premature_connection_reuse,bad_HTTP_reply",
-            }
-        ],
-        # A weird in a session of one connection counts.
-        [finding("weird", False)],
-        # A weird that no session holds counts.
-        [{**finding("weird", True), "session": None}],
-        # One counted finding beside an uncounted one fails the gate.
-        [finding("weird", True), finding("malformed", True)],
-    ],
-)
-def test_other_findings_still_fail(entries: list[dict[str, Any]]) -> None:
-    r = realism(parsers_ok=False)
-    r["checks"][1]["errors_total"] = len(entries)
-    checks, _ = g.evaluate(
-        run_report(), r, metrics(), 0.99, 100, findings_doc(*entries)
-    )
-    assert failed(checks) == ["Parser error check"]
-
-
-def test_findings_that_the_realism_report_cut_off_count() -> None:
-    r = realism(parsers_ok=False)
-    r["checks"][1]["errors_total"] = 150
-    docs = findings_doc(finding("weird", True))
-    checks, _ = g.evaluate(run_report(), r, metrics(), 0.99, 100, docs)
-    assert failed(checks) == ["Parser error check"]
+    assert parser.rule == "passed with every named parser"
+    assert not parser.measured.endswith("not counted")
 
 
 def test_report_lists_the_findings() -> None:
     r = realism(parsers_ok=False)
     docs = findings_doc(finding("weird", True))
-    checks, _ = g.evaluate(run_report(), r, metrics(), 0.99, 100, docs)
+    checks, _ = g.evaluate(run_report(), r, metrics(), 0.99, 100)
     text = g.render(checks, run_report(), r, {}, 0.99, docs)
     assert "### Findings" in text
     assert (

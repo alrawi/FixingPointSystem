@@ -52,7 +52,10 @@ _TOP_LEVEL = {
     "mix",
     "transport",
     "messages",
+    "hosts",
 }
+_HOSTS_FIELDS = {"count", "gateway_macs"}
+_MAC = re.compile(r"[0-9a-f]{2}([:-][0-9a-f]{2}){5}", re.IGNORECASE)
 MESSAGE_PROTOCOLS = ("http1", "http2", "smtp", "imap")
 _MESSAGE_RULE_FIELDS = {"protocol", "match", "expect"}
 # The counts that a messages rule may expect, by protocol. A scalar is one number, and a
@@ -334,7 +337,7 @@ class TransportLabels:
 
 @dataclass(frozen=True)
 class Count:
-    """An expected number of messages in one session: an exact number or a range.
+    """An expected number, exact or a range, of messages in a session or of hosts in a capture.
 
     ``max`` is None for a range without an upper limit.
     """
@@ -378,6 +381,19 @@ class MessageRule:
         return all(getattr(session, name) == value for name, value in self.match.items())
 
 
+@dataclass(frozen=True)
+class HostsLabels:
+    """Settings of the host identity check.
+
+    ``count`` is the number of hosts that the capture must hold, an exact number or a range
+    (open when absent). ``gateway_macs`` lists the MAC addresses of routers, in lower case with
+    colons, whose frames the search for address conflicts leaves out.
+    """
+
+    count: Count | None = None
+    gateway_macs: tuple[str, ...] = ()
+
+
 @dataclass
 class Labels:
     """The expected labels of one capture."""
@@ -393,6 +409,7 @@ class Labels:
     mix: MixLabels | None = None
     transport: TransportLabels | None = None
     messages: list[MessageRule] | None = None
+    hosts: HostsLabels | None = None
     base_dir: Path | None = None
 
     def tls_profile_of(self, session: Session) -> str | None:
@@ -495,6 +512,7 @@ def parse(doc: Any, source: str = "<labels>") -> Labels:
         mix=_mix(doc["mix"], where) if "mix" in doc else None,
         transport=_transport(doc["transport"], where) if "transport" in doc else None,
         messages=_messages(doc["messages"], where) if "messages" in doc else None,
+        hosts=_hosts(doc["hosts"], where) if "hosts" in doc else None,
     )
 
 
@@ -709,6 +727,21 @@ def _transport(value: Any, where: str) -> TransportLabels:
         strict=strict,
         expect=dict(raw_expect),
     )
+
+
+def _hosts(value: Any, where: str) -> HostsLabels:
+    """Validate the hosts section of the host identity check."""
+    here = f"{where} hosts"
+    if not isinstance(value, dict) or set(value) - _HOSTS_FIELDS:
+        raise LabelsError(f"{here}: must be a mapping with only {sorted(_HOSTS_FIELDS)}")
+    count = _count(value["count"], f"{here}.count") if "count" in value else None
+    raw = value.get("gateway_macs", [])
+    if not isinstance(raw, list) or not all(
+        isinstance(mac, str) and _MAC.fullmatch(mac) for mac in raw
+    ):
+        raise LabelsError(f"{here}.gateway_macs: must be a list of MAC addresses")
+    macs = tuple(dict.fromkeys(mac.replace("-", ":").lower() for mac in raw))
+    return HostsLabels(count=count, gateway_macs=macs)
 
 
 def _is_profile_name(value: Any) -> bool:

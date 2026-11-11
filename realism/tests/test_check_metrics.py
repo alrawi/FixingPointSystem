@@ -553,7 +553,7 @@ def test_transport_behavior_failing_without_a_handshake_carries_only_the_failure
 
 
 def test_the_report_format_is_0_12_0() -> None:
-    assert REPORT_VERSION == "0.12.0"
+    assert REPORT_VERSION == "0.13.0"
 
 
 def test_a_check_without_its_failures_series_is_refused(tmp_path: Path) -> None:

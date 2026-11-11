@@ -20,6 +20,7 @@ from realism import (
     conformance,
     content,
     encryption,
+    hosts,
     messages,
     mix,
     parser_errors,
@@ -29,11 +30,11 @@ from realism import (
 )
 from realism.capture import Session, SessionKey, summarize
 from realism.classifier import Classifier
-from realism.labels import load
+from realism.labels import Count, load
 from realism.parsers import ParserRunner
 
 REPORT_FORMAT = "fps-realism-report"
-REPORT_VERSION = "0.12.0"
+REPORT_VERSION = "0.13.0"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "realism-report.schema.json"
 LABELS_SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "labels.schema.json"
 
@@ -117,6 +118,8 @@ def score(
     client_hops: int | None = None,
     server_hops: int | None = None,
     message_probe: messages.MessageProbe | None = None,
+    host_identity: bool = False,
+    host_count: int | None = None,
 ) -> Report:
     """Score a capture against its labels and return the realism report.
 
@@ -155,6 +158,13 @@ def score(
     the operating system profile ``os_profile`` (read from ``os_profiles_dir``). The option order
     and the SYN window decide only when ``transport_strict`` is true, and ``client_hops`` and
     ``server_hops`` give the routers between the hosts and the capture point.
+
+    Labels with a ``messages`` section add the message count check.
+
+    Labels with a ``hosts`` section, the ``host_identity`` flag, or a ``host_count`` add the host
+    identity check, which counts the hosts of the capture, compares the number with the count of
+    the labels (``host_count`` replaces it with an exact number), and fails for an IP address that
+    sends from more than one MAC address.
     """
     labels = load(labels_path)
     summary = summarize(pcap)
@@ -217,6 +227,9 @@ def score(
     if labels.messages is not None:
         mprobe = message_probe if message_probe is not None else messages.TsharkMessageProbe()
         checks.append(messages.check(pcap, summary.sessions, labels, mprobe).to_dict())
+    if labels.hosts is not None or host_identity or host_count is not None:
+        expected = Count(host_count, host_count) if host_count is not None else None
+        checks.append(hosts.check(pcap, labels.hosts, expected).to_dict())
     return Report(
         capture={
             "file": pcap.name,

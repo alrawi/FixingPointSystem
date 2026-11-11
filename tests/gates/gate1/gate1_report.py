@@ -107,50 +107,12 @@ def agent_sessions(metrics: dict[str, Any]) -> dict[str, int]:
     return out
 
 
-# The Zeek weird that CI named for the one http1 parser error of 2026-11-10: a SYN
-# that reuses the 5-tuple of a connection which Zeek still tracks.
-REUSE_WEIRDS = frozenset({"premature_connection_reuse"})
-
-
-def reused_findings(
-    parser_check: dict[str, Any], findings: dict[str, Any] | None
-) -> int:
-    """Count the Zeek reuse weirds that lie in a session which reuses a TCP 5-tuple.
-
-    Two connections with one 5-tuple form one session of the realism runner, and
-    Zeek raises ``premature_connection_reuse`` for the second connection when the
-    server side still holds the first. The rule counts only that weird, so a
-    malformed packet of tshark, a weird of another name (also one that Zeek
-    merges into the same entry), and a finding in a session of one connection
-    still fail the gate. The count holds only when
-    parser_findings.py listed every finding of the parser error check, which the
-    realism report cuts off at 100 entries. Otherwise it is 0, so a finding that
-    the files cannot place always counts.
-    """
-    if not findings:
-        return 0
-    listed = findings.get("findings", [])
-    total = int(parser_check.get("errors_total", 0))
-    if not isinstance(listed, list) or len(listed) != total:
-        return 0
-    return sum(
-        1
-        for f in listed
-        if isinstance(f, dict)
-        and f.get("kind") == "weird"
-        and set(str(f.get("name", "")).split(",")) <= REUSE_WEIRDS
-        and f.get("reused_tuple") is True
-        and f.get("session") is not None
-    )
-
-
 def evaluate(
     run_report: dict[str, Any],
     realism: dict[str, Any],
     metrics: dict[str, Any],
     threshold: float,
     min_sessions: int,
-    findings: dict[str, Any] | None = None,
 ) -> tuple[list[Check], dict[str, float]]:
     """Apply the gate checks and return them with the ratio of each application."""
     run = run_report.get("run")
@@ -222,24 +184,14 @@ def evaluate(
         ran = ", ".join(str(p.get("parser")) for p in parser_check.get("parsers", []))
         errors = int(parser_check.get("errors_total", 0))
         missing = parser_check.get("missing_parsers", [])
-        reused = reused_findings(parser_check, findings)
-        counted = errors - reused
-        passed = (
-            parser_check.get("passed") is True or (bool(ran) and counted == 0)
-        ) and not missing
+        passed = parser_check.get("passed") is True and not missing
         checks.append(
             Check(
                 "Parser error check",
                 passed,
-                f"{counted} findings from {ran or 'no parser'}"
-                + (
-                    f", {reused} premature_connection_reuse weirds not counted"
-                    if reused
-                    else ""
-                )
+                f"{errors} findings from {ran or 'no parser'}"
                 + (f", missing {', '.join(missing)}" if missing else ""),
-                "passed with every named parser, premature_connection_reuse weirds of "
-                "Zeek in sessions that reuse a TCP 5-tuple not counted",
+                "passed with every named parser",
             )
         )
 
@@ -462,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
         findings_path = out / "parser-findings.json"
         findings = load_json(findings_path) if findings_path.exists() else None
         checks, ratios = evaluate(
-            run_report, realism, metrics, args.threshold, args.min_sessions, findings
+            run_report, realism, metrics, args.threshold, args.min_sessions
         )
     except GateInputError as e:
         print(f"gate1_report.py: {e}", file=sys.stderr)

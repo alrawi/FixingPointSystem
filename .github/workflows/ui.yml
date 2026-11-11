@@ -14,6 +14,9 @@ on:
       - contracts/openapi/**
       - contracts/schemas/**
       - contracts/examples/**
+      # The OpenAPI file references the realism report schema, so the generated
+      # client goes stale when it changes.
+      - realism/schema/**
       - mk/ui.mk
       - .github/workflows/ui.yml
   pull_request:
@@ -22,6 +25,9 @@ on:
       - contracts/openapi/**
       - contracts/schemas/**
       - contracts/examples/**
+      # The OpenAPI file references the realism report schema, so the generated
+      # client goes stale when it changes.
+      - realism/schema/**
       - mk/ui.mk
       - .github/workflows/ui.yml
 

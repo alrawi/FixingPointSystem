@@ -1047,6 +1047,26 @@ export interface components {
             };
             value: number;
         };
+        "$defs-name": string;
+        /** @description The share of the sessions of one application that the classifier names as the application. */
+        conformance_metric: components["schemas"]["metric"] & {
+            /** @constant */
+            name?: "realism.conformance_ratio";
+            labels?: {
+                application: string;
+                classifier: string;
+            };
+            value?: unknown;
+        };
+        /** @description The series that every check carries: the number of reasons for which the check failed. The label check names the kind of the check, and the value is 0 exactly when the check passed. */
+        failures_metric: components["schemas"]["metric"] & {
+            /** @constant */
+            name?: "realism.check_failures";
+            labels?: {
+                check: components["schemas"]["$defs-name"];
+            };
+            value?: number;
+        };
         endpoint: {
             ip: string;
             port: number;
@@ -1057,15 +1077,8 @@ export interface components {
             check: "conformance";
             /** @description True when at least one application was scored and every application passed. */
             passed: boolean;
-            metrics: (components["schemas"]["metric"] & {
-                /** @constant */
-                name?: "realism.conformance_ratio";
-                labels?: {
-                    application: string;
-                    classifier: string;
-                };
-                value?: unknown;
-            })[];
+            /** @description The realism.conformance_ratio series of each scored application, and the realism.check_failures series. */
+            metrics: (components["schemas"]["conformance_metric"] | components["schemas"]["failures_metric"])[];
             /** @enum {unknown} */
             classifier: "ndpi" | "zeek" | "stub";
             classifier_version: string;
@@ -1096,6 +1109,17 @@ export interface components {
             }[];
             mismatches_total: number;
         };
+        /** @description Findings of one reference parser, in the sessions of one application or, with the application all, in the whole capture. */
+        parser_errors_metric: components["schemas"]["metric"] & {
+            /** @constant */
+            name?: "realism.parser_errors";
+            labels?: {
+                application: string;
+                /** @enum {unknown} */
+                parser: "tshark" | "zeek" | "stub";
+            };
+            value?: number;
+        };
         parser_counts: {
             parser_errors: number;
             malformed_packets: number;
@@ -1105,8 +1129,8 @@ export interface components {
             /** @constant */
             check: "parser_errors";
             passed: boolean;
-            /** @description Empty until the metric catalog defines a parser error metric. */
-            metrics: unknown[];
+            /** @description The realism.parser_errors series of each application and parser that ran, with the application all for the total of the parser, and the realism.check_failures series. When no parser ran, only the failures series is there. */
+            metrics: (components["schemas"]["parser_errors_metric"] | components["schemas"]["failures_metric"])[];
             /** @description The parsers that ran, in run order. */
             parsers: {
                 /** @enum {unknown} */
@@ -1160,13 +1184,20 @@ export interface components {
             }[];
             errors_total: number;
         };
+        /** @description The decrypted share and the JA4 matched share of the sampled TLS sessions. */
+        encryption_metric: components["schemas"]["metric"] & {
+            /** @enum {unknown} */
+            name?: "realism.decrypted_ratio" | "realism.ja4_match_ratio";
+            labels?: unknown;
+            value?: unknown;
+        };
         /** @description Decryption and JA4 check of a sample of TLS sessions. The check passes when at least min_decrypted of the sampled sessions decrypt with the exported keys and every sampled ClientHello has a JA4 fingerprint that its client profile lists. failures names each reason in words. */
         encryption: {
             /** @constant */
             check: "encryption";
             passed: boolean;
-            /** @description Empty until the metric catalog defines metrics for the decrypted and JA4 matched shares. */
-            metrics: unknown[];
+            /** @description The realism.decrypted_ratio and realism.ja4_match_ratio series when sessions were sampled, and the realism.check_failures series. */
+            metrics: (components["schemas"]["encryption_metric"] | components["schemas"]["failures_metric"])[];
             /** @description The program that decrypted the sample, or null when none ran. */
             tool: {
                 /** @enum {unknown} */
@@ -1212,6 +1243,15 @@ export interface components {
                 reasons: string[];
             }[];
         };
+        /** @description The duplicate share of the payload units of one application. */
+        content_metric: components["schemas"]["metric"] & {
+            /** @constant */
+            name?: "realism.duplicate_ratio";
+            labels?: {
+                application: string;
+            };
+            value?: unknown;
+        };
         /** @description Size distribution of payload units in bytes. cv is the population standard deviation over the mean, and the quantiles use linear interpolation. */
         "$defs-size_distribution": {
             count: number;
@@ -1242,8 +1282,8 @@ export interface components {
             /** @constant */
             check: "content";
             passed: boolean;
-            /** @description Empty until the metric catalog defines a duplicate ratio metric. */
-            metrics: unknown[];
+            /** @description The realism.duplicate_ratio series of each application with payloads, and the realism.check_failures series. */
+            metrics: (components["schemas"]["content_metric"] | components["schemas"]["failures_metric"])[];
             max_duplicate_ratio: number;
             /** @description HTTP header names that the check drops before it hashes a message. */
             ignored_headers: string[];
@@ -1301,13 +1341,22 @@ export interface components {
             /** @description One sentence for each reason that the check failed. Empty when it passed. */
             failures: string[];
         };
+        /** @description The rules that the instances of one scenario break. */
+        session_structure_metric: components["schemas"]["metric"] & {
+            /** @constant */
+            name?: "realism.structure_failures";
+            labels?: {
+                scenario: string;
+            };
+            value?: number;
+        };
         /** @description Connection count and ordering of each scenario instance against the flow graph of its scenario. The check passes when at least one instance was found for every scenario, every flow has a number of connections that the scenario allows, every after edge holds (the later flow starts once the earlier flow completed), every spawn edge holds (the spawned flow starts while its parent runs), and the number of instances agrees with expected_instances where the labels give one. failures names the instance and the violated edge in words. */
         session_structure: {
             /** @constant */
             check: "session_structure";
             passed: boolean;
-            /** @description Empty until the metric catalog defines a session structure metric. */
-            metrics: unknown[];
+            /** @description The realism.structure_failures series of each scenario, and the realism.check_failures series. */
+            metrics: (components["schemas"]["session_structure_metric"] | components["schemas"]["failures_metric"])[];
             /** @description Silence of a client, in seconds, that starts a new instance. Null when no gap splits instances. */
             max_gap_s: number | null;
             tolerance_s: number;
@@ -1368,22 +1417,24 @@ export interface components {
             /** @description One sentence for each broken rule, at most 50. failures_total counts them all. */
             failures: string[];
         };
+        /** @description The KS statistic or p value of one comparison. */
+        temporal_metric: components["schemas"]["metric"] & {
+            /** @enum {unknown} */
+            name?: "realism.ks_statistic" | "realism.ks_p_value";
+            labels?: {
+                application: string;
+                /** @enum {unknown} */
+                property: "inter_arrival" | "request_bytes" | "response_bytes";
+            };
+            value?: unknown;
+        };
         /** @description Inter arrival times and payload sizes against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. The check passes when there is at least one comparison and every one passed. failures names each reason in words. */
         temporal: {
             /** @constant */
             check: "temporal";
             passed: boolean;
-            /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads). Comparisons over all sessions and over both directions have no catalog label and are only in comparisons. */
-            metrics: (components["schemas"]["metric"] & {
-                /** @enum {unknown} */
-                name?: "realism.ks_statistic" | "realism.ks_p_value";
-                labels?: {
-                    application: string;
-                    /** @enum {unknown} */
-                    property: "inter_arrival" | "request_bytes" | "response_bytes";
-                };
-                value?: unknown;
-            })[];
+            /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions and over both directions have no catalog label and are only in comparisons. */
+            metrics: (components["schemas"]["temporal_metric"] | components["schemas"]["failures_metric"])[];
             alpha: number;
             min_samples: number;
             sessions_total: number;
@@ -1445,6 +1496,18 @@ export interface components {
             /** @description One sentence for each comparison that did not pass, and one when the labels name no target. */
             failures: string[];
         };
+        /** @description A share, a distance, or the largest distance of the mix that the classifier found. */
+        mix_metric: components["schemas"]["metric"] & {
+            /** @enum {unknown} */
+            name: "mix.share_pct" | "mix.abs_error_pp" | "mix.max_abs_error_pp";
+            labels: {
+                application?: string;
+                /** @constant */
+                source: "classifier";
+                classifier: string;
+            };
+            value?: unknown;
+        } & unknown & unknown;
         /** @description One application of one basis. A share is null when its source has no total. A delta is the achieved share minus the configured share, in percentage points. */
         mix_row: {
             application: string;
@@ -1473,18 +1536,8 @@ export interface components {
             /** @constant */
             check: "mix_accuracy";
             passed: boolean;
-            /** @description The shares that the classifier found in the capture, with source classifier, for the basis in metrics_basis. Empty when metrics_basis is null or no application has a share. */
-            metrics: (components["schemas"]["metric"] & {
-                /** @enum {unknown} */
-                name: "mix.share_pct" | "mix.abs_error_pp" | "mix.max_abs_error_pp";
-                labels: {
-                    application?: string;
-                    /** @constant */
-                    source: "classifier";
-                    classifier: string;
-                };
-                value?: unknown;
-            } & unknown & unknown)[];
+            /** @description The shares that the classifier found in the capture, with source classifier, for the basis in metrics_basis, and the realism.check_failures series. Without a basis or an application with a share, only the failures series is there. */
+            metrics: (components["schemas"]["mix_metric"] | components["schemas"]["failures_metric"])[];
             /**
              * @description The basis that the series describe, which is profile.basis of the test configuration, or the only basis that ran. null when neither tells it, for weights in the labels with both bases, and then metrics is empty.
              * @enum {unknown}
@@ -1526,12 +1579,25 @@ export interface components {
             /** @description One sentence for each broken rule, at most 50. failures_total counts them all. */
             failures: string[];
         };
+        /** @description The packets of one role whose field differs from the profile. A SYN has the side client and a SYN-ACK the side server. */
+        transport_behavior_metric: components["schemas"]["metric"] & {
+            /** @constant */
+            name?: "realism.transport_deviations";
+            labels?: {
+                /** @enum {unknown} */
+                property: "ttl" | "df" | "mss" | "window_scale" | "sack" | "timestamps" | "options" | "syn_window";
+                /** @enum {unknown} */
+                side: "client" | "server";
+            };
+            value?: number;
+        };
         /** @description The TTL and the TCP options of the SYN and SYN-ACK of every connection against the operating system profile of the sending host. The check passes when no enforced field differs and at least one handshake of a profiled host was compared. The option order and the SYN window are enforced only when strict is true, and they appear in deviations either way. */
         transport_behavior: {
             /** @constant */
             check: "transport_behavior";
             passed: boolean;
-            metrics: unknown[];
+            /** @description The realism.transport_deviations series of each enforced field and role that the check compared, and the realism.check_failures series. */
+            metrics: (components["schemas"]["transport_behavior_metric"] | components["schemas"]["failures_metric"])[];
             strict: boolean;
             client_hops: number;
             server_hops: number;
@@ -1591,7 +1657,7 @@ export interface components {
             /** @constant */
             check: "messages";
             passed: boolean;
-            /** @description Empty until the metric catalog defines metrics for message counts. */
+            /** @description Empty until the metric catalog (0.5.0 has no value messages for the label check) names this check, which gives it the realism.check_failures series. */
             metrics: unknown[];
             /** @description The program that counted the messages, or null when none ran. */
             tool: {
@@ -1639,14 +1705,51 @@ export interface components {
                 reasons: string[];
             }[];
         };
-        "$defs-name": string;
+        /** @description The hosts of the capture and the IP addresses that send from more than one MAC address. A host is an IP address (not multicast, broadcast, reserved, or unspecified) that is the source or destination of an IP packet or the sender of an ARP packet, within one VLAN. The check passes when the capture holds no address conflict, the number of hosts lies in the expected range (when there is one), and at least one frame has an Ethernet source address. */
+        host_identity: {
+            /** @constant */
+            check: "host_identity";
+            passed: boolean;
+            /** @description Empty until the metric catalog (0.5.0 has no value host_identity for the label check) names this check, which gives it the realism.check_failures series. */
+            metrics: unknown[];
+            /** @description The expected number of hosts, or null when the labels leave it open. A null max is no upper limit. */
+            expected_hosts: {
+                min: number;
+                max: number | null;
+            } | null;
+            /** @description Distinct IP addresses per VLAN that appear as a source, a destination, or an ARP sender. */
+            hosts: number;
+            /** @description The hosts among them that sent a frame with an Ethernet source address, leaving out the frames of gateway MAC addresses. */
+            senders: number;
+            /** @description Distinct Ethernet source addresses of those frames. */
+            macs: number;
+            /** @description Frames of the capture. */
+            frames: number;
+            /** @description Ethernet frames with a station address as source, including those of gateway MAC addresses. */
+            frames_with_mac: number;
+            conflicts_total: number;
+            /** @description The first 100 IP addresses with more than one MAC address, in address order. */
+            conflicts: {
+                ip: string;
+                /** @description The VLAN tags, outermost first and joined by dots, or null for untagged frames. */
+                vlan: string | null;
+                /** @description Each MAC address that sent from the IP address with its number of frames, the busiest first. */
+                macs: {
+                    mac: string;
+                    frames: number;
+                }[];
+            }[];
+            failures_total: number;
+            /** @description One sentence for each reason that the check failed, at most 50. failures_total counts them all. */
+            failures: string[];
+        };
         sha256: string;
         /** @description Fields that every check carries. The allOf entries add the fields of each known check kind. */
         check: {
             check: components["schemas"]["$defs-name"];
             passed: boolean;
             metrics: components["schemas"]["metric"][];
-        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
+        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
         /**
          * FixingPointSystem realism report
          * @description Report of the realism runner for one capture. Every check adds one entry to checks. A new check kind adds a definition under $defs and one if/then entry to $defs.check.allOf, and keeps the common check fields.
@@ -1692,27 +1795,110 @@ export interface components {
                     };
                     value: number;
                 };
+                /** @description The series that every check carries: the number of reasons for which the check failed. The label check names the kind of the check, and the value is 0 exactly when the check passed. */
+                failures_metric: components["schemas"]["metric"] & {
+                    /** @constant */
+                    name?: "realism.check_failures";
+                    labels?: {
+                        check: components["schemas"]["$defs-name"];
+                    };
+                    value?: number;
+                };
+                /** @description Findings of one reference parser, in the sessions of one application or, with the application all, in the whole capture. */
+                parser_errors_metric: components["schemas"]["metric"] & {
+                    /** @constant */
+                    name?: "realism.parser_errors";
+                    labels?: {
+                        application: string;
+                        /** @enum {unknown} */
+                        parser: "tshark" | "zeek" | "stub";
+                    };
+                    value?: number;
+                };
+                /** @description The decrypted share and the JA4 matched share of the sampled TLS sessions. */
+                encryption_metric: components["schemas"]["metric"] & {
+                    /** @enum {unknown} */
+                    name?: "realism.decrypted_ratio" | "realism.ja4_match_ratio";
+                    labels?: unknown;
+                    value?: unknown;
+                };
+                /** @description The duplicate share of the payload units of one application. */
+                content_metric: components["schemas"]["metric"] & {
+                    /** @constant */
+                    name?: "realism.duplicate_ratio";
+                    labels?: {
+                        application: string;
+                    };
+                    value?: unknown;
+                };
+                /** @description The rules that the instances of one scenario break. */
+                session_structure_metric: components["schemas"]["metric"] & {
+                    /** @constant */
+                    name?: "realism.structure_failures";
+                    labels?: {
+                        scenario: string;
+                    };
+                    value?: number;
+                };
+                /** @description The packets of one role whose field differs from the profile. A SYN has the side client and a SYN-ACK the side server. */
+                transport_behavior_metric: components["schemas"]["metric"] & {
+                    /** @constant */
+                    name?: "realism.transport_deviations";
+                    labels?: {
+                        /** @enum {unknown} */
+                        property: "ttl" | "df" | "mss" | "window_scale" | "sack" | "timestamps" | "options" | "syn_window";
+                        /** @enum {unknown} */
+                        side: "client" | "server";
+                    };
+                    value?: number;
+                };
+                /** @description The share of the sessions of one application that the classifier names as the application. */
+                conformance_metric: components["schemas"]["metric"] & {
+                    /** @constant */
+                    name?: "realism.conformance_ratio";
+                    labels?: {
+                        application: string;
+                        classifier: string;
+                    };
+                    value?: unknown;
+                };
+                /** @description The KS statistic or p value of one comparison. */
+                temporal_metric: components["schemas"]["metric"] & {
+                    /** @enum {unknown} */
+                    name?: "realism.ks_statistic" | "realism.ks_p_value";
+                    labels?: {
+                        application: string;
+                        /** @enum {unknown} */
+                        property: "inter_arrival" | "request_bytes" | "response_bytes";
+                    };
+                    value?: unknown;
+                };
+                /** @description A share, a distance, or the largest distance of the mix that the classifier found. */
+                mix_metric: components["schemas"]["metric"] & {
+                    /** @enum {unknown} */
+                    name: "mix.share_pct" | "mix.abs_error_pp" | "mix.max_abs_error_pp";
+                    labels: {
+                        application?: string;
+                        /** @constant */
+                        source: "classifier";
+                        classifier: string;
+                    };
+                    value?: unknown;
+                } & unknown & unknown;
                 /** @description Fields that every check carries. The allOf entries add the fields of each known check kind. */
                 check: {
                     check: components["schemas"]["$defs-name"];
                     passed: boolean;
                     metrics: components["schemas"]["metric"][];
-                } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
+                } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
                 /** @description Share of labelled sessions that one classifier names as the intended application. */
                 conformance: {
                     /** @constant */
                     check: "conformance";
                     /** @description True when at least one application was scored and every application passed. */
                     passed: boolean;
-                    metrics: (components["schemas"]["metric"] & {
-                        /** @constant */
-                        name?: "realism.conformance_ratio";
-                        labels?: {
-                            application: string;
-                            classifier: string;
-                        };
-                        value?: unknown;
-                    })[];
+                    /** @description The realism.conformance_ratio series of each scored application, and the realism.check_failures series. */
+                    metrics: (components["schemas"]["conformance_metric"] | components["schemas"]["failures_metric"])[];
                     /** @enum {unknown} */
                     classifier: "ndpi" | "zeek" | "stub";
                     classifier_version: string;
@@ -1752,8 +1938,8 @@ export interface components {
                     /** @constant */
                     check: "parser_errors";
                     passed: boolean;
-                    /** @description Empty until the metric catalog defines a parser error metric. */
-                    metrics: unknown[];
+                    /** @description The realism.parser_errors series of each application and parser that ran, with the application all for the total of the parser, and the realism.check_failures series. When no parser ran, only the failures series is there. */
+                    metrics: (components["schemas"]["parser_errors_metric"] | components["schemas"]["failures_metric"])[];
                     /** @description The parsers that ran, in run order. */
                     parsers: {
                         /** @enum {unknown} */
@@ -1812,8 +1998,8 @@ export interface components {
                     /** @constant */
                     check: "encryption";
                     passed: boolean;
-                    /** @description Empty until the metric catalog defines metrics for the decrypted and JA4 matched shares. */
-                    metrics: unknown[];
+                    /** @description The realism.decrypted_ratio and realism.ja4_match_ratio series when sessions were sampled, and the realism.check_failures series. */
+                    metrics: (components["schemas"]["encryption_metric"] | components["schemas"]["failures_metric"])[];
                     /** @description The program that decrypted the sample, or null when none ran. */
                     tool: {
                         /** @enum {unknown} */
@@ -1889,8 +2075,8 @@ export interface components {
                     /** @constant */
                     check: "content";
                     passed: boolean;
-                    /** @description Empty until the metric catalog defines a duplicate ratio metric. */
-                    metrics: unknown[];
+                    /** @description The realism.duplicate_ratio series of each application with payloads, and the realism.check_failures series. */
+                    metrics: (components["schemas"]["content_metric"] | components["schemas"]["failures_metric"])[];
                     max_duplicate_ratio: number;
                     /** @description HTTP header names that the check drops before it hashes a message. */
                     ignored_headers: string[];
@@ -1953,8 +2139,8 @@ export interface components {
                     /** @constant */
                     check: "session_structure";
                     passed: boolean;
-                    /** @description Empty until the metric catalog defines a session structure metric. */
-                    metrics: unknown[];
+                    /** @description The realism.structure_failures series of each scenario, and the realism.check_failures series. */
+                    metrics: (components["schemas"]["session_structure_metric"] | components["schemas"]["failures_metric"])[];
                     /** @description Silence of a client, in seconds, that starts a new instance. Null when no gap splits instances. */
                     max_gap_s: number | null;
                     tolerance_s: number;
@@ -2020,17 +2206,8 @@ export interface components {
                     /** @constant */
                     check: "temporal";
                     passed: boolean;
-                    /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads). Comparisons over all sessions and over both directions have no catalog label and are only in comparisons. */
-                    metrics: (components["schemas"]["metric"] & {
-                        /** @enum {unknown} */
-                        name?: "realism.ks_statistic" | "realism.ks_p_value";
-                        labels?: {
-                            application: string;
-                            /** @enum {unknown} */
-                            property: "inter_arrival" | "request_bytes" | "response_bytes";
-                        };
-                        value?: unknown;
-                    })[];
+                    /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions and over both directions have no catalog label and are only in comparisons. */
+                    metrics: (components["schemas"]["temporal_metric"] | components["schemas"]["failures_metric"])[];
                     alpha: number;
                     min_samples: number;
                     sessions_total: number;
@@ -2097,7 +2274,7 @@ export interface components {
                     /** @constant */
                     check: "messages";
                     passed: boolean;
-                    /** @description Empty until the metric catalog defines metrics for message counts. */
+                    /** @description Empty until the metric catalog (0.5.0 has no value messages for the label check) names this check, which gives it the realism.check_failures series. */
                     metrics: unknown[];
                     /** @description The program that counted the messages, or null when none ran. */
                     tool: {
@@ -2145,12 +2322,51 @@ export interface components {
                         reasons: string[];
                     }[];
                 };
+                /** @description The hosts of the capture and the IP addresses that send from more than one MAC address. A host is an IP address (not multicast, broadcast, reserved, or unspecified) that is the source or destination of an IP packet or the sender of an ARP packet, within one VLAN. The check passes when the capture holds no address conflict, the number of hosts lies in the expected range (when there is one), and at least one frame has an Ethernet source address. */
+                host_identity: {
+                    /** @constant */
+                    check: "host_identity";
+                    passed: boolean;
+                    /** @description Empty until the metric catalog (0.5.0 has no value host_identity for the label check) names this check, which gives it the realism.check_failures series. */
+                    metrics: unknown[];
+                    /** @description The expected number of hosts, or null when the labels leave it open. A null max is no upper limit. */
+                    expected_hosts: {
+                        min: number;
+                        max: number | null;
+                    } | null;
+                    /** @description Distinct IP addresses per VLAN that appear as a source, a destination, or an ARP sender. */
+                    hosts: number;
+                    /** @description The hosts among them that sent a frame with an Ethernet source address, leaving out the frames of gateway MAC addresses. */
+                    senders: number;
+                    /** @description Distinct Ethernet source addresses of those frames. */
+                    macs: number;
+                    /** @description Frames of the capture. */
+                    frames: number;
+                    /** @description Ethernet frames with a station address as source, including those of gateway MAC addresses. */
+                    frames_with_mac: number;
+                    conflicts_total: number;
+                    /** @description The first 100 IP addresses with more than one MAC address, in address order. */
+                    conflicts: {
+                        ip: string;
+                        /** @description The VLAN tags, outermost first and joined by dots, or null for untagged frames. */
+                        vlan: string | null;
+                        /** @description Each MAC address that sent from the IP address with its number of frames, the busiest first. */
+                        macs: {
+                            mac: string;
+                            frames: number;
+                        }[];
+                    }[];
+                    failures_total: number;
+                    /** @description One sentence for each reason that the check failed, at most 50. failures_total counts them all. */
+                    failures: string[];
+                };
                 /** @description The TTL and the TCP options of the SYN and SYN-ACK of every connection against the operating system profile of the sending host. The check passes when no enforced field differs and at least one handshake of a profiled host was compared. The option order and the SYN window are enforced only when strict is true, and they appear in deviations either way. */
                 transport_behavior: {
                     /** @constant */
                     check: "transport_behavior";
                     passed: boolean;
-                    metrics: unknown[];
+                    /** @description The realism.transport_deviations series of each enforced field and role that the check compared, and the realism.check_failures series. */
+                    metrics: (components["schemas"]["transport_behavior_metric"] | components["schemas"]["failures_metric"])[];
                     strict: boolean;
                     client_hops: number;
                     server_hops: number;
@@ -2233,18 +2449,8 @@ export interface components {
                     /** @constant */
                     check: "mix_accuracy";
                     passed: boolean;
-                    /** @description The shares that the classifier found in the capture, with source classifier, for the basis in metrics_basis. Empty when metrics_basis is null or no application has a share. */
-                    metrics: (components["schemas"]["metric"] & {
-                        /** @enum {unknown} */
-                        name: "mix.share_pct" | "mix.abs_error_pp" | "mix.max_abs_error_pp";
-                        labels: {
-                            application?: string;
-                            /** @constant */
-                            source: "classifier";
-                            classifier: string;
-                        };
-                        value?: unknown;
-                    } & unknown & unknown)[];
+                    /** @description The shares that the classifier found in the capture, with source classifier, for the basis in metrics_basis, and the realism.check_failures series. Without a basis or an application with a share, only the failures series is there. */
+                    metrics: (components["schemas"]["mix_metric"] | components["schemas"]["failures_metric"])[];
                     /**
                      * @description The basis that the series describe, which is profile.basis of the test configuration, or the only basis that ran. null when neither tells it, for weights in the labels with both bases, and then metrics is empty.
                      * @enum {unknown}
