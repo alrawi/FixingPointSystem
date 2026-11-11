@@ -69,6 +69,9 @@ type rig struct {
 	agents map[string]*fakeagent.Agent
 	// skipReq leaves the request unvalidated, for requests that break the contract on purpose.
 	skipReq bool
+	// token is the bearer token of the requests: token-run by default, or
+	// token-read for a read-scoped caller.
+	token string
 }
 
 type rigOptions struct {
@@ -120,7 +123,7 @@ func newRig(t *testing.T, ids []string, o rigOptions) *rig {
 	if r.doc, err = contract.Load(contractPath); err != nil {
 		t.Fatal(err)
 	}
-	auth, err := api.NewStaticTokens(map[string]api.Scope{"token-run": api.ScopeRun})
+	auth, err := api.NewStaticTokens(map[string]api.Scope{"token-run": api.ScopeRun, "token-read": api.ScopeRead})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +150,11 @@ func (r *rig) call(method, path string, params map[string]string, body string) *
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		req.Header.Set("Authorization", "Bearer token-run")
+		token := r.token
+		if token == "" {
+			token = "token-run"
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 		return req
 	}
 	rec := httptest.NewRecorder()

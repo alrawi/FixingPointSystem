@@ -64,6 +64,9 @@ var (
 	// ErrStopIncomplete reports that an agent did not end its capture, so the
 	// capture still runs. The stop is idempotent, and the caller may repeat it.
 	ErrStopIncomplete = errors.New("an agent did not end its capture")
+	// ErrCaptureRunning reports that a download would have to end a capture of
+	// a running run, and the caller lacks the run scope that stopping needs.
+	ErrCaptureRunning = errors.New("the capture still runs; stopping it needs scope run")
 	// ErrNoFile reports that no agent of the capture could deliver its file.
 	ErrNoFile = errors.New("no capture file available")
 	// ErrDigestMismatch reports that the bytes of a transfer have another
@@ -612,7 +615,13 @@ func (d *Download) WriteTo(w io.Writer) (int64, error) {
 // succeeds when at least one agent delivered a verified file, and then the
 // caller closes the Download when it has sent the files. A capture that the
 // retention sweep deleted is not found.
-func (s *Service) Prepare(ctx context.Context, runID, captureID string) (*Download, error) {
+//
+// mayStop says whether the caller may end a capture that still runs (scope
+// run). Without it, Prepare refuses a capture of a running run whose files are
+// still being written with ErrCaptureRunning, and sends no command (issue
+// #452). A capture of an ended run cannot go on, so it is finished either way,
+// as List does.
+func (s *Service) Prepare(ctx context.Context, runID, captureID string, mayStop bool) (*Download, error) {
 	run, err := s.cfg.Runs.Get(runID)
 	if err != nil {
 		return nil, err
@@ -628,6 +637,9 @@ func (s *Service) Prepare(ctx context.Context, runID, captureID string) (*Downlo
 	c.mu.Unlock()
 	if gone {
 		return nil, fmt.Errorf("capture %s of run %s: expired: %w", captureID, runID, ErrCaptureNotFound)
+	}
+	if !mayStop && !runs.Final(run.State) && c.active() {
+		return nil, fmt.Errorf("capture %s of run %s: %w", captureID, runID, ErrCaptureRunning)
 	}
 	s.stopAll(ctx, c, runs.Final(run.State))
 	var firstErr error
@@ -775,4 +787,17 @@ func sleep(ctx context.Context, d time.Duration) error {
 // problemDetail trims an error to one line for a problem detail.
 func problemDetail(err error) string {
 	return strings.ReplaceAll(err.Error(), "\n", "; ")
+}
+
+// active reports whether an agent of the capture still writes its file, so a
+// download would have to stop it.
+func (c *capture) active() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, f := range c.files {
+		if f.Started && !f.Stopped && !f.Lost {
+			return true
+		}
+	}
+	return false
 }

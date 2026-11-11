@@ -129,7 +129,7 @@ func TestSweepKeepsARunningCapture(t *testing.T) {
 func TestSweepKeepsTheFilesOfAnOpenDownload(t *testing.T) {
 	r, clock := retentionRig(t, "agent-a")
 	c := r.start(`{"port":"eth1"}`)
-	d, err := r.svc.Prepare(context.Background(), "run-1", c.Id)
+	d, err := r.svc.Prepare(context.Background(), "run-1", c.Id, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestSweepSkipsACaptureWhoseTransferIsRunning(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := r.svc.Prepare(ctx, "run-1", c.Id)
+		_, err := r.svc.Prepare(ctx, "run-1", c.Id, true)
 		done <- err
 	}()
 	waitFor(t, "the fetch command", func() bool {
