@@ -43,7 +43,7 @@ from typing import Any
 from urllib.parse import quote, quote_plus, unquote
 
 SCRUBBER = "capture scrub"
-SCRUBBER_VERSION = "1.0.0"
+SCRUBBER_VERSION = "1.1.0"
 SCRUBBED_SCHEMA_VERSION = "1.1"
 
 # Rule id to rule version. The version rises when a rule changes what it replaces.
@@ -59,7 +59,7 @@ RULES: dict[str, int] = {
     "http_cookie": 1,
     "http_header": 1,
     "url_credentials": 1,
-    "parameter": 1,
+    "parameter": 2,  # JSON members by token, any white space, escaped names (#451)
     "jwt": 1,
     "api_key": 1,
     "private_key": 1,
@@ -68,7 +68,7 @@ RULES: dict[str, int] = {
     "pop3": 1,
     "ftp": 1,
     "literal": 1,
-    "sweep": 1,
+    "sweep": 2,  # JSON-escaped forms of a value too (#451)
     "base64": 1,
 }
 
@@ -282,7 +282,13 @@ _NAMES = (
     r"|username|user_name|user|login|email|e-mail|mail|account"
 )
 _PARAM = re.compile(rf"(?i)(?<![A-Za-z0-9_-])(?:[A-Za-z0-9_]*\[)?({_NAMES})\]?=([^&;\s\"'<>]*)")
-_JSON_PARAM = re.compile(rf'(?i)"({_NAMES})"[ \t]*:[ \t]*"((?:[^"\\]|\\.)*)"')
+# JSON is scanned token by token (_json_fields), not with one regular
+# expression: a key may be written with escapes, and any JSON white space,
+# line breaks included, may stand around the colon (issue #451).
+_JSON_STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')
+_JSON_NUMBER = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
+_JSON_WS = " \t\r\n"
+_NAME = re.compile(rf"(?i)^(?:{_NAMES})$")
 _XML_PARAM = re.compile(rf"(?i)<({_NAMES})>([^<]+)</\1>")
 _PASSWORD_NAMES = re.compile(r"(?i)^(?:password|passwd|pwd|pass|passphrase)$")
 _USER_NAMES = re.compile(r"(?i)^(?:username|user_name|user|login|account)$")
@@ -520,30 +526,42 @@ class _Finder:
             self._secret(edits, "pass", m.group(2), m.start(2), "url_credentials", prio=_PATTERN)
 
     def parameters(self, text: str, edits: list[Edit]) -> None:
-        for pat, decode in ((_PARAM, unquote), (_JSON_PARAM, _json_unescape), (_XML_PARAM, str)):
+        found: list[tuple[str, str, int, int, str]] = []  # name, raw, start, end, form
+        for pat, form in ((_PARAM, "form"), (_XML_PARAM, "xml")):
             for m in pat.finditer(text):
-                name, raw = m.group(1), m.group(2)
-                value = decode(raw)
-                if not value:
+                found.append((m.group(1), m.group(2), m.start(2), m.end(2), form))
+        for n, r, a, b in _json_fields(text):
+            found.append((n, r, a, b, "json" if text[a - 1 : a] == '"' else "number"))
+        for name, raw, start, end, form in found:
+            value = unquote(raw) if form == "form" else raw
+            if form == "json":
+                value = _json_unescape(raw)
+            if not value:
+                continue
+            if _PASSWORD_NAMES.match(name):
+                kind = "pass"
+            elif _USER_NAMES.match(name) or (_EMAIL_NAMES.match(name) and "@" not in value):
+                kind = "user"
+            elif _EMAIL_NAMES.match(name):
+                repl = self.s.email(value)
+                if form == "form":
+                    repl = quote(repl, safe="@")
+                elif form == "json":
+                    repl = _json_escape(repl)
+                self._put(edits, start, end, repl, "parameter", _PATTERN)
+                continue
+            else:
+                kind = "token"
+                if value.lower() in _BENIGN:
                     continue
-                if _PASSWORD_NAMES.match(name):
-                    kind = "pass"
-                elif _USER_NAMES.match(name) or (_EMAIL_NAMES.match(name) and "@" not in value):
-                    kind = "user"
-                elif _EMAIL_NAMES.match(name):
-                    repl = self.s.email(value)
-                    if pat is _PARAM:
-                        repl = quote(repl, safe="@")
-                    self._put(edits, m.start(2), m.end(2), repl, "parameter", _PATTERN)
-                    continue
-                else:
-                    kind = "token"
-                    if value.lower() in _BENIGN:
-                        continue
-                repl = self.s.secret(kind, value)
-                if pat is _PARAM:
-                    repl = quote(repl, safe="/+=-_.~:!*")
-                self._put(edits, m.start(2), m.end(2), repl, "parameter", _PATTERN)
+            repl = self.s.secret(kind, value)
+            if form == "form":
+                repl = quote(repl, safe="/+=-_.~:!*")
+            elif form == "json":
+                repl = _json_escape(repl)
+            elif form == "number":
+                repl = _number_like(value, repl)
+            self._put(edits, start, end, repl, "parameter", _PATTERN)
 
     def host_names(self, text: str) -> None:
         """Learn host names from their usual places. The sweep replaces them."""
@@ -634,6 +652,102 @@ class _Finder:
                                   "ftp")  # fmt: skip
 
 
+def _json_fields(text: str) -> list[tuple[str, str, int, int]]:
+    """The values of sensitive JSON members in text, as (name, raw, start, end).
+
+    It walks the JSON string tokens in order, decodes each one, and takes it as
+    a member name when JSON white space and a colon follow. The value of a
+    sensitive member is a string (raw is its escaped content), a number, or an
+    array, whose strings and numbers are all taken, nested arrays included.
+    Objects under a sensitive name are walked on their own, since their members
+    have names of their own. Text that is not JSON yields nothing more than it
+    would to a parser that stops at the first error, so the scan is bounded by
+    the length of the text.
+    """
+    out: list[tuple[str, str, int, int]] = []
+    n = len(text)
+
+    def skip(i: int) -> int:
+        while i < n and text[i] in _JSON_WS:
+            i += 1
+        return i
+
+    def value_at(name: str, i: int) -> int:
+        """Take the value at i. Return the index after it, or i if none."""
+        if i >= n:
+            return i
+        if text[i] == '"':
+            v = _JSON_STRING.match(text, i)
+            if v:
+                out.append((name, v.group(1), v.start(1), v.end(1)))
+                return v.end()
+            return i
+        if text[i] == "[":
+            depth, j = 0, i
+            while j < n:
+                c = text[j]
+                if c == '"':
+                    v = _JSON_STRING.match(text, j)
+                    if not v:
+                        return j
+                    out.append((name, v.group(1), v.start(1), v.end(1)))
+                    j = v.end()
+                    continue
+                if c in "[":
+                    depth += 1
+                elif c == "]":
+                    depth -= 1
+                    if depth == 0:
+                        return j + 1
+                elif c == "{":
+                    return j  # members of an object are names of their own
+                else:
+                    num = _JSON_NUMBER.match(text, j)
+                    if num and num.end() > j:
+                        out.append((name, num.group(0), num.start(), num.end()))
+                        j = num.end()
+                        continue
+                j += 1
+            return j
+        num = _JSON_NUMBER.match(text, i)
+        if num and num.end() > i:
+            out.append((name, num.group(0), num.start(), num.end()))
+            return num.end()
+        return i
+
+    for m in _JSON_STRING.finditer(text):
+        j = skip(m.end())
+        if j >= n or text[j] != ":":
+            continue
+        name = _json_unescape(m.group(1))
+        if _NAME.match(name):
+            value_at(name, skip(j + 1))
+    return out
+
+
+def _number_like(orig: str, repl: str) -> str:
+    """A JSON number of the shape of orig whose digits come from repl, so a
+    numeric secret is replaced and the body stays valid JSON."""
+    out, k = [], 0
+    for i, c in enumerate(orig):
+        if c.isdigit():
+            d = ord(repl[k % len(repl)]) % 10 if repl else 0
+            k += 1
+            lead = i == 0 or orig[i - 1] in "-."
+            if lead and d == 0 and len(orig) > i + 1 and orig[i + 1].isdigit():
+                d = 1 + ord(repl[k % len(repl)]) % 9 if repl else 1
+            out.append(str(d))
+        else:
+            out.append(c)
+    new = "".join(out)
+    return new if new != orig else new[:-1] + str((int(new[-1]) + 1) % 10)
+
+
+def _json_escape(value: str) -> str:
+    """The content of a JSON string literal that holds value."""
+    return json.dumps(value, ensure_ascii=False)[1:-1]
+
+
 def _json_unescape(raw: str) -> str:
     try:
         out = json.loads(f'"{raw}"')
@@ -649,9 +763,20 @@ def _quote_all(value: str) -> str:
     return quote(value, safe="")
 
 
+def _json_ascii(value: str) -> str:
+    return json.dumps(value, ensure_ascii=True)[1:-1]
+
+
 def _variants(orig: str, repl: str) -> list[tuple[str, str]]:
     out = [(orig, repl)]
-    fns: tuple[Callable[[str], str], ...] = (_quote_all, quote_plus, quote)
+    # A secret echoed inside a JSON string is escaped there (issue #451).
+    fns: tuple[Callable[[str], str], ...] = (
+        _quote_all,
+        quote_plus,
+        quote,
+        _json_escape,
+        _json_ascii,
+    )
     for fn in fns:
         o, r = fn(orig), fn(repl)
         if o != orig and (o, r) not in out:
@@ -1063,7 +1188,12 @@ def _record_problems(rec: dict[str, Any], doc: dict[str, Any]) -> list[str]:
 
 def check_record(doc: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
     """The scrub record of a document if it is intact and matches its capture, and the problems
-    if it does not."""
+    if it does not.
+
+    An intact record shows that the document was not changed after `capture scrub` ran, with the
+    rule versions it lists. It does not show that every credential was found: that is the work of
+    the rules, and a record written by an older rule version (see RULES) may describe a document
+    that a newer rule would scrub further (issue #451)."""
     rec = doc.get("scrub")
     if rec is None:
         return None, []
