@@ -236,6 +236,42 @@ fn ssh_run() {
     assert!(ok >= 4, "{ok} ssh sessions succeeded\n{log}");
 }
 
+/// AGT-20: `call_pcmu` of the sip_rtp module has a UDP signaling flow and a
+/// spawned UDP media flow. The agent runs it as a scenario instance in the
+/// runtime, so every call gives two client sessions: the SIP dialog and the RTP
+/// stream. The SIP port and the RTP range lie above 1023, because the test runs
+/// without root. The registry gives each flow side its own `SipRtp`, so the RTP
+/// sequence numbers and the pacing clocks of the calls never mix.
+#[test]
+fn a_sip_call_with_a_media_flow_runs_through_the_agent() {
+    let mut plan = mail_plan(&[("sip_rtp/call_pcmu", 18_026)]);
+    plan["mix"][0]["params"] = serde_json::json!({
+        "sip_port": 18_026,
+        "server_ip": "127.82.0.1",
+        "client_ip": "127.81.0.1",
+        "rtp_port_min": 28_000,
+        "rtp_port_max": 28_998,
+        "ring_ms": 300,
+        "talk_ms": 600,
+    });
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fps-agent-first-party");
+    std::fs::create_dir_all(&dir).expect("plan dir");
+    let path = dir.join("sip_rtp.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&plan).unwrap()).expect("write plan");
+
+    let (mut out, mut log) = (Vec::new(), Vec::new());
+    let summary = run(&RunOptions::new(path, repo_modules()), &mut out, &mut log).expect("run");
+    let log = String::from_utf8(log).unwrap();
+    assert_eq!(summary.outcome, Outcome::Pass, "{log}");
+    let out = String::from_utf8(out).unwrap();
+    let last: Json =
+        serde_json::from_str(out.lines().last().expect("a snapshot line")).expect("JSON line");
+    // Four calls per second start for three seconds, and a call lasts about one
+    // second, so several whole calls of two sessions each finish.
+    let ok = succeeded(&last, "sip_rtp");
+    assert!(ok >= 4, "{ok} sip_rtp sessions succeeded\n{log}");
+}
+
 /// AGT-19: `download` and `upload` of the smb2 module run a synthetic NTLMv2
 /// session setup and 64 KiB reads and writes through the agent. The ports lie
 /// above 1023, because the test runs without root.

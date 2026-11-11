@@ -723,6 +723,23 @@ static REGISTRY: &[Registration] = &[
             Ok(Box::new(SshSide::default()))
         },
     },
+    // SipRtp holds the RTP stream and the pacing clock of one flow side. The
+    // runtime asks the factory once per flow side, so the signaling and the
+    // media flow of a call, and both ends of each, get their own value. It is
+    // `Clone`, and the registry value itself never renders, so a clone starts
+    // from nothing.
+    Registration {
+        name: fps_module_sip_rtp::MODULE_NAME,
+        catalog: || catalog_of!(fps_module_sip_rtp),
+        build: |ctx| {
+            if ctx.given.is_some() {
+                return Err(BuildError::Settings(
+                    "the plan gives settings, but its native functions take none".to_owned(),
+                ));
+            }
+            Ok(Box::new(fps_module_sip_rtp::SipRtp::default()))
+        },
+    },
 ];
 
 /// The ssh functions of one session side. `fps_module_ssh::Ssh` is not
@@ -1076,7 +1093,10 @@ mod tests {
     fn the_registry_covers_every_first_party_module() {
         assert_eq!(
             NativeFunctions::registered(),
-            ["http1", "dns", "content", "smtp", "imap", "pop3", "ftp", "smb2", "http2", "ssh"]
+            [
+                "http1", "dns", "content", "smtp", "imap", "pop3", "ftp", "smb2", "http2", "ssh",
+                "sip_rtp"
+            ]
         );
     }
 
@@ -1124,6 +1144,49 @@ mod tests {
             .expect_err("no exchange started")
             .to_string();
         assert!(e.contains("wrong order"), "{e}");
+    }
+
+    /// AGT-20. The factory gives every flow side its own sip_rtp value: the RTP
+    /// stream that one side started does not exist on a value that the factory
+    /// makes later, so the media flows of two calls never share a sequence.
+    #[test]
+    fn every_flow_side_gets_its_own_sip_rtp_value() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
+        let mut set = ModuleSet::default();
+        set.insert(Manifest::load(&root.join("sip_rtp/manifest.yaml")).unwrap());
+        let f = NativeFunctions::for_modules(&set, &[], &root, &[], &mut Vec::new()).unwrap();
+        assert_eq!(f.modules(), ["sip_rtp"]);
+        let factory = f.factory();
+        let (mut a, mut b) = (factory(), factory());
+        let mut rng = rand_pcg::Pcg64Mcg::new(7);
+        let args = [
+            fps_flow::ArgValue::Text("PCMU"),
+            fps_flow::ArgValue::Int(20),
+        ];
+        let call = || FnCall {
+            module: "sip_rtp",
+            function: "rtp",
+            args: fps_flow::CallArgs {
+                positional: &args,
+                named: &[],
+            },
+        };
+        let (mut one, mut two, mut three) = (Vec::new(), Vec::new(), Vec::new());
+        a.render(&call(), &mut rng, &mut one).expect("first packet");
+        a.render(&call(), &mut rng, &mut two)
+            .expect("second packet");
+        // The sequence number of an RTP header sits in bytes 2 and 3 and moves
+        // by one per packet on one side.
+        let seq = |p: &[u8]| u16::from_be_bytes([p[2], p[3]]);
+        assert_eq!(seq(&two), seq(&one).wrapping_add(1));
+        // Another side starts a stream of its own, and so does a later value.
+        b.render(&call(), &mut rng, &mut three).expect("other side");
+        assert_ne!(seq(&three), seq(&two), "the sides share a stream");
+        let mut four = Vec::new();
+        factory()
+            .render(&call(), &mut rng, &mut four)
+            .expect("later");
+        assert_ne!(seq(&four), seq(&two), "a later value shares a stream");
     }
 
     /// Every function of every first party manifest reaches the crate of its

@@ -1,0 +1,131 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: ldap
+version: 0.1.0
+type: app
+summary: LDAPv3 clients and servers on port 389 that bind, search, and unbind, with BER messages built and read by the module and a server that answers binds and searches from a directory fixture in LDIF.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: ldap, transport: tcp, port: 389 }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 389, description: TCP port of the server side. nDPI classifies LDAP on port 389 and from the payload. }
+    directory: { type: string, default: "", description: "The directory that the server answers from and that the client draws its accounts from, as LDIF text. An empty value selects the directory that ships with the module, modules/ldap/directory.ldif, which holds a root DSE, 16 people with a userPassword, and 5 groups. A bind compares its password with the userPassword of the entry, and no search returns that attribute." }
+    search_base: { type: string, default: "dc=example,dc=test", description: Base object of the user search in bind_search. }
+    search_scope: { type: string, enum: [base, one, sub], default: sub, description: Scope of the user search in bind_search. }
+    user_attributes: { type: string, default: "cn,mail,telephoneNumber,title,departmentNumber", description: Comma separated attributes that bind_search asks for. An empty value asks for every attribute. }
+    list_base: { type: string, default: "ou=People,dc=example,dc=test", description: Base object of the listing in directory_browse, which searches one level below it. }
+    list_filter: { type: string, minLength: 1, default: "(objectClass=inetOrgPerson)", description: Filter of the listing in directory_browse, in the string form of RFC 4515. }
+    list_attributes: { type: string, default: "cn,mail,telephoneNumber", description: Comma separated attributes of the listing in directory_browse. }
+    detail_attributes: { type: string, default: "cn,mail,telephoneNumber,title,departmentNumber,employeeNumber", description: Comma separated attributes of the base object search that opens one person in directory_browse. }
+    size_limit: { type: integer, minimum: 0, maximum: 2147483647, default: 0, description: Size limit of the listing in directory_browse, where 0 means none. When it is below the number of entries, the server sends that many and ends with sizeLimitExceeded, and done_code must be 4. }
+    done_code: { type: integer, minimum: 0, maximum: 1000, default: 0, description: Result code that the client of directory_browse expects in the SearchResultDone of the listing. }
+    context: { type: string, default: "dc=example,dc=test", description: Naming context that rootdse_probe reads after the root DSE. }
+    root_attributes: { type: string, default: "namingContexts,supportedLDAPVersion,supportedSASLMechanisms,subschemaSubentry,vendorName", description: Comma separated attributes that rootdse_probe asks the root DSE for. }
+    group_base: { type: string, default: "ou=Groups,dc=example,dc=test", description: Base object of the group search in failed_bind. }
+    wrong_password: { type: string, default: Tst-not-the-password-00, description: Password of the first bind in failed_bind, which the server rejects with invalidCredentials. }
+    group_attributes: { type: string, default: cn, description: Comma separated attributes that the group search of failed_bind asks for. }
+functions:
+  - name: size
+    summary: The number of octets that follow the 4 octet head of a message, given those 4 octets. It keeps the head for recv. A message has at most 65535 content octets.
+    params:
+      - { name: head, type: bytes }
+  - name: recv
+    summary: Decodes a message after its head, requires the named kind and result code, and keeps it for field, bind_answer, and matches.
+    params:
+      - { name: message, type: bytes }
+      - { name: kind, type: text }
+      - { name: result, type: int, default: 0 }
+  - name: field
+    summary: A field of the message that recv kept, such as message_id, operation, name, password, base, filter, result_code, or dn.
+    params:
+      - { name: name, type: text }
+  - name: bind_request
+    summary: BindRequest with a simple authentication. An empty name and an empty password make an anonymous bind.
+    params:
+      - { name: message_id, type: int }
+      - { name: name, type: text }
+      - { name: password, type: text }
+      - { name: version, type: int, default: 3 }
+  - name: bind_response
+    summary: BindResponse with a result code, a matched DN, and a diagnostic message.
+    params:
+      - { name: message_id, type: int }
+      - { name: result_code, type: int, default: 0 }
+      - { name: matched_dn, type: text, default: "" }
+      - { name: diagnostic, type: text, default: "" }
+  - name: search_request
+    summary: SearchRequest with a scope of base, one, or sub, a filter in the string form of RFC 4515, and comma separated attributes.
+    params:
+      - { name: message_id, type: int }
+      - { name: base, type: text }
+      - { name: scope, type: text, default: sub }
+      - { name: filter, type: text, default: "(objectClass=*)" }
+      - { name: attributes, type: text, default: "" }
+      - { name: size_limit, type: int, default: 0 }
+      - { name: time_limit, type: int, default: 0 }
+      - { name: deref, type: text, default: never }
+      - { name: types_only, type: boolean, default: false }
+  - name: search_entry
+    summary: SearchResultEntry for a DN and attributes given as LDIF lines, where lines of one name make one attribute with several values.
+    params:
+      - { name: message_id, type: int }
+      - { name: dn, type: text }
+      - { name: attributes, type: text }
+  - name: search_done
+    summary: SearchResultDone with a result code, a matched DN, and a diagnostic message.
+    params:
+      - { name: message_id, type: int }
+      - { name: result_code, type: int, default: 0 }
+      - { name: matched_dn, type: text, default: "" }
+      - { name: diagnostic, type: text, default: "" }
+  - name: unbind_request
+    summary: UnbindRequest.
+    params:
+      - { name: message_id, type: int }
+  - name: filter_eq
+    summary: The equality filter (attribute=value) with the special octets of the value escaped as RFC 4515 requires.
+    params:
+      - { name: attribute, type: text }
+      - { name: value, type: text }
+  - name: account
+    summary: A field of an account of the directory, picked by a seed, where -1 draws from the session generator. Empty directory selects the shipped one.
+    params:
+      - { name: directory, type: text }
+      - { name: field, type: text }
+      - { name: seed, type: int, default: -1 }
+  - name: count
+    summary: The number of entries that a search returns from the directory, after the size limit. The client uses it to know how many SearchResultEntry messages to read.
+    params:
+      - { name: directory, type: text }
+      - { name: base, type: text }
+      - { name: scope, type: text, default: sub }
+      - { name: filter, type: text, default: "(objectClass=*)" }
+      - { name: size_limit, type: int, default: 0 }
+  - name: bind_answer
+    summary: BindResponse to the bind that recv kept, from the bind rules of RFC 4513 applied to the directory.
+    params:
+      - { name: directory, type: text }
+  - name: matches
+    summary: Runs the search request that recv kept against the directory, keeps the result for search_next and search_end, and returns the number of entries.
+    params:
+      - { name: directory, type: text }
+  - name: search_next
+    summary: The next SearchResultEntry of the search that matches ran, trimmed to the requested attributes, never with the userPassword.
+    params: []
+  - name: search_end
+    summary: The SearchResultDone of the search that matches ran, with success, sizeLimitExceeded, or noSuchObject and the matched DN. It fails while entries remain unsent.
+    params: []
+scenarios:
+  - scenarios/bind_search.yaml
+  - scenarios/directory_browse.yaml
+  - scenarios/rootdse_probe.yaml
+  - scenarios/failed_bind.yaml
+fixtures:
+  - { capture: fixtures/ldap.pcapng, expect: { ndpi: [LDAP] } }
+provenance:
+  source: synthetic
+  notes: The messages follow RFC 4511 for the protocol and its BER encoding, RFC 4515 for the filters in string form, RFC 4513 for the bind rules, and RFC 2849 for the LDIF of the directory, with the exchanges of OpenLDAP 2.6 as the model. The BER codec is written in the crate and uses no ASN.1 library. Every name, number, mail address, and password of the directory is invented, and the suffix and the mail domain lie under the reserved .test top level domain.

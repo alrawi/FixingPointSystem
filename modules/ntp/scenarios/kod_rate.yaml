@@ -1,0 +1,26 @@
+scenario: kod_rate
+description: A client that polls too fast. The server answers the first request with a Kiss o' Death packet with the code RATE (RFC 5905 section 7.4), stratum 0 and leap indicator 3. The client binds the code, backs off for poll_interval_ms, and asks again with the exponent 6, and the server answers as a stratum 2 server.
+vars:
+  server_port: 123
+  poll_interval_ms: 64000
+flows:
+  - id: rate
+    module: ntp
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ ntp.query(now_ms=now('epoch_ms'), poll=4) }}"
+      - expect: { bytes: 48, max_datagram: 48, timeout_ms: 2000 }
+      - set: { kiss_code: "{{ ntp.field(last, 'reference_id') }}" }
+      - delay: { ms: "{{ vars.poll_interval_ms }}" }
+      - send: "{{ ntp.query(now_ms=now('epoch_ms'), poll=6) }}"
+      - expect: { bytes: 48, max_datagram: 48, timeout_ms: 2000 }
+      - set: { server_stratum: "{{ ntp.field(last, 'stratum') }}" }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { min_bytes: 48, max_datagram: 1024, timeout_ms: 2000 }
+      - send: "{{ ntp.reply(last, now_ms=now('epoch_ms'), kiss='RATE') }}"
+      - expect: { min_bytes: 48, max_datagram: 1024, timeout_ms: 600000 }
+      - send: "{{ ntp.reply(last, now_ms=now('epoch_ms')) }}"
+      - close: fin
