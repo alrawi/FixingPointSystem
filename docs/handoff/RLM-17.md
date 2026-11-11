@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #441 |
 | Branch | `wp/RLM-17` |
-| Pull request | pending |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Pull request | #446 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-df82d8, lease until 2026-11-11T05:13:59Z |
-| Last verified commit | none |
+| Last verified commit | 9665913 |
 
 ## Goal
 
@@ -20,7 +20,7 @@ Every realism check emits the series that `contracts/changes/CON-23.md` defines,
 - [x] 2. Apply the schema patch by hand, extend it, bump the format to 0.12.0
 - [x] 3. Add `premature_connection_reuse` to `ZEEK_STATE_WEIRDS`
 - [x] 4. Tests with literal series and the contract examples; docs and log entry
-- [ ] 5. Open the PR, wait for CI, hand over for review
+- [x] 5. Open the PR, wait for CI, hand over for review
 
 ## Done and verified
 
@@ -30,11 +30,11 @@ Every realism check emits the series that `contracts/changes/CON-23.md` defines,
 
 ## Remaining
 
-CI result on the PR. The coordinator refreshes `controller/internal/report/schema/realism-report.schema.json` (byte copy).
+CI green on 9665913 (30 check runs). The coordinator refreshes `controller/internal/report/schema/realism-report.schema.json` (byte copy).
 
 ## Next action
 
-Open the pull request and poll its check runs.
+Coordinator: review PR #446, refresh the controller schema copy.
 
 ## Blockers and open questions
 
@@ -59,3 +59,4 @@ python3 -m pytest -q realism && python3 -m ruff check realism && python3 -m mypy
 ## Session log
 
 - 2026-11-11 claude-df82d8: claimed, implemented steps 1 to 4.
+- 2026-11-11 claude-df82d8: PR #446 opened, CI green on 9665913, handed over for review.
