@@ -19,6 +19,9 @@ import { MockRuns, unknownAgents, type MockRunOptions } from "./runs";
 /** The token that the mock server accepts unless the options name others. */
 export const MOCK_TOKEN = "fps-mock-token";
 
+/** The holder that reserveAgent records, as the controller does. */
+const OPERATOR = "operator";
+
 /** An error answer that replaces the normal answer of matching requests, for error tests. */
 export interface MockFault {
   /** The method to fail, every method when absent. */
@@ -317,8 +320,19 @@ function routes(data: MockData, runs: MockRuns, agents: Agent[]): [string, RegEx
             body: problem(404, "Not Found", `reserve agent ${id}: unknown agent`),
           };
         }
-        // The controller reserves for the operator. It reserves an agent again without error,
-        // and it refuses an agent that has no control session or that holds a plan.
+        // The controller reserves for the operator. It reserves an agent that the operator holds
+        // again without error. It refuses in this order: another holder (a run) has the agent,
+        // the agent has no control session, the agent holds a plan.
+        if (agent.reserved_by !== undefined && agent.reserved_by !== OPERATOR) {
+          return {
+            status: 409,
+            body: problem(
+              409,
+              "Conflict",
+              `reserve agent ${id} for ${OPERATOR}: held by ${agent.reserved_by}: agent reserved by another holder`,
+            ),
+          };
+        }
         if (agent.state === "offline" || agent.state === "busy") {
           const why = agent.state === "offline" ? "" : "plan loaded: ";
           return {
@@ -327,6 +341,7 @@ function routes(data: MockData, runs: MockRuns, agents: Agent[]): [string, RegEx
           };
         }
         agent.state = "reserved";
+        agent.reserved_by = OPERATOR;
         return { status: 200, body: agent };
       },
     ],
@@ -342,8 +357,10 @@ function routes(data: MockData, runs: MockRuns, agents: Agent[]): [string, RegEx
             body: problem(404, "Not Found", `release agent ${id}: unknown agent`),
           };
         }
-        // Releasing an agent that is not reserved succeeds and changes nothing.
+        // Releasing ends any reservation, whoever holds it, and an agent without one is unchanged.
+        // Only the state `reserved` goes back to `online`, because `offline` and `busy` win.
         if (agent.state === "reserved") agent.state = "online";
+        delete agent.reserved_by;
         return { status: 200, body: agent };
       },
     ],
