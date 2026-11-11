@@ -2,12 +2,19 @@
 //! Synthetic MPEG-TS segments (ISO/IEC 13818-1).
 //!
 //! A segment is a whole number of 188 octet packets. It opens with a PAT and a
-//! PMT that name one H.264 video stream and one AAC audio stream, and repeats
-//! both every 100 packets. The rest is a repeating cycle of one video access
-//! unit of ten packets, with a PCR in the adaptation field of its first
-//! packet, and one audio frame. Every elementary stream payload is random
-//! bytes behind a valid PES header, so the segment parses as transport stream
-//! and carries no third party media.
+//! PMT that name one H.264 video stream and one AAC audio stream. The rest is
+//! a repeating cycle of one video access unit of ten packets, with a PCR in the
+//! adaptation field of its first packet, and one audio frame, and then null
+//! packets up to the size of the segment. Every elementary stream payload is
+//! random bytes behind a valid PES header, so the segment parses as transport
+//! stream and carries no third party media.
+//!
+//! The video and the audio take a multiple of 16 packets each, so that their
+//! continuity counters are back at 0 at the end of every segment, whatever the
+//! size of the segment is. A player that switches the rung between two segments,
+//! or a parser that reads segments of different rungs from one connection, then
+//! sees a counter that continues. The null packets bring the segment to the exact
+//! size of the bit rate, as the null stuffing of a constant bit rate stream does.
 
 use rand::RngCore;
 
@@ -20,10 +27,9 @@ pub const MAX_SEGMENT: u64 = 16 << 20;
 const PMT_PID: u16 = 0x1000;
 const VIDEO_PID: u16 = 0x0100;
 const AUDIO_PID: u16 = 0x0101;
+const NULL_PID: u16 = 0x1FFF;
 /// Video packets for each audio packet in the cycle.
 const VIDEO_RUN: usize = 10;
-/// A PAT and a PMT follow every this many packets.
-const REPEAT: usize = 100;
 
 /// The number of packets of a segment of `segment_ms` milliseconds at `bits_per_second`.
 pub fn packets(bits_per_second: u64, segment_ms: u64) -> u64 {
@@ -100,18 +106,72 @@ fn pts_field(pts: u64) -> [u8; 5] {
     ]
 }
 
+/// The continuity counter slot of a PID.
+fn slot(pid: u16) -> usize {
+    match pid {
+        0 => 0,
+        PMT_PID => 1,
+        VIDEO_PID => 2,
+        _ => 3,
+    }
+}
+
+/// What one packet of a segment carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Pat,
+    Pmt,
+    VideoStart,
+    VideoCont,
+    Audio,
+    Null,
+}
+
+/// The number of video and audio packets of a segment of `packets` packets. Each is a multiple of
+/// 16, and a segment too short for that gives all its data packets to the video.
+fn shares(packets: u64) -> (usize, usize) {
+    let data = (packets as usize).saturating_sub(2);
+    let video = data * VIDEO_RUN / (VIDEO_RUN + 1) / 16 * 16;
+    if video == 0 {
+        return (data, 0);
+    }
+    let audio = (data - video) / 16 * 16;
+    (video, audio)
+}
+
+/// The kinds of the packets of a segment in order, which depend on the packet count only.
+fn layout(packets: u64) -> impl Iterator<Item = Kind> {
+    let (mut video, mut audio) = shares(packets);
+    let mut run = 0usize;
+    (0..packets as usize).map(move |p| match p {
+        0 => Kind::Pat,
+        1 => Kind::Pmt,
+        _ if audio > 0 && (run == VIDEO_RUN || video == 0) => {
+            run = 0;
+            audio -= 1;
+            Kind::Audio
+        }
+        _ if video > 0 => {
+            video -= 1;
+            run += 1;
+            if run == 1 {
+                Kind::VideoStart
+            } else {
+                Kind::VideoCont
+            }
+        }
+        _ => Kind::Null,
+    })
+}
+
 struct Writer<'a> {
     out: &'a mut Vec<u8>,
-    counters: [u8; 3],
+    counters: [u8; 4],
 }
 
 impl Writer<'_> {
     fn counter(&mut self, pid: u16) -> u8 {
-        let slot = match pid {
-            VIDEO_PID => 1,
-            AUDIO_PID => 2,
-            _ => 0,
-        };
+        let slot = slot(pid);
         let c = self.counters[slot];
         self.counters[slot] = (c + 1) & 0x0F;
         c
@@ -178,6 +238,13 @@ impl Writer<'_> {
         self.fill(room - 14 - 4, rng);
     }
 
+    /// A null packet, which has no continuity counter of its own.
+    fn null(&mut self) {
+        self.out
+            .extend_from_slice(&[0x47, (NULL_PID >> 8) as u8, NULL_PID as u8, 0x10]);
+        self.out.resize(self.out.len() + PACKET - 4, 0xFF);
+    }
+
     fn fill(&mut self, n: usize, rng: &mut dyn RngCore) {
         let at = self.out.len();
         self.out.resize(at + n, 0);
@@ -187,6 +254,10 @@ impl Writer<'_> {
 
 /// Appends the segment `index` of a stream with `packets` packets to `out`. The presentation
 /// times continue from segment to segment at `segment_ms` per segment.
+///
+/// The continuity counters continue from segment to segment, whatever the size of each: the PAT
+/// and the PMT appear once per segment and start their counters at the segment number, and the
+/// video and the audio take whole turns of the 16 values.
 pub fn segment(
     index: u64,
     segment_ms: u64,
@@ -196,31 +267,24 @@ pub fn segment(
 ) {
     let (pat, pmt) = (pat(), pmt());
     let first_pts = 90_000 + index * segment_ms * 90;
-    let mut w = Writer {
-        out,
-        counters: [0; 3],
-    };
+    // The PAT and the PMT appear once in every segment, so their counters follow the index.
+    // The video and the audio take a multiple of 16 packets, so their counters start at 0.
+    let counters = [(index % 16) as u8, (index % 16) as u8, 0, 0];
+    let mut w = Writer { out, counters };
     // Spread the access units of the segment over its length at 30 frames per second.
     let mut frame = 0u64;
-    let mut run = 0usize;
-    for p in 0..packets as usize {
-        match p % REPEAT {
-            0 => w.psi(0, &pat),
-            1 => w.psi(PMT_PID, &pmt),
-            _ => {
-                let pts = first_pts + frame * 3000;
-                if run == VIDEO_RUN {
-                    w.audio(pts, rng);
-                    run = 0;
-                } else if run == 0 {
-                    w.video_start(pts, rng);
-                    frame += 1;
-                    run = 1;
-                } else {
-                    w.payload_packet(VIDEO_PID, rng);
-                    run += 1;
-                }
+    for kind in layout(packets) {
+        let pts = first_pts + frame * 3000;
+        match kind {
+            Kind::Pat => w.psi(0, &pat),
+            Kind::Pmt => w.psi(PMT_PID, &pmt),
+            Kind::Audio => w.audio(pts, rng),
+            Kind::VideoStart => {
+                w.video_start(pts, rng);
+                frame += 1;
             }
+            Kind::VideoCont => w.payload_packet(VIDEO_PID, rng),
+            Kind::Null => w.null(),
         }
     }
 }
@@ -267,26 +331,50 @@ mod tests {
         let mut out = Vec::new();
         segment(3, 2000, 250, &mut rng(), &mut out);
         assert_eq!(out.len(), 250 * PACKET);
-        let mut next = [0u8; 3];
+        let mut next = [None::<u8>; 4];
         let mut pids = std::collections::BTreeMap::new();
         for (i, p) in out.chunks(PACKET).enumerate() {
             assert_eq!(p[0], 0x47, "sync byte of packet {i}");
             let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
             *pids.entry(pid).or_insert(0) += 1;
-            let slot = match pid {
-                VIDEO_PID => 1,
-                AUDIO_PID => 2,
-                _ => 0,
-            };
-            if slot != 0 {
-                assert_eq!(p[3] & 0x0F, next[slot], "continuity of pid {pid} at {i}");
-                next[slot] = (next[slot] + 1) & 0x0F;
+            if pid == NULL_PID {
+                continue;
             }
+            let cc = p[3] & 0x0F;
+            if let Some(want) = next[slot(pid)] {
+                assert_eq!(cc, want, "continuity of pid {pid} at {i}");
+            }
+            next[slot(pid)] = Some((cc + 1) & 0x0F);
         }
-        assert_eq!(pids[&0], 3, "PAT at 0, 100, and 200");
-        assert_eq!(pids[&PMT_PID], 3);
+        assert_eq!(pids[&0], 1, "one PAT");
+        assert_eq!(pids[&PMT_PID], 1);
+        assert!(pids[&NULL_PID] > 0);
         assert!(pids[&VIDEO_PID] > pids[&AUDIO_PID] * 8);
         assert_eq!(&out[4..5], &[0], "pointer field of the PAT");
+    }
+
+    fn pid_of(p: &[u8]) -> u16 {
+        (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2])
+    }
+
+    #[test]
+    fn counters_continue_from_segment_to_segment() {
+        // Two segments in a row of one rung: the second starts each counter where the first
+        // ended, for the PAT, the PMT, the video, and the audio.
+        for packets in [43u64, 250, 3191] {
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            segment(4, 400, packets, &mut rng(), &mut a);
+            segment(5, 400, packets, &mut rng(), &mut b);
+            let mut last = [None::<u8>; 4];
+            for p in a.chunks(PACKET).filter(|p| pid_of(p) != NULL_PID) {
+                last[slot(pid_of(p))] = Some(p[3] & 0x0F);
+            }
+            for pid in [0, PMT_PID, VIDEO_PID, AUDIO_PID] {
+                let Some(end) = last[slot(pid)] else { continue };
+                let first = b.chunks(PACKET).find(|p| pid_of(p) == pid).unwrap()[3] & 0x0F;
+                assert_eq!(first, (end + 1) & 0x0F, "pid {pid:#x}, {packets} packets");
+            }
+        }
     }
 
     #[test]

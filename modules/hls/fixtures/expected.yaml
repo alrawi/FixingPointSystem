@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of hls.pcapng, which capture.sh records in the QA-01 harness.
+# realism/schema/labels.schema.json defines the format.
+#
+# One TCP port per scenario, so a session maps to its application. vod_ladder
+# runs on 8090, the playlist connection of vod_segments on 8091 and its
+# segments, one connection each, on 8092, and live_refresh on 8093. nDPI must
+# classify at least 99% of these sessions as HTTP from the payload alone.
+#
+# The temporal section is the acceptance of MOD-15. The segment connections of
+# vod_segments start one segment duration apart, 400 ms in this capture, on an
+# absolute schedule, so the gaps between their starts must all lie within 40 ms
+# of 400 ms. The capture holds one playback of 33 segments, which gives 32 gaps,
+# above the 30 observations that the check needs. The gaps inside a keepalive
+# connection are not session starts, so hls_check.py reads them, together with
+# the byte share of the rungs.
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: hls_vod
+    match: {transport: tcp, server_port: 8090}
+  - application: hls_playlist
+    match: {transport: tcp, server_port: 8091}
+  - application: hls_segment
+    match: {transport: tcp, server_port: 8092}
+  - application: hls_live
+    match: {transport: tcp, server_port: 8093}
+applications:
+  hls_vod: {ndpi: [HTTP]}
+  hls_playlist: {ndpi: [HTTP]}
+  hls_segment: {ndpi: [HTTP]}
+  hls_live: {ndpi: [HTTP]}
+temporal:
+  alpha: 0.01
+  min_samples: 30
+  arrivals:
+    applications:
+      hls_segment: {dist: constant, ms: 400, tolerance_ms: 40}
