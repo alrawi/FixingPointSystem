@@ -10,7 +10,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.4, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.4 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
-| `metrics/catalog.yaml` | Metric catalog 0.5.0 |
+| `metrics/catalog.yaml` | Metric catalog 0.6.0 |
 | `examples/` | Example modules, tests, and plans that every validator run checks |
 
 ## Agent control protocol
@@ -280,6 +280,18 @@ CON-23 moves the metric catalog from 0.4.0 to 0.5.0. The owner approved the chan
 | Report schema | The schema under `realism/` is not part of this package. The change entry holds its exact change as a patch, which the runner package applies together with the emitters, and it moves the report format to 0.12.0, since RLM-14 had taken 0.11.0 (RLM-17) |
 
 The controller embeds a byte copy of the catalog, the engine mirrors it in `fps-stats`, and two tests pin the version, so the coordinator refreshes them and regenerates the Go code, the Python SDK, and the UI schema for the two descriptions.
+
+## The messages check in the catalog
+
+CON-25 moves the metric catalog from 0.5.0 to 0.6.0. RLM-14 added the `messages` check to the realism report after CON-23 listed the check kinds, so a series for it would have broken the catalog and a failing check never reached `RunReport.realism`. The owner approved the contract change on 2026-11-11. The change is additive, and the entry `contracts/changes/CON-25.md` records it.
+
+| Change | Rule |
+|---|---|
+| Label `check` | Gains the value `messages`, at the end of its list |
+| `realism.check_failures` | For `check: messages` its value is `failures_total` of the check entry, which is 0 exactly when the check passed. The check carries no other series, and the generic target `== 0` of CON-23 applies |
+| `contracts/examples/realism/check-metrics.yaml` | Gains a passing and a failing case of the kind `messages` |
+
+The controller copy of the catalog, the `fps-stats` tables, two version pins, and the realism runner follow the contract, and the coordinator and the RLM package apply them.
 
 ## Capture drop counts
 

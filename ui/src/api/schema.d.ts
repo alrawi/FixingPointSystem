@@ -1658,8 +1658,8 @@ export interface components {
             /** @constant */
             check: "messages";
             passed: boolean;
-            /** @description Empty until the metric catalog (0.5.0 has no value messages for the label check) names this check, which gives it the realism.check_failures series. */
-            metrics: unknown[];
+            /** @description The realism.check_failures series of the check (metric catalog 0.6.0, contracts/changes/CON-25.md): its value is failures_total, so 0 exactly when the check passed. The check carries no other series. */
+            metrics: components["schemas"]["failures_metric"][];
             /** @description The program that counted the messages, or null when none ran. */
             tool: {
                 /** @enum {unknown} */
@@ -1706,13 +1706,51 @@ export interface components {
                 reasons: string[];
             }[];
         };
+        /** @description The hosts of the capture and the IP addresses that send from more than one MAC address. A host is an IP address (not multicast, broadcast, reserved, or unspecified) that is the source or destination of an IP packet or the sender of an ARP packet, within one VLAN. The check passes when the capture holds no address conflict, the number of hosts lies in the expected range (when there is one), and at least one frame has an Ethernet source address. */
+        host_identity: {
+            /** @constant */
+            check: "host_identity";
+            passed: boolean;
+            /** @description Empty until the metric catalog (0.6.0 has no value host_identity for the label check) names this check, which gives it the realism.check_failures series. */
+            metrics: unknown[];
+            /** @description The expected number of hosts, or null when the labels leave it open. A null max is no upper limit. */
+            expected_hosts: {
+                min: number;
+                max: number | null;
+            } | null;
+            /** @description Distinct IP addresses per VLAN that appear as a source, a destination, or an ARP sender. */
+            hosts: number;
+            /** @description The hosts among them that sent a frame with an Ethernet source address, leaving out the frames of gateway MAC addresses. */
+            senders: number;
+            /** @description Distinct Ethernet source addresses of those frames. */
+            macs: number;
+            /** @description Frames of the capture. */
+            frames: number;
+            /** @description Ethernet frames with a station address as source, including those of gateway MAC addresses. */
+            frames_with_mac: number;
+            conflicts_total: number;
+            /** @description The first 100 IP addresses with more than one MAC address, in address order. */
+            conflicts: {
+                ip: string;
+                /** @description The VLAN tags, outermost first and joined by dots, or null for untagged frames. */
+                vlan: string | null;
+                /** @description Each MAC address that sent from the IP address with its number of frames, the busiest first. */
+                macs: {
+                    mac: string;
+                    frames: number;
+                }[];
+            }[];
+            failures_total: number;
+            /** @description One sentence for each reason that the check failed, at most 50. failures_total counts them all. */
+            failures: string[];
+        };
         sha256: string;
         /** @description Fields that every check carries. The allOf entries add the fields of each known check kind. */
         check: {
             check: components["schemas"]["$defs-name"];
             passed: boolean;
             metrics: components["schemas"]["metric"][];
-        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
+        } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
         /**
          * FixingPointSystem realism report
          * @description Report of the realism runner for one capture. Every check adds one entry to checks. A new check kind adds a definition under $defs and one if/then entry to $defs.check.allOf, and keeps the common check fields.
@@ -1853,7 +1891,7 @@ export interface components {
                     check: components["schemas"]["$defs-name"];
                     passed: boolean;
                     metrics: components["schemas"]["metric"][];
-                } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
+                } & (unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown & unknown);
                 /** @description Share of labelled sessions that one classifier names as the intended application. */
                 conformance: {
                     /** @constant */
@@ -2237,8 +2275,8 @@ export interface components {
                     /** @constant */
                     check: "messages";
                     passed: boolean;
-                    /** @description Empty until the metric catalog (0.5.0 has no value messages for the label check) names this check, which gives it the realism.check_failures series. */
-                    metrics: unknown[];
+                    /** @description The realism.check_failures series of the check (metric catalog 0.6.0, contracts/changes/CON-25.md): its value is failures_total, so 0 exactly when the check passed. The check carries no other series. */
+                    metrics: components["schemas"]["failures_metric"][];
                     /** @description The program that counted the messages, or null when none ran. */
                     tool: {
                         /** @enum {unknown} */
@@ -2284,6 +2322,44 @@ export interface components {
                         passed: boolean;
                         reasons: string[];
                     }[];
+                };
+                /** @description The hosts of the capture and the IP addresses that send from more than one MAC address. A host is an IP address (not multicast, broadcast, reserved, or unspecified) that is the source or destination of an IP packet or the sender of an ARP packet, within one VLAN. The check passes when the capture holds no address conflict, the number of hosts lies in the expected range (when there is one), and at least one frame has an Ethernet source address. */
+                host_identity: {
+                    /** @constant */
+                    check: "host_identity";
+                    passed: boolean;
+                    /** @description Empty until the metric catalog (0.6.0 has no value host_identity for the label check) names this check, which gives it the realism.check_failures series. */
+                    metrics: unknown[];
+                    /** @description The expected number of hosts, or null when the labels leave it open. A null max is no upper limit. */
+                    expected_hosts: {
+                        min: number;
+                        max: number | null;
+                    } | null;
+                    /** @description Distinct IP addresses per VLAN that appear as a source, a destination, or an ARP sender. */
+                    hosts: number;
+                    /** @description The hosts among them that sent a frame with an Ethernet source address, leaving out the frames of gateway MAC addresses. */
+                    senders: number;
+                    /** @description Distinct Ethernet source addresses of those frames. */
+                    macs: number;
+                    /** @description Frames of the capture. */
+                    frames: number;
+                    /** @description Ethernet frames with a station address as source, including those of gateway MAC addresses. */
+                    frames_with_mac: number;
+                    conflicts_total: number;
+                    /** @description The first 100 IP addresses with more than one MAC address, in address order. */
+                    conflicts: {
+                        ip: string;
+                        /** @description The VLAN tags, outermost first and joined by dots, or null for untagged frames. */
+                        vlan: string | null;
+                        /** @description Each MAC address that sent from the IP address with its number of frames, the busiest first. */
+                        macs: {
+                            mac: string;
+                            frames: number;
+                        }[];
+                    }[];
+                    failures_total: number;
+                    /** @description One sentence for each reason that the check failed, at most 50. failures_total counts them all. */
+                    failures: string[];
                 };
                 /** @description The TTL and the TCP options of the SYN and SYN-ACK of every connection against the operating system profile of the sending host. The check passes when no enforced field differs and at least one handshake of a profiled host was compared. The option order and the SYN window are enforced only when strict is true, and they appear in deviations either way. */
                 transport_behavior: {

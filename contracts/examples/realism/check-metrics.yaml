@@ -206,3 +206,23 @@ examples:
           - {metric: realism.transport_deviations, labels: {property: ttl, side: client}, property: ttl deviations of client SYN packets, observed: 5, target: "== 0", passed: false}
           - {metric: realism.transport_deviations, labels: {property: mss, side: server}, property: mss deviations of server SYN-ACK packets, observed: 0, target: "== 0", passed: true}
           - {metric: realism.check_failures, labels: {check: transport_behavior}, property: failures of the transport_behavior check, observed: 1, target: "== 0", passed: false}
+
+  # CON-25: the messages check of RLM-14. Its realism.check_failures is its
+  # failures_total, the number of failure sentences (a session outside its range,
+  # a rule that selects no session, a missing tshark), and it carries no other series.
+  - check: messages
+    report: {}
+    cases:
+      - name: passing
+        check_passed: true
+        metrics:
+          - {name: realism.check_failures, labels: {check: messages}, value: 0}
+        results:
+          - {metric: realism.check_failures, labels: {check: messages}, property: failures of the messages check, observed: 0, target: "== 0", passed: true}
+      - name: failing
+        check_passed: false
+        note: One session lost its response (missing http1 response, found 0, expected 1) and one rule selects no TCP session, so failures_total is 2.
+        metrics:
+          - {name: realism.check_failures, labels: {check: messages}, value: 2}
+        results:
+          - {metric: realism.check_failures, labels: {check: messages}, property: failures of the messages check, observed: 2, target: "== 0", passed: false}

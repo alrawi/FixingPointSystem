@@ -299,11 +299,15 @@
           "then": {"$ref": "#/$defs/messages"}
         },
         {
-          "description": "Every check of a kind that the metric catalog names in its label check carries the realism.check_failures series, which is 0 for a check that passed and at least 1 for one that did not. The messages check is not in the list, because the catalog (0.5.0) has no value messages for the label, so it carries no series yet (see contracts/changes/CON-23.md and the RLM-17 handoff).",
+          "if": {"properties": {"check": {"const": "host_identity"}}, "required": ["check"]},
+          "then": {"$ref": "#/$defs/host_identity"}
+        },
+        {
+          "description": "Every check of a kind that the metric catalog names in its label check carries the realism.check_failures series, which is 0 for a check that passed and at least 1 for one that did not. The host_identity check is not in the list, because the catalog (0.6.0) has no such value for the label, so it carries no series yet (see contracts/changes/CON-23.md and contracts/changes/CON-25.md).",
           "if": {
             "properties": {
               "check": {
-                "enum": ["conformance", "parser_errors", "encryption", "content", "session_structure", "temporal", "mix_accuracy", "transport_behavior"]
+                "enum": ["conformance", "parser_errors", "encryption", "content", "session_structure", "temporal", "mix_accuracy", "transport_behavior", "messages"]
               }
             },
             "required": ["check"]
@@ -1069,9 +1073,16 @@
         "check": {"const": "messages"},
         "passed": {"type": "boolean"},
         "metrics": {
-          "description": "Empty until the metric catalog (0.5.0 has no value messages for the label check) names this check, which gives it the realism.check_failures series.",
+          "description": "The realism.check_failures series of the check (metric catalog 0.6.0, contracts/changes/CON-25.md): its value is failures_total, so 0 exactly when the check passed. The check carries no other series.",
           "type": "array",
-          "maxItems": 0
+          "items": {"$ref": "#/$defs/failures_metric"},
+          "contains": {
+            "properties": {
+              "name": {"const": "realism.check_failures"},
+              "labels": {"properties": {"check": {"const": "messages"}}, "required": ["check"]}
+            },
+            "required": ["name", "labels"]
+          }
         },
         "tool": {
           "description": "The program that counted the messages, or null when none ran.",
@@ -1149,6 +1160,80 @@
               "reasons": {"type": "array", "items": {"type": "string", "minLength": 1}}
             }
           }
+        }
+      }
+    },
+    "host_identity": {
+      "description": "The hosts of the capture and the IP addresses that send from more than one MAC address. A host is an IP address (not multicast, broadcast, reserved, or unspecified) that is the source or destination of an IP packet or the sender of an ARP packet, within one VLAN. The check passes when the capture holds no address conflict, the number of hosts lies in the expected range (when there is one), and at least one frame has an Ethernet source address.",
+      "type": "object",
+      "required": [
+        "check", "passed", "metrics", "expected_hosts", "hosts", "senders", "macs", "frames", "frames_with_mac",
+        "conflicts_total", "conflicts", "failures_total", "failures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "check": {"const": "host_identity"},
+        "passed": {"type": "boolean"},
+        "metrics": {
+          "description": "Empty until the metric catalog (0.6.0 has no value host_identity for the label check) names this check, which gives it the realism.check_failures series.",
+          "type": "array",
+          "maxItems": 0
+        },
+        "expected_hosts": {
+          "description": "The expected number of hosts, or null when the labels leave it open. A null max is no upper limit.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["min", "max"],
+              "additionalProperties": false,
+              "properties": {
+                "min": {"type": "integer", "minimum": 0},
+                "max": {"type": ["integer", "null"], "minimum": 0}
+              }
+            },
+            {"type": "null"}
+          ]
+        },
+        "hosts": {"type": "integer", "minimum": 0, "description": "Distinct IP addresses per VLAN that appear as a source, a destination, or an ARP sender."},
+        "senders": {"type": "integer", "minimum": 0, "description": "The hosts among them that sent a frame with an Ethernet source address, leaving out the frames of gateway MAC addresses."},
+        "macs": {"type": "integer", "minimum": 0, "description": "Distinct Ethernet source addresses of those frames."},
+        "frames": {"type": "integer", "minimum": 0, "description": "Frames of the capture."},
+        "frames_with_mac": {"type": "integer", "minimum": 0, "description": "Ethernet frames with a station address as source, including those of gateway MAC addresses."},
+        "conflicts_total": {"type": "integer", "minimum": 0},
+        "conflicts": {
+          "description": "The first 100 IP addresses with more than one MAC address, in address order.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": ["ip", "vlan", "macs"],
+            "additionalProperties": false,
+            "properties": {
+              "ip": {"type": "string"},
+              "vlan": {"description": "The VLAN tags, outermost first and joined by dots, or null for untagged frames.", "type": ["string", "null"]},
+              "macs": {
+                "description": "Each MAC address that sent from the IP address with its number of frames, the busiest first.",
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "type": "object",
+                  "required": ["mac", "frames"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "mac": {"type": "string", "pattern": "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$"},
+                    "frames": {"type": "integer", "minimum": 1}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "failures_total": {"type": "integer", "minimum": 0},
+        "failures": {
+          "description": "One sentence for each reason that the check failed, at most 50. failures_total counts them all.",
+          "type": "array",
+          "maxItems": 50,
+          "items": {"type": "string", "minLength": 1}
         }
       }
     },

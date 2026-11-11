@@ -282,6 +282,19 @@
         }
       }
     },
+    "hosts": {
+      "description": "Settings of the host identity check, which counts the hosts of the capture (IP addresses of IP and ARP packets, per VLAN) and fails for an IP address that sends from more than one MAC address. The check runs when this section is present, and the empty section asks only for the conflict search.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "count": {"description": "The number of hosts that the capture must hold, a number or a range with min and max. Left open when absent.", "$ref": "#/$defs/count"},
+        "gateway_macs": {
+          "description": "MAC addresses of routers, whose frames the search for address conflicts leaves out, because a router sends the packets of other addresses with its own MAC address.",
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$"}
+        }
+      }
+    },
     "messages": {
       "description": "Expected message counts per session, read with tshark. Each rule selects sessions with the match fields of a session rule (all TCP sessions without match) and names the protocol that tshark reads them as. The message count check runs when this section is present, and fails for a session whose count is outside its expectation, for a rule that matches no session, and when tshark is missing.",
       "type": "array",

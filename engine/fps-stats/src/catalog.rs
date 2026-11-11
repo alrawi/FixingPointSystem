@@ -605,6 +605,7 @@ pub const LABEL_VALUES: &[(&str, &[&str])] = &[
             "temporal",
             "mix_accuracy",
             "transport_behavior",
+            "messages",
         ],
     ),
     ("parser", &["tshark", "zeek", "stub"]),
