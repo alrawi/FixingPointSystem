@@ -55,8 +55,11 @@ from realism.capture import (
     read_frames,
 )
 from realism.labels import Labels, LabelsError, TransportLabels
+from realism.series import failures_series
 
 CHECK_NAME = "transport_behavior"
+METRIC = "realism.transport_deviations"
+_SIDE = {"syn": "client", "syn-ack": "server"}
 MAX_FAILURES = 50
 PROFILES_DIR = Path(__file__).resolve().parents[1] / "engine" / "fps-backend-kernel" / "profiles"
 OPTION_NAMES = {0: "eol", 1: "nop", 2: "mss", 3: "ws", 4: "sok", 8: "ts"}
@@ -352,12 +355,40 @@ class TransportResult:
                 )
         return out
 
+    def metrics(self) -> list[dict[str, Any]]:
+        """Return the deviating packets of each enforced field and role, and the failures series.
+
+        The series sums ``mismatched`` over the hosts for each field and role in which at least
+        one packet of a profiled host was compared. A SYN has the side ``client`` and a SYN-ACK
+        the side ``server``. A field that the check does not enforce (the option order and the SYN
+        window without ``strict``) has no series.
+        """
+        totals: dict[tuple[str, str], int] = {}
+        for host in self.hosts.values():
+            for (role, name), group in host.groups.items():
+                if group.enforced:
+                    key = (name, _SIDE[role])
+                    totals[key] = totals.get(key, 0) + sum(group.mismatched.values())
+        order = {name: i for i, name in enumerate((*FIELDS, *STRICT_FIELDS))}
+        series = [
+            {
+                "name": METRIC,
+                "labels": {"property": name, "side": side},
+                "value": count,
+            }
+            for (name, side), count in sorted(
+                totals.items(), key=lambda item: (item[0][1] != "client", order[item[0][0]])
+            )
+        ]
+        series.append(failures_series(CHECK_NAME, len(self.failures), self.passed))
+        return series
+
     def to_dict(self) -> dict[str, Any]:
         """Return the check entry of the realism report."""
         settings = self.labels
         return {
             "check": CHECK_NAME,
-            "metrics": [],
+            "metrics": self.metrics(),
             "passed": self.passed,
             "strict": self.strict,
             "client_hops": settings.client_hops,

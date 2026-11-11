@@ -63,7 +63,11 @@ _ZEEK_VERSION = re.compile(r"zeek version\s+v?(\d+(?:\.\d+)+\S*)")
 
 # Weirds that Zeek raises from connection or transaction state rather than from a
 # message it failed to parse. They describe session behavior, which other realism
-# checks cover, so the parser error check does not count them.
+# checks cover, so the parser error check does not count them. This includes
+# ``premature_connection_reuse``: Zeek raises it when a SYN reuses the 5-tuple of a
+# connection that it still tracks, which makes the runner's session (one per 5-tuple) hold
+# more than one TCP connection. The agents pick source ports at random, so that happens by
+# chance (QA-09), and the check of the session structure sees the connections.
 ZEEK_STATE_WEIRDS = frozenset(
     {
         "above_hole_data_without_any_acks",
@@ -73,6 +77,7 @@ ZEEK_STATE_WEIRDS = frozenset(
         "dns_unmatched_msg_quantity",
         "dns_unmatched_reply",
         "possible_split_routing",
+        "premature_connection_reuse",
     }
 )
 

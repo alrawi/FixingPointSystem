@@ -1,65 +1,61 @@
 # Handoff RLM-17 The CON-23 metrics in the realism report
 
-<!-- Copy this file to docs/handoff/<ID>.md when you claim a work package.
-     Update it at every checkpoint. A successor reads only this file, the
-     issue, and the branch, so write for an agent that knows nothing else. -->
-
 | Field | Value |
 |---|---|
 | Issue | #441 |
 | Branch | `wp/RLM-17` |
-| Pull request | #0 |
+| Pull request | pending |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-df82d8, lease until 2026-11-11T05:13:59Z |
 | Last verified commit | none |
 
-Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
-
 ## Goal
 
-State the outcome in two or three sentences, copied or condensed from the issue.
+Every realism check emits the series that `contracts/changes/CON-23.md` defines, the report schema requires them, the report format moves to 0.12.0, the `#89` TODOs go, `transport.py` returns its series, and `premature_connection_reuse` joins `ZEEK_STATE_WEIRDS`. Tests pin literal series for every check kind (passing and failing) and validate `contracts/examples/realism/check-metrics.yaml` against the schema.
 
 ## Plan
 
-Each step takes at most 30 minutes of work and ends in a state that tests can check.
-
-- [ ] 1. First step
-- [ ] 2. Second step
+- [x] 1. Emit the series in every check (`realism/series.py` and the eight checks)
+- [x] 2. Apply the schema patch by hand, extend it, bump the format to 0.12.0
+- [x] 3. Add `premature_connection_reuse` to `ZEEK_STATE_WEIRDS`
+- [x] 4. Tests with literal series and the contract examples; docs and log entry
+- [ ] 5. Open the PR, wait for CI, hand over for review
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- `python3 -m pytest -q realism`: 686 passed, 9 skipped (tshark 4.2.2 present, no Zeek).
+- `ruff format --check realism`, `ruff check realism`, `mypy --config-file realism/pyproject.toml realism`: clean.
+- `plan.py check`, `render --check`, `lint`: clean.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+CI result on the PR. The coordinator refreshes `controller/internal/report/schema/realism-report.schema.json` (byte copy).
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Open the pull request and poll its check runs.
 
 ## Blockers and open questions
 
-Write "none" or name each blocker with a link to its issue.
+The `messages` check has no failures series: the catalog label `check` lacks the value `messages`. A CON follow up is needed (see the log entry and the PR).
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- The failures series is `0` for a passed check and `max(count, 1)` for a failed one, because the schema requires at least 1 and a check can fail without naming a reason.
+- The two generic schema rules of the patch apply only to the eight kinds of the catalog label `check`; `messages` keeps `maxItems: 0`.
+- `premature_connection_reuse` is ignored unconditionally. Zeek raises it only for a reused 5-tuple, and the parser layer has no connection counts.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+The patch hunk for `$defs.check.allOf` does not apply to the 0.11.0 schema (the `messages` entry sits there).
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+python3 -m pytest -q realism && python3 -m ruff check realism && python3 -m mypy --config-file realism/pyproject.toml realism
 ```
 
 ## Session log
 
-Append one row per session start, checkpoint, release, block, takeover, and finish. Never edit earlier rows.
-
-| Time (UTC) | Agent | Event | Commit | Note |
-|---|---|---|---|---|
+- 2026-11-11 claude-df82d8: claimed, implemented steps 1 to 4.

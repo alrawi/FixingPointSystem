@@ -43,8 +43,11 @@ from realism.parsers import (
     _port,
     _run,
 )
+from realism.series import failures_series
 
 CHECK_NAME = "encryption"
+DECRYPTED_METRIC = "realism.decrypted_ratio"
+JA4_METRIC = "realism.ja4_match_ratio"
 MAX_SESSIONS = 100
 
 _HANDSHAKE_CLIENT_HELLO = 1
@@ -295,6 +298,22 @@ class EncryptionResult:
         """True when nothing in ``failures`` stands against the capture."""
         return not self.failures
 
+    def metrics(self) -> list[dict[str, Any]]:
+        """Return the decrypted and JA4 matched shares, and the failures series.
+
+        The two ratios are not rounded, and they are absent when no session was sampled,
+        because there is no share of nothing.
+        """
+        out: list[dict[str, Any]] = []
+        if self.sampled:
+            out.append(
+                {"name": DECRYPTED_METRIC, "labels": {}, "value": self.decrypted / self.sampled}
+            )
+            matched = self.sampled - self.mismatched
+            out.append({"name": JA4_METRIC, "labels": {}, "value": matched / self.sampled})
+        out.append(failures_series(CHECK_NAME, len(self.failures), self.passed))
+        return out
+
     def to_dict(self) -> dict[str, Any]:
         """Return the check entry of the realism report."""
         profiles: dict[str, dict[str, Any]] = {}
@@ -311,9 +330,7 @@ class EncryptionResult:
             entry.setdefault("decrypted", 0)
         return {
             "check": CHECK_NAME,
-            # TODO: report realism metrics for the decrypted and JA4 matched shares once the
-            # metric catalog has them, as issue #89 does for parser errors.
-            "metrics": [],
+            "metrics": self.metrics(),
             "passed": self.passed,
             "tool": self.tool,
             "keys": self.keys,

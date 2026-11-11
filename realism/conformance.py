@@ -18,6 +18,7 @@ from typing import Any
 from realism.capture import Session
 from realism.classifier import UNKNOWN, Classifier, matches
 from realism.labels import Labels
+from realism.series import failures_series
 
 CHECK_NAME = "conformance"
 METRIC = "realism.conformance_ratio"
@@ -66,6 +67,26 @@ class ConformanceResult:
             app.passes(self.threshold) for app in self.applications
         )
 
+    @property
+    def failures_total(self) -> int:
+        """The applications that failed, and 1 when no application was scored."""
+        failed = sum(1 for app in self.applications if not app.passes(self.threshold))
+        return failed + (0 if self.applications else 1)
+
+    def metrics(self) -> list[dict[str, Any]]:
+        """Return the ratio of each scored application and the failures series."""
+        return [
+            *(
+                {
+                    "name": METRIC,
+                    "labels": {"application": app.application, "classifier": self.classifier},
+                    "value": round(app.ratio, 6),
+                }
+                for app in self.applications
+            ),
+            failures_series(CHECK_NAME, self.failures_total, self.passed),
+        ]
+
     def to_dict(self) -> dict[str, Any]:
         """Return the check entry of the realism report."""
         return {
@@ -74,14 +95,7 @@ class ConformanceResult:
             "classifier": self.classifier,
             "classifier_version": self.classifier_version,
             "threshold": self.threshold,
-            "metrics": [
-                {
-                    "name": METRIC,
-                    "labels": {"application": app.application, "classifier": self.classifier},
-                    "value": round(app.ratio, 6),
-                }
-                for app in self.applications
-            ],
+            "metrics": self.metrics(),
             "applications": [
                 {
                     "application": app.application,

@@ -63,6 +63,7 @@ from typing import Any
 from realism.capture import Session
 from realism.classifier import UNKNOWN, Classifier, matches
 from realism.labels import Labels
+from realism.series import failures_series
 
 CHECK_NAME = "mix_accuracy"
 DEFAULT_TOLERANCE_POINTS = 2.0
@@ -420,6 +421,13 @@ class MixResult:
         sessions or bytes to count) has no series. The row of the unrecognised traffic is not an
         application and has none either: it lowers the shares of the others.
         """
+        return [
+            *self.classifier_series(),
+            failures_series(CHECK_NAME, len(self.failures), self.passed),
+        ]
+
+    def classifier_series(self) -> list[dict[str, Any]]:
+        """Return the series of what the classifier saw, without the failures series."""
         basis = next((b for b in self.bases if b.basis == self.metrics_basis), None)
         if basis is None:
             return []

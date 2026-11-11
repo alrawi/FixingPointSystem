@@ -19,8 +19,11 @@ from typing import Any
 from realism.capture import Session, SessionKey
 from realism.labels import Labels
 from realism.parsers import KIND_MALFORMED, Finding, ParserRunner
+from realism.series import failures_series
 
 CHECK_NAME = "parser_errors"
+METRIC = "realism.parser_errors"
+ALL_APPLICATIONS = "all"
 MAX_ERRORS = 100
 
 
@@ -70,14 +73,41 @@ class ParserErrorsResult:
         """True when at least one parser ran and no parser reported an error."""
         return bool(self.parsers) and self.errors_total == 0
 
+    @property
+    def failures_total(self) -> int:
+        """The findings of every parser, and 1 more when no parser ran."""
+        return self.errors_total + (0 if self.parsers else 1)
+
+    def metrics(self) -> list[dict[str, Any]]:
+        """Return ``realism.parser_errors`` per application and parser, and the failures series.
+
+        Each parser that ran gives one series for each labelled application and one with the
+        application ``all`` that totals every finding of the parser: the per application values
+        plus its unlabelled and unattributed findings. When no parser ran, only the failures
+        series is there.
+        """
+        out: list[dict[str, Any]] = []
+        for parser in self.parser_names:
+            for app in self.applications:
+                labels = {"application": app.application, "parser": parser}
+                out.append({"name": METRIC, "labels": labels, "value": app.errors[parser]})
+            total = (
+                sum(app.errors[parser] for app in self.applications)
+                + self.unlabelled[parser]
+                + self.unattributed[parser]
+            )
+            labels = {"application": ALL_APPLICATIONS, "parser": parser}
+            out.append({"name": METRIC, "labels": labels, "value": total})
+        out.append(failures_series(CHECK_NAME, self.failures_total, self.passed))
+        return out
+
     def to_dict(self) -> dict[str, Any]:
         """Return the check entry of the realism report."""
         names = self.parser_names
         return {
             "check": CHECK_NAME,
             "passed": self.passed,
-            # TODO(#89): report realism.parser_errors once the metric catalog has it.
-            "metrics": [],
+            "metrics": self.metrics(),
             "parsers": self.parsers,
             "missing_parsers": self.missing,
             "skipped_parsers": self.skipped,

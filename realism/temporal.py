@@ -66,6 +66,7 @@ from realism.labels import (
     TemporalTarget,
 )
 from realism.labels import load as load_labels
+from realism.series import failures_series
 
 CHECK_NAME = "temporal"
 PROP_ARRIVAL = "inter_arrival"
@@ -245,6 +246,7 @@ class TemporalResult:
             labels = {"application": c["application"], "property": prop}
             out.append({"name": "realism.ks_statistic", "labels": labels, "value": c["statistic"]})
             out.append({"name": "realism.ks_p_value", "labels": labels, "value": c["p_value"]})
+        out.append(failures_series(CHECK_NAME, len(self.failures), self.passed))
         return out
 
     def to_dict(self) -> dict[str, Any]:

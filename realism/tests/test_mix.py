@@ -627,12 +627,13 @@ def test_the_report_entry_validates_against_the_schema(tmp_path: Path) -> None:
         ).to_dict()
         jsonschema.validate(report, schema)
         entry = next(c for c in report["checks"] if c["check"] == "mix_accuracy")
-        assert report["version"] == "0.11.0"
+        assert report["version"] == "0.12.0"
         assert entry["passed"] is expected
         assert {m["name"] for m in entry["metrics"]} == {
             "mix.share_pct",
             "mix.abs_error_pp",
             "mix.max_abs_error_pp",
+            "realism.check_failures",
         }
     assert report["passed"] is False
 
@@ -795,6 +796,10 @@ def _series(name: str, value: float, **labels: str) -> dict[str, Any]:
     return {"name": name, "labels": {**labels, **CLASSIFIER_LABELS}, "value": value}
 
 
+def _FAILURES(value: int) -> dict[str, Any]:
+    return {"name": "realism.check_failures", "labels": {"check": "mix_accuracy"}, "value": value}
+
+
 def test_the_fixture_gives_the_literal_series_by_sessions() -> None:
     # Configured 75 and 25 percent, the capture holds 8 and 2 of 10 sessions.
     entry = _fixture_entry("run-report.json")
@@ -805,7 +810,9 @@ def test_the_fixture_gives_the_literal_series_by_sessions() -> None:
         _series("mix.abs_error_pp", 5.0, application="http1"),
         _series("mix.abs_error_pp", 5.0, application="dns"),
         _series("mix.max_abs_error_pp", 5.0),
+        _FAILURES(4),
     ]
+    assert entry["failures_total"] == 4
     assert entry["passed"] is False
 
 
@@ -823,6 +830,7 @@ def test_the_fixture_gives_the_literal_series_by_bytes(tmp_path: Path) -> None:
         _series("mix.abs_error_pp", 1.797386, application="http1"),
         _series("mix.abs_error_pp", 1.797386, application="dns"),
         _series("mix.max_abs_error_pp", 1.797386),
+        _FAILURES(0),
     ]
     assert entry["passed"] is True
 
@@ -835,7 +843,7 @@ def test_the_series_validate_against_catalog_0_4_0() -> None:
     classifier_values = set(catalog["labels"]["classifier"]["values"])
     entry = _fixture_entry("run-report.json")
     assert entry["metrics"]
-    for series in entry["metrics"]:
+    for series in entry["metrics"][:-1]:
         definition = metrics[series["name"]]
         assert set(series["labels"]) == set(definition["labels"])
         assert series["labels"]["source"] in source_values
@@ -903,7 +911,8 @@ def test_weights_in_the_labels_leave_the_basis_of_the_series_to_the_bases(tmp_pa
     run_report = FIXTURE / "run-report.json"
     labels.write_text(json.dumps(_labels(basis="both", weights=weights)))
     entry = _entry_of(score(FIXTURE / "mix.pcapng", labels, STUB, run_report=run_report).to_dict())
-    assert entry["metrics_basis"] is None and entry["metrics"] == []
+    assert entry["metrics_basis"] is None
+    assert entry["metrics"] == [_FAILURES(entry["failures_total"])]
     labels.write_text(json.dumps(_labels(basis="bytes", weights=weights)))
     entry = _entry_of(score(FIXTURE / "mix.pcapng", labels, STUB, run_report=run_report).to_dict())
     assert entry["metrics_basis"] == "bytes"
@@ -912,7 +921,8 @@ def test_weights_in_the_labels_leave_the_basis_of_the_series_to_the_bases(tmp_pa
 
 def test_a_capture_without_sessions_has_no_series(run: Run) -> None:
     result = run.check(pcapgen.Capture(), _table(6, 4))
-    assert result.metrics() == []
+    assert result.classifier_series() == []
+    assert result.metrics() == [_FAILURES(len(result.failures))]
     assert result.metrics_basis == "sessions"
 
 
