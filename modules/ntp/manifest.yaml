@@ -1,0 +1,52 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: ntp
+version: 0.1.0
+type: app
+summary: NTP version 4 clients and servers on UDP port 123 with SNTP, burst, poll cycle, Kiss o' Death, and peer scenarios.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: ntp, transport: udp, port: 123 }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 123, description: "UDP port of the server side. nDPI classifies NTP only when one side of the flow uses port 123, so a run that realism must classify keeps the default." }
+    burst_gap_ms: { type: integer, minimum: 0, default: 2000, description: "Pause between the packets of the initial burst in milliseconds. Real clients send the burst at 2 second intervals (the iburst option of chronyd and ntpd)." }
+    poll_interval_ms: { type: integer, minimum: 0, default: 64000, description: "Pause before the next request of a client that polls at the exponent 6, 2^6 seconds, in milliseconds. The back off after a Kiss o' Death reply and the interval of a symmetric peer use it too." }
+    poll_interval_long_ms: { type: integer, minimum: 0, default: 128000, description: "Pause before the request that carries the exponent 7, 2^7 seconds, in milliseconds. The poll_cycle scenario waits this long after its second request." }
+functions:
+  - name: query
+    summary: "A 48 byte request, mode 3 (client) or 1 (symmetric peer), with its transmit timestamp from now_ms, which a scenario sets to now('epoch_ms')."
+    params:
+      - { name: now_ms, type: int }
+      - { name: version, type: int, default: 4 }
+      - { name: poll, type: int, default: 6 }
+      - { name: mode, type: int, default: 3 }
+      - { name: stratum, type: int, default: 0 }
+      - { name: reference, type: text, default: "" }
+  - name: reply
+    summary: "The reply to a request, in mode 4 or 2, with the timestamps of the server from now_ms. A non empty kiss makes it a Kiss o' Death packet."
+    params:
+      - { name: request, type: bytes }
+      - { name: now_ms, type: int }
+      - { name: stratum, type: int, default: 2 }
+      - { name: reference, type: text, default: "" }
+      - { name: kiss, type: text, default: "" }
+  - name: field
+    summary: "One field of a packet as text: version, mode, leap, stratum, poll, precision, reference_id, root_delay_ms, root_dispersion_ms, or transmit_ms."
+    params:
+      - { name: message, type: bytes }
+      - { name: name, type: text }
+scenarios:
+  - scenarios/sntp_query.yaml
+  - scenarios/iburst.yaml
+  - scenarios/poll_cycle.yaml
+  - scenarios/kod_rate.yaml
+  - scenarios/symmetric_peer.yaml
+fixtures:
+  - { capture: fixtures/ntp.pcapng, expect: { ndpi: [NTP] } }
+provenance:
+  source: synthetic
+  notes: Packets follow RFC 5905, with the Kiss o' Death codes of its section 7.4. The server stamps timestamps from the clock of the engine and draws the sub millisecond bits, root error, and reference time from the session generator. Reference identifiers lie in the documentation ranges of RFC 5737.

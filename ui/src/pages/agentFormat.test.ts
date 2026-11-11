@@ -1,7 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { describe, expect, it } from "vitest";
-import { formatLabels, formatLinkSpeed } from "./agentFormat";
+import { formatLabels, formatLinkSpeed, holderOf } from "./agentFormat";
+
+describe("holderOf", () => {
+  it.each([
+    [{ state: "online" }, { kind: "none" }],
+    [{ state: "reserved" }, { kind: "unknown" }],
+    [{ state: "reserved", reserved_by: "operator" }, { kind: "operator" }],
+    [
+      { state: "reserved", reserved_by: "run_mock0007" },
+      { kind: "run", id: "run_mock0007" },
+    ],
+    [
+      { state: "busy", reserved_by: "run_mock0008" },
+      { kind: "run", id: "run_mock0008" },
+    ],
+    [{ state: "offline", reserved_by: "operator" }, { kind: "operator" }],
+    [{ state: "busy" }, { kind: "none" }],
+  ])("reads %j as %j", (agent, holder) => {
+    expect(holderOf(agent)).toEqual(holder);
+  });
+});
 
 describe("formatLinkSpeed", () => {
   it.each([

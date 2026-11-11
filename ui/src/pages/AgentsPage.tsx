@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 import { useState } from "react";
+import { Link } from "react-router";
 import "../runs/runs.css";
 import { ApiError, type Agent } from "../api/client";
-import { formatLabels, formatLinkSpeed } from "./agentFormat";
+import { formatLabels, formatLinkSpeed, holderOf } from "./agentFormat";
 import { useAgentAction, useAgentInventory, type AgentAction } from "./agentsQuery";
 import { useSignOutWhenUnauthorized } from "./modulesQuery";
 import { useHeadingFocus } from "./useHeadingFocus";
@@ -37,9 +38,15 @@ export function AgentsPage() {
         },
         onError: (error) => {
           const reason = error instanceof ApiError ? error.message : "Try again.";
+          // A 409 means that the controller refused because of the state it holds: another
+          // holder, no control session, or a plan. Its detail names which one, and the list
+          // refreshes to the current state and holder.
+          const conflict = error instanceof ApiError && error.status === 409;
           setOutcome({
             ok: false,
-            text: `Agent ${agent.id} was not ${PAST[kind]}. ${reason}`,
+            text: conflict
+              ? `Agent ${agent.id} was not ${PAST[kind]} because of a conflict. ${reason}`
+              : `Agent ${agent.id} was not ${PAST[kind]}. ${reason}`,
           });
         },
       },
@@ -123,6 +130,7 @@ function AgentTable({
             <th scope="col">Version</th>
             <th scope="col">Address</th>
             <th scope="col">Labels</th>
+            <th scope="col">Held by</th>
             <th scope="col">Reservation</th>
           </tr>
         </thead>
@@ -138,6 +146,9 @@ function AgentTable({
               <td>{agent.version ?? "not reported"}</td>
               <td>{agent.address ?? "offline"}</td>
               <td>{formatLabels(agent.labels)}</td>
+              <td>
+                <HolderCell agent={agent} />
+              </td>
               <td>
                 <ReservationCell agent={agent} busy={busy} onAction={onAction} />
               </td>
@@ -171,6 +182,10 @@ function ReservationCell({
       </button>
     );
   }
+  if (agent.state === "reserved" && holderOf(agent).kind === "run") {
+    // The controller would end the reservation under the run, so the view offers no release.
+    return <span>Held by a run</span>;
+  }
   if (agent.state === "reserved") {
     return (
       <button
@@ -185,6 +200,21 @@ function ReservationCell({
     );
   }
   return <span>{agent.state === "busy" ? "In use by a run" : "Not connected"}</span>;
+}
+
+/** Names the holder of the reservation, and links a run holder to the page of that run. */
+function HolderCell({ agent }: { agent: Agent }) {
+  const holder = holderOf(agent);
+  switch (holder.kind) {
+    case "none":
+      return <span>none</span>;
+    case "operator":
+      return <span>operator</span>;
+    case "run":
+      return <Link to={`/runs/${encodeURIComponent(holder.id)}`}>{`Run ${holder.id}`}</Link>;
+    case "unknown":
+      return <span>not reported</span>;
+  }
 }
 
 function PortTable({ agents }: { agents: Agent[] }) {
