@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Workflow of the ldap module under modules/ldap/. The rust job of ci.yml runs
+# the Rust tests of the native crate, but there the tshark test skips itself.
+# The tshark job installs tshark and runs it with FPS_REQUIRE_CAPTURE_TOOLS=1,
+# so tshark must parse every message that the functions encode. The module job
+# validates the manifest and scenarios and scores the committed fixture with
+# nDPI and tshark, so nDPI must classify at least 99% of its sessions as LDAP
+# and no parser reports an error (MOD-17 acceptance). The realism workflow
+# records a fresh capture of the module in the QA-01 namespace harness and
+# checks it the same way.
+name: mod-ldap
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - modules/ldap/**
+      - engine/fps-flow/**
+      - Cargo.lock
+      - realism/**
+      - tools/contracts/**
+      - contracts/schemas/**
+      - mk/mod-ldap.mk
+      - .github/workflows/mod-ldap.yml
+  pull_request:
+    paths:
+      - modules/ldap/**
+      - engine/fps-flow/**
+      - Cargo.lock
+      - realism/**
+      - tools/contracts/**
+      - contracts/schemas/**
+      - mk/mod-ldap.mk
+      - .github/workflows/mod-ldap.yml
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+
+jobs:
+  module:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install nDPI and tshark, which the checks call out of process
+        run: realism/ci/install-tools.sh
+      - run: python -m pip install -r tools/contracts/requirements.txt
+      - run: make lint-mod-ldap PYTHON=python
+      - name: Score the committed fixture
+        run: |
+          python -m realism score --pcap modules/ldap/fixtures/ldap.pcapng \
+            --labels modules/ldap/fixtures/expected.yaml --parsers tshark --output report.json
+          python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))'
+  tshark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install tshark
+        run: |
+          echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
+          tools/ci/apt-install.sh tshark
+      - name: Parse every encoded message with tshark
+        env:
+          FPS_REQUIRE_CAPTURE_TOOLS: "1"
+        run: cargo test -p fps-module-ldap --test tshark -- --nocapture
