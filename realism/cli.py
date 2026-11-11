@@ -90,6 +90,16 @@ def _hops(text: str) -> int:
     return value
 
 
+def _host_count(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not an integer: {text}") from exc
+    if value < 0:
+        raise argparse.ArgumentTypeError("the host count must not be negative")
+    return value
+
+
 def _parser_list(text: str) -> tuple[str, ...] | None:
     """Read the value of ``--parsers``, where None means every installed parser."""
     if text == "auto":
@@ -225,6 +235,18 @@ def _parser() -> argparse.ArgumentParser:
         type=_hops,
         help="routers between the servers and the capture point, which lower the TTL of a "
         "SYN-ACK; adds the transport behavior check",
+    )
+    score_cmd.add_argument(
+        "--host-identity",
+        action="store_true",
+        help="count the hosts of the capture and fail for an IP address with more than one MAC "
+        "address; adds the host identity check next to the hosts section of the labels file",
+    )
+    score_cmd.add_argument(
+        "--host-count",
+        type=_host_count,
+        help="number of hosts that the capture must hold; adds the host identity check and "
+        "overrides the count of the labels file",
     )
     score_cmd.add_argument("--tshark", help="path of tshark, defaults to FPS_TSHARK or the path")
     score_cmd.add_argument("--zeek", help="path of zeek, defaults to FPS_ZEEK or the path")
@@ -422,6 +444,8 @@ def main(argv: list[str] | None = None) -> int:
             client_hops=args.client_hops,
             server_hops=args.server_hops,
             message_probe=TsharkMessageProbe(args.tshark, args.timeout),
+            host_identity=args.host_identity,
+            host_count=args.host_count,
         )
     except (
         CaptureError,
