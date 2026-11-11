@@ -1,0 +1,100 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: hls
+version: 0.1.0
+type: app
+summary: HTTP Live Streaming over HTTP/1.1 with a bitrate ladder, VOD and live playlists, and MPEG-TS segments fetched at the segment duration, on one connection or on one per segment.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+requires:
+  - { module: http1, version: ">=0.1" }
+provides:
+  - { protocol: hls, transport: tcp, port: 8090 }
+  - { protocol: hls, transport: tcp, port: 8091 }
+  - { protocol: hls, transport: tcp, port: 8092 }
+  - { protocol: hls, transport: tcp, port: 8093 }
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    host: { type: string, minLength: 1, default: video.example.test, description: Host header value. }
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 8090, description: "TCP port of the playlist server. The scenarios default to 8090 (vod_ladder), 8091 (vod_segments), and 8093 (live_refresh), one port per scenario, so a capture tells them apart." }
+    segment_port: { type: integer, minimum: 1, maximum: 65535, default: 8092, description: TCP port that serves the segments of vod_segments, on a connection of its own for each segment. }
+    ladder: { type: string, minLength: 1, default: "800000@640x360,1600000@960x540,3000000@1280x720", description: "The bitrate ladder as bits_per_second@WIDTHxHEIGHT rungs separated by commas, lowest first, at most 16 rungs. The bit rate of a rung is the rate of its whole transport stream, so a segment moves that rate times segment_ms of bytes." }
+    segment_ms: { type: integer, minimum: 100, maximum: 60000, default: 6000, description: Duration of every segment in milliseconds, which is also the interval at which the player fetches segments. }
+    segments: { type: integer, minimum: 1, maximum: 100000, default: 12, description: "Segments in the VOD media playlist. A flow has no arithmetic, so it must equal stages times stage_segments." }
+    stages: { type: integer, minimum: 1, maximum: 16, default: 3, description: "Number of ladder stages of a playback. Stage s plays on rung s, up to the top rung, and starts with the media playlist of that rung." }
+    stage_segments: { type: integer, minimum: 1, maximum: 100000, default: 4, description: Segments that a stage plays before the player moves up one rung. }
+    rung: { type: integer, minimum: 0, maximum: 15, default: 1, description: Rung of the ladder that a live playback follows. }
+    window: { type: integer, minimum: 1, maximum: 100, default: 3, description: Segments in the sliding window of a live media playlist. }
+    cycles: { type: integer, minimum: 1, maximum: 100000, default: 8, description: Playlist reloads of a live playback, each followed by a fetch of the newest segment. }
+functions:
+  - name: master
+    summary: "Master playlist with one EXT-X-STREAM-INF per rung of the ladder, which is text such as '400000@640x360,800000@960x540', and the media playlist path v0/index.m3u8, v1/index.m3u8, and so on."
+    params:
+      - { name: ladder, type: text }
+  - name: media
+    summary: "Media playlist of one rung. A VOD list names the segments from first on and ends with ENDLIST. A live list names count segments from first and has no end. Segments are seg00000.ts and so on."
+    params:
+      - { name: segments, type: int }
+      - { name: segment_ms, type: int }
+      - { name: first, type: int, default: 0 }
+      - { name: count, type: int, default: 0 }
+      - { name: live, type: boolean, default: false }
+  - name: segment
+    summary: "MPEG-TS body of the segment that a request line names, such as GET /v1/seg00007.ts. Its size is the bit rate of that rung times segment_ms, in whole 188 octet packets."
+    params:
+      - { name: request, type: bytes }
+      - { name: ladder, type: text }
+      - { name: segment_ms, type: int }
+  - name: segment_size
+    summary: "Size in octets of a segment of the rung, as text. It is the bit rate times segment_ms divided by 8000, rounded to whole 188 octet packets, and at least three packets."
+    params:
+      - { name: ladder, type: text }
+      - { name: variant, type: int }
+      - { name: segment_ms, type: int }
+  - name: content_length
+    summary: "Value of the Content-Length header of an HTTP message, as text, so a flow can read a body of any size after the header block."
+    params:
+      - { name: message, type: bytes }
+  - name: playlist_uri
+    summary: "The index-th URI line of a playlist, counting from 0 and skipping tag and blank lines, as text. A negative index counts from the end, so -1 is the last URI."
+    params:
+      - { name: playlist, type: bytes }
+      - { name: index, type: int }
+  - name: playlist_count
+    summary: "Number of URI lines of a playlist, as text."
+    params:
+      - { name: playlist, type: bytes }
+  - name: resolve
+    summary: "Request path of a playlist URI relative to the path of the playlist that names it. A URI that starts with a slash stays as it is."
+    params:
+      - { name: base, type: bytes }
+      - { name: uri, type: bytes }
+  - name: rendition
+    summary: "Rung that a player picks for segment n, as text. The plan fixed:I stays on rung I, and ramp:K starts on rung 0 and moves up one rung every K segments until the top rung."
+    params:
+      - { name: ladder, type: text }
+      - { name: plan, type: text }
+      - { name: n, type: int }
+  - name: next
+    summary: "Counter of this flow side, as text. The first call gives 0, and each call adds step to it, so a loop can number its segments. A step of 0 reads the counter and leaves it."
+    params:
+      - { name: step, type: int, default: 1 }
+  - name: pace
+    summary: "Milliseconds to sleep until the next segment of this flow side is due, as text. Each call moves the due time on by one segment duration, so a late wake shortens the next sleep."
+    params:
+      - { name: segment_ms, type: int }
+scenarios:
+  - scenarios/vod_ladder.yaml
+  - scenarios/vod_segments.yaml
+  - scenarios/live_refresh.yaml
+expected_bytes:
+  vod_ladder: 16210000
+  vod_segments: 16210000
+  live_refresh: 9610000
+fixtures:
+  - { capture: fixtures/hls.pcapng, expect: { ndpi: [HTTP] } }
+provenance:
+  source: synthetic
+  notes: Playlists follow RFC 8216 (tags EXT-X-STREAM-INF, EXT-X-TARGETDURATION, EXT-X-MEDIA-SEQUENCE, EXTINF, EXT-X-PLAYLIST-TYPE, and EXT-X-ENDLIST), and segments are MPEG-TS packets of ISO/IEC 13818-1 with a PAT, a PMT, PES headers, and random payload bytes, so no media of a third party is in the module. Requests and responses are HTTP/1.1 messages of the http1 module, and every host name lies under the reserved .test domain.

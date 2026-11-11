@@ -1,0 +1,48 @@
+scenario: live_refresh
+description: A live stream on one HTTP/1.1 keepalive connection. The player fetches the master playlist, picks the rung rung, and then in each cycle it reloads the media playlist and fetches the newest segment that the reloaded playlist names. The playlist is a sliding window of window segments without an end marker, and its first segment moves on by one in each cycle, so a reload at the segment duration shows exactly one new segment. The cycles follow an absolute schedule at the segment duration.
+vars:
+  host: video.example.test
+  server_port: 8093
+  ladder: 800000@640x360,1600000@960x540,3000000@1280x720
+  segment_ms: 6000
+  rung: 1
+  window: 3
+  cycles: 8
+flows:
+  - id: live
+    module: hls
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ http1.request('GET', '/live/master.m3u8', vars.host, accept='application/vnd.apple.mpegurl', user_agent='AppleCoreMedia/1.0.0.22G90 (Macintosh; U; Intel Mac OS X 13_5; en_us)') }}"
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - set: { length: "{{ hls.content_length(last) }}" }
+      - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+      - set: { media_path: "{{ hls.resolve('/live/master.m3u8', hls.playlist_uri(last, vars.rung)) }}" }
+      - loop:
+          count: "{{ vars.cycles }}"
+          do:
+            - delay: { ms: "{{ hls.pace(vars.segment_ms) }}" }
+            - send: "{{ http1.request('GET', vars.media_path, vars.host, accept='application/vnd.apple.mpegurl', user_agent='AppleCoreMedia/1.0.0.22G90 (Macintosh; U; Intel Mac OS X 13_5; en_us)') }}"
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+            - set: { length: "{{ hls.content_length(last) }}" }
+            - expect: { bytes: "{{ vars.length }}", timeout_ms: 5000 }
+            - set: { segment: "{{ hls.resolve(vars.media_path, hls.playlist_uri(last, -1)) }}" }
+            - send: "{{ http1.request('GET', vars.segment, vars.host, user_agent='AppleCoreMedia/1.0.0.22G90 (Macintosh; U; Intel Mac OS X 13_5; en_us)') }}"
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+            - set: { length: "{{ hls.content_length(last) }}" }
+            - expect: { bytes: "{{ vars.length }}", timeout_ms: 30000 }
+      - delay: { dist: exponential, mean_ms: 200 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "{{ http1.response(200, body=hls.master(vars.ladder), content_type='application/vnd.apple.mpegurl', server='fps-origin/0.1') }}"
+      - loop:
+          count: "{{ vars.cycles }}"
+          do:
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 600000 }
+            - set: { first: "{{ hls.next() }}" }
+            - send: "{{ http1.response(200, body=hls.media(0, vars.segment_ms, first=vars.first, count=vars.window, live=true), content_type='application/vnd.apple.mpegurl', server='fps-origin/0.1') }}"
+            - expect: { pattern: "\r\n\r\n", timeout_ms: 30000 }
+            - send: "{{ http1.response(200, body=hls.segment(last, vars.ladder, vars.segment_ms), content_type='video/mp2t', server='fps-origin/0.1') }}"
+      - close: fin

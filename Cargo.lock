@@ -1074,6 +1074,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fps-module-hls"
+version = "0.0.1"
+dependencies = [
+ "fps-backend-kernel",
+ "fps-flow",
+ "fps-golden",
+ "fps-interp",
+ "fps-io",
+ "fps-module-http1",
+ "rand 0.8.8",
+ "rand_pcg",
+ "serde_norway",
+ "tokio",
+]
+
+[[package]]
 name = "fps-module-http1"
 version = "0.0.1"
 dependencies = [
