@@ -1,0 +1,6 @@
+GET /v0/seg00001.ts HTTP/1.1
+Host: video.example.test
+User-Agent: AppleCoreMedia/1.0.0.22G90 (Macintosh; U; Intel Mac OS X 13_5; en_us)
+Accept: */*
+Connection: close
+
