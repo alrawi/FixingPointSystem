@@ -20,8 +20,10 @@
 //! workers drive the entry flow, which is the first flow of the scenario, and
 //! the flows that it spawns or that follow it through `after` run inside the
 //! instance. The L4 protocol, the accept port, and the host ranges of the
-//! mix entry are those of the entry flow. The runtime runs instances over TCP
-//! only, so a scenario with several flows may not have a UDP flow.
+//! mix entry are those of the entry flow. The runtime opens datagram flows in
+//! instances too (ENG-26), so a scenario with several flows may have UDP flows,
+//! and one whose entry flow is UDP runs in the runtime and not in the UDP
+//! workers of this crate, which run one flow per session (AGT-20).
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -282,9 +284,10 @@ pub fn assemble(plan: &Plan, loaded: &LoadedModules, sides: Sides) -> Result<Ass
                     external_port,
                     &flow_ref,
                 )?;
-                match flows[mix_index].1 {
-                    L4::Tcp => out.tcp_clients.push(cfg),
-                    L4::Udp => out.udp_clients.push(cfg),
+                if udp_worker(&flows[mix_index].0) {
+                    out.udp_clients.push(cfg);
+                } else {
+                    out.tcp_clients.push(cfg);
                 }
             }
         }
@@ -336,7 +339,7 @@ pub fn assemble(plan: &Plan, loaded: &LoadedModules, sides: Sides) -> Result<Ass
                         config: ListenConfig::default(),
                     }),
                 };
-                if udp {
+                if udp_worker(scenario) {
                     out.udp_servers.push(cfg);
                 } else {
                     out.tcp_servers.push(cfg);
@@ -353,9 +356,16 @@ pub fn assemble(plan: &Plan, loaded: &LoadedModules, sides: Sides) -> Result<Ass
     Ok(out)
 }
 
+/// Tells whether the UDP workers of this crate run the scenario. They run a
+/// scenario of one UDP flow. A scenario with several flows runs in the
+/// runtime, whose instance runner opens datagram flows as well as streams.
+fn udp_worker(s: &Scenario) -> bool {
+    s.flows.len() == 1 && s.flows[0].l4 == L4::Udp
+}
+
 /// Refuses the scenarios that the workers cannot run: one whose entry flow is
-/// spawned, and one with several flows of which any is UDP, because the
-/// instance runner of the runtime opens TCP connections only.
+/// spawned, because no client can start it. Datagram flows among several are
+/// allowed, since the instance runner of the runtime opens them (ENG-26).
 fn check_flows(reference: &str, s: &Scenario) -> Result<(), RunError> {
     let Some(entry) = s.flows.first() else {
         return Err(RunError::rule(format!("scenario {reference} has no flow")));
@@ -365,15 +375,6 @@ fn check_flows(reference: &str, s: &Scenario) -> Result<(), RunError> {
             "scenario {reference}: the entry flow {} is spawned, so no client can start it",
             entry.id
         )));
-    }
-    if s.flows.len() > 1 {
-        if let Some(udp) = s.flows.iter().find(|f| f.l4 == L4::Udp) {
-            return Err(RunError::Unimplemented(format!(
-                "scenario {reference} has {} flows and its flow {} is UDP; the standalone mode runs scenarios with several flows over TCP only",
-                s.flows.len(),
-                udp.id
-            )));
-        }
     }
     Ok(())
 }
@@ -500,12 +501,33 @@ flows:
     }
 
     #[test]
-    fn a_scenario_with_a_udp_flow_among_several_is_refused() {
+    fn a_scenario_with_a_udp_flow_among_several_passes_and_runs_in_the_runtime() {
         let text = TCP_PAIR.replace("    spawned: true\n", "    spawned: true\n    l4: udp\n");
+        let s = parse(&text);
+        check_flows("m/pair", &s).unwrap();
+        assert!(!udp_worker(&s));
+    }
+
+    /// A UDP entry flow with a spawned UDP flow, like sip_rtp, runs in the runtime.
+    #[test]
+    fn a_scenario_with_a_udp_entry_flow_and_several_flows_runs_in_the_runtime() {
+        let text = TCP_PAIR.replace("    client:", "    l4: udp\n    client:");
+        let s = parse(&text);
+        assert_eq!(s.flows[0].l4, L4::Udp);
+        check_flows("m/pair", &s).unwrap();
+        assert!(!udp_worker(&s));
+    }
+
+    #[test]
+    fn a_spawned_entry_flow_is_still_refused() {
+        let text = TCP_PAIR.replace(
+            "  - id: control\n    module: m\n",
+            "  - id: control\n    module: m\n    spawned: true\n",
+        );
         let e = check_flows("m/pair", &parse(&text))
             .unwrap_err()
             .to_string();
-        assert!(e.contains("2 flows") && e.contains("data is UDP"), "{e}");
+        assert!(e.contains("spawned"), "{e}");
     }
 
     #[test]
@@ -522,6 +544,8 @@ flows:
       - accept: { port: 53 }
       - close: fin
 ";
-        check_flows("m/dns", &parse(text)).unwrap();
+        let s = parse(text);
+        check_flows("m/dns", &s).unwrap();
+        assert!(udp_worker(&s));
     }
 }

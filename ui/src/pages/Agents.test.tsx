@@ -122,6 +122,7 @@ describe("agents view", () => {
       "0.4.0",
       "127.0.0.1:50051",
       "rack=r2, site=lab",
+      "none",
       "Reserve agent-local",
     ]);
     expect(rowTexts(agents, "agent-held")).toEqual([
@@ -131,6 +132,7 @@ describe("agents view", () => {
       "0.4.0",
       "10.0.0.7:50051",
       "",
+      "not reported",
       "Release agent-held",
     ]);
     expect(rowTexts(agents, "agent-busy")).toEqual([
@@ -140,6 +142,7 @@ describe("agents view", () => {
       "not reported",
       "10.0.0.8:50051",
       "",
+      "none",
       "In use by a run",
     ]);
     expect(rowTexts(agents, "agent-down")).toEqual([
@@ -149,6 +152,7 @@ describe("agents view", () => {
       "not reported",
       "offline",
       "",
+      "none",
       "Not connected",
     ]);
 
@@ -225,7 +229,7 @@ describe("reserve and release", () => {
     ).toBeDefined();
     const agents = screen.getByRole("table", { name: "Agents" });
     expect(rowTexts(agents, "agent-local")[0]).toBe("reserved");
-    expect(rowTexts(agents, "agent-local")[6]).toBe("Release agent-local");
+    expect(rowTexts(agents, "agent-local")[7]).toBe("Release agent-local");
     expect(screen.getByText("4 agents: 2 reserved, 1 busy, 1 offline")).toBeDefined();
 
     await user.click(screen.getByRole("button", { name: "Release agent-local" }));
@@ -268,7 +272,7 @@ describe("reserve and release", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(
-      "Agent agent-local was not reserved. reserve agent agent-local: agent offline",
+      "Agent agent-local was not reserved because of a conflict. reserve agent agent-local: agent offline",
     );
     // The refresh after the conflict replaces the stale button with the state of the controller.
     await waitFor(() => {
@@ -276,7 +280,7 @@ describe("reserve and release", () => {
     });
     const agents = screen.getByRole("table", { name: "Agents" });
     expect(rowTexts(agents, "agent-local")[0]).toBe("offline");
-    expect(rowTexts(agents, "agent-local")[6]).toBe("Not connected");
+    expect(rowTexts(agents, "agent-local")[7]).toBe("Not connected");
     await expectNoAxeViolations();
   });
 
@@ -290,10 +294,10 @@ describe("reserve and release", () => {
     await user.click(screen.getByRole("button", { name: "Reserve agent-local" }));
 
     expect((await screen.findByRole("alert")).textContent).toBe(
-      "Agent agent-local was not reserved. reserve agent agent-local: plan loaded: agent busy",
+      "Agent agent-local was not reserved because of a conflict. reserve agent agent-local: plan loaded: agent busy",
     );
     await waitFor(() => {
-      expect(rowTexts(screen.getByRole("table", { name: "Agents" }), "agent-local")[6]).toBe(
+      expect(rowTexts(screen.getByRole("table", { name: "Agents" }), "agent-local")[7]).toBe(
         "In use by a run",
       );
     });
@@ -306,7 +310,24 @@ describe("reserve and release", () => {
     });
     await user.click(await screen.findByRole("button", { name: "Reserve agent-local" }));
     expect((await screen.findByRole("alert")).textContent).toBe(
-      `Agent agent-local was not reserved. ${detail}`,
+      `Agent agent-local was not reserved because of a conflict. ${detail}`,
+    );
+  });
+
+  it("shows a problem that is not a conflict without the word conflict", async () => {
+    const { user } = await renderAgents(AGENTS, {
+      faults: [
+        {
+          method: "POST",
+          path: "/agents/agent-local:reserve",
+          status: 500,
+          detail: "The controller could not reach its store.",
+        },
+      ],
+    });
+    await user.click(await screen.findByRole("button", { name: "Reserve agent-local" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Agent agent-local was not reserved. The controller could not reach its store.",
     );
   });
 
@@ -359,5 +380,100 @@ describe("reserve and release", () => {
     await user.click(await screen.findByRole("button", { name: "Reserve agent-local" }));
     expect(await screen.findByRole("heading", { level: 1, name: /Sign in/ })).toBeDefined();
     expect(window.sessionStorage.getItem("fps.token")).toBeNull();
+  });
+});
+
+/** One agent for each kind of holder, with literal run identifiers. */
+const HOLDERS: Agent[] = [
+  { id: "agent-free", address: "10.0.1.1:50051", state: "online" },
+  { id: "agent-op", address: "10.0.1.2:50051", state: "reserved", reserved_by: "operator" },
+  { id: "agent-run", address: "10.0.1.3:50051", state: "reserved", reserved_by: "run_mock0007" },
+  { id: "agent-run-busy", address: "10.0.1.4:50051", state: "busy", reserved_by: "run_mock0008" },
+  { id: "agent-down", state: "offline", reserved_by: "operator" },
+];
+
+describe("reservation holders", () => {
+  it("shows the operator, a run with a link to its page, and no holder", async () => {
+    await renderAgents(HOLDERS);
+    const agents = await screen.findByRole("table", { name: "Agents" });
+
+    expect(rowTexts(agents, "agent-free").slice(6)).toEqual(["none", "Reserve agent-free"]);
+    expect(rowTexts(agents, "agent-op").slice(6)).toEqual(["operator", "Release agent-op"]);
+    expect(rowTexts(agents, "agent-run").slice(6)).toEqual(["Run run_mock0007", "Held by a run"]);
+    // A reservation shows while a busy or offline state takes precedence over `reserved`.
+    expect(rowTexts(agents, "agent-run-busy").slice(6)).toEqual([
+      "Run run_mock0008",
+      "In use by a run",
+    ]);
+    expect(rowTexts(agents, "agent-down").slice(6)).toEqual(["operator", "Not connected"]);
+
+    const link = within(agents).getByRole("link", { name: "Run run_mock0007" });
+    expect(link.getAttribute("href")).toBe("/runs/run_mock0007");
+    expect(
+      within(agents)
+        .getAllByRole("link")
+        .map((candidate) => candidate.textContent),
+    ).toEqual(["Run run_mock0007", "Run run_mock0008"]);
+    // The view offers no release for an agent that a run holds.
+    expect(
+      within(agents)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Reserve agent-free", "Release agent-op"]);
+    await expectNoAxeViolations();
+  });
+
+  it("shows the operator after a reservation and no holder after the release", async () => {
+    const { user } = await renderAgents(HOLDERS);
+    const agents = await screen.findByRole("table", { name: "Agents" });
+    await user.click(screen.getByRole("button", { name: "Reserve agent-free" }));
+    expect(await screen.findByText("Agent agent-free reserved. It is now reserved.")).toBeDefined();
+    expect(rowTexts(agents, "agent-free").slice(6)).toEqual(["operator", "Release agent-free"]);
+
+    await user.click(screen.getByRole("button", { name: "Release agent-free" }));
+    expect(await screen.findByText("Agent agent-free released. It is now online.")).toBeDefined();
+    expect(rowTexts(agents, "agent-free").slice(6)).toEqual(["none", "Reserve agent-free"]);
+  });
+
+  it("explains a conflict with the run that took the agent and then shows that run", async () => {
+    const { user, mock } = await renderAgents(HOLDERS);
+    await screen.findByRole("button", { name: "Reserve agent-free" });
+    const agent = mock.agents.find((candidate) => candidate.id === "agent-free");
+    if (agent === undefined) throw new Error("the mock lost agent-free");
+    agent.state = "reserved";
+    agent.reserved_by = "run_mock0009";
+
+    await user.click(screen.getByRole("button", { name: "Reserve agent-free" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Agent agent-free was not reserved because of a conflict. " +
+        "reserve agent agent-free for operator: held by run_mock0009: agent reserved by another holder",
+    );
+    const agents = screen.getByRole("table", { name: "Agents" });
+    await waitFor(() => {
+      expect(rowTexts(agents, "agent-free").slice(6)).toEqual([
+        "Run run_mock0009",
+        "Held by a run",
+      ]);
+    });
+    expect(
+      within(agents).getByRole("link", { name: "Run run_mock0009" }).getAttribute("href"),
+    ).toBe("/runs/run_mock0009");
+    await expectNoAxeViolations();
+  });
+
+  it("explains an offline conflict when the agent went offline after the list loaded", async () => {
+    const { user, mock } = await renderAgents(HOLDERS);
+    await screen.findByRole("button", { name: "Reserve agent-free" });
+    const agent = mock.agents.find((candidate) => candidate.id === "agent-free");
+    if (agent === undefined) throw new Error("the mock lost agent-free");
+    agent.state = "offline";
+
+    await user.click(screen.getByRole("button", { name: "Reserve agent-free" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Agent agent-free was not reserved because of a conflict. reserve agent agent-free: agent offline",
+    );
+    await expectNoAxeViolations();
   });
 });
