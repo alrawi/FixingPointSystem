@@ -181,6 +181,10 @@ func (a *Authority) Enroll(token string, csrDER []byte) (*Issued, error) {
 	return issued, nil
 }
 
+// renewHook runs in Renew between the authorization of the presented
+// certificate and issuance. Only tests set it, to run a revocation in that gap.
+var renewHook func()
+
 // Renew issues a new certificate for the identity of a certificate that the
 // agent presented on a TLS connection. It verifies the presented certificate
 // again against the CA, so it does not rely on the listener. An expired,
@@ -198,8 +202,17 @@ func (a *Authority) Renew(presented *x509.Certificate, csrDER []byte) (*Issued, 
 	if err != nil {
 		return nil, err
 	}
+	if renewHook != nil {
+		renewHook()
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	// Authorize released the lock, so Revoke may have ended the identity since
+	// (issue #450). Check the presented certificate again under the lock that
+	// issuance holds, or the replacement would outlive the revocation.
+	if rec, ok := a.certs[serialHex(presented)]; !ok || rec.AgentID != AgentID(presented) {
+		return nil, ErrRevoked
+	}
 	issued, cert, err := a.issueLocked(AgentID(presented), pub)
 	if err == nil {
 		err = a.saveLocked()
