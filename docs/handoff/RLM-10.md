@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #192 |
 | Branch | `wp/RLM-10` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #473 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-6897c3, lease until 2026-11-11T19:41:48Z |
-| Last verified commit | none |
+| Last verified commit | 67e0af2 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Count the distinct hosts of a capture and detect address conflicts. Acceptance: 
 - [x] 2. `hosts` labels section (`labels.py`, `labels.schema.json`), `host_identity` report entry (`realism-report.schema.json`), `score()` and the `--host-identity` and `--host-count` flags, report format 0.13.0
 - [x] 3. `realism/tests/test_hosts.py` (35 tests, no tool needed)
 - [x] 4. README, `docs/wiki/Realism.md`, log entry
-- [ ] 5. Checks, pull request, CI, review
+- [x] 5. Checks, pull request, CI, review
 
 ## Done and verified
 
@@ -30,11 +30,11 @@ Count the distinct hosts of a capture and detect address conflicts. Acceptance: 
 
 ## Remaining
 
-Pull request and CI.
+none. CI is green on 67e0af2 (49 of 49 checks succeeded).
 
 ## Next action
 
-Open the pull request and wait for CI.
+Review and merge.
 
 ## Blockers and open questions
 
@@ -66,3 +66,5 @@ python3 -m mypy --config-file realism/pyproject.toml realism
 |---|---|---|---|---|
 | 2026-11-11T18:12:00Z | claude-6897c3 | claim | | Claimed #192, branch from origin/main |
 | 2026-11-11T18:20:00Z | claude-6897c3 | checkpoint | | Steps 1 to 4 done, first push |
+| 2026-11-11T18:35:00Z | claude-6897c3 | pr | 67e0af2 | Opened PR 473 |
+| 2026-11-11T18:45:00Z | claude-6897c3 | finish | | CI green, ready for review |
