@@ -619,7 +619,10 @@ def test_manifest_provenance_fields_come_from_the_scrub_record(tmp_path: Path) -
         "consent": CONSENT,
         "scrubbed": True,
         "capture_sha256": HTTP1_SHA256,
-        "scrub_rules": [{"id": r, "version": 1} for r in ALL_RULES],
+        # parameter and sweep moved to version 2 with the JSON fix of issue #451
+        "scrub_rules": [
+            {"id": r, "version": 2 if r in ("parameter", "sweep") else 1} for r in ALL_RULES
+        ],
         "scrubbed_at": "2026-11-10",
     }
     # the notes keep what the fields do not hold, and no longer repeat what they do
