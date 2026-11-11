@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #183 |
 | Branch | `wp/MOD-16` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #447 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-b74ad8, lease until 2026-11-11T05:13:57Z |
-| Last verified commit | none |
+| Last verified commit | 1345a6b |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Ship ntp client and server scenarios in client and server modes, with NTPv4 pack
 - [x] 2. Native crate with the NTPv4 codec and template functions, with unit tests
 - [x] 3. Scenarios, interpreter tests, and golden transcripts
 - [x] 4. Fixture peer, capture.sh, fixtures, expected.yaml, and the realism score
-- [ ] 5. README, wiki page and log entry with shared page notes, checks, PR, and CI
+- [x] 5. README, wiki page and log entry with shared page notes, checks, PR, and CI
 
 ## Done and verified
 
@@ -34,13 +34,13 @@ Ship ntp client and server scenarios in client and server modes, with NTPv4 pack
 
 ## Remaining
 
-- Open the pull request and wait for CI.
+- CI is green on 1345a6b, including the realism job with Zeek 9.0.1.
 - The coordinator creates `mk/mod-ntp.mk` and `.github/workflows/mod-ntp.yml` from the shared page notes of the log entry, and the AGT follow up adds the agent registry line.
-- Zeek is not installed here, so the `realism` workflow is the first Zeek score of the capture.
+- Zeek is not installed here. The realism workflow scored the fresh capture with Zeek 9.0.1 and passed.
 
 ## Next action
 
-Open the pull request against `main` and poll its checks.
+Review and merge PR #447, then the coordinator adds `mk/mod-ntp.mk`, `.github/workflows/mod-ntp.yml`, and the agent registry line.
 
 ## Blockers and open questions
 
@@ -72,3 +72,4 @@ sudo modules/ntp/fixtures/capture.sh /tmp/ntp-capture
 |---|---|---|---|---|
 | 2026-11-11T03:45Z | claude-b74ad8 | claim | none | Claimed #183 and created the handoff file |
 | 2026-11-11T04:05Z | claude-b74ad8 | checkpoint | none | Module, tests, fixture, README, wiki, and log entry written |
+| 2026-11-11T04:30Z | claude-b74ad8 | finish | 1345a6b | PR #447 opened, CI green, ready for review |
