@@ -1,0 +1,19 @@
+scenario: sntp_query
+description: One SNTP exchange. The client sends a version 4 request with the poll exponent 0 and only a transmit timestamp, as the time sync of a phone or a desktop does at start, and the server answers as a stratum 2 server.
+vars:
+  server_port: 123
+flows:
+  - id: query
+    module: ntp
+    l4: udp
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ ntp.query(now_ms=now('epoch_ms'), version=4, poll=0) }}"
+      - expect: { bytes: 48, max_datagram: 48, timeout_ms: 2000 }
+      - set: { server_stratum: "{{ ntp.field(last, 'stratum') }}" }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { min_bytes: 48, max_datagram: 1024, timeout_ms: 2000 }
+      - send: "{{ ntp.reply(last, now_ms=now('epoch_ms')) }}"
+      - close: fin
