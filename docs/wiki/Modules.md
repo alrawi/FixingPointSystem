@@ -21,6 +21,7 @@ The table lists the modules that exist today.
 | [`ssh`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/ssh) | `fps-module-ssh` with thirty two functions for the SSH 2.0 transport, a real `curve25519-sha256` key exchange, the authentication and channel messages, and synthetic names | `interactive_shell`, `remote_command`, `scp_upload`, `scp_download` | Committed capture of 16 sessions, checked by nDPI, tshark, and Zeek |
 | [`smb2`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/smb2) | `fps-module-smb2` with thirty seven functions for SMB2 messages, synthetic NTLM exchanges, and the readers of a peer | `browse`, `download`, `upload` | Committed capture of 18 sessions, 18 of 18 classified as SMB by nDPI 4.2.0 and by nDPI 4.14.0 in CI |
 | [`sip_rtp`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/sip_rtp) | `fps-module-sip-rtp` with eleven functions for SIP messages, SDP offers and answers, paced RTP packets, and the call times | `call_pcmu`, `call_pcma`, `call_g729`, `call_opus`, `busy` | Committed capture of 15 calls and 27 sessions, checked by nDPI, tshark, the RTP interval check, and Zeek |
+| [`mqtt`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/mqtt) | `fps-module-mqtt` with twenty three functions for MQTT 3.1.1 and 5.0 packets, a packet reader, and a keep alive schedule | `publish_qos0`, `publish_qos1`, `publish_qos2`, `subscribe`, `keepalive` | Committed capture of 40 sessions (half in each version), 40 of 40 classified as MQTT by nDPI 4.2.0, tshark clean |
 
 ## The http1 module
 
@@ -187,6 +188,16 @@ The three scenarios are `browse`, `download`, and `upload`. Each starts with NEG
 The fixture `smb2.pcapng` holds six sessions of each scenario, 18 in all, which `fixtures/capture.sh` records in the QA-01 harness with a source port of its own per session (MOD-21). nDPI 4.2.0 classifies 18 of 18 as `NetBIOS.SMBv23`, so `expected.yaml` accepts `SMBv23` and `SMB`, and tshark 4.2.2 reports no parser error. The 4 octet header of direct TCP, which starts every message, is also the NetBIOS session header of a session message, and nDPI needs nothing else. It classifies SMB only on port 445: the same scenarios on port 4450 are `Unknown`. The `realism` workflow records a fresh capture with nDPI 4.14.0, tshark 4.2.2, and Zeek 9.0.1, and its first run gave 18 of 18 sessions as `NetBIOS.SMBv23` and no parser error from tshark or Zeek.
 
 The agent does not dispatch `smb2` calls yet. The module has no state, so the `stateless!` form of `engine/fps-agent/src/modules.rs` fits, as the log entry of MOD-12 describes.
+
+## The mqtt module
+
+MOD-18 added the `mqtt` module under [`modules/mqtt`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/mqtt). Its native crate `fps-module-mqtt` implements twenty three template functions for MQTT 3.1.1 and MQTT 5.0: the encoders for `CONNECT`, `CONNACK`, `PUBLISH` and the answers of the QoS 1 and QoS 2 flows, `SUBSCRIBE`, `SUBACK`, `UNSUBSCRIBE`, `UNSUBACK`, `PINGREQ`, `PINGRESP`, and `DISCONNECT`, the variable byte integer, and a packet reader. No MQTT library fits, because the interpreter needs a writer and a reader that handle one packet at a time, so the crate writes both.
+
+A packet has a variable length, so a flow reads it with one `expect` of one byte, six `expect` actions of `mqtt.feed(last)` bytes, and `mqtt.recv(kind)`. `feed` returns the size of the next read, which is one byte while the Remaining Length continues and the whole body after it, and a read of size 0 is a no-op. `recv` checks the packet against the standard and the kind that the flow expects, and `mqtt.field(name)` reads its fields as text. The module is stateful, because the version, the packet identifiers, and the reader belong to one session side.
+
+The acceptance asks for realistic keep alive timing. `mqtt.pace` schedules each ping against an absolute due time, as `sip_rtp.pace` does for RTP, so a late wake shortens the next sleep and the pings keep their interval. The capture holds pings exactly 2 seconds apart, and a paused time test runs 200 pings at 30 seconds. The five scenarios are `publish_qos0`, `publish_qos1`, `publish_qos2`, `subscribe`, and `keepalive`, and `version` 4 or 5 selects the protocol version.
+
+The fixture `mqtt.pcapng` holds 40 sessions with 40 different 5-tuples, which `fixtures/capture.sh` records in the QA-01 harness with a source port of its own per session. nDPI 4.2.0 classifies 40 of 40 as `MQTT`, tshark 4.2.2 reports no parser error, and the packets of both versions dissect. The `realism` workflow measures with nDPI 4.14, which the sandbox could not run. The agent does not dispatch `mqtt` calls yet, and the log entry of MOD-18 gives the registry line.
 
 ## Joining the realism job
 
