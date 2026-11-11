@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of ldap.pcapng, which capture.sh records in the QA-01 harness.
+# Every connection of the fixture is LDAP on TCP port 389, and nDPI must
+# classify at least 99% of them as LDAP. realism/schema/labels.schema.json
+# defines the format.
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: ldap
+    match: {transport: tcp, server_port: 389}
+applications:
+  ldap: {ndpi: [LDAP]}

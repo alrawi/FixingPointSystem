@@ -1,0 +1,80 @@
+scenario: directory_browse
+description: An address book that lists a directory without logging in, as a mail client does. The client binds anonymously with an empty name and an empty password, lists the entries one level below vars.list_base with the filter vars.list_filter, reads every entry that the server returns, looks up the full entry of one person with a base object search, and unbinds. The listing returns one SearchResultEntry per entry, each in its own write, so a session carries as many small messages as the directory holds people. Setting vars.size_limit below the number of entries makes the server stop at that many and end with sizeLimitExceeded, which the client expects when vars.done_code is 4. An empty vars.directory selects the directory that ships with the module.
+vars:
+  server_port: 389
+  directory: ""
+  list_base: ou=People,dc=example,dc=test
+  list_filter: (objectClass=inetOrgPerson)
+  list_attributes: cn,mail,telephoneNumber
+  detail_attributes: cn,mail,telephoneNumber,title,departmentNumber,employeeNumber
+  size_limit: 0
+  done_code: 0
+flows:
+  - id: session
+    module: ldap
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "{{ ldap.bind_request(1, '', '') }}"
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_response') }}" }
+      - delay: { dist: lognormal, mu: 4.5, sigma: 0.6, unit: ms }
+      - set:
+          listed: "{{ ldap.count(vars.directory, vars.list_base, 'one', vars.list_filter, vars.size_limit) }}"
+      - send: "{{ ldap.search_request(2, vars.list_base, 'one', vars.list_filter, vars.list_attributes, vars.size_limit) }}"
+      - loop:
+          count: "{{ vars.listed }}"
+          do:
+            - expect: { bytes: 4, timeout_ms: 5000 }
+            - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+            - set: { got: "{{ ldap.recv(last, 'search_entry') }}" }
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+      - set: { got: "{{ ldap.recv(last, 'search_done', vars.done_code) }}" }
+      # The person whose details the user opens.
+      - delay: { dist: lognormal, mu: 7.5, sigma: 0.6, unit: ms }
+      - set:
+          dn: "{{ ldap.account(vars.directory, 'dn') }}"
+      - set:
+          opened: "{{ ldap.count(vars.directory, vars.dn, 'base') }}"
+      - send: "{{ ldap.search_request(3, vars.dn, 'base', '(objectClass=*)', vars.detail_attributes) }}"
+      - loop:
+          count: "{{ vars.opened }}"
+          do:
+            - expect: { bytes: 4, timeout_ms: 5000 }
+            - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+            - set: { got: "{{ ldap.recv(last, 'search_entry') }}" }
+      - expect: { bytes: 4, timeout_ms: 5000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 5000 }
+      - set: { got: "{{ ldap.recv(last, 'search_done') }}" }
+      - delay: { dist: lognormal, mu: 6.0, sigma: 0.7, unit: ms }
+      - send: "{{ ldap.unbind_request(4) }}"
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'bind_request') }}" }
+      - send: "{{ ldap.bind_answer(vars.directory) }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'search_request') }}" }
+      - set: { listed: "{{ ldap.matches(vars.directory) }}" }
+      - loop:
+          count: "{{ vars.listed }}"
+          do:
+            - send: "{{ ldap.search_next() }}"
+      - send: "{{ ldap.search_end() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'search_request') }}" }
+      - set: { opened: "{{ ldap.matches(vars.directory) }}" }
+      - loop:
+          count: "{{ vars.opened }}"
+          do:
+            - send: "{{ ldap.search_next() }}"
+      - send: "{{ ldap.search_end() }}"
+      - expect: { bytes: 4, timeout_ms: 10000 }
+      - expect: { bytes: "{{ ldap.size(last) }}", timeout_ms: 10000 }
+      - set: { got: "{{ ldap.recv(last, 'unbind_request') }}" }
+      - close: fin

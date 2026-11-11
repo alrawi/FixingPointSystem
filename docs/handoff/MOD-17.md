@@ -1,18 +1,14 @@
 # Handoff MOD-17 LDAP module
 
-<!-- Copy this file to docs/handoff/<ID>.md when you claim a work package.
-     Update it at every checkpoint. A successor reads only this file, the
-     issue, and the branch, so write for an agent that knows nothing else. -->
-
 | Field | Value |
 |---|---|
 | Issue | #184 |
 | Branch | `wp/MOD-17` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 90% (5 of 6 plan steps) |
 | Current holder | claude-e41a7f, lease until 2026-11-11T05:14:04Z |
-| Last verified commit | none |
+| Last verified commit | see the session log |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,49 +18,54 @@ Ship ldap scenarios for bind, search, and unbind with BER encoding functions. Th
 
 ## Plan
 
-Each step takes at most 30 minutes of work and ends in a state that tests can check.
-
-- [ ] 1. Claim commit, BER codec and filter parser with unit tests
-- [ ] 2. LDAP messages, directory model, search evaluation, the template functions and the catalog
-- [ ] 3. Manifest, scenarios, and the interpreter, catalog, and transcript tests
-- [ ] 4. fixture_peer, capture.sh, expected.yaml, and a capture in a namespace harness if root allows
-- [ ] 5. tshark test of every encoded message, README, Modules page, log entry with shared page notes
+- [x] 1. Claim commit, BER codec and filter parser with unit tests
+- [x] 2. LDAP messages, directory model, search evaluation, the template functions and the catalog
+- [x] 3. Manifest, scenarios, and the interpreter, catalog, and transcript tests
+- [x] 4. fixture_peer, capture.sh, expected.yaml, and a capture in a namespace harness
+- [x] 5. tshark test of every encoded message, README, Modules page, log entry with shared page notes
 - [ ] 6. Run the checks, open the PR, wait for CI, hand over for review
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- `cargo test -p fps-module-ldap`: 48 unit tests, catalog, scenarios (10), transcript (3), and tshark (3) pass.
+- `cargo clippy -p fps-module-ldap --all-targets -- -D warnings` and `cargo fmt`: clean.
+- `tools/contracts/validate.py` over a directory of links (the lint-mod-ldap recipe): 0 errors.
+- `plan.py check`, `render --check`, `lint`: ok.
+- `modules/ldap/fixtures/capture.sh` in the namespace harness: 24 sessions, nDPI 4.2.0 labels 24 of 24 LDAP (ratio 1.0), tshark 4.2.2 reports no parser error. The report is committed as `ldap.report.json`.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+- PR, CI with nDPI 4.14 (not available in the sandbox), review.
 
 ## Next action
 
-Step 1: write modules/ldap/native/src/ber.rs.
+Open the pull request and poll CI.
 
 ## Blockers and open questions
 
-Write "none" or name each blocker with a link to its issue.
+none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- The BER codec is written in the crate, so no dependency is added.
+- Every scenario starts with an anonymous bind, because nDPI 4.2.0 labels a session MQTT when its first bind carries a name.
+- The coordinator files `mk/mod-ldap.mk` and `.github/workflows/mod-ldap.yml` and the agent registry entry are in the Shared page notes of the log entry.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+- A nested call has the type bytes, so a text parameter needs a `set` first.
+- The manifest summary of a function may not exceed 200 characters.
+- Set CARGO_TARGET_DIR with an absolute path of the worktree root, or a target directory lands under modules/.
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+CARGO_TARGET_DIR=$PWD/target-MOD-17 cargo test -p fps-module-ldap
 ```
 
 ## Session log
 
-Append one row per session start, checkpoint, release, block, takeover, and finish. Never edit earlier rows.
-
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-11T03:46Z | claude-e41a7f | claim | pending | Claimed issue #184 with a 90 minute lease, branch from origin/main |
+| 2026-11-11T05:00Z | claude-e41a7f | checkpoint | see git log | Crate, scenarios, tests, fixture, docs complete locally |

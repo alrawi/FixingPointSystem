@@ -1129,6 +1129,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fps-module-ldap"
+version = "0.0.1"
+dependencies = [
+ "fps-backend-kernel",
+ "fps-flow",
+ "fps-golden",
+ "fps-interp",
+ "fps-io",
+ "rand 0.8.8",
+ "rand_pcg",
+ "serde_norway",
+ "tokio",
+]
+
+[[package]]
 name = "fps-module-pop3"
 version = "0.0.1"
 dependencies = [
