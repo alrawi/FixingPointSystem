@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #185 |
 | Branch | `wp/MOD-18` |
-| Pull request | #0 |
+| Pull request | #448 |
 | Status | in progress |
 | Progress | 90% (5 of 6 plan steps) |
 | Current holder | claude-4d2e91, lease until 2026-11-11T05:13:59Z |
