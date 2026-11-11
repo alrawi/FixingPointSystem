@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #442 |
 | Branch | `wp/CON-24` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #443 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-e327f4, lease per the status card on #442 |
-| Last verified commit | none |
+| Last verified commit | 249fc30 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 - [x] 1. Read the ENG-27 log entry, the proto, and the OpenAPI schema, and fix the design.
 - [x] 2. Edit the proto, the OpenAPI document, the versions, and `docs/wiki/Contracts.md`.
 - [x] 3. Write `contracts/changes/CON-24.md` and the log entry with the follow up list.
-- [ ] 4. Run the checks, open the PR, wait for CI, and request review.
+- [x] 4. Run the checks, open the PR, wait for CI, and request review.
 
 ## Done and verified
 
@@ -34,7 +34,7 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Next action
 
-Open the pull request and wait for CI.
+The coordinator applies the follow up of the log entry and merges after the owner approves PR #443.
 
 ## Blockers and open questions
 
@@ -62,3 +62,4 @@ python3 -m pytest -q tools/contracts  # 290 passed, 1 skipped
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-10 | claude-e327f4 | claim and work | none | Claimed #442, edited the contract, wrote the entry and the log |
+| 2026-11-11 | claude-e327f4 | ready for review | 249fc30 | PR #443. CI green for proto, contracts, breaking, licenses, scripts, ops. Red only where consumers drift: fps-agent (E0063 missing fields), agentpb and api.gen.go generated checks, TestCapabilitiesVersions, ui schema.d.ts, sdk _generated.py |
