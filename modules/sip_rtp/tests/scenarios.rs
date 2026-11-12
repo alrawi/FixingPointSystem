@@ -361,3 +361,64 @@ async fn a_lost_rtp_packet_fails_the_media_flow_and_the_call() {
     assert_eq!(m.s2c().len(), 6);
     assert_eq!(signaling(&r).c2s().len(), 2, "INVITE and ACK only");
 }
+
+/// The sessions that the estimate averages over. The packet sizes and the
+/// call length come from the session generator, so one session says little
+/// about the mean that the controller needs.
+const ESTIMATE_SESSIONS: u64 = 20;
+
+/// A session of each scenario at the default parameters moves the payload
+/// bytes of `expected_bytes` in the manifest, both directions of the signaling
+/// connection and of the RTP stream, within 2 percent. The RTP payload counts
+/// with its 12 byte header, the way the datagram carries it. The controller
+/// turns byte weights into session shares with these estimates, so a change of
+/// a template or a fixture that alters the size of a session must change the
+/// manifest.
+#[tokio::test(start_paused = true)]
+async fn default_parameters_move_the_expected_bytes() {
+    let doc: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(common::module_dir().join("manifest.yaml")).unwrap(),
+    )
+    .unwrap();
+    let all = common::scenarios();
+    let mut bad = Vec::new();
+    if let Some(keys) = doc["expected_bytes"].as_mapping() {
+        for key in keys.keys() {
+            let key = key.as_str().unwrap_or_default();
+            if !all.iter().any(|(name, _)| name == key) {
+                bad.push(format!("{key}: an estimate for no scenario"));
+            }
+        }
+    }
+    for (name, s) in all {
+        let mut sizes = Vec::new();
+        for id in 1..=ESTIMATE_SESSIONS {
+            let r = common::run(&s, common::SEED, id).await;
+            r.result.as_ref().unwrap_or_else(|e| panic!("{name}: {e}"));
+            sizes.push(
+                r.net
+                    .conns()
+                    .iter()
+                    .map(|c| {
+                        let sum = |v: Vec<Vec<u8>>| v.iter().map(Vec::len).sum::<usize>();
+                        sum(c.c2s_bytes()) + sum(c.s2c_bytes())
+                    })
+                    .sum::<usize>(),
+            );
+        }
+        let mean = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64;
+        match doc["expected_bytes"][name.as_str()].as_f64() {
+            Some(want) if (mean - want).abs() / want < 0.02 => {}
+            Some(want) => bad.push(format!(
+                "{name}: {mean:.0} bytes against the estimate {want}"
+            )),
+            None => bad.push(format!("{name}: {mean:.0} bytes and no estimate")),
+        }
+        eprintln!(
+            "MEASURED {name} mean {mean:.1} min {} max {}",
+            sizes.iter().min().unwrap(),
+            sizes.iter().max().unwrap()
+        );
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}

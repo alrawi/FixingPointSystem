@@ -730,3 +730,56 @@ async fn plain_pop3_offers_no_starttls_and_uses_port_110() {
         );
     }
 }
+
+/// The sessions that the estimate averages over. Sizes that the session
+/// generator draws vary from session to session, so one session says little
+/// about the mean that the controller needs.
+const ESTIMATE_SESSIONS: u64 = 100;
+
+/// A session of each scenario at the default parameters moves the payload
+/// bytes of `expected_bytes` in the manifest, both directions of the stream
+/// above any TLS layer, within 2 percent. A scenario whose size depends on the
+/// session generator is averaged over [`ESTIMATE_SESSIONS`] session ids. The
+/// controller turns byte weights into session shares with these estimates, so a
+/// change of a template or a fixture that alters the size of a session must
+/// change the manifest.
+#[tokio::test(start_paused = true)]
+async fn default_parameters_move_the_expected_bytes() {
+    let doc: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(common::module_dir().join("manifest.yaml")).unwrap(),
+    )
+    .unwrap();
+    let all = common::scenarios();
+    let mut bad = Vec::new();
+    if let Some(keys) = doc["expected_bytes"].as_mapping() {
+        for key in keys.keys() {
+            let key = key.as_str().unwrap_or_default();
+            if !all.iter().any(|(name, _)| name == key) {
+                bad.push(format!("{key}: an estimate for no scenario"));
+            }
+        }
+    }
+    for (name, s) in all {
+        let mut sizes = Vec::new();
+        for id in 1..=ESTIMATE_SESSIONS {
+            let r = common::run(&s, common::SEED, id).await;
+            assert!(r.client.is_ok(), "{name}: {:?}", r.client);
+            assert!(r.server.is_ok(), "{name}: {:?}", r.server);
+            sizes.push(r.c2s.len() + r.s2c.len());
+        }
+        let mean = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64;
+        match doc["expected_bytes"][name.as_str()].as_f64() {
+            Some(want) if (mean - want).abs() / want < 0.02 => {}
+            Some(want) => bad.push(format!(
+                "{name}: {mean:.0} bytes against the estimate {want}"
+            )),
+            None => bad.push(format!("{name}: {mean:.0} bytes and no estimate")),
+        }
+        eprintln!(
+            "MEASURED {name} mean {mean:.1} min {} max {}",
+            sizes.iter().min().unwrap(),
+            sizes.iter().max().unwrap()
+        );
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}

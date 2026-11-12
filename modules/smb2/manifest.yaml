@@ -348,6 +348,10 @@ scenarios:
   - scenarios/browse.yaml
   - scenarios/download.yaml
   - scenarios/upload.yaml
+expected_bytes:
+  browse: 4900
+  download: 1050000
+  upload: 1050000
 fixtures:
   - { capture: fixtures/smb2.pcapng, expect: { ndpi: [SMBv23, SMB] } }
 provenance:

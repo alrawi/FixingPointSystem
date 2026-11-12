@@ -45,6 +45,12 @@ scenarios:
   - scenarios/poll_cycle.yaml
   - scenarios/kod_rate.yaml
   - scenarios/symmetric_peer.yaml
+expected_bytes:
+  sntp_query: 96
+  iburst: 384
+  poll_cycle: 288
+  kod_rate: 192
+  symmetric_peer: 192
 fixtures:
   - { capture: fixtures/ntp.pcapng, expect: { ndpi: [NTP] } }
 provenance:

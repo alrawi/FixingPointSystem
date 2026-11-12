@@ -117,7 +117,7 @@ Each phase ends at a gate, and a QA package automates the gate as a test suite. 
 | Phase | Name | Gate suite | Exit criterion |
 |---|---|---|---|
 | 1 | Core alpha | QA-04 | HTTP/1.1 and DNS mix classified at 99% by nDPI through controller and agent |
-| 2 | Library | QA-05 | All 15 modules pass realism CI; byte mixes within 2 points; qcow2 boots and runs. The suite passes with one waiver until the controller reads `expected_bytes` (CTL-47) and the manifests carry it (MOD-25) |
+| 2 | Library | QA-05 | All 15 modules pass realism CI; byte mixes within 2 points; qcow2 boots and runs. The suite passes with one waiver until the run counts a spawned flow with the session that opened it (CTL-49), since CTL-47 and MOD-25 put the byte estimates in place |
 | 3 | Scale | QA-07 | Tier T1 on KVM, multi agent runs, every image format, UI end to end suite |
 
 ## Critical path of Phase 1

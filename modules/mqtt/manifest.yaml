@@ -175,6 +175,12 @@ scenarios:
   - scenarios/publish_qos2.yaml
   - scenarios/subscribe.yaml
   - scenarios/keepalive.yaml
+expected_bytes:
+  publish_qos0: 807
+  publish_qos1: 884
+  publish_qos2: 872
+  subscribe: 406
+  keepalive: 204
 fixtures:
   - { capture: fixtures/mqtt.pcapng, expect: { ndpi: [MQTT] } }
 provenance:
