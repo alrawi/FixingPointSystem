@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #496 |
 | Branch | `wp/CON-28` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #507 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-4d21ba, lease until 2026-11-12T15:15:55Z |
-| Last verified commit | none |
+| Last verified commit | a263854 |
 
 ## Goal
 
@@ -20,7 +20,7 @@ The property label of `realism.ks_statistic` and `realism.ks_p_value` gets value
 - [x] 2. Consumers: controller catalog copy, version pins, `catalog.rs`
 - [x] 3. Realism runner: series, schema, report format, tests, controller schema copy, `schema.d.ts`
 - [x] 4. Docs: Realism page, README, log entry
-- [ ] 5. Checks, PR, CI, review
+- [x] 5. Checks, PR, CI, review
 
 ## Done and verified
 
@@ -28,11 +28,11 @@ Steps 1 to 4: `validate.py` 0 errors, `pytest realism tools/contracts` 1064 pass
 
 ## Remaining
 
-Open the pull request, wait for CI, review step.
+Nothing. CI on a263854 was green.
 
 ## Next action
 
-Open the pull request and poll CI.
+The coordinator reviews and merges PR 507, and checks the report format number against RLM-16.
 
 ## Blockers and open questions
 
@@ -58,3 +58,4 @@ python3 tools/contracts/validate.py
 |---|---|---|---|---|
 | 2026-11-12T14:46Z | claude-4d21ba | claim | none | claimed #496 |
 | 2026-11-12T15:05Z | claude-4d21ba | checkpoint | 0d9b3db | contract, consumers, runner, docs done locally |
+| 2026-11-12T15:35Z | claude-4d21ba | review | a263854 | PR 507, CI green |
