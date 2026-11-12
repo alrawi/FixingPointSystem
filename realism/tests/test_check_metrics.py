@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""The metric series of every check of the realism report (CON-23, CON-25, CON-27; format 0.15.0).
+"""The metric series of every check of the realism report (CON-23, CON-25, CON-27, CON-28).
 
-Every check kind of the metric catalog carries ``realism.check_failures``, and most carry a
-series of their own. Each case below builds a small capture or a committed fixture, runs one
-check, and compares the whole ``metrics`` array with a literal, once for a passing and once
-for a failing check. The entry then has to validate against the report schema, and the
-examples of ``contracts/examples/realism/check-metrics.yaml`` have to validate against it too.
+Report format 0.17.0 carries them. Every check kind of the metric catalog carries
+``realism.check_failures``, and most carry a series of their own. Each case below builds a
+small capture or a committed fixture, runs one check, and compares the whole ``metrics``
+array with a literal, once for a passing and once for a failing check. The entry then has to
+validate against the report schema, and the examples of
+``contracts/examples/realism/check-metrics.yaml`` have to validate against it too.
 The ``messages`` check (CON-25, catalog 0.6.0) and the ``host_identity`` check (CON-27, catalog
 0.7.0) carry only the failures series, and its value is ``failures_total``.
 """
@@ -555,7 +556,7 @@ def test_transport_behavior_failing_without_a_handshake_carries_only_the_failure
 
 
 def test_the_report_format_is_0_14_0() -> None:
-    assert REPORT_VERSION == "0.16.0"
+    assert REPORT_VERSION == "0.17.0"
 
 
 def test_a_check_without_its_failures_series_is_refused(tmp_path: Path) -> None:

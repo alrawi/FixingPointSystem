@@ -508,21 +508,21 @@ def test_the_report_carries_the_packet_gap_comparison_and_validates(tmp_path: Pa
         pcap = cap.write_pcap(tmp_path / f"{name}.pcap")
         report = score(pcap, labels, STUB).to_dict()
         _validate(report)
-        assert report["version"] == REPORT_VERSION == "0.16.0"
+        assert report["version"] == REPORT_VERSION == "0.17.0"
         entries.append(report["checks"][-1])
     ok, bad = entries
     assert (ok["check"], ok["passed"]) == ("temporal", True)
     assert (bad["passed"], bad["comparisons"][0]["status"]) == (False, "fail")
     assert bad["failures"] == [bad["comparisons"][0]["reason"]]
-    # The catalog has no property for packet gaps, so the comparison has no KS series,
-    # and the failures series is the only metric.
+    # A paced comparison has no KS statistic (CON-28), so it has no KS series, and the
+    # failures series is the only metric.
     for entry in entries:
         assert [m["name"] for m in entry["metrics"]] == ["realism.check_failures"]
     assert ok["metrics"][0]["value"] == 0
     assert bad["metrics"][0]["value"] == 1
 
 
-def test_packet_gaps_add_no_ks_series_next_to_the_other_properties(tmp_path: Path) -> None:
+def test_paced_packet_gaps_add_no_ks_series_next_to_the_other_properties(tmp_path: Path) -> None:
     cap = pcapgen.Capture()
     _call(cap, 1, 20, 100, jitter_ms=1)
     section = {
@@ -539,12 +539,99 @@ def test_packet_gaps_add_no_ks_series_next_to_the_other_properties(tmp_path: Pat
     labelled = [
         (m["labels"]["property"], m["name"]) for m in result.metrics() if "property" in m["labels"]
     ]
-    # Only the size comparison has a catalog property, and a client direction of packet gaps
-    # must not pass for request_bytes.
+    # Only the size comparison has a KS series, and a paced comparison of the client direction
+    # must not pass for request_bytes or request_gap.
     assert labelled == [
         ("request_bytes", "realism.ks_statistic"),
         ("request_bytes", "realism.ks_p_value"),
     ]
+
+
+def _keepalive_capture(seed: int = 3) -> pcapgen.Capture:
+    """Return a capture of 150 client datagrams and 150 server ones with exponential gaps."""
+    rng = random.Random(seed)
+    cap = pcapgen.Capture()
+    for src, sport, dst, dport in (
+        (CLIENT, 41000, SERVER, 5683),
+        (SERVER, 5683, CLIENT, 41000),
+    ):
+        t = cap.clock
+        for _ in range(150):
+            t += rng.expovariate(1 / 0.5)
+            cap.frames.append((t, pcapgen.ethernet(pcapgen.udp(src, sport, dst, dport, b"ka"))))
+    cap.frames.sort(key=lambda frame: frame[0])
+    return cap
+
+
+@pytest.mark.parametrize(
+    ("direction", "prop"),
+    [("client", "request_gap"), ("server", "response_gap"), ("both", "packet_gap")],
+)
+def test_a_ks_packet_gap_comparison_carries_the_series_of_its_direction(
+    tmp_path: Path, direction: str, prop: str
+) -> None:
+    labels = _labels(_packets({"dist": "exponential", "mean_ms": 500, "direction": direction}))
+    result = _check(tmp_path, _keepalive_capture(), labels)
+    assert result.passed, result.failures
+    comparison = result.comparisons[0]
+    assert comparison["direction"] == direction
+    series = [m for m in result.metrics() if m["name"] != "realism.check_failures"]
+    assert series == [
+        {
+            "name": "realism.ks_statistic",
+            "labels": {"application": "rtp", "property": prop},
+            "value": comparison["statistic"],
+        },
+        {
+            "name": "realism.ks_p_value",
+            "labels": {"application": "rtp", "property": prop},
+            "value": comparison["p_value"],
+        },
+    ]
+    catalog = yaml.safe_load((ROOT / "contracts" / "metrics" / "catalog.yaml").read_text())
+    assert prop in catalog["labels"]["property"]["values"]
+
+
+def test_the_three_directions_of_packet_gaps_are_three_series_with_unique_labels(
+    tmp_path: Path,
+) -> None:
+    targets = [
+        {"dist": "exponential", "mean_ms": 500, "direction": d}
+        for d in ("client", "server", "both")
+    ]
+    result = _check(tmp_path, _keepalive_capture(), _labels(_packets(targets)))
+    keys = [
+        (m["name"], m["labels"]["property"])
+        for m in result.metrics()
+        if m["name"] != "realism.check_failures"
+    ]
+    assert len(keys) == len(set(keys)) == 6
+    assert {k[1] for k in keys} == {"request_gap", "response_gap", "packet_gap"}
+
+
+def test_a_failing_ks_packet_gap_comparison_reports_a_small_p_value_in_a_valid_report(
+    tmp_path: Path,
+) -> None:
+    pcap = _keepalive_capture().write_pcap(tmp_path / "ka.pcap")
+    doc = {
+        "labels": "fps-realism-labels",
+        "version": 1,
+        "sessions": [{"application": "rtp", "match": {"transport": "udp"}}],
+        "temporal": _packets({"dist": "exponential", "mean_ms": 100, "direction": "both"}),
+    }
+    labels = tmp_path / "labels.json"
+    labels.write_text(json.dumps(doc))
+    report = score(pcap, labels, STUB).to_dict()
+    _validate(report)
+    entry = report["checks"][-1]
+    assert entry["passed"] is False
+    by_name = {m["name"]: m for m in entry["metrics"]}
+    assert by_name["realism.ks_p_value"]["labels"] == {
+        "application": "rtp",
+        "property": "packet_gap",
+    }
+    assert by_name["realism.ks_p_value"]["value"] < 0.01
+    assert by_name["realism.check_failures"]["value"] == 1
 
 
 def test_a_temporal_entry_of_an_earlier_format_still_validates(tmp_path: Path) -> None:
