@@ -18,7 +18,8 @@ The table separates what works from what does not. The sections below give the d
 | Publish to a shared registry | Not supported. A registry is one local directory of one controller, and an operator uploads a module to it. | `controller/internal/registry/doc.go` |
 | Sign a module | Works with any Ed25519 library, and the procedure is below. The repository has no signing command. | `controller/internal/registry/signing/`, `docs/wiki/Controller.md` |
 | Have the controller send a module to the agents | Not supported. An operator copies the module tree into the modules directory of every agent. | `docs/wiki/Agent.md` |
-| Use the types `tunnel`, `strike`, `evasion`, and `fuzzer`, or the `raw` action | Not supported. The schema accepts the types, and the specification reserves them. | `docs/spec/specification.md`, `tools/contracts/validate.py` |
+| Use the types `tunnel`, `evasion`, and `fuzzer` | Not supported. The schema accepts the types, and the specification reserves them. | `docs/spec/specification.md`, `tools/contracts/validate.py` |
+| Write bytes without templating with the `raw` action | Works in a module of type `strike` or `fuzzer`, see [Module types](#module-types). Any other module type fails to load. | `engine/fps-flow/src/check.rs`, `engine/fps-flow/src/program.rs` |
 
 ## The contracts at a glance
 
@@ -170,9 +171,10 @@ The specification defines eight types (`docs/spec/specification.md`, Module type
 | `transport` | v1 (TLS) | The TLS profiles belong to the agent, see [Transport](Transport.md). A scenario names a profile in `tls_upgrade`. |
 | `host` | v1 | Host behavior belongs to the project, see [Hosts](Hosts.md). |
 | `content` | v1 | The first party `content` module renders bodies with a native crate. A module outside the repository has no way to add native functions. |
-| `tunnel`, `strike`, `evasion`, `fuzzer` | Reserved | Not supported. |
+| `tunnel`, `evasion` | Reserved | Not supported. |
+| `strike`, `fuzzer` | Reserved | Write scenarios that use the `raw` action. The engine runs no other behavior for these types. |
 
-The schema description names `tunnel`, `strike`, `evasion`, and `fuzzer` as reserved. The schema accepts them and no reader rejects them, so a manifest of such a type validates and installs, and no engine behavior exists for it. The one rule that depends on the type is the `raw` action, which the validator and the contract check of the engine admit only in `strike` and `fuzzer` modules (`tools/contracts/validate.py`, `RESERVED_ACTION_TYPES`, and `engine/fps-flow/src/check.rs`). The interpreter does not run it yet: a runnable program with `raw` fails to load as an unsupported action (`engine/fps-flow/src/program.rs`) until ENG-29. A strike scenario with `raw` therefore validates and installs, and the agent refuses to run it.
+The schema description names `tunnel`, `strike`, `evasion`, and `fuzzer` as reserved. The schema accepts them and no reader rejects them, so a manifest of such a type validates and installs. The one rule that depends on the type is the `raw` action, which the validator and the contract check of the engine admit only in `strike` and `fuzzer` modules (`tools/contracts/validate.py`, `RESERVED_ACTION_TYPES`, and `engine/fps-flow/src/check.rs`). A module of any other type that uses `raw`, in a loop or a branch arm as well, fails to load with the error `ReservedAction`, which names the action and the two types that may use it, for example `flow 'a': client: action 2: 'raw' is reserved for module types ["fuzzer", "strike"]`. In a `strike` or `fuzzer` module the engine runs the action: it decodes `hex` once at load time and writes the bytes on the session exactly as given (`engine/fps-flow/src/program.rs`, ENG-29). The bytes are not a template, so `{{` and `}}` in them stay as written, and the engine draws nothing from the session generator for them. On a TCP flow the bytes join the stream, and on a UDP flow they form one datagram of at most 65,507 bytes, as with `send`. The action writes on the session socket of the flow and nothing more. It does not send stateless packets such as a SYN flood, and it does not forge source addresses, so a scenario that needs either of them cannot be written yet.
 
 ### Licenses
 
@@ -225,7 +227,7 @@ An action is a mapping with exactly one key.
 | `spawn` | `flow` | The named flow must declare `spawned: true` |
 | `tls_upgrade` | `profile` (required), `role`, `server_name` | TCP only. Wraps the running session in TLS, and every later action runs over TLS. |
 | `close` | `fin`, `rst`, or `half` | `fin` shuts down the write side and drains until the peer closes. `rst` aborts. `half` shuts down the write side and goes on. |
-| `raw` | `hex` | Reserved for `strike` and `fuzzer` modules, so do not use it |
+| `raw` | `hex` | Only in `strike` and `fuzzer` modules. Writes the decoded bytes without templating. `hex` is an even number of hexadecimal digits with no spaces, and at least one byte. Any other module type fails to load with `ReservedAction`. |
 
 The sources are `contracts/schemas/scenario.schema.json` for the fields and `contracts/README.md` for the semantics. The validator adds the semantic rules that the schema cannot express (`check_scenario`). It reports a duplicate flow id, an unknown or cyclic `after`, a spawn of a flow that is not `spawned`, a branch whose probabilities do not sum to 1, a uniform delay with `min_ms` above `max_ms`, a side that does not start with its opener, and `tls_upgrade` or `transport` in a UDP flow.
 
