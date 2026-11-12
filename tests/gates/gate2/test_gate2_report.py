@@ -576,3 +576,90 @@ def test_port_collisions_need_the_findings_file(tmp_path: Path) -> None:
     write_mix_findings(out, [collision("tcp", 44322, 8082, "pcp")], ["pmproxy"])
     (out / "mix" / "parser-findings.json").unlink()
     assert run(out) == 1
+
+
+def step(factor: float, multipliers: dict[str, float] | None = None) -> dict[str, Any]:
+    """Build one CalibrationStep of the REST contract."""
+    doc: dict[str, Any] = {
+        "time": "2026-11-12T10:00:00Z",
+        "factor": factor,
+        "target": factor * 1.1,
+        "sessions_per_second": 42.5,
+        "entries": [
+            {"id": "http1/single_fetch", "bytes_per_session": 2048.0, "measured": True},
+            {"id": "dns/lookup_a", "bytes_per_session": 180.0, "measured": False},
+        ],
+    }
+    if multipliers is not None:
+        doc["multipliers"] = multipliers
+    return doc
+
+
+def report_text(out: Path) -> str:
+    assert run(out, "--stages", "mix", "--allow-waivers") == 0
+    return (out / "report.md").read_text()
+
+
+def test_the_report_shows_the_last_calibration_step(tmp_path: Path) -> None:
+    write_mix(tmp_path)
+    write(
+        tmp_path / "mix" / "run.json",
+        {
+            "state": "completed",
+            "calibration": [
+                step(0.5, {"http1/single_fetch": 1.0}),
+                step(1.25, {"http1/single_fetch": 1.5, "dns/lookup_a": 0.75}),
+            ],
+        },
+    )
+    text = report_text(tmp_path)
+    assert "### Calibration" in text
+    assert "2 steps" in text
+    assert "factor 1.25" in text
+    assert "| http1/single_fetch | 2048 | yes | 1.5 |" in text
+    assert "| dns/lookup_a | 180 | no | 0.75 |" in text
+    assert "factor 0.5," not in text
+    facts = json.loads((tmp_path / "summary.json").read_text())["facts"]["mix"]
+    assert facts["calibration"]["steps"] == 2
+    assert facts["calibration"]["last"]["factor"] == 1.25
+
+
+def test_a_run_without_calibration_says_so(tmp_path: Path) -> None:
+    write_mix(tmp_path)
+    write(tmp_path / "mix" / "run.json", {"state": "completed"})
+    text = report_text(tmp_path)
+    assert "The client run has no calibration" in text
+    facts = json.loads((tmp_path / "summary.json").read_text())["facts"]["mix"]
+    assert facts["calibration"] == {"source": "run.json", "steps": 0, "last": None}
+
+
+def test_a_step_without_multipliers_says_so(tmp_path: Path) -> None:
+    write_mix(tmp_path)
+    write(tmp_path / "mix" / "run.json", {"calibration": [step(1.1)]})
+    write(tmp_path / "mix" / "context.json", {"basis": "sessions"})
+    text = report_text(tmp_path)
+    assert "no byte mix multipliers" in text
+    assert "(this run: `sessions`)" in text
+    assert "| http1/single_fetch | 2048 | yes | none |" in text
+
+
+def test_the_calibration_falls_back_to_the_run_of_the_report(tmp_path: Path) -> None:
+    write_mix(tmp_path)
+    report = json.loads((tmp_path / "mix" / "run-report.json").read_text())
+    report["run"]["calibration"] = [step(0.9, {"dns/lookup_a": 1.0})]
+    write(tmp_path / "mix" / "run-report.json", report)
+    text = report_text(tmp_path)
+    assert "factor 0.9" in text
+    assert "`run-report.json`" in text
+
+
+def test_a_malformed_calibration_exits_with_2(tmp_path: Path) -> None:
+    write_mix(tmp_path)
+    write(tmp_path / "mix" / "run.json", {"calibration": "none"})
+    assert run(tmp_path, "--stages", "mix", "--allow-waivers") == 2
+
+
+def test_the_calibration_never_decides_the_verdict(tmp_path: Path) -> None:
+    write_mix(tmp_path)
+    assert run(tmp_path, "--stages", "mix", "--allow-waivers") == 0
+    assert "The client run has no calibration" in (tmp_path / "report.md").read_text()
