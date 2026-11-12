@@ -13,9 +13,8 @@ from typing import Any
 
 FAILURES_METRIC = "realism.check_failures"
 
-# The values of the catalog label ``check`` (catalog 0.6.0, ``messages`` added by CON-25). The
-# ``host_identity`` check of RLM-10 is not among them, so it carries no failures series until a
-# catalog change adds the value.
+# The values of the catalog label ``check`` (catalog 0.7.0, ``messages`` added by CON-25 and
+# ``host_identity`` by CON-27).
 CATALOG_CHECKS = (
     "conformance",
     "parser_errors",
@@ -26,6 +25,7 @@ CATALOG_CHECKS = (
     "mix_accuracy",
     "transport_behavior",
     "messages",
+    "host_identity",
 )
 
 

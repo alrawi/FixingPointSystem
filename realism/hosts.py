@@ -34,6 +34,7 @@ from typing import Any
 
 from realism.capture import LINKTYPE_ETHERNET, _network_layer, read_frames
 from realism.labels import Count, HostsLabels
+from realism.series import failures_series
 
 CHECK_NAME = "host_identity"
 MAX_FAILURES = 50
@@ -101,9 +102,8 @@ class HostsResult:
         """Return the check entry of the realism report."""
         return {
             "check": CHECK_NAME,
-            # The catalog label `check` has no value `host_identity` (catalog 0.6.0), so the check
-            # carries no realism.check_failures series until a catalog change adds one.
-            "metrics": [],
+            # CON-27 (catalog 0.7.0): the series is failures_total, 0 exactly when the check passed.
+            "metrics": [failures_series(CHECK_NAME, len(self.failures), self.passed)],
             "passed": self.passed,
             "expected_hosts": self.expected.to_dict() if self.expected is not None else None,
             "hosts": self.hosts,

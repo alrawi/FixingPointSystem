@@ -148,8 +148,8 @@ func TestMapRealismCON23Examples(t *testing.T) {
 	if err := yaml.Unmarshal(data, &f); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Examples) != 9 {
-		t.Fatalf("the examples hold %d check kinds, want 9", len(f.Examples))
+	if len(f.Examples) != 10 {
+		t.Fatalf("the examples hold %d check kinds, want 10", len(f.Examples))
 	}
 	names := map[string]bool{}
 	cases := 0
@@ -175,8 +175,8 @@ func TestMapRealismCON23Examples(t *testing.T) {
 			}
 		}
 	}
-	if cases != 19 {
-		t.Errorf("the examples hold %d cases, want 19", cases)
+	if cases != 21 {
+		t.Errorf("the examples hold %d cases, want 21", cases)
 	}
 	// Every row of the table of CON-23 that names a metric has an example.
 	for _, name := range []string{
