@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 167 work packages. Packages marked critical path gate the phase.
+This page lists 170 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -147,6 +147,7 @@ flowchart LR
   ENG_27["ENG-27<br/>Dropped counts of a capture"]
   ENG_28["ENG-28<br/>The runtime instance test flakes of batch 29"]
   ENG_29["ENG-29<br/>The raw action in the engine"]
+  ENG_30["ENG-30<br/>Count a scenario session once, with the bytes of its spawned flows"]
   RLM_15["RLM-15<br/>Packet inter arrival times inside a session"]
   RLM_16["RLM-16<br/>Deliver the realism report to the controller"]
   UI_09["UI-09<br/>Reservation holders in the agents view"]
@@ -157,6 +158,7 @@ flowchart LR
   RLM_19["RLM-19<br/>The port collision rule in the realism runner"]
   RLM_20["RLM-20<br/>Expected parser findings in the realism labels"]
   RLM_21["RLM-21<br/>STARTTLS ports in the decrypted view"]
+  RLM_22["RLM-22<br/>Request cadence and bytes for HLS in the realism labels"]
   CON_24["CON-24<br/>Capture drop counts in the agent protocol and the REST API"]
   AGT_21["AGT-21<br/>NTP, MQTT, LDAP, and HLS in the agent"]
   CON_25["CON-25<br/>The messages check in the metric catalog"]
@@ -165,6 +167,7 @@ flowchart LR
   CON_28["CON-28<br/>Packet gap and payload size series in the metric catalog"]
   CON_29["CON-29<br/>Run calibration in the REST API (superseded by CON-14)"]
   CON_30["CON-30<br/>Module manifest rules that match the registry and the agent"]
+  CON_31["CON-31<br/>A session is a scenario session, and its spawned flows add bytes"]
   CTL_42["CTL-42<br/>The CON-23 mapping table in the controller"]
   QA_10["QA-10<br/>Gate 1 without its own reuse rule"]
   QA_11["QA-11<br/>The parser findings of the Gate 2 mix stage"]
@@ -343,6 +346,7 @@ flowchart LR
   ENG_26 --> AGT_20
   MOD_14 --> AGT_20
   AGT_18 --> ENG_27
+  CON_31 --> ENG_30
   RLM_06 --> RLM_15
   MOD_14 --> RLM_15
   CON_22 --> RLM_16
@@ -520,6 +524,7 @@ flowchart LR
 | [ENG-27](#eng-27-dropped-counts-of-a-capture) | Dropped counts of a capture | S | AGT-18 |  |
 | [ENG-28](#eng-28-the-runtime-instance-test-flakes-of-batch-29) | The runtime instance test flakes of batch 29 | S | none |  |
 | [ENG-29](#eng-29-the-raw-action-in-the-engine) | The raw action in the engine | M | none |  |
+| [ENG-30](#eng-30-count-a-scenario-session-once-with-the-bytes-of-its-spawned-flows) | Count a scenario session once, with the bytes of its spawned flows | M | CON-31 |  |
 | [RLM-15](#rlm-15-packet-inter-arrival-times-inside-a-session) | Packet inter arrival times inside a session | S | RLM-06, MOD-14 |  |
 | [RLM-16](#rlm-16-deliver-the-realism-report-to-the-controller) | Deliver the realism report to the controller | S | CON-22 |  |
 | [UI-09](#ui-09-reservation-holders-in-the-agents-view) | Reservation holders in the agents view | S | CON-22, UI-06 |  |
@@ -530,6 +535,7 @@ flowchart LR
 | [RLM-19](#rlm-19-the-port-collision-rule-in-the-realism-runner) | The port collision rule in the realism runner | S | QA-11 |  |
 | [RLM-20](#rlm-20-expected-parser-findings-in-the-realism-labels) | Expected parser findings in the realism labels | S | none |  |
 | [RLM-21](#rlm-21-starttls-ports-in-the-decrypted-view) | STARTTLS ports in the decrypted view | S | RLM-18 |  |
+| [RLM-22](#rlm-22-request-cadence-and-bytes-for-hls-in-the-realism-labels) | Request cadence and bytes for HLS in the realism labels | S | none |  |
 | [CON-24](#con-24-capture-drop-counts-in-the-agent-protocol-and-the-rest-api) | Capture drop counts in the agent protocol and the REST API | S | ENG-27 |  |
 | [AGT-21](#agt-21-ntp-mqtt-ldap-and-hls-in-the-agent) | NTP, MQTT, LDAP, and HLS in the agent | S | MOD-15, MOD-16, MOD-17, MOD-18 |  |
 | [CON-25](#con-25-the-messages-check-in-the-metric-catalog) | The messages check in the metric catalog | S | CON-23, RLM-17 |  |
@@ -538,6 +544,7 @@ flowchart LR
 | [CON-28](#con-28-packet-gap-and-payload-size-series-in-the-metric-catalog) | Packet gap and payload size series in the metric catalog | S | RLM-15 |  |
 | [CON-29](#con-29-run-calibration-in-the-rest-api-superseded-by-con-14) | Run calibration in the REST API (superseded by CON-14) | S | none |  |
 | [CON-30](#con-30-module-manifest-rules-that-match-the-registry-and-the-agent) | Module manifest rules that match the registry and the agent | S | MOD-26 |  |
+| [CON-31](#con-31-a-session-is-a-scenario-session-and-its-spawned-flows-add-bytes) | A session is a scenario session, and its spawned flows add bytes | S | none |  |
 | [CTL-42](#ctl-42-the-con-23-mapping-table-in-the-controller) | The CON-23 mapping table in the controller | S | CON-23, CTL-41, RLM-17 |  |
 | [QA-10](#qa-10-gate-1-without-its-own-reuse-rule) | Gate 1 without its own reuse rule | S | QA-09, RLM-17 |  |
 | [QA-11](#qa-11-the-parser-findings-of-the-gate-2-mix-stage) | The parser findings of the Gate 2 mix stage | S | QA-05 |  |
@@ -936,6 +943,24 @@ Deliverables.
 Acceptance.
 
 - [ ] validate.py rejects a manifest for each rule the registry rejects it for, in tests, and the Module Development guide lists no gap that this package closes.
+
+### CON-31 A session is a scenario session, and its spawned flows add bytes
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** none
+- **Paths.** `contracts/`
+- **Owner action.** The owner approves the change of meaning of the sessions series before a worker starts.
+
+contracts/README.md says that each flow runs one session, and the sessions series of the metric catalog count per flow program, so the FTP data connection and the RTP media stream are sessions of their own. The run metrics, the calibration and the Gate 2 byte basis then see half the bytes of an ftp or sip_rtp scenario session (CTL-49 found the split in engine/fps-runtime). The change makes a session one run of the entry flow of a scenario instance, and the spawned flows add their bytes and their failure to it. Flows ordered with after but not spawned are an open question for the owner.
+
+Deliverables.
+
+- The new meaning in contracts/README.md and the descriptions of the sessions series, the rule for after flows, and contracts/changes/CON-31.md naming the consumers (engine counters, agent and capture tests, the guide's expected_bytes section, Engine.md).
+
+Acceptance.
+
+- [ ] validate.py passes, and the change entry lists every test that counts sessions of a multi flow scenario.
 
 ## OPS Repository and swarm tooling
 
@@ -1358,6 +1383,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A test session of a strike module sends the exact bytes of a raw action, and a raw action in an app module fails to load with a named error.
+
+### ENG-30 Count a scenario session once, with the bytes of its spawned flows
+
+Phase 2 · size M · workstream ENG
+
+- **Depends on.** CON-31
+- **Paths.** `engine/fps-runtime/`
+
+engine/fps-runtime/src/instance.rs records started, established, succeeded or failed, bytes and duration for every flow side of an instance, spawned flows included, into the one SessionMetrics of the scenario (worker.rs). CON-31 defines a session as the entry flow of an instance, so only it records the outcome, and spawned flows add only their bytes to it. CTL-49 resumes after this package.
+
+Deliverables.
+
+- The counters of instance.rs and worker.rs as CON-31 defines them, the tests that assert the old counts (tests/instances.rs, tests/datagrams.rs, and the agent and capture tests of multi flow scenarios), and Engine.md.
+
+Acceptance.
+
+- [ ] A run of ftp/retr_epsv and sip_rtp/call_pcmu reports one session per scenario session with the bytes of both flows, and cargo test --workspace passes.
 
 ## TRN Transport backends
 
@@ -3140,6 +3182,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A STARTTLS capture whose ClientHello is split after its first bytes lists every session, and the smtp and imap realism jobs pass.
+
+### RLM-22 Request cadence and bytes for HLS in the realism labels
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** none
+- **Paths.** `realism/`
+
+MOD-24 could not replace modules/hls/fixtures/hls_check.py with temporal.packets labels. A keepalive connection alternates playlist and segment requests, so a third to a half of its client gaps are under a millisecond, a playback has 8 to 16 gaps against the 30 a stream needs, and the labels read no bytes, while the script also checks the byte share and bit rate of MOD-15.
+
+Deliverables.
+
+- A packet gap target that selects the requests of one kind (by HTTP request path), a minimum sample count per target, and a byte property per rung, so a MOD follow up can move hls_check.py into labels.
+
+Acceptance.
+
+- [ ] The committed hls fixture passes with labels equal in strength to hls_check.py, and a capture with a wrong segment cadence or bit rate fails.
 
 ## CAP Capture compiler and profile extractor
 
