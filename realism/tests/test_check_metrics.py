@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""The metric series of every check of the realism report (CON-23, CON-25, and CON-27, report format 0.15.0).
+"""The metric series of every check of the realism report (CON-23, CON-25, CON-27; format 0.15.0).
 
 Every check kind of the metric catalog carries ``realism.check_failures``, and most carry a
 series of their own. Each case below builds a small capture or a committed fixture, runs one
@@ -648,11 +648,11 @@ def test_the_messages_check_requires_exactly_one_failures_series(tmp_path: Path)
 
 
 def _host_identity_entry(tmp_path: Path, conflict: bool, expected: Count) -> dict[str, Any]:
-    frames = hosts_tests._exchange(
-        ("10.0.0.1", hosts_tests.MAC_A), ("10.0.0.2", hosts_tests.MAC_B)
-    )
+    frames = hosts_tests._exchange(("10.0.0.1", hosts_tests.MAC_A), ("10.0.0.2", hosts_tests.MAC_B))
     if conflict:
-        frames.append(hosts_tests._frame(hosts_tests.MAC_C, hosts_tests._udp("10.0.0.1", "10.0.0.2")))
+        frames.append(
+            hosts_tests._frame(hosts_tests.MAC_C, hosts_tests._udp("10.0.0.1", "10.0.0.2"))
+        )
     entry = hosts.check(hosts_tests._capture(tmp_path, frames), expected=expected).to_dict()
     return entry
 
