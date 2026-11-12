@@ -4,7 +4,7 @@
 Real users arrive at random, think for a while, and fetch objects of very different
 sizes. A generator that opens sessions at a fixed pace, or whose object sizes cluster
 around one value, does not look like the population that it imitates. The check
-compares two properties of the capture with the target distributions of the labels,
+compares three properties of the capture with the target distributions of the labels,
 through the Kolmogorov Smirnov (KS) test of :mod:`realism.ks`.
 
 **Properties.**
@@ -18,6 +18,11 @@ through the Kolmogorov Smirnov (KS) test of :mod:`realism.ks`.
   HTTP message, a UDP datagram, or one whole direction of a TCP session), for one
   application or for all, and for the client direction, the server direction, or both.
   TLS sessions have no plaintext here and are skipped as in the content check.
+* ``packet_gap``: the gaps in seconds between consecutive packets with payload inside one
+  session, for one application or for all, and for the client direction, the server
+  direction, or both. Each direction of a session is one stream, and a gap never spans two
+  directions, so the two directions of an RTP call that run in lock step give two streams
+  with their own pacing. Packets without payload (a TCP acknowledgment) do not count.
 
 **Targets.** A parametric target is ``constant``, ``exponential``, ``uniform``,
 ``lognormal``, or ``pareto``, written with the parameter names of a scenario ``delay``
@@ -25,6 +30,19 @@ for arrivals (``mean_ms``, ``min_ms``, ``max_ms``, ``mu`` and ``sigma`` with a `
 ``alpha`` and ``scale_ms``) and in bytes for sizes. An ``empirical`` target is a list of
 values, a file of values, or a reference capture, and the check then runs the two sample
 test against that sample.
+
+**Paced media.** The constant of a ``packet_gap`` target is the packet time of paced
+media, such as the 20 ms of a G.711 stream, and it takes a list because calls of one
+application can differ (20 ms and 30 ms). A real sender wakes up a few milliseconds late,
+and a loaded host sends a burst after a stall, so the test is not the exact one of the other
+constants. It judges each stream with at least ``min_samples`` gaps on its own, against the
+listed packet time that is nearest to the median gap of the stream, and the stream passes
+when at least ``within`` of its gaps (default 0.9) lie within ``tolerance_ms`` of that time.
+The comparison fails when any judged stream fails, and the reason names the worst stream.
+A stream with fewer gaps is not judged alone, and the comparison reports
+``insufficient_data`` when no stream is long enough. The test bounds the late and the early
+packets, but not a slow drift that stays inside the tolerance, which the mean of the gaps
+shows (the report entry carries it in ``observed``).
 
 **Decision.** With significance level ``alpha`` (default 0.01) a comparison passes when
 the p value is at least ``alpha``, and fails with the statistic, the p value, and the
@@ -56,7 +74,7 @@ from pathlib import Path
 from typing import Any
 
 from realism import ks
-from realism.capture import Session, summarize
+from realism.capture import Session, SessionKey, decode, read_frames, summarize
 from realism.content import IGNORED_HEADERS, Unit, collect_units, read_flows
 from realism.labels import (
     Distribution,
@@ -71,11 +89,12 @@ from realism.series import failures_series
 CHECK_NAME = "temporal"
 PROP_ARRIVAL = "inter_arrival"
 PROP_SIZE = "payload_size"
+PROP_GAP = "packet_gap"
 STATUS_PASS = "pass"
 STATUS_FAIL = "fail"
 STATUS_INSUFFICIENT = "insufficient_data"
 # The catalog property label of a size target, by direction. Sizes of both directions
-# have no catalog property, so they carry no metric.
+# have no catalog property, so they carry no metric. Packet gaps have none either.
 _SIZE_METRIC_PROPERTY = {"client": "request_bytes", "server": "response_bytes"}
 _NUMBER_SPLIT = re.compile(r"[\s,;]+")
 
@@ -88,6 +107,7 @@ class _Source:
         self.sessions = sessions
         self.labels = labels
         self._units: list[Unit] | None = None
+        self._streams: list[_Stream] | None = None
         self.skipped_encrypted = 0
 
     def arrivals(self, application: str | None) -> list[float]:
@@ -117,11 +137,74 @@ class _Source:
             and direction in ("both", u.direction)
         ]
 
+    def streams(self, application: str | None, direction: str) -> list[_Stream]:
+        """Return the streams of one application, or of all, that a direction selects."""
+        if self._streams is None:
+            self._streams = _read_streams(self.capture, self.sessions)
+        return [
+            stream
+            for stream in self._streams
+            if direction in ("both", stream.side)
+            and (application is None or self.labels.application_of(stream.session) == application)
+        ]
+
     def samples(self, target: TemporalTarget) -> list[float]:
         """Return the observations of a target."""
         if target.prop == PROP_ARRIVAL:
             return self.arrivals(target.application)
+        if target.prop == PROP_GAP:
+            return [
+                gap
+                for stream in self.streams(target.application, target.direction)
+                for gap in stream.gaps
+            ]
         return self.sizes(target.application, target.direction)
+
+
+@dataclass
+class _Stream:
+    """The packets with payload that one side of a session sent, in time order."""
+
+    session: Session
+    side: str
+    times: list[float] = field(default_factory=list)
+
+    @property
+    def gaps(self) -> list[float]:
+        """The gaps in seconds between consecutive packets."""
+        return [later - earlier for earlier, later in pairwise(self.times)]
+
+    def name(self) -> str:
+        """Name the stream by its session, its sender, and its receiver."""
+        s = self.session
+        client = f"{s.client_ip}:{s.client_port}"
+        server = f"{s.server_ip}:{s.server_port}"
+        sender, receiver = (client, server) if self.side == "client" else (server, client)
+        return f"{s.transport} stream {sender} to {receiver} (session {s.id}, {self.side} side)"
+
+
+def _read_streams(capture: Path, sessions: Sequence[Session]) -> list[_Stream]:
+    """Read the send times of every side of every session, in the order of the sessions."""
+    by_key: dict[SessionKey, Session] = {s.key: s for s in sessions}
+    streams: dict[tuple[int, str], _Stream] = {}
+    _, frames = read_frames(capture)
+    for frame in frames:
+        packet = decode(frame)
+        if packet is None or packet.payload_len == 0:
+            continue
+        key = SessionKey.of(
+            packet.transport, packet.src_ip, packet.src_port, packet.dst_ip, packet.dst_port
+        )
+        session = by_key.get(key)
+        if session is None:
+            continue
+        from_client = (packet.src_ip, packet.src_port) == (session.client_ip, session.client_port)
+        side = "client" if from_client else "server"
+        stream = streams.setdefault((session.id, side), _Stream(session, side))
+        stream.times.append(packet.timestamp)
+    for stream in streams.values():
+        stream.times.sort()
+    return [streams[key] for key in sorted(streams)]
 
 
 def cdf_of(dist: Distribution) -> Callable[[float], float]:
@@ -148,7 +231,7 @@ def target_median(dist: Distribution) -> float | None:
     """Return the median of a parametric distribution, or None for an empirical one."""
     p = dist.params
     if dist.kind == "constant":
-        return p["value"]
+        return p.get("value")  # a paced target with several packet times has no median
     if dist.kind == "exponential":
         return p["mean"] * math.log(2.0)
     if dist.kind == "uniform":
@@ -194,12 +277,19 @@ def _name(target: TemporalTarget) -> str:
     who = "all sessions" if target.application is None else f"application {target.application}"
     if target.prop == PROP_ARRIVAL:
         return f"inter-arrival times of {who}"
+    if target.prop == PROP_GAP:
+        side = "" if target.direction == "both" else f" ({target.direction})"
+        return f"packet gaps{side} of {who}"
     side = "" if target.direction == "both" else f" ({target.direction})"
     return f"payload sizes{side} of {who}"
 
 
 def _unit_text(target: TemporalTarget, value: float) -> str:
-    return f"{value:.6g} s" if target.prop == PROP_ARRIVAL else f"{value:.6g} bytes"
+    return f"{value:.6g} bytes" if target.prop == PROP_SIZE else f"{value:.6g} s"
+
+
+def _ms(seconds: float) -> str:
+    return f"{seconds * 1000:.6g} ms"
 
 
 def _target_text(target: TemporalTarget) -> str:
@@ -230,17 +320,18 @@ class TemporalResult:
         """Return the KS statistic and p value of each comparison that the catalog names.
 
         The catalog labels a metric with an application and a property. Comparisons over
-        all sessions, and sizes of both directions, have no such label and stay out.
+        all sessions, sizes of both directions, and packet gaps have no such label and stay
+        out.
         """
         out: list[dict[str, Any]] = []
         for c in self.comparisons:
             if c["application"] is None or c["statistic"] is None:
                 continue
-            prop = (
-                "inter_arrival"
-                if c["property"] == PROP_ARRIVAL
-                else _SIZE_METRIC_PROPERTY.get(c["direction"])
-            )
+            prop: str | None = None
+            if c["property"] == PROP_ARRIVAL:
+                prop = "inter_arrival"
+            elif c["property"] == PROP_SIZE:
+                prop = _SIZE_METRIC_PROPERTY.get(c["direction"])
             if prop is None:
                 continue
             labels = {"application": c["application"], "property": prop}
@@ -320,11 +411,12 @@ def _compare(
     entry: dict[str, Any] = {
         "property": target.prop,
         "application": target.application,
-        "direction": target.direction if target.prop == PROP_SIZE else None,
-        "unit": "seconds" if target.prop == PROP_ARRIVAL else "bytes",
+        "direction": None if target.prop == PROP_ARRIVAL else target.direction,
+        "unit": "bytes" if target.prop == PROP_SIZE else "seconds",
         "target": {
             "dist": dist.kind,
             "parameters": dict(dist.params),
+            "values": [*dist.values] or None,
             "median": target_median(dist),
             "source": reference_source,
         },
@@ -338,6 +430,7 @@ def _compare(
         "status": STATUS_INSUFFICIENT,
         "reason": None,
         "observed": _describe(observed),
+        "streams": None,
     }
     short = None
     if len(observed) < minimum:
@@ -350,6 +443,8 @@ def _compare(
             "(temporal.min_samples), so the distribution is not judged"
         )
         return entry
+    if dist.values:
+        return _compare_paced(main, target, entry, minimum)
     if reference is not None:
         result = ks.ks_two_sample(observed, reference)
         entry["test"] = "ks_two_sample"
@@ -365,6 +460,54 @@ def _compare(
     entry["status"] = STATUS_PASS if passed else STATUS_FAIL
     if not passed:
         entry["reason"] = _failure_reason(target, entry, result)
+    return entry
+
+
+def _compare_paced(
+    main: _Source, target: TemporalTarget, entry: dict[str, Any], minimum: int
+) -> dict[str, Any]:
+    """Judge each stream with enough gaps against its packet time, and fill the entry."""
+    dist = target.distribution
+    name = _name(target)
+    streams = main.streams(target.application, target.direction)
+    judged: list[tuple[float, float, _Stream, list[float]]] = []
+    for stream in streams:
+        gaps = stream.gaps
+        if len(gaps) < minimum:
+            continue
+        median = statistics.median(gaps)
+        time = min(dist.values, key=lambda candidate: abs(candidate - median))
+        outside = sum(1 for g in gaps if abs(g - time) > dist.tolerance) / len(gaps)
+        judged.append((outside, time, stream, gaps))
+    if not judged:
+        entry["reason"] = (
+            f"{name}: insufficient data, no stream has the {minimum} gaps that are needed "
+            "(temporal.min_samples) to judge its pacing, so the pacing is not judged"
+        )
+        return entry
+    worst = max(judged, key=lambda item: item[0])
+    failed = [item for item in judged if item[0] > 1.0 - dist.within + 1e-9]
+    entry["test"] = "constant"
+    entry["method"] = "constant"
+    entry["statistic"] = round(worst[0], 6)
+    entry["p_value"] = 0.0 if failed else 1.0
+    entry["status"] = STATUS_FAIL if failed else STATUS_PASS
+    entry["streams"] = {
+        "judged": len(judged),
+        "failed": len(failed),
+        "too_short": len(streams) - len(judged),
+    }
+    if failed:
+        share, time, stream, gaps = worst
+        times = " or ".join(_ms(v) for v in dist.values)
+        entry["reason"] = (
+            f"{name}: {len(failed)} of {len(judged)} streams are not paced at {times}, because "
+            f"more than {1.0 - dist.within:.1%} of their gaps are further than "
+            f"{_ms(dist.tolerance)} from the packet time; the worst is the {stream.name()}, "
+            f"where {share:.1%} of {len(gaps)} gaps are further than {_ms(dist.tolerance)} "
+            f"from {_ms(time)} (gaps from {_ms(min(gaps))} to {_ms(max(gaps))}, median "
+            f"{_ms(statistics.median(gaps))})"
+        )
     return entry
 
 

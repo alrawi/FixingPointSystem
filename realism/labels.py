@@ -95,10 +95,11 @@ _SIZE_FIELDS = {"direction", "median", "cv", "tolerance"}
 DIRECTIONS = ("client", "server", "both")
 DEFAULT_MAX_DUPLICATE_RATIO = 0.01
 DEFAULT_SIZE_TOLERANCE = 0.25
-_TEMPORAL_FIELDS = {"alpha", "min_samples", "arrivals", "sizes"}
+_TEMPORAL_FIELDS = {"alpha", "min_samples", "arrivals", "sizes", "packets"}
 _TEMPORAL_TARGET_FIELDS = {"overall", "applications"}
 DEFAULT_KS_ALPHA = 0.01
 DEFAULT_KS_MIN_SAMPLES = 30
+DEFAULT_PACED_WITHIN = 0.9
 # Parameters of each parametric distribution, by quantity. Times use the names of a
 # scenario ``delay`` (milliseconds), sizes use bytes.
 _TIME_PARAMS: dict[str, tuple[str, ...]] = {
@@ -107,6 +108,12 @@ _TIME_PARAMS: dict[str, tuple[str, ...]] = {
     "uniform": ("min_ms", "max_ms"),
     "lognormal": ("mu", "sigma", "unit"),
     "pareto": ("alpha", "scale_ms"),
+}
+# A paced target (the constant of a packet gap) lists its packet times in ``ms`` and says
+# how late a packet may be and how many of them may be late.
+_GAP_PARAMS: dict[str, tuple[str, ...]] = {
+    **_TIME_PARAMS,
+    "constant": ("ms", "tolerance_ms", "within"),
 }
 _SIZE_PARAMS: dict[str, tuple[str, ...]] = {
     "constant": ("value", "tolerance"),
@@ -241,11 +248,19 @@ class Distribution:
     distribution has exactly one of ``sample`` (the values), ``sample_file`` (a path
     relative to the labels file), or ``reference`` (a capture). ``declared`` is the
     distribution as the labels file wrote it.
+
+    The constant of a packet gap target is paced: ``values`` lists its packet times in
+    seconds (one or more, because calls of one application can use different packet
+    times), and ``within`` is the share of the gaps of each stream that must lie within
+    ``tolerance`` of the packet time of that stream. ``values`` is empty for the other
+    targets, and ``within`` stays 1.
     """
 
     kind: str
     params: Mapping[str, float] = field(default_factory=dict)
     tolerance: float = 0.0
+    values: tuple[float, ...] = ()
+    within: float = 1.0
     sample: tuple[float, ...] | None = None
     sample_file: str | None = None
     reference: Reference | None = None
@@ -257,8 +272,10 @@ class TemporalTarget:
     """One distribution that the temporal check compares with the capture.
 
     ``prop`` is ``inter_arrival`` (the gaps between the first packets of consecutive
-    sessions) or ``payload_size``. ``application`` is None for all sessions of the capture.
-    ``direction`` selects the payloads of a size target, and it is ``both`` for arrivals.
+    sessions), ``payload_size``, or ``packet_gap`` (the gaps between the packets with
+    payload of one direction of a session). ``application`` is None for all sessions of the
+    capture. ``direction`` selects the payloads of a size target and the streams of a packet
+    gap target, and it is ``both`` for arrivals.
     """
 
     prop: str
@@ -768,6 +785,7 @@ def _temporal(value: Any, where: str) -> TemporalLabels:
     for section, prop, quantity in (
         ("arrivals", "inter_arrival", "time"),
         ("sizes", "payload_size", "size"),
+        ("packets", "packet_gap", "gap"),
     ):
         if section not in value:
             continue
@@ -802,14 +820,14 @@ def _temporal_entries(
     entry: Any, application: str | None, prop: str, quantity: str, where: str
 ) -> list[TemporalTarget]:
     """Read one target, or a list of targets for the two directions of an application."""
-    items = entry if isinstance(entry, list) and quantity == "size" else [entry]
+    items = entry if isinstance(entry, list) and quantity != "time" else [entry]
     if not items:
         raise LabelsError(f"{where}: must not be an empty list")
     out = []
     for index, item in enumerate(items):
         here = where if len(items) == 1 else f"{where}[{index}]"
         direction = "both"
-        if quantity == "size":
+        if quantity != "time":
             if not isinstance(item, dict):
                 raise LabelsError(f"{here}: must be a mapping")
             item = dict(item)
@@ -834,9 +852,9 @@ def _distribution(spec: Any, quantity: str, where: str) -> Distribution:
     """Validate a target distribution and convert its parameters to seconds or bytes."""
     if not isinstance(spec, dict):
         raise LabelsError(f"{where}: must be a mapping with dist")
-    table = _TIME_PARAMS if quantity == "time" else _SIZE_PARAMS
+    table = {"time": _TIME_PARAMS, "gap": _GAP_PARAMS, "size": _SIZE_PARAMS}[quantity]
     kind = spec.get("dist")
-    if kind is None and quantity == "time" and "ms" in spec:
+    if kind is None and quantity != "size" and "ms" in spec:
         kind = "constant"  # the constant delay of a scenario, written without dist
     if kind == "empirical":
         return _empirical(spec, where)
@@ -847,10 +865,12 @@ def _distribution(spec: Any, quantity: str, where: str) -> Distribution:
         raise LabelsError(
             f"{where}: {kind} takes only dist and {', '.join(table[kind])}, not {sorted(unknown)}"
         )
-    scale = 0.001 if quantity == "time" else 1.0  # milliseconds to seconds
-    suffix = "_ms" if quantity == "time" else ""
+    scale = 1.0 if quantity == "size" else 0.001  # milliseconds to seconds
+    suffix = "" if quantity == "size" else "_ms"
     params: dict[str, float] = {}
     tolerance = 0.0
+    if kind == "constant" and quantity == "gap":
+        return _paced(spec, where)
     if kind == "constant":
         params["value"] = (
             _param(spec, "ms" if quantity == "time" else "value", where, False) * scale
@@ -879,6 +899,35 @@ def _distribution(spec: Any, quantity: str, where: str) -> Distribution:
         params["alpha"] = _param(spec, "alpha", where, True)
         params["scale"] = _param(spec, "scale" + suffix, where, True) * scale
     return Distribution(kind, params, tolerance, declared=dict(spec) | {"dist": kind})
+
+
+def _paced(spec: Mapping[str, Any], where: str) -> Distribution:
+    """Validate the constant of a packet gap target: packet times, tolerance, and share."""
+    raw = spec.get("ms")
+    times: list[Any] = raw if isinstance(raw, list) else [raw]
+    if not times or not all(_finite(t) and t > 0 for t in times):
+        raise LabelsError(f"{where}.ms: must be a packet time above 0, or a list of them")
+    if "tolerance_ms" not in spec:
+        raise LabelsError(
+            f"{where}.tolerance_ms: a paced target needs the lateness that still counts as on "
+            "time, because a real sender wakes up a few milliseconds late"
+        )
+    tolerance = _param(spec, "tolerance_ms", where, False) * 0.001
+    within = spec.get("within", DEFAULT_PACED_WITHIN)
+    if not _finite(within) or not 0 < within <= 1:
+        raise LabelsError(f"{where}.within: must be a number above 0 and up to 1")
+    values = tuple(sorted({float(t) * 0.001 for t in times}))
+    params = {"tolerance": tolerance, "within": float(within)}
+    if len(values) == 1:
+        params = {"value": values[0], **params}
+    return Distribution(
+        "constant",
+        params,
+        tolerance,
+        values=values,
+        within=float(within),
+        declared=dict(spec) | {"dist": "constant"},
+    )
 
 
 def _empirical(spec: Mapping[str, Any], where: str) -> Distribution:
