@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Workflow of the strike module under modules/strike/. The first slice carries
+# the manifest and scenarios, so the gate is contract validation. The fixture
+# score of the committed capture and the QA-01 harness recording job arrive
+# with the native fixture peer, following mod-dns.yml.
+name: mod-strike
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - modules/strike/**
+      - contracts/schemas/**
+      - tools/contracts/**
+      - mk/mod-strike.mk
+      - .github/workflows/mod-strike.yml
+  pull_request:
+    paths:
+      - modules/strike/**
+      - contracts/schemas/**
+      - tools/contracts/**
+      - mk/mod-strike.mk
+      - .github/workflows/mod-strike.yml
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+
+jobs:
+  module:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r tools/contracts/requirements.txt
+      - run: make lint-mod-strike PYTHON=python

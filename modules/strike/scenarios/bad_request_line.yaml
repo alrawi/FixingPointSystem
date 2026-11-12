@@ -1,0 +1,22 @@
+scenario: bad_request_line
+description: >-
+  A malformed request line. The client sends a request whose method is not a
+  token the parser can accept, followed by ordinary headers, so a lenient
+  server answers 400 and a strict one refuses the connection before any
+  application state exists.
+vars:
+  host: www.probe.example.test
+  server_port: 8080
+flows:
+  - id: probe
+    module: strike
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "GETT /probe HTTP/1.1\r\nHost: {{ vars.host }}\r\n\r\n"
+      - expect: { pattern: "HTTP/1.1 400", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+      - close: fin
