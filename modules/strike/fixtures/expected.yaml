@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Expected labels of strike.pcapng, which capture.sh records in the QA-01
+# harness. The slowloris phase runs on port 8080 and the churn phase moves
+# conn_churn to ports 8081 and 8082, so the structure check gives every
+# scenario a session pool of its own. nDPI must classify at least 99% of the
+# scored sessions, the slowloris trickle and the churn keepers, as HTTP from
+# payload. The churn children on 8082 carry no bytes and reset, so they are
+# left unassigned. tolerance_s covers the churn children that start while
+# the keeper close is already in flight. realism/schema/labels.schema.json
+# defines the format.
+labels: fps-realism-labels
+version: 1
+threshold: 0.99
+sessions:
+  - application: strike
+    match: {transport: tcp, server_port: 8080}
+  - application: strike
+    match: {transport: tcp, server_port: 8081}
+applications:
+  strike: {ndpi: [HTTP]}
+structure:
+  tolerance_s: 0.5
+  scenarios:
+    - file: ../scenarios/slowloris.yaml
+      match: {transport: tcp, server_port: 8080}
+      expected_instances: 20
+    - file: ../scenarios/conn_churn.yaml
+      vars: {server_port: 8081, churn_port: 8082}
+      match: {transport: tcp}
+      expected_instances: 20

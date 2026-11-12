@@ -8,6 +8,8 @@ engine_api: ">=0.2, <0.3"
 license: GPL-3.0-only
 provides:
   - { protocol: http, transport: tcp, port: 8080 }
+fixtures:
+  - { capture: fixtures/strike.pcapng, expect: { ndpi: [HTTP] } }
 provenance:
   source: synthetic
   notes: >-

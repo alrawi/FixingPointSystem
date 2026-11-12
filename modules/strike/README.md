@@ -1,4 +1,3 @@
-
 # strike
 
 Application-layer attack traffic for validating the defensive posture of a
@@ -22,15 +21,37 @@ is replayable against a device under test placed between the namespaces.
 
 ## Layout
 
-- `manifest.yaml` — module manifest, validated by `tools/contracts/validate.py`.
-- `scenarios/` — scenario YAML flows.
-- Fixtures, a fixture peer, and a QA harness job land in a follow-up once the
-  scenario set settles, following `modules/dns` and `modules/http1`.
+The module follows the layout of the Modules section of the
+[Coding Standards](../../docs/wiki/Coding-Standards.md#modules).
+
+| Path | Contents |
+|---|---|
+| `manifest.yaml` | Identity, provides, scenarios, fixtures, and provenance |
+| `scenarios/*.yaml` | The four flow programs listed above |
+| `native/` | The crate `fps-module-strike`; the scenarios are pure contract programs, so the crate holds no native template functions |
+| `native/examples/fixture_peer.rs` | Runs one side of the selected scenarios as scenario instances over kernel sockets for the fixture capture |
+| `fixtures/` | The capture `strike.pcapng`, its labels `expected.yaml`, its realism report, and `capture.sh`, which records it |
+
+## Fixture
+
+`fixtures/capture.sh` records `strike.pcapng` inside the QA-01 namespace
+harness (`tests/harness/netns.sh`): the server side of the fixture peer runs
+in the server namespace, the client side in the client namespace, and the
+router's client leg records between them. The capture has two phases. The
+slowloris phase runs `slowloris` on its default port 8080. The churn phase
+runs `conn_churn` with `--var server_port=8081 --var churn_port=8082`, so the
+structure check of the realism runner scores each scenario against a session
+pool of its own, and a listen port is any variable whose name ends in
+`_port`. `fixtures/expected.yaml` holds the labels, and the script ends with
+the realism score, which must pass.
+
+The malformed scenarios `bad_request_line` and `te_cl_conflict` are not in
+the scored fixture yet: their origin replies are protocol errors, and their
+expected-findings package lands with the RLM work.
 
 ## Roadmap
 
-1. Recorded fixture and realism scoring once the scenario set is stable.
-2. A native fixture peer crate so `fixtures/capture.sh` can record in the
-   QA-01 namespace harness, following `modules/dns`.
-3. Raw-packet strikes (stateless SYN floods, spoofed pools) when the engine
+1. The malformed scenarios in the scored fixture once the RLM
+   expected-findings package defines how origin errors are labelled.
+2. Raw-packet strikes (stateless SYN floods, spoofed pools) when the engine
    accepts the `raw` action, per the reserved-action rule in the contract.
