@@ -3303,6 +3303,59 @@ work_packages:
       - A reader who follows the guide from an empty directory gets a module that passes validate.py, and the template passes validate.py in CI.
       - Every claim of the guide names the file or contract it rests on, and the guide links Modules.md, Contracts.md and SDK.md.
 
+  - id: MOD-27
+    title: The strike module, application layer first slice
+    phase: 2
+    workstream: MOD
+    size: S
+    depends_on: []
+    paths: [modules/strike/]
+    owner_action: The owner implements this package by hand (issue #491). Workers do not claim it, and the coordinator does not dispatch it.
+    summary: >-
+      The first slice of modules/strike/ (issue #491, PR #492). It opens the strike module type with four application
+      layer scenarios that need no raw action, slowloris, conn_churn, bad_request_line and te_cl_conflict, each an
+      attacker flow paired with a hardened origin flow.
+    deliverables:
+      - The manifest and the four scenarios, mk/mod-strike.mk and .github/workflows/mod-strike.yml, a row in docs/wiki/Modules.md, and the strike type and the attack scenario pattern in docs/wiki/Module-Development.md.
+    acceptance:
+      - make lint-mod-strike passes in CI, and the module is listed in Modules.md.
+
+  - id: MOD-28
+    title: Fixtures for the strike module
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: [MOD-27, RLM-20]
+    paths: [modules/strike/]
+    owner_action: The owner implements this package by hand (issue #491). Workers do not claim it, and the coordinator does not dispatch it.
+    summary: >-
+      Follow ups 1 and 2 of issue #491. A native fixture peer and fixtures/capture.sh record the strike scenarios in the
+      QA-01 namespace harness, following modules/dns. The labels give conformance rules only to the HTTP port, the
+      churn connections are judged by the session structure check through their spawn edges, and the deliberately
+      malformed scenarios list their expected parser findings (RLM-20).
+    deliverables:
+      - A fixture peer crate, fixtures/capture.sh, a committed capture with fixtures/expected.yaml, the fixture score and the harness job in mod-strike.yml, and expected_bytes for every scenario.
+    acceptance:
+      - The committed capture passes the realism checks with the expected findings declared, and the harness job records and scores a fresh capture.
+
+  - id: MOD-29
+    title: Raw strikes in the strike module
+    phase: 2
+    workstream: MOD
+    size: L
+    depends_on: [MOD-28, ENG-29]
+    paths: [modules/strike/]
+    owner_action: The owner implements this package by hand (issue #491). Workers do not claim it, and the coordinator does not dispatch it.
+    summary: >-
+      Follow up 3 of issue #491. Strike scenarios that write bytes the templates cannot express, through the raw action
+      once the engine executes it (ENG-29). Stateless SYN floods and large spoofed source pools need packet level sending
+      that the raw action over a session socket does not give, so they need an engine design of their own before a
+      package can take them on.
+    deliverables:
+      - Strike scenarios that use the raw action, with fixtures, and a written account of what floods and spoofed pools would need from the engine.
+    acceptance:
+      - The raw scenarios validate, run through the agent, and their fixture scores with the expected findings declared.
+
   - id: TRN-16
     title: Per profile captures scored with the transport check
     phase: 2
@@ -3494,6 +3547,22 @@ work_packages:
     acceptance:
       - 200 consecutive passes of both tests on the hosted runner, and cargo test -p fps-runtime passes.
 
+  - id: ENG-29
+    title: The raw action in the engine
+    phase: 2
+    workstream: ENG
+    size: M
+    depends_on: []
+    paths: [engine/fps-flow/, engine/fps-runtime/]
+    summary: >-
+      Scenario contract v0.6 defines the action raw (hex bytes written without templating) and reserves it for strike and
+      fuzzer modules, and the validator enforces the reservation, but the engine does not execute it. The strike module
+      needs it for its raw scenarios (issue #491, MOD-29).
+    deliverables:
+      - The interpreter writes the bytes of a raw action on the session, the engine refuses raw in a module whose type is not strike or fuzzer, and the text for docs/wiki/Module-Development.md in the Shared page notes.
+    acceptance:
+      - A test session of a strike module sends the exact bytes of a raw action, and a raw action in an app module fails to load with a named error.
+
   - id: RLM-15
     title: Packet inter arrival times inside a session
     phase: 2
@@ -3623,6 +3692,22 @@ work_packages:
       - The parser error check of the runner applies the port collision rule of QA-11, reports each skipped finding, and the Gate 2 suite uses the runner's rule instead of its own.
     acceptance:
       - A capture whose client port collides with a dissector passes with the finding reported as not counted, and a real malformed packet still fails.
+
+  - id: RLM-20
+    title: Expected parser findings in the realism labels
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: []
+    paths: [realism/]
+    summary: >-
+      The parser error check passes only when tshark and Zeek report no error, and it counts findings of unlabelled
+      sessions too, so a module whose traffic is malformed on purpose (strike, a future fuzzer) cannot pass. The labels
+      have no way to say that a finding is expected (issue #491).
+    deliverables:
+      - A labels section that names, per rule, the tshark expert items and Zeek weirds a session is expected to produce, the check reporting expected findings apart from the rest, and the text for docs/wiki/Module-Development.md in the Shared page notes.
+    acceptance:
+      - A capture whose malformed sessions produce exactly the declared findings passes, a missing or an undeclared finding fails, and the report lists both kinds.
 
   - id: CON-24
     title: Capture drop counts in the agent protocol and the REST API
