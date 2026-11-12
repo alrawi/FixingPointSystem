@@ -367,6 +367,16 @@
             "type": "string",
             "minLength": 1
           },
+          "expect_findings": {
+            "description": "Parser findings that the sessions of this rule are expected to produce, because their traffic is malformed on purpose. The parser error check does not count a finding that a rule of its session declares, fails when a declared item shows in no session of the rule, and fails for every finding that no rule declares. A zeek item is the name of a weird, such as bad_HTTP_request. A tshark item is the protocol of the frame with the expert item, such as http, optionally followed by a colon, a space, and a part of the expert message, such as http: Illegal characters. The rule that matches a session first applies.",
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "zeek": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9_]+$"}},
+              "tshark": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+(: \\S.*)?$"}}
+            }
+          },
           "match": {
             "type": "object",
             "additionalProperties": false,

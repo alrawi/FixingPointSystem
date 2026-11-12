@@ -54,6 +54,12 @@ _TOP_LEVEL = {
     "messages",
     "hosts",
 }
+# The parsers whose findings a rule may expect. A Zeek item is the name of a weird. A tshark
+# item is the protocol of the frame that carries the expert item (the last name of
+# frame.protocols), optionally followed by a colon, a space, and a part of its message.
+EXPECT_PARSERS = ("tshark", "zeek")
+_ZEEK_WEIRD = re.compile(r"[A-Za-z0-9_]+")
+_TSHARK_ITEM = re.compile(r"[A-Za-z0-9_.-]+(: \S.*)?")
 _HOSTS_FIELDS = {"count", "gateway_macs"}
 _MAC = re.compile(r"[0-9a-f]{2}([:-][0-9a-f]{2}){5}", re.IGNORECASE)
 MESSAGE_PROTOCOLS = ("http1", "http2", "smtp", "imap")
@@ -139,6 +145,7 @@ class Rule:
     application: str
     match: Mapping[str, str | int]
     tls_profile: str | None = None
+    expect_findings: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def matches(self, session: Session) -> bool:
         """Return True when every field of the rule equals the session field."""
@@ -434,6 +441,13 @@ class Labels:
         for rule in self.rules:
             if rule.matches(session):
                 return rule.tls_profile
+        return None
+
+    def rule_index_of(self, session: Session) -> int | None:
+        """Return the index of the first rule that matches a session, or None."""
+        for index, rule in enumerate(self.rules):
+            if rule.matches(session):
+                return index
         return None
 
     def application_of(self, session: Session) -> str | None:
@@ -1012,9 +1026,51 @@ def _is_name(value: Any) -> bool:
     return isinstance(value, str) and bool(value)
 
 
+def _expect_findings(value: Any, where: str) -> dict[str, tuple[str, ...]]:
+    """Validate the expected parser findings of a rule: a list of items per parser."""
+    if not isinstance(value, dict):
+        raise LabelsError(f"{where}: expect_findings must map a parser to a list of items")
+    out: dict[str, tuple[str, ...]] = {}
+    for parser, items in value.items():
+        if parser not in EXPECT_PARSERS:
+            raise LabelsError(
+                f"{where}: expect_findings names the parser {parser!r}, "
+                f"which must be one of {list(EXPECT_PARSERS)}"
+            )
+        names = _list(items, f"{where} expect_findings.{parser}")
+        seen: list[str] = []
+        for item in names:
+            if not _is_name(item) or item != item.strip():
+                raise LabelsError(f"{where}: expect_findings.{parser} items must be non empty text")
+            if parser == "zeek" and not _ZEEK_WEIRD.fullmatch(item):
+                raise LabelsError(
+                    f"{where}: expect_findings.zeek item {item!r} is no weird name, "
+                    "which has letters, digits, and underscores"
+                )
+            if parser == "tshark" and not _TSHARK_ITEM.fullmatch(item):
+                raise LabelsError(
+                    f"{where}: expect_findings.tshark item {item!r} must be a protocol name, "
+                    "or a protocol name, a colon, a space, and a part of the message"
+                )
+            if item in seen:
+                raise LabelsError(f"{where}: expect_findings.{parser} lists {item!r} twice")
+            seen.append(item)
+        if not seen:
+            raise LabelsError(f"{where}: expect_findings.{parser} must list an item")
+        out[parser] = tuple(seen)
+    return out
+
+
 def _rule(item: Any, where: str) -> Rule:
-    if not isinstance(item, dict) or set(item) - {"application", "match", "tls_profile"}:
-        raise LabelsError(f"{where}: a rule has only application, match, and tls_profile")
+    if not isinstance(item, dict) or set(item) - {
+        "application",
+        "match",
+        "tls_profile",
+        "expect_findings",
+    }:
+        raise LabelsError(
+            f"{where}: a rule has only application, match, tls_profile, and expect_findings"
+        )
     tls_profile = item.get("tls_profile")
     if tls_profile is not None and (not isinstance(tls_profile, str) or not tls_profile):
         raise LabelsError(f"{where}: tls_profile must be a profile name")
@@ -1025,6 +1081,9 @@ def _rule(item: Any, where: str) -> Rule:
         application=application,
         match=_match_fields(item.get("match", {}), where),
         tls_profile=tls_profile,
+        expect_findings=_expect_findings(item["expect_findings"], where)
+        if "expect_findings" in item
+        else {},
     )
 
 

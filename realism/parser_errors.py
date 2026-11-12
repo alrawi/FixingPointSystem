@@ -19,6 +19,16 @@ not count. The entry lists it under ``not_counted`` with the dissector, so that 
 disappears. The rule needs the port table of the parser (``port_bindings``), which only the
 tshark runner has, and it needs the session of the finding, so a finding without a session
 always counts.
+
+The expected findings rule (RLM-20) is the other way round. A module whose traffic is malformed
+on purpose declares, per session rule of the labels, the Zeek weirds and the tshark expert items
+that the sessions of the rule must produce (``expect_findings``). A finding that a rule of its
+session declares is an expected finding: it does not count, and the entry lists it under
+``expected_findings``. A declared item that no session of its rule produced is missing, and a
+missing item fails the check, as does every finding that no rule declares. Expected findings
+come before the port collision rule, so a malformed session whose client port collides still
+shows its declared items. A declared item of a parser that did not run cannot be checked, and the
+entry lists it under ``unchecked_expectations``.
 """
 
 from __future__ import annotations
@@ -39,6 +49,7 @@ METRIC = "realism.parser_errors"
 ALL_APPLICATIONS = "all"
 MAX_ERRORS = 100
 RULE_PORT_COLLISION = "port_collision"
+ZEEK_NAMES_SEPARATOR = ","
 
 
 @dataclass
@@ -79,6 +90,10 @@ class ParserErrorsResult:
     not_counted: list[dict[str, Any]] = field(default_factory=list)
     not_counted_total: int = 0
     port_collision_ports: int = 0
+    expected: list[dict[str, Any]] = field(default_factory=list)
+    expected_total: int = 0
+    missing_findings: list[dict[str, Any]] = field(default_factory=list)
+    unchecked: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def parser_names(self) -> list[str]:
@@ -87,13 +102,13 @@ class ParserErrorsResult:
 
     @property
     def passed(self) -> bool:
-        """True when at least one parser ran and no parser reported an error."""
-        return bool(self.parsers) and self.errors_total == 0
+        """True when a parser ran, none reported an error, and no expected finding is missing."""
+        return bool(self.parsers) and self.errors_total == 0 and not self.missing_findings
 
     @property
     def failures_total(self) -> int:
-        """The findings of every parser, and 1 more when no parser ran."""
-        return self.errors_total + (0 if self.parsers else 1)
+        """The findings that count, the missing expected findings, and 1 when no parser ran."""
+        return self.errors_total + len(self.missing_findings) + (0 if self.parsers else 1)
 
     def metrics(self) -> list[dict[str, Any]]:
         """Return ``realism.parser_errors`` per application and parser, and the failures series.
@@ -136,6 +151,10 @@ class ParserErrorsResult:
             "not_counted": self.not_counted,
             "not_counted_total": self.not_counted_total,
             "port_collision_ports": self.port_collision_ports,
+            "expected_findings": self.expected,
+            "expected_total": self.expected_total,
+            "missing_findings": self.missing_findings,
+            "unchecked_expectations": self.unchecked,
         }
 
 
@@ -149,6 +168,26 @@ def port_collision(session: Session, bindings: Mapping[tuple[str, int], str]) ->
     if bound is None or bindings.get((session.transport, session.server_port)) == bound:
         return None
     return bound
+
+
+def _matched_items(finding: Finding, declared: Sequence[str]) -> tuple[list[str], bool]:
+    """Return the declared items that a finding shows, and whether they explain all of it.
+
+    A Zeek finding names every weird of one connection at one packet time, and the declared items
+    explain it only when each of those weirds is declared. A tshark finding is one frame, and an
+    item matches when the protocol of the frame is the protocol of the item and the message of
+    the frame contains the part of the message that the item names, if it names one.
+    """
+    if finding.parser == "zeek":
+        names = finding.name.split(ZEEK_NAMES_SEPARATOR)
+        matched = [item for item in declared if item in names]
+        return matched, len(matched) == len(set(names))
+    matched = []
+    for item in declared:
+        protocol, _, part = item.partition(": ")
+        if finding.name == protocol and part in finding.message:
+            matched.append(item)
+    return matched, bool(matched)
 
 
 def _endpoint(ip: str | None, port: int | None) -> dict[str, Any] | None:
@@ -182,6 +221,9 @@ def check(
     not_counted: list[dict[str, Any]] = []
     not_counted_total = 0
     bound_ports = 0
+    expected: list[dict[str, Any]] = []
+    expected_total = 0
+    seen: Counter[tuple[int, str, str]] = Counter()
     ran: list[dict[str, str]] = []
     for parser in parsers:
         ran.append({"parser": parser.name, "version": parser.version()})
@@ -190,6 +232,24 @@ def check(
         for finding in parser.findings(capture):
             key = finding.key
             owner = by_key.get(key) if key is not None else None
+            rule_index = labels.rule_index_of(owner) if owner is not None else None
+            declared = (
+                labels.rules[rule_index].expect_findings.get(parser.name, ())
+                if rule_index is not None
+                else ()
+            )
+            if rule_index is not None and declared:
+                matched, covered = _matched_items(finding, declared)
+                for item in matched:
+                    seen[(rule_index, parser.name, item)] += 1
+                if covered and owner is not None:
+                    expected_total += 1
+                    if len(expected) < MAX_ERRORS:
+                        entry = _error_entry(
+                            parser.name, finding, owner, labels.application_of(owner)
+                        )
+                        expected.append(entry | {"session_rule": rule_index})
+                    continue
             dissector = port_collision(owner, bindings) if owner is not None else None
             if owner is not None and dissector is not None:
                 not_counted_total += 1
@@ -211,6 +271,22 @@ def check(
                     app.malformed[parser.name] += 1
             if len(errors) < MAX_ERRORS:
                 errors.append(_error_entry(parser.name, finding, owner, application))
+    ran_names = {p["parser"] for p in ran}
+    missing_items: list[dict[str, Any]] = []
+    unchecked: list[dict[str, Any]] = []
+    for rule_index, rule in enumerate(labels.rules):
+        for name, items in rule.expect_findings.items():
+            for item in items:
+                entry = {
+                    "session_rule": rule_index,
+                    "application": rule.application,
+                    "parser": name,
+                    "item": item,
+                }
+                if name not in ran_names:
+                    unchecked.append(entry)
+                elif not seen[(rule_index, name, item)]:
+                    missing_items.append(entry)
     return ParserErrorsResult(
         parsers=ran,
         missing=list(missing),
@@ -225,6 +301,10 @@ def check(
         not_counted=not_counted,
         not_counted_total=not_counted_total,
         port_collision_ports=bound_ports,
+        expected=expected,
+        expected_total=expected_total,
+        missing_findings=missing_items,
+        unchecked=unchecked,
     )
 
 
