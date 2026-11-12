@@ -3,7 +3,8 @@
 
 ``python3 -m realism score --pcap FILE --labels FILE`` writes a JSON realism
 report and exits with 0 when every check passes, 1 when a check fails, and 2 on a
-usage, input, classifier, or parser error.
+usage, input, classifier, or parser error. With ``--attach-run ID`` it also delivers the
+report to the controller of that run, and exits with 2 when the controller does not accept it.
 
 ``python3 -m realism decrypted --pcap FILE --labels FILE`` decrypts the TLS sessions of a
 capture with tshark, writes their plaintext as a capture of plain TCP sessions, and scores
@@ -18,11 +19,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 
-from realism import decrypted
+from realism import decrypted, deliver
 from realism.capture import CaptureError
 from realism.classifier import DEFAULT_TIMEOUT_S, ClassifierError, NdpiClassifier
 from realism.encryption import TsharkTlsProbe
@@ -115,13 +117,35 @@ def _parser_list(text: str) -> tuple[str, ...] | None:
     return names
 
 
+def _delivery_target(args: argparse.Namespace) -> deliver.Target:
+    """Read the settings and the token of ``--attach-run`` before the capture is scored."""
+    env = os.environ
+    ca_file = args.ca_file if args.ca_file is not None else _path(env.get("FPS_CA_FILE"))
+    if ca_file is not None and not ca_file.is_file():
+        raise deliver.DeliveryError(f"CA file {ca_file} is not a file")
+    insecure = args.insecure_http
+    if insecure is None:
+        insecure = env.get("FPS_INSECURE_HTTP", "").lower() in ("1", "true", "yes")
+    base = args.url or env.get("FPS_URL") or deliver.DEFAULT_URL
+    url = deliver.endpoint(base, args.attach_run, insecure_http=insecure)
+    token, warning = deliver.read_token(args.token_file, env)
+    if warning is not None:
+        print(f"realism score: warning: {warning}", file=sys.stderr)
+    return deliver.Target(url=url, token=token, ca_file=ca_file)
+
+
+def _path(text: str | None) -> Path | None:
+    return Path(text) if text else None
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python3 -m realism", description="Realism checks for FixingPointSystem captures."
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    # No abbreviations: "--token SECRET" must not mean "--token-file SECRET".
     score_cmd = commands.add_parser(
-        "score", help="score a capture against expected application labels"
+        "score", help="score a capture against expected application labels", allow_abbrev=False
     )
     score_cmd.add_argument("--pcap", type=Path, required=True, help="pcap or pcapng capture")
     score_cmd.add_argument("--labels", type=Path, required=True, help="labels file in JSON or YAML")
@@ -250,6 +274,35 @@ def _parser() -> argparse.ArgumentParser:
     )
     score_cmd.add_argument("--tshark", help="path of tshark, defaults to FPS_TSHARK or the path")
     score_cmd.add_argument("--zeek", help="path of zeek, defaults to FPS_ZEEK or the path")
+    score_cmd.add_argument(
+        "--attach-run",
+        metavar="ID",
+        help="deliver the report to the controller with PUT /v1/runs/ID/realism after scoring; "
+        "the run must have ended; the run token comes from --token-file, FPS_TOKEN_FILE, or "
+        "FPS_TOKEN, and never from the command line",
+    )
+    score_cmd.add_argument(
+        "--url",
+        help=f"controller base URL for --attach-run, default FPS_URL or {deliver.DEFAULT_URL}",
+    )
+    score_cmd.add_argument(
+        "--token-file",
+        type=Path,
+        help="file that holds the run token for --attach-run, default FPS_TOKEN_FILE",
+    )
+    score_cmd.add_argument(
+        "--ca-file",
+        type=Path,
+        help="CA certificate file that verifies the controller for --attach-run, "
+        "default FPS_CA_FILE",
+    )
+    score_cmd.add_argument(
+        "--insecure-http",
+        action="store_true",
+        default=None,
+        help="allow the token over plain http to a host that is not loopback, default "
+        "FPS_INSECURE_HTTP=1",
+    )
     dec_cmd = commands.add_parser(
         "decrypted",
         help="decrypt the TLS sessions of a capture and score the decrypted view",
@@ -408,6 +461,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.keylog is not None and not args.keylog.is_file():
         print(f"realism score failed: key log {args.keylog} is not a file", file=sys.stderr)
         return EXIT_ERROR
+    target: deliver.Target | None = None
+    if args.attach_run is not None:
+        try:
+            target = _delivery_target(args)
+        except deliver.DeliveryError as exc:
+            print(f"realism score failed: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+    else:
+        for flag, value in (
+            ("--url", args.url),
+            ("--token-file", args.token_file),
+            ("--ca-file", args.ca_file),
+            ("--insecure-http", args.insecure_http),
+        ):
+            if value is not None:
+                print(f"realism score failed: {flag} needs --attach-run", file=sys.stderr)
+                return EXIT_ERROR
     classifier = NdpiClassifier(reader=args.ndpi_reader, timeout_s=args.timeout)
     try:
         parsers, missing = resolve(
@@ -467,4 +537,11 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             print(f"realism score failed: write {args.output}: {exc.strerror}", file=sys.stderr)
             return EXIT_ERROR
+    if target is not None:
+        try:
+            answer = deliver.attach(target, text.encode("utf-8"))
+        except deliver.DeliveryError as exc:
+            print(f"realism score failed: run {args.attach_run}: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        print(f"realism score: {answer.summary(args.attach_run)}", file=sys.stderr)
     return EXIT_PASS if report.passed else EXIT_FAIL

@@ -10,7 +10,7 @@
 | Branch | `wp/RLM-16` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 3 plan steps) |
+| Progress | 90% (3 of 3 plan steps, CI pending) |
 | Current holder | claude-492e74, lease until 2026-11-12T15:15:59Z |
 | Last verified commit | none |
 
@@ -24,21 +24,22 @@ A `score` option that PUTs the report to `PUT /v1/runs/{id}/realism` (attachReal
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Delivery module realism/deliver.py with token, URL, PUT, answers
-- [ ] 2. CLI options and tests against a fake controller
-- [ ] 3. README and Realism page, log entry, checks, PR
+- [x] 1. Delivery module realism/deliver.py with token, URL, PUT, answers
+- [x] 2. CLI options and tests against a fake controller
+- [x] 3. README and Realism page, log entry, checks, PR
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- `make lint-rlm`: ruff and mypy clean. `python3 -m pytest -q realism`: 801 passed, 9 skipped (tools absent). `plan.py check`, `render --check`, `lint`: ok.
+- `realism/tests/test_deliver.py` runs a fake controller on loopback: request, token sources, 409, 422.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+CI result, then `fps_swarm.py review`.
 
 ## Next action
 
-Write realism/deliver.py.
+Wait for CI on the PR.
 
 ## Blockers and open questions
 
@@ -46,7 +47,9 @@ none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- Delivered whether checks pass or fail; exit 2 when the controller does not accept it.
+- `allow_abbrev=False` on `score`, so `--token SECRET` is not read as `--token-file`.
+- Report format unchanged (0.16.0).
 
 ## Pitfalls
 
