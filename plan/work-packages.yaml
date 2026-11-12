@@ -3563,6 +3563,23 @@ work_packages:
     acceptance:
       - A test session of a strike module sends the exact bytes of a raw action, and a raw action in an app module fails to load with a named error.
 
+  - id: ENG-30
+    title: Count a scenario session once, with the bytes of its spawned flows
+    phase: 2
+    workstream: ENG
+    size: M
+    depends_on: [CON-31]
+    paths: [engine/fps-runtime/]
+    summary: >-
+      engine/fps-runtime/src/instance.rs records started, established, succeeded or failed, bytes and duration for every
+      flow side of an instance, spawned flows included, into the one SessionMetrics of the scenario (worker.rs). CON-31
+      defines a session as the entry flow of an instance, so only it records the outcome, and spawned flows add only
+      their bytes to it. CTL-49 resumes after this package.
+    deliverables:
+      - The counters of instance.rs and worker.rs as CON-31 defines them, the tests that assert the old counts (tests/instances.rs, tests/datagrams.rs, and the agent and capture tests of multi flow scenarios), and Engine.md.
+    acceptance:
+      - A run of ftp/retr_epsv and sip_rtp/call_pcmu reports one session per scenario session with the bytes of both flows, and cargo test --workspace passes.
+
   - id: RLM-15
     title: Packet inter arrival times inside a session
     phase: 2
@@ -3725,6 +3742,23 @@ work_packages:
     acceptance:
       - A STARTTLS capture whose ClientHello is split after its first bytes lists every session, and the smtp and imap realism jobs pass.
 
+  - id: RLM-22
+    title: Request cadence and bytes for HLS in the realism labels
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: []
+    paths: [realism/]
+    summary: >-
+      MOD-24 could not replace modules/hls/fixtures/hls_check.py with temporal.packets labels. A keepalive connection
+      alternates playlist and segment requests, so a third to a half of its client gaps are under a millisecond, a
+      playback has 8 to 16 gaps against the 30 a stream needs, and the labels read no bytes, while the script also checks
+      the byte share and bit rate of MOD-15.
+    deliverables:
+      - A packet gap target that selects the requests of one kind (by HTTP request path), a minimum sample count per target, and a byte property per rung, so a MOD follow up can move hls_check.py into labels.
+    acceptance:
+      - The committed hls fixture passes with labels equal in strength to hls_check.py, and a capture with a wrong segment cadence or bit rate fails.
+
   - id: CON-24
     title: Capture drop counts in the agent protocol and the REST API
     phase: 2
@@ -3855,6 +3889,26 @@ work_packages:
       - The contract text and schema descriptions corrected, the extension.wasm path decided and stated, and validate.py checking every rule the registry enforces, with the change entry naming the guide sections to update.
     acceptance:
       - validate.py rejects a manifest for each rule the registry rejects it for, in tests, and the Module Development guide lists no gap that this package closes.
+
+  - id: CON-31
+    title: A session is a scenario session, and its spawned flows add bytes
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: []
+    paths: [contracts/]
+    owner_action: The owner approves the change of meaning of the sessions series before a worker starts.
+    summary: >-
+      contracts/README.md says that each flow runs one session, and the sessions series of the metric catalog count per
+      flow program, so the FTP data connection and the RTP media stream are sessions of their own. The run metrics, the
+      calibration and the Gate 2 byte basis then see half the bytes of an ftp or sip_rtp scenario session (CTL-49 found
+      the split in engine/fps-runtime). The change makes a session one run of the entry flow of a scenario instance, and
+      the spawned flows add their bytes and their failure to it. Flows ordered with after but not spawned are an open
+      question for the owner.
+    deliverables:
+      - The new meaning in contracts/README.md and the descriptions of the sessions series, the rule for after flows, and contracts/changes/CON-31.md naming the consumers (engine counters, agent and capture tests, the guide's expected_bytes section, Engine.md).
+    acceptance:
+      - validate.py passes, and the change entry lists every test that counts sessions of a multi flow scenario.
 
   - id: CTL-42
     title: The CON-23 mapping table in the controller
