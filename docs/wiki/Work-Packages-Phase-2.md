@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 159 work packages. Packages marked critical path gate the phase.
+This page lists 164 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -131,6 +131,9 @@ flowchart LR
   MOD_24["MOD-24<br/>Packet gap labels in place of the module timing scripts"]
   MOD_25["MOD-25<br/>Byte estimates in every module manifest"]
   MOD_26["MOD-26<br/>A module development guide for third party authors"]
+  MOD_27["MOD-27<br/>The strike module, application layer first slice"]
+  MOD_28["MOD-28<br/>Fixtures for the strike module"]
+  MOD_29["MOD-29<br/>Raw strikes in the strike module"]
   TRN_16["TRN-16<br/>Per profile captures scored with the transport check"]
   CON_22["CON-22<br/>Realism report delivery and reservation conflicts in the REST API"]
   UI_08["UI-08<br/>Scenario table, criterion filters, and realism results in the report views"]
@@ -143,6 +146,7 @@ flowchart LR
   AGT_20["AGT-20<br/>SIP with RTP in the agent"]
   ENG_27["ENG-27<br/>Dropped counts of a capture"]
   ENG_28["ENG-28<br/>The runtime instance test flakes of batch 29"]
+  ENG_29["ENG-29<br/>The raw action in the engine"]
   RLM_15["RLM-15<br/>Packet inter arrival times inside a session"]
   RLM_16["RLM-16<br/>Deliver the realism report to the controller"]
   UI_09["UI-09<br/>Reservation holders in the agents view"]
@@ -151,6 +155,7 @@ flowchart LR
   RLM_17["RLM-17<br/>The CON-23 metrics in the realism report"]
   RLM_18["RLM-18<br/>TLS on non standard ports in the decrypted check"]
   RLM_19["RLM-19<br/>The port collision rule in the realism runner"]
+  RLM_20["RLM-20<br/>Expected parser findings in the realism labels"]
   CON_24["CON-24<br/>Capture drop counts in the agent protocol and the REST API"]
   AGT_21["AGT-21<br/>NTP, MQTT, LDAP, and HLS in the agent"]
   CON_25["CON-25<br/>The messages check in the metric catalog"]
@@ -314,6 +319,10 @@ flowchart LR
   RLM_15 --> MOD_24
   RLM_18 --> MOD_24
   CTL_47 --> MOD_25
+  MOD_27 --> MOD_28
+  RLM_20 --> MOD_28
+  MOD_28 --> MOD_29
+  ENG_29 --> MOD_29
   RLM_09 --> TRN_16
   CON_21 --> CON_22
   CTL_39 --> UI_08
@@ -489,6 +498,9 @@ flowchart LR
 | [MOD-24](#mod-24-packet-gap-labels-in-place-of-the-module-timing-scripts) | Packet gap labels in place of the module timing scripts | S | RLM-15, RLM-18 |  |
 | [MOD-25](#mod-25-byte-estimates-in-every-module-manifest) | Byte estimates in every module manifest | S | CTL-47 |  |
 | [MOD-26](#mod-26-a-module-development-guide-for-third-party-authors) | A module development guide for third party authors | M | none |  |
+| [MOD-27](#mod-27-the-strike-module-application-layer-first-slice) | The strike module, application layer first slice | S | none |  |
+| [MOD-28](#mod-28-fixtures-for-the-strike-module) | Fixtures for the strike module | M | MOD-27, RLM-20 |  |
+| [MOD-29](#mod-29-raw-strikes-in-the-strike-module) | Raw strikes in the strike module | L | MOD-28, ENG-29 |  |
 | [TRN-16](#trn-16-per-profile-captures-scored-with-the-transport-check) | Per profile captures scored with the transport check | S | RLM-09, TRN-03 |  |
 | [CON-22](#con-22-realism-report-delivery-and-reservation-conflicts-in-the-rest-api) | Realism report delivery and reservation conflicts in the REST API | S | CON-21 |  |
 | [UI-08](#ui-08-scenario-table-criterion-filters-and-realism-results-in-the-report-views) | Scenario table, criterion filters, and realism results in the report views | S | CTL-39, UI-05 |  |
@@ -501,6 +513,7 @@ flowchart LR
 | [AGT-20](#agt-20-sip-with-rtp-in-the-agent) | SIP with RTP in the agent | S | ENG-26, MOD-14 |  |
 | [ENG-27](#eng-27-dropped-counts-of-a-capture) | Dropped counts of a capture | S | AGT-18 |  |
 | [ENG-28](#eng-28-the-runtime-instance-test-flakes-of-batch-29) | The runtime instance test flakes of batch 29 | S | none |  |
+| [ENG-29](#eng-29-the-raw-action-in-the-engine) | The raw action in the engine | M | none |  |
 | [RLM-15](#rlm-15-packet-inter-arrival-times-inside-a-session) | Packet inter arrival times inside a session | S | RLM-06, MOD-14 |  |
 | [RLM-16](#rlm-16-deliver-the-realism-report-to-the-controller) | Deliver the realism report to the controller | S | CON-22 |  |
 | [UI-09](#ui-09-reservation-holders-in-the-agents-view) | Reservation holders in the agents view | S | CON-22, UI-06 |  |
@@ -509,6 +522,7 @@ flowchart LR
 | [RLM-17](#rlm-17-the-con-23-metrics-in-the-realism-report) | The CON-23 metrics in the realism report | M | CON-23, RLM-14 |  |
 | [RLM-18](#rlm-18-tls-on-non-standard-ports-in-the-decrypted-check) | TLS on non standard ports in the decrypted check | S | none |  |
 | [RLM-19](#rlm-19-the-port-collision-rule-in-the-realism-runner) | The port collision rule in the realism runner | S | QA-11 |  |
+| [RLM-20](#rlm-20-expected-parser-findings-in-the-realism-labels) | Expected parser findings in the realism labels | S | none |  |
 | [CON-24](#con-24-capture-drop-counts-in-the-agent-protocol-and-the-rest-api) | Capture drop counts in the agent protocol and the REST API | S | ENG-27 |  |
 | [AGT-21](#agt-21-ntp-mqtt-ldap-and-hls-in-the-agent) | NTP, MQTT, LDAP, and HLS in the agent | S | MOD-15, MOD-16, MOD-17, MOD-18 |  |
 | [CON-25](#con-25-the-messages-check-in-the-metric-catalog) | The messages check in the metric catalog | S | CON-23, RLM-17 |  |
@@ -1318,6 +1332,23 @@ Deliverables.
 Acceptance.
 
 - [ ] 200 consecutive passes of both tests on the hosted runner, and cargo test -p fps-runtime passes.
+
+### ENG-29 The raw action in the engine
+
+Phase 2 · size M · workstream ENG
+
+- **Depends on.** none
+- **Paths.** `engine/fps-flow/`, `engine/fps-runtime/`
+
+Scenario contract v0.6 defines the action raw (hex bytes written without templating) and reserves it for strike and fuzzer modules, and the validator enforces the reservation, but the engine does not execute it. The strike module needs it for its raw scenarios (issue #491, MOD-29).
+
+Deliverables.
+
+- The interpreter writes the bytes of a raw action on the session, the engine refuses raw in a module whose type is not strike or fuzzer, and the text for docs/wiki/Module-Development.md in the Shared page notes.
+
+Acceptance.
+
+- [ ] A test session of a strike module sends the exact bytes of a raw action, and a raw action in an app module fails to load with a named error.
 
 ## TRN Transport backends
 
@@ -2719,6 +2750,61 @@ Acceptance.
 - [ ] A reader who follows the guide from an empty directory gets a module that passes validate.py, and the template passes validate.py in CI.
 - [ ] Every claim of the guide names the file or contract it rests on, and the guide links Modules.md, Contracts.md and SDK.md.
 
+### MOD-27 The strike module, application layer first slice
+
+Phase 2 · size S · workstream MOD
+
+- **Depends on.** none
+- **Paths.** `modules/strike/`
+- **Owner action.** The owner implements this package by hand (issue
+
+The first slice of modules/strike/ (issue #491, PR #492). It opens the strike module type with four application layer scenarios that need no raw action, slowloris, conn_churn, bad_request_line and te_cl_conflict, each an attacker flow paired with a hardened origin flow.
+
+Deliverables.
+
+- The manifest and the four scenarios, mk/mod-strike.mk and .github/workflows/mod-strike.yml, a row in docs/wiki/Modules.md, and the strike type and the attack scenario pattern in docs/wiki/Module-Development.md.
+
+Acceptance.
+
+- [ ] make lint-mod-strike passes in CI, and the module is listed in Modules.md.
+
+### MOD-28 Fixtures for the strike module
+
+Phase 2 · size M · workstream MOD
+
+- **Depends on.** MOD-27, RLM-20
+- **Paths.** `modules/strike/`
+- **Owner action.** The owner implements this package by hand (issue
+
+Follow ups 1 and 2 of issue #491. A native fixture peer and fixtures/capture.sh record the strike scenarios in the QA-01 namespace harness, following modules/dns. The labels give conformance rules only to the HTTP port, the churn connections are judged by the session structure check through their spawn edges, and the deliberately malformed scenarios list their expected parser findings (RLM-20).
+
+Deliverables.
+
+- A fixture peer crate, fixtures/capture.sh, a committed capture with fixtures/expected.yaml, the fixture score and the harness job in mod-strike.yml, and expected_bytes for every scenario.
+
+Acceptance.
+
+- [ ] The committed capture passes the realism checks with the expected findings declared, and the harness job records and scores a fresh capture.
+
+### MOD-29 Raw strikes in the strike module
+
+Phase 2 · size L · workstream MOD
+
+- **Depends on.** MOD-28, ENG-29
+- **Paths.** `modules/strike/`
+- **Owner action.** The owner implements this package by hand (issue
+- **Epic.** Split this package into S or M packages before anyone claims it.
+
+Follow up 3 of issue #491. Strike scenarios that write bytes the templates cannot express, through the raw action once the engine executes it (ENG-29). Stateless SYN floods and large spoofed source pools need packet level sending that the raw action over a session socket does not give, so they need an engine design of their own before a package can take them on.
+
+Deliverables.
+
+- Strike scenarios that use the raw action, with fixtures, and a written account of what floods and spoofed pools would need from the engine.
+
+Acceptance.
+
+- [ ] The raw scenarios validate, run through the agent, and their fixture scores with the expected findings declared.
+
 ## RLM Realism validation
 
 ### RLM-04 TLS decryption and JA4 checks
@@ -2977,6 +3063,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A capture whose client port collides with a dissector passes with the finding reported as not counted, and a real malformed packet still fails.
+
+### RLM-20 Expected parser findings in the realism labels
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** none
+- **Paths.** `realism/`
+
+The parser error check passes only when tshark and Zeek report no error, and it counts findings of unlabelled sessions too, so a module whose traffic is malformed on purpose (strike, a future fuzzer) cannot pass. The labels have no way to say that a finding is expected (issue #491).
+
+Deliverables.
+
+- A labels section that names, per rule, the tshark expert items and Zeek weirds a session is expected to produce, the check reporting expected findings apart from the rest, and the text for docs/wiki/Module-Development.md in the Shared page notes.
+
+Acceptance.
+
+- [ ] A capture whose malformed sessions produce exactly the declared findings passes, a missing or an undeclared finding fails, and the report lists both kinds.
 
 ## CAP Capture compiler and profile extractor
 
