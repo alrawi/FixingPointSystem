@@ -43,7 +43,7 @@ Tests use `fps_io::memory::duplex(capacity)`, which returns two connected `Memor
 3. Rendering takes any sized `rand::RngCore`, and the filler buffer comes from `rand_pcg::Pcg64Mcg`, which gives the same bytes on every platform. The spike used `SmallRng`, whose algorithm may change between platforms and releases.
 4. The contract test `tests/contract_examples.rs` compiles every scenario under `contracts/examples/modules/`, so a new example joins the check on its own.
 
-`Scenario::load` desugars the flow keyword `transport: {module: tls, ...}` into a leading `tls_upgrade` on each side since CON-18, and still rejects spawned flows and the `spawn` and `raw` actions with `LoadError::Unsupported` (`Scenario::parse_instance` accepts spawn for the multi flow instances of ENG-23), while `Scenario::check` accepts them when the contract allows them. The action `tls_upgrade` of ENG-20 compiles in every mode to `Op::UpgradeTls`, see [TLS upgrade of a running session](#tls-upgrade-of-a-running-session).
+`Scenario::load` desugars the flow keyword `transport: {module: tls, ...}` into a leading `tls_upgrade` on each side since CON-18, and still rejects spawned flows and the `spawn` action with `LoadError::Unsupported` (`Scenario::parse_instance` accepts spawn for the multi flow instances of ENG-23), while `Scenario::check` accepts them when the contract allows them. The action `raw` of ENG-29 compiles in every mode, see [The raw action](#the-raw-action). The action `tls_upgrade` of ENG-20 compiles in every mode to `Op::UpgradeTls`, see [TLS upgrade of a running session](#tls-upgrade-of-a-running-session).
 
 ## Templates
 
@@ -271,7 +271,7 @@ The rule on `last` follows the Python validator. A loop body counts only when it
 
 ### Shared fixtures
 
-The fixtures live in `engine/fps-flow/tests/fixtures/`. Four fixture modules hold 61 scenarios, 16 accepted and 45 rejected, and `verdicts.yaml` lists each scenario with its verdict, the Rust error kind, and the JSON pointer of the first error. The Rust test `tests/fixtures.rs` checks every verdict, kind, and pointer with `Scenario::check_file`. The Python test `tests/test_fixtures.py` runs the module and scenario checks of `validate.py` over the same modules and checks every verdict and pointer. The workflow `eng.yml` runs the Python half, and the rust job of `ci.yml` runs the Rust half. A new rule therefore needs one fixture and one line in `verdicts.yaml`, and both tests pick it up.
+The fixtures live in `engine/fps-flow/tests/fixtures/`. Four fixture modules hold 61 scenarios, 16 accepted and 45 rejected, and `verdicts.yaml` lists each scenario with its verdict, the Rust error kind, and the JSON pointer of the first error. The Rust test `tests/fixtures.rs` checks every verdict, kind, and pointer with `Scenario::check_file`. The Python test `tests/test_fixtures.py` runs the module and scenario checks of `validate.py` over the same modules and checks every verdict and pointer. The workflow `eng.yml` runs the Python half, and the rust job of `ci.yml` runs the Rust half. A new rule therefore needs one fixture and one line in `verdicts.yaml`, and both tests pick it up. Two more tests of `tests/fixtures.rs` load the fixtures `st/scenarios/raw_ok.yaml` and `fx/scenarios/raw_reserved.yaml` with `Scenario::load_with`: the strike module gets a single send of the bytes `0d0a`, and the app module fails with `ReservedAction`.
 
 ### Limits
 
@@ -318,6 +318,18 @@ Every failure is a `Failure` with the flow id, the side, the catalog action inde
 | `internal` | A rendered count, port, or delay was out of range, or the transport reported another error |
 
 `FailureKind::reason` reads the cause of `FailureKind::Render`. A `TemplateError::Function` means `extension_error`, and every other `TemplateError` means `template_error`. A failed module call also keeps its kind, and `Failure::extension_label` returns the label `extension_<kind>` that `contracts/extension/README.md` names. The contract test `tests/catalog.rs` reads `contracts/metrics/catalog.yaml` and checks that `Reason::ALL` equals the reason values in catalog order.
+
+### The raw action
+
+Scenario contract v0.6 defines `raw: {hex: ...}`, which writes bytes without template validation, and reserves it for modules of type `strike` and `fuzzer`. ENG-29 makes the engine run it. The compiler decodes the hex string at load time and emits `Op::Send` of `Template::literal(bytes)`, so `raw` needs no op of its own and `fps-interp` runs it as any other send. A literal segment never goes through the template parser, so `{{`, `}}`, a NUL, and bytes that are not UTF-8 reach the session as written, and the render draws nothing from the session generator. On a TCP flow the bytes go out as stream bytes, and on a UDP flow they go out as one datagram, so the size limits of a datagram apply as for `send`. The action works at any depth of `loop` and `branch`.
+
+The reservation holds before the compiler runs. The contract check of `check.rs` refuses `raw` in a module of any other type, and in a scenario loaded without a module context, with `LoadError::ReservedAction`, whose message names the action and the types that may use it:
+
+```text
+flow 'a': client: action 2: 'raw' is reserved for module types ["fuzzer", "strike"]
+```
+
+A runnable program no longer fails with `Unsupported` for `raw`. The program dump shows a raw action as `send` of a literal, since the two are the same op. Stateless packet floods and large spoofed source pools need packet level sending, which a write on a session socket does not give, so the action does not cover them (MOD-29 records what they would need from the engine).
 
 ### TLS upgrade of a running session
 
@@ -524,6 +536,7 @@ The tests run over loopback addresses with the kernel backend and are listed bel
 | `tests/instances.rs` same data port | Eight `mixed_session` instances in one second all draw one data port (`data_port_min` equals `data_port_max`). Both workers count 32 succeeded sessions, no reset appears in the capture, and all 24 data connections dialed the one port. On the code before ENG-26 the test failed in two of three runs with 27 or 28 of 32 sessions |
 | `tests/datagrams.rs` SIP call | `call_pcmu` of the sip_rtp module runs four calls through a client runtime and a server runtime. Both workers count eight succeeded sessions, and the client capture holds 20 RTP packets of 172 bytes each way per call, SIP messages, and one 5-tuple per flow |
 | `tests/datagrams.rs` same RTP port | Six calls in one second all draw RTP port 18500. All sessions succeed, one port served every call, and the capture holds 20 RTP packets each way per call |
+| `tests/raw.rs` | A module of type `strike`, built in the test, runs a scenario whose client writes 30 bytes with `raw`, among them `{{ x }}`, two NULs, `}}`, and 0xff. A client runtime dials a plain listener, five sessions succeed, `bytes_tx` equals 150, and the listener reads the 30 bytes of every session unchanged. The same scenario in a module of type `app`, `tunnel`, `evasion`, `transport`, `host`, or `content` fails to load with `ReservedAction` |
 | `tests/properties.rs` | Session ids stay unique across workers, and the collector total equals the sum of the newest snapshot of every worker in any arrival order |
 | unit tests | The clock on a paused Tokio clock, the bounded wake time, the stop state order, opener address selection, the collector, and the instance openers (a used stream and the end of a side), the rendezvous of a shared port, the data ports (two waiters, a connection that comes first, a waiter that gives up, a bind that waits for a port in use), and the datagram ports (two hosts on one socket, a datagram that comes first, release of the port, a pinned port) |
 ## UDP datagram sessions

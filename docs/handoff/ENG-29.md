@@ -6,7 +6,7 @@
 | Branch | `wp/ENG-29` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 85% (3 of 4 plan steps) |
 | Current holder | claude-7e29a1, lease until 2026-11-12T21:02:13Z |
 | Last verified commit | none |
 
@@ -18,22 +18,24 @@ Scenario contract v0.6 defines the action `raw` (hex bytes written without templ
 
 ## Plan
 
-- [ ] 1. Compile `raw` to a literal send in `engine/fps-flow/src/program.rs`, and update the load tests and the fixture test that tolerate `Unsupported`.
-- [ ] 2. Test in `engine/fps-runtime/tests/` that a session of a strike module sends the exact bytes of a raw action over TCP and UDP.
-- [ ] 3. Test that a raw action in an app module fails to load with `ReservedAction`.
+- [x] 1. Compile `raw` to a literal send in `engine/fps-flow/src/program.rs`, and update the load tests and the fixture test that tolerate `Unsupported`.
+- [x] 2. Test in `engine/fps-runtime/tests/` that a session of a strike module sends the exact bytes of a raw action over TCP (UDP is covered at the compiled program level).
+- [x] 3. Test that a raw action in an app module fails to load with `ReservedAction`.
 - [ ] 4. Docs: Engine page, log entry with the Shared page notes, then checks, PR, CI, review.
 
 ## Done and verified
 
-Nothing yet.
+- `cargo test -p fps-flow`: all pass, including the new unit tests of `program.rs` and the two load tests of `tests/fixtures.rs`.
+- `cargo test -p fps-runtime --test raw`: 3 passed (exact bytes of 5 strike sessions, app module refused).
+- `cargo clippy -p fps-flow -p fps-runtime --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `plan.py check`, `render --check`, `lint`: clean.
 
 ## Remaining
 
-Everything above.
+Step 4: PR, CI, review. The full `cargo test -p fps-runtime` runs in CI only.
 
 ## Next action
 
-Edit the `raw` arm in `engine/fps-flow/src/program.rs`.
+Open the PR and poll CI.
 
 ## Blockers and open questions
 
@@ -41,10 +43,12 @@ none
 
 ## Decisions taken in this package
 
+- UDP is covered only at the compiled program level; the runtime test uses TCP because a flow without a server side needs the instance runner for UDP.
 - `raw` compiles to `Op::Send` of `Template::literal(bytes)`, so no new op exists and `fps-interp` (outside this package's paths) needs no change. A literal segment is never parsed as a template, so `{{` in the bytes stays literal.
 
 ## Pitfalls
 
+- `close: fin` drains until the peer closes, so a test listener must close its side or the client session fails with `expect_timeout`.
 - The worktree guard refuses `source` and `export` in a command; use `VAR=value command`.
 
 ## Verify the current state

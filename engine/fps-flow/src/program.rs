@@ -1009,22 +1009,25 @@ impl Compiler {
                     .ok_or_else(|| missing("flow"))?;
                 ops.push(Op::Spawn(flow.to_string()));
             }
-            "spawn" | "raw" if self.runnable => {
-                return Err(unsupported(format!("the '{kind}' action")))
-            }
-            // The contract check accepts these actions, and the programs leave
-            // them out until a later package runs them.
+            "spawn" if self.runnable => return Err(unsupported("the 'spawn' action")),
+            // The contract check accepts this action, and the programs leave
+            // it out until the instance runner runs it.
             "spawn" => {
                 body.get("flow")
                     .and_then(Yaml::as_str)
                     .ok_or_else(|| missing("flow"))?;
             }
+            // The bytes are a literal segment that no template parser reads, so
+            // `{{` in them stays as written. The contract check admits the
+            // action only in strike and fuzzer modules.
             "raw" => {
                 let hex = body
                     .get("hex")
                     .and_then(Yaml::as_str)
                     .ok_or_else(|| missing("hex"))?;
-                crate::template::decode_hex(hex).map_err(|e| LoadError::from(e).at_field("hex"))?;
+                let bytes = crate::template::decode_hex(hex)
+                    .map_err(|e| LoadError::from(e).at_field("hex"))?;
+                ops.push(Op::Send(Template::literal(bytes)));
             }
             other => return Err(invalid(format!("unknown action '{other}'"))),
         }
@@ -1035,6 +1038,7 @@ impl Compiler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::{Manifest, ModuleSet};
 
     const LOOPED: &str = r#"
 scenario: t
@@ -1214,7 +1218,10 @@ flows:
         assert_eq!(s.flows[2].after, ["ctl", "data"]);
         assert!(s.dump().contains("0 spawn data"));
         let raw = "scenario: t\nflows:\n  - { id: a, module: strike, client: [ { connect: { port: 1 } }, { raw: { hex: '00' } } ] }\n";
-        assert!(Scenario::parse_instance(raw, None).is_err());
+        assert!(matches!(
+            Scenario::parse_instance(raw, None),
+            Err(LoadError::ReservedAction { .. })
+        ));
     }
 
     #[test]
@@ -1233,6 +1240,87 @@ flows:
         assert!(Scenario::parse(no_connect).is_err());
         let bad_branch = "scenario: t\nflows:\n  - { id: a, module: m, client: [ { connect: { port: 1 } }, { branch: [ { p: 0.5, do: [ { send: x } ] }, { p: 0.4, do: [ { send: y } ] } ] } ] }\n";
         assert!(Scenario::parse(bad_branch).is_err());
+    }
+
+    /// A context for a module of the given type, which has no functions.
+    fn context_of(module_type: &str) -> ModuleContext {
+        let manifest = Manifest::parse(&format!("name: m\ntype: {module_type}\n")).unwrap();
+        let mut set = ModuleSet::default();
+        set.insert(manifest);
+        set.context("m").unwrap()
+    }
+
+    /// The bytes of the static sends of the client program of the first flow.
+    fn sent(s: &Scenario) -> Vec<Vec<u8>> {
+        s.flows[0]
+            .client
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::Send(t) => Some(t.as_static().expect("static send").to_vec()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn raw_compiles_to_a_literal_send_in_strike_and_fuzzer_modules() {
+        // The bytes hold `{{` and `}}`, a NUL, and a byte that is no UTF-8, and
+        // none of them goes through the template parser.
+        let text = "scenario: t\nflows:\n  - id: a\n    module: m\n    client:\n      - connect: { port: 1 }\n      - raw: { hex: '7b7b2276617273227d7d00ff' }\n      - raw: { hex: 0D0A }\n";
+        for module_type in ["strike", "fuzzer"] {
+            let ctx = context_of(module_type);
+            Scenario::check(text, Some(&ctx)).unwrap();
+            for s in [
+                Scenario::parse_with(text, Some(&ctx)).unwrap(),
+                Scenario::parse_instance(text, Some(&ctx)).unwrap(),
+            ] {
+                assert_eq!(
+                    sent(&s),
+                    [b"{{\"vars\"}}\x00\xff".to_vec(), b"\r\n".to_vec()],
+                    "{module_type}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn raw_inside_a_loop_and_a_branch_arm_compiles() {
+        let text = "scenario: t\nflows:\n  - id: a\n    module: m\n    client:\n      - connect: { port: 1 }\n      - loop: { count: 3, do: [ { raw: { hex: '41' } } ] }\n      - branch:\n          - { p: 1.0, do: [ { raw: { hex: '4243' } } ] }\n";
+        let s = Scenario::parse_with(text, Some(&context_of("strike"))).unwrap();
+        assert_eq!(sent(&s), [b"A".to_vec(), b"BC".to_vec()]);
+    }
+
+    #[test]
+    fn raw_fails_to_load_outside_strike_and_fuzzer_modules() {
+        let text = "scenario: t\nflows:\n  - id: a\n    module: m\n    client:\n      - connect: { port: 1 }\n      - loop: { count: 2, do: [ { raw: { hex: '00' } } ] }\n";
+        for module_type in ["app", "transport", "host", "content", "tunnel", "evasion"] {
+            let ctx = context_of(module_type);
+            for result in [
+                Scenario::parse_with(text, Some(&ctx)),
+                Scenario::parse_instance(text, Some(&ctx)),
+            ] {
+                let err = result.expect_err(module_type);
+                assert!(matches!(err, LoadError::ReservedAction { .. }), "{err:?}");
+                assert_eq!(err.kind(), "ReservedAction");
+                assert!(err.to_string().contains("'raw' is reserved"), "{err}");
+            }
+        }
+        // Without a module context no module type admits the action.
+        assert!(matches!(
+            Scenario::parse(text),
+            Err(LoadError::ReservedAction { .. })
+        ));
+    }
+
+    #[test]
+    fn raw_with_bad_hex_names_the_field() {
+        for hex in ["'0'", "'zz'"] {
+            let text = format!("scenario: t\nflows:\n  - id: a\n    module: m\n    client:\n      - connect: {{ port: 1 }}\n      - raw: {{ hex: {hex} }}\n");
+            let ctx = context_of("strike");
+            let err = Scenario::parse_with(&text, Some(&ctx)).expect_err(hex);
+            assert!(err.to_string().contains("hex"), "{err}");
+        }
     }
 
     #[test]

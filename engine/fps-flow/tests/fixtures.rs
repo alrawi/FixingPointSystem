@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
+use fps_flow::program::Op;
 use fps_flow::{LoadError, ModuleSet, Scenario};
 use serde_yaml::Value as Yaml;
 
@@ -110,8 +111,7 @@ fn load_accepts_what_the_check_accepts_unless_unsupported() {
         let path = fixtures().join("modules").join(&case.scenario);
         match Scenario::load_with(&path, Some(&ctx)) {
             Ok(_) => {}
-            Err(LoadError::Unsupported { .. })
-                if case.scenario.contains("spawn") || case.scenario.contains("raw") => {}
+            Err(LoadError::Unsupported { .. }) if case.scenario.contains("spawn") => {}
             Err(e) => panic!("{}: {e}", case.scenario),
         }
     }
@@ -155,4 +155,35 @@ fn calls_into_a_module_without_manifest_warn() {
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].message.contains("ghost"), "{}", warnings[0]);
     assert_eq!(warnings[0].at.pointer(), "/flows/0/client/1/send");
+}
+
+/// Loads a fixture scenario the way a runner does, in the module context of its directory.
+fn load(scenario: &str) -> Result<Scenario, LoadError> {
+    let set = modules();
+    let module = scenario.split('/').next().expect("module");
+    let ctx = set.context(module).expect("module context");
+    Scenario::load_with(&fixtures().join("modules").join(scenario), Some(&ctx))
+}
+
+#[test]
+fn a_strike_module_loads_raw_as_a_send_of_its_exact_bytes() {
+    let s = load("st/scenarios/raw_ok.yaml").expect("strike module may use raw");
+    let ops = &s.flows[0].client.ops;
+    assert_eq!(ops.len(), 1, "{ops:?}");
+    let Op::Send(t) = &ops[0] else {
+        panic!("raw compiled to {:?}", ops[0]);
+    };
+    assert_eq!(t.as_static(), Some(&b"\r\n"[..]));
+}
+
+#[test]
+fn a_raw_action_in_an_app_module_fails_to_load_with_a_named_error() {
+    let err = load("fx/scenarios/raw_reserved.yaml").expect_err("raw in an app module");
+    assert!(matches!(err, LoadError::ReservedAction { .. }), "{err:?}");
+    assert_eq!(err.kind(), "ReservedAction");
+    assert!(
+        err.to_string()
+            .ends_with("flow 'a': client: action 2: 'raw' is reserved for module types [\"fuzzer\", \"strike\"]"),
+        "{err}"
+    );
 }
