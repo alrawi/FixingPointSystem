@@ -57,7 +57,9 @@ report() {
   local dir=$1
   shift
   local args=(--out-dir "$dir" --no-write --stages "$stages" --mix-modules "$mix_modules" "$@")
-  [[ -z ${FPS_GATE2_MIX_WAIVE:-} ]] || args+=(--allow-waivers)
+  # Either waiver (a module left out of the mix, or a basis other than bytes)
+  # lets the verdict be PASS WITH WAIVERS.
+  [[ -z ${FPS_GATE2_MIX_WAIVE:-} && ${FPS_GATE2_BASIS:-bytes} == bytes ]] || args+=(--allow-waivers)
   python3 -I "$here/gate2_report.py" "${args[@]}"
 }
 

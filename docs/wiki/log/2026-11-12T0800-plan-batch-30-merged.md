@@ -3,6 +3,7 @@
 The coordinator merged:
 - ENG-28 in PR #489, MOD-23 in PR #488, AGT-21 in PR #484, QA-05 in PR #487 and CTL-46 in PR #483.
 - CON-27 in PR #485, which the owner approved on 2026-11-11. With the coordinator's leave, the worker also updated the consumers on its branch: the catalog copy, the pins, the fps-stats tables, the host_identity series, report format 0.15.0, the controller schema copy, the CON-23 test counts and the UI types. The coordinator merged main into it after CTL-46.
+- In this wrap-up, the Gate 2 scripts (`mix.sh`, `run.sh`, `prove-failure.sh`) allow waivers when either waiver holds. They keyed `--allow-waivers` to the mix waiver only, so with the mix waiver gone the session basis waiver failed the gate. The full 15 application mix itself passed (largest difference 1.442 points, conformance 100%, no parser findings).
 - RLM-15 in PR #486. CON-27 took format 0.15.0 first, so the worker merged main and moved to 0.16.0. One qa-gate2 run failed twice on 10 parser findings in its mix stage and passed on a full rerun (QA-11).
 
 What the workers found:

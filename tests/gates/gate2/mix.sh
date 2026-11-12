@@ -54,6 +54,10 @@ tolerance=${FPS_GATE2_TOLERANCE:-2}
 parsers=${FPS_REALISM_PARSERS:-tshark,zeek}
 requested_waiver=${FPS_GATE2_MIX_WAIVE:-}
 basis=${FPS_GATE2_BASIS:-bytes}
+# Either waiver lets the verdict be PASS WITH WAIVERS: a module left out of the
+# mix, or a controller basis other than bytes.
+allow_waivers=
+[[ -z $requested_waiver && $basis == bytes ]] || allow_waivers=--allow-waivers
 mix_config="$here/mix_config.py"
 
 usage() {
@@ -89,7 +93,7 @@ score_and_report() {
   [[ $rc -ne 2 && -s $dir/realism.json ]] || die "the realism runner could not score $dir/mix.pcapng"
   rc=0
   python3 -I "$here/gate2_report.py" --out-dir "$(dirname "$dir")" --stages mix \
-    --tolerance "$tolerance" --mix-modules "${mix_modules// /,}" ${requested_waiver:+--allow-waivers} || rc=$?
+    --tolerance "$tolerance" --mix-modules "${mix_modules// /,}" ${allow_waivers:+"$allow_waivers"} || rc=$?
   return "$rc"
 }
 
