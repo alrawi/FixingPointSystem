@@ -159,6 +159,21 @@ def test_cli_prints_the_ports_and_the_names(capsys: pytest.CaptureFixture[str]) 
     assert "hls" not in capsys.readouterr().out.split()
 
 
+def test_every_param_is_a_variable_of_its_scenario() -> None:
+    root = Path(__file__).resolve().parents[3]
+    for e in doc()["entries"]:
+        scenario = (
+            root / "modules" / e["module"] / "scenarios" / f"{e['scenario']}.yaml"
+        )
+        declared = (m.yaml_module().safe_load(scenario.read_text()) or {}).get(
+            "vars", {}
+        )
+        unknown = sorted(set(e["params"]) - set(declared))
+        assert not unknown, (
+            f"{m.scenario_ref(e)} sets {unknown}, which it does not declare"
+        )
+
+
 def test_the_session_basis_carries_the_byte_weights() -> None:
     mix = doc()
     config = m.yaml_module().safe_load(
