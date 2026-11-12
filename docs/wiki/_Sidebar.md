@@ -29,5 +29,6 @@
 - [Operations](Operations.md)
 - [Agent](Agent.md)
 - [Modules](Modules.md)
+- [Module Development](Module-Development.md)
 - [Benchmarks](Benchmarks.md)
 - [Web UI](Web-UI.md)

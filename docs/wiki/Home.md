@@ -48,6 +48,7 @@ A new agent reads four pages in order before claiming work.
 | [Contracts](Contracts.md) | Contract files and versions, the agent initiated control protocol, and the contract checks |
 | [Agent](Agent.md) | The agent binary, its standalone `run` mode, plan loading, and module digests |
 | [Modules](Modules.md) | Application modules, starting with http1, their native functions, fixtures, and tests |
+| [Module Development](Module-Development.md) | The guide for third party module authors, from an empty directory to a signed module that a controller accepts |
 | [Benchmarks](Benchmarks.md) | Benchmark result and baseline format, the comparison tool, and baseline refresh |
 | [Web UI](Web-UI.md) | The accepted web UI stack (D11) and the UI packages |
 | [Realism](Realism.md) | The realism runner, its conformance and parser error checks, and the report seam |

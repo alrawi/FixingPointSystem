@@ -1,6 +1,6 @@
 # Modules
 
-This page describes the protocol modules under `modules/`, which the MOD workstream owns. A module ships a manifest, scenarios, an optional native crate, fixtures, and tests, with the layout that the Modules section of [Coding Standards](Coding-Standards.md#modules) defines and the four proofs that [Testing](Testing.md#testing-a-new-module) requires.
+This page describes the protocol modules under `modules/`, which the MOD workstream owns. A module ships a manifest, scenarios, an optional native crate, fixtures, and tests, with the layout that the Modules section of [Coding Standards](Coding-Standards.md#modules) defines and the four proofs that [Testing](Testing.md#testing-a-new-module) requires. People who write modules outside the project start with [Module Development](Module-Development.md).
 
 ## How a module plugs in
 
