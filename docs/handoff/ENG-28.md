@@ -6,7 +6,7 @@
 | Branch | `wp/ENG-28` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 50% (2 of 4 plan steps) |
 | Current holder | claude-960dd7, lease until 2026-11-12T04:26:13Z |
 | Last verified commit | none |
 
@@ -16,22 +16,23 @@ Two tests of `engine/fps-runtime/tests/instances.rs` failed once each in batch 2
 
 ## Plan
 
-- [ ] 1. Read both failures and find the cause of each
-- [ ] 2. Fix the causes and reproduce locally where the sandbox allows it
+- [x] 1. Read both failures and find the cause of each
+- [x] 2. Fix the causes and reproduce locally where the sandbox allows it (failure 1 only)
 - [ ] 3. Temporary CI loop of 200 runs of both tests, then remove the loop
 - [ ] 4. Ingest (component page, log entry) and open the pull request
 
 ## Done and verified
 
-Nothing yet.
+1. Failure 1 (line 318) reproduced locally: 1 failure in 120 runs of the whole instances binary with one busy loop. Cause: the test treats a repeated (source host, source port) pair among the client SYNs as a second SYN of one connection, but the client sockets bind with `IP_BIND_ADDRESS_NO_PORT`, so the kernel may give one source host the same port for two connections to different destination ports. A diagnostic run showed `127.61.0.4:40204` as the source of two SYNs, one to the control port and one to data port 52486. The set now holds the four tuple.
+2. Failure 2 (line 713, 16 of 32) did not reproduce in about 600 local runs, with and without busy loops. The log of job 130740042708 shows the test took 6.1 s against about 1.3 s in a passing run, which fits one 5 s timeout (`connect_timeout` or an `expect` of 5000 ms) in the client. The test now names the failed series before it counts successes, so a repeat names the reason.
 
 ## Remaining
 
-Everything.
+Temporary CI loop (`.github/workflows/eng-28-loop.yml`, delete before review), cause of failure 2, ingest, pull request.
 
 ## Next action
 
-Read `engine/fps-runtime/tests/instances.rs` around lines 300 to 330 and 690 to 740 and compare with the job logs.
+Push the branch and read the loop job of `eng-28-loop`; a failure prints `failed_series` for failure 2.
 
 ## Blockers and open questions
 
@@ -56,4 +57,5 @@ cargo test -p fps-runtime --test instances
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
-| 2026-11-12T02:58:00Z | claude-960dd7 | claim | none | Claimed issue #479 with card 6813013946 |
+| 2026-11-12T02:58:00Z | claude-960dd7 | claim | b2028d2 | Claimed issue #479 with card 6813013946 |
+| 2026-11-12T03:46:00Z | claude-960dd7 | checkpoint | see git log | Fix of failure 1, diagnostics for failure 2, temporary loop workflow |
