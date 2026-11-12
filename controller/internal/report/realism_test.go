@@ -77,7 +77,7 @@ func fixtureResults() []api.RealismResult {
 	const alpha = "p value >= 0.05"
 	failures := func(check string) api.RealismResult {
 		return result("realism.check_failures", map[string]string{"check": check}, 1,
-			"realism.check_failures of check "+check, "== 0", false)
+			"failures of the "+check+" check", "== 0", false)
 	}
 	return []api.RealismResult{
 		result("realism.conformance_ratio", app("http1", "ndpi"), 1, "conformance of http1 by ndpi", ">= 0.99", true),
@@ -137,13 +137,13 @@ func TestMapRealismFallback(t *testing.T) {
 			"mix.max_abs_error_pp of application dns", "check passed", false),
 		result("realism.structure_ok", nil, 1, "realism.structure_ok", "check passed", true),
 		result("realism.conformance_ratio", map[string]string{"application": "other", "classifier": "stub"}, 0.5,
-			"realism.conformance_ratio of application other, classifier stub", "check passed", true),
+			"conformance of other by stub", "check passed", true),
 		result("realism.conformance_ratio", map[string]string{"application": "http1", "classifier": "stub"}, 0.95,
 			"conformance of http1 by stub", ">= 0.9", true),
 		result("realism.other", map[string]string{"application": "http1"}, 2,
 			"realism.other of application http1", "check passed", true),
 		result("realism.ks_p_value", map[string]string{"application": "http1", "property": "inter_arrival"}, 0.2,
-			"realism.ks_p_value of application http1, property inter_arrival", "check passed", false),
+			"KS p value of inter_arrival of http1", "check passed", false),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("results:\n%s\nwant:\n%s", showResults(got), showResults(want))
