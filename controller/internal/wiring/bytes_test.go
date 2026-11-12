@@ -50,7 +50,7 @@ func copyModule(t *testing.T, src string, edit func(manifest string) string) str
 		if rel == registry.ManifestFile {
 			data = []byte(edit(string(data)))
 		}
-		return os.WriteFile(target, data, 0o600)
+		return os.WriteFile(target, data, 0o600) //nolint:gosec // G703: writes under a test temp directory
 	})
 	if err != nil {
 		t.Fatalf("copy module %s: %v", src, err)
