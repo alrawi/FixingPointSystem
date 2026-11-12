@@ -1,0 +1,5 @@
+# Python tools that lint and test the Gate 2 suite, and PyYAML for mix_config.py.
+pytest>=8.0
+PyYAML>=6.0
+ruff==0.16.9
+mypy==2.3.1

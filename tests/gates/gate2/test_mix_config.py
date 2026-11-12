@@ -8,9 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import mix_config as m
+import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 EVERY_MODULE = {
@@ -29,6 +28,11 @@ EVERY_MODULE = {
     "smtp",
     "ssh",
 }
+
+
+@pytest.fixture(autouse=True)
+def _need_yaml() -> None:
+    pytest.importorskip("yaml")
 
 
 def doc() -> dict[str, Any]:

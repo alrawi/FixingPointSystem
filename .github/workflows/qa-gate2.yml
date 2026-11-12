@@ -1,0 +1,314 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# QA Gate 2 acceptance suite under tests/gates/gate2/. Gate 2 holds when all 15
+# application modules pass the realism checks of module CI, a byte weighted
+# enterprise mix of the 15 applications stays within 2 points of its weights
+# through the controller and the agent, and the qcow2 image boots and runs a test
+# unattended. Three jobs run the three stages on clean GitHub hosted runners, and
+# the report job reads their files, writes the gate report to the job summary and
+# the gate2-report artifact, proves that the gate fails on worse results, and fails
+# when a check of the gate fails.
+#
+# Security rules, which docs/wiki/Operations.md repeats: the jobs run on GitHub
+# hosted runners only, the token is read only, and the workflow uses no secret.
+# Event text never reaches a script through ${{ }}.
+name: qa-gate2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - tests/gates/gate2/**
+      - tests/harness/**
+      - engine/**
+      - modules/**
+      - controller/**
+      - realism/**
+      - contracts/**
+      - image/**
+      - Cargo.lock
+      - mk/qa-gate2.mk
+      - .github/workflows/qa-gate2.yml
+  pull_request:
+    paths:
+      - tests/gates/gate2/**
+      - tests/harness/**
+      - engine/**
+      - modules/**
+      - controller/**
+      - realism/**
+      - contracts/**
+      - image/**
+      - Cargo.lock
+      - mk/qa-gate2.mk
+      - .github/workflows/qa-gate2.yml
+  workflow_dispatch:
+    inputs:
+      force_tcg:
+        description: "Use software emulation for the image stage even when /dev/kvm works (slow)."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-gate2-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  # Modules that the agent cannot run yet. A waiver ends by itself once
+  # engine/fps-agent depends on the native crate of the module, so merging AGT-21
+  # puts the four modules into the mix without an edit here.
+  FPS_GATE2_MIX_WAIVE: hls ldap mqtt ntp
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r tests/gates/gate2/requirements.txt
+      - run: make lint-qa-gate2 test-qa-gate2 PYTHON=python
+
+  modules:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gate2-modules
+      - name: Install the harness and realism tools
+        run: realism/ci/install-tools.sh
+      - name: Build the fixture peer of every module as the runner user
+        run: tests/gates/gate2/build-peers.sh gate2-peers
+      - name: Record and score every module as root
+        run: sudo env "PATH=/opt/zeek/bin:$PATH" "GITHUB_STEP_SUMMARY=$GITHUB_STEP_SUMMARY" tests/gates/gate2/modules.sh gate2-peers gate2-out
+      - name: Stage report
+        if: always()
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" gate2-out 2>/dev/null || true
+          [ -d gate2-out/modules ] && cat gate2-out/modules/results.json || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate2-modules
+          path: gate2-out/modules/
+          if-no-files-found: warn
+
+  mix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gate2-mix
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: controller/go.mod
+          cache-dependency-path: controller/go.sum
+      - name: Install the harness and realism tools
+        run: |
+          realism/ci/install-tools.sh
+          tools/ci/apt-install.sh curl
+      - name: Build the agent and the controller as the runner user
+        run: |
+          cargo build -p fps-agent
+          mkdir -p target
+          cd controller && GOWORK=off go build -o ../target/fps-controller ./cmd/fps-controller
+      - name: Byte weighted enterprise mix as root
+        run: sudo env "PATH=/opt/zeek/bin:$PATH" "FPS_GATE2_MIX_WAIVE=$FPS_GATE2_MIX_WAIVE" tests/gates/gate2/mix.sh target/fps-controller target/debug/fps-agent gate2-out
+      - name: The mix fails at a tolerance of 0 points
+        run: sudo env "PATH=/opt/zeek/bin:$PATH" "FPS_GATE2_MIX_WAIVE=$FPS_GATE2_MIX_WAIVE" tests/gates/gate2/prove-failure.sh --only mix gate2-out
+      - name: Stage report
+        if: always()
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" target gate2-out 2>/dev/null || true
+          if [ -f gate2-out/report.md ]; then
+            cat gate2-out/report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          rm -rf gate2-out/mix/work gate2-out/mix/state
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate2-mix
+          path: |
+            gate2-out/mix/
+            !gate2-out/mix/*.pcapng
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: gate2-mix-capture
+          path: gate2-out/mix/mix.pcapng
+          if-no-files-found: ignore
+          retention-days: 7
+
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Choose the accelerator
+        id: accel
+        env:
+          FORCE_TCG: ${{ inputs.force_tcg }}
+        run: |
+          set -euo pipefail
+          accel=tcg
+          if [ -e /dev/kvm ]; then
+            # The standard rule that gives every user access to KVM on a hosted runner.
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+              sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+            sleep 1
+            ls -l /dev/kvm
+            if [ -w /dev/kvm ]; then accel=kvm; fi
+          else
+            echo "/dev/kvm does not exist on this runner"
+          fi
+          if [ "$FORCE_TCG" = true ]; then
+            echo "force_tcg is set"
+            accel=tcg
+          fi
+          echo "accel=$accel" >> "$GITHUB_OUTPUT"
+          echo "accelerator: $accel"
+
+      - name: Install the host packages
+        run: |
+          set -euo pipefail
+          tools/ci/apt-install.sh \
+            qemu-system-x86 qemu-utils cloud-image-utils xorriso \
+            curl openssh-client openssl python3 file musl-tools
+
+      - name: Install Packer
+        run: |
+          set -euo pipefail
+          if command -v packer >/dev/null 2>&1; then
+            packer version
+            exit 0
+          fi
+          curl -fsSL https://apt.releases.hashicorp.com/gpg |
+            sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" |
+            sudo tee /etc/apt/sources.list.d/hashicorp.list >/dev/null
+          tools/ci/apt-install.sh --install-recommends packer
+          packer version
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gate2-image-musl
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: controller/go.mod
+          cache-dependency-path: controller/go.sum
+
+      # The base image is cached by its checksum, so a new Ubuntu release builds a
+      # new cache entry and a pinned checksum guards the download.
+      - name: Find the checksum of the Ubuntu cloud image
+        id: base
+        run: |
+          set -euo pipefail
+          sums="$(curl -fsSL https://cloud-images.ubuntu.com/releases/noble/release/SHA256SUMS)"
+          sha="$(printf '%s\n' "$sums" | awk '$2 ~ /^\*?ubuntu-24\.04-server-cloudimg-amd64\.img$/ { print $1; exit }')"
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::SHA256SUMS has no checksum for the amd64 cloud image"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: image/.cache/packer
+          key: ubuntu-cloudimg-${{ steps.base.outputs.sha }}
+      - uses: actions/cache@v4
+        with:
+          path: image/.cache/packer-plugins
+          key: packer-plugins-${{ hashFiles('image/fps.pkr.hcl') }}
+
+      - name: Build the image, boot it, and run a test unattended
+        env:
+          FPS_ACCEL: ${{ steps.accel.outputs.accel }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
+        run: |
+          set -euo pipefail
+          export FPS_BASE_IMAGE_CHECKSUM="sha256:$BASE_SHA"
+          tests/gates/gate2/image.sh gate2-out
+
+      - name: Stage report
+        if: always()
+        run: |
+          if [ -f gate2-out/image/boot-test.log ]; then
+            { echo '## Gate 2 image stage'; echo; echo '```'; grep -E '^(RESULT|FAIL|PASS run)' gate2-out/image/boot-test.log || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate2-image
+          path: gate2-out/image/
+          if-no-files-found: warn
+
+  report:
+    needs: [test, modules, mix, image]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r tests/gates/gate2/requirements.txt
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: gate2-modules
+          path: gate2-out/modules
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: gate2-mix
+          path: gate2-out/mix
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: gate2-image
+          path: gate2-out/image
+      - name: Gate 2 report
+        run: |
+          mkdir -p gate2-out
+          rc=0
+          tests/gates/gate2/run.sh --report gate2-out || rc=$?
+          cat gate2-out/report.md >> "$GITHUB_STEP_SUMMARY" || true
+          exit "$rc"
+      - name: The gate fails on worse results
+        run: tests/gates/gate2/prove-failure.sh --only report gate2-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate2-report
+          path: |
+            gate2-out/report.md
+            gate2-out/summary.json

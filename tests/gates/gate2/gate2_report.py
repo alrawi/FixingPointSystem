@@ -91,6 +91,7 @@ DEFAULT_TOLERANCE = 2.0
 # Sessions of each module that its realism capture must hold.
 DEFAULT_MIN_MODULE_SESSIONS = 10
 RAISE_STEP = 0.001
+WAIVER_CHECK = "Modules waived from the mix"
 
 
 class GateInputError(Exception):
@@ -318,7 +319,11 @@ def worst_delta(rows: Sequence[dict[str, Any]], key: str) -> float:
 
 
 def mix_stage(
-    out_dir: Path, threshold: float, tolerance: float, mix_modules: Sequence[str]
+    out_dir: Path,
+    threshold: float,
+    tolerance: float,
+    mix_modules: Sequence[str],
+    allow_waivers: bool = False,
 ) -> tuple[list[Check], dict[str, Any]]:
     """Judge the byte weighted enterprise mix."""
     stage = "mix"
@@ -349,6 +354,22 @@ def mix_stage(
             state == "completed" and verdict.get("passed") is True,
             f"state {state}, verdict {'passed' if verdict.get('passed') else 'not passed'}",
             "completed with a passed verdict",
+        )
+    )
+    waived = [
+        w
+        for w in re.split(r"[\s,]+", str(context.get("waived", "none")))
+        if w and w != "none"
+    ]
+    checks.append(
+        Check(
+            stage,
+            WAIVER_CHECK,
+            not waived or allow_waivers,
+            ", ".join(waived) + " (waived, the agent has no crate for them yet)"
+            if waived
+            else "none",
+            "none, because the agent runs every module of the mix",
         )
     )
     scenarios = [s for s in run_report.get("scenarios", []) if isinstance(s, dict)]
@@ -466,6 +487,7 @@ def mix_stage(
     )
     facts = {
         "modules": attempted,
+        "waived": waived,
         "rows": rows,
         "unmatched_pct": unmatched_pct,
         "metrics_worst_pp": metrics_worst,
@@ -580,6 +602,10 @@ def render(
     """Render the gate report in Markdown."""
     passed = all(c.passed for c in checks)
     partial = tuple(stages) != STAGES
+    waived = list((facts.get("mix") or {}).get("waived") or [])
+    word = "PASS" if passed else "FAIL"
+    if passed and waived:
+        word = "PASS WITH WAIVERS"
     lines = [
         "# Gate 2 report",
         "",
@@ -590,11 +616,19 @@ def render(
             "unattended."
         ),
         "",
-        f"**Verdict: {'PASS' if passed else 'FAIL'}**"
+        f"**Verdict: {word}**"
         + (f" (partial, stages {', '.join(stages)} only)" if partial else ""),
         "",
         f"Conformance threshold {fmt_ratio(threshold)}, mix tolerance {tolerance:g} points.",
     ]
+    if waived:
+        lines += [
+            "",
+            "Gate 2 does not hold in full while the mix leaves out "
+            + ", ".join(waived)
+            + ". The agent has no native crate for these modules yet, and the waiver "
+            "ends by itself when it gains one.",
+        ]
     for stage in stages:
         stage_checks = [c for c in checks if c.stage == stage]
         title = {
@@ -606,7 +640,14 @@ def render(
         lines += table(
             ("Check", "Measured", "Rule", "Result"),
             [
-                (c.name, c.measured, c.rule, "pass" if c.passed else "FAIL")
+                (
+                    c.name,
+                    c.measured,
+                    c.rule,
+                    ("WAIVED" if waived and c.name == WAIVER_CHECK else "pass")
+                    if c.passed
+                    else "FAIL",
+                )
                 for c in stage_checks
             ],
         )
@@ -692,6 +733,7 @@ def evaluate(
     tolerance: float,
     min_module_sessions: int,
     mix_modules: Sequence[str],
+    allow_waivers: bool = False,
 ) -> tuple[list[Check], dict[str, Any]]:
     """Run the checks of the selected stages."""
     checks: list[Check] = []
@@ -700,7 +742,9 @@ def evaluate(
         found, facts["modules"] = modules_stage(out_dir, threshold, min_module_sessions)
         checks += found
     if "mix" in stages:
-        found, facts["mix"] = mix_stage(out_dir, threshold, tolerance, mix_modules)
+        found, facts["mix"] = mix_stage(
+            out_dir, threshold, tolerance, mix_modules, allow_waivers
+        )
         checks += found
     if "image" in stages:
         found, facts["image"] = image_stage(out_dir)
@@ -745,6 +789,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="print a threshold just above the lowest measured ratio and exit",
     )
     parser.add_argument(
+        "--allow-waivers",
+        action="store_true",
+        help="let modules that the agent cannot run yet leave the mix; the verdict then says so",
+    )
+    parser.add_argument(
         "--no-write", action="store_true", help="print the verdict only"
     )
     args = parser.parse_args(argv)
@@ -767,6 +816,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.tolerance,
             args.min_module_sessions,
             [m for m in args.mix_modules.split(",") if m],
+            args.allow_waivers,
         )
     except GateInputError as e:
         print(f"gate2_report.py: {e}", file=sys.stderr)

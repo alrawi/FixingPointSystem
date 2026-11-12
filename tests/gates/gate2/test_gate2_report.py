@@ -341,3 +341,42 @@ def test_raised_threshold_is_above_the_lowest_ratio(tmp_path: Path) -> None:
     write(out / "modules" / "dns" / "dns.realism.json", report)
     assert g.lowest_ratio(out) == 0.995
     assert g.raised_threshold([0.995]) == 0.996
+
+
+def write_waived_mix(out: Path, waived: list[str]) -> None:
+    write_mix(out)
+    write(out / "mix" / "context.json", {"waived": " ".join(waived) or "none"})
+    report = json.loads((out / "mix" / "run-report.json").read_text())
+    report["scenarios"] = [
+        s for s in report["scenarios"] if s["application"] not in waived
+    ]
+    write(out / "mix" / "run-report.json", report)
+
+
+def test_waived_modules_fail_unless_allowed(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    waived = ["hls", "ldap", "mqtt", "ntp"]
+    write_waived_mix(out, waived)
+    mix = [m for m in g.MODULES if m not in waived]
+    base = ["--mix-modules", ",".join(mix)]
+    assert run(out, *base) == 1
+    assert run(out, *base, "--allow-waivers") == 0
+    report = (out / "report.md").read_text()
+    assert "**Verdict: PASS WITH WAIVERS**" in report
+    assert "WAIVED" in report
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["facts"]["mix"]["waived"] == waived
+
+
+def test_a_module_missing_from_the_run_fails_even_with_waivers(
+    tmp_path: Path,
+) -> None:
+    out = full(tmp_path)
+    write_waived_mix(out, ["hls"])
+    # hls is not in the module list of this report, but ntp is and has sessions;
+    # drop the sessions of ntp to show that an unwaived module still has to run.
+    report = json.loads((out / "mix" / "run-report.json").read_text())
+    report["scenarios"] = [s for s in report["scenarios"] if s["application"] != "ntp"]
+    write(out / "mix" / "run-report.json", report)
+    mix = [m for m in g.MODULES if m != "hls"]
+    assert run(out, "--mix-modules", ",".join(mix), "--allow-waivers") == 1

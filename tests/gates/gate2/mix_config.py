@@ -7,6 +7,7 @@
     python3 -I mix_config.py labels  --out FILE [--waived "hls ntp"]
     python3 -I mix_config.py ports   [--waived "hls ntp"]
     python3 -I mix_config.py names   [--waived "hls ntp"]
+    python3 -I mix_config.py pools
 
 ``mix.yaml`` holds the entries of the byte weighted enterprise mix. A module
 that the agent does not run yet can be waived. A waiver only holds while the
@@ -360,7 +361,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run one subcommand."""
     parser = argparse.ArgumentParser(description="Inputs of the Gate 2 mix run")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("waived", "modules", "config", "labels", "ports", "names"):
+    for name in ("waived", "modules", "config", "labels", "ports", "names", "pools"):
         p = sub.add_parser(name)
         p.add_argument("--mix", type=Path, default=MIX_FILE)
         p.add_argument("--waived", default="", help="modules that the mix leaves out")
@@ -414,6 +415,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "ports":
             for transport, port in listen_ports(doc, waive):
                 print(transport, port)
+        elif args.command == "pools":
+            print(CLIENT_POOL, SERVER_POOL)
         elif args.command == "names":
             print(" ".join(sorted({str(e["module"]) for e in included(doc, waive)})))
     except MixError as e:
