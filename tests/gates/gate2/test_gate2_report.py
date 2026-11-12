@@ -390,3 +390,94 @@ def test_the_session_basis_fails_unless_waived(tmp_path: Path) -> None:
     report = (out / "report.md").read_text()
     assert "**Verdict: PASS WITH WAIVERS**" in report
     assert "expected_bytes" in report
+
+
+FINDINGS: list[dict[str, Any]] = [
+    {
+        "parser": "tshark",
+        "kind": "malformed",
+        "name": "tls",
+        "message": "Malformed Packet (Exception occurred)",
+        "frame": 4321,
+        "timestamp": 1762923691.25,
+        "session": 7,
+        "application": "https",
+        "transport": "tcp",
+        "client": {"ip": "10.201.0.2", "port": 40001},
+        "server": {"ip": "10.202.0.2", "port": 443},
+    },
+    {
+        "parser": "zeek",
+        "kind": "weird",
+        "name": "bad_HTTP_request",
+        "message": "",
+        "frame": None,
+        "timestamp": None,
+        "session": None,
+        "application": None,
+        "transport": None,
+        "client": None,
+        "server": None,
+    },
+]
+
+
+def write_findings(
+    out: Path, name: str | None = None, errors_total: int = len(FINDINGS)
+) -> None:
+    """Make the parser error check of one realism report fail with FINDINGS."""
+    path = (
+        out / "mix" / "realism.json"
+        if name is None
+        else out / "modules" / name / f"{name}.realism.json"
+    )
+    report = json.loads(path.read_text())
+    parsers = next(c for c in report["checks"] if c["check"] == "parser_errors")
+    parsers.update(passed=False, errors_total=errors_total, errors=FINDINGS)
+    report["passed"] = False
+    write(path, report)
+
+
+def test_describe_finding_names_every_fact() -> None:
+    line = g.describe_finding(FINDINGS[0])
+    assert line == (
+        "tshark malformed tls: Malformed Packet (Exception occurred); "
+        "frame 4321 at 2025-11-12T05:01:31.250000Z; application https, session 7; "
+        "tcp 10.201.0.2:40001 -> 10.202.0.2:443"
+    )
+    assert g.describe_finding(FINDINGS[1]) == "zeek weird bad_HTTP_request; no session"
+
+
+def test_failing_mix_parser_check_names_each_finding(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    write_findings(out)
+    assert run(out) == 1
+    report = (out / "report.md").read_text()
+    assert "### Parser findings\n" in report
+    for entry in FINDINGS:
+        assert f"- {g.describe_finding(entry)}\n" in report
+    assert "| Mix parser errors | 2 findings from tshark, zeek |" in report
+
+
+def test_failing_module_parser_check_names_each_finding(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    write_findings(out, "ssh")
+    assert run(out) == 1
+    report = (out / "report.md").read_text()
+    assert "### Parser findings of module ssh\n" in report
+    assert f"- {g.describe_finding(FINDINGS[0])}\n" in report
+    assert "of module dns" not in report
+
+
+def test_unlisted_findings_are_counted(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    write_findings(out, errors_total=130)
+    assert run(out) == 1
+    report = (out / "report.md").read_text()
+    assert "- and 128 more that the realism report does not list\n" in report
+
+
+def test_a_passing_run_has_no_findings_section(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    assert run(out) == 0
+    assert "Parser findings" not in (out / "report.md").read_text()

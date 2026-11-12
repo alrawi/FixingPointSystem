@@ -80,17 +80,35 @@ waived=$(python3 -I "$mix_config" waived --requested "$requested_waiver" --cargo
 mix_modules=$(python3 -I "$mix_config" names --waived "$waived") || die "cannot list the modules of the mix"
 readonly waived mix_modules
 
+# log_capture FILE prints the packet count, the duration, and the first and last packet
+# time of the capture, so that a parser finding (the report gives its time in UTC) can
+# be placed at the start, in the middle, or at the end of the capture. capinfos prints
+# local time, which is UTC on the runners. It is best effort and never fails the stage.
+log_capture() {
+  command -v capinfos >/dev/null 2>&1 || return 0
+  local line
+  capinfos -c -u -a -e "$1" 2>&1 | grep -v '^File name' | while IFS= read -r line; do
+    log "capture: $line"
+  done || true
+}
+
 # score_and_report DIR scores the capture of DIR/mix.pcapng and writes the report of the
-# stage. It returns the verdict of the stage.
+# stage. The report names every parser finding in its own section, so the job log shows
+# what tshark and Zeek reported. It returns the verdict of the stage.
 score_and_report() {
   local dir=$1 rc=0
   [[ -s $dir/mix.pcapng && -s $dir/run-report.json && -s $dir/test-config.yaml && -s $dir/score-config.yaml && -s $dir/expected.yaml ]] ||
     die "$dir holds no mix.pcapng, run-report.json, test-config.yaml, score-config.yaml, and expected.yaml"
+  log_capture "$dir/mix.pcapng"
   (cd "$root" && python3 -m realism score --pcap "$dir/mix.pcapng" --labels "$dir/expected.yaml" \
     --test-config "$dir/score-config.yaml" --run-report "$dir/run-report.json" \
     --mix-tolerance "$tolerance" --mix-basis bytes \
     --parsers "$parsers" --output "$dir/realism.json") || rc=$?
   [[ $rc -ne 2 && -s $dir/realism.json ]] || die "the realism runner could not score $dir/mix.pcapng"
+  # The job log names every parser finding with its place in the capture, and the findings
+  # stay in OUT as parser-findings.json. A fault here never decides the stage.
+  python3 -I "$here/mix_findings.py" --out-dir "$(dirname "$dir")" ||
+    log "the parser findings of $dir could not be written"
   rc=0
   python3 -I "$here/gate2_report.py" --out-dir "$(dirname "$dir")" --stages mix \
     --tolerance "$tolerance" --mix-modules "${mix_modules// /,}" ${allow_waivers:+"$allow_waivers"} || rc=$?
