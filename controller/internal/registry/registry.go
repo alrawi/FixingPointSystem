@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 
 	"go.yaml.in/yaml/v3"
@@ -433,9 +434,13 @@ func checkTree(dir string) (Entry, error) {
 	}
 	names := make([]string, 0, len(m.Scenarios))
 	seen := map[string]string{}
+	// namesKnown turns false when a scenario file gave no name, because a key
+	// of expected_bytes may then name that scenario.
+	namesKnown := true
 	for i, p := range m.Scenarios {
 		name, err := scenarioName(root.FS(), p)
 		if err != nil {
+			namesKnown = false
 			if !errors.Is(err, os.ErrNotExist) {
 				verr.Findings = append(verr.Findings, Finding{Path: fmt.Sprintf("/scenarios/%d", i), Message: err.Error()})
 			}
@@ -455,6 +460,9 @@ func checkTree(dir string) (Entry, error) {
 			verr.Findings = append(verr.Findings, Finding{Path: "file:" + p, Message: "read scenario: " + err.Error()})
 		}
 		verr.Findings = append(verr.Findings, found...)
+	}
+	if namesKnown {
+		verr.Findings = append(verr.Findings, unknownEstimateKeys(m.ExpectedBytes, seen)...)
 	}
 	// Scenarios that use syntax the engine does not compile yet sit in
 	// scenarios-pending. The manifest does not list them and the index does
@@ -481,6 +489,24 @@ func checkTree(dir string) (Entry, error) {
 		Name: m.Name, Version: m.Version, Type: m.Type, License: m.License,
 		Summary: m.Summary, Scenarios: names, Digest: digest,
 	}, nil
+}
+
+// unknownEstimateKeys returns one finding for each key of expected_bytes that
+// names no scenario of the manifest. A misspelled key installs otherwise and
+// leaves the real scenario without an estimate. Scenarios in scenarios-pending
+// are not in the manifest, so their names do not count.
+func unknownEstimateKeys(expected map[string]int64, scenarios map[string]string) []Finding {
+	var found []Finding
+	for key := range expected {
+		if _, ok := scenarios[key]; !ok {
+			found = append(found, Finding{
+				Path:    "/expected_bytes/" + strings.NewReplacer("~", "~0", "/", "~1").Replace(key),
+				Message: fmt.Sprintf("expected_bytes key %s names no scenario of the manifest", key),
+			})
+		}
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].Path < found[j].Path })
+	return found
 }
 
 // identifier is the identifier pattern of the scenario schema.

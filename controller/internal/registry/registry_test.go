@@ -209,6 +209,9 @@ func TestParseManifestFindings(t *testing.T) {
 		{"unknown field", "kind: Module", "kind: Module\ncolor: blue", ""},
 		{"escaping scenario path", "scenarios/web_get.yaml", "../web_get.yaml", "/scenarios/0"},
 		{"reserved name", "name: http1", "name: vars", "/name"},
+		{"reserved name profiles", "name: http1", "name: profiles", "/name"},
+		{"reserved name dist", "name: http1", "name: dist", "/name"},
+		{"reserved name all", "name: http1", "name: all", "/name"},
 		{"capture without consent", "source: specification", "source: capture", "/provenance"},
 		{"duplicate function", "  - name: response", "  - name: request", "/functions/1/name"},
 	}
@@ -375,6 +378,12 @@ func TestInstallRejects(t *testing.T) {
 			f["scenarios/resolve.yaml"] = f["scenarios/lookup.yaml"]
 			return f
 		}(), nil, "/scenarios/1"},
+		{"module named dist", exampleTree(t, "http1", func(s string) string {
+			return strings.Replace(s, "name: http1", "name: dist", 1)
+		}), nil, "/name"},
+		{"misspelled expected_bytes key", exampleTree(t, "http1", func(s string) string {
+			return strings.Replace(s, "  web_get: 17244", "  web_gte: 17244", 1)
+		}), nil, "/expected_bytes/web_gte"},
 		{"no manifest", map[string][]byte{"scenarios/a.yaml": []byte("scenario: a\n")}, ErrArchive, ""},
 		{"absolute path", map[string][]byte{ManifestFile: []byte("x"), "/etc/passwd": []byte("x")}, ErrArchive, ""},
 		{"parent path", map[string][]byte{ManifestFile: []byte("x"), "a/../../b": []byte("x")}, ErrArchive, ""},
@@ -440,5 +449,16 @@ func TestOpenRejectsBadIndex(t *testing.T) {
 	}
 	if _, err := Open(root, Limits{}); err == nil {
 		t.Error("Open accepted a truncated index")
+	}
+}
+
+func TestUnknownEstimateKeys(t *testing.T) {
+	scenarios := map[string]string{"a": "scenarios/a.yaml", "b": "scenarios/b.yaml"}
+	if got := unknownEstimateKeys(map[string]int64{"a": 1, "b": 2}, scenarios); len(got) != 0 {
+		t.Errorf("keys that name scenarios gave %v", got)
+	}
+	got := unknownEstimateKeys(map[string]int64{"a": 1, "z": 2, "c": 3}, scenarios)
+	if len(got) != 2 || got[0].Path != "/expected_bytes/c" || got[1].Path != "/expected_bytes/z" {
+		t.Errorf("findings = %v, want c and z in order", got)
 	}
 }
