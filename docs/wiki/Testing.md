@@ -168,12 +168,13 @@ func TestRunStateTransitions(t *testing.T) {
 
 ## Testing a new module
 
-A module package proves four things with tests inside its own directory.
+A module package proves five things with tests inside its own directory.
 
 1. **The module validates.** The module's `lint-mod-<name>` target passes. It runs `tools/contracts/validate.py --modules` on a parent directory that holds only the module, because the validator treats each subdirectory of the given directory as a module.
 2. **Client and server agree.** An interpreter test runs every scenario with both sides over the in memory duplex and checks success counters.
 3. **Bytes stay stable.** A transcript test renders each scenario with seed 42 and compares the bytes in both directions with golden files in `tests/testdata/`.
 4. **Traffic looks real.** The fixture capture from a harness run passes every realism check that applies to the module, and `fixtures/expected.yaml` records the expected labels.
+5. **The byte estimates hold.** A test named `default_parameters_move_the_expected_bytes` runs the scenarios at the default parameters and fails at a difference of 2 percent or more from `expected_bytes` (MOD-25, see [Module Development](Module-Development.md)).
 
 ```text
 modules/dns/tests/

@@ -103,7 +103,7 @@ make e2e-qa-gate2-image        # the image stage, which needs Packer, QEMU, and 
 Two waivers keep the suite honest about what the system cannot do yet. The report names both and then says `PASS WITH WAIVERS`, and the workflow sets them.
 
 - **Modules the agent does not run.** `engine/fps-agent` links the native crate of a module to run it, and AGT-21 adds `ntp`, `mqtt`, `ldap`, and `hls`. `FPS_GATE2_MIX_WAIVE` leaves them out of the mix. A waiver lapses by itself once `engine/fps-agent/Cargo.toml` depends on the crate, so merging AGT-21 puts the four modules into the mix without an edit. Their module checks run in the module stage regardless.
-- **The byte basis.** The scenario catalog of the controller (`internal/wiring/adapters.go`) does not pass `expected_bytes` of the manifests to the compiler, so `profile.basis: bytes` fails with `ErrNoByteEstimate`, and a `throughput_bps` objective would fail too. `FPS_GATE2_BASIS=sessions` makes the suite compute the session shares and the session rate from the estimates in `mix.yaml`, which is what the compiler does for the basis `bytes`, and the controller then runs on the basis `sessions`. The mix control of CTL-12 does not run, and the capture is still scored against the byte weights (`mix/score-config.yaml`). Without the variable the suite runs the basis `bytes`, which no CI run has exercised, because the catalog fails it.
+- **The byte basis.** The controller reads `expected_bytes` since CTL-47, and every manifest carries it since MOD-25. A run on the bytes basis still misses the mix by up to 7.84 points, because the run counts the FTP data connection and the RTP media stream as sessions of their own. The calibration then measures half the real bytes of an ftp or sip_rtp session and doubles their shares. CTL-49 counts a spawned flow with the session that opened it. Until then `FPS_GATE2_BASIS=sessions` keeps the waiver.
 
 ### Negative proof
 
@@ -132,6 +132,6 @@ An earlier run of the mix with guessed byte estimates missed the limit by up to 
 ### Limits
 
 - The mix leaves out `hls`, `ldap`, `mqtt`, and `ntp` until AGT-21 merges, and it runs on the session basis until the controller catalog carries `expected_bytes`. Gate 2 does not hold in full before both waivers end.
-- Most module manifests have no `expected_bytes`, so the suite stages the module trees with the estimates of `mix.yaml` and does not change the tracked manifests.
+- Every manifest of a module with scenarios carries `expected_bytes` (MOD-25). The suite still stages the module trees with the estimates of `mix.yaml` for the mix scenarios, and does not change the tracked manifests.
 - The suite runs two agent identities, one per side, as the Gate 1 suite does.
 - The image stage needs Packer, QEMU, and a runner with KVM or the patience for TCG.
