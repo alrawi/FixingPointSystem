@@ -109,9 +109,41 @@ if [[ -n ${FPS_FIXTURE_DECRYPTED_DIR:-} ]]; then
   mkdir -p "$FPS_FIXTURE_DECRYPTED_DIR"
   view_args=(--view "$FPS_FIXTURE_DECRYPTED_DIR/http2.decrypted.pcap")
 fi
+# The decrypted check lists the TLS sessions as the streams with a ClientHello.
+# tshark finds one on the ports 8443 and 8444 by its heuristic only, which a
+# ClientHello whose first segment is shorter than a record header escapes (MOD-23),
+# so the check reads the capture through a tshark that decodes those ports as TLS.
+# It leaves the decrypted view, which holds HTTP/2 in the clear on them, alone.
+tls_ports=$(sed -n 's/^  server_port: *\(84[0-9][0-9]\)$/\1/p' "$here"/../scenarios/https_*.yaml | sort -u | tr '\n' ' ')
+tls_ports=${tls_ports% }
+if [[ -z $tls_ports ]]; then
+  echo "capture.sh: the https scenarios name no server port" >&2
+  exit 2
+fi
+real_tshark=${FPS_TSHARK:-tshark}
 check_rc=0
-python3 -m realism decrypted --pcap "$out/http2.pcapng" \
+FPS_TSHARK_REAL=$real_tshark FPS_TLS_PORTS=$tls_ports FPS_TLS_DECODE_PCAP="$out/http2.pcapng" \
+  python3 -m realism decrypted --pcap "$out/http2.pcapng" \
   --labels "$root/realism/examples/decrypted/http2.labels.yaml" \
-  --sessions $(( sessions * 2 )) --parsers tshark \
+  --sessions $(( sessions * 2 )) --parsers tshark --tshark "$here/tshark-tls-ports.sh" \
   --output "$out/http2.decrypted.json" "${view_args[@]}" || check_rc=$?
+if [[ $check_rc -ne 0 ]]; then
+  # Say how many connections the capture holds on the TLS ports, so a count
+  # that is off names its cause: a SYN count that differs from the 5-tuple
+  # count is a reused source port, and fewer ClientHellos than SYNs is a
+  # connection that never started TLS.
+  syn_filter='tcp.flags.syn == 1 && tcp.flags.ack == 0'
+  # shellcheck disable=SC2086  # one printf round per port
+  port_filter=$(printf 'tcp.dstport == %s || ' $tls_ports)
+  port_filter="(${port_filter% || })"
+  syns=$("$real_tshark" -r "$out/http2.pcapng" -Y "$syn_filter && $port_filter" -T fields \
+    -e tcp.srcport -e tcp.dstport 2>/dev/null || true)
+  hello_args=()
+  for port in $tls_ports; do hello_args+=(-d "tcp.port==$port,tls"); done
+  hellos=$("$real_tshark" -r "$out/http2.pcapng" "${hello_args[@]}" -Y 'tls.handshake.type == 1' \
+    -T fields -e tcp.stream 2>/dev/null || true)
+  echo "capture.sh: the TLS ports $tls_ports hold $(grep -c . <<<"$syns") SYNs from" \
+    "$(sort -u <<<"$syns" | grep -c .) distinct 5-tuples and" \
+    "$(sort -u <<<"$hellos" | grep -c .) streams with a ClientHello, $(( sessions * 2 )) expected" >&2
+fi
 exit $(( score_rc != 0 ? score_rc : check_rc ))
