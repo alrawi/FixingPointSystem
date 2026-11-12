@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #528 |
 | Branch | `wp/CTL-50` |
-| Pull request | pending |
-| Status | in progress |
-| Progress | 80% (2 of 3 plan steps) |
+| Pull request | #529 |
+| Status | blocked |
+| Progress | 95% (3 of 3 plan steps) |
 | Current holder | see the status card on #528 |
 | Last verified commit | none |
 
@@ -20,7 +20,7 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 - [x] 1. Code: eight reserved names, `unknownEstimateKeys` in `checkTree`, tests.
 - [x] 2. Docs: Controller page, log entry with the Shared page notes, this handoff.
-- [ ] 3. PR, CI, review.
+- [x] 3. PR and CI. Review waits for the CON edit.
 
 ## Done and verified
 
@@ -29,11 +29,11 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Remaining
 
-CI and review. The CON change of the log entry is outside this package.
+The CON change of the log entry, then CI green and review.
 
 ## Next action
 
-Open the PR and poll CI.
+Coordinator applies the CON edit of the log entry to `tools/contracts/`, then the `contracts` job turns green and the review step runs.
 
 ## Blockers and open questions
 
@@ -56,4 +56,4 @@ python3 -m pytest tools/contracts/test_contracts.py -q -k reserved
 
 ## Session log
 
-- 2026-11-12: claimed, code and docs written.
+- 2026-11-12: claimed, code and docs written, PR #529 opened. CI: Go tests, controller-e2e, ops, licenses, proto, scripts green. `contracts` fails only on `test_reserved_names_equal_the_registry_list` (needs the CON edit). `rust` fails on a rustfmt diff in `modules/ldap/native/src/catalog.rs`, which main has too.
