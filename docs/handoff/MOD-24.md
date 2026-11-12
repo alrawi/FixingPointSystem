@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #493 |
 | Branch | `wp/MOD-24` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #530 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-6afc7f, lease until 2026-11-12T21:01:58Z |
-| Last verified commit | none |
+| Last verified commit | 85a9728 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Replace `rtp_check.py` (sip_rtp) and `hls_check.py` (hls) with `temporal.packets
 - [x] 1. Add the labels, remove the sip_rtp script and the http2 wrapper, update capture scripts, mk files, workflows
 - [x] 2. Hls decision (see findings) and the README and test updates of the three modules
 - [x] 3. Module-Development.md, log entry, checks
-- [ ] 4. Open the PR, wait for CI, review
+- [x] 4. Open the PR, wait for CI, review
 
 ## Done and verified
 
@@ -29,11 +29,11 @@ Steps 1 to 3: sip_rtp labels (`ms: [20, 30]`, `tolerance_ms: 8`), `rtp_check.py`
 
 ## Remaining
 
-Open the PR, wait for CI (module jobs of sip, hls, http2), review.
+Nothing. CI of PR #530 on 85a9728: every job green (module sip_rtp, hls, http2, harness, fuzz, contracts) except `rust`, which fails at `cargo fmt --check` on `modules/ldap/native/src/catalog.rs` and fails the same way on main (43c0b7b). The hls decision is open for the coordinator.
 
 ## Next action
 
-Open the PR with `gh api repos/$FPS_REPO/pulls`.
+Review PR #530.
 
 ## Blockers and open questions
 
@@ -59,3 +59,4 @@ git log --oneline origin/wp/MOD-24
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-12T19:36 | claude-6afc7f | claim | none | claimed issue #493 |
+| 2026-11-12T20:00 | claude-6afc7f | finish | 85a9728 | PR 530 open, CI green except the rust fmt failure that main has too |
