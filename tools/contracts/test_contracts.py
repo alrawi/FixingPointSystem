@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import copy
+import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -250,7 +252,7 @@ def test_example_function_catalogs_are_valid(dns_manifest, http_manifest):
     (lambda m: m["functions"][2]["params"][2].update(default="long"), "does not match parameter type int"),
     (lambda m: m["functions"][0]["params"].append({"name": "raw", "type": "bytes", "default": "xyz"}),
      "hexadecimal digit pairs"),
-    (lambda m: m.update(extension={"wasm": "manifest.yaml", "hooks": ["on_data"]}), "must list the render hook"),
+    (lambda m: m.update(extension={"wasm": "extension.wasm", "hooks": ["on_data"]}), "must list the render hook"),
 ])
 def test_function_catalog_rejects(change, needle, dns_manifest):
     change(dns_manifest)
@@ -264,7 +266,7 @@ def test_function_catalog_schema_rejects_unknown_type(dns_manifest):
 
 def test_render_hook_without_functions_is_a_warning(dns_manifest):
     del dns_manifest["functions"]
-    dns_manifest["extension"] = {"wasm": "manifest.yaml", "hooks": ["render"]}
+    dns_manifest["extension"] = {"wasm": "extension.wasm", "hooks": ["render"]}
     report = manifest_report(dns_manifest)
     assert not report.errors
     assert any("declares no functions" in m for m in messages(report, "warning"))
@@ -1042,3 +1044,215 @@ def test_no_shipped_module_is_named_all():
 ])
 def test_controller_copies_are_byte_identical(source, copy_path):
     assert (v.REPO / source).read_bytes() == (v.REPO / copy_path).read_bytes(), copy_path
+
+
+# --- registry rules (CON-30) ----------------------------------------------------
+
+REGISTRY = v.REPO / "controller/internal/registry"
+
+
+def module_copy(tmp_path: Path, name: str = "dns", edit=None) -> Path:
+    """Copy an example module to tmp_path/<name> and return the directory."""
+    mod = tmp_path / name
+    shutil.copytree(EXAMPLES / "modules/dns", mod)
+    manifest = v.load_yaml(mod / "manifest.yaml")
+    manifest["name"] = name
+    if edit:
+        edit(manifest)
+    (mod / "manifest.yaml").write_text(yaml.safe_dump(manifest))
+    return mod
+
+
+def module_errors(mod: Path) -> list[str]:
+    report = v.Report()
+    v.check_module_dir(mod, report, v.ModuleIndex())
+    return messages(report)
+
+
+def test_copy_of_the_example_module_is_valid(tmp_path):
+    assert module_errors(module_copy(tmp_path)) == []
+
+
+@pytest.mark.parametrize("name", sorted(v.REGISTRY_RESERVED_NAMES))
+def test_every_registry_reserved_name_is_rejected(tmp_path, name):
+    assert any("reserved" in m for m in module_errors(module_copy(tmp_path, name)))
+
+
+@pytest.mark.parametrize("name", ["profiles", "dist", "all"])
+def test_validator_also_rejects_the_names_the_registry_lacks(tmp_path, name):
+    assert any("reserved" in m for m in module_errors(module_copy(tmp_path, name)))
+
+
+def test_reserved_names_equal_the_registry_list():
+    source = (REGISTRY / "manifest.go").read_text()
+    body = re.search(r"reservedModuleNames = map\[string\]bool\{([^}]*)\}", source).group(1)
+    assert set(re.findall(r'"(\w+)"', body)) == set(v.REGISTRY_RESERVED_NAMES)
+    assert v.REGISTRY_RESERVED_NAMES <= v.RESERVED_ROOTS
+
+
+def test_license_lists_equal_the_registry_lists():
+    source = (REGISTRY / "license.go").read_text()
+
+    def ids(var: str) -> tuple[str, ...]:
+        body = re.search(var + r" = canonical\((.*?)\n\)", source, re.S).group(1)
+        return tuple(re.findall(r'"([^"]+)"', body))
+
+    assert ids("compatibleLicenses") == v.COMPATIBLE_LICENSES
+    assert ids("incompatibleLicenses") == v.INCOMPATIBLE_LICENSES
+    assert ids("licenseExceptions") == v.LICENSE_EXCEPTIONS
+
+
+# The cases of TestCheckLicense in controller/internal/registry/license_test.go.
+LICENSE_CASES = [
+    ("GPL-3.0-only", None), ("gpl-3.0-or-later", None), ("MIT", None),
+    ("Apache-2.0 WITH LLVM-exception", None), ("MIT OR GPL-2.0-only", None),
+    ("(MIT AND BSD-3-Clause) OR Apache-2.0", None), ("LGPL-2.1-or-later AND CC0-1.0", None),
+    ("GPL-2.0-only", "not compatible"), ("MIT AND EPL-2.0", "not compatible"),
+    ("GPL-2.0-only OR CDDL-1.0", "not compatible"),
+    ("Proprietary", "allow list"), ("LicenseRef-acme", "allow list"), ("MIT OR LicenseRef-acme", "allow list"),
+    ("GPL-3.0", "allow list"), ("GPL-2.0+", "allow list"),
+    ("Apache-2.0 WITH Made-up-exception", "allow list"),
+    ("MIT AND", "ends early"), ("(MIT", "closing parenthesis"), ("MIT BSD-3-Clause", "unexpected"),
+    ("", "empty"), ("mit or apache-2.0", "unexpected"),
+]
+
+
+@pytest.mark.parametrize("expr,needle", LICENSE_CASES)
+def test_license_problem_follows_the_registry(expr, needle):
+    problem = v.license_problem(expr)
+    if needle is None:
+        assert problem is None
+    else:
+        assert problem and needle in problem, problem
+
+
+def test_license_cases_equal_the_registry_tests():
+    source = (REGISTRY / "license_test.go").read_text()
+    body = source.split("func TestCheckLicense", 1)[1].split("for _, tt", 1)[0]
+    go = re.findall(r'\{"([^"]*)", (nil|Err\w+)\}', body)
+    assert [e for e, _ in go] == [e for e, _ in LICENSE_CASES]
+    assert [w == "nil" for _, w in go] == [n is None for _, n in LICENSE_CASES]
+
+
+@pytest.mark.parametrize("license_text", ["Proprietary", "GPL-2.0-only", "MIT OR"])
+def test_module_with_a_refused_license_is_rejected(tmp_path, license_text):
+    mod = module_copy(tmp_path, edit=lambda m: m.update(license=license_text))
+    assert any(m.startswith("license ") for m in module_errors(mod))
+
+
+def test_module_with_an_allowed_license_expression_is_valid(tmp_path):
+    mod = module_copy(tmp_path, edit=lambda m: m.update(license="Apache-2.0 OR GPL-2.0-only"))
+    assert module_errors(mod) == []
+
+
+@pytest.mark.parametrize("bad", ["notes it.txt", "a+b.txt", "caf\u00e9.txt", "q?.txt"])
+def test_file_name_characters_outside_the_relpath_set_are_rejected(tmp_path, bad):
+    mod = module_copy(tmp_path)
+    (mod / bad).write_text("x")
+    assert any("cannot name" in m for m in module_errors(mod))
+
+
+def test_bad_directory_name_is_rejected_for_files_the_manifest_does_not_name(tmp_path):
+    mod = module_copy(tmp_path)
+    (mod / "my dir").mkdir()
+    (mod / "my dir" / "ok.txt").write_text("x")
+    errors = module_errors(mod)
+    assert any("cannot name" in m for m in errors)
+
+
+def test_dotfiles_and_nested_names_are_allowed(tmp_path):
+    mod = module_copy(tmp_path)
+    (mod / "notes").mkdir()
+    (mod / "notes" / ".keep-1_a.txt").write_text("x")
+    assert module_errors(mod) == []
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symbolic links unavailable")
+@pytest.mark.parametrize("kind", ["file", "dir", "dangling"])
+def test_symbolic_link_in_the_tree_is_rejected(tmp_path, kind):
+    mod = module_copy(tmp_path)
+    target = {"file": mod / "manifest.yaml", "dir": mod / "scenarios", "dangling": tmp_path / "missing"}[kind]
+    (mod / "link").symlink_to(target)
+    assert any("symbolic link" in m for m in module_errors(mod))
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symbolic links unavailable")
+def test_a_linked_module_root_is_not_a_symbolic_link_error(tmp_path):
+    (tmp_path / "real").mkdir()
+    real = module_copy(tmp_path / "real", "dns")
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "dns").symlink_to(real)
+    assert module_errors(parent / "dns") == []
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symbolic links unavailable")
+def test_manifest_path_that_is_a_link_does_not_exist_for_the_registry(tmp_path):
+    mod = module_copy(tmp_path)
+    scenario = mod / "scenarios" / "resolve.yaml"
+    moved = mod / "resolve-real.yaml"
+    scenario.rename(moved)
+    scenario.symlink_to(moved)
+    errors = module_errors(mod)
+    assert any("does not exist" in m for m in errors)
+
+
+def test_manifest_path_that_is_a_directory_does_not_exist_for_the_registry(tmp_path):
+    mod = module_copy(tmp_path, edit=lambda m: m.update(assets=[{"name": "dir", "path": "scenarios"}]))
+    assert any("file 'scenarios' does not exist" in m for m in module_errors(mod))
+
+
+def test_expected_bytes_key_that_names_no_scenario_is_rejected(tmp_path):
+    mod = module_copy(tmp_path, edit=lambda m: m["expected_bytes"].update(resolv=10))
+    errors = module_errors(mod)
+    assert any("expected_bytes names 'resolv'" in m for m in errors), errors
+
+
+def test_expected_bytes_key_of_a_pending_scenario_is_rejected(tmp_path):
+    def edit(m):
+        m["expected_bytes"]["later"] = 10
+    mod = module_copy(tmp_path, edit=edit)
+    (mod / "scenarios-pending").mkdir(exist_ok=True)
+    pending = v.load_yaml(mod / "scenarios/resolve.yaml")
+    pending["scenario"] = "later"
+    (mod / "scenarios-pending" / "later.yaml").write_text(yaml.safe_dump(pending))
+    assert any("expected_bytes names 'later'" in m for m in module_errors(mod))
+
+
+def test_expected_bytes_check_waits_when_a_scenario_file_is_missing(tmp_path):
+    mod = module_copy(tmp_path)
+    (mod / "scenarios" / "resolve.yaml").unlink()
+    errors = module_errors(mod)
+    assert any("does not exist" in m for m in errors)
+    assert not any("expected_bytes" in m for m in errors)
+
+
+def test_expected_bytes_of_the_examples_name_scenarios():
+    for name in ("dns", "http1"):
+        manifest = v.load_yaml(EXAMPLES / "modules" / name / "manifest.yaml")
+        assert manifest.get("expected_bytes"), name
+
+
+# --- the extension.wasm path (CON-30) ---------------------------------------------
+
+@pytest.mark.parametrize("path", ["dns.wasm", "ext/extension.wasm", "manifest.yaml", "extension.wasm.bak"])
+def test_extension_wasm_other_than_the_root_file_is_rejected(path, dns_manifest):
+    dns_manifest["extension"] = {"wasm": path, "hooks": ["render"]}
+    assert manifest_report(dns_manifest).errors
+
+
+def test_extension_wasm_root_file_is_accepted(dns_manifest):
+    dns_manifest["extension"] = {"wasm": "extension.wasm", "hooks": ["render"]}
+    assert not manifest_report(dns_manifest).errors
+
+
+def test_extension_file_must_exist_in_the_module(tmp_path):
+    mod = module_copy(tmp_path, edit=lambda m: m.update(extension={"wasm": "extension.wasm", "hooks": ["render"]}))
+    assert any("file 'extension.wasm' does not exist" in m for m in module_errors(mod))
+    (mod / "extension.wasm").write_bytes(b"\0asm")
+    assert module_errors(mod) == []
+
+
+def test_manifest_schema_matches_the_controller_copy():
+    assert (v.SCHEMAS / "module-manifest.schema.json").read_bytes() == (
+        REGISTRY / "schema/module-manifest.schema.json").read_bytes()

@@ -1,4 +1,4 @@
-# Module manifest, contract v0.4 (contracts/schemas/module-manifest.schema.json).
+# Module manifest, contract v0.5 (contracts/schemas/module-manifest.schema.json).
 # The guide docs/wiki/Module-Development.md explains every field, and each
 # comment below names the section that applies. Copy this directory to
 # modules/<name>/ (or to any directory named <name>), then follow the section

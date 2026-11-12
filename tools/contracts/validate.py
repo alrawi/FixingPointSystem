@@ -225,6 +225,12 @@ ALL_APPLICATIONS = "all"
 # these names, because a template could not tell the two apart.
 RESERVED_ROOTS = {"vars", "session", "last", "true", "false", "profiles", "dist"}
 
+# The module names that the controller registry refuses at install
+# (controller/internal/registry/manifest.go, reservedModuleNames). RESERVED_ROOTS
+# and ALL_APPLICATIONS name three more that the registry does not refuse yet, so
+# the validator is stricter than the registry for them and never looser.
+REGISTRY_RESERVED_NAMES = frozenset({"vars", "session", "last", "true", "false"})
+
 # Calls may nest at most this deep, counting the outermost call as 1.
 MAX_CALL_DEPTH = 8
 
@@ -855,6 +861,192 @@ def _check_expect(body: dict, udp: bool, path: list, file: Path, report: Report)
 
 
 # ---------------------------------------------------------------------------
+# Registry rules
+#
+# The controller registry refuses a module at install for reasons that the
+# schema cannot express. The validator applies the same rules, so that a module
+# that validates here installs there (CON-30). Each rule names the registry
+# source that it follows, and test_contracts.py compares the lists below with
+# those sources, so a change on one side fails the tests until the other follows.
+# ---------------------------------------------------------------------------
+
+# controller/internal/registry/license.go: the lower case SPDX identifiers that
+# may be combined with GPL-3.0 code, the well known ones that may not, and the
+# exceptions that only add permissions.
+COMPATIBLE_LICENSES = (
+    "GPL-3.0-only", "GPL-3.0-or-later", "GPL-2.0-or-later",
+    "LGPL-3.0-only", "LGPL-3.0-or-later", "LGPL-2.1-only", "LGPL-2.1-or-later",
+    "AGPL-3.0-only", "AGPL-3.0-or-later",
+    "Apache-2.0", "MIT", "MIT-0", "X11", "ISC", "0BSD", "Zlib", "BSL-1.0",
+    "BSD-2-Clause", "BSD-3-Clause", "MPL-2.0", "Artistic-2.0",
+    "Unlicense", "CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0",
+    "Unicode-3.0", "Unicode-DFS-2016", "CDLA-Permissive-2.0",
+)
+INCOMPATIBLE_LICENSES = (
+    "GPL-2.0-only", "LGPL-2.0-only", "Apache-1.0", "Apache-1.1", "BSD-4-Clause",
+    "CDDL-1.0", "CDDL-1.1", "EPL-1.0", "EPL-2.0", "MPL-1.0", "MPL-1.1",
+    "MPL-2.0-no-copyleft-exception", "SSPL-1.0", "BUSL-1.1", "JSON", "OpenSSL",
+    "CC-BY-NC-4.0", "CC-BY-ND-4.0", "CC-BY-NC-SA-4.0", "CC-BY-NC-ND-4.0",
+    "Commons-Clause", "Elastic-2.0",
+)
+LICENSE_EXCEPTIONS = ("LLVM-exception", "Classpath-exception-2.0", "GCC-exception-3.1")
+
+_COMPATIBLE = {i.lower(): i for i in COMPATIBLE_LICENSES}
+_INCOMPATIBLE = {i.lower(): i for i in INCOMPATIBLE_LICENSES}
+_EXCEPTIONS = {i.lower(): i for i in LICENSE_EXCEPTIONS}
+
+
+class _LicenseUnknown(ValueError):
+    """A malformed expression, or a license or exception off the allow list."""
+
+
+def _license_tokens(expr: str) -> list[str]:
+    toks: list[str] = []
+    cur: list[str] = []
+
+    def flush() -> None:
+        if cur:
+            toks.append("".join(cur))
+            cur.clear()
+
+    for ch in expr:
+        if ch in "()":
+            flush()
+            toks.append(ch)
+        elif ch in " \t\n\r":
+            flush()
+        else:
+            cur.append(ch)
+    flush()
+    return toks
+
+
+class _LicenseParser:
+    """The recursive descent parser of license.go. Operators are upper case, AND
+    binds tighter than OR, and WITH follows a single license."""
+
+    def __init__(self, toks: list[str]) -> None:
+        self.toks = toks
+        self.pos = 0
+
+    def peek(self) -> str:
+        return self.toks[self.pos] if self.pos < len(self.toks) else ""
+
+    def binary(self, op: str, nxt) -> tuple:
+        first = nxt()
+        args = [first]
+        while self.peek() == op:
+            self.pos += 1
+            args.append(nxt())
+        return first if len(args) == 1 else (op, args)
+
+    def expr(self) -> tuple:
+        return self.binary("OR", lambda: self.binary("AND", self.term))
+
+    def term(self) -> tuple:
+        tok = self.peek()
+        if tok == "":
+            raise _LicenseUnknown("expression ends early")
+        if tok == "(":
+            self.pos += 1
+            node = self.expr()
+            if self.peek() != ")":
+                raise _LicenseUnknown("missing closing parenthesis")
+            self.pos += 1
+            return node
+        if tok in (")", "AND", "OR", "WITH"):
+            raise _LicenseUnknown(f"unexpected '{tok}'")
+        self.pos += 1
+        key = tok.lower()
+        if key in _COMPATIBLE:
+            leaf = ("leaf", _COMPATIBLE[key], True)
+        elif key in _INCOMPATIBLE:
+            leaf = ("leaf", _INCOMPATIBLE[key], False)
+        else:
+            raise _LicenseUnknown(f"license '{tok}' is not on the allow list")
+        if self.peek() == "WITH":
+            self.pos += 1
+            exc = self.peek()
+            if exc.lower() not in _EXCEPTIONS:
+                raise _LicenseUnknown(f"license exception '{exc}' is not on the allow list")
+            self.pos += 1
+            leaf = ("leaf", leaf[1] + " WITH " + _EXCEPTIONS[exc.lower()], leaf[2])
+        return leaf
+
+
+def _incompatible_license(node: tuple) -> str:
+    """The license that makes node incompatible, or an empty string."""
+    if node[0] == "leaf":
+        return "" if node[2] else node[1]
+    op, args = node
+    bad = [_incompatible_license(a) for a in args]
+    if op == "AND":
+        return next((b for b in bad if b), "")
+    return "" if "" in bad else bad[0]
+
+
+def license_problem(expr: str) -> str | None:
+    """Return why the registry refuses the SPDX expression expr, or None.
+
+    An expression is compatible with GPL-3.0 code when every AND operand is
+    compatible and at least one operand of each OR is. Every license and
+    exception must be on the allow list, even in an OR operand that is not
+    needed, so a typo never passes (controller/internal/registry/license.go,
+    CheckLicense).
+    """
+    parser = _LicenseParser(_license_tokens(expr))
+    try:
+        if not parser.toks:
+            raise _LicenseUnknown("empty expression")
+        node = parser.expr()
+        if parser.pos < len(parser.toks):
+            raise _LicenseUnknown(f"unexpected '{parser.toks[parser.pos]}'")
+    except _LicenseUnknown as exc:
+        return f"license '{expr}': {exc}"
+    bad = _incompatible_license(node)
+    if bad:
+        return f"license '{expr}': {bad}: license is not compatible with GPL-3.0"
+    return None
+
+
+# controller/internal/registry/archive.go, entryPath and hasDotSegment: every
+# file and directory of a module tree, not only the files that the manifest
+# names, uses these characters and has no "." or ".." segment.
+TREE_PATH_RE = re.compile(r"[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)*")
+
+
+def tree_problems(root: Path) -> list[tuple[str, str]]:
+    """Return (path, problem) for every entry of the module tree under root that
+    the registry refuses. The root itself may be a link, as the first party
+    targets make it, and a link inside the tree is refused, as the registry, the
+    digest, and the agent refuse it (archive.go, digest.go, modules.rs)."""
+    found: list[tuple[str, str]] = []
+
+    def walk(directory: Path, prefix: str) -> None:
+        for entry in sorted(directory.iterdir(), key=lambda e: e.name):
+            rel = prefix + entry.name
+            if not TREE_PATH_RE.fullmatch(rel) or entry.name in (".", ".."):
+                found.append((rel, "the path has a character or a segment that a manifest cannot name; "
+                                   "use letters, digits, '_', '.', and '-' only"))
+            if entry.is_symlink():
+                found.append((rel, "the module tree holds a symbolic link"))
+            elif entry.is_dir():
+                walk(entry, rel + "/")
+            elif not entry.is_file():
+                found.append((rel, "the module tree holds a special file"))
+
+    walk(root, "")
+    return found
+
+
+def names_regular_file(root: Path, rel: str) -> bool:
+    """Whether rel is a regular file of the tree and not a link to one, which is
+    what the registry asks of every path that the manifest names."""
+    path = root / rel
+    return path.is_file() and not path.is_symlink()
+
+
+# ---------------------------------------------------------------------------
 # Module checks
 # ---------------------------------------------------------------------------
 
@@ -900,6 +1092,11 @@ def check_module_dir(mod_dir: Path, report: Report, index: ModuleIndex) -> None:
     if name == ALL_APPLICATIONS:
         report.error(manifest_path, "/name",
                      f"module name '{name}' is reserved for the application label value that totals every application")
+    problem = license_problem(manifest["license"])
+    if problem:
+        report.error(manifest_path, "/license", problem)
+    for rel, why in tree_problems(mod_dir):
+        report.error(mod_dir / rel, "", why)
     for i, req in enumerate(manifest.get("requires", [])):
         if req["module"] == name:
             report.error(manifest_path, f"/requires/{i}", "module requires itself")
@@ -913,7 +1110,7 @@ def check_module_dir(mod_dir: Path, report: Report, index: ModuleIndex) -> None:
                              ("fixtures", manifest.get("fixtures", []), "capture"),
                              ("assets", manifest.get("assets", []), "path")):
         for i, item in enumerate(items):
-            if item and item.get(attr) and not (mod_dir / item[attr]).exists():
+            if item and item.get(attr) and not names_regular_file(mod_dir, item[attr]):
                 report.error(manifest_path, f"/{key}" + (f"/{i}" if key != "extension" else "") + f"/{attr}",
                              f"file '{item[attr]}' does not exist")
 
@@ -925,19 +1122,31 @@ def check_module_dir(mod_dir: Path, report: Report, index: ModuleIndex) -> None:
         doc = load_yaml(spath)
         if schema_errors(scenario_schema, doc, report, spath):
             index.pending.append((name, spath, doc))
+    names_known = True
     for i, rel in enumerate(manifest.get("scenarios", [])):
         spath = mod_dir / rel
-        if not spath.exists():
+        if not names_regular_file(mod_dir, rel):
             report.error(manifest_path, f"/scenarios/{i}", f"scenario file '{rel}' does not exist")
+            names_known = False
             continue
         doc = load_yaml(spath)
         if not schema_errors(scenario_schema, doc, report, spath):
+            names_known = False
             continue
         sname = doc["scenario"]
         if sname in index.scenarios[name]:
             report.error(spath, "/scenario", f"duplicate scenario '{sname}' in module '{name}'")
         index.scenarios[name][sname] = doc
         index.pending.append((name, spath, doc))
+    # A key of expected_bytes that names no scenario of the manifest is a typo
+    # that the controller would never read. The registry does not refuse it yet,
+    # so the validator is the only check. It waits when a scenario file failed
+    # above, because that scenario's name is then unknown.
+    if names_known:
+        for key in manifest.get("expected_bytes", {}):
+            if key not in index.scenarios[name]:
+                report.error(manifest_path, f"/expected_bytes/{key}",
+                             f"expected_bytes names '{key}', which is not the name of a scenario in 'scenarios'")
 
 
 def check_index_scenarios(index: ModuleIndex, report: Report) -> None:

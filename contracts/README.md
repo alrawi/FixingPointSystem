@@ -1,15 +1,17 @@
 # Contracts v0.2
 
+The heading names the engine API generation, which is the minor part of `engine_api` that modules declare (`>=0.2, <0.3`) and of `EngineAPIVersion` of the controller (`controller/internal/api/capabilities.go`, and `TestCapabilitiesVersions` compares the two). It is not the version of any single contract. Each contract carries its own version, and the table below names it: the REST API 0.12.0, the agent protocol 0.2.4, the module manifest v0.5, the scenario contract v0.6, the test configuration v0.3, the extension interface 0.1.0, and the metric catalog 0.8.0.
+
 These files define the interfaces between FixingPointSystem workstreams. Implementation work must conform to them, and changes follow the process in `CONTRIBUTING.md`.
 
 | File | Defines |
 |---|---|
-| `openapi/fps-api-v1.yaml` | Controller REST API (OpenAPI 3.1) |
-| `schemas/module-manifest.schema.json` | Module manifest, including the template function catalog |
+| `openapi/fps-api-v1.yaml` | Controller REST API (OpenAPI 3.1, version 0.12.0) |
+| `schemas/module-manifest.schema.json` | Module manifest (v0.5), including the template function catalog |
 | `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.6) |
 | `schemas/test-config.schema.json` | Test configuration (v0.3) |
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
-| `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels (catalog 0.5.0) |
+| `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels (catalog 0.8.0) |
 | `metrics/catalog.schema.json` | Format of the metric catalog |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.4 between the controller and agents (gRPC, proto3). Agents dial the controller. |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |
@@ -133,7 +135,7 @@ The grammar has five further rules.
 2. Positional arguments come before keyword arguments, and a keyword names each parameter at most once. A trailing comma is a syntax error.
 3. Arguments may be calls, so `http1.response(200, body=fill(vars.size))` is valid. Calls nest at most 8 levels deep.
 4. A function name with a module prefix calls a template function of that module. The module must be the module that ships the scenario or a module in its `requires` list. Core functions have no prefix.
-5. The module names `vars`, `session`, `last`, `profiles`, `dist`, `true`, and `false` are reserved, because a template could not tell them apart from references and literals.
+5. The module names `vars`, `session`, `last`, `profiles`, `dist`, `true`, and `false` are reserved, because a template could not tell them apart from references and literals. The name `all` is reserved too (see the metric catalog). The validator rejects all eight. The controller registry rejects `vars`, `session`, `last`, `true`, and `false` today, so a module named `profiles`, `dist`, or `all` fails the validator and would still install; do not rely on that.
 
 | Name | Type | Value |
 |---|---|---|
@@ -234,7 +236,20 @@ cargo install wasm-tools --locked
 wasm-tools component wit contracts/extension/fps-extension.wit
 ```
 
-The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax and argument types, module calls against the manifest function catalog, the precedence rule of `last`, the UDP datagram rules, `tls_upgrade` and `transport` only in TCP flows, the literal arguments of `int_bytes` and `now`, the bounds of uniform arrival and size distributions, the reserved module name `all`, scenario references in mixes, host pool sizes, and port references. The metric rules check that catalog names and labels are unique and declared, that formulas refer to catalog counters and gauges, and that every metric in test criteria and in `x-fps-metric` annotations exists in the catalog.
+The validator checks schema conformance and the semantic rules that JSON Schema cannot express. These rules cover unique flow ids, `after` and `spawn` references, dependency cycles, branch probabilities, reserved actions, template syntax and argument types, module calls against the manifest function catalog, the precedence rule of `last`, the UDP datagram rules, `tls_upgrade` and `transport` only in TCP flows, the literal arguments of `int_bytes` and `now`, the bounds of uniform arrival and size distributions, the reserved module names, scenario references in mixes, host pool sizes, and port references. The metric rules check that catalog names and labels are unique and declared, that formulas refer to catalog counters and gauges, and that every metric in test criteria and in `x-fps-metric` annotations exists in the catalog.
+
+## Module rules of the registry
+
+The controller registry refuses a module at install for reasons that the manifest schema cannot express. `tools/contracts/validate.py` applies the same rules (CON-30), so a module that validates installs. The rules are the license, the file names, the links, and the files that the manifest names.
+
+- The `license` is an SPDX expression that every license and exception of which is on the allow list of `controller/internal/registry/license.go`, and that is compatible with GPL-3.0: every `AND` operand is compatible and at least one operand of each `OR` is. Operators are upper case. The schema checks the length only.
+- Every file and directory of the module tree, not only the named files, has a path of letters, digits, `_`, `.`, `-`, and `/` and no `.` or `..` segment.
+- The tree holds no symbolic link and no special file.
+- Every path that the manifest names is a regular file of the tree.
+- The `extension.wasm` path is the constant `extension.wasm`. The agent loads only that file at the module root (`engine/fps-agent/src/modules.rs`), and the agent does not read the path, so the schema accepts no other value (CON-30). A module that ships the file needs no `extension` key for the agent to load it, and the key declares the hooks.
+- Each key of `expected_bytes` is the name of a scenario in `scenarios`. Only the validator checks this today.
+
+The module types `tunnel`, `strike`, `evasion`, and `fuzzer` are reserved. The schema accepts them, and no reader rejects them yet. The one rule that depends on the type is that the `raw` action needs a `strike` or `fuzzer` module.
 
 The plan checker validates the agent plans in `examples/plans/`. It needs the protobuf packages in `tools/contracts/requirements-proto.txt`, and CI runs it in the `proto` job together with `buf lint` and `buf breaking`.
 

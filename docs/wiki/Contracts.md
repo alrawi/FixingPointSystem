@@ -8,7 +8,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.12.0 |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.4, unreleased |
-| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.4 |
+| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.5 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.8.0 |
 | `examples/` | Example modules, tests, and plans that every validator run checks |
