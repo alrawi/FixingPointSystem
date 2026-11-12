@@ -87,7 +87,7 @@ readonly waived mix_modules
 log_capture() {
   command -v capinfos >/dev/null 2>&1 || return 0
   local line
-  capinfos -c -u -a -e "$1" 2>&1 | grep -v '^File name' | while IFS= read -r line; do
+  capinfos -M -c -u -a -e "$1" 2>&1 | grep -v '^File name' | while IFS= read -r line; do
     log "capture: $line"
   done || true
 }
