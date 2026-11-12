@@ -10,7 +10,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.4, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.4 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
-| `metrics/catalog.yaml` | Metric catalog 0.7.0 |
+| `metrics/catalog.yaml` | Metric catalog 0.8.0 |
 | `examples/` | Example modules, tests, and plans that every validator run checks |
 
 ## Agent control protocol
@@ -305,6 +305,19 @@ CON-27 moves the metric catalog from 0.6.0 to 0.7.0. RLM-10 added the `host_iden
 | `contracts/examples/realism/check-metrics.yaml` | Gains a passing and a failing case of the kind `host_identity` |
 
 The controller copy of the catalog, the `fps-stats` tables, the version pins, and the realism runner follow the contract.
+
+## Packet gap series in the catalog
+
+CON-28 moves the metric catalog from 0.7.0 to 0.8.0. RLM-15 measures the gaps between packets inside a session, but the label `property` of `realism.ks_statistic` and `realism.ks_p_value` had no value for them, so only `realism.check_failures` showed a failing comparison in `RunReport.realism`. The owner approved the contract change on 2026-11-12. The change is additive, and the entry `contracts/changes/CON-28.md` records it.
+
+| Change | Rule |
+|---|---|
+| Label `property` | Gains the values `packet_gap` (both directions pooled), `request_gap` (client streams), and `response_gap` (server streams), at the end of its list |
+| `payload_size` | Not a value: `request_bytes`, `response_bytes`, and `both` already name the payload size comparisons, and a second name would duplicate the series |
+| Paced comparisons | A `constant` packet gap target has no KS statistic, so it carries no series and `realism.check_failures` shows its failure |
+| `contracts/examples/realism/check-metrics.yaml` | Gains a passing and a failing packet gap case of the kind `temporal` |
+
+The controller copy of the catalog, the `fps-stats` tables, the version pins, the controller mapping of the comparison, and the realism runner (report format 0.17.0) follow the contract in the same pull request.
 
 ## Capture drop counts
 

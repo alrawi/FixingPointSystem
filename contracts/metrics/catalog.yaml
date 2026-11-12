@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# Metric catalog, contract v0.7. Every metric that the agent records, the
+# Metric catalog, contract v0.8. Every metric that the agent records, the
 # controller derives, the API serves, or a test criterion names appears here
 # once. contracts/metrics/catalog.schema.json defines the format, and
 # tools/contracts/validate.py checks every metric reference against this file.
 catalog: fps-metrics
-version: 0.7.0
+version: 0.8.0
 
 # A reference to a histogram, in a test criterion or a report, appends one of
 # these statistic suffixes to the histogram name, for example
@@ -78,7 +78,13 @@ labels:
       window_scale, sack, timestamps, options, and syn_window name the field of
       a TCP SYN or SYN-ACK that the transport behavior check compares with the
       operating system profile of the sending host, and only
-      realism.transport_deviations uses them.
+      realism.transport_deviations uses them. The values packet_gap,
+      request_gap, and response_gap hold the gaps in seconds between
+      consecutive packets with payload inside one stream of a session, where a
+      stream is one direction of one session. request_gap holds the gaps of the
+      client to server streams, response_gap those of the server to client
+      streams, and packet_gap the streams of both directions pooled. Only
+      realism.ks_statistic and realism.ks_p_value use them.
     values:
       - session_bytes
       - request_bytes
@@ -94,6 +100,9 @@ labels:
       - timestamps
       - options
       - syn_window
+      - packet_gap
+      - request_gap
+      - response_gap
   check:
     description: >-
       Check kind of the realism report, as the check field of an entry of its

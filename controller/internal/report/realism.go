@@ -494,16 +494,28 @@ func mixResult(c mixCheck, m realismMetric, generic func(realismMetric) api.Real
 
 // comparisonProperty returns the value of the property label that names a
 // comparison of the temporal check: inter_arrival, request_bytes for the
-// payloads of the client, and response_bytes for those of the server. The
-// comparisons over both directions have no label and give "".
+// payloads of the client, response_bytes for those of the server, and for the
+// packet gaps (CON-28) request_gap for the client streams, response_gap for
+// the server streams, and packet_gap for both directions. The payload sizes
+// of both directions have no label and give "".
 func comparisonProperty(property string, direction *string) string {
+	dir := ""
+	if direction != nil {
+		dir = *direction
+	}
 	switch {
 	case property == "inter_arrival":
 		return "inter_arrival"
-	case property == "payload_size" && direction != nil && *direction == "client":
+	case property == "payload_size" && dir == "client":
 		return "request_bytes"
-	case property == "payload_size" && direction != nil && *direction == "server":
+	case property == "payload_size" && dir == "server":
 		return "response_bytes"
+	case property == "packet_gap" && dir == "client":
+		return "request_gap"
+	case property == "packet_gap" && dir == "server":
+		return "response_gap"
+	case property == "packet_gap" && dir == "both":
+		return "packet_gap"
 	}
 	return ""
 }

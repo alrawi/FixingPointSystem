@@ -84,7 +84,24 @@ func exampleCheck(t *testing.T, kind string, report map[string]any, c exampleCas
 		if c.CheckPassed {
 			status = "pass"
 		}
-		check["comparisons"] = []entry{{"property": "inter_arrival", "application": "http1", "alpha": report["alpha"], "status": status}}
+		// One comparison for each pair of KS series, named by the property label.
+		comparisons := []entry{}
+		for _, m := range c.Metrics {
+			if m.Name != metricKSPValue {
+				continue
+			}
+			property, direction := "inter_arrival", any(nil)
+			switch m.Labels["property"] {
+			case "request_gap":
+				property, direction = "packet_gap", "client"
+			case "response_gap":
+				property, direction = "packet_gap", "server"
+			case "packet_gap":
+				property, direction = "packet_gap", "both"
+			}
+			comparisons = append(comparisons, entry{"property": property, "application": m.Labels["application"], "direction": direction, "alpha": report["alpha"], "status": status})
+		}
+		check["comparisons"] = comparisons
 	case checkContent:
 		var apps []entry
 		for _, m := range c.Metrics {
@@ -178,8 +195,8 @@ func TestMapRealismCON23Examples(t *testing.T) {
 			}
 		}
 	}
-	if cases != 21 {
-		t.Errorf("the examples hold %d cases, want 21", cases)
+	if cases != 23 {
+		t.Errorf("the examples hold %d cases, want 23", cases)
 	}
 	// Every row of the table of CON-23 that names a metric has an example.
 	for _, name := range []string{

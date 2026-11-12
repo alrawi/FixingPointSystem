@@ -54,6 +54,32 @@ examples:
           - {metric: realism.ks_statistic, labels: {application: http1, property: inter_arrival}, property: KS statistic of inter_arrival of http1, observed: 0.31, target: "p value >= 0.05", passed: false}
           - {metric: realism.ks_p_value, labels: {application: http1, property: inter_arrival}, property: KS p value of inter_arrival of http1, observed: 0.003, target: "p value >= 0.05", passed: false}
           - {metric: realism.check_failures, labels: {check: temporal}, property: failures of the temporal check, observed: 1, target: "== 0", passed: false}
+      - name: passing packet gaps
+        check_passed: true
+        note: CON-28. The gaps of the client to server streams (request_gap) and of both directions pooled (packet_gap) of an application, each with a KS statistic and a p value. A paced packet gap target has no KS statistic and no such series.
+        metrics:
+          - {name: realism.ks_statistic, labels: {application: rtp, property: request_gap}, value: 0.05}
+          - {name: realism.ks_p_value, labels: {application: rtp, property: request_gap}, value: 0.62}
+          - {name: realism.ks_statistic, labels: {application: rtp, property: packet_gap}, value: 0.07}
+          - {name: realism.ks_p_value, labels: {application: rtp, property: packet_gap}, value: 0.37}
+          - {name: realism.check_failures, labels: {check: temporal}, value: 0}
+        results:
+          - {metric: realism.ks_statistic, labels: {application: rtp, property: request_gap}, property: KS statistic of request_gap of rtp, observed: 0.05, target: "p value >= 0.05", passed: true}
+          - {metric: realism.ks_p_value, labels: {application: rtp, property: request_gap}, property: KS p value of request_gap of rtp, observed: 0.62, target: "p value >= 0.05", passed: true}
+          - {metric: realism.ks_statistic, labels: {application: rtp, property: packet_gap}, property: KS statistic of packet_gap of rtp, observed: 0.07, target: "p value >= 0.05", passed: true}
+          - {metric: realism.ks_p_value, labels: {application: rtp, property: packet_gap}, property: KS p value of packet_gap of rtp, observed: 0.37, target: "p value >= 0.05", passed: true}
+          - {metric: realism.check_failures, labels: {check: temporal}, property: failures of the temporal check, observed: 0, target: "== 0", passed: true}
+      - name: failing packet gaps
+        check_passed: false
+        note: CON-28. The gaps of the server to client streams (response_gap) differ from the target.
+        metrics:
+          - {name: realism.ks_statistic, labels: {application: rtp, property: response_gap}, value: 0.27}
+          - {name: realism.ks_p_value, labels: {application: rtp, property: response_gap}, value: 0.001}
+          - {name: realism.check_failures, labels: {check: temporal}, value: 1}
+        results:
+          - {metric: realism.ks_statistic, labels: {application: rtp, property: response_gap}, property: KS statistic of response_gap of rtp, observed: 0.27, target: "p value >= 0.05", passed: false}
+          - {metric: realism.ks_p_value, labels: {application: rtp, property: response_gap}, property: KS p value of response_gap of rtp, observed: 0.001, target: "p value >= 0.05", passed: false}
+          - {metric: realism.check_failures, labels: {check: temporal}, property: failures of the temporal check, observed: 1, target: "== 0", passed: false}
 
   - check: parser_errors
     report: {parsers: [tshark]}

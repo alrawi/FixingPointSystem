@@ -592,6 +592,9 @@ pub const LABEL_VALUES: &[(&str, &[&str])] = &[
             "timestamps",
             "options",
             "syn_window",
+            "packet_gap",
+            "request_gap",
+            "response_gap",
         ],
     ),
     (
