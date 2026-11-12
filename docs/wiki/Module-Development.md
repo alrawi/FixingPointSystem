@@ -106,7 +106,7 @@ The manifest is `manifest.yaml` at the root. The schema sets `additionalProperti
 | `parameters` | A JSON Schema (draft 2020-12) with an object root. A test sets it per mix entry in `profile.mix[].params`. | `validate.py`, controller compiler, agent |
 | `settings` | A JSON Schema with an object root. A test sets it once per module under `modules.<name>.settings`. A module without it accepts no settings. | Controller compiler |
 | `scenarios` | Scenario files relative to the manifest, unique, each of which must exist. | `validate.py`, registry, agent |
-| `expected_bytes` | Application payload bytes per session in both directions with default parameters, keyed by scenario name, each an integer of at least 1. The controller reads it into the scenario catalog (CTL-47), see [below](#expected_bytes-bytes-per-session-of-each-scenario). `validate.py` rejects a key that names no scenario of `scenarios`. | Controller compiler, `validate.py` (keys) |
+| `expected_bytes` | Application payload bytes per session in both directions with default parameters, keyed by scenario name, each an integer of at least 1. The controller reads it into the scenario catalog (CTL-47), see [below](#expected_bytes-bytes-per-session-of-each-scenario). The registry and `validate.py` reject a key that names no scenario of `scenarios`. | Controller compiler, registry (keys), `validate.py` (keys) |
 | `assets` | Items with a `name` and exactly one of `path` and `generator` (`module.function`). | Existence check only |
 | `functions` | The template function catalog, see [Template functions](#template-functions-and-the-catalog). | `validate.py`, agent, registry |
 | `extension` | `wasm`, which must be the text `extension.wasm` because the agent loads only that file at the module root, and `hooks` (a non empty list from `on_open`, `on_data`, `on_timer`, `on_close`, `render`). | Schema, `validate.py`, registry, agent |
@@ -123,7 +123,7 @@ Three details need care.
 
 #### `expected_bytes`: bytes per session of each scenario
 
-`expected_bytes` maps the name of each scenario to the estimated application payload bytes that one session of the scenario moves, in both directions together, with the default parameters of the scenario. Each value is an integer of at least 1, and each key follows the identifier pattern of scenario names (`contracts/schemas/module-manifest.schema.json`, key `expected_bytes`). Each key must also be the name of a scenario that `scenarios` lists, and `validate.py` reports a key that is not (a typo in a key leaves the real scenario without an estimate). The registry does not check the keys yet. The schema marks the field as optional, but a module that has scenarios needs an entry for each of them.
+`expected_bytes` maps the name of each scenario to the estimated application payload bytes that one session of the scenario moves, in both directions together, with the default parameters of the scenario. Each value is an integer of at least 1, and each key follows the identifier pattern of scenario names (`contracts/schemas/module-manifest.schema.json`, key `expected_bytes`). Each key must also be the name of a scenario that `scenarios` lists, and both the registry and `validate.py` report a key that is not, with the finding `/expected_bytes/<key>` at install (a typo in a key would otherwise leave the real scenario without an estimate). The schema marks the field as optional, but a module that has scenarios needs an entry for each of them.
 
 ```yaml
 scenarios:
@@ -152,11 +152,11 @@ expected_bytes:
 
 The schema defines the estimate as application payload bytes. It holds for the default parameters, so a test configuration that sets a size parameter such as `body_size` moves more or fewer bytes than the estimate says, and the calibration absorbs the difference. The Gate 2 suite sets such parameters, and it stages its module trees with the estimates of its own `mix.yaml` for them (`tests/gates/gate2/mix_config.py`, `stage_modules`), which replace the manifest value for the scenarios of the mix only.
 
-Neither the registry nor `tools/contracts/validate.py` checks that a key names a scenario of the manifest, so a misspelled key surfaces only as the missing estimate of the scenario that you meant. Check the keys against the `scenarios` list yourself.
+The registry refuses an install, and `tools/contracts/validate.py` reports an error, when a key names no scenario of the manifest, so a misspelled key cannot reach a controller. A key must name a scenario that `scenarios` lists, and the files of `scenarios-pending/` do not count.
 
 ### Names
 
-A module name must not collide with a template root. The grammar reserves `vars`, `session`, `last`, `profiles`, `dist`, `true`, and `false`, and the metric catalog reserves `all` as the label value that totals every application (`contracts/README.md`, `tools/contracts/validate.py`, `RESERVED_ROOTS` and `ALL_APPLICATIONS`). The registry refuses only `vars`, `session`, `last`, `true`, and `false` (`controller/internal/registry/manifest.go`, `reservedModuleNames`), so a module named `profiles`, `dist`, or `all` passes the install and fails the validator, which rejects all eight. Treat all eight as reserved.
+A module name must not collide with a template root. The grammar reserves `vars`, `session`, `last`, `profiles`, `dist`, `true`, and `false`, and the metric catalog reserves `all` as the label value that totals every application (`contracts/README.md`, `tools/contracts/validate.py`, `RESERVED_ROOTS` and `ALL_APPLICATIONS`). Both the registry (`controller/internal/registry/manifest.go`, `reservedModuleNames`) and the validator refuse all eight, so a module with one of these names fails at install with the finding `/name` and fails the validator.
 
 Choose a name that no first party module uses. The agent hands a module the native functions of its own registry when the module has the name of a first party module and a manifest catalog that equals the catalog of that crate (`modules.rs`, `NativeFunctions::for_modules`), so a module named `dns` with the catalog of `dns` runs the code of the agent and not yours.
 
@@ -361,7 +361,7 @@ Run the validator on every change. It checks three things (`tools/contracts/vali
 2. **Module rules.** The directory name equals `name`, the name is not reserved, the license is on the allow list, every file and directory of the tree has a path of letters, digits, `_`, `.`, and `-`, the tree holds no symbolic link, no module requires itself, function and parameter names are unique, parameter defaults match their types, every path that `scenarios`, `assets`, `fixtures`, and `extension.wasm` names is a regular file of the tree, and every key of `expected_bytes` names a scenario of `scenarios`.
 3. **Scenario rules.** The rules of [Actions](#actions) and [Templates](#templates), including each module call against the catalog of its manifest. A call into a required module whose manifest the run does not hold is a warning and stays unchecked (`_resolve_call`).
 
-The validator applies the rules that the registry applies to a tree: the license, the file names, links, and named files (`tools/contracts/validate.py`, `license_problem`, `tree_problems`, `names_regular_file`). It is stricter than the registry for the reserved names `profiles`, `dist`, and `all` and for the keys of `expected_bytes`. It does not check the `settings` schema or the signature, and it never runs extension code. Check these by hand before you package.
+The validator applies the rules that the registry applies to a tree: the license, the file names, links, and named files (`tools/contracts/validate.py`, `license_problem`, `tree_problems`, `names_regular_file`). It applies the same rules for the reserved names and for the keys of `expected_bytes`, and it does not check the `settings` schema or the signature, and it never runs extension code. Check these by hand before you package.
 
 ## Package
 
@@ -486,9 +486,8 @@ We recorded what the repository does not support yet, so that you do not look fo
 5. **No settings for third party modules.** The agent refuses them for a module without native functions (`engine/fps-agent/src/modules.rs`).
 6. **Native crates are first party only**, and decision D10 still has the status Proposed (`docs/decisions/0010-native-extensions.md`).
 7. **Declared and not enforced.** `engine_api` is read by nothing that compares it with an engine version, `assets` and `fixtures[].expect` are never read beyond the existence of a file, and `provides` and the version of `requires` document only (`controller/internal/registry/manifest.go`, `tools/contracts/validate.py`). A search of `controller/`, `engine/`, and `realism/` found no other reader. The module types `tunnel`, `strike`, `evasion`, and `fuzzer` are reserved in the schema text and no reader rejects them.
-8. **The registry is looser than the validator in two places.** It accepts the names `profiles`, `dist`, and `all`, which the validator rejects, and it does not check that a key of `expected_bytes` names a scenario (`controller/internal/registry/manifest.go`, `reservedModuleNames`, and `registry.go`, `checkTree`). Both are safe for the author, because a module that validates also installs.
-9. **No realism job for third party modules.** The job selects modules that have a native crate and a recording script, and the harness records only the traffic of first party peers (`realism/modules.py`).
-10. **The agent reads `version` by line.** A trailing comment on the line makes it differ from the plan (`engine/fps-agent/src/modules.rs`, `version_of`).
+8. **No realism job for third party modules.** The job selects modules that have a native crate and a recording script, and the harness records only the traffic of first party peers (`realism/modules.py`).
+9. **The agent reads `version` by line.** A trailing comment on the line makes it differ from the plan (`engine/fps-agent/src/modules.rs`, `version_of`).
 
 ## Sources
 
