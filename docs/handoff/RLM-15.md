@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #425 |
 | Branch | `wp/RLM-15` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #486 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-a3e893, lease until 2026-11-12T04:27:19Z |
-| Last verified commit | none |
+| Last verified commit | f1bae2c |
 
 ## Goal
 
@@ -19,21 +19,22 @@ The temporal check gets a per application property for the gaps between the pack
 - [x] 1. Labels: a `packets` section of `temporal` (parser, dataclasses, labels schema)
 - [x] 2. The check: per session gaps, the paced constant test, report entry, schema, report format bump
 - [x] 3. Tests: the sip_rtp fixture at 20 ms and 30 ms, jitter, labels, report schema
-- [ ] 4. README, Realism page, log entry, run the checks, open the pull request
+- [x] 4. README, Realism page, log entry, run the checks, open the pull request
 
 ## Done and verified
 
 1. Labels: `temporal.packets` in `realism/labels.py` and `labels.schema.json`. `python3 -m pytest realism/tests/test_packet_gaps.py` covers the parser and the schema (36 passed).
 2. Check: `packet_gap` in `realism/temporal.py`, schema and report format 0.15.0, controller schema copy refreshed with `cp`.
 3. Tests: `realism/tests/test_packet_gaps.py`, including the committed sip_rtp fixture (passes with `ms: [20, 30]`, fails with either time alone) and jittered, bursty, and wrong packet time captures. `ruff format --check`, `ruff check`, and `mypy` of `make lint-rlm` pass.
+4. Pull request #486 opened, and all 57 check runs of commit f1bae2c passed. `python3 -m pytest -q realism` gave 761 passed and 9 skipped before the last test was added. The report format is 0.15.0 and origin/main had not moved, so CON-27 had not merged yet.
 
 ## Remaining
 
-Full `pytest realism`, the pull request, and CI.
+none
 
 ## Next action
 
-Open the pull request and wait for CI.
+Review pull request #486.
 
 ## Blockers and open questions
 
@@ -64,3 +65,4 @@ python3 -m pytest realism/tests/test_temporal.py -q
 |---|---|---|---|---|
 | 2026-11-12T03:57Z | claude-a3e893 | claim | none | Claimed #425, branch from origin/main f3ffedc |
 | 2026-11-12T04:10Z | claude-a3e893 | checkpoint | see git log | Labels, check, schema, tests, docs, log entry |
+| 2026-11-12T04:45Z | claude-a3e893 | finish | f1bae2c | PR #486, CI green (57 of 57), ready for review |
