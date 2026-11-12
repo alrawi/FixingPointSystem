@@ -8,7 +8,7 @@
 | Status | ready for review |
 | Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-960dd7, lease until 2026-11-12T04:26:13Z |
-| Last verified commit | none |
+| Last verified commit | 9fe6ffe |
 
 ## Goal
 
@@ -34,7 +34,7 @@ The cause of failure 2 is not proven. If it recurs, the failed series in the ass
 
 ## Next action
 
-Review the pull request.
+Review pull request 489. All checks passed on 9fe6ffe.
 
 ## Blockers and open questions
 
@@ -61,4 +61,4 @@ cargo test -p fps-runtime --test instances
 |---|---|---|---|---|
 | 2026-11-12T02:58:00Z | claude-960dd7 | claim | b2028d2 | Claimed issue #479 with card 6813013946 |
 | 2026-11-12T03:46:00Z | claude-960dd7 | checkpoint | 6a6655d | Fix of failure 1, diagnostics for failure 2, temporary loop workflow |
-| 2026-11-12T04:50:00Z | claude-960dd7 | ready for review | see git log | Loop removed, ingest done, pull request 489 |
+| 2026-11-12T04:50:00Z | claude-960dd7 | ready for review | 9fe6ffe | Loop removed, ingest done, pull request 489, all checks green |
