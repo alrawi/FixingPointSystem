@@ -1010,6 +1010,8 @@ Bug #128 gave run ids their own prefix. The run orchestrator used `store.RandomI
 
 ## Throughput rate calibration
 
+The scenario catalog does not read `expected_bytes` from the module manifests yet, because `internal/wiring/adapters.go` never sets `compiler.Scenario.BytesPerSession` (found by QA-05, fixed by CTL-47). Until then the `bytes` basis and the `throughput_bps` objective fail with `ErrNoByteEstimate` on a real controller.
+
 The package `internal/runs/calibrate/` (CTL-21) applies decision D12 item 10. The compiler turns a `throughput_bps` objective into session rates with the `expected_bytes` estimate of the module manifest, so a session rate is `objective / (8 * mean bytes per session)` (see `splitRates` in `internal/compiler/`). When the estimate is wrong, the run misses the objective by the same ratio. The calibration measures the real bytes per session during the run and returns a `Factor` that scales every compiled session rate. The package uses only the standard library, reads no clock, and uses no random source. CTL-24 wired it into the run loop, which [Throughput calibration in the run loop](#throughput-calibration-in-the-run-loop) describes.
 
 ### Interface
