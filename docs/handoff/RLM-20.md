@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #524 |
 | Branch | `wp/RLM-20` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 25% (1 of 4 plan steps) |
+| Pull request | #531 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude worker, lease until 2026-11-12T21:01:37Z |
-| Last verified commit | none |
+| Last verified commit | e635a0d |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -20,10 +20,10 @@ Session rules of the realism labels declare the Zeek weirds and tshark expert it
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Labels, check, schema, report format 0.19.0, tests.
-- [ ] 2. README, Realism page, schema copies.
-- [ ] 3. Log entry with the Module Development text.
-- [ ] 4. Pull request, CI, review.
+- [x] 1. Labels, check, schema, report format 0.19.0, tests.
+- [x] 2. README, Realism page, schema copies.
+- [x] 3. Log entry with the Module Development text.
+- [x] 4. Pull request, CI, review.
 
 ## Done and verified
 
@@ -31,11 +31,11 @@ Steps 1 to 3 are in the branch; `python3 -m pytest realism/tests` passes, `ruff`
 
 ## Remaining
 
-Pull request, CI, review.
+none
 
 ## Next action
 
-Open the pull request against main and poll its CI.
+The coordinator applies the Module Development text of the log entry and merges.
 
 ## Blockers and open questions
 
