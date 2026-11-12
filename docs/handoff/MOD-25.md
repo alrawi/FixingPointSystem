@@ -6,7 +6,7 @@
 | Branch | `wp/MOD-25` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 80% (5 of 6 plan steps) |
+| Progress | 90% (5 of 6 plan steps) |
 | Current holder | claude-9c4e1a, lease until 2026-11-12T17:54:55Z |
 | Last verified commit | none |
 
@@ -28,7 +28,7 @@ Every scenario of every first party module manifest carries a measured `expected
 - Guard test `default_parameters_move_the_expected_bytes` in the 14 modules with scenarios (hls had it); each passes locally with `cargo test --offline -p fps-module-<m> --test scenarios default_parameters` (tmpfs target dir, the disk was full).
 - `cargo fmt --check` and `cargo clippy --tests -D warnings` clean for the 13 crates changed; `validate.py` over the module trees: 0 errors, 0 warnings (the template and tls errors are the known directory name ones).
 - `plan.py check`, `render --check`, `lint` ok.
-- `FPS_GATE2_BASIS` removed from qa-gate2.yml; the CI run of that workflow is the proof.
+- First CI run (51af583) removed `FPS_GATE2_BASIS`: the mix FAILED on the bytes basis (ftp +7.84 pp, sip_rtp +4.42 pp; the run counts the FTP data connection and the RTP media as sessions, so calibration halves their bytes per session). Workflow restored to main, deltas in the log entry. Also `tests/gates/gate2/test_mix_config.py` (QA-05, outside my paths) fails because the ssh manifest now has more than one key; fix noted for the coordinator.
 
 ## Remaining
 
@@ -66,3 +66,4 @@ git log --oneline -3
 |---|---|---|---|---|
 | 2026-11-12T16:25Z | claude-9c4e1a | claim | none | claimed #494 |
 | 2026-11-12T16:50Z | claude-9c4e1a | checkpoint | see git log | estimates, guards, guide, workflow, log entry |
+| 2026-11-12T17:10Z | claude-9c4e1a | checkpoint | see git log | PR 518 opened; qa-gate2 mix fails on bytes basis, workflow restored |
