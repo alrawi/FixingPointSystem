@@ -109,6 +109,7 @@ jobs:
           name: gate2-modules
           path: gate2-out/modules/
           if-no-files-found: warn
+          overwrite: true
 
   mix:
     runs-on: ubuntu-24.04
@@ -154,6 +155,7 @@ jobs:
             gate2-out/mix/
             !gate2-out/mix/*.pcapng
           if-no-files-found: warn
+          overwrite: true
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -161,6 +163,7 @@ jobs:
           path: gate2-out/mix/mix.pcapng
           if-no-files-found: ignore
           retention-days: 7
+          overwrite: true
 
   image:
     runs-on: ubuntu-24.04
@@ -271,6 +274,7 @@ jobs:
           name: gate2-image
           path: gate2-out/image/
           if-no-files-found: warn
+          overwrite: true
 
   report:
     needs: [test, modules, mix, image]
@@ -316,3 +320,4 @@ jobs:
           path: |
             gate2-out/report.md
             gate2-out/summary.json
+          overwrite: true

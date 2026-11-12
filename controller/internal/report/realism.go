@@ -341,7 +341,7 @@ func metricKey(m realismMetric) string {
 // table and the rule of CON-22.
 func checkRule(head realismHead, raw json.RawMessage, passedBy map[string]bool) (func(realismMetric) api.RealismResult, error) {
 	generic := func(m realismMetric) api.RealismResult {
-		return newResult(m, genericProperty(m), targetCheckPassed, head.Passed)
+		return newResult(m, metricProperty(m), targetCheckPassed, head.Passed)
 	}
 	rule, err := kindRule(head, raw, generic)
 	if err != nil {
@@ -357,7 +357,7 @@ func checkRule(head realismHead, raw json.RawMessage, passedBy map[string]bool) 
 		if !ok {
 			passed = head.Passed
 		}
-		return newResult(m, genericProperty(m), targetNone, passed)
+		return newResult(m, metricProperty(m), targetNone, passed)
 	}, nil
 }
 
@@ -371,7 +371,7 @@ func kindRule(head realismHead, raw json.RawMessage, generic func(realismMetric)
 			if m.Name != name {
 				return generic(m)
 			}
-			return newResult(m, genericProperty(m), targetNone, m.Value == 0)
+			return newResult(m, metricProperty(m), targetNone, m.Value == 0)
 		}
 	}
 	switch head.Check {
@@ -386,7 +386,7 @@ func kindRule(head realismHead, raw json.RawMessage, generic func(realismMetric)
 			}
 			for _, a := range c.Applications {
 				if a.Application == m.Labels["application"] {
-					return newResult(m, conformanceProperty(m), ">= "+formatNumber(c.Threshold), a.Passed)
+					return newResult(m, metricProperty(m), ">= "+formatNumber(c.Threshold), a.Passed)
 				}
 			}
 			return generic(m)
@@ -403,7 +403,7 @@ func kindRule(head realismHead, raw json.RawMessage, generic func(realismMetric)
 			for _, cmp := range c.Comparisons {
 				if cmp.Application != nil && *cmp.Application == m.Labels["application"] &&
 					comparisonProperty(cmp.Property, cmp.Direction) == m.Labels["property"] {
-					return newResult(m, ksProperty(m), "p value >= "+formatNumber(cmp.Alpha), cmp.Status == "pass")
+					return newResult(m, metricProperty(m), "p value >= "+formatNumber(cmp.Alpha), cmp.Status == "pass")
 				}
 			}
 			return generic(m)
@@ -422,9 +422,9 @@ func kindRule(head realismHead, raw json.RawMessage, generic func(realismMetric)
 		return func(m realismMetric) api.RealismResult {
 			switch m.Name {
 			case metricDecryptedRatio:
-				return newResult(m, genericProperty(m), ">= "+formatNumber(c.MinDecrypted), m.Value >= c.MinDecrypted)
+				return newResult(m, metricProperty(m), ">= "+formatNumber(c.MinDecrypted), m.Value >= c.MinDecrypted)
 			case metricJA4MatchRatio:
-				return newResult(m, genericProperty(m), ">= 1", m.Value == 1)
+				return newResult(m, metricProperty(m), ">= 1", m.Value == 1)
 			}
 			return generic(m)
 		}, nil
@@ -439,7 +439,7 @@ func kindRule(head realismHead, raw json.RawMessage, generic func(realismMetric)
 			}
 			for _, a := range c.Applications {
 				if a.Application == m.Labels["application"] {
-					return newResult(m, genericProperty(m), "<= "+formatNumber(c.MaxDuplicateRatio), a.Passed)
+					return newResult(m, metricProperty(m), "<= "+formatNumber(c.MaxDuplicateRatio), a.Passed)
 				}
 			}
 			return generic(m)
@@ -479,14 +479,14 @@ func mixResult(c mixCheck, m realismMetric, generic func(realismMetric) api.Real
 				if m.Name == metricMixShare {
 					target = "within " + tol + " points of " + formatNumber(a.ConfiguredPct)
 				}
-				return newResult(m, genericProperty(m), target, a.NDPIPassed)
+				return newResult(m, metricProperty(m), target, a.NDPIPassed)
 			}
 		case metricMixMaxAbsError:
 			passed := true
 			for _, a := range b.Applications {
 				passed = passed && a.NDPIPassed
 			}
-			return newResult(m, genericProperty(m), "<= "+tol, passed)
+			return newResult(m, metricProperty(m), "<= "+tol, passed)
 		}
 	}
 	return generic(m)
@@ -494,16 +494,28 @@ func mixResult(c mixCheck, m realismMetric, generic func(realismMetric) api.Real
 
 // comparisonProperty returns the value of the property label that names a
 // comparison of the temporal check: inter_arrival, request_bytes for the
-// payloads of the client, and response_bytes for those of the server. The
-// comparisons over both directions have no label and give "".
+// payloads of the client, response_bytes for those of the server, and for the
+// packet gaps (CON-28) request_gap for the client streams, response_gap for
+// the server streams, and packet_gap for both directions. The payload sizes
+// of both directions have no label and give "".
 func comparisonProperty(property string, direction *string) string {
+	dir := ""
+	if direction != nil {
+		dir = *direction
+	}
 	switch {
 	case property == "inter_arrival":
 		return "inter_arrival"
-	case property == "payload_size" && direction != nil && *direction == "client":
+	case property == "payload_size" && dir == "client":
 		return "request_bytes"
-	case property == "payload_size" && direction != nil && *direction == "server":
+	case property == "payload_size" && dir == "server":
 		return "response_bytes"
+	case property == "packet_gap" && dir == "client":
+		return "request_gap"
+	case property == "packet_gap" && dir == "server":
+		return "response_gap"
+	case property == "packet_gap" && dir == "both":
+		return "packet_gap"
 	}
 	return ""
 }
@@ -524,25 +536,73 @@ func newResult(m realismMetric, property, target string, passed bool) api.Realis
 	return res
 }
 
-// conformanceProperty words a conformance ratio, for example
-// `conformance of http1 by ndpi`.
-func conformanceProperty(m realismMetric) string {
-	s := "conformance of " + m.Labels["application"]
-	if c := m.Labels["classifier"]; c != "" {
-		s += " by " + c
+// metricProperty words the property of a metric as the examples of CON-23 do,
+// whatever the rule that gives its target and outcome, for example
+// `conformance of http1 by ndpi`, `failures of the temporal check`, or
+// `ttl deviations of client SYN packets`. The value of a label stays as it is.
+// A metric that the examples do not name, and a series whose labels the wording
+// needs but lacks, keep the wording of genericProperty.
+func metricProperty(m realismMetric) string {
+	l := m.Labels
+	switch m.Name {
+	case metricConformanceRatio:
+		s := "conformance of " + l["application"]
+		if c := l["classifier"]; c != "" {
+			s += " by " + c
+		}
+		return s
+	case metricKSPValue, metricKSStatistic:
+		what := "KS p value"
+		if m.Name == metricKSStatistic {
+			what = "KS statistic"
+		}
+		return what + " of " + l["property"] + " of " + l["application"]
+	case metricCheckFailures:
+		if c := l["check"]; c != "" {
+			return "failures of the " + c + " check"
+		}
+	case metricParserErrors:
+		if app, parser := l["application"], l["parser"]; app != "" && parser != "" {
+			if app == "all" {
+				app = "all applications"
+			}
+			return "parser errors of " + app + " by " + parser
+		}
+	case metricDecryptedRatio:
+		return "decrypted TLS sessions"
+	case metricJA4MatchRatio:
+		return "JA4 matched TLS sessions"
+	case metricDuplicateRatio:
+		if app := l["application"]; app != "" {
+			return "duplicate payloads of " + app
+		}
+	case metricStructureFailures:
+		if sc := l["scenario"]; sc != "" {
+			return "structure failures of " + sc
+		}
+	case metricTransportDeviations:
+		if prop := l["property"]; prop != "" {
+			switch l["side"] {
+			case "client":
+				return prop + " deviations of client SYN packets"
+			case "server":
+				return prop + " deviations of server SYN-ACK packets"
+			}
+		}
+	case metricMixShare, metricMixAbsError:
+		what := "mix share"
+		if m.Name == metricMixAbsError {
+			what = "mix error"
+		}
+		if app, c := l["application"], l["classifier"]; app != "" && c != "" {
+			return what + " of " + app + " by " + c
+		}
+	case metricMixMaxAbsError:
+		if c := l["classifier"]; c != "" {
+			return "largest mix error by " + c
+		}
 	}
-	return s
-}
-
-// ksProperty words a KS metric as the examples of CON-23 do, for example
-// `KS p value of inter_arrival of http1`. The value of the label property
-// stays as it is.
-func ksProperty(m realismMetric) string {
-	what := "KS p value"
-	if m.Name == metricKSStatistic {
-		what = "KS statistic"
-	}
-	return what + " of " + m.Labels["property"] + " of " + m.Labels["application"]
+	return genericProperty(m)
 }
 
 // genericProperty words a metric of a check kind without a rule of its own,

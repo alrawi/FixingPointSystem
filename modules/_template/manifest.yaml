@@ -1,0 +1,60 @@
+# Module manifest, contract v0.4 (contracts/schemas/module-manifest.schema.json).
+# The guide docs/wiki/Module-Development.md explains every field, and each
+# comment below names the section that applies. Copy this directory to
+# modules/<name>/ (or to any directory named <name>), then follow the section
+# "Start from the template" of the guide.
+#
+# tools/contracts/validate.py requires the directory name to equal `name`. This
+# directory is called _template, which is not an identifier, so the target
+# `make lint-mod-template` (mk/mod-template.mk) validates it through a link named
+# template. Keep the name `template` while you work in this directory.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+# Identifier: a lower case letter, then lower case letters, digits, or
+# underscores, 63 characters at most. The names vars, session, last, profiles,
+# dist, true, false, and all are reserved.
+name: template
+# Semantic version. A published version is immutable in a registry, so a new
+# build needs a new version.
+version: 0.1.0
+# One of app, transport, host, content, tunnel, strike, evasion, fuzzer. The
+# guide lists which types run today. An application scenario is type app.
+type: app
+summary: Starting point for a module, with one scenario in which a client sends a request and a server answers.
+# Engine contract versions that the module supports, as a semver range.
+engine_api: ">=0.2, <0.3"
+# SPDX expression, compatible with GPL-3.0. The controller registry refuses a
+# license that is not on its allow list; the guide section "Licenses" lists it.
+license: GPL-3.0-only
+# Protocols and default ports that the module speaks. Port 9000 is a
+# placeholder, so replace the protocol name and the port with your own.
+provides:
+  - { protocol: template, transport: tcp, port: 9000 }
+# Other modules whose template functions the scenarios call, for example
+# `requires: [{ module: content, version: ">=0.1" }]`. Leave it out when the
+# scenarios call no other module.
+# Parameters. A test configuration sets them per mix entry (profile.mix[].params).
+# Every property must be a variable under `vars` in the scenario, because the
+# engine refuses a parameter that names no variable. Leave `settings` out, since
+# the agent refuses settings for a module without native functions.
+parameters:
+  type: object
+  additionalProperties: false
+  properties:
+    server_port: { type: integer, minimum: 1, maximum: 65535, default: 9000, description: TCP port of the server side. }
+    request_size: { type: integer, minimum: 1, maximum: 65536, default: 256, description: Bytes of the request. }
+    response_size: { type: integer, minimum: 1, maximum: 1048576, default: 1024, description: Bytes of the response. }
+# Scenario files, relative to this manifest. Every file listed must exist.
+scenarios:
+  - scenarios/request_response.yaml
+# Application payload bytes that one session of each scenario moves in both
+# directions with the default parameters (256 + 1024). The controller uses it
+# for the throughput_bps objective, so keep it equal to the defaults above.
+expected_bytes:
+  request_response: 1280
+# Where the module content comes from. Use `synthetic` for content that you
+# wrote, `specification` for content that follows a public specification, and
+# `capture` only with consent and scrubbing, see the guide section "Provenance".
+provenance:
+  source: synthetic
+  notes: The scenario sends printable filler bytes from the seeded generator and carries no third party content.

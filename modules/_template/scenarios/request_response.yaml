@@ -1,0 +1,33 @@
+# Scenario contract v0.6 (contracts/schemas/scenario.schema.json). The guide
+# docs/wiki/Module-Development.md, section "Scenarios", explains every action.
+#
+# One client session sends `request_size` bytes and reads `response_size` bytes,
+# and the server side reads the request and answers. Both sides run their action
+# lists in order, and a flow fails when an action fails or times out.
+scenario: request_response
+description: A client sends a request of request_size bytes and the server answers with response_size bytes.
+# Variables. A test configuration overrides them through the manifest
+# `parameters` (profile.mix[].params), and every override names one of these.
+vars:
+  server_port: 9000
+  request_size: 256
+  response_size: 1024
+flows:
+  - id: exchange
+    # The module that owns the flow: this module, or one in `requires`.
+    module: template
+    # l4 is tcp by default. Use `l4: udp` for datagram flows.
+    client:
+      # The client side starts with connect and the server side with accept.
+      - connect: { port: "{{ vars.server_port }}" }
+      # fill(n) renders n printable bytes from the seeded generator. A placeholder
+      # ends at the first }}, and strings use single quotes without escapes.
+      - send: "{{ fill(vars.request_size) }}"
+      # expect reads with one stop rule: pattern, bytes, or min_bytes.
+      - expect: { bytes: "{{ vars.response_size }}", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { bytes: "{{ vars.request_size }}", timeout_ms: 5000 }
+      - send: "{{ fill(vars.response_size) }}"
+      - close: fin

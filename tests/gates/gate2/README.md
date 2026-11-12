@@ -15,7 +15,8 @@ This suite automates the exit criterion of Phase 2. QA-05 added it. Gate 2 holds
 | `gate2_report.py` | Decides the verdict from the files of the stages and writes `report.md` and `summary.json` |
 | `mix.yaml` | The 15 entries of the mix with weights, byte estimates, parameters, ports, and nDPI names |
 | `mix_config.py` | Writes the test configuration, the labels, and the staged module trees from `mix.yaml` |
-| `test_gate2_report.py`, `test_mix_config.py` | Unit tests of the two Python files |
+| `mix_findings.py` | Prints every parser finding of the mix capture with its place in the capture and writes `mix/parser-findings.json` |
+| `test_gate2_report.py`, `test_mix_config.py`, `test_mix_findings.py` | Unit tests of the three Python files |
 | `requirements.txt` | The Python tools of the lint and test targets |
 
 ## Commands
@@ -62,11 +63,18 @@ tests/gates/gate2/prove-failure.sh OUT  # the negative proofs
 | `modules/results.json` | The exit code of each module |
 | `mix/mix.pcapng` | The capture of the router's client arm |
 | `mix/realism.json` | The realism report of the mix capture, with the `mix_accuracy` check |
+| `mix/parser-findings.json` | The parser findings of the mix capture with the facts of their sessions (see Parser findings) |
 | `mix/run-report.json`, `mix/run-report.csv`, `mix/run-metrics-scenario.json` | The report and the scenario metrics of the client run |
 | `mix/test-config.yaml`, `mix/expected.yaml` | The configuration and the labels that `mix_config.py` wrote |
 | `mix/context.json` | Run ids, rate, phases, seed, tolerance, waivers, and commit |
 | `mix/controller.log`, `mix/client-agent.log`, `mix/server-agent.log` | Logs of the three processes |
 | `image/boot-test.log`, `image/run/`, `image/context.json` | The log of the boot test, the files of the run in the VM, and the accelerator and image digest |
+
+## Parser findings
+
+A failed parser error check names each finding in the job log, so a failure can be read without the run artifacts (QA-11). Two parts do it. The report of `gate2_report.py` has a section `Parser findings` for the mix, and `Parser findings of module NAME` for a module, with one line for each finding that the realism report lists (the first 100): the parser, the kind, the protocol layer, the message, the frame and its time in UTC, the session with its application, and the endpoints. A report that cannot list all findings says how many it leaves out. The mix stage also runs `mix_findings.py` after the realism runner. It prints a line for each finding on stderr with the offset of the finding in the capture, the packets, connections, FIN and RST of its session, `cut` (whether the capture start or stop cut the session) and `reused_tuple` (whether two connections that used one 5-tuple form the session), and `mix.sh` prints the packet count and the first and last packet time of the capture (`capinfos`) before them. A fault in this step never decides the stage. `prove-failure.sh` proves for a module and for the mix that a failed parser error check fails the gate and that the report names the finding.
+
+**The port collision rule.** A tshark finding of the mix does not count when it is a port collision. The kernel picks the client port of each session at random, and tshark binds about 900 TCP and UDP ports to a dissector (`tshark -G decodes` lists them), among them 41170 (Manolito) and 44322 (Performance Co-Pilot proxy). When a session uses such a port as its client port, tshark decodes the payload with that dissector and reports every packet that the dissector rejects as malformed, so a clean HTTP/2 session or SIP media stream gets findings by chance (QA-11 saw 31 in one run: 1 in an `http2` session on TCP 44322 and 30 in an RTP stream on UDP 41170, and none from Zeek). `mix_findings.py` marks a finding with `port_collision` when the client port of its session is bound to a dissector for the transport and the server port is not bound to the same dissector, and `gate2_report.py` leaves marked findings out of the count. The rule holds only when `mix/parser-findings.json` lists every finding of the realism report and has its total, and it never applies to Zeek, so an unlisted finding, a missing file, or any finding in a session whose client port is free fails the stage. The report and the log still print each collision, marked `not counted`. The module stage has no such rule: its sessions are too few to draw a port that collides.
 
 ## Waivers
 
@@ -74,4 +82,4 @@ The agent runs a module only when `engine/fps-agent` links its native crate. AGT
 
 ## Negative proofs
 
-`prove-failure.sh` takes the files of a passing run and expects the gate to fail three times. A conformance threshold just above the lowest measured ratio must fail it. A failed parser error check in the `http1` module report must fail it and must name the check. The mix capture scored again with a tolerance of 0 points must fail the mix stage. The report job runs the first two proofs on the files of all three stages, and the mix job runs the third on its own capture.
+`prove-failure.sh` takes the files of a passing run and expects the gate to fail four times. A conformance threshold just above the lowest measured ratio must fail it. A failed parser error check in the `http1` module report must fail it and must name the check and the finding. The mix capture scored again with a tolerance of 0 points must fail the mix stage. A failed parser error check in the mix report must fail it and must name the check and the finding. The report job runs the first two proofs on the files of all three stages, and the mix job runs the last two on its own capture.

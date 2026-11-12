@@ -84,7 +84,24 @@ func exampleCheck(t *testing.T, kind string, report map[string]any, c exampleCas
 		if c.CheckPassed {
 			status = "pass"
 		}
-		check["comparisons"] = []entry{{"property": "inter_arrival", "application": "http1", "alpha": report["alpha"], "status": status}}
+		// One comparison for each pair of KS series, named by the property label.
+		comparisons := []entry{}
+		for _, m := range c.Metrics {
+			if m.Name != metricKSPValue {
+				continue
+			}
+			property, direction := "inter_arrival", any(nil)
+			switch m.Labels["property"] {
+			case "request_gap":
+				property, direction = "packet_gap", "client"
+			case "response_gap":
+				property, direction = "packet_gap", "server"
+			case "packet_gap":
+				property, direction = "packet_gap", "both"
+			}
+			comparisons = append(comparisons, entry{"property": property, "application": m.Labels["application"], "direction": direction, "alpha": report["alpha"], "status": status})
+		}
+		check["comparisons"] = comparisons
 	case checkContent:
 		var apps []entry
 		for _, m := range c.Metrics {
@@ -115,9 +132,9 @@ func marshalChecks(t *testing.T, checks ...any) []byte {
 	return doc
 }
 
-// literal is the part of a RealismResult that CON-23 fixes, and the wording in
-// property of the metrics that wordedProperty names. The wording of the other
-// metrics is for an operator and takes no part in the comparison.
+// literal is the part of a RealismResult that CON-23 fixes: the metric, the
+// labels, the observed value, the target, the outcome, and the wording in
+// property.
 type literal struct {
 	Metric   string
 	Labels   map[string]string
@@ -127,25 +144,10 @@ type literal struct {
 	Property string
 }
 
-// wordedProperty reports whether the controller words the property of metric
-// as the examples do. The KS metrics (CTL-46) and the conformance ratio do. The
-// other metrics keep the wording of their name and labels, which the examples
-// do not follow yet, so the comparison leaves their property out.
-func wordedProperty(metric string) bool {
-	return metric == metricKSStatistic || metric == metricKSPValue || metric == metricConformanceRatio
-}
-
-func propertyOf(metric, property string) string {
-	if wordedProperty(metric) {
-		return property
-	}
-	return ""
-}
-
 func literals(rs []api.RealismResult) []literal {
 	out := make([]literal, 0, len(rs))
 	for _, r := range rs {
-		l := literal{Metric: *r.Metric, Observed: r.Observed, Target: r.Target, Passed: r.Passed, Property: propertyOf(*r.Metric, r.Property)}
+		l := literal{Metric: *r.Metric, Observed: r.Observed, Target: r.Target, Passed: r.Passed, Property: r.Property}
 		if r.Labels != nil && len(*r.Labels) > 0 {
 			l.Labels = *r.Labels
 		}
@@ -155,8 +157,8 @@ func literals(rs []api.RealismResult) []literal {
 }
 
 // TestMapRealismCON23Examples maps every case of
-// contracts/examples/realism/check-metrics.yaml to the literal target and
-// passed that the example gives.
+// contracts/examples/realism/check-metrics.yaml to the literal property,
+// target, and passed that the example gives.
 func TestMapRealismCON23Examples(t *testing.T) {
 	data, err := os.ReadFile(checkMetricsPath)
 	if err != nil {
@@ -181,7 +183,7 @@ func TestMapRealismCON23Examples(t *testing.T) {
 			}
 			var want []literal
 			for _, r := range c.Results {
-				l := literal{Metric: r.Metric, Observed: float32(r.Observed), Target: r.Target, Passed: r.Passed, Property: propertyOf(r.Metric, r.Property)}
+				l := literal{Metric: r.Metric, Observed: float32(r.Observed), Target: r.Target, Passed: r.Passed, Property: r.Property}
 				if len(r.Labels) > 0 {
 					l.Labels = r.Labels
 				}
@@ -193,8 +195,8 @@ func TestMapRealismCON23Examples(t *testing.T) {
 			}
 		}
 	}
-	if cases != 21 {
-		t.Errorf("the examples hold %d cases, want 21", cases)
+	if cases != 23 {
+		t.Errorf("the examples hold %d cases, want 23", cases)
 	}
 	// Every row of the table of CON-23 that names a metric has an example.
 	for _, name := range []string{
@@ -226,8 +228,8 @@ func TestMapRealismCheckFailuresTakesTheCheckOfItsLabel(t *testing.T) {
 		t.Fatalf("MapRealism = %v, %+v", err, findings)
 	}
 	want := []literal{
-		{metricCheckFailures, map[string]string{"check": checkTemporal}, 1, "== 0", false, ""},
-		{metricCheckFailures, map[string]string{"check": "messages"}, 1, "== 0", false, ""},
+		{metricCheckFailures, map[string]string{"check": checkTemporal}, 1, "== 0", false, "failures of the temporal check"},
+		{metricCheckFailures, map[string]string{"check": "messages"}, 1, "== 0", false, "failures of the messages check"},
 	}
 	if have := literals(got); !reflect.DeepEqual(have, want) {
 		t.Fatalf("results %+v, want %+v", have, want)
@@ -251,8 +253,8 @@ func TestMapRealismCON23Fallbacks(t *testing.T) {
 			"bases": []any{map[string]any{"basis": "sessions", "applications": []any{row("http1", true), row("dns", false)}}},
 		}
 	}
-	generic := func(name string, labels map[string]string, v float64, passed bool) literal {
-		return literal{name, labels, float32(v), "check passed", passed, ""}
+	generic := func(name, property string, labels map[string]string, v float64, passed bool) literal {
+		return literal{name, labels, float32(v), "check passed", passed, property}
 	}
 	metricsSource := map[string]string{"application": "http1", "source": "metrics"}
 	doc := marshalChecks(t,
@@ -278,16 +280,18 @@ func TestMapRealismCON23Fallbacks(t *testing.T) {
 		t.Fatalf("MapRealism = %v, %+v", err, findings)
 	}
 	want := []literal{
-		generic(metricMixShare, metricsSource, 59, false),
+		// The series of the metrics source has no classifier to name, so its
+		// wording is the one of a metric without a rule.
+		generic(metricMixShare, "mix.share_pct of application http1, source metrics", metricsSource, 59, false),
 		// The label other has no row in the basis, and the largest error is
 		// judged by the rows, of which dns fails.
-		generic(metricMixAbsError, classifier("other"), 1, false),
-		{metricMixMaxAbsError, map[string]string{"source": "classifier", "classifier": "ndpi"}, 9, "<= 2", false, ""},
-		generic(metricMixShare, classifier("http1"), 59, false),
-		generic(metricMixShare, classifier("dns"), 59, false),
-		generic(metricDecryptedRatio, nil, 0.1, true),
-		generic(metricDuplicateRatio, map[string]string{"application": "http1"}, 0.5, true),
-		generic("realism.parser_notes", nil, 3, true),
+		generic(metricMixAbsError, "mix error of other by ndpi", classifier("other"), 1, false),
+		{metricMixMaxAbsError, map[string]string{"source": "classifier", "classifier": "ndpi"}, 9, "<= 2", false, "largest mix error by ndpi"},
+		generic(metricMixShare, "mix share of http1 by ndpi", classifier("http1"), 59, false),
+		generic(metricMixShare, "mix share of dns by ndpi", classifier("dns"), 59, false),
+		generic(metricDecryptedRatio, "decrypted TLS sessions", nil, 0.1, true),
+		generic(metricDuplicateRatio, "duplicate payloads of http1", map[string]string{"application": "http1"}, 0.5, true),
+		generic("realism.parser_notes", "realism.parser_notes", nil, 3, true),
 	}
 	if have := literals(got); !reflect.DeepEqual(have, want) {
 		t.Fatalf("results:\n %+v\nwant:\n %+v", have, want)

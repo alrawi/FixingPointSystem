@@ -39,6 +39,7 @@ import re
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -142,6 +143,112 @@ def app_entries(check: dict[str, Any] | None) -> list[dict[str, Any]]:
     if check is None:
         return []
     return [a for a in check.get("applications", []) if isinstance(a, dict)]
+
+
+def describe_finding(entry: dict[str, Any]) -> str:
+    """Describe one parser finding of a realism report on one line.
+
+    The line names the parser, the kind, the protocol layer, the message, the frame and
+    the time of the packet, the session with its application, and the endpoints, so a
+    failing job log shows what each parser reported without the run artifacts.
+    """
+    head = f"{entry.get('parser')} {entry.get('kind')} {entry.get('name')}"
+    message = str(entry.get("message") or "").strip()
+    if message:
+        head += f": {message}"
+    parts = [head]
+    frame = entry.get("frame")
+    stamp = entry.get("timestamp")
+    when = ""
+    if isinstance(stamp, int | float) and not isinstance(stamp, bool):
+        try:
+            when = datetime.fromtimestamp(float(stamp), timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"
+            )
+        except (OverflowError, OSError, ValueError):
+            when = ""
+    if frame is not None and when:
+        parts.append(f"frame {frame} at {when}")
+    elif frame is not None:
+        parts.append(f"frame {frame}")
+    elif when:
+        parts.append(f"at {when}")
+    owner = []
+    if entry.get("application"):
+        owner.append(f"application {entry['application']}")
+    elif entry.get("session") is None:
+        owner.append("no session")
+    if entry.get("session") is not None:
+        owner.append(f"session {entry['session']}")
+    if owner:
+        parts.append(", ".join(owner))
+    client, server = entry.get("client"), entry.get("server")
+    if isinstance(client, dict) and isinstance(server, dict):
+        parts.append(
+            f"{entry.get('transport') or 'ip'} "
+            f"{client.get('ip')}:{client.get('port')} -> "
+            f"{server.get('ip')}:{server.get('port')}"
+        )
+    return "; ".join(parts)
+
+
+def finding_facts(
+    report: dict[str, Any], marks: Sequence[str | None] = ()
+) -> dict[str, Any]:
+    """Return the parser findings of a realism report for the gate report.
+
+    ``total`` is the count of every parser. ``lines`` describes the findings that the
+    realism report lists, which are the first 100 in the order of the parsers, and says
+    of each port collision (``marks``, one per finding) that it does not count.
+    """
+    entry = find_check(report, "parser_errors") or {}
+    listed = [e for e in entry.get("errors", []) if isinstance(e, dict)]
+    total = int(entry.get("errors_total", 0))
+    lines = []
+    for index, found in enumerate(listed):
+        line = describe_finding(found)
+        if index < len(marks) and marks[index]:
+            line += f"; port collision with {marks[index]}, not counted"
+        lines.append(line)
+    return {"total": total, "lines": lines, "unlisted": max(0, total - len(listed))}
+
+
+def finding_lines(facts: dict[str, Any], heading: str) -> list[str]:
+    """Render the findings of one realism report as a Markdown list, or nothing."""
+    if not facts or not facts.get("total"):
+        return []
+    lines = ["", heading, ""]
+    lines += [f"- {line}" for line in facts.get("lines", [])]
+    if facts.get("unlisted"):
+        lines.append(
+            f"- and {facts['unlisted']} more that the realism report does not list"
+        )
+    return lines
+
+
+def collision_marks(path: Path, errors_total: int) -> list[str | None]:
+    """Return the port collision of each finding of the mix, or nothing when it is unproven.
+
+    ``mix_findings.py`` marks a tshark finding with the dissector that the client port of
+    its session is bound to (see its documentation). The marks hold only when the file
+    belongs to the realism report, which means that it lists every one of its findings:
+    with an unlisted finding, or a file of another total, the list is empty and every
+    finding counts.
+    """
+    doc = load_optional(path)
+    if not isinstance(doc, dict) or int(doc.get("errors_total", -1)) != errors_total:
+        return []
+    listed = [f for f in doc.get("findings", []) if isinstance(f, dict)]
+    if len(listed) != errors_total:
+        return []
+    return [
+        str(f["port_collision"]) if f.get("port_collision") else None for f in listed
+    ]
+
+
+def port_collisions(marks: Sequence[str | None]) -> int:
+    """Return the number of findings that are port collisions."""
+    return sum(1 for m in marks if m)
 
 
 def module_checks(
@@ -295,6 +402,7 @@ def modules_stage(
                 }
                 for a in apps
             },
+            "findings": finding_facts(report),
         }
     return checks, facts
 
@@ -482,15 +590,18 @@ def mix_stage(
         if isinstance(p, dict)
     ]
     errors = int((parsers or {}).get("errors_total", 0))
+    marks = collision_marks(out_dir / "mix" / "parser-findings.json", errors)
+    collisions = port_collisions(marks)
     checks.append(
         Check(
             stage,
             "Mix parser errors",
             parsers is not None
-            and parsers.get("passed") is True
+            and (parsers.get("passed") is True or (errors > 0 and collisions == errors))
             and all(p in ran for p in REQUIRED_PARSERS),
-            f"{errors} findings from {', '.join(ran) or 'no parser'}",
-            f"0 findings from {' and '.join(REQUIRED_PARSERS)}",
+            f"{errors} findings from {', '.join(ran) or 'no parser'}"
+            + (f", {collisions} of them port collisions" if collisions else ""),
+            f"0 findings from {' and '.join(REQUIRED_PARSERS)}, not counting port collisions",
         )
     )
     facts = {
@@ -508,6 +619,7 @@ def mix_stage(
         ],
         "rows": rows,
         "unmatched_pct": unmatched_pct,
+        "findings": finding_facts(realism, marks),
         "metrics_worst_pp": metrics_worst,
         "ndpi_worst_pp": ndpi_worst,
         "context": context,
@@ -702,6 +814,14 @@ def render(
                     (n, ", ".join(f["checks"]))
                     for n, f in sorted(facts["modules"].items())
                 ],
+            )
+            for n, f in sorted(facts["modules"].items()):
+                lines += finding_lines(
+                    f.get("findings", {}), f"### Parser findings of module {n}"
+                )
+        if stage == "mix":
+            lines += finding_lines(
+                (facts.get("mix") or {}).get("findings", {}), "### Parser findings"
             )
         if stage == "mix" and facts.get("mix", {}).get("rows"):
             mix = facts["mix"]
