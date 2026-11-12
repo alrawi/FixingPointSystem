@@ -254,6 +254,15 @@ modules/dns/
 
 Module content is synthetic or carries a documented license in the provenance field. Fixtures come from runs in the test harness and never from third party captures.
 
+Third parties build their own modules, so the way a module is written is a public interface. [Module Development](Module-Development.md) is the guide for module authors outside the project. A pull request that changes how a module is written updates that guide in the same pull request. Such changes include the following.
+
+- A field of the module manifest, a scenario action, a template function, or a validation rule.
+- The labels or checks that a module fixture is scored with.
+- How a module is packaged, signed, uploaded, or loaded by the controller and the agent.
+- The layout of a module directory or the files of `modules/_template/`.
+
+A package whose paths do not include the guide puts the text in the `Shared page notes` of its log entry, and the coordinator applies it before the package merges.
+
 ## Commits and pull requests
 
 Commit subjects use the imperative mood, stay under 72 characters, and name the package. Bodies explain why the change exists. Every commit carries two trailers.

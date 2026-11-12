@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 155 work packages. Packages marked critical path gate the phase.
+This page lists 156 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -130,6 +130,7 @@ flowchart LR
   MOD_23["MOD-23<br/>The http2 module capture that missed one TLS session"]
   MOD_24["MOD-24<br/>Packet gap labels in place of the module timing scripts"]
   MOD_25["MOD-25<br/>Byte estimates in every module manifest"]
+  MOD_26["MOD-26<br/>A module development guide for third party authors"]
   TRN_16["TRN-16<br/>Per profile captures scored with the transport check"]
   CON_22["CON-22<br/>Realism report delivery and reservation conflicts in the REST API"]
   UI_08["UI-08<br/>Scenario table, criterion filters, and realism results in the report views"]
@@ -481,6 +482,7 @@ flowchart LR
 | [MOD-23](#mod-23-the-http2-module-capture-that-missed-one-tls-session) | The http2 module capture that missed one TLS session | S | none |  |
 | [MOD-24](#mod-24-packet-gap-labels-in-place-of-the-module-timing-scripts) | Packet gap labels in place of the module timing scripts | S | RLM-15, RLM-18 |  |
 | [MOD-25](#mod-25-byte-estimates-in-every-module-manifest) | Byte estimates in every module manifest | S | CTL-47 |  |
+| [MOD-26](#mod-26-a-module-development-guide-for-third-party-authors) | A module development guide for third party authors | M | none |  |
 | [TRN-16](#trn-16-per-profile-captures-scored-with-the-transport-check) | Per profile captures scored with the transport check | S | RLM-09, TRN-03 |  |
 | [CON-22](#con-22-realism-report-delivery-and-reservation-conflicts-in-the-rest-api) | Realism report delivery and reservation conflicts in the REST API | S | CON-21 |  |
 | [UI-08](#ui-08-scenario-table-criterion-filters-and-realism-results-in-the-report-views) | Scenario table, criterion filters, and realism results in the report views | S | CTL-39, UI-05 |  |
@@ -2654,6 +2656,25 @@ Deliverables.
 Acceptance.
 
 - [ ] qa-gate2 passes with profile.basis bytes and no waiver.
+
+### MOD-26 A module development guide for third party authors
+
+Phase 2 · size M · workstream MOD
+
+- **Depends on.** none
+- **Paths.** `modules/_template/`
+
+Third parties are to build their own modules, but the project documents modules only as a catalog of first party modules (Modules.md), and modules/_template/ holds a three line README and an empty crate. A third party author cannot learn from the repository how to write, validate, package, sign, and load a module. The guide is a wiki page of the MOD workstream, docs/wiki/Module-Development.md, which the package creates.
+
+Deliverables.
+
+- docs/wiki/Module-Development.md covering the module layout, every manifest field (manifest contract v0.4, including settings, functions, expected_bytes, assets, extension, fixtures and provenance), the scenario contract v0.6 (actions, templates, built in functions, profiles, spawned flows), the module types and the reserved raw action, what a third party module may do without a native crate (decision D10) and with a WASM extension, fixtures and realism labels, validation with tools/contracts/validate.py, packaging, signing, upload to the registry, and how the agent loads a module.
+- modules/_template/ as a complete starting point that validates, with a manifest, one scenario, a README and comments that point at the guide.
+
+Acceptance.
+
+- [ ] A reader who follows the guide from an empty directory gets a module that passes validate.py, and the template passes validate.py in CI.
+- [ ] Every claim of the guide names the file or contract it rests on, and the guide links Modules.md, Contracts.md and SDK.md.
 
 ## RLM Realism validation
 
