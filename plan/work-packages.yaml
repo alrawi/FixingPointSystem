@@ -3283,6 +3283,26 @@ work_packages:
     acceptance:
       - qa-gate2 passes with profile.basis bytes and no waiver.
 
+
+  - id: MOD-26
+    title: A module development guide for third party authors
+    phase: 2
+    workstream: MOD
+    size: M
+    depends_on: []
+    paths: [modules/_template/]
+    summary: >-
+      Third parties are to build their own modules, but the project documents modules only as a catalog of first
+      party modules (Modules.md), and modules/_template/ holds a three line README and an empty crate. A third party
+      author cannot learn from the repository how to write, validate, package, sign, and load a module. The guide is a
+      wiki page of the MOD workstream, docs/wiki/Module-Development.md, which the package creates.
+    deliverables:
+      - docs/wiki/Module-Development.md covering the module layout, every manifest field (manifest contract v0.4, including settings, functions, expected_bytes, assets, extension, fixtures and provenance), the scenario contract v0.6 (actions, templates, built in functions, profiles, spawned flows), the module types and the reserved raw action, what a third party module may do without a native crate (decision D10) and with a WASM extension, fixtures and realism labels, validation with tools/contracts/validate.py, packaging, signing, upload to the registry, and how the agent loads a module.
+      - modules/_template/ as a complete starting point that validates, with a manifest, one scenario, a README and comments that point at the guide.
+    acceptance:
+      - A reader who follows the guide from an empty directory gets a module that passes validate.py, and the template passes validate.py in CI.
+      - Every claim of the guide names the file or contract it rests on, and the guide links Modules.md, Contracts.md and SDK.md.
+
   - id: TRN-16
     title: Per profile captures scored with the transport check
     phase: 2
