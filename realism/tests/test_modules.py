@@ -257,6 +257,21 @@ def test_summary_rows_list_every_skipped_parser_with_its_reason() -> None:
     ]
 
 
+def test_summary_rows_name_the_findings_that_did_not_count() -> None:
+    check = {
+        "check": "parser_errors",
+        "passed": True,
+        "parsers": [{"parser": "tshark", "version": "4.2.2"}],
+        "skipped_parsers": [],
+        "applications": [],
+        "not_counted_total": 30,
+    }
+    assert summary.rows("sip", {"checks": [check]}) == [
+        "| sip | parser_errors | all | pass | ran tshark 4.2.2, "
+        "30 findings not counted (port collision) |"
+    ]
+
+
 def test_summary_rows_of_parser_errors_without_parsers() -> None:
     report = {"checks": [{"check": "parser_errors", "passed": False, "applications": []}]}
     assert summary.rows("dns", report) == ["| dns | parser_errors | all | fail | ran none |"]

@@ -186,13 +186,16 @@ def test_error_list_is_capped_but_the_total_counts_all(tmp_path: Path) -> None:
     assert {a["application"]: a["parser_errors"] for a in entry["applications"]}["dns"] == 105
 
 
-def _fake_tshark(tmp_path: Path, stdout: str) -> Path:
+def _fake_tshark(tmp_path: Path, stdout: str, decodes: str = "") -> Path:
     script = tmp_path / "fake-tshark"
     script.write_text(
         f"#!{sys.executable}\n"
         "import sys\n"
         "if sys.argv[1:] == ['--version']:\n"
         "    print('TShark (Wireshark) 4.2.2')\n"
+        "    sys.exit(0)\n"
+        "if sys.argv[1:] == ['-G', 'decodes']:\n"
+        f"    sys.stdout.write({decodes!r})\n"
         "    sys.exit(0)\n"
         "assert '-Y' in sys.argv, 'the runner must filter on expert severity'\n"
         f"sys.stdout.write({stdout!r})\n"
