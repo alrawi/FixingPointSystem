@@ -203,6 +203,20 @@ fn counted(snapshot: &Snapshot, metric: fps_stats::MetricId, label: (&str, &str)
         .sum()
 }
 
+/// The failed sessions of a snapshot with their labels, so that an assertion
+/// on a count says which flows failed and why. Empty when nothing failed.
+fn failed_series(snapshot: &Snapshot) -> String {
+    snapshot
+        .iter()
+        .filter(|(k, _)| k.metric() == metric::SESSIONS_FAILED)
+        .filter_map(|(k, v)| match v {
+            SeriesValue::Count(c) if *c > 0 => Some(format!("{:?} x{c}", k.labels())),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn start_capture(name: &str) -> Capture {
     let dir = fresh_dir(name);
     let mut ring = RingConfig::new(&dir);
@@ -259,6 +273,7 @@ fn mixed_session_runs_with_one_data_connection_per_transfer() {
     for (report, worker, side) in [(&client, 0, "client"), (&server, 10, "server")] {
         let s = exit(report, worker);
         let side = ("side", side);
+        assert_eq!(failed_series(s), "", "{side:?}");
         assert_eq!(
             counted(s, metric::SESSIONS_ATTEMPTED, side),
             sessions,
@@ -310,12 +325,20 @@ fn mixed_session_runs_with_one_data_connection_per_transfer() {
         .collect();
     assert!(packets.iter().all(|p| p.flags & RST == 0), "no reset");
     let mut dialed: BTreeMap<IpAddr, Vec<u16>> = BTreeMap::new();
-    let mut ports = std::collections::BTreeSet::new();
+    let mut connections = std::collections::BTreeSet::new();
     for p in packets
         .iter()
         .filter(|p| p.flags & SYN != 0 && p.flags & ACK == 0)
     {
-        assert!(ports.insert((p.src, p.sport)), "one SYN per connection");
+        // A connection is the four tuple, not the source port. The client
+        // sockets bind with IP_BIND_ADDRESS_NO_PORT, so the kernel picks the
+        // port at connect time and gives a source host the same port for two
+        // connections to different destination ports, such as the control
+        // connection and a data connection of one instance.
+        assert!(
+            connections.insert((p.src, p.sport, p.dst, p.dport)),
+            "one SYN per connection: {p:?}"
+        );
         dialed.entry(p.src).or_default().push(p.dport);
     }
     assert_eq!(
@@ -710,6 +733,7 @@ fn concurrent_instances_that_draw_the_same_data_port_all_succeed() {
     for (report, worker, side) in [(&client, 0, "client"), (&server, 10, "server")] {
         let s = exit(report, worker);
         let side = ("side", side);
+        assert_eq!(failed_series(s), "", "{side:?}");
         assert_eq!(
             counted(s, metric::SESSIONS_SUCCEEDED, side),
             sessions,
