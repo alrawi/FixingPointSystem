@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #500 |
 | Branch | `wp/CTL-48` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 67% (2 of 3 plan steps) |
+| Pull request | #503 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-c4a8e1 |
-| Last verified commit | none (Go cannot build here, CI is the test loop) |
+| Last verified commit | a26f45e (CI green, including ctl `go test`) |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -20,7 +20,7 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 - [x] 1. `metricProperty` in `controller/internal/report/realism.go`, used by every rule.
 - [x] 2. Tests: `realism_con23_test.go` compares property everywhere, `realism_test.go` follows the new wording.
-- [ ] 3. Open the PR, merge `origin/main` (CON-28 may change the case counts), wait for CI, request review.
+- [x] 3. Open the PR, merge `origin/main` (CON-28 may change the case counts), wait for CI, request review.
 
 ## Done and verified
 
@@ -28,11 +28,11 @@ Steps 1 and 2: `gofmt -l controller/internal/report` is clean. The Go module can
 
 ## Remaining
 
-CI result of `go test ./internal/report`.
+none. Before merge: if CON-28 landed cases in `check-metrics.yaml`, update the counts in `realism_con23_test.go`.
 
 ## Next action
 
-Open the pull request and poll its checks.
+Coordinator review and merge.
 
 ## Blockers and open questions
 
