@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #510 |
 | Branch | `wp/RLM-19` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #519 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-r19a7c, lease until 2026-11-12T19:03:12Z |
-| Last verified commit | none |
+| Last verified commit | 3ba1c37 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ The parser error check of the realism runner applies the port collision rule of 
 - [x] 1. Move the rule into `realism/parsers.py` (`port_bindings`, `parse_decodes`) and `realism/parser_errors.py` (`port_collision`, `not_counted`), report format 0.18.0 and schema.
 - [x] 2. Tests (`realism/tests/test_port_collision.py`, real tshark included), module job summary line, README and Realism page.
 - [x] 3. Log entry with the Shared page notes (Gate 2 patch, Module Development text, controller schema copy).
-- [ ] 4. Pull request, CI, review.
+- [x] 4. Pull request #519, CI, review.
 
 ## Done and verified
 
@@ -30,11 +30,11 @@ The parser error check of the realism runner applies the port collision rule of 
 
 ## Remaining
 
-The controller copy of the schema and `ui/src/api/schema.d.ts` need a refresh that is outside the paths (see the log entry), so the controller and ui jobs are expected to be red until the coordinator applies it.
+CI of 3ba1c37: every job passes except `check` of the ui workflow (`src/api/schema.d.ts is out of date`). The controller workflow did not run (its path filter), and its Go test `realism_test.go` will fail on the next controller change until `controller/internal/report/schema/realism-report.schema.json` is refreshed. Both refreshes are outside the paths, and the log entry has the commands. The Gate 2 patch is also the coordinator's.
 
 ## Next action
 
-Open the pull request, poll the check runs, and report the failing jobs that are outside the paths.
+The coordinator applies the three out-of-path changes of the Shared page notes (schema copies, Gate 2 patch, Module Development text) and merges.
 
 ## Blockers and open questions
 
@@ -63,3 +63,4 @@ python3 -m pytest -q realism/tests/test_port_collision.py realism/tests/test_par
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-12T18:03Z | claude-r19a7c | claim | none | lease taken on #510 |
+| 2026-11-12T17:55Z | claude-r19a7c | finish | 3ba1c37 | PR 519, CI red only in the ui job for the schema copy |
