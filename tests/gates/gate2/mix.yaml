@@ -32,7 +32,7 @@ entries:
   - module: http1
     scenario: single_fetch
     weight: 8
-    expected_bytes: 9500
+    expected_bytes: 8150
     params: {server_port: 80, body_size: 8192}
     application: http
     ndpi: [HTTP]
@@ -54,7 +54,7 @@ entries:
   - module: http1
     scenario: https_fetch
     weight: 4
-    expected_bytes: 20500
+    expected_bytes: 26000
     params: {server_port: 443, body_size: 20000}
     application: https
     ndpi: [TLS]
@@ -62,7 +62,7 @@ entries:
   - module: dns
     scenario: lookup_a
     weight: 0.5
-    expected_bytes: 112
+    expected_bytes: 84
     params: {server_port: 53}
     application: dns
     ndpi: [DNS]
@@ -70,7 +70,7 @@ entries:
   - module: smtp
     scenario: relay
     weight: 13
-    expected_bytes: 9400
+    expected_bytes: 12100
     params: {server_port: 25, body_size: 900, attachment_min: 2000, attachment_max: 12000}
     application: smtp
     ndpi: [SMTP]
@@ -78,7 +78,7 @@ entries:
   - module: imap
     scenario: fetch_messages
     weight: 13
-    expected_bytes: 17000
+    expected_bytes: 23800
     params: {server_port: 143, body_size: 900, attachment_min: 2000, attachment_max: 12000, messages: 6, fetches: 2}
     application: imap
     ndpi: [IMAP]
@@ -86,7 +86,7 @@ entries:
   - module: pop3
     scenario: retrieve_all
     weight: 12
-    expected_bytes: 25000
+    expected_bytes: 34000
     params: {server_port: 110, body_size: 900, attachment_min: 2000, attachment_max: 12000, messages: 3, fetches: 3}
     application: pop3
     ndpi: [POP3]
@@ -94,7 +94,7 @@ entries:
   - module: ftp
     scenario: retr_epsv
     weight: 11
-    expected_bytes: 8500
+    expected_bytes: 3830
     params: {server_port: 21, file_min: 2000, file_max: 12000}
     application: ftp
     ndpi: [FTP_CONTROL, FTP_DATA]
@@ -102,7 +102,7 @@ entries:
   - module: ssh
     scenario: remote_command
     weight: 11
-    expected_bytes: 15000
+    expected_bytes: 9700
     params: {server_port: 22, output_bytes: 8000}
     application: ssh
     ndpi: [SSH]
@@ -110,7 +110,7 @@ entries:
   - module: smb2
     scenario: download
     weight: 6
-    expected_bytes: 48000
+    expected_bytes: 42300
     params: {server_port: 445, file_size: 40000, read_size: 65536, tail_size: 40000}
     application: smb2
     ndpi: [SMBv23, SMB]
@@ -118,7 +118,7 @@ entries:
   - module: sip_rtp
     scenario: call_pcmu
     weight: 7
-    expected_bytes: 37500
+    expected_bytes: 18600
     params: {sip_port: 5060, rtp_port_min: 16384, rtp_port_max: 32766, ring_ms: 300, talk_ms: 2000}
     application: voip
     ndpi: [SIP, RTP]

@@ -128,7 +128,8 @@ def test_the_stage_puts_required_modules_first_and_sets_the_estimates(
     ssh = m.yaml_module().safe_load(
         (tmp_path / "modules" / "ssh" / "manifest.yaml").read_text()
     )
-    assert ssh["expected_bytes"] == {"remote_command": 15000}
+    want = next(e for e in doc()["entries"] if e["module"] == "ssh")["expected_bytes"]
+    assert ssh["expected_bytes"] == {"remote_command": want}
     for name in order:
         assert (tmp_path / f"{name}.tar.gz").stat().st_size > 0
 

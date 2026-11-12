@@ -497,6 +497,15 @@ def mix_stage(
         "modules": attempted,
         "waived": waived,
         "basis_waived": basis_waived,
+        "scenarios": [
+            {
+                "scenario": f"{x.get('application')}/{x.get('scenario')}",
+                "attempted": int(x.get("sessions_attempted", 0)),
+                "failed": int(x.get("sessions_failed", 0)),
+                "bytes": int(x.get("bytes_tx", 0)) + int(x.get("bytes_rx", 0)),
+            }
+            for x in scenarios
+        ],
         "rows": rows,
         "unmatched_pct": unmatched_pct,
         "metrics_worst_pp": metrics_worst,
@@ -718,6 +727,22 @@ def render(
                         f"{r.get('ndpi_count')}",
                     )
                     for r in mix["rows"]
+                ],
+            )
+            lines += ["", "### Scenario totals", ""]
+            lines += table(
+                ("Scenario", "Sessions", "Failed", "Bytes", "Bytes per session"),
+                [
+                    (
+                        str(x["scenario"]),
+                        str(x["attempted"]),
+                        str(x["failed"]),
+                        str(x["bytes"]),
+                        str(round(x["bytes"] / x["attempted"]))
+                        if x["attempted"]
+                        else "n/a",
+                    )
+                    for x in mix.get("scenarios", [])
                 ],
             )
             lines += [
