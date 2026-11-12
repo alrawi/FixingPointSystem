@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #426 |
 | Branch | `wp/RLM-16` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (3 of 3 plan steps, CI pending) |
+| Pull request | #505 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-492e74, lease until 2026-11-12T15:15:59Z |
 | Last verified commit | none |
 
@@ -35,11 +35,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-CI result, then `fps_swarm.py review`.
+none. CI on cd03b72 is green.
 
 ## Next action
 
-Wait for CI on the PR.
+The coordinator reviews and merges PR #505.
 
 ## Blockers and open questions
 
