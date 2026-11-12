@@ -1129,6 +1129,24 @@ export interface components {
             parser_errors: number;
             malformed_packets: number;
         };
+        /** @description One parser error with the session that it belongs to. A closed object where it is used, because the entries of not_counted add the fields rule and dissector. */
+        parser_error: {
+            /** @enum {unknown} */
+            parser: "tshark" | "zeek" | "stub";
+            /** @enum {unknown} */
+            kind: "malformed" | "error" | "weird";
+            /** @description The protocol of the faulty layer for tshark, and the weird names for Zeek. */
+            name: string;
+            message: string;
+            frame: number | null;
+            timestamp: number | null;
+            session: number | null;
+            application: string | null;
+            /** @enum {unknown} */
+            transport: "tcp" | "udp" | null;
+            client: components["schemas"]["endpoint"] | null;
+            server: components["schemas"]["endpoint"] | null;
+        };
         /** @description Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran and no parser reported an error. */
         parser_errors: {
             /** @constant */
@@ -1170,24 +1188,15 @@ export interface components {
                 [key: string]: number;
             };
             /** @description The first 100 parser errors in parser order. */
-            errors: {
-                /** @enum {unknown} */
-                parser: "tshark" | "zeek" | "stub";
-                /** @enum {unknown} */
-                kind: "malformed" | "error" | "weird";
-                /** @description The protocol of the faulty layer for tshark, and the weird names for Zeek. */
-                name: string;
-                message: string;
-                frame: number | null;
-                timestamp: number | null;
-                session: number | null;
-                application: string | null;
-                /** @enum {unknown} */
-                transport: "tcp" | "udp" | null;
-                client: components["schemas"]["endpoint"] | null;
-                server: components["schemas"]["endpoint"] | null;
-            }[];
+            errors: components["schemas"]["parser_error"][];
+            /** @description The parser errors that count, which is every finding except those of not_counted. */
             errors_total: number;
+            /** @description The first 100 findings that the check left out of every count by a named rule, in parser order. Each entry is a parser error with the rule and the dissector that applied. The rule port_collision (RLM-19) applies to a tshark finding in a session whose client port tshark binds to a dissector and whose server port it does not bind to the same dissector. Reports before format 0.18.0 have no such field. */
+            not_counted?: components["schemas"]["parser_error"][];
+            /** @description The number of findings that the check left out of every count, which can exceed the length of not_counted. Reports before format 0.18.0 have no such field. */
+            not_counted_total?: number;
+            /** @description The number of TCP and UDP ports that the parsers bind to a dissector, from tshark -G decodes. It is 0 when no parser has such a table or tshark could not print it, and no finding is then a port collision. Reports before format 0.18.0 have no such field. */
+            port_collision_ports?: number;
         };
         /** @description The decrypted share and the JA4 matched share of the sampled TLS sessions. */
         encryption_metric: components["schemas"]["metric"] & {
@@ -1942,6 +1951,24 @@ export interface components {
                     }[];
                     mismatches_total: number;
                 };
+                /** @description One parser error with the session that it belongs to. A closed object where it is used, because the entries of not_counted add the fields rule and dissector. */
+                parser_error: {
+                    /** @enum {unknown} */
+                    parser: "tshark" | "zeek" | "stub";
+                    /** @enum {unknown} */
+                    kind: "malformed" | "error" | "weird";
+                    /** @description The protocol of the faulty layer for tshark, and the weird names for Zeek. */
+                    name: string;
+                    message: string;
+                    frame: number | null;
+                    timestamp: number | null;
+                    session: number | null;
+                    application: string | null;
+                    /** @enum {unknown} */
+                    transport: "tcp" | "udp" | null;
+                    client: components["schemas"]["endpoint"] | null;
+                    server: components["schemas"]["endpoint"] | null;
+                };
                 parser_counts: {
                     parser_errors: number;
                     malformed_packets: number;
@@ -1987,24 +2014,15 @@ export interface components {
                         [key: string]: number;
                     };
                     /** @description The first 100 parser errors in parser order. */
-                    errors: {
-                        /** @enum {unknown} */
-                        parser: "tshark" | "zeek" | "stub";
-                        /** @enum {unknown} */
-                        kind: "malformed" | "error" | "weird";
-                        /** @description The protocol of the faulty layer for tshark, and the weird names for Zeek. */
-                        name: string;
-                        message: string;
-                        frame: number | null;
-                        timestamp: number | null;
-                        session: number | null;
-                        application: string | null;
-                        /** @enum {unknown} */
-                        transport: "tcp" | "udp" | null;
-                        client: components["schemas"]["endpoint"] | null;
-                        server: components["schemas"]["endpoint"] | null;
-                    }[];
+                    errors: components["schemas"]["parser_error"][];
+                    /** @description The parser errors that count, which is every finding except those of not_counted. */
                     errors_total: number;
+                    /** @description The first 100 findings that the check left out of every count by a named rule, in parser order. Each entry is a parser error with the rule and the dissector that applied. The rule port_collision (RLM-19) applies to a tshark finding in a session whose client port tshark binds to a dissector and whose server port it does not bind to the same dissector. Reports before format 0.18.0 have no such field. */
+                    not_counted?: components["schemas"]["parser_error"][];
+                    /** @description The number of findings that the check left out of every count, which can exceed the length of not_counted. Reports before format 0.18.0 have no such field. */
+                    not_counted_total?: number;
+                    /** @description The number of TCP and UDP ports that the parsers bind to a dissector, from tshark -G decodes. It is 0 when no parser has such a table or tshark could not print it, and no finding is then a port collision. Reports before format 0.18.0 have no such field. */
+                    port_collision_ports?: number;
                 };
                 /** @description Decryption and JA4 check of a sample of TLS sessions. The check passes when at least min_decrypted of the sampled sessions decrypt with the exported keys and every sampled ClientHello has a JA4 fingerprint that its client profile lists. failures names each reason in words. */
                 encryption: {

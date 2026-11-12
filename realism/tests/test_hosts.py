@@ -463,7 +463,7 @@ def test_score_adds_the_check_for_the_section_the_flag_or_the_count(
         report = score(pcap, labels_file(_doc(section)), classifier, **kwargs)
         assert [c["check"] for c in report.checks] == ["conformance", "host_identity"]
         assert report.passed
-        assert report.to_dict()["version"] == REPORT_VERSION == "0.17.0"
+        assert report.to_dict()["version"] == REPORT_VERSION == "0.18.0"
         _validate(report.to_dict())
     wrong = score(pcap, labels_file(_doc({"count": 2})), classifier, host_count=3)
     assert not wrong.passed

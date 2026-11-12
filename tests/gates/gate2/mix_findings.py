@@ -19,16 +19,12 @@ carries no FIN or RST and its last frame lies within ``--boundary-s`` seconds of
 last frame. The file also lists the Zeek weirds and the tshark messages that the
 findings share, with their counts.
 
-The port collision rule (QA-11). The kernel picks the client port of a session at
-random, and tshark binds some ports to a dissector: UDP 41170 to Manolito and TCP 44322
-to the Performance Co-Pilot proxy are two of them. When a session uses such a port as its
-client port, tshark decodes the payload with that dissector and reports malformed
-packets for every packet that the dissector rejects, and none of it is a fault of the
-traffic. A tshark finding is a ``port_collision`` when the client port of its session is
-a port that ``tshark -G decodes`` lists for the transport and the server port is not
-listed for the same dissector, so the intended protocol would have taken the session.
-The file marks such findings, and ``gate2_report.py`` leaves them out of the count of
-parser errors.
+The port collision rule (QA-11, RLM-19) lives in the parser error check of the realism
+runner (``realism/parser_errors.py``). A tshark finding in a session whose client port tshark
+binds to a dissector, and whose server port it does not bind to the same dissector, does not
+count, and the realism report lists it under ``not_counted``. This script lists those findings
+after the counted ones and marks each with ``port_collision``, and ``gate2_report.py`` reads
+the counts of the report.
 
 The script never decides the stage. It exits with 0 whenever it printed the findings,
 and with 2 when an input is unreadable.
@@ -38,11 +34,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import subprocess
 import sys
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -52,9 +46,6 @@ sys.path.insert(0, str(ROOT))
 
 from realism import capture as cap
 
-DEFAULT_TSHARK = "tshark"
-DECODE_TABLES = {"tcp.port": "tcp", "udp.port": "udp"}
-TSHARK_TIMEOUT_S = 60.0
 BOUNDARY_S = 2.0
 TCP_FIN = 0x01
 TCP_SYN = 0x02
@@ -184,83 +175,18 @@ def endpoint_text(value: Any) -> str:
     return "?"
 
 
-def parse_decodes(text: str) -> dict[tuple[str, int], str]:
-    """Parse the output of ``tshark -G decodes`` into the dissector of each TCP and UDP port.
-
-    Each line holds the name of a table, a selector, and the name of the dissector,
-    separated by tabs. Only the tables ``tcp.port`` and ``udp.port`` with a numeric
-    selector count.
-    """
-    ports: dict[tuple[str, int], str] = {}
-    for line in text.splitlines():
-        cols = line.split("\t")
-        if len(cols) < 3 or cols[0] not in DECODE_TABLES or not cols[1].isdigit():
-            continue
-        ports[(DECODE_TABLES[cols[0]], int(cols[1]))] = cols[2].strip()
-    return ports
-
-
-def registered_ports(program: str | None = None) -> dict[tuple[str, int], str]:
-    """Return the dissector that the installed tshark binds to each TCP and UDP port.
-
-    The result is empty when tshark cannot run, and no finding is then a port collision.
-    """
-    exe = program or os.environ.get("FPS_TSHARK") or DEFAULT_TSHARK
-    try:
-        proc = subprocess.run(
-            [exe, "-G", "decodes"],
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=TSHARK_TIMEOUT_S,
-            check=False,
-            stdin=subprocess.DEVNULL,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    return parse_decodes(proc.stdout) if proc.returncode == 0 else {}
-
-
-def port_collision(
-    entry: dict[str, Any], registered: Mapping[tuple[str, int], str]
-) -> str | None:
-    """Return the dissector that the client port of the session of a tshark finding collides with.
-
-    The result is None for every finding that is not a port collision: a finding of
-    another parser, a finding without a session, and a finding in a session whose client
-    port is bound to no dissector or whose server port is bound to the same dissector.
-    """
-    transport = entry.get("transport")
-    client, server = entry.get("client"), entry.get("server")
-    if (
-        entry.get("parser") != "tshark"
-        or entry.get("session") is None
-        or transport not in ("tcp", "udp")
-        or not isinstance(client, dict)
-        or not isinstance(server, dict)
-    ):
-        return None
-    bound = registered.get((str(transport), client.get("port", -1)))
-    if (
-        bound is None
-        or registered.get((str(transport), server.get("port", -1))) == bound
-    ):
-        return None
-    return bound
-
-
 def build(
     check: dict[str, Any],
     facts: dict[int, SessionFacts],
     start: float,
     end: float,
     boundary_s: float,
-    registered: Mapping[tuple[str, int], str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return one entry per finding that the realism report lists."""
-    ports = registered or {}
+    """Return one entry per finding that the realism report lists, counted ones first."""
     entries: list[dict[str, Any]] = []
-    for raw in check.get("errors", []):
+    raws = [(r, False) for r in check.get("errors", [])]
+    raws += [(r, True) for r in check.get("not_counted", [])]
+    for raw, skipped in raws:
         if not isinstance(raw, dict):
             continue
         entry: dict[str, Any] = {key: raw.get(key) for key in FINDING_KEYS}
@@ -287,7 +213,7 @@ def build(
                 fact, str(entry["transport"] or ""), start, end, boundary_s
             )
             entry["reused_tuple"] = fact.reused
-        entry["port_collision"] = port_collision(entry, ports)
+        entry["port_collision"] = raw.get("dissector") if skipped else None
         entries.append(entry)
     return entries
 
@@ -319,11 +245,7 @@ def describe(entry: dict[str, Any], duration: float) -> str:
     return text
 
 
-def run(
-    out: Path,
-    boundary_s: float,
-    registered: Mapping[tuple[str, int], str] | None = None,
-) -> list[dict[str, Any]]:
+def run(out: Path, boundary_s: float) -> list[dict[str, Any]]:
     """Write the findings file of an output directory and return the entries."""
     mix = out / "mix"
     check = load_check(mix / "realism.json")
@@ -331,13 +253,14 @@ def run(
     if not pcap.is_file():
         raise FindingsError(f"{pcap} is missing")
     facts, start, end = read_sessions(pcap)
-    entries = build(check, facts, start, end, boundary_s, registered)
+    entries = build(check, facts, start, end, boundary_s)
     doc = {
         "parsers": check.get("parsers", []),
-        "errors_total": check.get("errors_total", 0),
+        "errors_total": check.get("errors_total", 0)
+        + check.get("not_counted_total", 0),
         "listed": len(entries),
         "port_collisions": sum(1 for e in entries if e["port_collision"]),
-        "registered_ports": len(registered or {}),
+        "registered_ports": check.get("port_collision_ports", 0),
         "boundary_s": boundary_s,
         "capture_start": start,
         "capture_end": end,
@@ -360,7 +283,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--boundary-s", type=float, default=BOUNDARY_S)
     args = p.parse_args(argv)
     try:
-        entries = run(args.out_dir, args.boundary_s, registered_ports())
+        entries = run(args.out_dir, args.boundary_s)
         report = json.loads(
             (args.out_dir / "mix" / "parser-findings.json").read_text(encoding="utf-8")
         )

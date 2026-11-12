@@ -505,77 +505,60 @@ def collision(
 
 def write_mix_findings(
     out: Path,
-    findings: list[dict[str, Any]],
-    marks: list[str | None],
-    total: int | None = None,
+    counted: list[dict[str, Any]],
+    skipped: list[tuple[dict[str, Any], str]],
 ) -> None:
-    """Fail the parser check of the mix with findings and write the file of mix_findings.py."""
+    """Write a parser error check of the mix in which the runner did not count ``skipped``.
+
+    Each item of ``skipped`` is a finding and the dissector its client port is bound to.
+    """
     realism_path = out / "mix" / "realism.json"
     report = json.loads(realism_path.read_text())
     parsers = next(c for c in report["checks"] if c["check"] == "parser_errors")
-    count = len(findings) if total is None else total
-    parsers.update(passed=False, errors_total=count, errors=findings)
-    report["passed"] = False
-    write(realism_path, report)
-    marked = [dict(f, port_collision=m) for f, m in zip(findings, marks, strict=True)]
-    write(
-        out / "mix" / "parser-findings.json",
-        {"errors_total": count, "listed": len(findings), "findings": marked},
+    parsers.update(
+        passed=not counted,
+        errors_total=len(counted),
+        errors=counted,
+        not_counted_total=len(skipped),
+        not_counted=[dict(f, rule="port_collision", dissector=d) for f, d in skipped],
     )
+    report["passed"] = not counted
+    write(realism_path, report)
 
 
 def test_port_collisions_do_not_fail_the_mix(tmp_path: Path) -> None:
     out = full(tmp_path)
-    findings = [
-        collision("tcp", 44322, 8082, "pcp"),
-        collision("udp", 41170, 23394, "manolito"),
-    ]
-    write_mix_findings(out, findings, ["pmproxy", "manolito"])
+    write_mix_findings(
+        out,
+        [],
+        [
+            (collision("tcp", 44322, 8082, "pcp"), "pmproxy"),
+            (collision("udp", 41170, 23394, "manolito"), "manolito"),
+        ],
+    )
     assert run(out) == 0
     report = (out / "report.md").read_text()
-    assert "2 findings from tshark, zeek, 2 of them port collisions" in report
-    assert "; port collision with pmproxy, not counted\n" in report
-    assert "; port collision with manolito, not counted\n" in report
+    assert (
+        "0 findings from tshark, zeek, 2 more not counted (port collisions)" in report
+    )
+    assert "; port_collision with pmproxy, not counted\n" in report
+    assert "; port_collision with manolito, not counted\n" in report
 
 
 def test_a_finding_next_to_port_collisions_fails_the_mix(tmp_path: Path) -> None:
     out = full(tmp_path)
-    findings = [
-        collision("tcp", 44322, 8082, "pcp"),
-        collision("tcp", 40000, 80, "http"),
-    ]
-    write_mix_findings(out, findings, ["pmproxy", None])
+    write_mix_findings(
+        out,
+        [collision("tcp", 40000, 80, "http")],
+        [(collision("tcp", 44322, 8082, "pcp"), "pmproxy")],
+    )
     assert run(out) == 1
     report = (out / "report.md").read_text()
     assert (
-        "| Mix parser errors | 2 findings from tshark, zeek, 1 of them port" in report
+        "| Mix parser errors | 1 findings from tshark, zeek, 1 more not counted"
+        in report
     )
     assert "FAIL |" in report
-
-
-def test_unlisted_findings_are_never_port_collisions(tmp_path: Path) -> None:
-    out = full(tmp_path)
-    write_mix_findings(
-        out, [collision("tcp", 44322, 8082, "pcp")], ["pmproxy"], total=31
-    )
-    assert run(out) == 1
-
-
-def test_a_findings_file_of_another_run_is_ignored(tmp_path: Path) -> None:
-    out = full(tmp_path)
-    write_mix_findings(out, [collision("tcp", 44322, 8082, "pcp")], ["pmproxy"])
-    path = out / "mix" / "parser-findings.json"
-    doc = json.loads(path.read_text())
-    doc["errors_total"] = 5
-    write(path, doc)
-    assert run(out) == 1
-
-
-def test_port_collisions_need_the_findings_file(tmp_path: Path) -> None:
-    out = full(tmp_path)
-    write_mix_findings(out, [collision("tcp", 44322, 8082, "pcp")], ["pmproxy"])
-    (out / "mix" / "parser-findings.json").unlink()
-    assert run(out) == 1
 
 
 def step(factor: float, multipliers: dict[str, float] | None = None) -> dict[str, Any]:

@@ -421,6 +421,30 @@
         "mismatches_total": {"type": "integer", "minimum": 0}
       }
     },
+    "parser_error": {
+      "description": "One parser error with the session that it belongs to. A closed object where it is used, because the entries of not_counted add the fields rule and dissector.",
+      "type": "object",
+      "required": [
+        "parser", "kind", "name", "message", "frame", "timestamp", "session",
+        "application", "transport", "client", "server"
+      ],
+      "properties": {
+        "parser": {"enum": ["tshark", "zeek", "stub"]},
+        "kind": {"enum": ["malformed", "error", "weird"]},
+        "name": {
+          "description": "The protocol of the faulty layer for tshark, and the weird names for Zeek.",
+          "type": "string"
+        },
+        "message": {"type": "string"},
+        "frame": {"type": ["integer", "null"], "minimum": 1},
+        "timestamp": {"type": ["number", "null"]},
+        "session": {"type": ["integer", "null"], "minimum": 1},
+        "application": {"type": ["string", "null"]},
+        "transport": {"enum": ["tcp", "udp", null]},
+        "client": {"oneOf": [{"$ref": "#/$defs/endpoint"}, {"type": "null"}]},
+        "server": {"oneOf": [{"$ref": "#/$defs/endpoint"}, {"type": "null"}]}
+      }
+    },
     "parser_counts": {
       "type": "object",
       "required": ["parser_errors", "malformed_packets"],
@@ -519,32 +543,37 @@
           "description": "The first 100 parser errors in parser order.",
           "type": "array",
           "maxItems": 100,
+          "items": {"$ref": "#/$defs/parser_error", "unevaluatedProperties": false}
+        },
+        "errors_total": {
+          "description": "The parser errors that count, which is every finding except those of not_counted.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_counted": {
+          "description": "The first 100 findings that the check left out of every count by a named rule, in parser order. Each entry is a parser error with the rule and the dissector that applied. The rule port_collision (RLM-19) applies to a tshark finding in a session whose client port tshark binds to a dissector and whose server port it does not bind to the same dissector. Reports before format 0.18.0 have no such field.",
+          "type": "array",
+          "maxItems": 100,
           "items": {
-            "type": "object",
-            "required": [
-              "parser", "kind", "name", "message", "frame", "timestamp", "session",
-              "application", "transport", "client", "server"
-            ],
-            "additionalProperties": false,
+            "$ref": "#/$defs/parser_error",
+            "required": ["rule", "dissector"],
             "properties": {
-              "parser": {"enum": ["tshark", "zeek", "stub"]},
-              "kind": {"enum": ["malformed", "error", "weird"]},
-              "name": {
-                "description": "The protocol of the faulty layer for tshark, and the weird names for Zeek.",
-                "type": "string"
-              },
-              "message": {"type": "string"},
-              "frame": {"type": ["integer", "null"], "minimum": 1},
-              "timestamp": {"type": ["number", "null"]},
-              "session": {"type": ["integer", "null"], "minimum": 1},
-              "application": {"type": ["string", "null"]},
-              "transport": {"enum": ["tcp", "udp", null]},
-              "client": {"oneOf": [{"$ref": "#/$defs/endpoint"}, {"type": "null"}]},
-              "server": {"oneOf": [{"$ref": "#/$defs/endpoint"}, {"type": "null"}]}
-            }
+              "rule": {"const": "port_collision"},
+              "dissector": {"type": "string", "minLength": 1}
+            },
+            "unevaluatedProperties": false
           }
         },
-        "errors_total": {"type": "integer", "minimum": 0}
+        "not_counted_total": {
+          "description": "The number of findings that the check left out of every count, which can exceed the length of not_counted. Reports before format 0.18.0 have no such field.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "port_collision_ports": {
+          "description": "The number of TCP and UDP ports that the parsers bind to a dissector, from tshark -G decodes. It is 0 when no parser has such a table or tshark could not print it, and no finding is then a port collision. Reports before format 0.18.0 have no such field.",
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "encryption": {

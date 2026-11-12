@@ -6,6 +6,19 @@ check runs each reference parser on the capture, joins its findings to the
 session table, and counts parser errors and malformed packets per intended
 application. An application counts the largest number that any one parser
 reports, so two parsers that see the same fault do not count it twice.
+
+The port collision rule (QA-11, RLM-19) leaves out one kind of finding. The kernel picks the
+client port of a session at random, and tshark binds hundreds of ports to a dissector: UDP 41170
+to Manolito and TCP 44322 to the Performance Co-Pilot proxy are two of them. When a session
+uses such a port as its client port, tshark decodes the payload with that dissector and
+reports malformed packets for every packet that the dissector rejects, and none of it is a
+fault of the traffic. A finding is a port collision when the client port of its session is
+bound to a dissector for the transport of the session and the server port is not bound to the
+same dissector, so the intended protocol would have taken the session. Such a finding does
+not count. The entry lists it under ``not_counted`` with the dissector, so that no finding
+disappears. The rule needs the port table of the parser (``port_bindings``), which only the
+tshark runner has, and it needs the session of the finding, so a finding without a session
+always counts.
 """
 
 from __future__ import annotations
@@ -25,6 +38,7 @@ CHECK_NAME = "parser_errors"
 METRIC = "realism.parser_errors"
 ALL_APPLICATIONS = "all"
 MAX_ERRORS = 100
+RULE_PORT_COLLISION = "port_collision"
 
 
 @dataclass
@@ -62,6 +76,9 @@ class ParserErrorsResult:
     unattributed: Counter[str]
     errors: list[dict[str, Any]]
     errors_total: int
+    not_counted: list[dict[str, Any]] = field(default_factory=list)
+    not_counted_total: int = 0
+    port_collision_ports: int = 0
 
     @property
     def parser_names(self) -> list[str]:
@@ -116,7 +133,22 @@ class ParserErrorsResult:
             "unattributed_errors": {p: self.unattributed[p] for p in names},
             "errors": self.errors,
             "errors_total": self.errors_total,
+            "not_counted": self.not_counted,
+            "not_counted_total": self.not_counted_total,
+            "port_collision_ports": self.port_collision_ports,
         }
+
+
+def port_collision(session: Session, bindings: Mapping[tuple[str, int], str]) -> str | None:
+    """Return the dissector that the client port of the session collides with, or None.
+
+    The client port collides when ``bindings`` binds it to a dissector for the transport of the
+    session and does not bind the server port to the same dissector.
+    """
+    bound = bindings.get((session.transport, session.client_port))
+    if bound is None or bindings.get((session.transport, session.server_port)) == bound:
+        return None
+    return bound
 
 
 def _endpoint(ip: str | None, port: int | None) -> dict[str, Any] | None:
@@ -147,13 +179,26 @@ def check(
     unattributed: Counter[str] = Counter()
     errors: list[dict[str, Any]] = []
     errors_total = 0
+    not_counted: list[dict[str, Any]] = []
+    not_counted_total = 0
+    bound_ports = 0
     ran: list[dict[str, str]] = []
     for parser in parsers:
         ran.append({"parser": parser.name, "version": parser.version()})
+        bindings = parser.port_bindings()
+        bound_ports = max(bound_ports, len(bindings))
         for finding in parser.findings(capture):
-            errors_total += 1
             key = finding.key
             owner = by_key.get(key) if key is not None else None
+            dissector = port_collision(owner, bindings) if owner is not None else None
+            if owner is not None and dissector is not None:
+                not_counted_total += 1
+                if len(not_counted) < MAX_ERRORS:
+                    entry = _error_entry(parser.name, finding, owner, labels.application_of(owner))
+                    entry |= {"rule": RULE_PORT_COLLISION, "dissector": dissector}
+                    not_counted.append(entry)
+                continue
+            errors_total += 1
             application = labels.application_of(owner) if owner is not None else None
             if owner is None:
                 unattributed[parser.name] += 1
@@ -177,6 +222,9 @@ def check(
         unattributed=unattributed,
         errors=errors,
         errors_total=errors_total,
+        not_counted=not_counted,
+        not_counted_total=not_counted_total,
+        port_collision_ports=bound_ports,
     )
 
 

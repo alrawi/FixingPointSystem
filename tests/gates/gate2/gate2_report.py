@@ -193,25 +193,29 @@ def describe_finding(entry: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
-def finding_facts(
-    report: dict[str, Any], marks: Sequence[str | None] = ()
-) -> dict[str, Any]:
+def finding_facts(report: dict[str, Any]) -> dict[str, Any]:
     """Return the parser findings of a realism report for the gate report.
 
-    ``total`` is the count of every parser. ``lines`` describes the findings that the
-    realism report lists, which are the first 100 in the order of the parsers, and says
-    of each port collision (``marks``, one per finding) that it does not count.
+    ``total`` is every finding of every parser, including those that the runner did not
+    count (``not_counted``, the port collision rule of RLM-19). ``lines`` describes the
+    findings that the realism report lists, which are the first 100 of each list, and says
+    of each finding that did not count why.
     """
     entry = find_check(report, "parser_errors") or {}
-    listed = [e for e in entry.get("errors", []) if isinstance(e, dict)]
-    total = int(entry.get("errors_total", 0))
-    lines = []
-    for index, found in enumerate(listed):
-        line = describe_finding(found)
-        if index < len(marks) and marks[index]:
-            line += f"; port collision with {marks[index]}, not counted"
-        lines.append(line)
-    return {"total": total, "lines": lines, "unlisted": max(0, total - len(listed))}
+    counted = [e for e in entry.get("errors", []) if isinstance(e, dict)]
+    skipped = [e for e in entry.get("not_counted", []) if isinstance(e, dict)]
+    total = int(entry.get("errors_total", 0)) + int(entry.get("not_counted_total", 0))
+    lines = [describe_finding(found) for found in counted]
+    for found in skipped:
+        lines.append(
+            describe_finding(found)
+            + f"; {found.get('rule')} with {found.get('dissector')}, not counted"
+        )
+    return {
+        "total": total,
+        "lines": lines,
+        "unlisted": max(0, total - len(counted) - len(skipped)),
+    }
 
 
 def finding_lines(facts: dict[str, Any], heading: str) -> list[str]:
@@ -225,31 +229,6 @@ def finding_lines(facts: dict[str, Any], heading: str) -> list[str]:
             f"- and {facts['unlisted']} more that the realism report does not list"
         )
     return lines
-
-
-def collision_marks(path: Path, errors_total: int) -> list[str | None]:
-    """Return the port collision of each finding of the mix, or nothing when it is unproven.
-
-    ``mix_findings.py`` marks a tshark finding with the dissector that the client port of
-    its session is bound to (see its documentation). The marks hold only when the file
-    belongs to the realism report, which means that it lists every one of its findings:
-    with an unlisted finding, or a file of another total, the list is empty and every
-    finding counts.
-    """
-    doc = load_optional(path)
-    if not isinstance(doc, dict) or int(doc.get("errors_total", -1)) != errors_total:
-        return []
-    listed = [f for f in doc.get("findings", []) if isinstance(f, dict)]
-    if len(listed) != errors_total:
-        return []
-    return [
-        str(f["port_collision"]) if f.get("port_collision") else None for f in listed
-    ]
-
-
-def port_collisions(marks: Sequence[str | None]) -> int:
-    """Return the number of findings that are port collisions."""
-    return sum(1 for m in marks if m)
 
 
 def module_checks(
@@ -660,17 +639,20 @@ def mix_stage(
         if isinstance(p, dict)
     ]
     errors = int((parsers or {}).get("errors_total", 0))
-    marks = collision_marks(out_dir / "mix" / "parser-findings.json", errors)
-    collisions = port_collisions(marks)
+    collisions = int((parsers or {}).get("not_counted_total", 0))
     checks.append(
         Check(
             stage,
             "Mix parser errors",
             parsers is not None
-            and (parsers.get("passed") is True or (errors > 0 and collisions == errors))
+            and parsers.get("passed") is True
             and all(p in ran for p in REQUIRED_PARSERS),
             f"{errors} findings from {', '.join(ran) or 'no parser'}"
-            + (f", {collisions} of them port collisions" if collisions else ""),
+            + (
+                f", {collisions} more not counted (port collisions)"
+                if collisions
+                else ""
+            ),
             f"0 findings from {' and '.join(REQUIRED_PARSERS)}, not counting port collisions",
         )
     )
@@ -690,7 +672,7 @@ def mix_stage(
         "rows": rows,
         "calibration": calibration_facts(out_dir, run),
         "unmatched_pct": unmatched_pct,
-        "findings": finding_facts(realism, marks),
+        "findings": finding_facts(realism),
         "metrics_worst_pp": metrics_worst,
         "ndpi_worst_pp": ndpi_worst,
         "context": context,

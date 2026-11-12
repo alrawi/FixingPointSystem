@@ -17,7 +17,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -58,6 +58,8 @@ _TSHARK_FIELDS = (
     "_ws.expert.group",
     "_ws.expert.message",
 )
+# ``tshark -G decodes`` prints these tables with the dissector that owns each port.
+DECODE_TABLES = {"tcp.port": "tcp", "udp.port": "udp"}
 _TSHARK_VERSION = re.compile(r"TShark \(Wireshark\)\s+v?(\d+(?:\.\d+)+)")
 _ZEEK_VERSION = re.compile(r"zeek version\s+v?(\d+(?:\.\d+)+\S*)")
 
@@ -137,6 +139,15 @@ class ParserRunner(Protocol):
         """Run the parser on the capture and return its parser errors."""
         ...
 
+    def port_bindings(self) -> Mapping[tuple[str, int], str]:
+        """Return the dissector that the parser binds to each ``(transport, port)``.
+
+        The parser error check uses the table for the port collision rule. A parser that
+        picks a protocol by port returns its table, and every other parser returns an
+        empty mapping, so none of its findings is a port collision.
+        """
+        ...
+
 
 class StubParser:
     """A deterministic parser runner for tests that never reads the capture.
@@ -149,10 +160,15 @@ class StubParser:
         self,
         findings: Iterable[Finding] | Callable[[Path], Iterable[Finding]] = (),
         name: str = "stub",
+        bindings: Mapping[tuple[str, int], str] | None = None,
     ) -> None:
-        """Create a stub that returns fixed findings or the result of a function."""
+        """Create a stub that returns fixed findings or the result of a function.
+
+        ``bindings`` is the port table that the stub reports, empty by default.
+        """
         self.name = name
         self._findings = findings
+        self._bindings = dict(bindings or {})
 
     def version(self) -> str:
         """Return the fixed stub version."""
@@ -162,6 +178,10 @@ class StubParser:
         """Return the configured findings for the capture."""
         source = self._findings(capture) if callable(self._findings) else self._findings
         return list(source)
+
+    def port_bindings(self) -> Mapping[tuple[str, int], str]:
+        """Return the configured port table."""
+        return self._bindings
 
 
 def _run(
@@ -220,6 +240,7 @@ class TsharkRunner:
         self.program = program or os.environ.get("FPS_TSHARK") or DEFAULT_TSHARK
         self.timeout_s = timeout_s
         self._version: str | None = None
+        self._bindings: dict[tuple[str, int], str] | None = None
 
     def available(self) -> bool:
         """Return True when the tshark program exists."""
@@ -242,6 +263,37 @@ class TsharkRunner:
             argv += ["-e", name]
         proc = _run(self.program, argv, f"tshark parse {capture}", self.timeout_s)
         return parse_tshark_fields(proc.stdout, source=str(capture))
+
+    def port_bindings(self) -> Mapping[tuple[str, int], str]:
+        """Return the dissector that tshark binds to each TCP and UDP port.
+
+        The table comes from ``tshark -G decodes`` and is read once. It is empty when
+        that command fails, and no finding is then a port collision.
+        """
+        if self._bindings is None:
+            try:
+                proc = _run(self.program, ["-G", "decodes"], "tshark decodes", self.timeout_s)
+            except ParserError:
+                self._bindings = {}
+            else:
+                self._bindings = parse_decodes(proc.stdout)
+        return self._bindings
+
+
+def parse_decodes(text: str) -> dict[tuple[str, int], str]:
+    """Parse the output of ``tshark -G decodes`` into the dissector of each TCP and UDP port.
+
+    Each line holds the name of a table, a selector, and the name of the dissector,
+    separated by tabs. Only the tables ``tcp.port`` and ``udp.port`` with a numeric
+    selector count.
+    """
+    ports: dict[tuple[str, int], str] = {}
+    for line in text.splitlines():
+        cols = line.split("\t")
+        if len(cols) < 3 or cols[0] not in DECODE_TABLES or not cols[1].isdigit():
+            continue
+        ports[(DECODE_TABLES[cols[0]], int(cols[1]))] = cols[2].strip()
+    return ports
 
 
 def _first(value: str) -> str:
@@ -378,6 +430,10 @@ class ZeekRunner:
             weird = _read_log(logs / "weird.log")
             conn = _read_log(logs / "conn.log")
         return parse_zeek_logs(weird, conn, ignore=self.ignore, source=str(capture))
+
+    def port_bindings(self) -> Mapping[tuple[str, int], str]:
+        """Return no table: Zeek follows the traffic and not the port, so no finding collides."""
+        return {}
 
 
 def _read_log(path: Path) -> str:

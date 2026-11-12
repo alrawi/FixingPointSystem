@@ -64,6 +64,8 @@ def rows(module: str, report: dict[str, Any]) -> list[str]:
         if kind == "parser_errors":
             ran = ", ".join(f"{p['parser']} {p['version']}" for p in check.get("parsers", []))
             detail = f"ran {ran or 'none'}" + skipped_text(check)
+            if check.get("not_counted_total"):
+                detail += f", {check['not_counted_total']} findings not counted (port collision)"
             out.append(f"| {module} | {kind} | all | {_verdict(check['passed'])} | {detail} |")
         if kind == "encryption":
             detail = (

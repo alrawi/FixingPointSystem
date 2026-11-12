@@ -371,7 +371,7 @@ def test_score_adds_the_check_when_the_labels_have_the_section(
     classifier = StubClassifier(lambda _session: "SMTP")
     report = score(view, labels_file(_doc()), classifier, message_probe=probe)
     assert [c["check"] for c in report.checks] == ["conformance", "messages"]
-    assert report.to_dict()["version"] == REPORT_VERSION == "0.17.0"
+    assert report.to_dict()["version"] == REPORT_VERSION == "0.18.0"
     _validate(report.to_dict())
     bare = _doc()
     del bare["messages"]

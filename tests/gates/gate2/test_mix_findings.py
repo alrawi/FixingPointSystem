@@ -116,6 +116,7 @@ def prepare(
     frames: list[tuple[float, bytes]],
     errors: list[dict[str, Any]],
     total: int | None = None,
+    not_counted: list[dict[str, Any]] | None = None,
 ) -> Path:
     mix = tmp_path / "mix"
     mix.mkdir()
@@ -126,6 +127,9 @@ def prepare(
         "parsers": [{"parser": "tshark", "version": "4.2.2"}],
         "errors": errors,
         "errors_total": len(errors) if total is None else total,
+        "not_counted": not_counted or [],
+        "not_counted_total": len(not_counted or []),
+        "port_collision_ports": 5,
     }
     (mix / "realism.json").write_text(json.dumps({"checks": [check]}), encoding="utf-8")
     return tmp_path
@@ -210,72 +214,26 @@ def test_unattributed_finding_has_no_session(tmp_path: Path) -> None:
     )
 
 
-DECODES = (
-    "tcp.port\t80\thttp\n"
-    "tcp.port\t44322\tpmproxy\n"
-    "udp.port\t41170\tmanolito\n"
-    "udp.port\t5060\tsip\n"
-    "tcp.port\t5060\tsip\n"
-    "tcp.heuristic\thttp\tHTTP\n"
-    "tcp.port\tnot-a-port\tdata\n"
-    "ip.proto\t6\ttcp\n"
-)
-PORTS = mf.parse_decodes(DECODES)
-
-
-def test_parse_decodes_keeps_the_numeric_tcp_and_udp_ports() -> None:
-    assert PORTS == {
-        ("tcp", 80): "http",
-        ("tcp", 44322): "pmproxy",
-        ("udp", 41170): "manolito",
-        ("udp", 5060): "sip",
-        ("tcp", 5060): "sip",
-    }
-
-
-def test_client_port_bound_to_a_dissector_is_a_port_collision(tmp_path: Path) -> None:
+def test_findings_that_the_runner_did_not_count_are_marked_port_collisions(
+    tmp_path: Path,
+) -> None:
     frames = session(100.0, 44322) + session(110.0, 40001)
-    out = prepare(tmp_path, frames, [finding(1, 44322), finding(2, 40001)])
-    first, second = mf.run(out, 2.0, PORTS)
+    skipped = dict(finding(1, 44322), rule="port_collision", dissector="pmproxy")
+    out = prepare(tmp_path, frames, [finding(2, 40001)], not_counted=[skipped])
+    second, first = mf.run(out, 2.0)
     assert first["port_collision"] == "pmproxy" and second["port_collision"] is None
     doc = json.loads((out / "mix" / "parser-findings.json").read_text())
-    assert doc["port_collisions"] == 1 and doc["registered_ports"] == len(PORTS)
+    assert doc["errors_total"] == 2 and doc["listed"] == 2
+    assert doc["port_collisions"] == 1 and doc["registered_ports"] == 5
     assert mf.describe(first, 10.0).endswith(
         ", reused_tuple false, port_collision with pmproxy (not counted)"
     )
 
 
-def test_a_udp_client_port_collides_with_its_udp_dissector() -> None:
-    raw = finding(3, 41170)
-    raw.update(transport="udp", server={"ip": SERVER, "port": 23394})
-    assert mf.port_collision(raw, PORTS) == "manolito"
-    raw["transport"] = "tcp"
-    assert mf.port_collision(raw, PORTS) is None
-
-
-def test_findings_that_are_no_port_collision() -> None:
-    same = finding(3, 5060)
-    same["server"] = {"ip": SERVER, "port": 5060}
-    assert mf.port_collision(same, PORTS) is None  # both ports are the SIP port
-    assert mf.port_collision(finding(3, 44322, parser="zeek"), PORTS) is None
-    assert mf.port_collision(finding(None, 44322), PORTS) is None
-    assert mf.port_collision(finding(3, 40000), PORTS) is None
-    assert mf.port_collision(finding(3, 44322), {}) is None
-    icmp = finding(3, 44322)
-    icmp["transport"] = None
-    assert mf.port_collision(icmp, PORTS) is None
-
-
-def test_registered_ports_is_empty_without_tshark() -> None:
-    assert mf.registered_ports("/nonexistent/tshark") == {}
-
-
 def test_main_prints_every_finding(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(mf, "registered_ports", lambda: PORTS)
     frames = session(100.0, 40000) + session(110.0, 40001)
     out = prepare(
         tmp_path, frames, [finding(2, 40001), finding(2, 40001, "zeek")], total=12
