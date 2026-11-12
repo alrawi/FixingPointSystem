@@ -12,11 +12,14 @@
 # 1. Conformance (report). The report is written again with a threshold just above
 #    the lowest conformance ratio that the run measured, which no capture can meet.
 # 2. Module (report). The realism report of one module gets a failed parser error
-#    check, which is what a module that emits a malformed message would produce.
-#    The gate must fail and name the check.
+#    check with one finding, which is what a module that emits a malformed message
+#    would produce. The gate must fail, name the check, and name the finding.
 # 3. Mix (mix). The mix capture is scored again with a tolerance of 0 points, which
 #    the Poisson arrivals and the payload sizes of a real run never meet. This
 #    proof needs mix/mix.pcapng, ndpiReader, tshark, and Zeek.
+# 4. Mix findings (mix). The realism report of the mix gets a failed parser error
+#    check with one finding. The gate must fail, name the check, and name the
+#    finding in the report that the job log shows.
 #
 # The report proofs need the files of all three stages, and the mix proof needs
 # the mix stage only, which is how the jobs of the workflow use them: --only mix
@@ -63,6 +66,22 @@ report() {
   python3 -I "$here/gate2_report.py" "${args[@]}"
 }
 
+# fail_parser_check FILE PARSER KIND NAME FRAME fails the parser error check of the
+# realism report FILE with one finding that the report lists.
+fail_parser_check() {
+  python3 -I -c 'import json, sys
+path, parser, kind, name, frame = sys.argv[1:]
+report = json.load(open(path))
+for check in report["checks"]:
+    if check["check"] == "parser_errors":
+        check["passed"] = False
+        check["errors_total"] = 1
+        check["errors"] = [{"parser": parser, "kind": kind, "name": name,
+                            "message": "Proof finding", "frame": int(frame)}]
+report["passed"] = False
+json.dump(report, open(path, "w"))' "$@"
+}
+
 # The gate passes on the real results first, or the proofs would show nothing.
 rc=0
 report "$out" >/dev/null || rc=$?
@@ -81,20 +100,14 @@ if [[ $only != mix ]]; then
   echo "prove-failure.sh: the gate failed at the threshold $raised" >&2
 
   echo "prove-failure.sh: proof 2, a module whose parser error check failed" >&2
-  python3 -I -c 'import json, sys
-path = sys.argv[1]
-report = json.load(open(path))
-for check in report["checks"]:
-    if check["check"] == "parser_errors":
-        check["passed"] = False
-        check["errors_total"] = 1
-report["passed"] = False
-json.dump(report, open(path, "w"))' "$scratch/copy/modules/http1/http1.realism.json"
+  fail_parser_check "$scratch/copy/modules/http1/http1.realism.json" tshark malformed http 4242
   rc=0
   report "$scratch/copy" >"$scratch/module-proof.txt" || rc=$?
   [[ $rc -eq 1 ]] || die "the gate exited with $rc for a failed http1 module, want 1"
   grep -q "Module http1 parser errors" "$scratch/module-proof.txt" || die "the report does not name the failed http1 check"
-  echo "prove-failure.sh: the gate failed on the broken http1 module" >&2
+  grep -q "tshark malformed http: Proof finding; frame 4242" "$scratch/module-proof.txt" ||
+    die "the report does not name the finding of the http1 module"
+  echo "prove-failure.sh: the gate failed on the broken http1 module and named its finding" >&2
 fi
 
 if [[ $only != report ]]; then
@@ -105,5 +118,15 @@ if [[ $only != report ]]; then
   FPS_GATE2_TOLERANCE=0 "$here/mix.sh" --rescore "$scratch/copy" >/dev/null 2>&1 || rc=$?
   [[ $rc -eq 1 ]] || die "the mix stage exited with $rc at a tolerance of 0 points, want 1"
   echo "prove-failure.sh: the mix stage failed at a tolerance of 0 points" >&2
+
+  echo "prove-failure.sh: proof 4, a mix whose parser error check failed" >&2
+  fail_parser_check "$scratch/copy/mix/realism.json" zeek weird proof_weird 17
+  rc=0
+  report "$scratch/copy" >"$scratch/mix-proof.txt" || rc=$?
+  [[ $rc -eq 1 ]] || die "the gate exited with $rc for a failed mix parser check, want 1"
+  grep -q "Mix parser errors" "$scratch/mix-proof.txt" || die "the report does not name the failed mix parser check"
+  grep -q "zeek weird proof_weird: Proof finding; frame 17" "$scratch/mix-proof.txt" ||
+    die "the report does not name the finding of the mix"
+  echo "prove-failure.sh: the gate failed on the mix finding and named it" >&2
 fi
 echo "prove-failure.sh: every proof made the gate fail as required" >&2

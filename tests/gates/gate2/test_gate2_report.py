@@ -390,3 +390,189 @@ def test_the_session_basis_fails_unless_waived(tmp_path: Path) -> None:
     report = (out / "report.md").read_text()
     assert "**Verdict: PASS WITH WAIVERS**" in report
     assert "expected_bytes" in report
+
+
+FINDINGS: list[dict[str, Any]] = [
+    {
+        "parser": "tshark",
+        "kind": "malformed",
+        "name": "tls",
+        "message": "Malformed Packet (Exception occurred)",
+        "frame": 4321,
+        "timestamp": 1762923691.25,
+        "session": 7,
+        "application": "https",
+        "transport": "tcp",
+        "client": {"ip": "10.201.0.2", "port": 40001},
+        "server": {"ip": "10.202.0.2", "port": 443},
+    },
+    {
+        "parser": "zeek",
+        "kind": "weird",
+        "name": "bad_HTTP_request",
+        "message": "",
+        "frame": None,
+        "timestamp": None,
+        "session": None,
+        "application": None,
+        "transport": None,
+        "client": None,
+        "server": None,
+    },
+]
+
+
+def write_findings(
+    out: Path, name: str | None = None, errors_total: int = len(FINDINGS)
+) -> None:
+    """Make the parser error check of one realism report fail with FINDINGS."""
+    path = (
+        out / "mix" / "realism.json"
+        if name is None
+        else out / "modules" / name / f"{name}.realism.json"
+    )
+    report = json.loads(path.read_text())
+    parsers = next(c for c in report["checks"] if c["check"] == "parser_errors")
+    parsers.update(passed=False, errors_total=errors_total, errors=FINDINGS)
+    report["passed"] = False
+    write(path, report)
+
+
+def test_describe_finding_names_every_fact() -> None:
+    line = g.describe_finding(FINDINGS[0])
+    assert line == (
+        "tshark malformed tls: Malformed Packet (Exception occurred); "
+        "frame 4321 at 2025-11-12T05:01:31.250000Z; application https, session 7; "
+        "tcp 10.201.0.2:40001 -> 10.202.0.2:443"
+    )
+    assert g.describe_finding(FINDINGS[1]) == "zeek weird bad_HTTP_request; no session"
+
+
+def test_failing_mix_parser_check_names_each_finding(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    write_findings(out)
+    assert run(out) == 1
+    report = (out / "report.md").read_text()
+    assert "### Parser findings\n" in report
+    for entry in FINDINGS:
+        assert f"- {g.describe_finding(entry)}\n" in report
+    assert "| Mix parser errors | 2 findings from tshark, zeek |" in report
+
+
+def test_failing_module_parser_check_names_each_finding(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    write_findings(out, "ssh")
+    assert run(out) == 1
+    report = (out / "report.md").read_text()
+    assert "### Parser findings of module ssh\n" in report
+    assert f"- {g.describe_finding(FINDINGS[0])}\n" in report
+    assert "of module dns" not in report
+
+
+def test_unlisted_findings_are_counted(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    write_findings(out, errors_total=130)
+    assert run(out) == 1
+    report = (out / "report.md").read_text()
+    assert "- and 128 more that the realism report does not list\n" in report
+
+
+def test_a_passing_run_has_no_findings_section(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    assert run(out) == 0
+    assert "Parser findings" not in (out / "report.md").read_text()
+
+
+# The findings of the failing run of 2026-11-12 (run 43233842055, attempt 3): the
+# client ports of two sessions of the mix were bound to dissectors of tshark.
+def collision(
+    transport: str, client_port: int, server_port: int, layer: str
+) -> dict[str, Any]:
+    return {
+        "parser": "tshark",
+        "kind": "malformed",
+        "name": layer,
+        "message": "Malformed Packet (Exception occurred)",
+        "frame": 74681,
+        "timestamp": 1762957770.5,
+        "session": 3785,
+        "application": "http2",
+        "transport": transport,
+        "client": {"ip": "198.18.0.22", "port": client_port},
+        "server": {"ip": "198.19.0.4", "port": server_port},
+    }
+
+
+def write_mix_findings(
+    out: Path,
+    findings: list[dict[str, Any]],
+    marks: list[str | None],
+    total: int | None = None,
+) -> None:
+    """Fail the parser check of the mix with findings and write the file of mix_findings.py."""
+    realism_path = out / "mix" / "realism.json"
+    report = json.loads(realism_path.read_text())
+    parsers = next(c for c in report["checks"] if c["check"] == "parser_errors")
+    count = len(findings) if total is None else total
+    parsers.update(passed=False, errors_total=count, errors=findings)
+    report["passed"] = False
+    write(realism_path, report)
+    marked = [dict(f, port_collision=m) for f, m in zip(findings, marks, strict=True)]
+    write(
+        out / "mix" / "parser-findings.json",
+        {"errors_total": count, "listed": len(findings), "findings": marked},
+    )
+
+
+def test_port_collisions_do_not_fail_the_mix(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    findings = [
+        collision("tcp", 44322, 8082, "pcp"),
+        collision("udp", 41170, 23394, "manolito"),
+    ]
+    write_mix_findings(out, findings, ["pmproxy", "manolito"])
+    assert run(out) == 0
+    report = (out / "report.md").read_text()
+    assert "2 findings from tshark, zeek, 2 of them port collisions" in report
+    assert "; port collision with pmproxy, not counted\n" in report
+    assert "; port collision with manolito, not counted\n" in report
+
+
+def test_a_finding_next_to_port_collisions_fails_the_mix(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    findings = [
+        collision("tcp", 44322, 8082, "pcp"),
+        collision("tcp", 40000, 80, "http"),
+    ]
+    write_mix_findings(out, findings, ["pmproxy", None])
+    assert run(out) == 1
+    report = (out / "report.md").read_text()
+    assert (
+        "| Mix parser errors | 2 findings from tshark, zeek, 1 of them port" in report
+    )
+    assert "FAIL |" in report
+
+
+def test_unlisted_findings_are_never_port_collisions(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    write_mix_findings(
+        out, [collision("tcp", 44322, 8082, "pcp")], ["pmproxy"], total=31
+    )
+    assert run(out) == 1
+
+
+def test_a_findings_file_of_another_run_is_ignored(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    write_mix_findings(out, [collision("tcp", 44322, 8082, "pcp")], ["pmproxy"])
+    path = out / "mix" / "parser-findings.json"
+    doc = json.loads(path.read_text())
+    doc["errors_total"] = 5
+    write(path, doc)
+    assert run(out) == 1
+
+
+def test_port_collisions_need_the_findings_file(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    write_mix_findings(out, [collision("tcp", 44322, 8082, "pcp")], ["pmproxy"])
+    (out / "mix" / "parser-findings.json").unlink()
+    assert run(out) == 1
