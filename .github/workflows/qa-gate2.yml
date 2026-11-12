@@ -58,10 +58,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: never
-  # Modules that the agent cannot run yet. A waiver ends by itself once
-  # engine/fps-agent depends on the native crate of the module, so merging AGT-21
-  # puts the four modules into the mix without an edit here.
-  FPS_GATE2_MIX_WAIVE: hls ldap mqtt ntp
+  # Modules that the agent cannot run yet, as a space separated list. AGT-21 put
+  # hls, ldap, mqtt and ntp into the agent, so no module is waived.
+  FPS_GATE2_MIX_WAIVE: ""
   # The controller does not read expected_bytes from the module manifests into its
   # scenario catalog yet, so the byte basis cannot compile. The suite sets the session
   # shares from the byte weights itself and the report says so. Remove this line once

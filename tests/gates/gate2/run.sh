@@ -44,8 +44,12 @@ report() {
   waived=$(python3 -I "$here/mix_config.py" waived --requested "${FPS_GATE2_MIX_WAIVE:-}" \
     --cargo "$root/engine/fps-agent/Cargo.toml") || die "cannot decide the waivers"
   mix_modules=$(python3 -I "$here/mix_config.py" names --waived "$waived") || die "cannot list the modules"
+  # Either waiver (a module left out of the mix, or a basis other than bytes)
+  # lets the verdict be PASS WITH WAIVERS.
+  local allow_waivers=
+  [[ -z ${FPS_GATE2_MIX_WAIVE:-} && ${FPS_GATE2_BASIS:-bytes} == bytes ]] || allow_waivers=--allow-waivers
   python3 -I "$here/gate2_report.py" --out-dir "$out" --stages "$stages" --threshold "$threshold" \
-    --tolerance "$tolerance" --mix-modules "${mix_modules// /,}" ${FPS_GATE2_MIX_WAIVE:+--allow-waivers} || rc=$?
+    --tolerance "$tolerance" --mix-modules "${mix_modules// /,}" ${allow_waivers:+"$allow_waivers"} || rc=$?
   return "$rc"
 }
 

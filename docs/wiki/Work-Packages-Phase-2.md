@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 147 work packages. Packages marked critical path gate the phase.
+This page lists 155 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -128,6 +128,8 @@ flowchart LR
   CAP_05["CAP-05<br/>Provenance fields from the scrub record"]
   MOD_22["MOD-22<br/>Shared decrypted check in the module capture scripts"]
   MOD_23["MOD-23<br/>The http2 module capture that missed one TLS session"]
+  MOD_24["MOD-24<br/>Packet gap labels in place of the module timing scripts"]
+  MOD_25["MOD-25<br/>Byte estimates in every module manifest"]
   TRN_16["TRN-16<br/>Per profile captures scored with the transport check"]
   CON_22["CON-22<br/>Realism report delivery and reservation conflicts in the REST API"]
   UI_08["UI-08<br/>Scenario table, criterion filters, and realism results in the report views"]
@@ -146,18 +148,24 @@ flowchart LR
   QA_09["QA-09<br/>The single http1 parser error of the Gate 1 run"]
   CON_23["CON-23<br/>Catalog metrics for every realism check"]
   RLM_17["RLM-17<br/>The CON-23 metrics in the realism report"]
+  RLM_18["RLM-18<br/>TLS on non standard ports in the decrypted check"]
   CON_24["CON-24<br/>Capture drop counts in the agent protocol and the REST API"]
   AGT_21["AGT-21<br/>NTP, MQTT, LDAP, and HLS in the agent"]
   CON_25["CON-25<br/>The messages check in the metric catalog"]
   CON_26["CON-26<br/>A read-scoped capture download answers 409 for a running capture"]
   CON_27["CON-27<br/>The host identity check in the metric catalog"]
+  CON_28["CON-28<br/>Packet gap and payload size series in the metric catalog"]
+  CON_29["CON-29<br/>Run calibration in the REST API"]
   CTL_42["CTL-42<br/>The CON-23 mapping table in the controller"]
   QA_10["QA-10<br/>Gate 1 without its own reuse rule"]
+  QA_11["QA-11<br/>The parser findings of the Gate 2 mix stage"]
   CTL_43["CTL-43<br/>Renewal cannot outlive a revocation"]
   CAP_06["CAP-06<br/>JSON credentials scrubbed whatever their spelling"]
   CTL_44["CTL-44<br/>A read-scoped download does not stop a capture"]
   CTL_45["CTL-45<br/>Numeric prerelease identifiers of any length"]
   CTL_46["CTL-46<br/>One property wording for realism metrics"]
+  CTL_47["CTL-47<br/>Byte estimates in the scenario catalog"]
+  CTL_48["CTL-48<br/>The CON-23 property wording for every realism metric"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -299,6 +307,9 @@ flowchart LR
   CAP_04 --> CAP_05
   RLM_12 --> MOD_22
   MOD_06 --> MOD_22
+  RLM_15 --> MOD_24
+  RLM_18 --> MOD_24
+  CTL_47 --> MOD_25
   RLM_09 --> TRN_16
   CON_21 --> CON_22
   CTL_39 --> UI_08
@@ -334,12 +345,15 @@ flowchart LR
   CTL_44 --> CON_26
   CON_25 --> CON_27
   RLM_10 --> CON_27
+  RLM_15 --> CON_28
   CON_23 --> CTL_42
   CTL_41 --> CTL_42
   RLM_17 --> CTL_42
   QA_09 --> QA_10
   RLM_17 --> QA_10
+  QA_05 --> QA_11
   CTL_42 --> CTL_46
+  CTL_46 --> CTL_48
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -465,6 +479,8 @@ flowchart LR
 | [CAP-05](#cap-05-provenance-fields-from-the-scrub-record) | Provenance fields from the scrub record | S | CON-20, CAP-04 |  |
 | [MOD-22](#mod-22-shared-decrypted-check-in-the-module-capture-scripts) | Shared decrypted check in the module capture scripts | S | RLM-12, MOD-06 |  |
 | [MOD-23](#mod-23-the-http2-module-capture-that-missed-one-tls-session) | The http2 module capture that missed one TLS session | S | none |  |
+| [MOD-24](#mod-24-packet-gap-labels-in-place-of-the-module-timing-scripts) | Packet gap labels in place of the module timing scripts | S | RLM-15, RLM-18 |  |
+| [MOD-25](#mod-25-byte-estimates-in-every-module-manifest) | Byte estimates in every module manifest | S | CTL-47 |  |
 | [TRN-16](#trn-16-per-profile-captures-scored-with-the-transport-check) | Per profile captures scored with the transport check | S | RLM-09, TRN-03 |  |
 | [CON-22](#con-22-realism-report-delivery-and-reservation-conflicts-in-the-rest-api) | Realism report delivery and reservation conflicts in the REST API | S | CON-21 |  |
 | [UI-08](#ui-08-scenario-table-criterion-filters-and-realism-results-in-the-report-views) | Scenario table, criterion filters, and realism results in the report views | S | CTL-39, UI-05 |  |
@@ -483,18 +499,24 @@ flowchart LR
 | [QA-09](#qa-09-the-single-http1-parser-error-of-the-gate-1-run) | The single http1 parser error of the Gate 1 run | S | QA-04 |  |
 | [CON-23](#con-23-catalog-metrics-for-every-realism-check) | Catalog metrics for every realism check | S | CON-22 |  |
 | [RLM-17](#rlm-17-the-con-23-metrics-in-the-realism-report) | The CON-23 metrics in the realism report | M | CON-23, RLM-14 |  |
+| [RLM-18](#rlm-18-tls-on-non-standard-ports-in-the-decrypted-check) | TLS on non standard ports in the decrypted check | S | none |  |
 | [CON-24](#con-24-capture-drop-counts-in-the-agent-protocol-and-the-rest-api) | Capture drop counts in the agent protocol and the REST API | S | ENG-27 |  |
 | [AGT-21](#agt-21-ntp-mqtt-ldap-and-hls-in-the-agent) | NTP, MQTT, LDAP, and HLS in the agent | S | MOD-15, MOD-16, MOD-17, MOD-18 |  |
 | [CON-25](#con-25-the-messages-check-in-the-metric-catalog) | The messages check in the metric catalog | S | CON-23, RLM-17 |  |
 | [CON-26](#con-26-a-read-scoped-capture-download-answers-409-for-a-running-capture) | A read-scoped capture download answers 409 for a running capture | S | CTL-44 |  |
 | [CON-27](#con-27-the-host-identity-check-in-the-metric-catalog) | The host identity check in the metric catalog | S | CON-25, RLM-10 |  |
+| [CON-28](#con-28-packet-gap-and-payload-size-series-in-the-metric-catalog) | Packet gap and payload size series in the metric catalog | S | RLM-15 |  |
+| [CON-29](#con-29-run-calibration-in-the-rest-api) | Run calibration in the REST API | S | none |  |
 | [CTL-42](#ctl-42-the-con-23-mapping-table-in-the-controller) | The CON-23 mapping table in the controller | S | CON-23, CTL-41, RLM-17 |  |
 | [QA-10](#qa-10-gate-1-without-its-own-reuse-rule) | Gate 1 without its own reuse rule | S | QA-09, RLM-17 |  |
+| [QA-11](#qa-11-the-parser-findings-of-the-gate-2-mix-stage) | The parser findings of the Gate 2 mix stage | S | QA-05 |  |
 | [CTL-43](#ctl-43-renewal-cannot-outlive-a-revocation) | Renewal cannot outlive a revocation | S | none |  |
 | [CAP-06](#cap-06-json-credentials-scrubbed-whatever-their-spelling) | JSON credentials scrubbed whatever their spelling | S | none |  |
 | [CTL-44](#ctl-44-a-read-scoped-download-does-not-stop-a-capture) | A read-scoped download does not stop a capture | S | none |  |
 | [CTL-45](#ctl-45-numeric-prerelease-identifiers-of-any-length) | Numeric prerelease identifiers of any length | S | none |  |
 | [CTL-46](#ctl-46-one-property-wording-for-realism-metrics) | One property wording for realism metrics | S | CTL-42 |  |
+| [CTL-47](#ctl-47-byte-estimates-in-the-scenario-catalog) | Byte estimates in the scenario catalog | M | none |  |
+| [CTL-48](#ctl-48-the-con-23-property-wording-for-every-realism-metric) | The CON-23 property wording for every realism metric | S | CTL-46 |  |
 
 ## CON Contracts
 
@@ -830,6 +852,40 @@ Acceptance.
 
 - [ ] validate.py passes, and the change entry lists the consumers (realism runner, fps-stats tables, controller catalog copy and its example count test).
 
+### CON-28 Packet gap and payload size series in the metric catalog
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** RLM-15
+- **Paths.** `contracts/`
+
+RLM-15 measures packet gaps inside a session, but the property label of realism.ks_statistic and realism.ks_p_value has no value packet_gap (nor payload_size per direction), so only realism.check_failures reports them. Needs owner approval as a contract change.
+
+Deliverables.
+
+- The property values packet_gap and payload_size for the KS series (catalog 0.8.0), examples, and the change entry with its consumers (realism runner, fps-stats tables, controller catalog copy).
+
+Acceptance.
+
+- [ ] validate.py passes, and the realism runner emits the KS series of packet gaps in the same PR or a named follow up.
+
+### CON-29 Run calibration in the REST API
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** none
+- **Paths.** `contracts/openapi/`
+
+The controller keeps Run.Calibration (the mix control and throughput multipliers of CTL-12 and CTL-24), but the OpenAPI Run schema does not carry it, so the Gate 2 suite cannot report the multipliers (QA-05). Needs owner approval as a contract change.
+
+Deliverables.
+
+- An optional Run.calibration object in the OpenAPI document, the change entry, and the regenerated controller, UI and SDK clients.
+
+Acceptance.
+
+- [ ] validate.py passes, openapi-breaking finds no breaking change, and a REST test reads the multipliers of a run.
+
 ## OPS Repository and swarm tooling
 
 ### OPS-05 Release workflow
@@ -901,6 +957,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The unit tests and three Gate 1 runs in a row pass, and the corruption proof still fails the gate.
+
+### QA-11 The parser findings of the Gate 2 mix stage
+
+Phase 2 · size S · workstream QA
+
+- **Depends on.** QA-05
+- **Paths.** `tests/gates/gate2/`
+
+On PR #486, which did not touch parsers or modules, the qa-gate2 mix job reported 10 tshark and Zeek findings twice and passed on a full rerun. The findings were in the run artifacts, which the sandbox cannot read.
+
+Deliverables.
+
+- The mix stage prints its parser findings in the job log, the cause of the findings, and a fix or a named rule.
+
+Acceptance.
+
+- [ ] Three consecutive qa-gate2 runs pass, and a failing run names each finding in its log.
 
 ## ENG Agent engine
 
@@ -2117,6 +2190,40 @@ Acceptance.
 
 - [ ] go test ./internal/report passes in CI, and the HTML report test shows the new wording.
 
+### CTL-47 Byte estimates in the scenario catalog
+
+Phase 2 · size M · workstream CTL
+
+- **Depends on.** none
+- **Paths.** `controller/internal/wiring/`, `controller/internal/registry/`
+
+internal/wiring/adapters.go never sets compiler.Scenario.BytesPerSession, and registry.Manifest has no expected_bytes field, so the bytes basis and throughput_bps fail with ErrNoByteEstimate on a real controller and the byte weighted mix control of CTL-12 has no estimates (QA-05). Most module manifests lack the estimate.
+
+Deliverables.
+
+- The manifest field expected_bytes read into the scenario catalog and compiler.Scenario.BytesPerSession set from it.
+
+Acceptance.
+
+- [ ] A controller test compiles a bytes basis mix and a throughput_bps objective from manifests with estimates, and a manifest without one still fails with ErrNoByteEstimate.
+
+### CTL-48 The CON-23 property wording for every realism metric
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CTL-46
+- **Paths.** `controller/internal/report/`
+
+CTL-46 aligned the KS metrics, but the controller still words the other mapped metrics differently from the CON-23 examples ("realism.check_failures of check temporal" against "failures of the temporal check", parser errors, decrypted sessions, mix shares).
+
+Deliverables.
+
+- MapRealism words every mapped metric as the examples do, and the example test compares property for every case.
+
+Acceptance.
+
+- [ ] go test ./internal/report passes in CI with property compared for all cases of check-metrics.yaml.
+
 ## CLI Python SDK and command line client
 
 ### CLI-01 Python SDK
@@ -2514,6 +2621,40 @@ Acceptance.
 
 - [ ] Three consecutive mod-http2 module runs with 40 of 40 TLS sessions.
 
+### MOD-24 Packet gap labels in place of the module timing scripts
+
+Phase 2 · size S · workstream MOD
+
+- **Depends on.** RLM-15, RLM-18
+- **Paths.** `modules/sip_rtp/`, `modules/hls/`, `modules/http2/`
+
+modules/sip_rtp/fixtures/rtp_check.py and modules/hls/fixtures/hls_check.py check timing that the temporal check now covers with temporal.packets labels (RLM-15), and the http2 TLS port wrapper becomes redundant after RLM-18.
+
+Deliverables.
+
+- temporal.packets labels for sip_rtp (ms 20 and 30) and hls, the two scripts and the http2 wrapper removed, and the workflows updated.
+
+Acceptance.
+
+- [ ] The sip_rtp, hls and http2 module realism jobs pass, and a jittered sip_rtp capture fails through the labels.
+
+### MOD-25 Byte estimates in every module manifest
+
+Phase 2 · size S · workstream MOD
+
+- **Depends on.** CTL-47
+- **Paths.** `modules/`
+
+Most module manifests lack expected_bytes, so the Gate 2 suite stages module trees with the estimates of its mix.yaml (QA-05). Once the controller reads the field (CTL-47), every scenario needs a measured estimate.
+
+Deliverables.
+
+- expected_bytes in every scenario of every module manifest, measured from the module fixtures, and FPS_GATE2_BASIS removed from qa-gate2.yml by the coordinator.
+
+Acceptance.
+
+- [ ] qa-gate2 passes with profile.basis bytes and no waiver.
+
 ## RLM Realism validation
 
 ### RLM-04 TLS decryption and JA4 checks
@@ -2738,6 +2879,23 @@ Deliverables.
 Acceptance.
 
 - [ ] Tests on committed fixtures with literal series for every check kind, a passing and a failing case each, the controller's copy of the report schema refreshed in the wrap-up, and the series of contracts/examples/realism/check-metrics.yaml validate.
+
+### RLM-18 TLS on non standard ports in the decrypted check
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** none
+- **Paths.** `realism/`
+
+realism/decrypted.py lists ClientHellos with plain tshark, which finds TLS on ports 8443 and 8444 only by its heuristic, so a ClientHello split after its first bytes is missed (MOD-23). The encryption check already passes Decode As. The http1, smtp and imap captures share the dependence.
+
+Deliverables.
+
+- read_sessions decodes the server ports of the labels as TLS, with a test on a split ClientHello; the http2 wrapper of MOD-23 can then go in a MOD follow up.
+
+Acceptance.
+
+- [ ] The split ClientHello fixture lists every session, and every module realism job still passes.
 
 ## CAP Capture compiler and profile extractor
 
