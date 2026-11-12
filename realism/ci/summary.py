@@ -66,6 +66,10 @@ def rows(module: str, report: dict[str, Any]) -> list[str]:
             detail = f"ran {ran or 'none'}" + skipped_text(check)
             if check.get("not_counted_total"):
                 detail += f", {check['not_counted_total']} findings not counted (port collision)"
+            if check.get("expected_total"):
+                detail += f", {check['expected_total']} expected findings"
+            if check.get("missing_findings"):
+                detail += f", {len(check['missing_findings'])} expected findings missing"
             out.append(f"| {module} | {kind} | all | {_verdict(check['passed'])} | {detail} |")
         if kind == "encryption":
             detail = (

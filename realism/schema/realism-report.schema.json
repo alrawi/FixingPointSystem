@@ -454,8 +454,20 @@
         "malformed_packets": {"type": "integer", "minimum": 0}
       }
     },
+    "expectation": {
+      "description": "One item of expect_findings in a session rule of the labels.",
+      "type": "object",
+      "required": ["session_rule", "application", "parser", "item"],
+      "additionalProperties": false,
+      "properties": {
+        "session_rule": {"description": "Index of the rule in the sessions list of the labels.", "type": "integer", "minimum": 0},
+        "application": {"type": "string", "minLength": 1},
+        "parser": {"enum": ["tshark", "zeek"]},
+        "item": {"description": "A zeek weird name, or a tshark protocol with an optional part of the message.", "type": "string", "minLength": 1}
+      }
+    },
     "parser_errors": {
-      "description": "Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran and no parser reported an error.",
+      "description": "Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran, no parser reported an error that counts, and no declared finding is missing.",
       "type": "object",
       "required": [
         "check", "passed", "metrics", "parsers", "missing_parsers", "skipped_parsers",
@@ -573,6 +585,32 @@
           "description": "The number of TCP and UDP ports that the parsers bind to a dissector, from tshark -G decodes. It is 0 when no parser has such a table or tshark could not print it, and no finding is then a port collision. Reports before format 0.18.0 have no such field.",
           "type": "integer",
           "minimum": 0
+        },
+        "expected_findings": {
+          "description": "The first 100 findings that a session rule of the labels declares in expect_findings (RLM-20). Each entry is a parser error with the index of the rule in the sessions list of the labels. A finding listed here is in no count and does not fail the check. Reports before format 0.19.0 have no such field.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/parser_error",
+            "required": ["session_rule"],
+            "properties": {"session_rule": {"type": "integer", "minimum": 0}},
+            "unevaluatedProperties": false
+          }
+        },
+        "expected_total": {
+          "description": "The number of findings that a rule declared, which can exceed the length of expected_findings. Reports before format 0.19.0 have no such field.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "missing_findings": {
+          "description": "The declared items that no session of their rule produced, for a parser that ran. Each one fails the check and counts once in realism.check_failures. A finding that no rule declares is not here: it is in errors and counts as before. Reports before format 0.19.0 have no such field.",
+          "type": "array",
+          "items": {"$ref": "#/$defs/expectation"}
+        },
+        "unchecked_expectations": {
+          "description": "The declared items of a parser that did not run, which the check cannot verify. They do not fail the check. Reports before format 0.19.0 have no such field.",
+          "type": "array",
+          "items": {"$ref": "#/$defs/expectation"}
         }
       }
     },

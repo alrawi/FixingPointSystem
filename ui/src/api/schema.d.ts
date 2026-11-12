@@ -1147,7 +1147,17 @@ export interface components {
             client: components["schemas"]["endpoint"] | null;
             server: components["schemas"]["endpoint"] | null;
         };
-        /** @description Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran and no parser reported an error. */
+        /** @description One item of expect_findings in a session rule of the labels. */
+        expectation: {
+            /** @description Index of the rule in the sessions list of the labels. */
+            session_rule: number;
+            application: string;
+            /** @enum {unknown} */
+            parser: "tshark" | "zeek";
+            /** @description A zeek weird name, or a tshark protocol with an optional part of the message. */
+            item: string;
+        };
+        /** @description Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran, no parser reported an error that counts, and no declared finding is missing. */
         parser_errors: {
             /** @constant */
             check: "parser_errors";
@@ -1197,6 +1207,14 @@ export interface components {
             not_counted_total?: number;
             /** @description The number of TCP and UDP ports that the parsers bind to a dissector, from tshark -G decodes. It is 0 when no parser has such a table or tshark could not print it, and no finding is then a port collision. Reports before format 0.18.0 have no such field. */
             port_collision_ports?: number;
+            /** @description The first 100 findings that a session rule of the labels declares in expect_findings (RLM-20). Each entry is a parser error with the index of the rule in the sessions list of the labels. A finding listed here is in no count and does not fail the check. Reports before format 0.19.0 have no such field. */
+            expected_findings?: components["schemas"]["parser_error"][];
+            /** @description The number of findings that a rule declared, which can exceed the length of expected_findings. Reports before format 0.19.0 have no such field. */
+            expected_total?: number;
+            /** @description The declared items that no session of their rule produced, for a parser that ran. Each one fails the check and counts once in realism.check_failures. A finding that no rule declares is not here: it is in errors and counts as before. Reports before format 0.19.0 have no such field. */
+            missing_findings?: components["schemas"]["expectation"][];
+            /** @description The declared items of a parser that did not run, which the check cannot verify. They do not fail the check. Reports before format 0.19.0 have no such field. */
+            unchecked_expectations?: components["schemas"]["expectation"][];
         };
         /** @description The decrypted share and the JA4 matched share of the sampled TLS sessions. */
         encryption_metric: components["schemas"]["metric"] & {
@@ -1973,7 +1991,17 @@ export interface components {
                     parser_errors: number;
                     malformed_packets: number;
                 };
-                /** @description Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran and no parser reported an error. */
+                /** @description One item of expect_findings in a session rule of the labels. */
+                expectation: {
+                    /** @description Index of the rule in the sessions list of the labels. */
+                    session_rule: number;
+                    application: string;
+                    /** @enum {unknown} */
+                    parser: "tshark" | "zeek";
+                    /** @description A zeek weird name, or a tshark protocol with an optional part of the message. */
+                    item: string;
+                };
+                /** @description Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran, no parser reported an error that counts, and no declared finding is missing. */
                 parser_errors: {
                     /** @constant */
                     check: "parser_errors";
@@ -2023,6 +2051,14 @@ export interface components {
                     not_counted_total?: number;
                     /** @description The number of TCP and UDP ports that the parsers bind to a dissector, from tshark -G decodes. It is 0 when no parser has such a table or tshark could not print it, and no finding is then a port collision. Reports before format 0.18.0 have no such field. */
                     port_collision_ports?: number;
+                    /** @description The first 100 findings that a session rule of the labels declares in expect_findings (RLM-20). Each entry is a parser error with the index of the rule in the sessions list of the labels. A finding listed here is in no count and does not fail the check. Reports before format 0.19.0 have no such field. */
+                    expected_findings?: components["schemas"]["parser_error"][];
+                    /** @description The number of findings that a rule declared, which can exceed the length of expected_findings. Reports before format 0.19.0 have no such field. */
+                    expected_total?: number;
+                    /** @description The declared items that no session of their rule produced, for a parser that ran. Each one fails the check and counts once in realism.check_failures. A finding that no rule declares is not here: it is in errors and counts as before. Reports before format 0.19.0 have no such field. */
+                    missing_findings?: components["schemas"]["expectation"][];
+                    /** @description The declared items of a parser that did not run, which the check cannot verify. They do not fail the check. Reports before format 0.19.0 have no such field. */
+                    unchecked_expectations?: components["schemas"]["expectation"][];
                 };
                 /** @description Decryption and JA4 check of a sample of TLS sessions. The check passes when at least min_decrypted of the sampled sessions decrypt with the exported keys and every sampled ClientHello has a JA4 fingerprint that its client profile lists. failures names each reason in words. */
                 encryption: {
