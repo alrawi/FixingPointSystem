@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #523 |
 | Branch | `wp/ENG-29` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 85% (3 of 4 plan steps) |
+| Pull request | #532 |
+| Status | blocked |
+| Progress | 95% (3 of 4 plan steps) |
 | Current holder | claude-7e29a1, lease until 2026-11-12T21:02:13Z |
-| Last verified commit | none |
+| Last verified commit | f35fc29 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -27,19 +27,20 @@ Scenario contract v0.6 defines the action `raw` (hex bytes written without templ
 
 - `cargo test -p fps-flow`: all pass, including the new unit tests of `program.rs` and the two load tests of `tests/fixtures.rs`.
 - `cargo test -p fps-runtime --test raw`: 3 passed (exact bytes of 5 strike sessions, app module refused).
+- `cargo test -p fps-runtime` (all suites, 66 tests including `raw`): all pass locally.
 - `cargo clippy -p fps-flow -p fps-runtime --all-targets -- -D warnings`, `cargo fmt --all -- --check`, `plan.py check`, `render --check`, `lint`: clean.
 
 ## Remaining
 
-Step 4: PR, CI, review. The full `cargo test -p fps-runtime` runs in CI only.
+The review step. The `rust` job of `ci.yml` is red on this PR, on `main` (43c0b7ba), and on PRs #529, #530, #531 for the same reason: `cargo fmt --all -- --check` of the current stable rustfmt reports diffs in `modules/ldap/native/src/catalog.rs` only, a file outside this package, and the job stops there, so clippy and `cargo test --workspace` do not run in CI. Every other job of the PR is green or was still running at the last poll.
 
 ## Next action
 
-Open the PR and poll CI.
+The coordinator fixes the rustfmt drift of `modules/ldap/native/src/catalog.rs` on main (or accepts the red job), then runs `fps_swarm.py review 523 --pr 532`.
 
 ## Blockers and open questions
 
-none
+The `rust` job of CI fails on `main` too, because of formatting in a file of the ldap module that this package may not touch. See Remaining.
 
 ## Decisions taken in this package
 
@@ -62,3 +63,5 @@ CARGO_TARGET_DIR=$PWD/target-ENG-29 CARGO_BUILD_JOBS=1 cargo test -p fps-flow
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-12T19:35Z | claude-7e29a1 | claim | none | Claimed #523, card 6833837021 |
+| 2026-11-12T19:50Z | claude-7e29a1 | checkpoint | f35fc29 | Implementation, tests, Engine page, log entry; PR #532 opened |
+| 2026-11-12T20:00Z | claude-7e29a1 | block | f35fc29 | CI rust job red on main for a rustfmt diff outside this package |
