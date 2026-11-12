@@ -131,9 +131,29 @@ def test_config(
     ramp_down_s: int,
     seed: int,
     waive: Iterable[str],
+    basis: str = "bytes",
 ) -> str:
-    """Return the test configuration of one agent."""
+    """Return the test configuration of one agent.
+
+    With the basis `bytes` the controller turns the byte weights into session shares.
+    The basis `sessions` does that sum here with the `expected_bytes` of mix.yaml and
+    sets a session rate for the same throughput, for a controller that does not read
+    `expected_bytes` from the module manifests.
+    """
+    if basis not in ("bytes", "sessions"):
+        raise MixError(f"the basis must be bytes or sessions, not {basis}")
     entries = included(doc, waive)
+    weights = [float(e["weight"]) for e in entries]
+    objective = {"type": "throughput_bps", "value": rate_bps}
+    if basis == "sessions":
+        per = [w / float(e["expected_bytes"]) for w, e in zip(weights, entries)]
+        total = sum(per)
+        weights = [round(p / total, 9) for p in per]
+        mean = sum(w * float(e["expected_bytes"]) for w, e in zip(weights, entries))
+        objective = {
+            "type": "sessions_per_second",
+            "value": round(rate_bps / (8 * mean), 6),
+        }
     config = {
         "apiVersion": "fixingpoint.dev/v1alpha1",
         "kind": "Test",
@@ -165,18 +185,18 @@ def test_config(
             ],
         },
         "profile": {
-            "basis": "bytes",
+            "basis": basis,
             "mix": [
                 {
                     "scenario": scenario_ref(e),
-                    "weight": e["weight"],
+                    "weight": w,
                     "params": e["params"],
                 }
-                for e in entries
+                for e, w in zip(entries, weights)
             ],
         },
         "load": {
-            "objective": {"type": "throughput_bps", "value": rate_bps},
+            "objective": objective,
             "phases": [
                 {"name": "ramp_up", "duration_s": ramp_s, "shape": "linear"},
                 {"name": "steady", "duration_s": steady_s, "shape": "hold"},
@@ -379,6 +399,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             p.add_argument("--steady-s", type=int, default=120)
             p.add_argument("--ramp-down-s", type=int, default=10)
             p.add_argument("--seed", type=int, default=7)
+            p.add_argument("--basis", choices=("bytes", "sessions"), default="bytes")
         if name in ("config", "labels"):
             p.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -408,6 +429,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.ramp_down_s,
                 args.seed,
                 waive,
+                args.basis,
             )
             args.out.write_text(text, encoding="utf-8")
         elif args.command == "labels":

@@ -397,15 +397,23 @@ def mix_stage(
             Check(stage, "Mix accuracy check", False, "absent", "present and passed")
         )
         return checks, {"modules": attempted}
-    basis = (entry.get("test_config") or {}).get("basis")
+    scored = (entry.get("test_config") or {}).get("basis")
+    run_basis = str(context.get("basis", "bytes"))
+    basis_waived = run_basis == "sessions"
     checks.append(
         Check(
             stage,
             "Mix basis",
-            basis == "bytes"
-            and [b.get("basis") for b in entry.get("bases", [])] == ["bytes"],
-            f"profile.basis {basis}",
-            "bytes",
+            scored == "bytes"
+            and [b.get("basis") for b in entry.get("bases", [])] == ["bytes"]
+            and (run_basis == "bytes" or (basis_waived and allow_waivers)),
+            f"profile.basis {run_basis}, scored by bytes"
+            + (
+                " (waived, the controller does not read expected_bytes yet)"
+                if basis_waived
+                else ""
+            ),
+            "profile.basis bytes, scored by bytes",
         )
     )
     rows = mix_rows(entry, "bytes")
@@ -488,6 +496,7 @@ def mix_stage(
     facts = {
         "modules": attempted,
         "waived": waived,
+        "basis_waived": basis_waived,
         "rows": rows,
         "unmatched_pct": unmatched_pct,
         "metrics_worst_pp": metrics_worst,
@@ -603,8 +612,9 @@ def render(
     passed = all(c.passed for c in checks)
     partial = tuple(stages) != STAGES
     waived = list((facts.get("mix") or {}).get("waived") or [])
+    basis_waived = bool((facts.get("mix") or {}).get("basis_waived"))
     word = "PASS" if passed else "FAIL"
-    if passed and waived:
+    if passed and (waived or basis_waived):
         word = "PASS WITH WAIVERS"
     lines = [
         "# Gate 2 report",
@@ -621,6 +631,17 @@ def render(
         "",
         f"Conformance threshold {fmt_ratio(threshold)}, mix tolerance {tolerance:g} points.",
     ]
+    if basis_waived:
+        lines += [
+            "",
+            (
+                "Gate 2 does not hold in full while the controller runs the mix on the session "
+                "basis. It does not read `expected_bytes` from the module manifests yet, so the "
+                "suite sets the session shares from the byte weights itself, and the byte weighted "
+                "mix control of CTL-12 does not correct the run. The capture is scored against the "
+                "byte weights all the same."
+            ),
+        ]
     if waived:
         lines += [
             "",
@@ -644,7 +665,12 @@ def render(
                     c.name,
                     c.measured,
                     c.rule,
-                    ("WAIVED" if waived and c.name == WAIVER_CHECK else "pass")
+                    (
+                        "WAIVED"
+                        if (waived and c.name == WAIVER_CHECK)
+                        or (basis_waived and c.name == "Mix basis")
+                        else "pass"
+                    )
                     if c.passed
                     else "FAIL",
                 )

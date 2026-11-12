@@ -380,3 +380,13 @@ def test_a_module_missing_from_the_run_fails_even_with_waivers(
     write(out / "mix" / "run-report.json", report)
     mix = [m for m in g.MODULES if m != "hls"]
     assert run(out, "--mix-modules", ",".join(mix), "--allow-waivers") == 1
+
+
+def test_the_session_basis_fails_unless_waived(tmp_path: Path) -> None:
+    out = full(tmp_path)
+    write(out / "mix" / "context.json", {"basis": "sessions"})
+    assert run(out) == 1
+    assert run(out, "--allow-waivers") == 0
+    report = (out / "report.md").read_text()
+    assert "**Verdict: PASS WITH WAIVERS**" in report
+    assert "expected_bytes" in report

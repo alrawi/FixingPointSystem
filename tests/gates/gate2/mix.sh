@@ -53,6 +53,7 @@ seed=${FPS_GATE2_SEED:-7}
 tolerance=${FPS_GATE2_TOLERANCE:-2}
 parsers=${FPS_REALISM_PARSERS:-tshark,zeek}
 requested_waiver=${FPS_GATE2_MIX_WAIVE:-}
+basis=${FPS_GATE2_BASIS:-bytes}
 mix_config="$here/mix_config.py"
 
 usage() {
@@ -79,10 +80,10 @@ readonly waived mix_modules
 # stage. It returns the verdict of the stage.
 score_and_report() {
   local dir=$1 rc=0
-  [[ -s $dir/mix.pcapng && -s $dir/run-report.json && -s $dir/test-config.yaml && -s $dir/expected.yaml ]] ||
-    die "$dir holds no mix.pcapng, run-report.json, test-config.yaml, and expected.yaml"
+  [[ -s $dir/mix.pcapng && -s $dir/run-report.json && -s $dir/test-config.yaml && -s $dir/score-config.yaml && -s $dir/expected.yaml ]] ||
+    die "$dir holds no mix.pcapng, run-report.json, test-config.yaml, score-config.yaml, and expected.yaml"
   (cd "$root" && python3 -m realism score --pcap "$dir/mix.pcapng" --labels "$dir/expected.yaml" \
-    --test-config "$dir/test-config.yaml" --run-report "$dir/run-report.json" \
+    --test-config "$dir/score-config.yaml" --run-report "$dir/run-report.json" \
     --mix-tolerance "$tolerance" --mix-basis bytes \
     --parsers "$parsers" --output "$dir/realism.json") || rc=$?
   [[ $rc -ne 2 && -s $dir/realism.json ]] || die "the realism runner could not score $dir/mix.pcapng"
@@ -253,7 +254,7 @@ start_agent gate2-server server server "$mgmt_client"
 store_config() {
   local role=$1 id=$2 hold=$3 file="$work/$1.yaml" config report
   python3 -I "$mix_config" config --role "$role" --agent "$id" --rate-bps "$rate_bps" --ramp-s "$ramp" \
-    --steady-s "$hold" --ramp-down-s "$ramp_down" --seed "$seed" --waived "$waived" --out "$file" ||
+    --steady-s "$hold" --ramp-down-s "$ramp_down" --seed "$seed" --waived "$waived" --basis "$basis" --out "$file" ||
     die "cannot write the $role configuration"
   config=$(call POST /v1/configs "$runner" -H 'Content-Type: application/yaml' \
     --data-binary "@$file" | json_field id)
@@ -326,13 +327,17 @@ call GET "/v1/runs/$client_run/report?format=csv" "$runner" >"$out/run-report.cs
 call GET "/v1/runs/$client_run/metrics?view=scenario" "$runner" >"$out/run-metrics-scenario.json"
 call GET "/v1/runs/$server_run/report" "$runner" >"$out/server-run-report.json"
 cp "$work/client.yaml" "$out/test-config.yaml"
+# The check scores the capture against the byte weights, whatever basis the controller ran.
+python3 -I "$mix_config" config --role client --agent gate2-client --rate-bps "$rate_bps" --ramp-s "$ramp" \
+  --steady-s "$steady" --ramp-down-s "$ramp_down" --seed "$seed" --waived "$waived" --basis bytes \
+  --out "$out/score-config.yaml"
 python3 -I "$mix_config" labels --waived "$waived" --out "$out/expected.yaml"
 python3 -I -c 'import json, sys
 keys = ("client_run", "server_run", "server_run_state", "rate_bps", "ramp_s", "steady_s", "ramp_down_s",
-        "seed", "tolerance_points", "waived", "parsers", "capture_dropped", "commit")
+        "seed", "basis", "tolerance_points", "waived", "parsers", "capture_dropped", "commit")
 json.dump(dict(zip(keys, sys.argv[1:])), open(sys.argv[-1] + "/context.json", "w"), indent=2)' \
   "$client_run" "$server_run" "$server_state" "$rate_bps" "$ramp" "$steady" "$ramp_down" "$seed" \
-  "$tolerance" "${waived:-none}" "$parsers" "${dropped:-unknown}" \
+  "$basis" "$tolerance" "${waived:-none}" "$parsers" "${dropped:-unknown}" \
   "$(git -c safe.directory="$root" -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)" "$out"
 # The module trees and their archives are inputs, not results.
 rm -rf "$work/modules" "$work"/*.tar.gz

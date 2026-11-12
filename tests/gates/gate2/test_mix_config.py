@@ -157,3 +157,22 @@ def test_cli_prints_the_ports_and_the_names(capsys: pytest.CaptureFixture[str]) 
     assert "tcp 80" in ports and "udp 5060" in ports and "tcp 8090" not in ports
     assert m.main(["names", "--waived", "hls ntp ldap mqtt"]) == 0
     assert "hls" not in capsys.readouterr().out.split()
+
+
+def test_the_session_basis_carries_the_byte_weights() -> None:
+    mix = doc()
+    config = m.yaml_module().safe_load(
+        m.test_config(mix, "client", "a", 8_000_000, 10, 120, 10, 7, [], "sessions")
+    )
+    assert config["profile"]["basis"] == "sessions"
+    rows = config["profile"]["mix"]
+    assert abs(sum(e["weight"] for e in rows) - 1) < 1e-6
+    estimate = {m.scenario_ref(e): e["expected_bytes"] for e in mix["entries"]}
+    weight = {m.scenario_ref(e): e["weight"] for e in mix["entries"]}
+    mean = sum(e["weight"] * estimate[e["scenario"]] for e in rows)
+    for e in rows:
+        carried = e["weight"] * estimate[e["scenario"]] / mean * 100
+        assert abs(carried - weight[e["scenario"]]) < 0.01
+    objective = config["load"]["objective"]
+    assert objective["type"] == "sessions_per_second"
+    assert abs(objective["value"] * 8 * mean - 8_000_000) < 1

@@ -62,6 +62,11 @@ env:
   # engine/fps-agent depends on the native crate of the module, so merging AGT-21
   # puts the four modules into the mix without an edit here.
   FPS_GATE2_MIX_WAIVE: hls ldap mqtt ntp
+  # The controller does not read expected_bytes from the module manifests into its
+  # scenario catalog yet, so the byte basis cannot compile. The suite sets the session
+  # shares from the byte weights itself and the report says so. Remove this line once
+  # the catalog carries the estimates.
+  FPS_GATE2_BASIS: sessions
 
 jobs:
   test:
@@ -131,9 +136,9 @@ jobs:
           mkdir -p target
           cd controller && GOWORK=off go build -o ../target/fps-controller ./cmd/fps-controller
       - name: Byte weighted enterprise mix as root
-        run: sudo env "PATH=/opt/zeek/bin:$PATH" "FPS_GATE2_MIX_WAIVE=$FPS_GATE2_MIX_WAIVE" tests/gates/gate2/mix.sh target/fps-controller target/debug/fps-agent gate2-out
+        run: sudo env "PATH=/opt/zeek/bin:$PATH" "FPS_GATE2_MIX_WAIVE=$FPS_GATE2_MIX_WAIVE" "FPS_GATE2_BASIS=$FPS_GATE2_BASIS" tests/gates/gate2/mix.sh target/fps-controller target/debug/fps-agent gate2-out
       - name: The mix fails at a tolerance of 0 points
-        run: sudo env "PATH=/opt/zeek/bin:$PATH" "FPS_GATE2_MIX_WAIVE=$FPS_GATE2_MIX_WAIVE" tests/gates/gate2/prove-failure.sh --only mix gate2-out
+        run: sudo env "PATH=/opt/zeek/bin:$PATH" "FPS_GATE2_MIX_WAIVE=$FPS_GATE2_MIX_WAIVE" "FPS_GATE2_BASIS=$FPS_GATE2_BASIS" tests/gates/gate2/prove-failure.sh --only mix gate2-out
       - name: Stage report
         if: always()
         run: |
