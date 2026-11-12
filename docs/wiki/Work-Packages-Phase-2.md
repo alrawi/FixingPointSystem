@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 156 work packages. Packages marked critical path gate the phase.
+This page lists 159 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -150,16 +150,19 @@ flowchart LR
   CON_23["CON-23<br/>Catalog metrics for every realism check"]
   RLM_17["RLM-17<br/>The CON-23 metrics in the realism report"]
   RLM_18["RLM-18<br/>TLS on non standard ports in the decrypted check"]
+  RLM_19["RLM-19<br/>The port collision rule in the realism runner"]
   CON_24["CON-24<br/>Capture drop counts in the agent protocol and the REST API"]
   AGT_21["AGT-21<br/>NTP, MQTT, LDAP, and HLS in the agent"]
   CON_25["CON-25<br/>The messages check in the metric catalog"]
   CON_26["CON-26<br/>A read-scoped capture download answers 409 for a running capture"]
   CON_27["CON-27<br/>The host identity check in the metric catalog"]
   CON_28["CON-28<br/>Packet gap and payload size series in the metric catalog"]
-  CON_29["CON-29<br/>Run calibration in the REST API"]
+  CON_29["CON-29<br/>Run calibration in the REST API (superseded by CON-14)"]
+  CON_30["CON-30<br/>Module manifest rules that match the registry and the agent"]
   CTL_42["CTL-42<br/>The CON-23 mapping table in the controller"]
   QA_10["QA-10<br/>Gate 1 without its own reuse rule"]
   QA_11["QA-11<br/>The parser findings of the Gate 2 mix stage"]
+  QA_12["QA-12<br/>Calibration in the Gate 2 report"]
   CTL_43["CTL-43<br/>Renewal cannot outlive a revocation"]
   CAP_06["CAP-06<br/>JSON credentials scrubbed whatever their spelling"]
   CTL_44["CTL-44<br/>A read-scoped download does not stop a capture"]
@@ -336,6 +339,7 @@ flowchart LR
   CON_22 --> CON_23
   CON_23 --> RLM_17
   RLM_14 --> RLM_17
+  QA_11 --> RLM_19
   ENG_27 --> CON_24
   MOD_15 --> AGT_21
   MOD_16 --> AGT_21
@@ -347,12 +351,14 @@ flowchart LR
   CON_25 --> CON_27
   RLM_10 --> CON_27
   RLM_15 --> CON_28
+  MOD_26 --> CON_30
   CON_23 --> CTL_42
   CTL_41 --> CTL_42
   RLM_17 --> CTL_42
   QA_09 --> QA_10
   RLM_17 --> QA_10
   QA_05 --> QA_11
+  CTL_47 --> QA_12
   CTL_42 --> CTL_46
   CTL_46 --> CTL_48
   classDef critical stroke-width:3px
@@ -502,16 +508,19 @@ flowchart LR
 | [CON-23](#con-23-catalog-metrics-for-every-realism-check) | Catalog metrics for every realism check | S | CON-22 |  |
 | [RLM-17](#rlm-17-the-con-23-metrics-in-the-realism-report) | The CON-23 metrics in the realism report | M | CON-23, RLM-14 |  |
 | [RLM-18](#rlm-18-tls-on-non-standard-ports-in-the-decrypted-check) | TLS on non standard ports in the decrypted check | S | none |  |
+| [RLM-19](#rlm-19-the-port-collision-rule-in-the-realism-runner) | The port collision rule in the realism runner | S | QA-11 |  |
 | [CON-24](#con-24-capture-drop-counts-in-the-agent-protocol-and-the-rest-api) | Capture drop counts in the agent protocol and the REST API | S | ENG-27 |  |
 | [AGT-21](#agt-21-ntp-mqtt-ldap-and-hls-in-the-agent) | NTP, MQTT, LDAP, and HLS in the agent | S | MOD-15, MOD-16, MOD-17, MOD-18 |  |
 | [CON-25](#con-25-the-messages-check-in-the-metric-catalog) | The messages check in the metric catalog | S | CON-23, RLM-17 |  |
 | [CON-26](#con-26-a-read-scoped-capture-download-answers-409-for-a-running-capture) | A read-scoped capture download answers 409 for a running capture | S | CTL-44 |  |
 | [CON-27](#con-27-the-host-identity-check-in-the-metric-catalog) | The host identity check in the metric catalog | S | CON-25, RLM-10 |  |
 | [CON-28](#con-28-packet-gap-and-payload-size-series-in-the-metric-catalog) | Packet gap and payload size series in the metric catalog | S | RLM-15 |  |
-| [CON-29](#con-29-run-calibration-in-the-rest-api) | Run calibration in the REST API | S | none |  |
+| [CON-29](#con-29-run-calibration-in-the-rest-api-superseded-by-con-14) | Run calibration in the REST API (superseded by CON-14) | S | none |  |
+| [CON-30](#con-30-module-manifest-rules-that-match-the-registry-and-the-agent) | Module manifest rules that match the registry and the agent | S | MOD-26 |  |
 | [CTL-42](#ctl-42-the-con-23-mapping-table-in-the-controller) | The CON-23 mapping table in the controller | S | CON-23, CTL-41, RLM-17 |  |
 | [QA-10](#qa-10-gate-1-without-its-own-reuse-rule) | Gate 1 without its own reuse rule | S | QA-09, RLM-17 |  |
 | [QA-11](#qa-11-the-parser-findings-of-the-gate-2-mix-stage) | The parser findings of the Gate 2 mix stage | S | QA-05 |  |
+| [QA-12](#qa-12-calibration-in-the-gate-2-report) | Calibration in the Gate 2 report | S | CTL-47 |  |
 | [CTL-43](#ctl-43-renewal-cannot-outlive-a-revocation) | Renewal cannot outlive a revocation | S | none |  |
 | [CAP-06](#cap-06-json-credentials-scrubbed-whatever-their-spelling) | JSON credentials scrubbed whatever their spelling | S | none |  |
 | [CTL-44](#ctl-44-a-read-scoped-download-does-not-stop-a-capture) | A read-scoped download does not stop a capture | S | none |  |
@@ -871,7 +880,7 @@ Acceptance.
 
 - [ ] validate.py passes, and the realism runner emits the KS series of packet gaps in the same PR or a named follow up.
 
-### CON-29 Run calibration in the REST API
+### CON-29 Run calibration in the REST API (superseded by CON-14)
 
 Phase 2 · size S · workstream CON
 
@@ -887,6 +896,23 @@ Deliverables.
 Acceptance.
 
 - [ ] validate.py passes, openapi-breaking finds no breaking change, and a REST test reads the multipliers of a run.
+
+### CON-30 Module manifest rules that match the registry and the agent
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** MOD-26
+- **Paths.** `contracts/`, `tools/contracts/`
+
+MOD-26 found gaps between the module contract and the code that third party authors meet. contracts/README.md is headed v0.2 though the schemas are manifest v0.4 and scenario v0.6. The manifest schema says reserved module types are rejected by v1 agents, but none is marked and nothing rejects one. The manifest accepts any extension.wasm path, but the agent loads only extension.wasm at the module root. validate.py knows eight reserved names against the registry's five, and does not check the license allow list, file name characters, symlinks, or that a key of expected_bytes names a scenario. Needs owner approval as a contract change.
+
+Deliverables.
+
+- The contract text and schema descriptions corrected, the extension.wasm path decided and stated, and validate.py checking every rule the registry enforces, with the change entry naming the guide sections to update.
+
+Acceptance.
+
+- [ ] validate.py rejects a manifest for each rule the registry rejects it for, in tests, and the Module Development guide lists no gap that this package closes.
 
 ## OPS Repository and swarm tooling
 
@@ -976,6 +1002,23 @@ Deliverables.
 Acceptance.
 
 - [ ] Three consecutive qa-gate2 runs pass, and a failing run names each finding in its log.
+
+### QA-12 Calibration in the Gate 2 report
+
+Phase 2 · size S · workstream QA
+
+- **Depends on.** CTL-47
+- **Paths.** `tests/gates/gate2/`
+
+The Gate 2 suite reads only the state of GET /v1/runs/{id}, so its report does not show how the mix control and the throughput calibration moved the run, although Run.calibration has carried the steps and multipliers since CON-14 (found by CON-29, which was superseded).
+
+Deliverables.
+
+- The mix stage records the last calibration step (factor, entries, multipliers) of the client run, and the report shows it with the byte shares.
+
+Acceptance.
+
+- [ ] A qa-gate2 run shows the calibration of its mix, and the report states when a run has none.
 
 ## ENG Agent engine
 
@@ -2917,6 +2960,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The split ClientHello fixture lists every session, and every module realism job still passes.
+
+### RLM-19 The port collision rule in the realism runner
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** QA-11
+- **Paths.** `realism/`
+
+tshark binds hundreds of ports to dissectors, and a random client port can collide with one, so tshark reports parser errors for traffic that is well formed (QA-11). The Gate 2 mix stage now skips such findings by a named rule, but the realism runner and the module realism jobs still count them, which fits a module job that failed once on 3 parser errors.
+
+Deliverables.
+
+- The parser error check of the runner applies the port collision rule of QA-11, reports each skipped finding, and the Gate 2 suite uses the runner's rule instead of its own.
+
+Acceptance.
+
+- [ ] A capture whose client port collides with a dissector passes with the finding reported as not counted, and a real malformed packet still fails.
 
 ## CAP Capture compiler and profile extractor
 

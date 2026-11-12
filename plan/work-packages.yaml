@@ -3607,6 +3607,23 @@ work_packages:
     acceptance:
       - The split ClientHello fixture lists every session, and every module realism job still passes.
 
+  - id: RLM-19
+    title: The port collision rule in the realism runner
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [QA-11]
+    paths: [realism/]
+    summary: >-
+      tshark binds hundreds of ports to dissectors, and a random client port can collide with one, so tshark reports
+      parser errors for traffic that is well formed (QA-11). The Gate 2 mix stage now skips such findings by a named rule,
+      but the realism runner and the module realism jobs still count them, which fits a module job that failed once on 3
+      parser errors.
+    deliverables:
+      - The parser error check of the runner applies the port collision rule of QA-11, reports each skipped finding, and the Gate 2 suite uses the runner's rule instead of its own.
+    acceptance:
+      - A capture whose client port collides with a dissector passes with the finding reported as not counted, and a real malformed packet still fails.
+
   - id: CON-24
     title: Capture drop counts in the agent protocol and the REST API
     phase: 2
@@ -3704,7 +3721,7 @@ work_packages:
       - validate.py passes, and the realism runner emits the KS series of packet gaps in the same PR or a named follow up.
 
   - id: CON-29
-    title: Run calibration in the REST API
+    title: Run calibration in the REST API (superseded by CON-14)
     phase: 2
     workstream: CON
     size: S
@@ -3718,6 +3735,25 @@ work_packages:
       - An optional Run.calibration object in the OpenAPI document, the change entry, and the regenerated controller, UI and SDK clients.
     acceptance:
       - validate.py passes, openapi-breaking finds no breaking change, and a REST test reads the multipliers of a run.
+
+  - id: CON-30
+    title: Module manifest rules that match the registry and the agent
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: [MOD-26]
+    paths: [contracts/, tools/contracts/]
+    summary: >-
+      MOD-26 found gaps between the module contract and the code that third party authors meet. contracts/README.md is
+      headed v0.2 though the schemas are manifest v0.4 and scenario v0.6. The manifest schema says reserved module types
+      are rejected by v1 agents, but none is marked and nothing rejects one. The manifest accepts any extension.wasm path,
+      but the agent loads only extension.wasm at the module root. validate.py knows eight reserved names against the
+      registry's five, and does not check the license allow list, file name characters, symlinks, or that a key of
+      expected_bytes names a scenario. Needs owner approval as a contract change.
+    deliverables:
+      - The contract text and schema descriptions corrected, the extension.wasm path decided and stated, and validate.py checking every rule the registry enforces, with the change entry naming the guide sections to update.
+    acceptance:
+      - validate.py rejects a manifest for each rule the registry rejects it for, in tests, and the Module Development guide lists no gap that this package closes.
 
   - id: CTL-42
     title: The CON-23 mapping table in the controller
@@ -3766,6 +3802,22 @@ work_packages:
       - The mix stage prints its parser findings in the job log, the cause of the findings, and a fix or a named rule.
     acceptance:
       - Three consecutive qa-gate2 runs pass, and a failing run names each finding in its log.
+
+  - id: QA-12
+    title: Calibration in the Gate 2 report
+    phase: 2
+    workstream: QA
+    size: S
+    depends_on: [CTL-47]
+    paths: [tests/gates/gate2/]
+    summary: >-
+      The Gate 2 suite reads only the state of GET /v1/runs/{id}, so its report does not show how the mix control and the
+      throughput calibration moved the run, although Run.calibration has carried the steps and multipliers since CON-14
+      (found by CON-29, which was superseded).
+    deliverables:
+      - The mix stage records the last calibration step (factor, entries, multipliers) of the client run, and the report shows it with the byte shares.
+    acceptance:
+      - A qa-gate2 run shows the calibration of its mix, and the report states when a run has none.
 
   - id: CTL-43
     title: Renewal cannot outlive a revocation
