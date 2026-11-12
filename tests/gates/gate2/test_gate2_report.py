@@ -506,9 +506,12 @@ def collision(
 def write_mix_findings(
     out: Path,
     counted: list[dict[str, Any]],
-    skipped: list[dict[str, Any]],
+    skipped: list[tuple[dict[str, Any], str]],
 ) -> None:
-    """Write a parser error check of the mix in which the runner did not count ``skipped``."""
+    """Write a parser error check of the mix in which the runner did not count ``skipped``.
+
+    Each item of ``skipped`` is a finding and the dissector its client port is bound to.
+    """
     realism_path = out / "mix" / "realism.json"
     report = json.loads(realism_path.read_text())
     parsers = next(c for c in report["checks"] if c["check"] == "parser_errors")
