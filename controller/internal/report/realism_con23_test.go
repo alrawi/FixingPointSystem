@@ -26,6 +26,7 @@ type exampleResult struct {
 	Metric   string            `yaml:"metric"`
 	Labels   map[string]string `yaml:"labels"`
 	Observed float64           `yaml:"observed"`
+	Property string            `yaml:"property"`
 	Target   string            `yaml:"target"`
 	Passed   bool              `yaml:"passed"`
 }
@@ -114,20 +115,37 @@ func marshalChecks(t *testing.T, checks ...any) []byte {
 	return doc
 }
 
-// literal is the part of a RealismResult that CON-23 fixes. The wording in
-// property is for an operator and takes no part.
+// literal is the part of a RealismResult that CON-23 fixes, and the wording in
+// property of the metrics that wordedProperty names. The wording of the other
+// metrics is for an operator and takes no part in the comparison.
 type literal struct {
 	Metric   string
 	Labels   map[string]string
 	Observed float32
 	Target   string
 	Passed   bool
+	Property string
+}
+
+// wordedProperty reports whether the controller words the property of metric
+// as the examples do. The KS metrics (CTL-46) and the conformance ratio do. The
+// other metrics keep the wording of their name and labels, which the examples
+// do not follow yet, so the comparison leaves their property out.
+func wordedProperty(metric string) bool {
+	return metric == metricKSStatistic || metric == metricKSPValue || metric == metricConformanceRatio
+}
+
+func propertyOf(metric, property string) string {
+	if wordedProperty(metric) {
+		return property
+	}
+	return ""
 }
 
 func literals(rs []api.RealismResult) []literal {
 	out := make([]literal, 0, len(rs))
 	for _, r := range rs {
-		l := literal{Metric: *r.Metric, Observed: r.Observed, Target: r.Target, Passed: r.Passed}
+		l := literal{Metric: *r.Metric, Observed: r.Observed, Target: r.Target, Passed: r.Passed, Property: propertyOf(*r.Metric, r.Property)}
 		if r.Labels != nil && len(*r.Labels) > 0 {
 			l.Labels = *r.Labels
 		}
@@ -163,7 +181,7 @@ func TestMapRealismCON23Examples(t *testing.T) {
 			}
 			var want []literal
 			for _, r := range c.Results {
-				l := literal{Metric: r.Metric, Observed: float32(r.Observed), Target: r.Target, Passed: r.Passed}
+				l := literal{Metric: r.Metric, Observed: float32(r.Observed), Target: r.Target, Passed: r.Passed, Property: propertyOf(r.Metric, r.Property)}
 				if len(r.Labels) > 0 {
 					l.Labels = r.Labels
 				}
@@ -208,8 +226,8 @@ func TestMapRealismCheckFailuresTakesTheCheckOfItsLabel(t *testing.T) {
 		t.Fatalf("MapRealism = %v, %+v", err, findings)
 	}
 	want := []literal{
-		{metricCheckFailures, map[string]string{"check": checkTemporal}, 1, "== 0", false},
-		{metricCheckFailures, map[string]string{"check": "messages"}, 1, "== 0", false},
+		{metricCheckFailures, map[string]string{"check": checkTemporal}, 1, "== 0", false, ""},
+		{metricCheckFailures, map[string]string{"check": "messages"}, 1, "== 0", false, ""},
 	}
 	if have := literals(got); !reflect.DeepEqual(have, want) {
 		t.Fatalf("results %+v, want %+v", have, want)
@@ -234,7 +252,7 @@ func TestMapRealismCON23Fallbacks(t *testing.T) {
 		}
 	}
 	generic := func(name string, labels map[string]string, v float64, passed bool) literal {
-		return literal{name, labels, float32(v), "check passed", passed}
+		return literal{name, labels, float32(v), "check passed", passed, ""}
 	}
 	metricsSource := map[string]string{"application": "http1", "source": "metrics"}
 	doc := marshalChecks(t,
@@ -264,7 +282,7 @@ func TestMapRealismCON23Fallbacks(t *testing.T) {
 		// The label other has no row in the basis, and the largest error is
 		// judged by the rows, of which dns fails.
 		generic(metricMixAbsError, classifier("other"), 1, false),
-		{metricMixMaxAbsError, map[string]string{"source": "classifier", "classifier": "ndpi"}, 9, "<= 2", false},
+		{metricMixMaxAbsError, map[string]string{"source": "classifier", "classifier": "ndpi"}, 9, "<= 2", false, ""},
 		generic(metricMixShare, classifier("http1"), 59, false),
 		generic(metricMixShare, classifier("dns"), 59, false),
 		generic(metricDecryptedRatio, nil, 0.1, true),

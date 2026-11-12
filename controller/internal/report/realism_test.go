@@ -83,12 +83,12 @@ func fixtureResults() []api.RealismResult {
 		result("realism.conformance_ratio", app("http1", "ndpi"), 1, "conformance of http1 by ndpi", ">= 0.99", true),
 		result("realism.conformance_ratio", app("dns", "ndpi"), 0.9, "conformance of dns by ndpi", ">= 0.99", false),
 		failures("conformance"),
-		result("realism.ks_statistic", ks("inter_arrival"), 0.08, "inter arrival of http1, KS statistic", alpha, true),
-		result("realism.ks_p_value", ks("inter_arrival"), 0.42, "inter arrival of http1, KS p value", alpha, true),
-		result("realism.ks_statistic", ks("request_bytes"), 0.31, "request bytes of http1, KS statistic", alpha, false),
-		result("realism.ks_p_value", ks("request_bytes"), 0.01, "request bytes of http1, KS p value", alpha, false),
-		result("realism.ks_statistic", ks("response_bytes"), 0.05, "response bytes of http1, KS statistic", alpha, true),
-		result("realism.ks_p_value", ks("response_bytes"), 0.5, "response bytes of http1, KS p value", alpha, true),
+		result("realism.ks_statistic", ks("inter_arrival"), 0.08, "KS statistic of inter_arrival of http1", alpha, true),
+		result("realism.ks_p_value", ks("inter_arrival"), 0.42, "KS p value of inter_arrival of http1", alpha, true),
+		result("realism.ks_statistic", ks("request_bytes"), 0.31, "KS statistic of request_bytes of http1", alpha, false),
+		result("realism.ks_p_value", ks("request_bytes"), 0.01, "KS p value of request_bytes of http1", alpha, false),
+		result("realism.ks_statistic", ks("response_bytes"), 0.05, "KS statistic of response_bytes of http1", alpha, true),
+		result("realism.ks_p_value", ks("response_bytes"), 0.5, "KS p value of response_bytes of http1", alpha, true),
 		failures("temporal"),
 	}
 }

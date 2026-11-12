@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -247,5 +248,36 @@ func TestRendererShowsTheRealismResultsOfTheReport(t *testing.T) {
 	}
 	if strings.Contains(body, "reported no realism results") {
 		t.Error("the page says that the run reported no realism results")
+	}
+}
+
+// TestRendererShowsTheKSWordingOfTheMapping maps the realism report fixture and
+// checks that the page words a KS metric as the examples of CON-23 do (CTL-46),
+// not as the controller did before, `inter arrival of http1, KS statistic`.
+func TestRendererShowsTheKSWordingOfTheMapping(t *testing.T) {
+	doc, err := os.ReadFile("../testdata/realism-report.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, findings, err := report.MapRealism(doc)
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("MapRealism = %v, %+v", err, findings)
+	}
+	rep := report.Report{Run: runs.Run{ID: "run-ks", State: runs.Completed}, Realism: results}
+	page, err := Renderer(rep, report.HTMLInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(page)
+	for _, want := range []string{
+		"KS statistic of inter_arrival of http1", "KS p value of inter_arrival of http1",
+		"KS statistic of request_bytes of http1", "KS p value of response_bytes of http1",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the page lacks %q", want)
+		}
+	}
+	if strings.Contains(body, ", KS ") {
+		t.Error("the page still words a KS metric as `<property> of <application>, KS ...`")
 	}
 }
