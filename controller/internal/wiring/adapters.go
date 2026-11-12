@@ -66,10 +66,14 @@ func (c Catalog) Scenarios(ctx context.Context) ([]compiler.Scenario, error) {
 				return nil, fmt.Errorf("scenario catalog: module %s %s: read scenario %s: %w", e.Name, e.Version, rel, err)
 			}
 			out = append(out, compiler.Scenario{
-				Module:         compiler.ModuleRef{Name: e.Name, Version: e.Version, Digest: e.Digest, Signature: e.Signature, SignatureKeyID: e.SignatureKeyID},
-				Name:           e.Scenarios[i],
-				Source:         string(src),
-				SettingsSchema: schema,
+				Module: compiler.ModuleRef{Name: e.Name, Version: e.Version, Digest: e.Digest, Signature: e.Signature, SignatureKeyID: e.SignatureKeyID},
+				Name:   e.Scenarios[i],
+				Source: string(src),
+				// A scenario without an entry in expected_bytes keeps zero,
+				// which the compiler rejects with ErrNoByteEstimate where the
+				// test needs an estimate.
+				BytesPerSession: float64(m.ExpectedBytes[e.Scenarios[i]]),
+				SettingsSchema:  schema,
 			})
 		}
 	}
