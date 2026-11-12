@@ -73,11 +73,15 @@ macro_rules! spec {
 
 spec!(
     /// `ldap.size`, which reads the head of a message and returns the number of octets that follow.
-    SIZE, "size", [req("head", ValueType::Bytes)]
+    SIZE,
+    "size",
+    [req("head", ValueType::Bytes)]
 );
 spec!(
     /// `ldap.recv`, which decodes a message, checks its kind and result, and keeps it.
-    RECV, "recv", [
+    RECV,
+    "recv",
+    [
         req("message", ValueType::Bytes),
         req("kind", ValueType::Text),
         opt("result", ValueType::Int, DefaultValue::Int(0)),
@@ -85,11 +89,15 @@ spec!(
 );
 spec!(
     /// `ldap.field`, which reads a field of the message that `recv` kept.
-    FIELD, "field", [req("name", ValueType::Text)]
+    FIELD,
+    "field",
+    [req("name", ValueType::Text)]
 );
 spec!(
     /// `ldap.bind_request`, a simple bind.
-    BIND_REQUEST, "bind_request", [
+    BIND_REQUEST,
+    "bind_request",
+    [
         req("message_id", ValueType::Int),
         req("name", ValueType::Text),
         req("password", ValueType::Text),
@@ -98,7 +106,9 @@ spec!(
 );
 spec!(
     /// `ldap.bind_response`.
-    BIND_RESPONSE, "bind_response", [
+    BIND_RESPONSE,
+    "bind_response",
+    [
         req("message_id", ValueType::Int),
         opt("result_code", ValueType::Int, DefaultValue::Int(0)),
         opt("matched_dn", ValueType::Text, DefaultValue::Text("")),
@@ -107,21 +117,33 @@ spec!(
 );
 spec!(
     /// `ldap.search_request`.
-    SEARCH_REQUEST, "search_request", [
+    SEARCH_REQUEST,
+    "search_request",
+    [
         req("message_id", ValueType::Int),
         req("base", ValueType::Text),
         opt("scope", ValueType::Text, DefaultValue::Text("sub")),
-        opt("filter", ValueType::Text, DefaultValue::Text("(objectClass=*)")),
+        opt(
+            "filter",
+            ValueType::Text,
+            DefaultValue::Text("(objectClass=*)")
+        ),
         opt("attributes", ValueType::Text, DefaultValue::Text("")),
         opt("size_limit", ValueType::Int, DefaultValue::Int(0)),
         opt("time_limit", ValueType::Int, DefaultValue::Int(0)),
         opt("deref", ValueType::Text, DefaultValue::Text("never")),
-        opt("types_only", ValueType::Boolean, DefaultValue::Boolean(false)),
+        opt(
+            "types_only",
+            ValueType::Boolean,
+            DefaultValue::Boolean(false)
+        ),
     ]
 );
 spec!(
     /// `ldap.search_entry`.
-    SEARCH_ENTRY, "search_entry", [
+    SEARCH_ENTRY,
+    "search_entry",
+    [
         req("message_id", ValueType::Int),
         req("dn", ValueType::Text),
         req("attributes", ValueType::Text),
@@ -129,7 +151,9 @@ spec!(
 );
 spec!(
     /// `ldap.search_done`.
-    SEARCH_DONE, "search_done", [
+    SEARCH_DONE,
+    "search_done",
+    [
         req("message_id", ValueType::Int),
         opt("result_code", ValueType::Int, DefaultValue::Int(0)),
         opt("matched_dn", ValueType::Text, DefaultValue::Text("")),
@@ -138,18 +162,24 @@ spec!(
 );
 spec!(
     /// `ldap.unbind_request`.
-    UNBIND_REQUEST, "unbind_request", [req("message_id", ValueType::Int)]
+    UNBIND_REQUEST,
+    "unbind_request",
+    [req("message_id", ValueType::Int)]
 );
 spec!(
     /// `ldap.filter_eq`, an equality filter with an escaped value.
-    FILTER_EQ, "filter_eq", [
+    FILTER_EQ,
+    "filter_eq",
+    [
         req("attribute", ValueType::Text),
         req("value", ValueType::Text),
     ]
 );
 spec!(
     /// `ldap.account`, a field of an entry of the directory that has a password.
-    ACCOUNT, "account", [
+    ACCOUNT,
+    "account",
+    [
         req("directory", ValueType::Text),
         req("field", ValueType::Text),
         opt("seed", ValueType::Int, DefaultValue::Int(-1)),
@@ -157,29 +187,43 @@ spec!(
 );
 spec!(
     /// `ldap.count`, the number of entries that a search returns.
-    COUNT, "count", [
+    COUNT,
+    "count",
+    [
         req("directory", ValueType::Text),
         req("base", ValueType::Text),
         opt("scope", ValueType::Text, DefaultValue::Text("sub")),
-        opt("filter", ValueType::Text, DefaultValue::Text("(objectClass=*)")),
+        opt(
+            "filter",
+            ValueType::Text,
+            DefaultValue::Text("(objectClass=*)")
+        ),
         opt("size_limit", ValueType::Int, DefaultValue::Int(0)),
     ]
 );
 spec!(
     /// `ldap.bind_answer`, the response to the bind request that `recv` kept.
-    BIND_ANSWER, "bind_answer", [req("directory", ValueType::Text)]
+    BIND_ANSWER,
+    "bind_answer",
+    [req("directory", ValueType::Text)]
 );
 spec!(
     /// `ldap.matches`, which runs the search request that `recv` kept.
-    MATCHES, "matches", [req("directory", ValueType::Text)]
+    MATCHES,
+    "matches",
+    [req("directory", ValueType::Text)]
 );
 spec!(
     /// `ldap.search_next`, the next entry of the search that `matches` ran.
-    SEARCH_NEXT, "search_next", []
+    SEARCH_NEXT,
+    "search_next",
+    []
 );
 spec!(
     /// `ldap.search_end`, the `SearchResultDone` of the search that `matches` ran.
-    SEARCH_END, "search_end", []
+    SEARCH_END,
+    "search_end",
+    []
 );
 
 /// Every template function of the module, in the order of the manifest.
