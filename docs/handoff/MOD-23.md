@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #478 |
 | Branch | `wp/MOD-23` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #488 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-ace46d, lease until 2026-11-12T04:27:06Z |
-| Last verified commit | none |
+| Last verified commit | 8b1de2e |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ The job `module (http2)` of run 43077861098 (job 130722417029, pull request #473
 - [x] 1. Read the failing job log and find which stage counted 39 and which counted 40.
 - [x] 2. Reproduce or prove the cause on the sandbox namespace harness.
 - [x] 3. Fix inside `modules/http2/` and add a test or a guard.
-- [ ] 4. Open the PR, get three green mod-http2 module runs, set ready for review.
+- [x] 4. Open the PR, get three green mod-http2 module runs, set ready for review.
 
 ## Done and verified
 
@@ -29,15 +29,16 @@ The job `module (http2)` of run 43077861098 (job 130722417029, pull request #473
 - The decrypted check counts streams with a ClientHello that plain tshark finds. On 8443 and 8444 that rests on the tshark heuristic, while the encryption check passes `-d tcp.port==P,tls`. Cutting the first ClientHello of `modules/http2/fixtures/http2.pcapng` after 1 to 4 octets gives the exact message (39 TLS sessions, expected 40) and 5 octets or more gives 40; reordering, duplicating, or dropping handshake frames gives 40 (scripts in the scratchpad, `*-MOD-23.py`).
 - A reused source port is not the cause: tshark keeps two streams, and the realism runner would have joined them into 39 sessions in the conformance row. The loop saw reuse in 2 of 11 captures at 100 sessions per scenario.
 - Fix: `fixtures/tshark-tls-ports.sh` plus `--tshark` in `capture.sh`, and a diagnostic line when the check fails. `cargo test -p fps-module-http2 --test tshark_wrapper` passes 5 tests, clippy clean, `capture.sh` records 40 of 40 locally (the nDPI 4.2 of the sandbox cannot classify HTTP/2, so the run ends with the conformance failure that nDPI 4.2 always gives).
+- Acceptance: three consecutive runs of `module (http2)` of the realism workflow on 8b1de2e (run 43148723160, attempts 1 to 3, jobs 130952644732, 130953782201, 130954461027), each with `realism decrypted: 40 of 40 TLS sessions decrypt ... https2_decrypted 40/40 ... passed`, conformance `https2` 40 of 40, and encryption 40 of 40. The mod-http2 workflow and every other check of the head are green.
 - `plan.py check`, `render --check`, `lint`, `make lint-mod-http2`, `pytest realism/tests/test_decrypted.py` pass.
 
 ## Remaining
 
-Three consecutive green runs of `module (http2)` on the pull request, then `fps_swarm.py review`.
+Nothing for this package. The coordinator may open an RLM package for `realism/decrypted.py`, see the log entry.
 
 ## Next action
 
-Open the pull request, push the code, and rerun the `realism` workflow until three runs in a row are green.
+Review the pull request.
 
 ## Blockers and open questions
 
@@ -65,3 +66,4 @@ python3 -m pytest realism/tests/test_decrypted.py -q
 |---|---|---|---|---|
 | 2026-11-12T02:57Z | claude-ace46d | claim | none | claimed #478 |
 | 2026-11-12T03:45Z | claude-ace46d | checkpoint | none | cause found and reproduced, fix and tests written |
+| 2026-11-12T03:40Z | claude-ace46d | review | 8b1de2e | CI green on three attempts, PR 488 |
