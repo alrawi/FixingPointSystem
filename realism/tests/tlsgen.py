@@ -110,17 +110,28 @@ def add_session(
     client: tuple[str, int],
     server: tuple[str, int],
     flights: Sequence[tuple[bool, bytes]],
+    first_segment: int | None = None,
 ) -> None:
-    """Append a TCP session that carries the flights, cut into segments of 1400 bytes."""
+    """Append a TCP session that carries the flights, cut into segments of 1400 bytes.
+
+    ``first_segment`` cuts the first flight of the client (its ClientHello) after that many
+    octets, so its first TCP segment is short and the rest follows in the next one.
+    """
     (c, cp), (s, sp) = client, server
     cseq, sseq = 1000, 5000
     cap.add(pcapgen.tcp(c, cp, s, sp, pcapgen.SYN, cseq, 0))
     cap.add(pcapgen.tcp(s, sp, c, cp, pcapgen.SYN | pcapgen.ACK, sseq, cseq + 1))
     cap.add(pcapgen.tcp(c, cp, s, sp, pcapgen.ACK, cseq + 1, sseq + 1))
     cseq, sseq = cseq + 1, sseq + 1
+    first = first_segment
     for from_client, data in flights:
-        for start in range(0, len(data), MSS):
-            segment = data[start : start + MSS]
+        cuts = [0]
+        if from_client and first is not None:
+            cuts.append(first)
+            first = None
+        cuts += range(cuts[-1] + MSS, len(data), MSS)
+        for start, end in zip(cuts, [*cuts[1:], len(data)], strict=True):
+            segment = data[start:end]
             if from_client:
                 cap.add(pcapgen.tcp(c, cp, s, sp, pcapgen.PSH | pcapgen.ACK, cseq, sseq, segment))
                 cseq += len(segment)
@@ -133,11 +144,15 @@ def add_session(
 
 
 def tls_capture(
-    directory: Path, configs: Sequence[ClientConfig], server_port: int = 443
+    directory: Path,
+    configs: Sequence[ClientConfig],
+    server_port: int = 443,
+    first_segment: int | None = None,
 ) -> tuple[pcapgen.Capture, Path]:
     """Build a capture with one TLS session per config and return it with its key log path.
 
-    Session ``i`` runs from ``10.0.0.10:40000+i`` to ``10.0.1.43:server_port``.
+    Session ``i`` runs from ``10.0.0.10:40000+i`` to ``10.0.1.43:server_port``. With
+    ``first_segment`` every ClientHello is split after that many octets.
     """
     cert, key = make_certificate(directory)
     keylog = directory / "keys.log"
@@ -145,7 +160,9 @@ def tls_capture(
     cap = pcapgen.Capture()
     for index, config in enumerate(configs):
         flights = handshake(cert, key, keylog, config)
-        add_session(cap, ("10.0.0.10", 40000 + index), ("10.0.1.43", server_port), flights)
+        add_session(
+            cap, ("10.0.0.10", 40000 + index), ("10.0.1.43", server_port), flights, first_segment
+        )
     return cap, keylog
 
 

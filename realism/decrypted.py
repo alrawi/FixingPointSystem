@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from realism import labels as labels_module
 from realism.classifier import Classifier
 from realism.messages import MessageProbe, TsharkMessageProbe
 from realism.parsers import ParserRunner
@@ -36,6 +37,7 @@ from realism.report import score
 
 DEFAULT_TSHARK = "tshark"
 DEFAULT_TIMEOUT_S = 300.0
+DEFAULT_TLS_PORT = 443
 PLAINTEXTS = ("inside", "upgrade")
 MAX_LISTED_FAILURES = 5
 MSS = 1400
@@ -102,9 +104,23 @@ class Tshark:
         self.program = program or os.environ.get("FPS_TSHARK") or DEFAULT_TSHARK
         self.timeout_s = timeout_s
 
-    def run(self, capture: Path, keylog: Path | None, args: Sequence[str]) -> str:
-        """Run tshark on the capture and return its standard output."""
+    def run(
+        self,
+        capture: Path,
+        keylog: Path | None,
+        args: Sequence[str],
+        tls_ports: Sequence[int] = (),
+    ) -> str:
+        """Run tshark on the capture and return its standard output.
+
+        Each port of ``tls_ports`` is decoded as TLS (``-d tcp.port==P,tls``). Without
+        it tshark takes a port that is not a TLS port for TLS only by a heuristic, which
+        misses a ClientHello whose first TCP segment is shorter than a record header
+        (MOD-23).
+        """
         argv = [self.program, "-r", str(capture)]
+        for port in sorted(set(tls_ports) - {DEFAULT_TLS_PORT}):
+            argv += ["-d", f"tcp.port=={port},tls"]
         if keylog is not None:
             argv += ["-o", f"tls.keylog_file:{keylog}"]
         argv += list(args)
@@ -208,10 +224,34 @@ def parse_follow(text: str, sessions: dict[int, TlsSession]) -> None:
         current.inside.append((from_client, bytes.fromhex(line.strip())))
 
 
+def labelled_tls_ports(labels: labels_module.Labels) -> tuple[int, ...]:
+    """Return the TCP server ports that the session rules of the labels name, sorted.
+
+    A rule counts when it matches TCP (or any transport) and gives an integer
+    ``server_port``. The decrypted check decodes these ports as TLS, so the labels that
+    describe the sessions of a capture also say where its TLS runs.
+    """
+    ports = {
+        rule.match["server_port"]
+        for rule in labels.rules
+        if rule.match.get("transport", "tcp") == "tcp"
+        and isinstance(rule.match.get("server_port"), int)
+    }
+    return tuple(sorted(int(port) for port in ports))
+
+
 def read_sessions(
-    capture: Path, keylog: Path | None, tshark: Tshark, plaintext: str = "inside"
+    capture: Path,
+    keylog: Path | None,
+    tshark: Tshark,
+    plaintext: str = "inside",
+    tls_ports: Sequence[int] = (),
 ) -> list[TlsSession]:
-    """Decrypt the capture with tshark and return its TLS sessions in stream order."""
+    """Decrypt the capture with tshark and return its TLS sessions in stream order.
+
+    ``tls_ports`` are the server ports that tshark decodes as TLS on every run, so a
+    ClientHello that tshark's heuristic would miss on such a port still names a session.
+    """
     fields = (
         "tcp.stream",
         "frame.number",
@@ -225,7 +265,7 @@ def read_sessions(
     hello = ["-Y", "tls.handshake.type == 1", "-T", "fields"]
     for name in fields:
         hello += ["-e", name]
-    sessions = parse_hellos(tshark.run(capture, keylog, hello))
+    sessions = parse_hellos(tshark.run(capture, keylog, hello, tls_ports))
     if not sessions:
         return []
     if plaintext == "upgrade":
@@ -240,11 +280,11 @@ def read_sessions(
             "tcp.payload",
         ):
             payload += ["-e", name]
-        parse_before(tshark.run(capture, keylog, payload), sessions)
+        parse_before(tshark.run(capture, keylog, payload, tls_ports), sessions)
     follow = ["-q"]
     for stream in sessions:
         follow += ["-z", f"follow,tls,raw,{stream}"]
-    parse_follow(tshark.run(capture, keylog, follow), sessions)
+    parse_follow(tshark.run(capture, keylog, follow, tls_ports), sessions)
     return [sessions[stream] for stream in sorted(sessions)]
 
 
@@ -477,7 +517,10 @@ def run(
     if plaintext not in PLAINTEXTS:
         raise DecryptedError(f"plaintext must be one of {', '.join(PLAINTEXTS)}")
     tshark = tshark or Tshark()
-    sessions = read_sessions(capture, keylog, tshark, plaintext)
+    # The labels describe the view. Its server ports are those of the capture unless
+    # view_port moves them, and then the labels name ports that the capture does not use.
+    tls_ports = () if view_port else labelled_tls_ports(labels_module.load(labels))
+    sessions = read_sessions(capture, keylog, tshark, plaintext, tls_ports)
     view = keep_view or work / f"{capture.stem}.decrypted.pcap"
     decrypted = [session for session in sessions if session.decrypted]
     write_view(view, decrypted, plaintext, view_port)

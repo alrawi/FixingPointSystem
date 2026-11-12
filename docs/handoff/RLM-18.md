@@ -6,7 +6,7 @@
 | Branch | `wp/RLM-18` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 3 plan steps) |
+| Progress | 90% (3 of 3 plan steps, CI pending) |
 | Current holder | claude-71aa28, lease until 2026-11-12T17:55:25Z |
 | Last verified commit | none |
 
@@ -16,21 +16,23 @@
 
 ## Plan
 
-- [ ] 1. `Tshark.run` and `read_sessions` pass `-d tcp.port==P,tls` for the server ports of the labels.
-- [ ] 2. Tests: a split ClientHello capture on a non standard port lists every session, and the labels give the ports.
-- [ ] 3. Runner README and Realism page, log entry, checks, pull request, CI.
+- [x] 1. `Tshark.run` and `read_sessions` pass `-d tcp.port==P,tls` for the server ports of the labels.
+- [x] 2. Tests: a split ClientHello capture on a non standard port lists every session, and the labels give the ports.
+- [x] 3. Runner README and Realism page, log entry, checks, pull request, CI.
 
 ## Done and verified
 
-Nothing yet.
+- `python3 -m pytest realism -q`: 812 passed, 9 skipped, 1 failed. The failure is `test_pinned_ndpi.py::test_a_reader_of_another_release_is_not_accepted`, which builds nDPI and hit "No space left on device" (the sandbox disk has 106 MB free), so it is environmental.
+- `ruff format --check`, `ruff check`, `mypy` on `realism`: clean. `plan.py check`, `render --check`, `lint`: ok.
+- The real command on the committed fixtures: http1 80 of 80 TLS sessions, http2 40 of 40 (its conformance fails locally only because the sandbox nDPI is 4.2.0, which has no HTTP/2).
 
 ## Remaining
 
-Everything.
+CI of the pull request, then `fps_swarm.py review`.
 
 ## Next action
 
-Implement step 1 in `realism/decrypted.py`.
+Wait for CI of the pull request.
 
 ## Blockers and open questions
 
@@ -38,11 +40,11 @@ none
 
 ## Decisions taken in this package
 
-None yet.
+With `--view-port` no port is added, because the labels then name the port of the view (smtp 587, imap 143), not of the capture. The report format stays 0.17.0 (no field changed). The http2 wrapper stays for MOD-24.
 
 ## Pitfalls
 
-None yet.
+Do not use `git stash` here (shared stack). The sandbox disk is nearly full, which breaks the nDPI build test.
 
 ## Verify the current state
 
@@ -55,3 +57,4 @@ python3 -m pytest realism/tests/test_decrypted.py -q
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-12 | claude-71aa28 | claim | none | claimed #495 |
+| 2026-11-12 | claude-71aa28 | checkpoint | see branch | fix, tests, docs, log entry |
