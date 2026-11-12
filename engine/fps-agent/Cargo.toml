@@ -30,8 +30,12 @@ fps-module-content = { path = "../../modules/content/native" }
 fps-module-dns = { path = "../../modules/dns/native" }
 fps-module-ftp = { path = "../../modules/ftp/native" }
 fps-module-http1 = { path = "../../modules/http1/native" }
+fps-module-hls = { path = "../../modules/hls/native" }
 fps-module-http2 = { path = "../../modules/http2/native" }
 fps-module-imap = { path = "../../modules/imap/native" }
+fps-module-ldap = { path = "../../modules/ldap/native" }
+fps-module-mqtt = { path = "../../modules/mqtt/native" }
+fps-module-ntp = { path = "../../modules/ntp/native" }
 fps-module-pop3 = { path = "../../modules/pop3/native" }
 fps-module-smb2 = { path = "../../modules/smb2/native" }
 # One value per flow side, because it holds the RTP stream and the pacing clock of one side (AGT-20).
