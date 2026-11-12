@@ -235,7 +235,7 @@ func TestParseManifestRenderHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(base) + "extension:\n  wasm: dns.wasm\n  hooks: [on_open]\n"
+	text := string(base) + "extension:\n  wasm: extension.wasm\n  hooks: [on_open]\n"
 	paths := findingPaths(t, func() error { _, err := ParseManifest([]byte(text)); return err }())
 	if len(paths) != 1 || paths[0] != "/extension/hooks" {
 		t.Fatalf("findings %v, want /extension/hooks", paths)

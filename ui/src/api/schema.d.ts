@@ -692,7 +692,7 @@ export interface components {
         };
         /**
          * FixingPointSystem module manifest
-         * @description Contract v0.4. Declares a module's identity, capabilities, parameters, settings, template functions, scenarios, byte estimates, and provenance.
+         * @description Contract v0.5. Declares a module's identity, capabilities, parameters, settings, template functions, scenarios, byte estimates, and provenance.
          */
         "module-manifest.schema": {
             /** @constant */
@@ -702,14 +702,14 @@ export interface components {
             name: components["schemas"]["identifier"];
             version: components["schemas"]["semver"];
             /**
-             * @description Module type. Types marked reserved are accepted by the schema but rejected by v1 agents.
+             * @description Module type. The types tunnel, strike, evasion, and fuzzer are reserved: the schema accepts them, no module of them runs in v1, and no reader rejects them yet. The only rule that depends on the type is that the raw action needs a strike or fuzzer module.
              * @enum {unknown}
              */
             type: "app" | "transport" | "host" | "content" | "tunnel" | "strike" | "evasion" | "fuzzer";
             summary?: string;
             /** @description Engine contract versions the module supports, as a semver range such as '>=0.2, <0.3'. */
             engine_api: string;
-            /** @description SPDX license expression for module code and content. It must be compatible with GPL-3.0. */
+            /** @description SPDX license expression for module code and content. It must be compatible with GPL-3.0, and every license and exception in it must be on the allow list of the controller registry (see the module development guide, Licenses). The schema checks the length only. tools/contracts/validate.py and the registry check the expression. */
             license: string;
             provides?: {
                 protocol: string;
@@ -745,7 +745,11 @@ export interface components {
             /** @description Template functions that scenarios call as <module>.<name>(...). The list must equal the catalog that the extension returns from functions(), so the validator checks calls without running extension code. */
             functions?: components["schemas"]["function"][];
             extension?: {
-                wasm: components["schemas"]["relpath"];
+                /**
+                 * @description The WebAssembly component of the module. The agent loads only the file extension.wasm at the module root, so this is the only accepted value.
+                 * @constant
+                 */
+                wasm: "extension.wasm";
                 hooks: ("on_open" | "on_data" | "on_timer" | "on_close" | "render")[];
             };
             fixtures?: {

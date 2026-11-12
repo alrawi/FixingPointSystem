@@ -26,7 +26,7 @@ Three contracts define a module, and the validator enforces the first two.
 
 | Contract | Version | File |
 |---|---|---|
-| Module manifest | v0.4 | `contracts/schemas/module-manifest.schema.json` |
+| Module manifest | v0.5 | `contracts/schemas/module-manifest.schema.json` |
 | Scenario | v0.6 | `contracts/schemas/scenario.schema.json` |
 | Extension interface | `fps:extension@0.1.0` | `contracts/extension/fps-extension.wit` and `contracts/extension/README.md` |
 
@@ -49,8 +49,8 @@ acme_ping/
 The layout follows the Modules section of [Coding Standards](Coding-Standards.md#modules). Three rules come from the code.
 
 1. The directory name must equal `name` in the manifest, or `tools/contracts/validate.py` reports an error (`check_module_dir`). The agent reads a module from `<modules directory>/<name>` (`engine/fps-agent/src/modules.rs`, `load_module`).
-2. Every path that the manifest names is relative, has no `..` segment, and uses only letters, digits, `_`, `.`, `/`, and `-` (the `relpath` definition of the manifest schema). The registry holds every file of the tree to the same rule, not only the named files (`controller/internal/registry/archive.go`, `entryPath`), so a file with a space in its name is refused at install although the validator accepts it.
-3. The tree holds no symbolic link. The registry, the digest, and the agent all refuse one (`registry/digest.go`, `registry/archive.go`, `modules.rs`).
+2. Every path that the manifest names is relative, has no `..` segment, and uses only letters, digits, `_`, `.`, `/`, and `-` (the `relpath` definition of the manifest schema). The registry holds every file of the tree to the same rule, not only the named files (`controller/internal/registry/archive.go`, `entryPath`), so a file with a space in its name is refused at install, and `validate.py` refuses it as well (CON-30).
+3. The tree holds no symbolic link and no special file. The registry, the digest, and the agent refuse one (`registry/digest.go`, `registry/archive.go`, `modules.rs`), and `validate.py` reports one (`tree_problems`). A link as the module directory itself is fine for the validator, which is how the first party targets validate a module.
 
 The directory `scenarios-pending/` holds scenarios that use syntax the engine does not compile yet. The validator checks each file against the scenario schema and indexes none (`check_module_dir`), the registry checks the same way (`registry.go`, `checkTree`), and the manifest does not list them.
 
@@ -100,16 +100,16 @@ The manifest is `manifest.yaml` at the root. The schema sets `additionalProperti
 | `type` | One of `app`, `transport`, `host`, `content`, `tunnel`, `strike`, `evasion`, `fuzzer`, see [Module types](#module-types). | Schema, `validate.py` (`raw` rule) |
 | `summary` | Up to 200 characters. It appears in the module list of the controller. | Registry index |
 | `engine_api` | A semver range such as `">=0.2, <0.3"`. We found no code that compares it with the engine version, see [Gaps](#gaps). | Schema only |
-| `license` | An SPDX expression, see [Licenses](#licenses). | Schema (length only), registry |
+| `license` | An SPDX expression, see [Licenses](#licenses). The schema checks the length, and `validate.py` and the registry check the expression. | Schema (length), `validate.py`, registry |
 | `provides` | Items with `protocol`, `transport` (`tcp`, `udp`, or `sctp`), and an optional `port`. It documents the module. | Schema only |
 | `requires` | Items with `module` and `version`. A scenario may call the functions of a module that it requires. | `validate.py`, agent |
 | `parameters` | A JSON Schema (draft 2020-12) with an object root. A test sets it per mix entry in `profile.mix[].params`. | `validate.py`, controller compiler, agent |
 | `settings` | A JSON Schema with an object root. A test sets it once per module under `modules.<name>.settings`. A module without it accepts no settings. | Controller compiler |
 | `scenarios` | Scenario files relative to the manifest, unique, each of which must exist. | `validate.py`, registry, agent |
-| `expected_bytes` | Application payload bytes per session in both directions with default parameters, keyed by scenario name, each an integer of at least 1. The controller reads it into the scenario catalog (CTL-47), see [below](#expected_bytes-bytes-per-session-of-each-scenario). | Controller compiler |
+| `expected_bytes` | Application payload bytes per session in both directions with default parameters, keyed by scenario name, each an integer of at least 1. The controller reads it into the scenario catalog (CTL-47), see [below](#expected_bytes-bytes-per-session-of-each-scenario). `validate.py` rejects a key that names no scenario of `scenarios`. | Controller compiler, `validate.py` (keys) |
 | `assets` | Items with a `name` and exactly one of `path` and `generator` (`module.function`). | Existence check only |
 | `functions` | The template function catalog, see [Template functions](#template-functions-and-the-catalog). | `validate.py`, agent, registry |
-| `extension` | `wasm` (a path) and `hooks` (a non empty list from `on_open`, `on_data`, `on_timer`, `on_close`, `render`). | `validate.py`, registry, agent |
+| `extension` | `wasm`, which must be the text `extension.wasm` because the agent loads only that file at the module root, and `hooks` (a non empty list from `on_open`, `on_data`, `on_timer`, `on_close`, `render`). | Schema, `validate.py`, registry, agent |
 | `fixtures` | Items with a `capture` path and an `expect` object with `ndpi` or `zeek` name lists. | Existence check only |
 | `provenance` | Where the content comes from, see [Provenance](#provenance). | Schema |
 
@@ -123,7 +123,7 @@ Three details need care.
 
 #### `expected_bytes`: bytes per session of each scenario
 
-`expected_bytes` maps the name of each scenario to the estimated application payload bytes that one session of the scenario moves, in both directions together, with the default parameters of the scenario. Each value is an integer of at least 1, and each key follows the identifier pattern of scenario names (`contracts/schemas/module-manifest.schema.json`, key `expected_bytes`). The schema marks the field as optional, but a module that has scenarios needs an entry for each of them.
+`expected_bytes` maps the name of each scenario to the estimated application payload bytes that one session of the scenario moves, in both directions together, with the default parameters of the scenario. Each value is an integer of at least 1, and each key follows the identifier pattern of scenario names (`contracts/schemas/module-manifest.schema.json`, key `expected_bytes`). Each key must also be the name of a scenario that `scenarios` lists, and `validate.py` reports a key that is not (a typo in a key leaves the real scenario without an estimate). The registry does not check the keys yet. The schema marks the field as optional, but a module that has scenarios needs an entry for each of them.
 
 ```yaml
 scenarios:
@@ -139,7 +139,7 @@ expected_bytes:
 - `profile.basis: bytes`. The test configuration gives byte weights, and the compiler turns them into session shares with `share_i = (weight_i / bytes_i) / sum_j (weight_j / bytes_j)`, where `bytes_i` is your estimate. Sessions at these shares then carry the byte weights.
 - `load.objective.type: throughput_bps`. The session rate is `objective / (8 * mean bytes per session)`, with the mean taken over the mix. A wrong estimate makes the run miss the objective by the same ratio until the calibration of the run loop corrects it.
 
-**What happens without it.** A scenario without an entry has no estimate. A test that uses the bytes basis, or the `throughput_bps` objective, and mixes that scenario fails to compile with the error `no bytes per session estimate` (`ErrNoByteEstimate`), and the message names the scenario as `<module>/<scenario>`. The controller never falls back to session shares, because that would run another mix than the one the test asks for. A test with the `sessions` basis and a session rate or concurrency objective does not need the field. Scenarios in `scenarios-pending/` are not in the manifest and need no entry.
+**What happens without it.** A scenario without an entry has no estimate. A test that uses the bytes basis, or the `throughput_bps` objective, and mixes that scenario fails to compile with the error `no bytes per session estimate` (`ErrNoByteEstimate`), and the message names the scenario as `<module>/<scenario>`. The controller never falls back to session shares, because that would run another mix than the one the test asks for. A test with the `sessions` basis and a session rate or concurrency objective does not need the field. Scenarios in `scenarios-pending/` are not in the manifest, need no entry, and may not have one.
 
 **The estimate is a starting point.** During a run the controller measures the real bytes per session and replaces the manifest estimate of a scenario after 20 pooled sessions (`controller/internal/runs/calibrate/`, the Throughput rate calibration section of [Controller](Controller.md)). A good estimate keeps the first seconds of a run on target, so measure it and do not guess it.
 
@@ -156,7 +156,7 @@ Neither the registry nor `tools/contracts/validate.py` checks that a key names a
 
 ### Names
 
-A module name must not collide with a template root. The grammar reserves `vars`, `session`, `last`, `profiles`, `dist`, `true`, and `false`, and the metric catalog reserves `all` as the label value that totals every application (`contracts/README.md`, `tools/contracts/validate.py`, `RESERVED_ROOTS` and `ALL_APPLICATIONS`). The registry refuses only `vars`, `session`, `last`, `true`, and `false` (`controller/internal/registry/manifest.go`, `reservedModuleNames`), so a module named `dist` passes the install and fails the validator. Treat all eight as reserved.
+A module name must not collide with a template root. The grammar reserves `vars`, `session`, `last`, `profiles`, `dist`, `true`, and `false`, and the metric catalog reserves `all` as the label value that totals every application (`contracts/README.md`, `tools/contracts/validate.py`, `RESERVED_ROOTS` and `ALL_APPLICATIONS`). The registry refuses only `vars`, `session`, `last`, `true`, and `false` (`controller/internal/registry/manifest.go`, `reservedModuleNames`), so a module named `profiles`, `dist`, or `all` passes the install and fails the validator, which rejects all eight. Treat all eight as reserved.
 
 Choose a name that no first party module uses. The agent hands a module the native functions of its own registry when the module has the name of a first party module and a manifest catalog that equals the catalog of that crate (`modules.rs`, `NativeFunctions::for_modules`), so a module named `dns` with the catalog of `dns` runs the code of the agent and not yours.
 
@@ -172,7 +172,7 @@ The specification defines eight types (`docs/spec/specification.md`, Module type
 | `content` | v1 | The first party `content` module renders bodies with a native crate. A module outside the repository has no way to add native functions. |
 | `tunnel`, `strike`, `evasion`, `fuzzer` | Reserved | Not supported. |
 
-The schema comment says that v1 agents reject the reserved types, and we found no code that does. The one rule that depends on the type is the `raw` action, which the validator and the engine allow only for `strike` and `fuzzer` modules (`tools/contracts/validate.py`, `RESERVED_ACTION_TYPES`, and `engine/fps-flow/src/check.rs`). Because no type admits it today, do not write `raw`.
+The schema description names `tunnel`, `strike`, `evasion`, and `fuzzer` as reserved. The schema accepts them and no reader rejects them, so a manifest of such a type validates and installs, and no engine behavior exists for it. The one rule that depends on the type is the `raw` action, which the validator and the contract check of the engine admit only in `strike` and `fuzzer` modules (`tools/contracts/validate.py`, `RESERVED_ACTION_TYPES`, and `engine/fps-flow/src/check.rs`). The interpreter does not run it yet: a runnable program with `raw` fails to load as an unsupported action (`engine/fps-flow/src/program.rs`) until ENG-29. A strike scenario with `raw` therefore validates and installs, and the agent refuses to run it.
 
 ### Licenses
 
@@ -182,7 +182,7 @@ The registry parses `license` as an SPDX expression and accepts it only when the
 - Permissive licenses Apache-2.0, MIT, MIT-0, X11, ISC, 0BSD, Zlib, BSL-1.0, BSD-2-Clause, BSD-3-Clause, Artistic-2.0, Unicode-3.0, Unicode-DFS-2016, and CDLA-Permissive-2.0.
 - Content licenses Unlicense, CC0-1.0, CC-BY-4.0, and CC-BY-SA-4.0.
 
-The exceptions `LLVM-exception`, `Classpath-exception-2.0`, and `GCC-exception-3.1` may follow `WITH`. Identifiers match without regard to case, the operators `AND`, `OR`, and `WITH` must be upper case, and the bare `GPL-3.0` and the `+` suffix are unknown. The validator checks none of this (it reads only the schema's minimum length), so a module with an unlisted license validates and fails at install.
+The exceptions `LLVM-exception`, `Classpath-exception-2.0`, and `GCC-exception-3.1` may follow `WITH`. Identifiers match without regard to case, the operators `AND`, `OR`, and `WITH` must be upper case, and the bare `GPL-3.0` and the `+` suffix are unknown. The validator applies the same parser and the same lists (`tools/contracts/validate.py`, `license_problem`), and a test compares them with the Go source, so a module with an unlisted license fails the validator and not only the install.
 
 ### Provenance
 
@@ -290,7 +290,7 @@ The agent does load a WebAssembly component for a module. The component targets 
 
 | Point | Behavior | Rests on |
 |---|---|---|
-| File name | The agent compiles the file `extension.wasm` at the root of the module tree, whatever path `extension.wasm` has in the manifest | `engine/fps-runtime/src/extension.rs` (`EXTENSION_FILE`), `modules.rs` |
+| File name | The agent compiles the file `extension.wasm` at the root of the module tree. The schema allows no other value for `extension.wasm` in the manifest (CON-30), and a module that ships the file needs no `extension` key for the agent to load it | `engine/fps-runtime/src/extension.rs` (`EXTENSION_FILE`), `modules.rs`, `contracts/schemas/module-manifest.schema.json` |
 | Verification order | The tree digest and the signature are checked first, and the component compiles only afterwards, from the bytes that the digest covered | `docs/wiki/Agent.md`, WebAssembly extensions |
 | Catalog check | The function names, parameter names and order, types, and required flags must equal the manifest, or `prepare` fails. Defaults are not compared. | `docs/wiki/Engine.md`, WebAssembly extensions in sessions |
 | Hooks called | `render` and `on-close` only. `on-data` and `on-timer` are never called, and `send` and `set-timer` return `not-allowed` to the guest. | `docs/wiki/Engine.md`, Limits of this step |
@@ -354,10 +354,10 @@ What the repository does for first party modules goes further than what it does 
 Run the validator on every change. It checks three things (`tools/contracts/validate.py`).
 
 1. **Schemas.** The manifest and every scenario that it lists validate against their JSON Schemas, and the `parameters` value is itself a valid JSON Schema (`check_module_dir`).
-2. **Module rules.** The directory name equals `name`, the name is not reserved, no module requires itself, function and parameter names are unique, parameter defaults match their types, and every path that `scenarios`, `assets`, `fixtures`, and `extension.wasm` names exists.
+2. **Module rules.** The directory name equals `name`, the name is not reserved, the license is on the allow list, every file and directory of the tree has a path of letters, digits, `_`, `.`, and `-`, the tree holds no symbolic link, no module requires itself, function and parameter names are unique, parameter defaults match their types, every path that `scenarios`, `assets`, `fixtures`, and `extension.wasm` names is a regular file of the tree, and every key of `expected_bytes` names a scenario of `scenarios`.
 3. **Scenario rules.** The rules of [Actions](#actions) and [Templates](#templates), including each module call against the catalog of its manifest. A call into a required module whose manifest the run does not hold is a warning and stays unchecked (`_resolve_call`).
 
-The validator does not check everything that the controller checks at install. The registry refuses a license that is not allowed, a file name outside the `relpath` characters, a symbolic link, a name that duplicates one of its five reserved names, and a scenario file whose `scenario` field is not an identifier or repeats (`controller/internal/registry/registry.go`, `checkTree`, and `manifest.go`). The validator does not read the license, the files that the manifest does not name, or links. It does not check the `settings` schema either. Check these by hand before you package.
+The validator applies the rules that the registry applies to a tree: the license, the file names, links, and named files (`tools/contracts/validate.py`, `license_problem`, `tree_problems`, `names_regular_file`). It is stricter than the registry for the reserved names `profiles`, `dist`, and `all` and for the keys of `expected_bytes`. It does not check the `settings` schema or the signature, and it never runs extension code. Check these by hand before you package.
 
 ## Package
 
@@ -430,7 +430,7 @@ The registry checks an install in a fixed order (`registry.go`, `checkTree`, and
 1. **Archive.** Only files and directories, with `relpath` paths, within the size limits.
 2. **Manifest schema.** `manifest.yaml` validates against an embedded copy of `module-manifest.schema.json`.
 3. **License.** The expression is on the allow list.
-4. **Semantic rules.** Function names are unique, `render` is listed when functions and an extension exist, and the name is not reserved.
+4. **Semantic rules.** Function names are unique, `render` is listed when functions and an extension exist, and the name is not reserved. `validate.py` reports each of them.
 5. **Files.** Every named scenario, asset path, extension, and fixture capture exists as a regular file.
 6. **Scenarios.** Each scenario file, and each file of `scenarios-pending/`, validates against the scenario schema, and its `profiles` and `dist` references follow the rules (`controller/internal/registry/scenario.go`). The registry does not check module function calls, which the validator and the agent own.
 7. **Digest.** The registry computes the tree digest and records it in the index, with the signature when the install had one.
@@ -465,10 +465,10 @@ Work through this list for a new version.
 
 - The directory name equals `name`, and `version` is new and stands on a line of its own with no trailing comment.
 - `validate.py` reports 0 errors and 0 warnings.
-- `license` is on the allow list, and `provenance` states the real source.
+- `license` is on the allow list, which `validate.py` checks, and `provenance` states the real source.
 - `parameters` names only variables of the scenarios, and `expected_bytes` matches the default parameters.
 - The manifest declares `functions` only when the module ships `extension.wasm`, and it declares no `settings`.
-- The tree holds no symbolic link and no file name outside the `relpath` characters.
+- The tree holds no symbolic link and no file name outside the `relpath` characters, which `validate.py` checks.
 - The README names the scenarios, the parameters, and the results that you measured.
 
 ## Gaps
@@ -478,11 +478,11 @@ We recorded what the repository does not support yet, so that you do not look fo
 1. **No out of tree publishing.** A registry is a local directory of one controller, there is no remote or shared registry, and no tooling builds or signs a registry index (`controller/internal/registry/doc.go`, `docs/wiki/Controller.md`).
 2. **No signing command, and no signed upload in the SDK.** Keys and signatures need your own code, and `install_module` of the Python SDK cannot send the signature headers (`sdk/python/fixingpoint/_generated.py`).
 3. **No distribution to agents.** The controller does not send module trees, so each agent needs the tree by other means (`docs/wiki/Agent.md`).
-4. **No WebAssembly toolchain for authors.** The host exists, and the repository gives no SDK, example, or instructions. Only `render` and `on-close` run, and the agent loads the file named `extension.wasm` at the root whatever the manifest says (`engine/fps-runtime/src/extension.rs`).
+4. **No WebAssembly toolchain for authors.** The host exists, and the repository gives no SDK, example, or instructions. Only `render` and `on-close` run (`engine/fps-runtime/src/extension.rs`).
 5. **No settings for third party modules.** The agent refuses them for a module without native functions (`engine/fps-agent/src/modules.rs`).
 6. **Native crates are first party only**, and decision D10 still has the status Proposed (`docs/decisions/0010-native-extensions.md`).
-7. **Declared and not enforced.** `engine_api` is read by nothing that compares it with an engine version, `assets` and `fixtures[].expect` are never read beyond the existence of a file, and `provides` and the version of `requires` document only (`controller/internal/registry/manifest.go`, `tools/contracts/validate.py`). A search of `controller/`, `engine/`, and `realism/` found no other reader.
-8. **The validator and the registry disagree in places.** The registry knows five reserved names and the validator eight, and the validator does not read the license, file names, or links, which the registry does (see [Names](#names) and [Validate](#validate)).
+7. **Declared and not enforced.** `engine_api` is read by nothing that compares it with an engine version, `assets` and `fixtures[].expect` are never read beyond the existence of a file, and `provides` and the version of `requires` document only (`controller/internal/registry/manifest.go`, `tools/contracts/validate.py`). A search of `controller/`, `engine/`, and `realism/` found no other reader. The module types `tunnel`, `strike`, `evasion`, and `fuzzer` are reserved in the schema text and no reader rejects them.
+8. **The registry is looser than the validator in two places.** It accepts the names `profiles`, `dist`, and `all`, which the validator rejects, and it does not check that a key of `expected_bytes` names a scenario (`controller/internal/registry/manifest.go`, `reservedModuleNames`, and `registry.go`, `checkTree`). Both are safe for the author, because a module that validates also installs.
 9. **No realism job for third party modules.** The job selects modules that have a native crate and a recording script, and the harness records only the traffic of first party peers (`realism/modules.py`).
 10. **The agent reads `version` by line.** A trailing comment on the line makes it differ from the plan (`engine/fps-agent/src/modules.rs`, `version_of`).
 
