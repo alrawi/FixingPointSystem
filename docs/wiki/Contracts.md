@@ -71,7 +71,7 @@ CON-09 applied decision D12 items 7, 9, 10, 14, and 22 to the test configuration
 | `criteria[].where` | Test configuration | Label names and values that select the series a criterion checks | CTL-20 |
 | `modules.<name>.settings` | Test configuration | Settings that hold for every scenario of the module | CTL-18, MOD-19 |
 | `settings` | Module manifest | JSON Schema with an object root that describes the module settings | CTL-18, MOD-19 |
-| `expected_bytes` | Module manifest | Estimated application payload bytes per session of each scenario with default parameters | CTL-21 |
+| `expected_bytes` | Module manifest | Estimated application payload bytes per session of each scenario with default parameters | CTL-21, CTL-47 |
 
 The examples that use `where`, `modules`, and the new location forms, `port_locations.yaml`, `dns_zone.yaml`, and `filtered_criteria.yaml`, moved from `contracts/examples/tests-pending/` to `contracts/examples/tests/` with CON-11, so the validator default and the controller tests read them. CTL-18, CTL-20, and CTL-22 taught the compiler, the store validation, and the catalog adapter their fields.
 
