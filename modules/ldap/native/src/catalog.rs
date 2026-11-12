@@ -123,12 +123,20 @@ spec!(
         req("message_id", ValueType::Int),
         req("base", ValueType::Text),
         opt("scope", ValueType::Text, DefaultValue::Text("sub")),
-        opt("filter", ValueType::Text, DefaultValue::Text("(objectClass=*)")),
+        opt(
+            "filter",
+            ValueType::Text,
+            DefaultValue::Text("(objectClass=*)")
+        ),
         opt("attributes", ValueType::Text, DefaultValue::Text("")),
         opt("size_limit", ValueType::Int, DefaultValue::Int(0)),
         opt("time_limit", ValueType::Int, DefaultValue::Int(0)),
         opt("deref", ValueType::Text, DefaultValue::Text("never")),
-        opt("types_only", ValueType::Boolean, DefaultValue::Boolean(false)),
+        opt(
+            "types_only",
+            ValueType::Boolean,
+            DefaultValue::Boolean(false)
+        ),
     ]
 );
 spec!(
@@ -185,7 +193,11 @@ spec!(
         req("directory", ValueType::Text),
         req("base", ValueType::Text),
         opt("scope", ValueType::Text, DefaultValue::Text("sub")),
-        opt("filter", ValueType::Text, DefaultValue::Text("(objectClass=*)")),
+        opt(
+            "filter",
+            ValueType::Text,
+            DefaultValue::Text("(objectClass=*)")
+        ),
         opt("size_limit", ValueType::Int, DefaultValue::Int(0)),
     ]
 );
