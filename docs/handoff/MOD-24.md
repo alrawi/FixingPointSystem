@@ -6,7 +6,7 @@
 | Branch | `wp/MOD-24` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-6afc7f, lease until 2026-11-12T21:01:58Z |
 | Last verified commit | none |
 
@@ -18,22 +18,22 @@ Replace `rtp_check.py` (sip_rtp) and `hls_check.py` (hls) with `temporal.packets
 
 ## Plan
 
-- [ ] 1. Add the labels, remove the sip_rtp script and the http2 wrapper, update capture scripts, mk files, workflows
-- [ ] 2. Hls decision (see findings) and the README and test updates of the three modules
-- [ ] 3. Module-Development.md, log entry, checks
+- [x] 1. Add the labels, remove the sip_rtp script and the http2 wrapper, update capture scripts, mk files, workflows
+- [x] 2. Hls decision (see findings) and the README and test updates of the three modules
+- [x] 3. Module-Development.md, log entry, checks
 - [ ] 4. Open the PR, wait for CI, review
 
 ## Done and verified
 
-Nothing yet.
+Steps 1 to 3: sip_rtp labels (`ms: [20, 30]`, `tolerance_ms: 8`), `rtp_check.py` and its tests removed, `test_packet_labels.py` (4 tests, committed capture passes, jittered capture fails), http2 wrapper, its Rust test and `split_client_hello.py` removed, `capture.sh` of both modules, `mk/mod-sip.mk`, `mod-sip.yml`, READMEs, Modules.md, Module-Development.md, log entry. Verified locally: unittest of sip_rtp (11) and hls (7), `realism score` of sip_rtp with tshark and nDPI 4.2.0 passes, `realism decrypted` on http2 lists 40 of 40 TLS sessions without the wrapper (the nDPI HTTP2 step needs nDPI 4.14, CI only), plan check, render --check, lint, `make lint-mod-sip lint-mod-hls lint-mod-http2`.
 
 ## Remaining
 
-Everything.
+Open the PR, wait for CI (module jobs of sip, hls, http2), review.
 
 ## Next action
 
-Step 1.
+Open the PR with `gh api repos/$FPS_REPO/pulls`.
 
 ## Blockers and open questions
 
@@ -41,11 +41,12 @@ none
 
 ## Decisions taken in this package
 
-none yet
+- hls keeps `hls_check.py` and gets no packet gap labels (see the log entry), because the labels cannot express its keepalive cadence or its byte checks. The coordinator decides whether to remove it anyway.
+- `mk/mod-sip.mk` is edited although it is outside the package paths, because it called the removed script.
 
 ## Pitfalls
 
-- `hls_check.py` also checks bytes (byte share, bit rate, segment body size), which no label covers.
+- `hls_check.py` also checks bytes (byte share, bit rate, segment body size), which no label covers, and the client stream of a keepalive connection mixes playlist and segment requests, so a constant 400 ms target fails.
 
 ## Verify the current state
 
@@ -57,4 +58,4 @@ git log --oneline origin/wp/MOD-24
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
-| 2026-11-12T20:35 | claude-6afc7f | claim | none | claimed issue #493 |
+| 2026-11-12T19:36 | claude-6afc7f | claim | none | claimed issue #493 |

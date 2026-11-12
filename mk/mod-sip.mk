@@ -15,11 +15,11 @@ lint-mod-sip:
 	ln -sfn $(CURDIR)/modules/sip_rtp $(MOD_SIP_OUT)/modules/sip_rtp
 	$(PYTHON) tools/contracts/validate.py --modules $(MOD_SIP_OUT)/modules --tests --no-openapi
 
-# The interpreter, catalog, and golden transcript tests, the tests of the two
-# fixture checks, then the realism score of the committed fixture, which needs
-# ndpiReader and tshark, the RTP interval check, which needs tshark, and the
-# Zeek check, which needs Zeek. The count is the number of calls that
-# capture.sh records with its default of 3 calls per scenario.
+# The interpreter, catalog, and golden transcript tests, the tests of the fixture
+# checks, then the realism score of the committed fixture, which needs ndpiReader
+# and tshark and covers the RTP packet interval through the temporal.packets
+# labels, and the Zeek check, which needs Zeek. The count is the number of calls
+# that capture.sh records with its default of 3 calls per scenario.
 TEST_TARGETS += test-mod-sip
 test-mod-sip:
 	$(CARGO) test -p fps-module-sip-rtp
@@ -30,10 +30,8 @@ test-mod-sip:
 	  $(PYTHON) -m realism score --pcap modules/sip_rtp/fixtures/sip_rtp.pcapng \
 	    --labels modules/sip_rtp/fixtures/expected.yaml --parsers tshark \
 	    --output $(MOD_SIP_OUT)/fixture.report.json; \
-	  echo "modules/sip_rtp/fixtures/rtp_check.py modules/sip_rtp/fixtures/sip_rtp.pcapng"; \
-	  $(PYTHON) -I modules/sip_rtp/fixtures/rtp_check.py modules/sip_rtp/fixtures/sip_rtp.pcapng; \
 	else \
-	  echo "test-mod-sip skipped the fixture score and the RTP interval check because ndpiReader or tshark is not installed"; \
+	  echo "test-mod-sip skipped the fixture score because ndpiReader or tshark is not installed"; \
 	fi
 	@zeek="$${FPS_ZEEK:-$$(command -v zeek || true)}"; \
 	if [ -z "$$zeek" ] && [ -x /opt/zeek/bin/zeek ]; then zeek=/opt/zeek/bin/zeek; fi; \
@@ -46,7 +44,7 @@ test-mod-sip:
 	fi
 
 # Records a fresh capture in the QA-01 harness, scores it, and runs the
-# session count check, the RTP interval check, and the Zeek check. It needs
+# session count check, and the Zeek check. It needs
 # root, so make test leaves it out, and it never overwrites the committed
 # fixture.
 E2E_TARGETS += e2e-mod-sip

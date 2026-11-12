@@ -110,10 +110,10 @@ if [[ -n ${FPS_FIXTURE_DECRYPTED_DIR:-} ]]; then
   view_args=(--view "$FPS_FIXTURE_DECRYPTED_DIR/http2.decrypted.pcap")
 fi
 # The decrypted check lists the TLS sessions as the streams with a ClientHello.
-# tshark finds one on the ports 8443 and 8444 by its heuristic only, which a
-# ClientHello whose first segment is shorter than a record header escapes (MOD-23),
-# so the check reads the capture through a tshark that decodes those ports as TLS.
-# It leaves the decrypted view, which holds HTTP/2 in the clear on them, alone.
+# It decodes the server ports of the session rules of the labels as TLS, so a
+# ClientHello whose first segment is shorter than a record header still counts
+# (MOD-23, fixed in the runner by RLM-18). The ports below are only for the
+# message that names the cause of a count that is off.
 tls_ports=$(sed -n 's/^  server_port: *\(84[0-9][0-9]\)$/\1/p' "$here"/../scenarios/https_*.yaml | sort -u | tr '\n' ' ')
 tls_ports=${tls_ports% }
 if [[ -z $tls_ports ]]; then
@@ -122,10 +122,9 @@ if [[ -z $tls_ports ]]; then
 fi
 real_tshark=${FPS_TSHARK:-tshark}
 check_rc=0
-FPS_TSHARK_REAL=$real_tshark FPS_TLS_PORTS=$tls_ports FPS_TLS_DECODE_PCAP="$out/http2.pcapng" \
-  python3 -m realism decrypted --pcap "$out/http2.pcapng" \
+python3 -m realism decrypted --pcap "$out/http2.pcapng" \
   --labels "$root/realism/examples/decrypted/http2.labels.yaml" \
-  --sessions $(( sessions * 2 )) --parsers tshark --tshark "$here/tshark-tls-ports.sh" \
+  --sessions $(( sessions * 2 )) --parsers tshark --tshark "$real_tshark" \
   --output "$out/http2.decrypted.json" "${view_args[@]}" || check_rc=$?
 if [[ $check_rc -ne 0 ]]; then
   # Say how many connections the capture holds on the TLS ports, so a count

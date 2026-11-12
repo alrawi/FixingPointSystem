@@ -11,9 +11,9 @@
 # one SIP session and one RTP session, a refused call only the SIP session),
 # which fails when two sessions share a 5-tuple (MOD-21). The realism runner
 # then scores the sessions with nDPI and tshark, which must classify the SIP
-# sessions as SIP and the media sessions as RTP. rtp_check.py requires every
-# RTP packet gap to match the configured packet interval. When Zeek is
-# installed, zeek_check.py also requires one sip.log row per call.
+# sessions as SIP and the media sessions as RTP, and whose temporal.packets
+# labels require every RTP stream to keep its packet interval of 20 or 30 ms.
+# When Zeek is installed, zeek_check.py also requires one sip.log row per call.
 # The script needs root, ip, tcpdump, ss, ndpiReader, and tshark.
 #
 #   sudo modules/sip_rtp/fixtures/capture.sh [OUTPUT_DIR]
@@ -98,8 +98,6 @@ if found != expected:
 PY
 python3 -m realism score --pcap "$out/sip_rtp.pcapng" --labels "$here/expected.yaml" \
   --parsers tshark --output "$out/sip_rtp.report.json"
-
-python3 -I "$here/rtp_check.py" "$out/sip_rtp.pcapng"
 
 # Zeek is optional here, because the realism job installs it and scores the
 # same capture for parser errors. Where it is present, the check below also

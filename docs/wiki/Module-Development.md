@@ -332,11 +332,22 @@ Each session rule names the intended application of the sessions that its `match
 | `tls` | `encryption` | Sessions decrypt with the embedded keys, and each ClientHello has the JA4 of its profile |
 | `content` | `content` | No application repeats more than 1 percent of its payloads |
 | `structure` | `session_structure` | The connections of each instance follow the `after` and `spawn` edges of the scenario |
-| `temporal` | `temporal` | Arrival times, sizes, and packet gaps agree with the target distributions in a KS test |
+| `temporal` | `temporal` | Arrival times, sizes, and packet gaps agree with their targets, with a KS test for a distribution and a tolerance for a constant |
 | `mix` | `mix_accuracy` | The achieved mix matches the configured weights |
 | `transport` | `transport_behavior` | The SYN options match the OS profile of the sending host |
 | `messages` | `messages` | Sessions show the expected number of requests, responses, commands, or messages |
 | `hosts` | `host_identity` | The host count and the address and MAC pairs make sense |
+
+For a module whose traffic is paced, such as audio or video with a fixed packet time, write the pacing as a `temporal.packets` target in the labels, and do not write a timing script for the fixture. The check reads the gaps between consecutive packets with payload in one direction of a session, judges each such stream on its own, and fails a call with jittered packets even among many good calls. The `sip_rtp` module labels its RTP media like this, where `ms` lists the packet times that its scenarios use, `tolerance_ms` is the lateness that a loaded host may add, and `within` is the share of the gaps of a stream that must be on time (`modules/sip_rtp/fixtures/expected.yaml`, `realism/README.md`, Temporal distribution check).
+
+```yaml
+temporal:
+  packets:
+    applications:
+      rtp: {dist: constant, ms: [20, 30], tolerance_ms: 8, within: 0.9}
+```
+
+A stream needs at least `min_samples` gaps (30 by default) to be judged, so record enough packets per stream. The labels do not see the gaps between the requests of one keepalive connection when playlist and segment requests alternate, and they do not read byte shares. A module that needs such a property still carries a small check script next to its fixture (`modules/hls/fixtures/hls_check.py`). Test the labels with a capture that you jitter on purpose, as `modules/sip_rtp/fixtures/test_packet_labels.py` does, so that you know they can fail.
 
 For a module whose sessions run inside TLS, `python3 -m realism decrypted` scores the decrypted view with a labels file whose session rules match the server ports of the TLS sessions. Without `--view-port`, tshark decodes each TCP `server_port` that a rule names as TLS, so name the real server port of every TLS session in a rule (`realism/README.md`, Decrypted view, RLM-18). A TLS session on a port that no rule names is found only by the heuristic of tshark, which misses a ClientHello split after its first bytes.
 
