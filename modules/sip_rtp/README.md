@@ -12,7 +12,7 @@ The module follows the layout of the Modules section of the [Coding Standards](.
 | `scenarios/*.yaml` | Five scenarios, four with a signaling flow and a spawned media flow, one with a signaling flow |
 | `native/` | The crate `fps-module-sip-rtp` and the `fixture_peer` example |
 | `tests/` | Catalog, scenario, and golden transcript tests |
-| `fixtures/` | `capture.sh`, `expected.yaml`, the committed capture `sip_rtp.pcapng`, the RTP interval check, and the Zeek check |
+| `fixtures/` | `capture.sh`, `expected.yaml`, the committed capture `sip_rtp.pcapng`, the tests of its packet gap labels, and the Zeek check |
 
 ## How a call runs
 
@@ -26,7 +26,7 @@ The server spawns its media flow before the ring time, so the RTP port is bound 
 
 A `delay` of the packet time after every packet drifts, because a sleep wakes a little late and the delays add up. In the harness a 20 ms packet time came out at 21.5 ms. `sip_rtp.pace` keeps a due time per flow side, moves it on by one packet time at every call, and returns the time left, so a late wake shortens the next sleep. The mean gap in the committed capture is within 0.1 ms of the packet time, and single gaps usually vary by a millisecond or two, with a rare outlier of several milliseconds, as the timer of a loaded host does.
 
-The packet time is the `ptime_ms` variable, a multiple of 10 from 10 to 120. The RTP timestamp advances by `ptime_ms` times the clock rate of the codec, so the packet time is also in the packets, and `fixtures/rtp_check.py` reads it from there.
+The packet time is the `ptime_ms` variable, a multiple of 10 from 10 to 120. The RTP timestamp advances by `ptime_ms` times the clock rate of the codec, so the packet time is also in the packets. The `temporal.packets` labels of `fixtures/expected.yaml` list the packet times that the scenarios use (20 and 30 ms).
 
 ## Template functions
 
@@ -80,18 +80,17 @@ cargo test -p fps-module-sip-rtp
 python3 -m unittest discover -s modules/sip_rtp/fixtures
 ```
 
-The unit tests cover the SIP parser and writer, the SDP offer and answer, the codec table, and the RTP header. `tests/scenarios.rs` runs every scenario between two peers over an in memory UDP network on a paused clock, so the packet gaps are exact. It checks the dialog structure, the SDP negotiation, the RTP interval, that the media ends before the `BYE`, the refused call, distinct Call-IDs and ports per call, that a call without a common codec fails, and that a lost RTP packet fails the call with a timeout. `tests/transcript.rs` compares the bytes of every flow at seed 42 with the files under `tests/testdata/`. `UPDATE_GOLDEN=1` records an intended change. The Python tests cover the two fixture checks with synthetic packets and logs.
+The unit tests cover the SIP parser and writer, the SDP offer and answer, the codec table, and the RTP header. `tests/scenarios.rs` runs every scenario between two peers over an in memory UDP network on a paused clock, so the packet gaps are exact. It checks the dialog structure, the SDP negotiation, the RTP interval, that the media ends before the `BYE`, the refused call, distinct Call-IDs and ports per call, that a call without a common codec fails, and that a lost RTP packet fails the call with a timeout. `tests/transcript.rs` compares the bytes of every flow at seed 42 with the files under `tests/testdata/`. `UPDATE_GOLDEN=1` records an intended change. The Python tests cover the packet gap labels with the committed capture and the Zeek check with synthetic logs.
 
 ## Fixture and realism
 
 `fixtures/capture.sh` brings up the QA-01 harness, runs `fixture_peer` on both sides over kernel UDP sockets, and records `fixtures/sip_rtp.pcapng` with 3 calls per scenario, 15 calls and 27 sessions in all (15 SIP, 12 RTP). The calls are shortened to 2 s of talk time and 300 ms of ringing. The script:
 
 1. requires one session in the capture for every session that the peers ran, which fails when two sessions share a 5-tuple (MOD-21),
-2. scores the capture with nDPI and tshark (`expected.yaml`): every SIP session must be classified as SIP, every RTP session as RTP, and tshark must report no parser error,
-3. runs `rtp_check.py`, which reads every RTP stream with tshark and requires, per stream and direction, a mean inter arrival time within 3% of the packet time that the RTP timestamps announce, and 90% of the gaps within 25% of it, and
-4. when Zeek is installed, runs `zeek_check.py`, which requires one `INVITE` row in `sip.log` for every call, with its own Call-ID and a row that carries a final status code, and no `sip` entry in `weird.log`.
+2. scores the capture with nDPI and tshark (`expected.yaml`): every SIP session must be classified as SIP, every RTP session as RTP, and tshark must report no parser error, and every RTP stream must keep its packet interval (below), and
+3. when Zeek is installed, runs `zeek_check.py`, which requires one `INVITE` row in `sip.log` for every call, with its own Call-ID and a row that carries a final status code, and no `sip` entry in `weird.log`.
 
-The realism runner has no check for the gaps between the packets inside one session. Its temporal check compares the gaps between the starts of sessions and the payload sizes, so `rtp_check.py` carries this acceptance until the runner has such a check.
+The same score covers the packet interval (MOD-24, which replaced `rtp_check.py`). The `temporal.packets` section of `expected.yaml` requires of every RTP stream, in each direction, that 90% of its gaps lie within 8 ms of 20 ms or of 30 ms, whichever is nearest to the median gap of the stream. The committed capture has gaps from 0.09 ms to 63.7 ms in a stream of 20 ms packets and passes. `fixtures/test_packet_labels.py` reads the capture with the temporal check of the runner, needs no tool, and shows that the capture passes and that it fails when the packets of one call are shifted by up to 14 ms. The check is looser than the script was: it does not read the packet time from the RTP timestamps, so a scenario with another packet time needs an entry in `ms`, and it does not test the mean gap, so the exact pacing stays with the paused clock tests of `tests/scenarios.rs`.
 
 The client of `fixture_peer` takes its source port from a counter, one port per flow, so that no two sessions of a capture share a 5-tuple.
 

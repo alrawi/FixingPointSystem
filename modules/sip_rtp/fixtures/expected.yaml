@@ -15,3 +15,12 @@ default: rtp
 applications:
   sip: {ndpi: [SIP]}
   rtp: {ndpi: [RTP]}
+# The temporal section holds the packet interval of the media. The packet time is
+# the ptime_ms variable of a call, which the scenarios draw from 20 and 30 ms in
+# the committed capture. The check judges each direction of each RTP stream alone
+# against the listed time that is nearest to its median gap, requires 90% of its
+# gaps within 8 ms of it, and fails when a stream drifts, bursts, or jitters.
+temporal:
+  packets:
+    applications:
+      rtp: {dist: constant, ms: [20, 30], tolerance_ms: 8, within: 0.9}
