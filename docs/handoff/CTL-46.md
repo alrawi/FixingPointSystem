@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #481 |
 | Branch | `wp/CTL-46` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 66% (2 of 3 plan steps) |
+| Pull request | #483 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-e834bb, lease until 2026-11-12T04:26:17Z |
-| Last verified commit | none |
+| Last verified commit | 228af79 (CI green: ctl `go test -race`, and every other workflow) |
 
 ## Goal
 
@@ -18,7 +18,7 @@
 
 - [x] 1. Change `ksProperty`, the fixture expectation, the example test, and add an HTML report test.
 - [x] 2. Update the Controller page and write the log entry.
-- [ ] 3. Open the PR, get CI green, hand over for review.
+- [x] 3. Open the PR, get CI green, hand over for review.
 
 ## Done and verified
 
@@ -26,11 +26,11 @@
 
 ## Remaining
 
-CI result of the pull request.
+Nothing.
 
 ## Next action
 
-Open the pull request and poll its check runs.
+Review and merge pull request #483.
 
 ## Blockers and open questions
 
@@ -57,3 +57,4 @@ cd controller && go test ./internal/report/...
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-11 | claude-e834bb | claim and implementation | none | claimed #481 |
+| 2026-11-11 | claude-e834bb | ready for review | 228af79 | PR #483, CI green |
