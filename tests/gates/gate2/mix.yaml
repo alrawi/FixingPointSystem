@@ -1,0 +1,167 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# The byte weighted enterprise mix of the Gate 2 suite. mix_config.py turns this
+# table into the test configuration that run.sh stores through POST /v1/configs,
+# into the labels of the realism runner, and into the module trees that the
+# agent loads. One row is one mix entry.
+#
+#   module, scenario  the entry `<module>/<scenario>` of profile.mix
+#   weight            the byte weight in percent; the weights add up to 100
+#   expected_bytes    the application payload bytes of one session with these
+#                     parameters, which the controller needs to turn byte weights
+#                     into session shares (CTL-34); the mix control corrects it
+#                     during the run (CTL-12). The values come from the bytes
+#                     per scenario session of CI runs. The run report seems to count the
+#                     data connection of ftp and the media stream of sip_rtp as
+#                     sessions of their own, so the bytes of one scenario session
+#                     are twice the bytes per counted session there
+#   params            the scenario parameters; every entry listens on its own
+#                     transport and port, because two entries must not share one
+#   application       the row of the mix check. Scenarios that nDPI cannot tell
+#                     apart form one row, so hls and http1 share `http`
+#   ndpi              the nDPI protocols of the application (conformance check)
+#   ports             transport and server port of the sessions that the labels
+#                     name; sessions on other ports (FTP data, RTP media) take the
+#                     default application `aux` of the labels
+#
+# 15 applications of decision D7 run in 15 entries: HTTP/1.1, HTTP/2, HTTPS,
+# DNS, SMTP, IMAP, POP3, FTP, SSH, SMB2, SIP with RTP, HLS, NTP, LDAP, MQTT.
+# The weights keep every large session entry above 100 sessions in the steady
+# phase at the throughput of the test configuration, so that the Poisson arrival
+# of each entry stays inside the tolerance of 2 points with margin.
+aux:
+  application: aux
+  ndpi: [FTP_DATA, RTP]
+entries:
+  - module: http1
+    scenario: single_fetch
+    weight: 8
+    expected_bytes: 8488
+    params: {server_port: 80, body_size: 8192}
+    application: http
+    ndpi: [HTTP]
+    ports: [{transport: tcp, port: 80}]
+  - module: http2
+    scenario: h2c_browse
+    weight: 7
+    expected_bytes: 43930
+    params:
+      server_port: 8082
+      page_size: 12000
+      chunk_size: 2048
+      rounds: 2
+      tail_min: 200
+      tail_max: 2000
+    application: http2
+    ndpi: [HTTP2]
+    ports: [{transport: tcp, port: 8082}]
+  - module: http1
+    scenario: https_fetch
+    weight: 4
+    expected_bytes: 20355
+    params: {server_port: 443, body_size: 20000}
+    application: https
+    ndpi: [TLS]
+    ports: [{transport: tcp, port: 443}]
+  - module: dns
+    scenario: lookup_a
+    weight: 0.5
+    expected_bytes: 84
+    params: {server_port: 53}
+    application: dns
+    ndpi: [DNS]
+    ports: [{transport: udp, port: 53}]
+  - module: smtp
+    scenario: relay
+    weight: 13
+    expected_bytes: 12047
+    params: {server_port: 25, body_size: 900, attachment_min: 2000, attachment_max: 12000}
+    application: smtp
+    ndpi: [SMTP]
+    ports: [{transport: tcp, port: 25}]
+  - module: imap
+    scenario: fetch_messages
+    weight: 13
+    expected_bytes: 23743
+    params: {server_port: 143, body_size: 900, attachment_min: 2000, attachment_max: 12000, messages: 6, fetches: 2}
+    application: imap
+    ndpi: [IMAP]
+    ports: [{transport: tcp, port: 143}]
+  - module: pop3
+    scenario: retrieve_all
+    weight: 12
+    expected_bytes: 34121
+    params: {server_port: 110, body_size: 900, attachment_min: 2000, attachment_max: 12000, messages: 3, fetches: 3}
+    application: pop3
+    ndpi: [POP3]
+    ports: [{transport: tcp, port: 110}]
+  - module: ftp
+    scenario: retr_epsv
+    weight: 11
+    expected_bytes: 7765
+    params: {server_port: 21, file_min: 2000, file_max: 12000}
+    application: ftp
+    ndpi: [FTP_CONTROL, FTP_DATA]
+    ports: [{transport: tcp, port: 21}]
+  - module: ssh
+    scenario: remote_command
+    weight: 11
+    expected_bytes: 9699
+    params: {server_port: 22, output_bytes: 8000}
+    application: ssh
+    ndpi: [SSH]
+    ports: [{transport: tcp, port: 22}]
+  - module: smb2
+    scenario: download
+    weight: 6
+    expected_bytes: 42327
+    params: {server_port: 445, file_size: 40000, read_size: 65536, tail_size: 40000}
+    application: smb2
+    ndpi: [SMBv23, SMB]
+    ports: [{transport: tcp, port: 445}]
+  - module: sip_rtp
+    scenario: call_pcmu
+    weight: 7
+    expected_bytes: 37230
+    params: {sip_port: 5060, rtp_port_min: 16384, rtp_port_max: 32766, ring_ms: 300, talk_ms: 2000}
+    application: voip
+    ndpi: [SIP, RTP]
+    ports: [{transport: udp, port: 5060}]
+  - module: hls
+    scenario: vod_ladder
+    weight: 5
+    expected_bytes: 100000
+    params:
+      server_port: 8090
+      ladder: "160000@426x240,320000@640x360,640000@960x540"
+      segment_ms: 400
+      stages: 3
+      stage_segments: 2
+      segments: 6
+    application: http
+    ndpi: [HTTP]
+    ports: [{transport: tcp, port: 8090}]
+  - module: ntp
+    scenario: sntp_query
+    weight: 0.5
+    expected_bytes: 230
+    params: {server_port: 123}
+    application: ntp
+    ndpi: [NTP]
+    ports: [{transport: udp, port: 123}]
+  - module: ldap
+    scenario: bind_search
+    weight: 1
+    expected_bytes: 1100
+    params: {server_port: 389}
+    application: ldap
+    ndpi: [LDAP]
+    ports: [{transport: tcp, port: 389}]
+  - module: mqtt
+    scenario: publish_qos1
+    weight: 1
+    expected_bytes: 700
+    params: {server_port: 1883, keepalive: 2, messages: 6, interval_min_ms: 100, interval_max_ms: 700}
+    application: mqtt
+    ndpi: [MQTT]
+    ports: [{transport: tcp, port: 1883}]

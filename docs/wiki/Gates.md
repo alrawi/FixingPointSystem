@@ -73,3 +73,55 @@ A local run on 2026-11-03 with debug builds on a 2 vCPU Firecracker microVM (Lin
 - The suite runs two agent identities, one per side, until the controller can place the client and server sides of one plan on different agents or the agent can enter a namespace per port.
 - The suite captures only the client arm, which carries every session of the mix in both directions.
 - Run ids carry the prefix `cfg_`, the same prefix as configuration ids, which we report to the CTL workstream.
+
+## Gate 2
+
+Gate 2 holds when all 15 application modules of decision D7 pass the realism checks in module CI, a byte weighted enterprise mix stays within 2 points of its weights, and the qcow2 image boots and runs a test unattended. QA-05 added the suite [`tests/gates/gate2/`](https://github.com/alrawi/FixingPointSystem/tree/main/tests/gates/gate2), and its [README](https://github.com/alrawi/FixingPointSystem/blob/main/tests/gates/gate2/README.md) lists every file, setting, and output.
+
+```bash
+make build-qa-gate2            # agent, controller, and the 14 fixture peers
+sudo make e2e-qa-gate2         # the module stage and the mix stage
+make e2e-qa-gate2-image        # the image stage, which needs Packer, QEMU, and KVM
+```
+
+### Stages
+
+| Stage | What it runs | Needs |
+|---|---|---|
+| Modules | `realism/ci/module-realism.sh` for each of the 14 native modules, with its fixture peer, in the namespace harness of QA-01 | root, tshark, Zeek, nDPI |
+| Mix | The controller and two agent identities run the byte weighted mix of `mix.yaml` in the namespace harness, and the realism runner scores the capture of the client arm | root, the controller and agent builds, tshark, Zeek, nDPI |
+| Image | `image/build.sh` and `image/boot-test.sh --role all-in-one --run` (IMG-04) | Packer, QEMU, and KVM or TCG |
+
+`gate2_report.py` reads the files of the three stages and writes `report.md` and `summary.json`, each check with its measured value. A stage that is selected and has no files fails its checks, so the gate cannot pass by a missing stage. The exit code is 0 for a pass, 1 for a failed check, and 2 when the suite cannot run. HTTPS has no module of its own: it takes the encryption check of both `http1` and `http2`, which decrypts a sample of sessions and compares their JA4 fingerprints.
+
+### The mix
+
+`mix.yaml` has one entry for each of the 15 applications, with a byte weight (the weights add up to 100), the bytes per session that the controller needs to turn byte weights into session shares, the scenario parameters, and the nDPI names of the application row. Every entry listens on its own transport and port, because the labels assign a session to its application by its server port and nDPI cannot tell `http1` from `hls`, which share the row `http`. FTP data and RTP fall into the row `aux`, which has no weight. The run uses a throughput of 8 Mbit/s for 10 s of ramp up, 120 s of steady load, and 10 s of ramp down with the seed 7. The arrivals are Poisson per entry, so a row with few sessions varies by about its square root: the weights keep the rows with large sessions (SMB, HTTP/2, and HTTPS) above 100 sessions each.
+
+### Waivers
+
+Two waivers keep the suite honest about what the system cannot do yet. The report names both and then says `PASS WITH WAIVERS`, and the workflow sets them.
+
+- **Modules the agent does not run.** `engine/fps-agent` links the native crate of a module to run it, and AGT-21 adds `ntp`, `mqtt`, `ldap`, and `hls`. `FPS_GATE2_MIX_WAIVE` leaves them out of the mix. A waiver lapses by itself once `engine/fps-agent/Cargo.toml` depends on the crate, so merging AGT-21 puts the four modules into the mix without an edit. Their module checks run in the module stage regardless.
+- **The byte basis.** The scenario catalog of the controller (`internal/wiring/adapters.go`) does not pass `expected_bytes` of the manifests to the compiler, so `profile.basis: bytes` fails with `ErrNoByteEstimate`, and a `throughput_bps` objective would fail too. `FPS_GATE2_BASIS=sessions` makes the suite compute the session shares and the session rate from the estimates in `mix.yaml`, which is what the compiler does for the basis `bytes`, and the controller then runs on the basis `sessions`. The mix control of CTL-12 does not run, and the capture is still scored against the byte weights (`mix/score-config.yaml`). Without the variable the suite runs the basis `bytes`, which no CI run has exercised, because the catalog fails it.
+
+### Negative proof
+
+`prove-failure.sh` takes the files of a passing run and expects the gate to fail three times: with a conformance threshold just above the lowest measured ratio, with a failed parser error check in the `http1` module report (the report must name it), and with the mix capture scored again at a tolerance of 0 points. The report job of the workflow runs the first two on the files of all three stages, and the mix job runs the third on its own capture.
+
+### Measured values
+
+The workflow run for pull request 487 on `ubuntu-24.04` passed in all five jobs on 2026-11-12 with the verdict `PASS WITH WAIVERS`.
+
+- **Modules.** All 14 modules passed every check that their `expected.yaml` enables, with conformance at 100% over 16 (`ssh`) to 200 (`http1`) sessions and no finding of tshark or Zeek. HTTPS decrypted 80 of 80 `http1` sessions and 40 of 40 `http2` sessions with a JA4 match each.
+- **Mix.** The 10 modules that the agent runs attempted 19,606 sessions in the client run (8,392 `dns`, 4,138 `ftp`, 1,697 `http1`, 213 `http2`, 799 `imap`, 491 `pop3`, 544 `sip_rtp`, 185 `smb2`, 1,510 `smtp`, and 1,637 `ssh`) and none failed. The largest difference between a byte share and its weight was 0.898 points by the run metrics (HTTPS) and 1.367 points by nDPI (HTTPS, where the TLS records add bytes that the metrics do not count), against the 2 point limit. Unmatched traffic was 0%, conformance was 100% for every application, and the parsers reported nothing. The mix scored again at a tolerance of 0 points failed the gate as required.
+- **Image.** The boot test passed 51 checks with no failure on KVM, and the unattended run in the VM completed with a passed verdict and 557 succeeded sessions (349 `http1`, 208 `dns`).
+
+An earlier run of the mix with guessed byte estimates missed the limit by up to 8.6 points, which shows that the check can fail. The estimates in `mix.yaml` now come from the bytes per scenario session of that run, where the run report seems to count the FTP data connection and the SIP media stream as sessions of their own (the session counts of both doubled against their weights). Another controller or a heavier agent changes these estimates only through the controller, and the byte basis ends the need for them once the catalog carries `expected_bytes`.
+
+### Limits
+
+- The mix leaves out `hls`, `ldap`, `mqtt`, and `ntp` until AGT-21 merges, and it runs on the session basis until the controller catalog carries `expected_bytes`. Gate 2 does not hold in full before both waivers end.
+- Most module manifests have no `expected_bytes`, so the suite stages the module trees with the estimates of `mix.yaml` and does not change the tracked manifests.
+- The suite runs two agent identities, one per side, as the Gate 1 suite does.
+- The image stage needs Packer, QEMU, and a runner with KVM or the patience for TCG.

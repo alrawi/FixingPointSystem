@@ -1,0 +1,9 @@
+## [2026-11-12] ingest | ENG-28 the runtime instance test flakes of batch 29
+
+ENG-28 looked at the two failures of `engine/fps-runtime/tests/instances.rs` in batch 29. The code change is in the test file only.
+
+Failure 1, `mixed_session_runs_with_one_data_connection_per_transfer` at line 318 (`one SYN per connection`), was a bug in the test. It put the pair (source host, source port) of every client SYN into a set and asserted that each insert was new. The client sockets bind with `IP_BIND_ADDRESS_NO_PORT`, so the kernel picks the source port at connect time and may give one source host the same port for two connections to different destination ports, here the control connection and a data connection of one instance. A local run of the whole binary reproduced the failure once in 120 runs, and a diagnostic run showed `127.61.0.4:40204` as the source of one SYN to the control port and one to data port 52486. The set now holds the four tuple, which still fails on a second SYN of one connection. No change to the runtime was needed.
+
+Failure 2, `concurrent_instances_that_draw_the_same_data_port_all_succeed` at line 713 (client side counted 16 succeeded flow sessions, not 32), has no proven cause. The job took 6.1 s against about 1.3 s in a passing run, which fits one 5 s timeout in the client (`connect_timeout` or an `expect` of 5000 ms), and the log names no reason. It did not recur in about 650 local runs (plain, next to busy loops, and pinned to one core with a busy loop) or in 1200 runs on the hosted runner (600 of the two tests and 600 of the whole binary, 200 per run on each of three runners). Both tests now assert the failed series, with its labels, before they count successes, so a repeat names the flow and the reason.
+
+Shared page notes: none. The Engine page, the row of the instances tests, carries the four tuple note.
