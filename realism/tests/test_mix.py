@@ -627,7 +627,7 @@ def test_the_report_entry_validates_against_the_schema(tmp_path: Path) -> None:
         ).to_dict()
         jsonschema.validate(report, schema)
         entry = next(c for c in report["checks"] if c["check"] == "mix_accuracy")
-        assert report["version"] == "0.15.0"
+        assert report["version"] == "0.16.0"
         assert entry["passed"] is expected
         assert {m["name"] for m in entry["metrics"]} == {
             "mix.share_pct",
@@ -837,7 +837,7 @@ def test_the_fixture_gives_the_literal_series_by_bytes(tmp_path: Path) -> None:
 
 def test_the_series_validate_against_catalog_0_4_0() -> None:
     catalog = yaml.safe_load(CATALOG.read_text())
-    assert catalog["version"] == "0.6.0"
+    assert catalog["version"] == "0.7.0"
     metrics = {m["name"]: m for m in catalog["metrics"]}
     source_values = set(catalog["labels"]["source"]["values"])
     classifier_values = set(catalog["labels"]["classifier"]["values"])

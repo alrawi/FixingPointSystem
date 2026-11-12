@@ -303,11 +303,11 @@
           "then": {"$ref": "#/$defs/host_identity"}
         },
         {
-          "description": "Every check of a kind that the metric catalog names in its label check carries the realism.check_failures series, which is 0 for a check that passed and at least 1 for one that did not. The host_identity check is not in the list, because the catalog (0.6.0) has no such value for the label, so it carries no series yet (see contracts/changes/CON-23.md and contracts/changes/CON-25.md).",
+          "description": "Every check of a kind that the metric catalog names in its label check carries the realism.check_failures series, which is 0 for a check that passed and at least 1 for one that did not. The catalog (0.7.0) names all ten check kinds (see contracts/changes/CON-23.md, CON-25.md, and CON-27.md).",
           "if": {
             "properties": {
               "check": {
-                "enum": ["conformance", "parser_errors", "encryption", "content", "session_structure", "temporal", "mix_accuracy", "transport_behavior", "messages"]
+                "enum": ["conformance", "parser_errors", "encryption", "content", "session_structure", "temporal", "mix_accuracy", "transport_behavior", "messages", "host_identity"]
               }
             },
             "required": ["check"]
@@ -1008,7 +1008,7 @@
                     "additionalProperties": {"type": "number"}
                   },
                   "values": {
-                    "description": "The packet times in seconds of a paced packet gap target, null for every other target. Reports before format 0.15.0 have no such field.",
+                    "description": "The packet times in seconds of a paced packet gap target, null for every other target. Reports before format 0.16.0 have no such field.",
                     "type": ["array", "null"],
                     "items": {"type": "number", "exclusiveMinimum": 0},
                     "minItems": 1
@@ -1040,7 +1040,7 @@
                 "type": ["string", "null"]
               },
               "streams": {
-                "description": "The streams of a paced packet gap comparison: judged (with at least min_samples gaps), failed, and too_short to be judged alone. The statistic is the largest share of late gaps of any judged stream. Null for every other comparison, and for a paced one with insufficient data. Reports before format 0.15.0 have no such field.",
+                "description": "The streams of a paced packet gap comparison: judged (with at least min_samples gaps), failed, and too_short to be judged alone. The statistic is the largest share of late gaps of any judged stream. Null for every other comparison, and for a paced one with insufficient data. Reports before format 0.16.0 have no such field.",
                 "oneOf": [
                   {"type": "null"},
                   {
@@ -1197,9 +1197,16 @@
         "check": {"const": "host_identity"},
         "passed": {"type": "boolean"},
         "metrics": {
-          "description": "Empty until the metric catalog (0.6.0 has no value host_identity for the label check) names this check, which gives it the realism.check_failures series.",
+          "description": "The realism.check_failures series of the check (metric catalog 0.7.0, contracts/changes/CON-27.md): its value is failures_total, so 0 exactly when the check passed. The check carries no other series.",
           "type": "array",
-          "maxItems": 0
+          "items": {"$ref": "#/$defs/failures_metric"},
+          "contains": {
+            "properties": {
+              "name": {"const": "realism.check_failures"},
+              "labels": {"properties": {"check": {"const": "host_identity"}}, "required": ["check"]}
+            },
+            "required": ["name", "labels"]
+          }
         },
         "expected_hosts": {
           "description": "The expected number of hosts, or null when the labels leave it open. A null max is no upper limit.",

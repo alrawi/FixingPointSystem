@@ -24,7 +24,7 @@ The temporal check gets a per application property for the gaps between the pack
 ## Done and verified
 
 1. Labels: `temporal.packets` in `realism/labels.py` and `labels.schema.json`. `python3 -m pytest realism/tests/test_packet_gaps.py` covers the parser and the schema (36 passed).
-2. Check: `packet_gap` in `realism/temporal.py`, schema and report format 0.15.0, controller schema copy refreshed with `cp`.
+2. Check: `packet_gap` in `realism/temporal.py`, schema and report format 0.16.0, controller schema copy refreshed with `cp`.
 3. Tests: `realism/tests/test_packet_gaps.py`, including the committed sip_rtp fixture (passes with `ms: [20, 30]`, fails with either time alone) and jittered, bursty, and wrong packet time captures. `ruff format --check`, `ruff check`, and `mypy` of `make lint-rlm` pass.
 4. Pull request #486 opened, and all 57 check runs of commit f1bae2c passed. `python3 -m pytest -q realism` gave 761 passed and 9 skipped before the last test was added. The report format is 0.15.0 and origin/main had not moved, so CON-27 had not merged yet.
 
@@ -47,7 +47,7 @@ none
 3. Each stream with at least `min_samples` gaps is judged alone, so one jittered call cannot hide among good ones.
 4. Packet gaps carry no `realism.ks_*` series, because the catalog 0.6.0 has no property label for them. This needs a CON follow up (see the log entry).
 5. The controller embeds a copy of the report schema, which a Go test compares, and `ui/src/api/schema.d.ts` is generated from the OpenAPI file that references it (ui.yml checks it). We refreshed the copy with `cp` and regenerated the types with openapi-typescript 7.13.0, so those two are the only files outside `realism/` and the wiki.
-6. The fields that 0.15.0 added (`target.values`, `streams`) are optional in the schema, so the controller still takes reports of older formats. Report format 0.15.0. CON-27 also bumps it, so the second merge renumbers.
+6. The fields that 0.16.0 added (`target.values`, `streams`) are optional in the schema, so the controller still takes reports of older formats. Report format 0.16.0, after CON-27 took 0.15.0.
 
 ## Pitfalls
 

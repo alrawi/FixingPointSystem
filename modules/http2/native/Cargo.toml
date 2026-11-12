@@ -56,3 +56,7 @@ path = "../tests/transcript.rs"
 [[test]]
 name = "fixture"
 path = "../tests/fixture.rs"
+
+[[test]]
+name = "tshark_wrapper"
+path = "../tests/tshark_wrapper.rs"

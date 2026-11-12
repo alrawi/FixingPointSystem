@@ -10,7 +10,7 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.4, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.4 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
-| `metrics/catalog.yaml` | Metric catalog 0.6.0 |
+| `metrics/catalog.yaml` | Metric catalog 0.7.0 |
 | `examples/` | Example modules, tests, and plans that every validator run checks |
 
 ## Agent control protocol
@@ -292,6 +292,19 @@ CON-25 moves the metric catalog from 0.5.0 to 0.6.0. RLM-14 added the `messages`
 | `contracts/examples/realism/check-metrics.yaml` | Gains a passing and a failing case of the kind `messages` |
 
 The controller copy of the catalog, the `fps-stats` tables, two version pins, and the realism runner follow the contract, and the coordinator and the RLM package apply them.
+
+## The host identity check in the catalog
+
+CON-27 moves the metric catalog from 0.6.0 to 0.7.0. RLM-10 added the `host_identity` check after CON-25, so the label `check` had no value for it and a failing check never reached `RunReport.realism`. The owner approved the contract change on 2026-11-11. The change is additive, and the entry `contracts/changes/CON-27.md` records it.
+
+| Change | Rule |
+|---|---|
+| Label `check` | Gains the value `host_identity`, at the end of its list |
+| `realism.check_failures` | For `check: host_identity` its value is `failures_total` of the check entry, which is 0 exactly when the check passed. The check carries no other series, and the generic target `== 0` applies |
+| Two checks of one kind | A report holds at most one check of each kind. `passed` of the series is the `passed` of that check, and a document with two checks of one kind is invalid: the controller gives the finding for a repeated metric and labels pair, and it does not combine the outcomes |
+| `contracts/examples/realism/check-metrics.yaml` | Gains a passing and a failing case of the kind `host_identity` |
+
+The controller copy of the catalog, the `fps-stats` tables, the version pins, and the realism runner follow the contract.
 
 ## Capture drop counts
 

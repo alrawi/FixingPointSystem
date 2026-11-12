@@ -534,13 +534,15 @@ func conformanceProperty(m realismMetric) string {
 	return s
 }
 
-// ksProperty words a KS metric, for example `inter arrival of http1, KS p value`.
+// ksProperty words a KS metric as the examples of CON-23 do, for example
+// `KS p value of inter_arrival of http1`. The value of the label property
+// stays as it is.
 func ksProperty(m realismMetric) string {
 	what := "KS p value"
 	if m.Name == metricKSStatistic {
 		what = "KS statistic"
 	}
-	return strings.ReplaceAll(m.Labels["property"], "_", " ") + " of " + m.Labels["application"] + ", " + what
+	return what + " of " + m.Labels["property"] + " of " + m.Labels["application"]
 }
 
 // genericProperty words a metric of a check kind without a rule of its own,

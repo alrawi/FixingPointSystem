@@ -508,7 +508,7 @@ def test_the_report_carries_the_packet_gap_comparison_and_validates(tmp_path: Pa
         pcap = cap.write_pcap(tmp_path / f"{name}.pcap")
         report = score(pcap, labels, STUB).to_dict()
         _validate(report)
-        assert report["version"] == REPORT_VERSION == "0.15.0"
+        assert report["version"] == REPORT_VERSION == "0.16.0"
         entries.append(report["checks"][-1])
     ok, bad = entries
     assert (ok["check"], ok["passed"]) == ("temporal", True)
@@ -548,7 +548,7 @@ def test_packet_gaps_add_no_ks_series_next_to_the_other_properties(tmp_path: Pat
 
 
 def test_a_temporal_entry_of_an_earlier_format_still_validates(tmp_path: Path) -> None:
-    """The fields that 0.15.0 added are optional, so the controller still takes older reports."""
+    """The fields that 0.16.0 added are optional, so the controller still takes older reports."""
     cap = pcapgen.Capture()
     _call(cap, 1, 20, 100, jitter_ms=1)
     doc = {

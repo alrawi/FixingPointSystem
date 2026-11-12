@@ -740,6 +740,49 @@ static REGISTRY: &[Registration] = &[
             Ok(Box::new(fps_module_sip_rtp::SipRtp::default()))
         },
     },
+    stateless!(fps_module_ntp, Ntp),
+    // Mqtt holds the packet that recv decoded last, so it is a value with state.
+    // Every session clones its own copy of the fresh value, as with Http2.
+    Registration {
+        name: fps_module_mqtt::MODULE_NAME,
+        catalog: || catalog_of!(fps_module_mqtt),
+        build: |ctx| {
+            if ctx.given.is_some() {
+                return Err(BuildError::Settings(
+                    "the plan gives settings, but its native functions take none".to_owned(),
+                ));
+            }
+            Ok(Box::new(fps_module_mqtt::Mqtt::default()))
+        },
+    },
+    // Ldap holds the message that recv decoded and the search that matches ran,
+    // so it is a value with state, and every session clones its own copy.
+    Registration {
+        name: fps_module_ldap::MODULE_NAME,
+        catalog: || catalog_of!(fps_module_ldap),
+        build: |ctx| {
+            if ctx.given.is_some() {
+                return Err(BuildError::Settings(
+                    "the plan gives settings, but its native functions take none".to_owned(),
+                ));
+            }
+            Ok(Box::new(fps_module_ldap::Ldap::default()))
+        },
+    },
+    // Hls holds the segment counter and the pace of one flow side, so every
+    // session side gets its own copy, as with Http2.
+    Registration {
+        name: fps_module_hls::MODULE_NAME,
+        catalog: || catalog_of!(fps_module_hls),
+        build: |ctx| {
+            if ctx.given.is_some() {
+                return Err(BuildError::Settings(
+                    "the plan gives settings, but its native functions take none".to_owned(),
+                ));
+            }
+            Ok(Box::new(fps_module_hls::Hls::default()))
+        },
+    },
 ];
 
 /// The ssh functions of one session side. `fps_module_ssh::Ssh` is not
@@ -1095,7 +1138,7 @@ mod tests {
             NativeFunctions::registered(),
             [
                 "http1", "dns", "content", "smtp", "imap", "pop3", "ftp", "smb2", "http2", "ssh",
-                "sip_rtp"
+                "sip_rtp", "ntp", "mqtt", "ldap", "hls"
             ]
         );
     }
