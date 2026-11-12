@@ -1,6 +1,6 @@
-# Contracts
+# Contracts v0.2
 
-Each contract carries its own version, and the table names it: the REST API 0.12.0, the agent protocol 0.2.4, the module manifest v0.5, the scenario contract v0.6, the test configuration v0.3, the extension interface 0.1.0, and the metric catalog 0.8.0.
+The heading names the engine API generation, which is the minor part of `engine_api` that modules declare (`>=0.2, <0.3`) and of `EngineAPIVersion` of the controller (`controller/internal/api/capabilities.go`, and `TestCapabilitiesVersions` compares the two). It is not the version of any single contract. Each contract carries its own version, and the table below names it: the REST API 0.12.0, the agent protocol 0.2.4, the module manifest v0.5, the scenario contract v0.6, the test configuration v0.3, the extension interface 0.1.0, and the metric catalog 0.8.0.
 
 These files define the interfaces between FixingPointSystem workstreams. Implementation work must conform to them, and changes follow the process in `CONTRIBUTING.md`.
 

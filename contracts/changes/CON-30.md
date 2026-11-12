@@ -6,7 +6,7 @@ Contract. Module manifest schema `contracts/schemas/module-manifest.schema.json`
 
 - The module manifest schema moves from v0.4 to v0.5. The `extension.wasm` path is now a constant, which refuses a value that v0.4 accepted, so the change takes a minor number, as CON-18 did when it tightened `transport`. No module in the repository and no example sets another path, so every manifest that a v0.4 reader accepted and an agent could use stays valid.
 - OpenAPI (0.12.0), the agent protocol (0.2.4), the scenario contract (v0.6), the test configuration (v0.3), and the metric catalog (0.8.0) stay as they are.
-- `contracts/README.md` carried the heading "Contracts v0.2" and the catalog version 0.5.0. It now has no single version and names the version of every contract.
+- `contracts/README.md` kept the heading "Contracts v0.2". MOD-26 took it for a stale contract version, but it names the engine API generation that `engine_api` ranges and `EngineAPIVersion` of the controller carry, and `TestCapabilitiesVersions` compares the two, so the heading stays and the README now says what it means. The table also gave the catalog version 0.5.0, which is now 0.8.0, and the README names the version of every contract.
 
 ## Decision: the `extension.wasm` path
 
