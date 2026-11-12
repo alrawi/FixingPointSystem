@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #494 |
 | Branch | `wp/MOD-25` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (5 of 6 plan steps) |
+| Pull request | #518 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-9c4e1a, lease until 2026-11-12T17:54:55Z |
-| Last verified commit | none |
+| Last verified commit | 890738d |
 
 ## Goal
 
@@ -21,7 +21,7 @@ Every scenario of every first party module manifest carries a measured `expected
 - [x] 3. ftp, smtp, pop3, imap estimates and guards
 - [x] 4. http1, http2, ssh, smb2 estimates and guards
 - [x] 5. Guide fixes, qa-gate2.yml, log entry
-- [ ] 6. PR, CI, review
+- [x] 6. PR, CI, review
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ Every scenario of every first party module manifest carries a measured `expected
 
 ## Remaining
 
-PR, CI (qa-gate2 on the bytes basis), review step.
+The acceptance item "qa-gate2 passes on the bytes basis with no waiver" does not hold (controller or run report counts spawned flows as sessions), and the QA-05 unit test needs a one line fix. Both are for the coordinator, see the PR description and the log entry.
 
 ## Next action
 
-Open the PR and poll CI.
+Coordinator: push the one line fix of tests/gates/gate2/test_mix_config.py line 132 to the branch, then merge or open a package for the session counting.
 
 ## Blockers and open questions
 
@@ -67,3 +67,4 @@ git log --oneline -3
 | 2026-11-12T16:25Z | claude-9c4e1a | claim | none | claimed #494 |
 | 2026-11-12T16:50Z | claude-9c4e1a | checkpoint | see git log | estimates, guards, guide, workflow, log entry |
 | 2026-11-12T17:10Z | claude-9c4e1a | checkpoint | see git log | PR 518 opened; qa-gate2 mix fails on bytes basis, workflow restored |
+| 2026-11-12T17:35Z | claude-9c4e1a | review | 890738d | CI green except the qa-gate2 unit test of QA-05 (outside paths); mix passes with the waiver |
