@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #495 |
 | Branch | `wp/RLM-18` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (3 of 3 plan steps, CI pending) |
+| Pull request | #516 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-71aa28, lease until 2026-11-12T17:55:25Z |
-| Last verified commit | none |
+| Last verified commit | 712f31b (54 of 54 check runs green) |
 
 ## Goal
 
@@ -28,11 +28,11 @@
 
 ## Remaining
 
-CI of the pull request, then `fps_swarm.py review`.
+Nothing. The coordinator reviews and merges.
 
 ## Next action
 
-Wait for CI of the pull request.
+Review pull request #516.
 
 ## Blockers and open questions
 
@@ -58,3 +58,4 @@ python3 -m pytest realism/tests/test_decrypted.py -q
 |---|---|---|---|---|
 | 2026-11-12 | claude-71aa28 | claim | none | claimed #495 |
 | 2026-11-12 | claude-71aa28 | checkpoint | see branch | fix, tests, docs, log entry |
+| 2026-11-12 | claude-71aa28 | finish | 712f31b | CI green, moved to review |
