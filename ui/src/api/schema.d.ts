@@ -1711,8 +1711,8 @@ export interface components {
             /** @constant */
             check: "host_identity";
             passed: boolean;
-            /** @description Empty until the metric catalog (0.6.0 has no value host_identity for the label check) names this check, which gives it the realism.check_failures series. */
-            metrics: unknown[];
+            /** @description The realism.check_failures series of the check (metric catalog 0.7.0, contracts/changes/CON-27.md): its value is failures_total, so 0 exactly when the check passed. The check carries no other series. */
+            metrics: components["schemas"]["failures_metric"][];
             /** @description The expected number of hosts, or null when the labels leave it open. A null max is no upper limit. */
             expected_hosts: {
                 min: number;
@@ -2328,8 +2328,8 @@ export interface components {
                     /** @constant */
                     check: "host_identity";
                     passed: boolean;
-                    /** @description Empty until the metric catalog (0.6.0 has no value host_identity for the label check) names this check, which gives it the realism.check_failures series. */
-                    metrics: unknown[];
+                    /** @description The realism.check_failures series of the check (metric catalog 0.7.0, contracts/changes/CON-27.md): its value is failures_total, so 0 exactly when the check passed. The check carries no other series. */
+                    metrics: components["schemas"]["failures_metric"][];
                     /** @description The expected number of hosts, or null when the labels leave it open. A null max is no upper limit. */
                     expected_hosts: {
                         min: number;

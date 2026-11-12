@@ -360,7 +360,15 @@ def test_the_entry_of_a_passing_and_a_failing_check_validates(tmp_path: Path) ->
         entry = hosts.check(pcap, expected=Count(2, 2)).to_dict()
         assert entry["passed"] is passed
         assert entry["check"] == "host_identity"
-        assert entry["metrics"] == []
+        # CON-27: the series is failures_total, 0 exactly when the check passed.
+        assert entry["failures_total"] == (0 if passed else 1)
+        assert entry["metrics"] == [
+            {
+                "name": "realism.check_failures",
+                "labels": {"check": "host_identity"},
+                "value": entry["failures_total"],
+            }
+        ]
         assert entry["expected_hosts"] == {"min": 2, "max": 2}
         report = {
             "report": "fps-realism-report",
@@ -397,7 +405,9 @@ def test_an_open_expectation_validates_as_null(tmp_path: Path) -> None:
 def test_the_schema_refuses_a_conflict_with_one_mac() -> None:
     entry = {
         "check": "host_identity",
-        "metrics": [],
+        "metrics": [
+            {"name": "realism.check_failures", "labels": {"check": "host_identity"}, "value": 1}
+        ],
         "passed": False,
         "expected_hosts": None,
         "hosts": 1,
@@ -453,7 +463,7 @@ def test_score_adds_the_check_for_the_section_the_flag_or_the_count(
         report = score(pcap, labels_file(_doc(section)), classifier, **kwargs)
         assert [c["check"] for c in report.checks] == ["conformance", "host_identity"]
         assert report.passed
-        assert report.to_dict()["version"] == REPORT_VERSION == "0.14.0"
+        assert report.to_dict()["version"] == REPORT_VERSION == "0.15.0"
         _validate(report.to_dict())
     wrong = score(pcap, labels_file(_doc({"count": 2})), classifier, host_count=3)
     assert not wrong.passed

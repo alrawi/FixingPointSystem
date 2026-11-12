@@ -226,3 +226,24 @@ examples:
           - {name: realism.check_failures, labels: {check: messages}, value: 2}
         results:
           - {metric: realism.check_failures, labels: {check: messages}, property: failures of the messages check, observed: 2, target: "== 0", passed: false}
+
+  # CON-27: the host_identity check of RLM-10. Its realism.check_failures is its
+  # failures_total, the number of failure sentences (one for each address conflict, one for a
+  # host count outside the range of the labels, one for a capture without an IP host, and one
+  # for a capture without an Ethernet source address), and it carries no other series.
+  - check: host_identity
+    report: {}
+    cases:
+      - name: passing
+        check_passed: true
+        metrics:
+          - {name: realism.check_failures, labels: {check: host_identity}, value: 0}
+        results:
+          - {metric: realism.check_failures, labels: {check: host_identity}, property: failures of the host_identity check, observed: 0, target: "== 0", passed: true}
+      - name: failing
+        check_passed: false
+        note: One IP address sends from two MAC addresses (one address conflict) and the capture holds 2 hosts where the labels expect 3, so failures_total is 2.
+        metrics:
+          - {name: realism.check_failures, labels: {check: host_identity}, value: 2}
+        results:
+          - {metric: realism.check_failures, labels: {check: host_identity}, property: failures of the host_identity check, observed: 2, target: "== 0", passed: false}

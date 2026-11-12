@@ -1,14 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""The metric series of every check of the realism report (CON-23 and CON-25, report format 0.14.0).
+"""The metric series of every check of the realism report (CON-23, CON-25, CON-27; format 0.15.0).
 
 Every check kind of the metric catalog carries ``realism.check_failures``, and most carry a
 series of their own. Each case below builds a small capture or a committed fixture, runs one
 check, and compares the whole ``metrics`` array with a literal, once for a passing and once
 for a failing check. The entry then has to validate against the report schema, and the
 examples of ``contracts/examples/realism/check-metrics.yaml`` have to validate against it too.
-The ``messages`` check carries only the failures series since CON-25 (catalog 0.6.0, report
-format 0.14.0), and its value is ``failures_total``. The ``host_identity`` check is the
-exception: the catalog has no value ``host_identity``, so it carries no series yet.
+The ``messages`` check (CON-25, catalog 0.6.0) and the ``host_identity`` check (CON-27, catalog
+0.7.0) carry only the failures series, and its value is ``failures_total``.
 """
 
 from __future__ import annotations
@@ -22,17 +21,18 @@ import jsonschema
 import pytest
 import yaml
 
-from realism import conformance, messages, parser_errors, series, structure
+from realism import conformance, hosts, messages, parser_errors, series, structure
 from realism.capture import summarize
 from realism.classifier import StubClassifier
 from realism.encryption import StubTlsProbe, TlsObservation
 from realism.encryption import check as encryption_check
-from realism.labels import parse
+from realism.labels import Count, parse
 from realism.parsers import KIND_MALFORMED, Finding, StubParser
 from realism.report import REPORT_VERSION, SCHEMA_PATH, score
 from realism.tests import pcapgen
 from realism.tests import test_content as content_tests
 from realism.tests import test_encryption as encryption_tests
+from realism.tests import test_hosts as hosts_tests
 from realism.tests import test_messages as messages_tests
 from realism.tests import test_mix as mix_tests
 from realism.tests import test_structure as structure_tests
@@ -555,7 +555,7 @@ def test_transport_behavior_failing_without_a_handshake_carries_only_the_failure
 
 
 def test_the_report_format_is_0_14_0() -> None:
-    assert REPORT_VERSION == "0.14.0"
+    assert REPORT_VERSION == "0.15.0"
 
 
 def test_a_check_without_its_failures_series_is_refused(tmp_path: Path) -> None:
@@ -600,11 +600,12 @@ def test_the_catalog_names_every_check_kind_that_carries_a_failures_series() -> 
     catalog = yaml.safe_load((REPO / "contracts" / "metrics" / "catalog.yaml").read_text())
     values = catalog["labels"]["check"]["values"]
     assert "messages" in values
-    assert "host_identity" not in values  # a separate future package adds it
+    assert "host_identity" in values
     assert set(series.CATALOG_CHECKS) == set(values)
     assert series.failures_series("messages", 2, False)["value"] == 2
+    assert series.failures_series("host_identity", 2, False)["value"] == 2
     with pytest.raises(ValueError, match="no check kind"):
-        series.failures_series("host_identity", 1, False)
+        series.failures_series("no_such_check", 1, False)
 
 
 def _messages_entry(tmp_path: Path, missing: int) -> dict[str, Any]:
@@ -638,6 +639,48 @@ def test_the_messages_check_requires_exactly_one_failures_series(tmp_path: Path)
         lambda e: e["metrics"].append(_failures("messages", 1)),  # two
         lambda e: e["metrics"].__setitem__(0, _failures("messages", 0)),  # 0 for a failed check
         lambda e: e["metrics"].__setitem__(0, _failures("temporal", 1)),  # another kind
+    ]
+    for change in changes:
+        broken = json.loads(json.dumps(entry))
+        change(broken)
+        with pytest.raises(jsonschema.ValidationError):
+            _validate_entry(broken)
+
+
+def _host_identity_entry(tmp_path: Path, conflict: bool, expected: Count) -> dict[str, Any]:
+    frames = hosts_tests._exchange(("10.0.0.1", hosts_tests.MAC_A), ("10.0.0.2", hosts_tests.MAC_B))
+    if conflict:
+        frames.append(
+            hosts_tests._frame(hosts_tests.MAC_C, hosts_tests._udp("10.0.0.1", "10.0.0.2"))
+        )
+    entry = hosts.check(hosts_tests._capture(tmp_path, frames), expected=expected).to_dict()
+    return entry
+
+
+def test_host_identity_passing_carries_the_failures_series_with_value_0(tmp_path: Path) -> None:
+    entry = _host_identity_entry(tmp_path, False, Count(2, 2))
+    assert entry["failures_total"] == 0
+    _assert_case(entry, True, [_failures("host_identity", 0)])
+
+
+def test_host_identity_failing_carries_the_failures_series_equal_to_failures_total(
+    tmp_path: Path,
+) -> None:
+    # One address conflict and a host count (2) outside the expected 3: two failure sentences.
+    entry = _host_identity_entry(tmp_path, True, Count(3, 3))
+    assert entry["failures_total"] == 2
+    _assert_case(entry, False, [_failures("host_identity", 2)])
+
+
+def test_the_host_identity_check_requires_exactly_one_failures_series(tmp_path: Path) -> None:
+    entry = _host_identity_entry(tmp_path, True, Count(2, 2))
+    assert entry["failures_total"] == 1
+    _validate_entry(entry)
+    changes: list[Callable[[dict[str, Any]], object]] = [
+        lambda e: e["metrics"].pop(),  # none
+        lambda e: e["metrics"].append(_failures("host_identity", 1)),  # two
+        lambda e: e["metrics"].__setitem__(0, _failures("host_identity", 0)),  # 0 for a failure
+        lambda e: e["metrics"].__setitem__(0, _failures("messages", 1)),  # another kind
     ]
     for change in changes:
         broken = json.loads(json.dumps(entry))
