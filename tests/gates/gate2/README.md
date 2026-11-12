@@ -64,11 +64,16 @@ tests/gates/gate2/prove-failure.sh OUT  # the negative proofs
 | `mix/mix.pcapng` | The capture of the router's client arm |
 | `mix/realism.json` | The realism report of the mix capture, with the `mix_accuracy` check |
 | `mix/parser-findings.json` | The parser findings of the mix capture with the facts of their sessions (see Parser findings) |
+| `mix/run.json` | `GET /v1/runs/{id}` of the client run, which carries `calibration` (see Calibration) |
 | `mix/run-report.json`, `mix/run-report.csv`, `mix/run-metrics-scenario.json` | The report and the scenario metrics of the client run |
 | `mix/test-config.yaml`, `mix/expected.yaml` | The configuration and the labels that `mix_config.py` wrote |
 | `mix/context.json` | Run ids, rate, phases, seed, tolerance, waivers, and commit |
 | `mix/controller.log`, `mix/client-agent.log`, `mix/server-agent.log` | Logs of the three processes |
 | `image/boot-test.log`, `image/run/`, `image/context.json` | The log of the boot test, the files of the run in the VM, and the accelerator and image digest |
+
+## Calibration
+
+The report shows how the mix control moved the client run (QA-12). `mix.sh` stores `GET /v1/runs/{id}` of the client run as `mix/run.json`, and the section `Calibration` of the report, beside the byte shares, gives the last step of `Run.calibration` (the steps are oldest first, so the last one is the state at the end): the number of steps, the time, the factor, the target and the session rate that the factor implies, and a row per mix entry with its bytes per session, whether the estimate is measured, and its byte mix multiplier. The controller records steps only for a `throughput_bps` objective and only once the factor leaves one, and multipliers only with `profile.basis: bytes`. A run without steps, or a last step without multipliers (the session basis waiver), gets a line that says so. The section is information and never decides the verdict. An output directory of an earlier run has no `mix/run.json`, and the report then reads the same `calibration` from the `run` object of `mix/run-report.json` and names the file it used.
 
 ## Parser findings
 
