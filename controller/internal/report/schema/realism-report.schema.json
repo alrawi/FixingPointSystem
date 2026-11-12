@@ -952,7 +952,7 @@
       }
     },
     "temporal": {
-      "description": "Inter arrival times and payload sizes against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. The check passes when there is at least one comparison and every one passed. failures names each reason in words.",
+      "description": "Inter arrival times, payload sizes, and packet gaps inside sessions against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. A paced packet gap target (a constant with packet times) judges each stream on its own instead, and its p value is 1 when every judged stream passed and 0 otherwise. The check passes when there is at least one comparison and every one passed. failures names each reason in words.",
       "type": "object",
       "required": [
         "check", "passed", "metrics", "alpha", "min_samples", "sessions_total",
@@ -963,7 +963,7 @@
         "check": {"const": "temporal"},
         "passed": {"type": "boolean"},
         "metrics": {
-          "description": "The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions and over both directions have no catalog label and are only in comparisons.",
+          "description": "The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions, over both directions, and of packet gaps have no catalog label and are only in comparisons.",
           "type": "array",
           "items": {"oneOf": [{"$ref": "#/$defs/temporal_metric"}, {"$ref": "#/$defs/failures_metric"}]},
           "contains": {"properties": {"name": {"const": "realism.check_failures"}, "labels": {"properties": {"check": {"const": "temporal"}}, "required": ["check"]}}, "required": ["name", "labels"]}
@@ -986,13 +986,13 @@
             ],
             "additionalProperties": false,
             "properties": {
-              "property": {"enum": ["inter_arrival", "payload_size"]},
+              "property": {"enum": ["inter_arrival", "payload_size", "packet_gap"]},
               "application": {
                 "description": "Application of the comparison, or null for all sessions.",
                 "type": ["string", "null"]
               },
               "direction": {
-                "description": "Payloads that count in a size comparison, null for arrivals.",
+                "description": "Payloads that count in a size comparison, or the streams that a packet gap comparison reads, null for arrivals.",
                 "enum": ["client", "server", "both", null]
               },
               "unit": {"enum": ["seconds", "bytes"]},
@@ -1003,9 +1003,15 @@
                 "properties": {
                   "dist": {"enum": ["constant", "exponential", "uniform", "lognormal", "pareto", "empirical"]},
                   "parameters": {
-                    "description": "Parameters in seconds or bytes: value, mean, min, max, mu, sigma, alpha, scale. Empty for an empirical target.",
+                    "description": "Parameters in seconds or bytes: value, mean, min, max, mu, sigma, alpha, scale. A paced target also has tolerance and within, and value only with one packet time. Empty for an empirical target.",
                     "type": "object",
                     "additionalProperties": {"type": "number"}
+                  },
+                  "values": {
+                    "description": "The packet times in seconds of a paced packet gap target, null for every other target. Reports before format 0.15.0 have no such field.",
+                    "type": ["array", "null"],
+                    "items": {"type": "number", "exclusiveMinimum": 0},
+                    "minItems": 1
                   },
                   "median": {"type": ["number", "null"]},
                   "source": {
@@ -1032,6 +1038,22 @@
               "reason": {
                 "description": "Why the comparison did not pass, null for a pass.",
                 "type": ["string", "null"]
+              },
+              "streams": {
+                "description": "The streams of a paced packet gap comparison: judged (with at least min_samples gaps), failed, and too_short to be judged alone. The statistic is the largest share of late gaps of any judged stream. Null for every other comparison, and for a paced one with insufficient data. Reports before format 0.15.0 have no such field.",
+                "oneOf": [
+                  {"type": "null"},
+                  {
+                    "type": "object",
+                    "required": ["judged", "failed", "too_short"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "judged": {"type": "integer", "minimum": 1},
+                      "failed": {"type": "integer", "minimum": 0},
+                      "too_short": {"type": "integer", "minimum": 0}
+                    }
+                  }
+                ]
               },
               "observed": {
                 "description": "Minimum, median, mean, and maximum of the observations, null without observations.",

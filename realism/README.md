@@ -74,16 +74,16 @@ We run ndpiReader with `-d`, which turns off its guess from port numbers, so onl
 
 [`schema/realism-report.schema.json`](schema/realism-report.schema.json) defines the report, which is the seam between the realism workstream and its consumers in the controller and the gate suites. The report holds the capture digest, the labels digest, and one entry per check in `checks`. The conformance entry carries `realism.conformance_ratio` from the [metric catalog](../contracts/metrics/catalog.yaml) for each application, the session counts per observed protocol, and the first 100 mismatched sessions.
 
-A later check adds three things. It adds a definition under `$defs`, one `if` and `then` entry in `$defs.check.allOf` that selects the definition by its `check` name, and a test that validates its report entry. Every check keeps the common fields `check`, `passed`, and `metrics`, and every metric name and label comes from the catalog. Version 0.10.0 added `metrics_basis` and the series to the `mix_accuracy` entry and the `rest_report` form of its run report, version 0.11.0 added the `messages` entry, version 0.12.0 added the metric series of every check except `messages` (see below), version 0.13.0 added the `host_identity` entry, which carries no series, and version 0.14.0 added the series of the `messages` check. The labels file stays at `version: 1`, because every section is optional and a new section adds no field to the others.
+A later check adds three things. It adds a definition under `$defs`, one `if` and `then` entry in `$defs.check.allOf` that selects the definition by its `check` name, and a test that validates its report entry. Every check keeps the common fields `check`, `passed`, and `metrics`, and every metric name and label comes from the catalog. Version 0.10.0 added `metrics_basis` and the series to the `mix_accuracy` entry and the `rest_report` form of its run report, version 0.11.0 added the `messages` entry, version 0.12.0 added the metric series of every check except `messages` (see below), version 0.13.0 added the `host_identity` entry, which carries no series, version 0.14.0 added the series of the `messages` check, and version 0.15.0 added the `packet_gap` property of the `temporal` entry (RLM-15). The labels file stays at `version: 1`, because every section is optional and a new section adds no field to the others.
 
 ## Metric series of each check
 
-Report format 0.14.0 carries the series of metric catalog 0.6.0 (`contracts/changes/CON-23.md`, `contracts/changes/CON-25.md`). Every check of the kinds `conformance`, `parser_errors`, `encryption`, `content`, `session_structure`, `temporal`, `mix_accuracy`, `transport_behavior`, and `messages` has exactly one `realism.check_failures` series with the label `check` set to its kind, and the schema requires it. Its value is the number of reasons for the failure and 0 exactly when the check passed, and a failed check never shows 0, even when it names no reason. The other series are:
+Report format 0.15.0 carries the series of metric catalog 0.6.0 (`contracts/changes/CON-23.md`, `contracts/changes/CON-25.md`). Every check of the kinds `conformance`, `parser_errors`, `encryption`, `content`, `session_structure`, `temporal`, `mix_accuracy`, `transport_behavior`, and `messages` has exactly one `realism.check_failures` series with the label `check` set to its kind, and the schema requires it. Its value is the number of reasons for the failure and 0 exactly when the check passed, and a failed check never shows 0, even when it names no reason. The other series are:
 
 | Check | Series | `realism.check_failures` |
 |---|---|---|
 | `conformance` | `realism.conformance_ratio` per scored application | Applications that failed, plus 1 when none was scored |
-| `temporal` | `realism.ks_statistic` and `realism.ks_p_value` per comparison with a catalog label | `len(failures)` |
+| `temporal` | `realism.ks_statistic` and `realism.ks_p_value` per comparison with a catalog label (not for packet gaps) | `len(failures)` |
 | `parser_errors` | `realism.parser_errors` per application and parser, and per parser with `application` `all` | `errors_total`, plus 1 when no parser ran |
 | `encryption` | `realism.decrypted_ratio` and `realism.ja4_match_ratio` when sessions were sampled | `len(failures)` |
 | `content` | `realism.duplicate_ratio` per application | `len(failures)` |
@@ -187,7 +187,7 @@ A failure names the scenario, the instance with its client address and first pac
 
 ## Temporal distribution
 
-The temporal check compares the inter arrival times of sessions and the payload sizes with target distributions of the labels through the KS test. It runs when the labels file has a `temporal` section, or when `--ks-alpha` or `--ks-min-samples` is given.
+The temporal check compares the inter arrival times of sessions, the payload sizes, and the gaps between the packets of one session with target distributions of the labels through the KS test. It runs when the labels file has a `temporal` section, or when `--ks-alpha` or `--ks-min-samples` is given.
 
 ```yaml
 temporal:
@@ -203,9 +203,20 @@ temporal:
       http1:
         - {direction: client, dist: lognormal, mu: 5.5, sigma: 0.4}
         - {direction: server, dist: pareto, alpha: 1.8, scale: 500}
+  packets:             # gaps in seconds between the packets of one direction of a session
+    applications:
+      rtp: {dist: constant, ms: [20, 30], tolerance_ms: 5, within: 0.9}   # paced media
 ```
 
 A target is `constant`, `exponential`, `uniform`, `lognormal`, `pareto`, or `empirical`. Arrivals use the parameter names of a scenario `delay` (`mean_ms`, `min_ms`, `max_ms`, `mu` with `sigma` and `unit`, `alpha` with `scale_ms`, and `ms` for a constant, which may stand without `dist`), and sizes use bytes (`value`, `mean`, `min`, `max`, `mu`, `sigma`, `alpha`, `scale`). An `empirical` target gives `sample` (a list of values), `sample_file` (numbers separated by white space or commas), or `reference` (`{pcap, labels}`, a capture whose sessions give the sample), all relative to the labels file, and runs the two sample test. An application can have one size target per direction, written as a list.
+
+The `packets` section checks the pacing inside a session, which `arrivals` cannot see. It reads the packets with payload of each direction of each session as a stream (a gap never spans two directions, and a TCP acknowledgment without payload does not count) and compares the gaps with the target of the application, or of `overall`. It takes the parameter names of `arrivals`, and an application can have one target per direction (`direction: client`, `server`, or `both`, the default), written as a list. Every distribution but the constant runs the KS test on the gaps of all its streams together. The constant is the packet time of paced media and is judged differently, because a real sender is a few milliseconds late and a loaded host sends a burst after a stall:
+
+* `ms` is one packet time or a list of them, because the calls of one application can differ (the sip_rtp fixture has 20 ms and 30 ms calls). Each stream is compared with the listed time that is nearest to its median gap.
+* `tolerance_ms` is required and says how far a gap may be from the packet time.
+* `within` (default 0.9) is the share of the gaps of each stream that must be within the tolerance.
+
+Each stream with at least `min_samples` gaps is judged alone, so one jittered call cannot hide among good ones. A shorter stream counts in the sample size but is not judged alone, and the comparison reports `insufficient_data` when no stream is long enough. The comparison fails when a judged stream fails, and the reason names the application, the number of failed streams, the worst stream with its session, ports, and side, the share of late gaps, and the observed range, for example `packet gaps of application rtp: 2 of 4 streams are not paced at 20 ms, because more than 10.0% of their gaps are further than 5 ms from the packet time; the worst is the udp stream 10.201.0.2:40002 to 10.202.0.2:20002 (session 2, client side), where 39.4% of 99 gaps are further than 5 ms from 20 ms (gaps from 6.14309 ms to 33.8569 ms, median 20 ms)`. The entry has the statistic (the largest share of late gaps of any judged stream), the p value (1 when every judged stream passed, 0 otherwise), and `streams` with the numbers judged, failed, and too short. The test bounds late and early packets but not a slow drift inside the tolerance, which the mean in `observed` shows. The metric catalog has no property for packet gaps, so they add no `realism.ks_*` series to the entry.
 
 Each comparison reports its status, which is `pass` when the p value is at least `alpha`, `fail` below it, and `insufficient_data` when a sample has fewer than `min_samples` observations. It also reports the statistic, the p value, the method (`exact` or `asymptotic`), the sample size, the observed minimum, median, mean, and maximum, and a reason in words for anything but a pass. A comparison that is not a pass fails the check, and so does a section without targets. Constants are exact: the observations must lie within `tolerance` of the value. The p value is exact for up to 100 observations (one sample) or 10000 pairs (two samples), and asymptotic above that. [`ks.py`](ks.py) implements the tests with the standard library only. The KS statistic and p value of each application go into the report as `realism.ks_statistic` and `realism.ks_p_value`, with the properties `inter_arrival`, `request_bytes`, and `response_bytes`.
 

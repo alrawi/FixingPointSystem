@@ -1429,12 +1429,12 @@ export interface components {
             };
             value?: unknown;
         };
-        /** @description Inter arrival times and payload sizes against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. The check passes when there is at least one comparison and every one passed. failures names each reason in words. */
+        /** @description Inter arrival times, payload sizes, and packet gaps inside sessions against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. A paced packet gap target (a constant with packet times) judges each stream on its own instead, and its p value is 1 when every judged stream passed and 0 otherwise. The check passes when there is at least one comparison and every one passed. failures names each reason in words. */
         temporal: {
             /** @constant */
             check: "temporal";
             passed: boolean;
-            /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions and over both directions have no catalog label and are only in comparisons. */
+            /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions, over both directions, and of packet gaps have no catalog label and are only in comparisons. */
             metrics: (components["schemas"]["temporal_metric"] | components["schemas"]["failures_metric"])[];
             alpha: number;
             min_samples: number;
@@ -1443,11 +1443,11 @@ export interface components {
             skipped_encrypted_sessions: number;
             comparisons: {
                 /** @enum {unknown} */
-                property: "inter_arrival" | "payload_size";
+                property: "inter_arrival" | "payload_size" | "packet_gap";
                 /** @description Application of the comparison, or null for all sessions. */
                 application: string | null;
                 /**
-                 * @description Payloads that count in a size comparison, null for arrivals.
+                 * @description Payloads that count in a size comparison, or the streams that a packet gap comparison reads, null for arrivals.
                  * @enum {unknown}
                  */
                 direction: "client" | "server" | "both" | null;
@@ -1456,10 +1456,12 @@ export interface components {
                 target: {
                     /** @enum {unknown} */
                     dist: "constant" | "exponential" | "uniform" | "lognormal" | "pareto" | "empirical";
-                    /** @description Parameters in seconds or bytes: value, mean, min, max, mu, sigma, alpha, scale. Empty for an empirical target. */
+                    /** @description Parameters in seconds or bytes: value, mean, min, max, mu, sigma, alpha, scale. A paced target also has tolerance and within, and value only with one packet time. Empty for an empirical target. */
                     parameters: {
                         [key: string]: number;
                     };
+                    /** @description The packet times in seconds of a paced packet gap target, null for every other target. Reports before format 0.15.0 have no such field. */
+                    values?: number[] | null;
                     median: number | null;
                     /**
                      * @description Where an empirical target sample came from, null for a parametric target.
@@ -1485,6 +1487,12 @@ export interface components {
                 status: "pass" | "fail" | "insufficient_data";
                 /** @description Why the comparison did not pass, null for a pass. */
                 reason: string | null;
+                /** @description The streams of a paced packet gap comparison: judged (with at least min_samples gaps), failed, and too_short to be judged alone. The statistic is the largest share of late gaps of any judged stream. Null for every other comparison, and for a paced one with insufficient data. Reports before format 0.15.0 have no such field. */
+                streams?: null | {
+                    judged: number;
+                    failed: number;
+                    too_short: number;
+                };
                 /** @description Minimum, median, mean, and maximum of the observations, null without observations. */
                 observed: null | {
                     min: number;
@@ -2202,12 +2210,12 @@ export interface components {
                     /** @description One sentence for each broken rule, at most 50. failures_total counts them all. */
                     failures: string[];
                 };
-                /** @description Inter arrival times and payload sizes against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. The check passes when there is at least one comparison and every one passed. failures names each reason in words. */
+                /** @description Inter arrival times, payload sizes, and packet gaps inside sessions against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. A paced packet gap target (a constant with packet times) judges each stream on its own instead, and its p value is 1 when every judged stream passed and 0 otherwise. The check passes when there is at least one comparison and every one passed. failures names each reason in words. */
                 temporal: {
                     /** @constant */
                     check: "temporal";
                     passed: boolean;
-                    /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions and over both directions have no catalog label and are only in comparisons. */
+                    /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions, over both directions, and of packet gaps have no catalog label and are only in comparisons. */
                     metrics: (components["schemas"]["temporal_metric"] | components["schemas"]["failures_metric"])[];
                     alpha: number;
                     min_samples: number;
@@ -2216,11 +2224,11 @@ export interface components {
                     skipped_encrypted_sessions: number;
                     comparisons: {
                         /** @enum {unknown} */
-                        property: "inter_arrival" | "payload_size";
+                        property: "inter_arrival" | "payload_size" | "packet_gap";
                         /** @description Application of the comparison, or null for all sessions. */
                         application: string | null;
                         /**
-                         * @description Payloads that count in a size comparison, null for arrivals.
+                         * @description Payloads that count in a size comparison, or the streams that a packet gap comparison reads, null for arrivals.
                          * @enum {unknown}
                          */
                         direction: "client" | "server" | "both" | null;
@@ -2229,10 +2237,12 @@ export interface components {
                         target: {
                             /** @enum {unknown} */
                             dist: "constant" | "exponential" | "uniform" | "lognormal" | "pareto" | "empirical";
-                            /** @description Parameters in seconds or bytes: value, mean, min, max, mu, sigma, alpha, scale. Empty for an empirical target. */
+                            /** @description Parameters in seconds or bytes: value, mean, min, max, mu, sigma, alpha, scale. A paced target also has tolerance and within, and value only with one packet time. Empty for an empirical target. */
                             parameters: {
                                 [key: string]: number;
                             };
+                            /** @description The packet times in seconds of a paced packet gap target, null for every other target. Reports before format 0.15.0 have no such field. */
+                            values?: number[] | null;
                             median: number | null;
                             /**
                              * @description Where an empirical target sample came from, null for a parametric target.
@@ -2258,6 +2268,12 @@ export interface components {
                         status: "pass" | "fail" | "insufficient_data";
                         /** @description Why the comparison did not pass, null for a pass. */
                         reason: string | null;
+                        /** @description The streams of a paced packet gap comparison: judged (with at least min_samples gaps), failed, and too_short to be judged alone. The statistic is the largest share of late gaps of any judged stream. Null for every other comparison, and for a paced one with insufficient data. Reports before format 0.15.0 have no such field. */
+                        streams?: null | {
+                            judged: number;
+                            failed: number;
+                            too_short: number;
+                        };
                         /** @description Minimum, median, mean, and maximum of the observations, null without observations. */
                         observed: null | {
                             min: number;

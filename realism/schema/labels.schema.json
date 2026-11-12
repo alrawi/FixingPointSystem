@@ -237,7 +237,7 @@
       }
     },
     "temporal": {
-      "description": "Target distributions of the temporal distribution check, which compares the inter arrival times of sessions and the payload sizes with them through the Kolmogorov Smirnov test. The check runs when this section is present.",
+      "description": "Target distributions of the temporal distribution check, which compares the inter arrival times of sessions, the payload sizes, and the gaps between the packets of one session with them through the Kolmogorov Smirnov test. The check runs when this section is present.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -277,6 +277,18 @@
             "applications": {
               "type": "object",
               "additionalProperties": {"$ref": "#/$defs/size_target_entry"}
+            }
+          }
+        },
+        "packets": {
+          "description": "Targets for the gaps in seconds between consecutive packets with payload inside one session. Each direction of a session is a stream, and a gap never spans two directions. Parameters have the names of a scenario delay. The constant of paced media, such as the 20 ms of G.711 audio, lists its packet times, takes a tolerance, and judges each stream on its own. An application can have one target per direction, written as a list.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "overall": {"$ref": "#/$defs/gap_target_entry"},
+            "applications": {
+              "type": "object",
+              "additionalProperties": {"$ref": "#/$defs/gap_target_entry"}
             }
           }
         }
@@ -476,6 +488,79 @@
           }
         },
         {"$ref": "#/$defs/empirical", "not": {"required": ["direction"]}}
+      ]
+    },
+    "gap_distribution": {
+      "description": "A distribution of the gaps between packets, in the vocabulary of a scenario delay, with an optional direction. The constant is paced: ms is one packet time or a list of them, tolerance_ms is required, and within is the share of the gaps of each stream that must lie within the tolerance of the packet time that is nearest to the median gap of the stream. The other distributions run the KS test on the gaps of all streams together.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["ms", "tolerance_ms"],
+          "additionalProperties": false,
+          "properties": {
+            "direction": {"enum": ["client", "server", "both"]},
+            "dist": {"const": "constant"},
+            "ms": {
+              "oneOf": [
+                {"type": "number", "exclusiveMinimum": 0},
+                {"type": "array", "minItems": 1, "items": {"type": "number", "exclusiveMinimum": 0}}
+              ]
+            },
+            "tolerance_ms": {"description": "Lateness in milliseconds that still counts as on time. Required.", "type": "number", "minimum": 0},
+            "within": {"description": "Share of the gaps of a stream that must be on time. The default is 0.9.", "type": "number", "exclusiveMinimum": 0, "maximum": 1}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "mean_ms"],
+          "additionalProperties": false,
+          "properties": {
+            "direction": {"enum": ["client", "server", "both"]},
+            "dist": {"const": "exponential"},
+            "mean_ms": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "min_ms", "max_ms"],
+          "additionalProperties": false,
+          "properties": {
+            "direction": {"enum": ["client", "server", "both"]},
+            "dist": {"const": "uniform"},
+            "min_ms": {"type": "number", "minimum": 0},
+            "max_ms": {"type": "number", "minimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "mu", "sigma"],
+          "additionalProperties": false,
+          "properties": {
+            "direction": {"enum": ["client", "server", "both"]},
+            "dist": {"const": "lognormal"},
+            "mu": {"type": "number"},
+            "sigma": {"type": "number", "exclusiveMinimum": 0},
+            "unit": {"enum": ["s", "ms"], "default": "s"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["dist", "alpha", "scale_ms"],
+          "additionalProperties": false,
+          "properties": {
+            "direction": {"enum": ["client", "server", "both"]},
+            "dist": {"const": "pareto"},
+            "alpha": {"type": "number", "exclusiveMinimum": 0},
+            "scale_ms": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        {"$ref": "#/$defs/empirical"}
+      ]
+    },
+    "gap_target_entry": {
+      "oneOf": [
+        {"$ref": "#/$defs/gap_distribution"},
+        {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/gap_distribution"}}
       ]
     },
     "size_distribution": {
