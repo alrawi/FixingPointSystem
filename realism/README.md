@@ -101,12 +101,12 @@ A later check adds three things. It adds a definition under `$defs`, one `if` an
 
 ## Metric series of each check
 
-Report format 0.16.0 carries the series of metric catalog 0.7.0 (`contracts/changes/CON-23.md`, `CON-25.md`, and `CON-27.md`). Every check of the kinds `conformance`, `parser_errors`, `encryption`, `content`, `session_structure`, `temporal`, `mix_accuracy`, `transport_behavior`, `messages`, and `host_identity` has exactly one `realism.check_failures` series with the label `check` set to its kind, and the schema requires it. Its value is the number of reasons for the failure and 0 exactly when the check passed, and a failed check never shows 0, even when it names no reason. The other series are:
+Report format 0.17.0 carries the series of metric catalog 0.8.0 (`contracts/changes/CON-23.md`, `CON-25.md`, `CON-27.md`, and `CON-28.md`). Every check of the kinds `conformance`, `parser_errors`, `encryption`, `content`, `session_structure`, `temporal`, `mix_accuracy`, `transport_behavior`, `messages`, and `host_identity` has exactly one `realism.check_failures` series with the label `check` set to its kind, and the schema requires it. Its value is the number of reasons for the failure and 0 exactly when the check passed, and a failed check never shows 0, even when it names no reason. The other series are:
 
 | Check | Series | `realism.check_failures` |
 |---|---|---|
 | `conformance` | `realism.conformance_ratio` per scored application | Applications that failed, plus 1 when none was scored |
-| `temporal` | `realism.ks_statistic` and `realism.ks_p_value` per comparison with a catalog label (not for packet gaps) | `len(failures)` |
+| `temporal` | `realism.ks_statistic` and `realism.ks_p_value` per comparison with a catalog label: `inter_arrival`, `request_bytes`, `response_bytes`, and for packet gaps `request_gap` (client streams), `response_gap` (server streams), and `packet_gap` (both directions), but not for a paced comparison, whose statistic is no KS statistic | `len(failures)` |
 | `parser_errors` | `realism.parser_errors` per application and parser, and per parser with `application` `all` | `errors_total`, plus 1 when no parser ran |
 | `encryption` | `realism.decrypted_ratio` and `realism.ja4_match_ratio` when sessions were sampled | `len(failures)` |
 | `content` | `realism.duplicate_ratio` per application | `len(failures)` |

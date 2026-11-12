@@ -93,9 +93,11 @@ PROP_GAP = "packet_gap"
 STATUS_PASS = "pass"
 STATUS_FAIL = "fail"
 STATUS_INSUFFICIENT = "insufficient_data"
-# The catalog property label of a size target, by direction. Sizes of both directions
-# have no catalog property, so they carry no metric. Packet gaps have none either.
+# The catalog property label (catalog 0.8.0) of a size target and of a packet gap target, by
+# direction. The comparisons over all sessions have no application label and carry no metric,
+# and nor do the sizes of both directions (the catalog value ``both`` is not emitted).
 _SIZE_METRIC_PROPERTY = {"client": "request_bytes", "server": "response_bytes"}
+_GAP_METRIC_PROPERTY = {"client": "request_gap", "server": "response_gap", "both": "packet_gap"}
 _NUMBER_SPLIT = re.compile(r"[\s,;]+")
 
 
@@ -319,9 +321,11 @@ class TemporalResult:
     def metrics(self) -> list[dict[str, Any]]:
         """Return the KS statistic and p value of each comparison that the catalog names.
 
-        The catalog labels a metric with an application and a property. Comparisons over
-        all sessions, sizes of both directions, and packet gaps have no such label and stay
-        out.
+        The catalog labels a metric with an application and a property (CON-28 added the
+        values of the packet gaps). Comparisons over all sessions have no application label
+        and stay out, and so do the paced comparisons of packet gaps (RLM-15): their statistic
+        is the share of gaps outside the tolerance and their p value is 0 or 1, which are not
+        what the two metrics describe, so ``realism.check_failures`` shows their failure.
         """
         out: list[dict[str, Any]] = []
         for c in self.comparisons:
@@ -332,6 +336,8 @@ class TemporalResult:
                 prop = "inter_arrival"
             elif c["property"] == PROP_SIZE:
                 prop = _SIZE_METRIC_PROPERTY.get(c["direction"])
+            elif c["property"] == PROP_GAP and c["streams"] is None:
+                prop = _GAP_METRIC_PROPERTY.get(c["direction"])
             if prop is None:
                 continue
             labels = {"application": c["application"], "property": prop}

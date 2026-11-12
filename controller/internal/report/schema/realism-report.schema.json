@@ -212,7 +212,12 @@
               "required": ["application", "property"],
               "properties": {
                 "application": {"type": "string", "minLength": 1},
-                "property": {"enum": ["inter_arrival", "request_bytes", "response_bytes"]}
+                "property": {
+                  "enum": [
+                    "inter_arrival", "request_bytes", "response_bytes",
+                    "packet_gap", "request_gap", "response_gap"
+                  ]
+                }
               },
               "additionalProperties": false
             },
@@ -963,7 +968,7 @@
         "check": {"const": "temporal"},
         "passed": {"type": "boolean"},
         "metrics": {
-          "description": "The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions, over both directions, and of packet gaps have no catalog label and are only in comparisons.",
+          "description": "The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), response_bytes (server payloads), request_gap (gaps of the client streams), response_gap (gaps of the server streams), and packet_gap (gaps of both directions pooled), and the realism.check_failures series. Comparisons over all sessions, over both directions of sizes, and the paced comparisons of packet gaps (a constant target, whose statistic is not a KS statistic) have no series and are only in comparisons.",
           "type": "array",
           "items": {"oneOf": [{"$ref": "#/$defs/temporal_metric"}, {"$ref": "#/$defs/failures_metric"}]},
           "contains": {"properties": {"name": {"const": "realism.check_failures"}, "labels": {"properties": {"check": {"const": "temporal"}}, "required": ["check"]}}, "required": ["name", "labels"]}

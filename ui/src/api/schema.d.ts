@@ -1425,7 +1425,7 @@ export interface components {
             labels?: {
                 application: string;
                 /** @enum {unknown} */
-                property: "inter_arrival" | "request_bytes" | "response_bytes";
+                property: "inter_arrival" | "request_bytes" | "response_bytes" | "packet_gap" | "request_gap" | "response_gap";
             };
             value?: unknown;
         };
@@ -1434,7 +1434,7 @@ export interface components {
             /** @constant */
             check: "temporal";
             passed: boolean;
-            /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions, over both directions, and of packet gaps have no catalog label and are only in comparisons. */
+            /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), response_bytes (server payloads), request_gap (gaps of the client streams), response_gap (gaps of the server streams), and packet_gap (gaps of both directions pooled), and the realism.check_failures series. Comparisons over all sessions, over both directions of sizes, and the paced comparisons of packet gaps (a constant target, whose statistic is not a KS statistic) have no series and are only in comparisons. */
             metrics: (components["schemas"]["temporal_metric"] | components["schemas"]["failures_metric"])[];
             alpha: number;
             min_samples: number;
@@ -1878,7 +1878,7 @@ export interface components {
                     labels?: {
                         application: string;
                         /** @enum {unknown} */
-                        property: "inter_arrival" | "request_bytes" | "response_bytes";
+                        property: "inter_arrival" | "request_bytes" | "response_bytes" | "packet_gap" | "request_gap" | "response_gap";
                     };
                     value?: unknown;
                 };
@@ -2215,7 +2215,7 @@ export interface components {
                     /** @constant */
                     check: "temporal";
                     passed: boolean;
-                    /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), and response_bytes (server payloads), and the realism.check_failures series. Comparisons over all sessions, over both directions, and of packet gaps have no catalog label and are only in comparisons. */
+                    /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), response_bytes (server payloads), request_gap (gaps of the client streams), response_gap (gaps of the server streams), and packet_gap (gaps of both directions pooled), and the realism.check_failures series. Comparisons over all sessions, over both directions of sizes, and the paced comparisons of packet gaps (a constant target, whose statistic is not a KS statistic) have no series and are only in comparisons. */
                     metrics: (components["schemas"]["temporal_metric"] | components["schemas"]["failures_metric"])[];
                     alpha: number;
                     min_samples: number;
