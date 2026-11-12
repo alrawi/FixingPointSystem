@@ -70,21 +70,25 @@ func compileECMARegexp(s string) (jsonschema.Regexp, error) {
 
 // Manifest is a validated module manifest. The typed fields hold what the
 // controller reads, and Raw holds the whole manifest as JSON, which getModule
-// returns and which validates against the manifest schema.
+// returns and which validates against the manifest schema. ExpectedBytes holds
+// the estimated application payload bytes per session of each scenario with
+// default parameters, keyed by scenario name, and the scenario catalog passes
+// it to the compiler as the bytes per session.
 type Manifest struct {
-	Name       string          `json:"name"`
-	Version    string          `json:"version"`
-	Type       string          `json:"type"`
-	Summary    string          `json:"summary,omitempty"`
-	EngineAPI  string          `json:"engine_api"`
-	License    string          `json:"license"`
-	Scenarios  []string        `json:"scenarios,omitempty"`
-	Requires   []Require       `json:"requires,omitempty"`
-	Functions  []Function      `json:"functions,omitempty"`
-	Assets     []Asset         `json:"assets,omitempty"`
-	Extension  *Extension      `json:"extension,omitempty"`
-	Fixtures   []Fixture       `json:"fixtures,omitempty"`
-	Parameters json.RawMessage `json:"parameters,omitempty"`
+	Name          string           `json:"name"`
+	Version       string           `json:"version"`
+	Type          string           `json:"type"`
+	Summary       string           `json:"summary,omitempty"`
+	EngineAPI     string           `json:"engine_api"`
+	License       string           `json:"license"`
+	Scenarios     []string         `json:"scenarios,omitempty"`
+	ExpectedBytes map[string]int64 `json:"expected_bytes,omitempty"`
+	Requires      []Require        `json:"requires,omitempty"`
+	Functions     []Function       `json:"functions,omitempty"`
+	Assets        []Asset          `json:"assets,omitempty"`
+	Extension     *Extension       `json:"extension,omitempty"`
+	Fixtures      []Fixture        `json:"fixtures,omitempty"`
+	Parameters    json.RawMessage  `json:"parameters,omitempty"`
 
 	// Raw is the manifest as canonical JSON with sorted keys.
 	Raw json.RawMessage `json:"-"`

@@ -106,7 +106,7 @@ The manifest is `manifest.yaml` at the root. The schema sets `additionalProperti
 | `parameters` | A JSON Schema (draft 2020-12) with an object root. A test sets it per mix entry in `profile.mix[].params`. | `validate.py`, controller compiler, agent |
 | `settings` | A JSON Schema with an object root. A test sets it once per module under `modules.<name>.settings`. A module without it accepts no settings. | Controller compiler |
 | `scenarios` | Scenario files relative to the manifest, unique, each of which must exist. | `validate.py`, registry, agent |
-| `expected_bytes` | Application payload bytes per session in both directions with default parameters, keyed by scenario name, each an integer of at least 1. The controller compiler is built to read it, see below. | Controller compiler |
+| `expected_bytes` | Application payload bytes per session in both directions with default parameters, keyed by scenario name, each an integer of at least 1. The controller reads it into the scenario catalog (CTL-47), see [below](#expected_bytes-bytes-per-session-of-each-scenario). | Controller compiler |
 | `assets` | Items with a `name` and exactly one of `path` and `generator` (`module.function`). | Existence check only |
 | `functions` | The template function catalog, see [Template functions](#template-functions-and-the-catalog). | `validate.py`, agent, registry |
 | `extension` | `wasm` (a path) and `hooks` (a non empty list from `on_open`, `on_data`, `on_timer`, `on_close`, `render`). | `validate.py`, registry, agent |
@@ -119,7 +119,40 @@ Three details need care.
 
 - **The version line.** The agent reads the top level `version` by a line prefix and not through the YAML parser (`modules.rs`, `version_of`). Write `version: 0.1.0` on a line of its own, with no trailing comment, or the agent sees a different version than the plan and refuses the module.
 - **Parameters name variables.** An entry of `profile.mix[].params` overrides a scenario variable, and the engine refuses a parameter that names no variable of the scenario (`engine/fps-flow/src/program.rs`, `override_vars`). Give every property of `parameters` the name of a `vars` entry. The validator checks a test configuration against the `parameters` schema (`check_test_config`), and it does not check that the names agree.
-- **Byte estimates.** `expected_bytes` is meant to let the controller turn a `byte` basis or a `throughput_bps` objective into session rates, and the run then corrects the estimate (`controller/internal/mixcontrol/mixcontrol.go`, `controller/internal/runs/calibrate/calibrate.go`). The scenario catalog of the controller does not read the field yet, because `controller/internal/wiring/adapters.go` never sets `BytesPerSession`, and the Controller page tracks the fix as CTL-47 (`docs/wiki/Controller.md`, Throughput calibration). Fill the field now so that the module is ready. Count the payload of one default session in both directions. For the template that is 256 plus 1024.
+- **Byte estimates.** Give every scenario an entry in `expected_bytes`. A test with the `bytes` basis or the `throughput_bps` objective cannot compile a mix with a scenario that has none. The next subsection explains the field. For the template the estimate is 256 plus 1024.
+
+#### `expected_bytes`: bytes per session of each scenario
+
+`expected_bytes` maps the name of each scenario to the estimated application payload bytes that one session of the scenario moves, in both directions together, with the default parameters of the scenario. Each value is an integer of at least 1, and each key follows the identifier pattern of scenario names (`contracts/schemas/module-manifest.schema.json`, key `expected_bytes`). The schema marks the field as optional, but a module that has scenarios needs an entry for each of them.
+
+```yaml
+scenarios:
+  - scenarios/web_get.yaml
+  - scenarios/web_browse.yaml
+expected_bytes:
+  web_get: 17244
+  web_browse: 70279
+```
+
+**What the controller does with it.** The controller reads the field into the scenario catalog (`controller/internal/wiring/adapters.go`, `registry.Manifest.ExpectedBytes`) and uses it in two places of the compiler (`controller/internal/compiler/`, see the Test compiler section of [Controller](Controller.md)):
+
+- `profile.basis: bytes`. The test configuration gives byte weights, and the compiler turns them into session shares with `share_i = (weight_i / bytes_i) / sum_j (weight_j / bytes_j)`, where `bytes_i` is your estimate. Sessions at these shares then carry the byte weights.
+- `load.objective.type: throughput_bps`. The session rate is `objective / (8 * mean bytes per session)`, with the mean taken over the mix. A wrong estimate makes the run miss the objective by the same ratio until the calibration of the run loop corrects it.
+
+**What happens without it.** A scenario without an entry has no estimate. A test that uses the bytes basis, or the `throughput_bps` objective, and mixes that scenario fails to compile with the error `no bytes per session estimate` (`ErrNoByteEstimate`), and the message names the scenario as `<module>/<scenario>`. The controller never falls back to session shares, because that would run another mix than the one the test asks for. A test with the `sessions` basis and a session rate or concurrency objective does not need the field. Scenarios in `scenarios-pending/` are not in the manifest and need no entry.
+
+**The estimate is a starting point.** During a run the controller measures the real bytes per session and replaces the manifest estimate of a scenario after 20 pooled sessions (`controller/internal/runs/calibrate/`, the Throughput rate calibration section of [Controller](Controller.md)). A good estimate keeps the first seconds of a run on target, so measure it and do not guess it.
+
+**How to measure it.**
+
+1. Run one session of the scenario to its end with the default parameters, in a test of your module, as `modules/hls/tests/scenarios.rs` does.
+2. Add the payload bytes of every connection that the session opens, client to server and server to client. `modules/hls/tests/scenarios.rs` does this with `c2s().len() + s2c().len()` over `net.conns()`.
+3. Write the result into the manifest as an integer. Round to a figure you can reproduce, since the value is an estimate and the calibration corrects the rest.
+4. Keep the estimate true. A test like `default_parameters_move_the_expected_bytes` in `modules/hls/tests/scenarios.rs` reads `expected_bytes` from the manifest, runs each scenario, and fails when the measured bytes differ from the estimate by 2 percent or more. Add the same test to your module, so that a change of a template or a fixture that alters the size of a session also changes the manifest.
+
+The schema defines the estimate as application payload bytes. It holds for the default parameters, so a test configuration that sets a size parameter such as `body_size` moves more or fewer bytes than the estimate says, and the calibration absorbs the difference.
+
+Neither the registry nor `tools/contracts/validate.py` checks that a key names a scenario of the manifest, so a misspelled key surfaces only as the missing estimate of the scenario that you meant. Check the keys against the `scenarios` list yourself.
 
 ### Names
 
@@ -448,7 +481,7 @@ We recorded what the repository does not support yet, so that you do not look fo
 4. **No WebAssembly toolchain for authors.** The host exists, and the repository gives no SDK, example, or instructions. Only `render` and `on-close` run, and the agent loads the file named `extension.wasm` at the root whatever the manifest says (`engine/fps-runtime/src/extension.rs`).
 5. **No settings for third party modules.** The agent refuses them for a module without native functions (`engine/fps-agent/src/modules.rs`).
 6. **Native crates are first party only**, and decision D10 still has the status Proposed (`docs/decisions/0010-native-extensions.md`).
-7. **Declared and not enforced.** The controller catalog does not read `expected_bytes` yet (CTL-47, `controller/internal/wiring/adapters.go`), and `engine_api` is read by nothing that compares it with an engine version, `assets` and `fixtures[].expect` are never read beyond the existence of a file, and `provides` and the version of `requires` document only (`controller/internal/registry/manifest.go`, `tools/contracts/validate.py`). A search of `controller/`, `engine/`, and `realism/` found no other reader.
+7. **Declared and not enforced.** `engine_api` is read by nothing that compares it with an engine version, `assets` and `fixtures[].expect` are never read beyond the existence of a file, and `provides` and the version of `requires` document only (`controller/internal/registry/manifest.go`, `tools/contracts/validate.py`). A search of `controller/`, `engine/`, and `realism/` found no other reader.
 8. **The validator and the registry disagree in places.** The registry knows five reserved names and the validator eight, and the validator does not read the license, file names, or links, which the registry does (see [Names](#names) and [Validate](#validate)).
 9. **No realism job for third party modules.** The job selects modules that have a native crate and a recording script, and the harness records only the traffic of first party peers (`realism/modules.py`).
 10. **The agent reads `version` by line.** A trailing comment on the line makes it differ from the plan (`engine/fps-agent/src/modules.rs`, `version_of`).
