@@ -84,6 +84,15 @@
 # and 160 bytes of payload after the 12 byte header, found by a reader in this
 # script that does not use the code of the agent.
 #
+# A tenth test (AGT-21) runs one scenario of each of the first party modules ntp,
+# mqtt, ldap, and hls, one run each: ntp/sntp_query (UDP), mqtt/publish_qos0,
+# ldap/bind_search, and hls/vod_segments, which spawns one segment flow per
+# segment, so that run needs the multi flow TCP path of the agent. ntp is
+# stateless, and mqtt, ldap, and hls hold the state of one session or flow side
+# in one value per side. All server ports lie above 1023 because the script runs
+# without root. The run parameters shorten the gaps and the segment duration, so
+# whole sessions finish within the three seconds of a run.
+#
 # The tail of the script checks the handshake failures. An agent that trusts
 # another CA ends with exit code 2 and a TLS error before it spends its
 # token. After `fps-controller revoke`, the running agent ends with exit code
@@ -230,6 +239,13 @@ rm -r "$modules/ssh/native" "$modules/ssh/tests"
 # sip_rtp is the first party module of AGT-20. It keeps its fixtures too.
 cp -r "$here/../../../modules/sip_rtp" "$modules/sip_rtp"
 rm -r "$modules/sip_rtp/native"
+# ntp, mqtt, ldap, and hls are the first party modules of AGT-21. They keep their
+# fixtures, which the manifests name. hls requires http1, which is installed
+# above.
+for m in ntp mqtt ldap hls; do
+  cp -r "$here/../../../modules/$m" "$modules/$m"
+  rm -r "$modules/$m/native" "$modules/$m/tests"
+done
 cat >"$modules/dns/zones/e2e.test.zone" <<'EOF'
 $ORIGIN e2e.test.
 $TTL 60
@@ -253,7 +269,7 @@ done
 [[ $(stat -c %a "$work/agent-pki/agent.key") == 600 ]] || fail "the agent key is not mode 0600"
 
 # content goes before smtp, which requires it.
-for name in http1 dns content smtp ftp ssh smb2 sip_rtp; do
+for name in http1 dns content smtp ftp ssh smb2 sip_rtp ntp mqtt ldap hls; do
   (cd "$modules/$name" && tar -czf "$work/$name.tar.gz" -- *)
   call POST /v1/modules "$admin" -H 'Content-Type: application/gzip' --data-binary "@$work/$name.tar.gz" >/dev/null
 done
@@ -617,6 +633,65 @@ run_test "$work/sip_rtp.yaml"
 sip_succeeded=$(succeeded_of sip_rtp)
 [[ $sip_succeeded -ge 4 ]] || fail "the sip_rtp run $run counted $sip_succeeded succeeded sessions, want at least two whole calls of two sessions: $metrics"
 echo "controller_e2e: run $run ran sip_rtp/call_pcmu with $sip_succeeded succeeded sessions (SIP dialog and RTP media flow), verdict passed"
+
+# The sessions of AGT-21. module_test MODULE SCENARIO PARAMS SUBNET SEED prints a
+# test configuration for one scenario of a first party module, with the
+# parameters PARAMS (the inside of a flow mapping, which names the ports), the
+# clients in 127.SUBNET.0.0/24, and the servers in the next subnet. The criteria
+# bound the failed ratio, which allows for a session that the stop of the run
+# cuts, and module_run checks the succeeded sessions of the application.
+module_test() {
+  local module=$1 scenario=$2 params=$3 subnet=$4 seed=$5
+  cat <<EOF
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: ${module}_$scenario
+  description: Sessions of the first party $module module, scenario $scenario.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/$iface }
+    - { name: server0, location: local/$iface }
+  host_pools:
+    - { name: clients, port: client0, role: client, ipv4: 127.$subnet.0.0/24, count: 16 }
+    - { name: servers, port: server0, role: server, ipv4: 127.$((subnet + 1)).0.0/24, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: $module/$scenario, weight: 1, params: { $params } }
+load:
+  objective: { type: sessions_per_second, value: 5 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: $seed }
+criteria:
+  - { metric: sessions.failed_ratio, op: "<=", value: 0.2 }
+  - { metric: sessions.succeeded, op: ">", value: 0 }
+EOF
+}
+
+# module_run MODULE SCENARIO PARAMS SUBNET SEED MIN runs the test and checks the
+# verdict and at least MIN succeeded sessions of the application MODULE.
+module_run() {
+  local module=$1 scenario=$2 min=$6 count
+  module_test "$1" "$2" "$3" "$4" "$5" >"$work/${module}_$scenario.yaml"
+  run_test "$work/${module}_$scenario.yaml"
+  [[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the $module/$scenario run $run did not pass: $summary"
+  count=$(succeeded_of "$module")
+  [[ $count -ge $min ]] || fail "the $module/$scenario run $run counted $count succeeded sessions, want at least $min: $metrics"
+  echo "controller_e2e: run $run ran $module/$scenario with $count succeeded sessions, verdict passed"
+}
+
+# ntp is stateless: a UDP exchange of one 48 byte request and its reply.
+module_run ntp sntp_query 'server_port: 18690' 107 37 1
+# mqtt and ldap hold the packet or message that recv decoded, one value per side.
+module_run mqtt publish_qos0 'server_port: 18691, messages: 2, interval_min_ms: 20, interval_max_ms: 60' 109 41 1
+module_run ldap bind_search 'server_port: 18692' 111 43 1
+# hls/vod_segments is a playlist flow that spawns one segment flow per segment
+# (multi flow TCP). The segments must equal stages times stage_segments, so one
+# whole instance gives one session for the playlists and six for the segments.
+module_run hls vod_segments 'server_port: 18693, segment_port: 18694, segment_ms: 100, segments: 6, stages: 3, stage_segments: 2' 113 47 7
 
 # The https fetch of AGT-14. Both sides of every session upgrade to TLS at
 # once: the client with the browser profile chrome-136, the server with
