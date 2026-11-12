@@ -124,6 +124,11 @@ scenarios:
   - scenarios/directory_browse.yaml
   - scenarios/rootdse_probe.yaml
   - scenarios/failed_bind.yaml
+expected_bytes:
+  bind_search: 458
+  directory_browse: 2900
+  rootdse_probe: 544
+  failed_bind: 410
 fixtures:
   - { capture: fixtures/ldap.pcapng, expect: { ndpi: [LDAP] } }
 provenance:

@@ -97,6 +97,14 @@ scenarios:
   - scenarios/submission_login.yaml
   - scenarios/submission_batch.yaml
   - scenarios/starttls_submission.yaml
+expected_bytes:
+  relay: 125000
+  relay_pipelined: 126000
+  text_only: 1710
+  submission_plain: 138000
+  submission_login: 138000
+  submission_batch: 396000
+  starttls_submission: 140000
 fixtures:
   - { capture: fixtures/smtp.pcapng, expect: { ndpi: [SMTP], zeek: [smtp] } }
 provenance:

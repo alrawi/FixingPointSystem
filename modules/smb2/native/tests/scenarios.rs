@@ -612,3 +612,53 @@ fn the_default_tails_follow_from_the_default_sizes() {
         }
     );
 }
+
+/// The sessions that the estimate averages over. Sizes that the session
+/// generator draws vary from session to session, so one session says little
+/// about the mean that the controller needs.
+const ESTIMATE_SESSIONS: u64 = 10;
+
+/// A session of each scenario at the default parameters moves the payload
+/// bytes of `expected_bytes` in the manifest, both directions of the stream,
+/// within 2 percent. The controller turns byte weights into session shares with
+/// these estimates, so a change of a template or a fixture that alters the size
+/// of a session must change the manifest.
+#[tokio::test(start_paused = true)]
+async fn default_parameters_move_the_expected_bytes() {
+    let doc: Yaml =
+        serde_yaml::from_str(&std::fs::read_to_string(module_dir().join("manifest.yaml")).unwrap())
+            .unwrap();
+    let mut bad = Vec::new();
+    if let Some(keys) = doc["expected_bytes"].as_mapping() {
+        for key in keys.keys() {
+            let key = key.as_str().unwrap_or_default();
+            if !SCENARIOS.contains(&key) {
+                bad.push(format!("{key}: an estimate for no scenario"));
+            }
+        }
+    }
+    for name in SCENARIOS {
+        let s = load(name, &[]);
+        let mut sizes = Vec::new();
+        for id in 1..=ESTIMATE_SESSIONS {
+            let o = run(&s, 42, id).await;
+            assert_eq!(o.client, Ok(()), "{name} client");
+            assert_eq!(o.server, Ok(()), "{name} server");
+            sizes.push(o.c2s.len() + o.s2c.len());
+        }
+        let mean = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64;
+        match doc["expected_bytes"][name].as_f64() {
+            Some(want) if (mean - want).abs() / want < 0.02 => {}
+            Some(want) => bad.push(format!(
+                "{name}: {mean:.0} bytes against the estimate {want}"
+            )),
+            None => bad.push(format!("{name}: {mean:.0} bytes and no estimate")),
+        }
+        eprintln!(
+            "MEASURED {name} mean {mean:.1} min {} max {}",
+            sizes.iter().min().unwrap(),
+            sizes.iter().max().unwrap()
+        );
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}

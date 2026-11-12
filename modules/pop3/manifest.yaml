@@ -106,6 +106,13 @@ scenarios:
   - scenarios/top_preview.yaml
   - scenarios/fetch_delete.yaml
   - scenarios/poll_new_mail.yaml
+expected_bytes:
+  retrieve_all: 372000
+  apop_login: 129000
+  apop_fallback: 129000
+  top_preview: 124000
+  fetch_delete: 373000
+  poll_new_mail: 314
 fixtures:
   - { capture: fixtures/pop3.pcapng, expect: { ndpi: [POP3] } }
 provenance:

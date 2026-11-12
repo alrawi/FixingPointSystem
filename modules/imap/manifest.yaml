@@ -112,6 +112,13 @@ scenarios:
   - scenarios/login_append.yaml
   - scenarios/idle_push.yaml
   - scenarios/starttls_mailbox.yaml
+expected_bytes:
+  mailbox_sync: 3900
+  fetch_messages: 387000
+  search_store: 135000
+  login_append: 139000
+  idle_push: 134000
+  starttls_mailbox: 256000
 fixtures:
   - { capture: fixtures/imap.pcapng, expect: { ndpi: [IMAP] } }
 provenance:

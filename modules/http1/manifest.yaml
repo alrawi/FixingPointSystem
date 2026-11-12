@@ -61,6 +61,17 @@ scenarios:
   - scenarios/https_keepalive_browse.yaml
   - scenarios/https_fetch_tls12.yaml
   - scenarios/https_keepalive_browse_tls12.yaml
+expected_bytes:
+  single_fetch: 4390
+  keepalive_browse: 91800
+  upload: 132000
+  upload_chunked: 66000
+  http10_fetch: 4310
+  http10_keepalive: 13100
+  https_fetch: 4450
+  https_keepalive_browse: 92000
+  https_fetch_tls12: 4460
+  https_keepalive_browse_tls12: 92300
 fixtures:
   - { capture: fixtures/http1.pcapng, expect: { ndpi: [HTTP, TLS] } }
 provenance:

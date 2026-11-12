@@ -54,6 +54,14 @@ scenarios:
   - scenarios/lookup_txt.yaml
   - scenarios/nxdomain.yaml
   - scenarios/tcp_fallback.yaml
+expected_bytes:
+  lookup_a: 84
+  lookup_aaaa: 96
+  lookup_cname: 127
+  lookup_mx: 163
+  lookup_txt: 119
+  nxdomain: 127
+  tcp_fallback: 956
 fixtures:
   - { capture: fixtures/dns.pcapng, expect: { ndpi: [DNS] } }
 provenance:

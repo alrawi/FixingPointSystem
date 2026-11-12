@@ -80,6 +80,12 @@ scenarios:
   - scenarios/stor_pasv.yaml
   - scenarios/mixed_session.yaml
   - scenarios/batch_download.yaml
+expected_bytes:
+  list_pasv: 2510
+  retr_epsv: 234000
+  stor_pasv: 226000
+  mixed_session: 415000
+  batch_download: 893000
 fixtures:
   - { capture: fixtures/ftp.pcapng, expect: { ndpi: [FTP_CONTROL], zeek: [ftp, ftp-data] } }
 provenance:

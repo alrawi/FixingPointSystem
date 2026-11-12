@@ -175,6 +175,11 @@ scenarios:
   - scenarios/remote_command.yaml
   - scenarios/scp_upload.yaml
   - scenarios/scp_download.yaml
+expected_bytes:
+  interactive_shell: 28100
+  remote_command: 9700
+  scp_upload: 264000
+  scp_download: 264000
 fixtures:
   - { capture: fixtures/ssh.pcapng, expect: { ndpi: [SSH], zeek: [ssh] } }
 provenance:

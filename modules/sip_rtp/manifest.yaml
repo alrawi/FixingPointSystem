@@ -90,10 +90,10 @@ scenarios:
   - scenarios/busy.yaml
 expected_bytes:
   call_pcmu: 175000
-  call_pcma: 175000
-  call_g729: 50000
-  call_opus: 150000
-  busy: 1800
+  call_pcma: 154000
+  call_g729: 41300
+  call_opus: 134000
+  busy: 1570
 fixtures:
   - { capture: fixtures/sip_rtp.pcapng, expect: { ndpi: [SIP, RTP], zeek: [sip] } }
 provenance:

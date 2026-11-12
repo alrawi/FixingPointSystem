@@ -156,6 +156,11 @@ scenarios:
   - scenarios/h2c_upload.yaml
   - scenarios/https_browse.yaml
   - scenarios/https_upload.yaml
+expected_bytes:
+  h2c_browse: 111000
+  h2c_upload: 343000
+  https_browse: 111000
+  https_upload: 343000
 fixtures:
   - { capture: fixtures/http2.pcapng, expect: { ndpi: [HTTP2, TLS] } }
 provenance:
