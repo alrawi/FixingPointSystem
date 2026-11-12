@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #480 |
 | Branch | `wp/CON-27` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #485 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-a2ef7e, lease until 2026-11-12T04:26:11Z |
-| Last verified commit | none |
+| Last verified commit | 661e4f4 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -24,8 +24,8 @@ Add the value `host_identity` to the label `check` of the metric catalog (0.7.0)
 
 - [x] 1. Contract: catalog 0.7.0, examples, `contracts/changes/CON-27.md`, Contracts page
 - [x] 2. Consumer follow ups: controller copies, version pins, `catalog.rs`, runner (format 0.15.0), con23 count test, UI schema, docs
-- [ ] 3. Merge origin/main (RLM-15, CTL-46 may take format numbers), push, open the PR
-- [ ] 4. CI green, then `review`
+- [x] 3. Merge origin/main (RLM-15, CTL-46 may take format numbers), push, open the PR
+- [x] 4. CI green, then `review`
 
 ## Done and verified
 
@@ -68,3 +68,4 @@ python3 -m pytest realism tools/contracts -q
 |---|---|---|---|---|
 | 2026-11-12 | claude-a2ef7e | claim | | claimed #480 |
 | 2026-11-12 | claude-a2ef7e | checkpoint | | contract and follow ups written |
+| 2026-11-12 | claude-a2ef7e | finish | 661e4f4 | PR #485, CI green (62 checks) |
