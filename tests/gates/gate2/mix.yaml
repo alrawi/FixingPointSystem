@@ -10,7 +10,11 @@
 #   expected_bytes    the application payload bytes of one session with these
 #                     parameters, which the controller needs to turn byte weights
 #                     into session shares (CTL-34); the mix control corrects it
-#                     during the run (CTL-12)
+#                     during the run (CTL-12). The values come from the bytes
+#                     per scenario session of CI runs. The run report seems to count the
+#                     data connection of ftp and the media stream of sip_rtp as
+#                     sessions of their own, so the bytes of one scenario session
+#                     are twice the bytes per counted session there
 #   params            the scenario parameters; every entry listens on its own
 #                     transport and port, because two entries must not share one
 #   application       the row of the mix check. Scenarios that nDPI cannot tell
@@ -32,7 +36,7 @@ entries:
   - module: http1
     scenario: single_fetch
     weight: 8
-    expected_bytes: 8150
+    expected_bytes: 8488
     params: {server_port: 80, body_size: 8192}
     application: http
     ndpi: [HTTP]
@@ -40,7 +44,7 @@ entries:
   - module: http2
     scenario: h2c_browse
     weight: 7
-    expected_bytes: 44000
+    expected_bytes: 43930
     params:
       server_port: 8082
       page_size: 12000
@@ -54,7 +58,7 @@ entries:
   - module: http1
     scenario: https_fetch
     weight: 4
-    expected_bytes: 26000
+    expected_bytes: 20355
     params: {server_port: 443, body_size: 20000}
     application: https
     ndpi: [TLS]
@@ -70,7 +74,7 @@ entries:
   - module: smtp
     scenario: relay
     weight: 13
-    expected_bytes: 12100
+    expected_bytes: 12047
     params: {server_port: 25, body_size: 900, attachment_min: 2000, attachment_max: 12000}
     application: smtp
     ndpi: [SMTP]
@@ -78,7 +82,7 @@ entries:
   - module: imap
     scenario: fetch_messages
     weight: 13
-    expected_bytes: 23800
+    expected_bytes: 23743
     params: {server_port: 143, body_size: 900, attachment_min: 2000, attachment_max: 12000, messages: 6, fetches: 2}
     application: imap
     ndpi: [IMAP]
@@ -86,7 +90,7 @@ entries:
   - module: pop3
     scenario: retrieve_all
     weight: 12
-    expected_bytes: 34000
+    expected_bytes: 34121
     params: {server_port: 110, body_size: 900, attachment_min: 2000, attachment_max: 12000, messages: 3, fetches: 3}
     application: pop3
     ndpi: [POP3]
@@ -94,7 +98,7 @@ entries:
   - module: ftp
     scenario: retr_epsv
     weight: 11
-    expected_bytes: 3830
+    expected_bytes: 7765
     params: {server_port: 21, file_min: 2000, file_max: 12000}
     application: ftp
     ndpi: [FTP_CONTROL, FTP_DATA]
@@ -102,7 +106,7 @@ entries:
   - module: ssh
     scenario: remote_command
     weight: 11
-    expected_bytes: 9700
+    expected_bytes: 9699
     params: {server_port: 22, output_bytes: 8000}
     application: ssh
     ndpi: [SSH]
@@ -110,7 +114,7 @@ entries:
   - module: smb2
     scenario: download
     weight: 6
-    expected_bytes: 42300
+    expected_bytes: 42327
     params: {server_port: 445, file_size: 40000, read_size: 65536, tail_size: 40000}
     application: smb2
     ndpi: [SMBv23, SMB]
@@ -118,7 +122,7 @@ entries:
   - module: sip_rtp
     scenario: call_pcmu
     weight: 7
-    expected_bytes: 18600
+    expected_bytes: 37230
     params: {sip_port: 5060, rtp_port_min: 16384, rtp_port_max: 32766, ring_ms: 300, talk_ms: 2000}
     application: voip
     ndpi: [SIP, RTP]
