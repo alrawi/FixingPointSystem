@@ -338,6 +338,8 @@ Each session rule names the intended application of the sessions that its `match
 | `messages` | `messages` | Sessions show the expected number of requests, responses, commands, or messages |
 | `hosts` | `host_identity` | The host count and the address and MAC pairs make sense |
 
+For a module whose sessions run inside TLS, `python3 -m realism decrypted` scores the decrypted view with a labels file whose session rules match the server ports of the TLS sessions. Without `--view-port`, tshark decodes each TCP `server_port` that a rule names as TLS, so name the real server port of every TLS session in a rule (`realism/README.md`, Decrypted view, RLM-18). A TLS session on a port that no rule names is found only by the heuristic of tshark, which misses a ClientHello split after its first bytes.
+
 You score a capture that you recorded yourself with the runner of the checkout. It needs `ndpiReader` and tshark, and Zeek is optional.
 
 ```bash

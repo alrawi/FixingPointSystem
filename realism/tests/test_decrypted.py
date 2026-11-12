@@ -28,11 +28,14 @@ from realism.decrypted import (
     TlsSession,
     Tshark,
     drop_starttls,
+    labelled_tls_ports,
     parse_before,
     parse_follow,
     parse_hellos,
+    read_sessions,
     write_view,
 )
+from realism.labels import parse as parse_labels
 from realism.report import score
 from realism.tests import pcapgen, tlsgen
 from realism.tests.conftest import NDPI_42_HEADER, NDPI_414_HEADER
@@ -193,6 +196,62 @@ def test_a_missing_tshark_is_reported(tmp_path: Path) -> None:
         Tshark(str(tmp_path / "no-such-tshark")).run(tmp_path / "x.pcap", None, [])
 
 
+def _rules(*matches: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{"application": "inner", "match": match} for match in matches]
+
+
+def test_the_tls_ports_are_the_tcp_server_ports_of_the_labels() -> None:
+    doc = _labels(443)
+    doc["sessions"] = _rules(
+        {"transport": "tcp", "server_port": 8444},
+        {"transport": "tcp", "server_port": 8443},
+        {"server_port": 8443},
+        {"transport": "udp", "server_port": 5060},
+        {"transport": "tcp", "client_ip": "10.0.0.10"},
+    )
+    assert labelled_tls_ports(parse_labels(doc)) == (8443, 8444)
+
+
+def _fake_tshark(tmp_path: Path) -> tuple[Tshark, Path]:
+    """Return a tshark that records its arguments and prints nothing."""
+    log = tmp_path / "argv.log"
+    script = tmp_path / "fake-tshark"
+    script.write_text(f'#!/bin/sh\necho "$@" >> {log}\nexit 0\n')
+    script.chmod(0o755)
+    return Tshark(str(script)), log
+
+
+def test_every_tshark_run_decodes_the_tls_ports_but_443(tmp_path: Path) -> None:
+    tshark, log = _fake_tshark(tmp_path)
+    assert read_sessions(tmp_path / "x.pcap", None, tshark, "inside", (8444, 443, 8443)) == []
+    assert log.read_text().splitlines() == [
+        f"-r {tmp_path / 'x.pcap'} -d tcp.port==8443,tls -d tcp.port==8444,tls "
+        "-Y tls.handshake.type == 1 -T fields -e tcp.stream -e frame.number -e ip.src "
+        "-e ipv6.src -e tcp.srcport -e ip.dst -e ipv6.dst -e tcp.dstport"
+    ]
+
+
+def test_the_view_port_hides_the_capture_ports_from_the_labels(
+    tmp_path: Path, fake_reader: Callable[..., Path]
+) -> None:
+    # The labels of a view with --view-port name the port of the view, not of the capture.
+    tshark, log = _fake_tshark(tmp_path)
+    labels = tmp_path / "labels.json"
+    labels.write_text(json.dumps(_labels(587)))
+    for view_port, expected in ((None, "-d tcp.port==587,tls"), (587, None)):
+        log.write_text("")
+        decrypted.run(
+            tmp_path / "x.pcap",
+            labels,
+            NdpiClassifier(reader=str(fake_reader(_http_view_csv(0)))),
+            tmp_path,
+            tshark=tshark,
+            view_port=view_port,
+        )
+        assert ("-d" in log.read_text()) == (expected is not None)
+        assert expected is None or expected in log.read_text()
+
+
 # The tests below run the real tshark.
 
 CLIENT = tlsgen.ClientConfig()
@@ -269,6 +328,40 @@ def test_the_view_of_a_tls_capture_scores_as_http(
     ).stdout
     assert text.split() == ["/fps"] * 3
     assert [c["check"] for c in result["report"]["checks"]] == ["conformance", "parser_errors"]
+
+
+@needs_tls_tools
+@pytest.mark.parametrize("cut", [1, 4])
+def test_a_split_client_hello_on_a_non_standard_port_still_names_its_session(
+    tmp_path: Path,
+    labels_file: Callable[..., Path],
+    fake_reader: Callable[..., Path],
+    cut: int,
+) -> None:
+    # tshark takes port 8443 for TLS only by its heuristic, which needs a record header in
+    # the first segment of the client. A ClientHello cut after 1 to 4 octets lists no
+    # session without Decode As (MOD-23), and every session once the labels name the port.
+    cap, keylog = tlsgen.tls_capture(tmp_path, [CLIENT, TLS12, CLIENT], 8443, first_segment=cut)
+    pcap = cap.write_pcapng(tmp_path / "split.pcapng", tls_keys=keylog.read_bytes())
+    assert read_sessions(pcap, None, TSHARK) == []
+    assert [s.server[1] for s in read_sessions(pcap, None, TSHARK, "inside", (8443,))] == [8443] * 3
+    reader = fake_reader(_http_view_csv(3, port=8443))
+    code = main(
+        _args(
+            tmp_path,
+            pcap,
+            labels_file(_labels(8443)),
+            reader,
+            "--parsers",
+            "none",
+            "--sessions",
+            "3",
+        )
+    )
+    result = json.loads((tmp_path / "result.json").read_text())
+    assert code == EXIT_PASS, result["failures"]
+    assert result["tls_sessions"] == result["decrypted_sessions"] == 3
+    assert result["server_ports"] == {"8443": 3}
 
 
 @needs_tls_tools
