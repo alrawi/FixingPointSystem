@@ -344,6 +344,8 @@ cp "$FPS_STATE_DIR/$FPS_NETNS.capture.log" "$out/tcpdump.log" 2>/dev/null || : >
 dropped=$(sed -n 's/^\([0-9][0-9]*\) packets dropped by kernel.*/\1/p' "$out/tcpdump.log" | tail -n 1)
 log "client run $client_run is $client_state and server run $server_run is $server_state"
 
+# The run object carries the calibration steps (Run.calibration), which the report shows.
+call GET "/v1/runs/$client_run" "$runner" >"$out/run.json"
 call GET "/v1/runs/$client_run/report" "$runner" >"$out/run-report.json"
 call GET "/v1/runs/$client_run/report?format=csv" "$runner" >"$out/run-report.csv"
 call GET "/v1/runs/$client_run/metrics?view=scenario" "$runner" >"$out/run-metrics-scenario.json"

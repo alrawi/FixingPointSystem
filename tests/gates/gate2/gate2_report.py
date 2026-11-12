@@ -17,6 +17,7 @@ The output directory has one directory per stage.
 
     modules/NAME/NAME.realism.json   realism/ci/module-realism.sh, per module
     mix/run-report.json              GET /v1/runs/{id}/report of the client run
+    mix/run.json                     GET /v1/runs/{id} of the client run (Run.calibration)
     mix/realism.json                 the realism report of the mix capture
     mix/context.json                 settings and facts of the mix run
     image/boot-test.log              image/boot-test.sh --run
@@ -426,6 +427,75 @@ def worst_delta(rows: Sequence[dict[str, Any]], key: str) -> float:
     return worst
 
 
+def calibration_facts(out_dir: Path, run: dict[str, Any]) -> dict[str, Any]:
+    """Return the last calibration step of the client run and where it came from.
+
+    ``mix/run.json`` holds ``GET /v1/runs/{id}``. An older output directory has
+    none, and the run object of the report carries the same ``calibration``.
+    The steps are oldest first, so the last one is the state at the end of the
+    run. A run without steps has none: the controller records them only for a
+    ``throughput_bps`` objective, and none while the factor stays at one.
+    """
+    source = "run.json"
+    doc = load_optional(out_dir / "mix" / "run.json")
+    if doc is None:
+        source, doc = "run-report.json", run
+    if not isinstance(doc, dict):
+        raise GateInputError(f"mix/{source} is not a run object")
+    steps = doc.get("calibration")
+    if steps is None:
+        return {"source": source, "steps": 0, "last": None}
+    if not isinstance(steps, list) or not all(isinstance(x, dict) for x in steps):
+        raise GateInputError(
+            f"mix/{source} has a calibration that is not a list of steps"
+        )
+    return {"source": source, "steps": len(steps), "last": steps[-1] if steps else None}
+
+
+def calibration_lines(facts: dict[str, Any], basis: str) -> list[str]:
+    """Render the calibration of the mix run as the lines of a Markdown section."""
+    lines = ["", "### Calibration", ""]
+    last = facts.get("last")
+    if not isinstance(last, dict):
+        none = (
+            f"The client run has no calibration (`{facts.get('source')}` has no `calibration` step). "
+            "The controller records a step only for a `throughput_bps` objective and only once "
+            "the factor leaves one, so the mix control did not move this run."
+        )
+        return [*lines, none]
+
+    def num(value: Any) -> str:
+        return f"{value:.4g}" if isinstance(value, int | float) else "n/a"
+
+    summary = (
+        f"{facts['steps']} steps, the last at {last.get('time', 'n/a')}: factor {num(last.get('factor'))}, "
+        f"target {num(last.get('target'))}, {num(last.get('sessions_per_second'))} sessions per second "
+        f"(`{facts.get('source')}`)."
+    )
+    lines += [summary, ""]
+    entries = [e for e in last.get("entries") or [] if isinstance(e, dict)]
+    multipliers = last.get("multipliers")
+    shares = multipliers if isinstance(multipliers, dict) else {}
+    lines += table(
+        ("Mix entry", "Bytes per session", "Measured", "Multiplier"),
+        [
+            (
+                str(e.get("id")),
+                num(e.get("bytes_per_session")),
+                "yes" if e.get("measured") is True else "no",
+                num(shares.get(e.get("id"))) if shares else "none",
+            )
+            for e in sorted(entries, key=lambda e: str(e.get("id")))
+        ],
+    )
+    if not shares:
+        lines += [
+            "",
+            f"The last step has no byte mix multipliers, as is the case for a run whose profile basis is not `bytes` (this run: `{basis}`).",
+        ]
+    return lines
+
+
 def mix_stage(
     out_dir: Path,
     threshold: float,
@@ -618,6 +688,7 @@ def mix_stage(
             for x in scenarios
         ],
         "rows": rows,
+        "calibration": calibration_facts(out_dir, run),
         "unmatched_pct": unmatched_pct,
         "findings": finding_facts(realism, marks),
         "metrics_worst_pp": metrics_worst,
@@ -848,6 +919,10 @@ def render(
                     )
                     for r in mix["rows"]
                 ],
+            )
+            lines += calibration_lines(
+                mix.get("calibration") or {},
+                str((mix.get("context") or {}).get("basis", "bytes")),
             )
             lines += ["", "### Scenario totals", ""]
             lines += table(
