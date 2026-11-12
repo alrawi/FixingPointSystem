@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 164 work packages. Packages marked critical path gate the phase.
+This page lists 167 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -156,6 +156,7 @@ flowchart LR
   RLM_18["RLM-18<br/>TLS on non standard ports in the decrypted check"]
   RLM_19["RLM-19<br/>The port collision rule in the realism runner"]
   RLM_20["RLM-20<br/>Expected parser findings in the realism labels"]
+  RLM_21["RLM-21<br/>STARTTLS ports in the decrypted view"]
   CON_24["CON-24<br/>Capture drop counts in the agent protocol and the REST API"]
   AGT_21["AGT-21<br/>NTP, MQTT, LDAP, and HLS in the agent"]
   CON_25["CON-25<br/>The messages check in the metric catalog"]
@@ -175,6 +176,8 @@ flowchart LR
   CTL_46["CTL-46<br/>One property wording for realism metrics"]
   CTL_47["CTL-47<br/>Byte estimates in the scenario catalog"]
   CTL_48["CTL-48<br/>The CON-23 property wording for every realism metric"]
+  CTL_49["CTL-49<br/>A spawned flow counts with the session that opened it"]
+  CTL_50["CTL-50<br/>Registry rules as strict as the validator"]
   TRN_04 --> TRN_05
   RLM_04 --> TRN_05
   CTL_11 --> AGT_04
@@ -349,6 +352,7 @@ flowchart LR
   CON_23 --> RLM_17
   RLM_14 --> RLM_17
   QA_11 --> RLM_19
+  RLM_18 --> RLM_21
   ENG_27 --> CON_24
   MOD_15 --> AGT_21
   MOD_16 --> AGT_21
@@ -370,6 +374,8 @@ flowchart LR
   CTL_47 --> QA_12
   CTL_42 --> CTL_46
   CTL_46 --> CTL_48
+  MOD_25 --> CTL_49
+  CON_30 --> CTL_50
   classDef critical stroke-width:3px
   class TRN_04,MOD_03,IMG_01,QA_05 critical
 ```
@@ -523,6 +529,7 @@ flowchart LR
 | [RLM-18](#rlm-18-tls-on-non-standard-ports-in-the-decrypted-check) | TLS on non standard ports in the decrypted check | S | none |  |
 | [RLM-19](#rlm-19-the-port-collision-rule-in-the-realism-runner) | The port collision rule in the realism runner | S | QA-11 |  |
 | [RLM-20](#rlm-20-expected-parser-findings-in-the-realism-labels) | Expected parser findings in the realism labels | S | none |  |
+| [RLM-21](#rlm-21-starttls-ports-in-the-decrypted-view) | STARTTLS ports in the decrypted view | S | RLM-18 |  |
 | [CON-24](#con-24-capture-drop-counts-in-the-agent-protocol-and-the-rest-api) | Capture drop counts in the agent protocol and the REST API | S | ENG-27 |  |
 | [AGT-21](#agt-21-ntp-mqtt-ldap-and-hls-in-the-agent) | NTP, MQTT, LDAP, and HLS in the agent | S | MOD-15, MOD-16, MOD-17, MOD-18 |  |
 | [CON-25](#con-25-the-messages-check-in-the-metric-catalog) | The messages check in the metric catalog | S | CON-23, RLM-17 |  |
@@ -542,6 +549,8 @@ flowchart LR
 | [CTL-46](#ctl-46-one-property-wording-for-realism-metrics) | One property wording for realism metrics | S | CTL-42 |  |
 | [CTL-47](#ctl-47-byte-estimates-in-the-scenario-catalog) | Byte estimates in the scenario catalog | M | none |  |
 | [CTL-48](#ctl-48-the-con-23-property-wording-for-every-realism-metric) | The CON-23 property wording for every realism metric | S | CTL-46 |  |
+| [CTL-49](#ctl-49-a-spawned-flow-counts-with-the-session-that-opened-it) | A spawned flow counts with the session that opened it | M | MOD-25 |  |
+| [CTL-50](#ctl-50-registry-rules-as-strict-as-the-validator) | Registry rules as strict as the validator | S | CON-30 |  |
 
 ## CON Contracts
 
@@ -2300,6 +2309,40 @@ Acceptance.
 
 - [ ] go test ./internal/report passes in CI with property compared for all cases of check-metrics.yaml.
 
+### CTL-49 A spawned flow counts with the session that opened it
+
+Phase 2 · size M · workstream CTL
+
+- **Depends on.** MOD-25
+- **Paths.** `controller/internal/runs/`, `controller/internal/report/`
+
+The run counts the FTP data connection and the RTP media stream as sessions of their own, so one ftp or sip_rtp scenario session reads as two in the run metrics, the bytes per session halve, and the calibration doubles their shares. On the bytes basis the Gate 2 mix misses by up to 7.84 points (MOD-25, run 43262436363), so qa-gate2 still runs with FPS_GATE2_BASIS=sessions. The agent counters may need a change too; the package finds where the split happens.
+
+Deliverables.
+
+- Session counts and bytes per scenario session that include the spawned flows of the session, in the run metrics, the calibration, and the run report, and FPS_GATE2_BASIS removed from qa-gate2.yml once the bytes basis passes.
+
+Acceptance.
+
+- [ ] A run of ftp/retr_epsv and sip_rtp/call_pcmu reports one session per scenario session with the bytes of mix.yaml, and qa-gate2 passes on the bytes basis with no waiver.
+
+### CTL-50 Registry rules as strict as the validator
+
+Phase 2 · size S · workstream CTL
+
+- **Depends on.** CON-30
+- **Paths.** `controller/internal/registry/`
+
+CON-30 made validate.py check every rule the registry enforces, and found the registry looser in two places. It accepts the module names profiles, dist and all, which templates and the metric catalog reserve, and it does not check that a key of expected_bytes names a scenario.
+
+Deliverables.
+
+- reservedModuleNames holds all eight reserved names, and checkTree refuses an expected_bytes key that names no scenario of the manifest, with the Gaps section of Module Development updated in the Shared page notes.
+
+Acceptance.
+
+- [ ] Installs of a module named dist and of a manifest with a misspelled expected_bytes key fail with named findings, and the test that compares the validator with the Go source still passes.
+
 ## CLI Python SDK and command line client
 
 ### CLI-01 Python SDK
@@ -3080,6 +3123,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A capture whose malformed sessions produce exactly the declared findings passes, a missing or an undeclared finding fails, and the report lists both kinds.
+
+### RLM-21 STARTTLS ports in the decrypted view
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** RLM-18
+- **Paths.** `realism/`
+
+RLM-18 decodes the server ports of the labels as TLS, but smtp and imap score their decrypted view with --view-port, whose labels name the view's port and not the capture's, so they still rely on the heuristic of tshark. A STARTTLS session also starts in clear text, so decoding its port as TLS from the first byte is wrong.
+
+Deliverables.
+
+- A way to name the capture ports of STARTTLS sessions that decodes TLS only after the upgrade, used by the smtp and imap module jobs.
+
+Acceptance.
+
+- [ ] A STARTTLS capture whose ClientHello is split after its first bytes lists every session, and the smtp and imap realism jobs pass.
 
 ## CAP Capture compiler and profile extractor
 

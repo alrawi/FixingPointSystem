@@ -3709,6 +3709,22 @@ work_packages:
     acceptance:
       - A capture whose malformed sessions produce exactly the declared findings passes, a missing or an undeclared finding fails, and the report lists both kinds.
 
+  - id: RLM-21
+    title: STARTTLS ports in the decrypted view
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: [RLM-18]
+    paths: [realism/]
+    summary: >-
+      RLM-18 decodes the server ports of the labels as TLS, but smtp and imap score their decrypted view with
+      --view-port, whose labels name the view's port and not the capture's, so they still rely on the heuristic of
+      tshark. A STARTTLS session also starts in clear text, so decoding its port as TLS from the first byte is wrong.
+    deliverables:
+      - A way to name the capture ports of STARTTLS sessions that decodes TLS only after the upgrade, used by the smtp and imap module jobs.
+    acceptance:
+      - A STARTTLS capture whose ClientHello is split after its first bytes lists every session, and the smtp and imap realism jobs pass.
+
   - id: CON-24
     title: Capture drop counts in the agent protocol and the REST API
     phase: 2
@@ -4018,3 +4034,36 @@ work_packages:
       - MapRealism words every mapped metric as the examples do, and the example test compares property for every case.
     acceptance:
       - go test ./internal/report passes in CI with property compared for all cases of check-metrics.yaml.
+
+  - id: CTL-49
+    title: A spawned flow counts with the session that opened it
+    phase: 2
+    workstream: CTL
+    size: M
+    depends_on: [MOD-25]
+    paths: [controller/internal/runs/, controller/internal/report/]
+    summary: >-
+      The run counts the FTP data connection and the RTP media stream as sessions of their own, so one ftp or sip_rtp
+      scenario session reads as two in the run metrics, the bytes per session halve, and the calibration doubles their
+      shares. On the bytes basis the Gate 2 mix misses by up to 7.84 points (MOD-25, run 43262436363), so qa-gate2 still
+      runs with FPS_GATE2_BASIS=sessions. The agent counters may need a change too; the package finds where the split happens.
+    deliverables:
+      - Session counts and bytes per scenario session that include the spawned flows of the session, in the run metrics, the calibration, and the run report, and FPS_GATE2_BASIS removed from qa-gate2.yml once the bytes basis passes.
+    acceptance:
+      - A run of ftp/retr_epsv and sip_rtp/call_pcmu reports one session per scenario session with the bytes of mix.yaml, and qa-gate2 passes on the bytes basis with no waiver.
+
+  - id: CTL-50
+    title: Registry rules as strict as the validator
+    phase: 2
+    workstream: CTL
+    size: S
+    depends_on: [CON-30]
+    paths: [controller/internal/registry/]
+    summary: >-
+      CON-30 made validate.py check every rule the registry enforces, and found the registry looser in two places. It
+      accepts the module names profiles, dist and all, which templates and the metric catalog reserve, and it does not
+      check that a key of expected_bytes names a scenario.
+    deliverables:
+      - reservedModuleNames holds all eight reserved names, and checkTree refuses an expected_bytes key that names no scenario of the manifest, with the Gaps section of Module Development updated in the Shared page notes.
+    acceptance:
+      - Installs of a module named dist and of a manifest with a misspelled expected_bytes key fail with named findings, and the test that compares the validator with the Go source still passes.
