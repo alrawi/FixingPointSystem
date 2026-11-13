@@ -6,35 +6,38 @@
 | Branch | `wp/RLM-22` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 60% (3 of 5 plan steps) |
-| Current holder | claude-r22a7c, lease until 2026-11-13T06:39:28Z |
-| Last verified commit | none |
+| Progress | 80% (4 of 5 plan steps) |
+| Current holder | claude-r22a7c, lease until 2026-11-13T06:48:40Z |
+| Last verified commit | c2246b4 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
 ## Goal
 
-Let the `temporal.packets` labels of the realism runner express what `modules/hls/fixtures/hls_check.py` checks: a packet gap target that selects the requests of one kind by HTTP request path, a minimum sample count per target, and a byte property per rung. A MOD follow up then moves `hls_check.py` into labels. This package does not touch `modules/hls/`; its tests prove the labels against the committed hls fixture.
+Let the `temporal` labels of the realism runner express what `modules/hls/fixtures/hls_check.py` checks: a packet gap target that selects the requests of one kind by HTTP request path, a minimum sample count per target, and a byte property per rung. A MOD follow up then moves `hls_check.py` into labels. This package does not touch `modules/hls/`; its tests prove the labels against the committed hls fixture.
 
 ## Plan
 
 - [x] 1. Read the labels parser, the temporal check, the report schema, and the hls fixture; decide the label syntax.
-- [x] 2. Labels parser: `path` selector, `min_samples` per target, byte target.
-- [x] 3. Temporal check: request streams, per target minimum, byte shares and bit rate.
-- [ ] 4. Report schema (0.20.0), controller schema copy, ui schema.d.ts, tests against the hls fixture.
+- [x] 2. Labels parser: `path` selector, `join_ms`, `min_samples` per target, `mean_tolerance_ms`, `rungs` section.
+- [x] 3. Reader of HTTP exchanges (`realism/exchanges.py`), rung check (`realism/rungs.py`), wiring in `temporal.py`.
+- [x] 4. Both schemas, report format 0.20.0, controller schema copy, `ui/src/api/schema.d.ts`, `realism/tests/test_http_rungs.py`.
 - [ ] 5. Docs, log entry with Shared page notes, checks, PR, CI.
 
 ## Done and verified
 
-Labels parser (path, join_ms, min_samples, mean_tolerance_ms, rungs), realism/exchanges.py, realism/rungs.py, temporal.py wiring, both schemas, version 0.20.0. 874 realism tests pass. The committed hls capture passes with the new labels and shows the same bit rates as hls.playbacks.json.
+- `python3 -m pytest -q realism`: 921 passed, 9 skipped. `ruff format --check`, `ruff check`, `mypy --strict` of `realism`: clean.
+- `plan.py check`, `render --check`, `lint`: clean. `tools/contracts/validate.py`: 0 errors.
+- `node ui/scripts/gen-api.mjs --check`: matches. `cmp` of the realism schema and the controller copy: equal.
+- The committed hls capture passes with the labels of the log entry, and its bit rates and rung shares equal `hls.playbacks.json`.
 
 ## Remaining
 
-Step 4: controller schema copy, ui schema.d.ts, tests against the hls fixture. Step 5: docs, log entry, checks, PR.
+Pull request, CI, review step.
 
 ## Next action
 
-Write realism/tests/test_http_rungs.py from /tmp scratch try-hls script, then refresh the schema copies.
+Open the pull request, then poll its check runs.
 
 ## Blockers and open questions
 
@@ -42,20 +45,29 @@ none
 
 ## Decisions taken in this package
 
-none yet
+- Report format 0.20.0 (next after 0.19.0 of main). New fields are optional, so a 0.19.0 report validates.
+- `path` is allowed only under `applications` with `direction: client`, because the sessions of an application are the ones that speak HTTP, and the server sends no request.
+- A comparison with a `path` and the `rungs` add no `realism.*` series: the catalog has none for bytes, and two paths of one application and direction would give two series with equal labels. The Go mapping of the controller reads comparisons by application and property, so no Go change is needed.
+- The per target `min_samples` wins over the section value and over `--ks-min-samples`, because it is the more specific setting.
+- Bytes on the wire are the octets of the response head and body, as `hls_check.py` counted them, not TCP or IP overhead.
+- `join_ms` (800 in the hls labels) stands for the two segment durations that `hls_check.py` used to group the connections of `vod_segments`.
 
 ## Pitfalls
 
-none yet
+- The sandbox guard refuses heredocs and complex commands that mix `cd` with git. Write scripts to the scratch folder and run them.
+- `ui/node_modules` came from `npm ci` for `gen-api.mjs`. Delete it before finishing (it is untracked and ignored).
 
 ## Verify the current state
 
 ```bash
-python3 -m pytest realism/tests/test_temporal.py realism/tests/test_packet_gaps.py -q
+python3 -m pytest -q realism/tests/test_http_rungs.py realism/tests/test_temporal.py realism/tests/test_packet_gaps.py
+python3 tools/plan/plan.py lint
 ```
 
 ## Session log
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
-| 2026-11-13T05:09Z | claude-r22a7c | claim | none | claimed #536 with card 6844739470 |
+| 2026-11-13T05:09Z | claude-r22a7c | claim | 4489226 | claimed #536 with card 6844739470 |
+| 2026-11-13T05:19Z | claude-r22a7c | checkpoint | c2246b4 | labels, check, schemas, version 0.20.0 |
+| 2026-11-13T05:32Z | claude-r22a7c | checkpoint | pending | tests, schema copies, docs, log entry |

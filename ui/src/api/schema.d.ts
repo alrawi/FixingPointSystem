@@ -1460,12 +1460,12 @@ export interface components {
             };
             value?: unknown;
         };
-        /** @description Inter arrival times, payload sizes, and packet gaps inside sessions against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. A paced packet gap target (a constant with packet times) judges each stream on its own instead, and its p value is 1 when every judged stream passed and 0 otherwise. The check passes when there is at least one comparison and every one passed. failures names each reason in words. */
+        /** @description Inter arrival times, payload sizes, and packet gaps inside sessions against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. A paced packet gap target (a constant with packet times) judges each stream on its own instead, and its p value is 1 when every judged stream passed and 0 otherwise. A packet gap target with a path reads only the requests of one kind, and the rungs entries judge the bytes of those requests per rung of a bit rate ladder (RLM-22). The check passes when there is at least one comparison or rung entry and every one passed. failures names each reason in words. */
         temporal: {
             /** @constant */
             check: "temporal";
             passed: boolean;
-            /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), response_bytes (server payloads), request_gap (gaps of the client streams), response_gap (gaps of the server streams), and packet_gap (gaps of both directions pooled), and the realism.check_failures series. Comparisons over all sessions, over both directions of sizes, and the paced comparisons of packet gaps (a constant target, whose statistic is not a KS statistic) have no series and are only in comparisons. */
+            /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), response_bytes (server payloads), request_gap (gaps of the client streams), response_gap (gaps of the server streams), and packet_gap (gaps of both directions pooled), and the realism.check_failures series. Comparisons over all sessions, over both directions of sizes, the paced comparisons of packet gaps (a constant target, whose statistic is not a KS statistic), and the comparisons of packet gaps that select requests by path (whose labels would collide with those of another path of the same application) have no series and are only in comparisons. */
             metrics: (components["schemas"]["temporal_metric"] | components["schemas"]["failures_metric"])[];
             alpha: number;
             min_samples: number;
@@ -1508,6 +1508,10 @@ export interface components {
                  */
                 method: "exact" | "asymptotic" | "constant" | null;
                 alpha: number;
+                /** @description The regular expression on the request target that selected the requests of a packet gap comparison, null when every packet counts. Reports before format 0.20.0 have no such field. */
+                path?: string | null;
+                /** @description The fewest observations that this comparison needed: the min_samples of its target, or else of the check. Reports before format 0.20.0 have no such field. */
+                min_samples?: number;
                 /** @description Observations in the capture. */
                 n: number;
                 /** @description Observations of the target sample in a two sample test, otherwise null. */
@@ -1532,8 +1536,51 @@ export interface components {
                     max: number;
                 };
             }[];
+            /** @description The bytes per rung of the temporal.rungs targets, one entry per application (RLM-22). The metric catalog has no series for them, so a failure shows in failures and in the realism.check_failures series. Reports before format 0.20.0 have no such field. */
+            rungs?: {
+                application: string;
+                /** @description The regular expression on the request target whose first group is the rung. */
+                path: string;
+                /** @description Seconds of media in one response. */
+                duration: number;
+                /** @description The bit rate of each rung, by rung number. */
+                bits_per_second: number[];
+                /** @description The fewest requests that a stream needs to be judged. */
+                min_samples: number;
+                /** @description The number of judged streams that the labels expect, null when they name none. */
+                expected_streams: null | {
+                    min: number;
+                    max: number | null;
+                };
+                /** @description Requests that matched the path, in all streams. */
+                requests: number;
+                /** @enum {unknown} */
+                status: "pass" | "fail" | "insufficient_data";
+                /** @description Why the entry did not pass, null for a pass. */
+                reason: string | null;
+                /** @description Streams judged (with at least min_samples requests), failed, and too_short to be judged. Null when no stream was judged. */
+                streams: null | {
+                    judged: number;
+                    failed: number;
+                    too_short: number;
+                };
+                /** @description The judged streams, those that failed first, at most 100. */
+                playbacks: {
+                    name: string;
+                    requests: number;
+                    failures: string[];
+                    /** @description The share of each requested rung in the bytes of the stream, by rung number. */
+                    rung_share?: {
+                        [key: string]: number;
+                    };
+                    /** @description The bit rate of the stream, from its response bytes. */
+                    bits_per_second?: number;
+                    /** @description The mean bit rate of the requested rungs. */
+                    configured_bits_per_second?: number;
+                }[];
+            }[];
             insufficient_comparisons: number;
-            /** @description One sentence for each comparison that did not pass, and one when the labels name no target. */
+            /** @description One sentence for each comparison or rung entry that did not pass, and one when the labels name no target. */
             failures: string[];
         };
         /** @description A share, a distance, or the largest distance of the mix that the classifier found. */
@@ -2268,12 +2315,12 @@ export interface components {
                     /** @description One sentence for each broken rule, at most 50. failures_total counts them all. */
                     failures: string[];
                 };
-                /** @description Inter arrival times, payload sizes, and packet gaps inside sessions against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. A paced packet gap target (a constant with packet times) judges each stream on its own instead, and its p value is 1 when every judged stream passed and 0 otherwise. The check passes when there is at least one comparison and every one passed. failures names each reason in words. */
+                /** @description Inter arrival times, payload sizes, and packet gaps inside sessions against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. A paced packet gap target (a constant with packet times) judges each stream on its own instead, and its p value is 1 when every judged stream passed and 0 otherwise. A packet gap target with a path reads only the requests of one kind, and the rungs entries judge the bytes of those requests per rung of a bit rate ladder (RLM-22). The check passes when there is at least one comparison or rung entry and every one passed. failures names each reason in words. */
                 temporal: {
                     /** @constant */
                     check: "temporal";
                     passed: boolean;
-                    /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), response_bytes (server payloads), request_gap (gaps of the client streams), response_gap (gaps of the server streams), and packet_gap (gaps of both directions pooled), and the realism.check_failures series. Comparisons over all sessions, over both directions of sizes, and the paced comparisons of packet gaps (a constant target, whose statistic is not a KS statistic) have no series and are only in comparisons. */
+                    /** @description The KS statistic and p value of each comparison for one application whose property the metric catalog names: inter_arrival, request_bytes (client payloads), response_bytes (server payloads), request_gap (gaps of the client streams), response_gap (gaps of the server streams), and packet_gap (gaps of both directions pooled), and the realism.check_failures series. Comparisons over all sessions, over both directions of sizes, the paced comparisons of packet gaps (a constant target, whose statistic is not a KS statistic), and the comparisons of packet gaps that select requests by path (whose labels would collide with those of another path of the same application) have no series and are only in comparisons. */
                     metrics: (components["schemas"]["temporal_metric"] | components["schemas"]["failures_metric"])[];
                     alpha: number;
                     min_samples: number;
@@ -2316,6 +2363,10 @@ export interface components {
                          */
                         method: "exact" | "asymptotic" | "constant" | null;
                         alpha: number;
+                        /** @description The regular expression on the request target that selected the requests of a packet gap comparison, null when every packet counts. Reports before format 0.20.0 have no such field. */
+                        path?: string | null;
+                        /** @description The fewest observations that this comparison needed: the min_samples of its target, or else of the check. Reports before format 0.20.0 have no such field. */
+                        min_samples?: number;
                         /** @description Observations in the capture. */
                         n: number;
                         /** @description Observations of the target sample in a two sample test, otherwise null. */
@@ -2340,8 +2391,51 @@ export interface components {
                             max: number;
                         };
                     }[];
+                    /** @description The bytes per rung of the temporal.rungs targets, one entry per application (RLM-22). The metric catalog has no series for them, so a failure shows in failures and in the realism.check_failures series. Reports before format 0.20.0 have no such field. */
+                    rungs?: {
+                        application: string;
+                        /** @description The regular expression on the request target whose first group is the rung. */
+                        path: string;
+                        /** @description Seconds of media in one response. */
+                        duration: number;
+                        /** @description The bit rate of each rung, by rung number. */
+                        bits_per_second: number[];
+                        /** @description The fewest requests that a stream needs to be judged. */
+                        min_samples: number;
+                        /** @description The number of judged streams that the labels expect, null when they name none. */
+                        expected_streams: null | {
+                            min: number;
+                            max: number | null;
+                        };
+                        /** @description Requests that matched the path, in all streams. */
+                        requests: number;
+                        /** @enum {unknown} */
+                        status: "pass" | "fail" | "insufficient_data";
+                        /** @description Why the entry did not pass, null for a pass. */
+                        reason: string | null;
+                        /** @description Streams judged (with at least min_samples requests), failed, and too_short to be judged. Null when no stream was judged. */
+                        streams: null | {
+                            judged: number;
+                            failed: number;
+                            too_short: number;
+                        };
+                        /** @description The judged streams, those that failed first, at most 100. */
+                        playbacks: {
+                            name: string;
+                            requests: number;
+                            failures: string[];
+                            /** @description The share of each requested rung in the bytes of the stream, by rung number. */
+                            rung_share?: {
+                                [key: string]: number;
+                            };
+                            /** @description The bit rate of the stream, from its response bytes. */
+                            bits_per_second?: number;
+                            /** @description The mean bit rate of the requested rungs. */
+                            configured_bits_per_second?: number;
+                        }[];
+                    }[];
                     insufficient_comparisons: number;
-                    /** @description One sentence for each comparison that did not pass, and one when the labels name no target. */
+                    /** @description One sentence for each comparison or rung entry that did not pass, and one when the labels name no target. */
                     failures: string[];
                 };
                 /** @description Message counts per session, read with tshark. Every session that a rule of the messages section selects has the expected number of requests, responses, commands, replies, or messages, every rule matches a session, and tshark ran. failures names each reason in words, for example a missing smtp message. */

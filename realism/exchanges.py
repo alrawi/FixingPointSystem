@@ -51,17 +51,13 @@ class SessionExchanges:
     error: str | None = None
 
 
-def read_exchanges(
-    capture: Path, sessions: Iterable[Session]
-) -> dict[int, SessionExchanges]:
+def read_exchanges(capture: Path, sessions: Iterable[Session]) -> dict[int, SessionExchanges]:
     """Read the exchanges of the given TCP sessions, by session id.
 
     Only these sessions are reassembled, so a capture with many other sessions costs only
     the time to decode its frames.
     """
-    wanted: dict[SessionKey, Session] = {
-        s.key: s for s in sessions if s.transport == "tcp"
-    }
+    wanted: dict[SessionKey, Session] = {s.key: s for s in sessions if s.transport == "tcp"}
     parts: dict[int, dict[str, list[tuple[int, float, bytes]]]] = {}
     _, frames = read_frames(capture)
     for frame in frames:
@@ -195,9 +191,7 @@ def runs(
     playback whose segments each use a connection. Sessions come in the order of their ids.
     """
     ordered = sorted(read, key=lambda item: item.session.id)
-    selected = [
-        (item, [e for e in item.exchanges if pattern.search(e.target)]) for item in ordered
-    ]
+    selected = [(item, [e for e in item.exchanges if pattern.search(e.target)]) for item in ordered]
     if join is None:
         return [
             Run(describe(item.session), item.session, 1, matching) for item, matching in selected

@@ -177,8 +177,7 @@ class _Source:
         found = exchanges.runs(read, re.compile(target.path), target.join)
         label = target.join is not None
         return [
-            _Stream(run.session, "client", run.times, run.name if label else None)
-            for run in found
+            _Stream(run.session, "client", run.times, run.name if label else None) for run in found
         ], None
 
     def samples(self, target: TemporalTarget) -> list[float]:
@@ -359,10 +358,13 @@ class TemporalResult:
         and stay out, and so do the paced comparisons of packet gaps (RLM-15): their statistic
         is the share of gaps outside the tolerance and their p value is 0 or 1, which are not
         what the two metrics describe, so ``realism.check_failures`` shows their failure.
+        The comparisons of packet gaps that select requests by path (RLM-22) stay out too,
+        because a second target of the same application and direction with another path would
+        give a second series with the same labels.
         """
         out: list[dict[str, Any]] = []
         for c in self.comparisons:
-            if c["application"] is None or c["statistic"] is None:
+            if c["application"] is None or c["statistic"] is None or c["path"] is not None:
                 continue
             prop: str | None = None
             if c["property"] == PROP_ARRIVAL:
