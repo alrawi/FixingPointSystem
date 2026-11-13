@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #526 |
 | Branch | `wp/RLM-21` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (2 of 3 plan steps) |
+| Pull request | #539 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-c41e7a, lease until 2026-11-13T05:43:08Z |
-| Last verified commit | none |
+| Last verified commit | f6ec76d (30 of 30 check runs green) |
 
 ## Goal
 
@@ -18,7 +18,7 @@ The smtp and imap module jobs score their decrypted view with `--view-port`, so 
 
 - [x] 1. `--starttls-port PORT:PROTOCOL` decodes the port as the application protocol (`-d tcp.port==P,smtp`), whose tshark dissector switches to TLS after STARTTLS.
 - [x] 2. Tests: split ClientHello STARTTLS captures (smtp 5587, imap 1143, cut 1 and 4) list every session; the smtp and imap workflows and fixture tests use the option.
-- [ ] 3. README, Realism page, log entry, checks, pull request, CI.
+- [x] 3. README, Realism page, log entry, checks, pull request, CI.
 
 ## Done and verified
 
@@ -27,11 +27,11 @@ The smtp and imap module jobs score their decrypted view with `--view-port`, so 
 
 ## Remaining
 
-Pull request and CI. The fixture tests of the two modules skip locally (nDPI 4.14 is missing), so CI runs them.
+Nothing. The fixture tests of the two modules skip locally (nDPI 4.14 is missing); CI ran them (`module (smtp)`, `module (imap)` green).
 
 ## Next action
 
-Open the pull request and wait for CI.
+Coordinator: apply the Module Development text of the log entry, then merge.
 
 ## Blockers and open questions
 
@@ -59,3 +59,4 @@ python3 -m pytest realism/tests/test_decrypted.py -q   # 52 passed
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-13T04:13Z | claude-c41e7a | claim | none | claimed #526 |
+| 2026-11-13T04:40Z | claude-c41e7a | finish | f6ec76d | PR #539, CI green |
