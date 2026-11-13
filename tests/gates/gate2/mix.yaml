@@ -11,10 +11,10 @@
 #                     parameters, which the controller needs to turn byte weights
 #                     into session shares (CTL-34); the mix control corrects it
 #                     during the run (CTL-12). The values come from the bytes
-#                     per scenario session of CI runs. The run report seems to count the
-#                     data connection of ftp and the media stream of sip_rtp as
-#                     sessions of their own, so the bytes of one scenario session
-#                     are twice the bytes per counted session there
+#                     per scenario session of CI runs. A session is one run of the entry
+#                     flow, and the data connection of ftp and the media stream of
+#                     sip_rtp add their bytes to it (CON-31), so the bytes of one
+#                     scenario session are the bytes of all its connections
 #   params            the scenario parameters; every entry listens on its own
 #                     transport and port, because two entries must not share one
 #   application       the row of the mix check. Scenarios that nDPI cannot tell
