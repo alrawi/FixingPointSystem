@@ -42,6 +42,16 @@ STATUS_LABELS = (
     "status:done",
 )
 
+# Status labels that a takeover accepts. A blocked item is included because the
+# Swarm Protocol defines takeover as a claim of an item whose newest card is
+# expired, released, or blocked.
+TAKEOVER_STATUSES = (
+    "status:ready",
+    "status:stale",
+    "status:in-progress",
+    "status:blocked",
+)
+
 EXIT_OK = 0
 EXIT_REFUSED = 1
 EXIT_ERROR = 2
@@ -633,10 +643,11 @@ class Swarm:
         issue = self.api.issue(number)
         labels = labels_of(issue)
         if takeover:
-            allowed = {"status:ready", "status:stale", "status:in-progress"}
+            allowed = set(TAKEOVER_STATUSES)
             if issue.get("state") != "open" or not allowed & set(labels):
                 raise Refused(
-                    f"issue #{number}: not open with a ready, stale, or in-progress label"
+                    f"issue #{number}: not open with a ready, stale, in-progress,"
+                    " or blocked label"
                 )
             if "needs:split" in labels or "type:followup" in labels:
                 raise Refused(
@@ -891,7 +902,8 @@ class Swarm:
                 continue
             number = int(issue["number"])
             refs = self._blocking_issues(number)
-            if refs is None or not refs:
+            if not refs:
+                self._report_unnamed_block(number, refs is None)
                 continue
             if all(closed_completed(self._issue_or_none(n)) for n in refs):
                 changes.append((number, "status:ready"))
@@ -913,6 +925,22 @@ class Swarm:
         for number, status in changes:
             self.log(f"promote: #{number} to {status}{' (dry run)' if dry_run else ''}")
         return changes
+
+    def _report_unnamed_block(self, number: int, no_marker: bool) -> None:
+        """Say that the sweep cannot unblock an item, so a person or a takeover must.
+
+        The report goes to the log, which is stderr, and never to stdout, because
+        stdout carries only the planned label changes.
+        """
+        why = (
+            "has no fps:block comment"
+            if no_marker
+            else "has a blocking comment that names no blocking issue"
+        )
+        self.log(
+            f"blocked: #{number} {why}, so the sweep leaves it alone;"
+            f" the owner relabels it or an agent runs `fps_swarm.py takeover {number}`"
+        )
 
     def _blocking_issues(self, number: int) -> list[int] | None:
         newest = None
