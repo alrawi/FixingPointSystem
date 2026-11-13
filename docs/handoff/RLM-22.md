@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #536 |
 | Branch | `wp/RLM-22` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #541 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-r22a7c, lease until 2026-11-13T06:48:40Z |
-| Last verified commit | c2246b4 |
+| Last verified commit | d71b9c5 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Let the `temporal` labels of the realism runner express what `modules/hls/fixtur
 - [x] 2. Labels parser: `path` selector, `join_ms`, `min_samples` per target, `mean_tolerance_ms`, `rungs` section.
 - [x] 3. Reader of HTTP exchanges (`realism/exchanges.py`), rung check (`realism/rungs.py`), wiring in `temporal.py`.
 - [x] 4. Both schemas, report format 0.20.0, controller schema copy, `ui/src/api/schema.d.ts`, `realism/tests/test_http_rungs.py`.
-- [ ] 5. Docs, log entry with Shared page notes, checks, PR, CI.
+- [x] 5. Docs, log entry with Shared page notes, checks, PR, CI.
 
 ## Done and verified
 
@@ -33,11 +33,11 @@ Let the `temporal` labels of the realism runner express what `modules/hls/fixtur
 
 ## Remaining
 
-Pull request, CI, review step.
+none
 
 ## Next action
 
-Open the pull request, then poll its check runs.
+Review the pull request (RLM-22, #541) against the Definition of Done.
 
 ## Blockers and open questions
 
@@ -55,7 +55,7 @@ none
 ## Pitfalls
 
 - The sandbox guard refuses heredocs and complex commands that mix `cd` with git. Write scripts to the scratch folder and run them.
-- `ui/node_modules` came from `npm ci` for `gen-api.mjs`. Delete it before finishing (it is untracked and ignored).
+- `ui/node_modules` came from `npm ci` for `gen-api.mjs` and is deleted again (it was untracked and ignored).
 
 ## Verify the current state
 
@@ -70,4 +70,5 @@ python3 tools/plan/plan.py lint
 |---|---|---|---|---|
 | 2026-11-13T05:09Z | claude-r22a7c | claim | 4489226 | claimed #536 with card 6844739470 |
 | 2026-11-13T05:19Z | claude-r22a7c | checkpoint | c2246b4 | labels, check, schemas, version 0.20.0 |
-| 2026-11-13T05:32Z | claude-r22a7c | checkpoint | pending | tests, schema copies, docs, log entry |
+| 2026-11-13T05:32Z | claude-r22a7c | checkpoint | d71b9c5 | tests, schema copies, docs, log entry; PR 541 opened, all 30 check runs green |
+| 2026-11-13T05:48Z | claude-r22a7c | finish | pending | handoff set to ready for review; the review step follows green CI |
