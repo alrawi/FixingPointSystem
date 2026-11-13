@@ -261,6 +261,8 @@ Third parties build their own modules, so the way a module is written is a publi
 - How a module is packaged, signed, uploaded, or loaded by the controller and the agent.
 - The layout of a module directory or the files of `modules/_template/`.
 
+A package that finds and resolves a problem that a module author could meet, such as a race in a fixture peer, a parser or classifier quirk, a timing pitfall, or a capture artifact, adds an entry to [Watch out for](Module-Development.md#watch-out-for) in the same pull request: what you see, why it happens, what to do, and the package that found it.
+
 A package whose paths do not include the guide puts the text in the `Shared page notes` of its log entry, and the coordinator applies it before the package merges.
 
 ## Commits and pull requests
