@@ -6,7 +6,7 @@
 | Branch | `wp/MOD-30` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 3 plan steps) |
+| Progress | 90% (3 of 3 plan steps, CI pending) |
 | Current holder | claude-4d2f9a, lease until 2026-11-13T18:06:18Z |
 | Last verified commit | none |
 
@@ -18,21 +18,21 @@ RLM-21 added `--starttls-port PORT:PROTOCOL` to `python3 -m realism decrypted`. 
 
 ## Plan
 
-- [ ] 1. Add the option to both capture scripts and both fixture tests.
-- [ ] 2. Score the committed captures locally with the option, where tshark and ndpiReader exist.
-- [ ] 3. Log entry, checks, PR, CI.
+- [x] 1. Add the option to both capture scripts and both fixture tests.
+- [x] 2. Score the committed captures locally with the option, where tshark and ndpiReader exist.
+- [x] 3. Log entry, checks, PR (CI pending).
 
 ## Done and verified
 
-Nothing yet.
+Edits to both capture scripts, both fixture tests, both READMEs, Module-Development. Verified: `capture.sh` of each module in the namespace harness (4 sessions) passes with the option; `realism decrypted --starttls-port` on the committed captures passes 8 of 8; `cargo test -p fps-module-{smtp,imap} --test fixture` pass; plan.py check, render --check, lint, lint-mod-smtp, lint-mod-imap pass.
 
 ## Remaining
 
-All steps.
+CI result, then `fps_swarm.py review`.
 
 ## Next action
 
-Edit the four files.
+Poll CI on the PR.
 
 ## Blockers and open questions
 

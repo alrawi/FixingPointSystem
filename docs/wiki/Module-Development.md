@@ -563,7 +563,7 @@ These are problems that the project has already met while it built modules, with
 
 **TLS on a port that is not 443.** tshark finds TLS on another port only by a heuristic, which misses a session whose ClientHello the sender split after its first bytes. Name the real server port of every TLS session in a rule of the decrypted labels, so the runner decodes it as TLS (MOD-23, RLM-18).
 
-**STARTTLS ports.** Never decode a STARTTLS port as TLS from its first byte, because the dialogue starts in clear text. Pass `--starttls-port PORT:smtp` (or `imap`, `pop`) to `python3 -m realism decrypted`, and name the capture port, not the view port (RLM-21).
+**STARTTLS ports.** Never decode a STARTTLS port as TLS from its first byte, because the dialogue starts in clear text. Pass `--starttls-port PORT:smtp` (or `imap`, `pop`) to `python3 -m realism decrypted`, and name the capture port, not the view port (RLM-21). The `capture.sh` scripts and fixture tests of the first party `smtp` and `imap` modules do this with `5587:smtp` and `1143:imap` (MOD-30).
 
 **Zeek does not decrypt TLS.** Checks of the dialogue inside TLS run on the decrypted view of `python3 -m realism decrypted` (MOD-04, RLM-12).
 

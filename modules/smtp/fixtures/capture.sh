@@ -31,6 +31,9 @@
 # decrypted` then reads the dialogue inside TLS with tshark and, where Zeek is
 # installed, with Zeek, see the README. The result lands as smtp.decrypted.json.
 # FPS_FIXTURE_DECRYPTED_DIR keeps the decrypted view as smtp.decrypted.pcap.
+# The command gets --starttls-port 5587:smtp (RLM-21, MOD-30), so tshark decodes
+# the capture port as SMTP and starts TLS after the STARTTLS reply, and does not
+# depend on its TLS heuristic. The labels name port 587, the port of the view.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -141,7 +144,8 @@ mkdir -p "$view_dir"
 view="$view_dir/smtp.decrypted.pcap"
 python3 -m realism decrypted --pcap "$out/smtp.pcapng" \
   --labels "$root/realism/examples/decrypted/smtp.labels.yaml" \
-  --sessions "$sessions" --plaintext upgrade --view-port 587 --parsers "$parsers" \
+  --sessions "$sessions" --plaintext upgrade --starttls-port "$starttls_port:smtp" \
+  --view-port 587 --parsers "$parsers" \
   --output "$out/smtp.decrypted.json" --view "$view" "${zeek_args[@]}"
 if [[ -n $zeek ]]; then
   python3 "$here/zeek_check.py" "$view" --zeek "$zeek" \

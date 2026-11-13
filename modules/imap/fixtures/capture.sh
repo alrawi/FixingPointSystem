@@ -29,6 +29,9 @@
 # scores a decrypted view with nDPI, and runs Zeek on the view when Zeek is
 # installed, see the README. The result lands as imap.decrypted.json.
 # FPS_FIXTURE_DECRYPTED_DIR keeps the view as imap.decrypted.pcap.
+# The command gets --starttls-port 1143:imap (RLM-21, MOD-30), so tshark decodes
+# the capture port as IMAP and starts TLS after the STARTTLS reply, and does not
+# depend on its TLS heuristic. The labels name port 143, the port of the view.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -120,5 +123,6 @@ if [[ -n ${FPS_FIXTURE_DECRYPTED_DIR:-} ]]; then
 fi
 python3 -m realism decrypted --pcap "$out/imap.pcapng" \
   --labels "$root/realism/examples/decrypted/imap.labels.yaml" \
-  --sessions "$sessions" --view-port 143 --parsers "$parsers" \
+  --sessions "$sessions" --starttls-port "$starttls_port:imap" --view-port 143 \
+  --parsers "$parsers" \
   --output "$out/imap.decrypted.json" "${zeek_args[@]}" "${view_args[@]}"

@@ -21,6 +21,10 @@ use std::process::Command;
 /// STARTTLS sessions in the capture.
 const SESSIONS: &str = "8";
 
+/// The capture port of the STARTTLS sessions with their protocol, as `capture.sh`
+/// passes it to `--starttls-port` (RLM-21). The labels name port 143, the port of the view.
+const STARTTLS_PORT: &str = "1143:imap";
+
 fn available(program: &str) -> bool {
     Command::new(program).arg("--version").output().is_ok()
 }
@@ -81,6 +85,8 @@ fn every_starttls_session_decrypts_and_scores() {
         .args([
             "--sessions",
             SESSIONS,
+            "--starttls-port",
+            STARTTLS_PORT,
             "--view-port",
             "143",
             "--parsers",
