@@ -100,10 +100,10 @@ make e2e-qa-gate2-image        # the image stage, which needs Packer, QEMU, and 
 
 ### Waivers
 
-Two waivers keep the suite honest about what the system cannot do yet. The report names both and then says `PASS WITH WAIVERS`, and the workflow sets them.
+Two waivers keep the suite honest about what the system cannot do yet. The report names any that is set and then says `PASS WITH WAIVERS`. The workflow sets none of them now.
 
 - **Modules the agent does not run.** `engine/fps-agent` links the native crate of a module to run it, and AGT-21 adds `ntp`, `mqtt`, `ldap`, and `hls`. `FPS_GATE2_MIX_WAIVE` leaves them out of the mix. A waiver lapses by itself once `engine/fps-agent/Cargo.toml` depends on the crate, so merging AGT-21 puts the four modules into the mix without an edit. Their module checks run in the module stage regardless.
-- **The byte basis.** The controller reads `expected_bytes` since CTL-47, and every manifest carries it since MOD-25. A run on the bytes basis still misses the mix by up to 7.84 points, because the run counts the FTP data connection and the RTP media stream as sessions of their own. The calibration then measures half the real bytes of an ftp or sip_rtp session and doubles their shares. CTL-49 counts a spawned flow with the session that opened it. Until then `FPS_GATE2_BASIS=sessions` keeps the waiver.
+- **The byte basis.** The controller reads `expected_bytes` since CTL-47, and every manifest carries it since MOD-25. The mix first missed on the bytes basis by up to 7.84 points, because the run counted the FTP data connection and the RTP media stream as sessions of their own, so the calibration measured half the real bytes of an ftp or sip_rtp session. CON-31 and ENG-30 made a session one run of the entry flow, with the bytes of its spawned flows, and the controller needed no change (CTL-49). The workflow no longer sets `FPS_GATE2_BASIS`, so the mix runs on the bytes basis with no waiver.
 
 ### Negative proof
 
@@ -127,7 +127,7 @@ The workflow run for pull request 487 on `ubuntu-24.04` passed in all five jobs 
 - **Mix.** The 10 modules that the agent runs attempted 19,606 sessions in the client run (8,392 `dns`, 4,138 `ftp`, 1,697 `http1`, 213 `http2`, 799 `imap`, 491 `pop3`, 544 `sip_rtp`, 185 `smb2`, 1,510 `smtp`, and 1,637 `ssh`) and none failed. The largest difference between a byte share and its weight was 0.898 points by the run metrics (HTTPS) and 1.367 points by nDPI (HTTPS, where the TLS records add bytes that the metrics do not count), against the 2 point limit. Unmatched traffic was 0%, conformance was 100% for every application, and the parsers reported nothing. The mix scored again at a tolerance of 0 points failed the gate as required.
 - **Image.** The boot test passed 51 checks with no failure on KVM, and the unattended run in the VM completed with a passed verdict and 557 succeeded sessions (349 `http1`, 208 `dns`).
 
-An earlier run of the mix with guessed byte estimates missed the limit by up to 8.6 points, which shows that the check can fail. The estimates in `mix.yaml` now come from the bytes per scenario session of that run, where the run report seems to count the FTP data connection and the SIP media stream as sessions of their own (the session counts of both doubled against their weights). Another controller or a heavier agent changes these estimates only through the controller, and the byte basis ends the need for them once the catalog carries `expected_bytes`.
+An earlier run of the mix with guessed byte estimates missed the limit by up to 8.6 points, which shows that the check can fail. The estimates in `mix.yaml` now come from the bytes per scenario session of that run, where the run counted the FTP data connection and the SIP media stream as sessions of their own (the session counts of both doubled against their weights). Since CON-31 and ENG-30 a session holds the bytes of its spawned flows, and the mix passes on the bytes basis with the same estimates. Another controller or a heavier agent changes these estimates only through the controller, and the byte basis ends the need for them once the catalog carries `expected_bytes`.
 
 ### Limits
 

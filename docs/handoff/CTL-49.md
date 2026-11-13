@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #527 |
 | Branch | `wp/CTL-49` |
-| Pull request | none |
+| Pull request | #543 |
 | Status | in progress |
-| Progress | 60% (3 of 5 plan steps) |
+| Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-c49b01 |
-| Last verified commit | none |
+| Last verified commit | 8f4bbd8 (CI green, qa-gate2 PASS on the bytes basis) |
 
 ## Goal
 
@@ -18,7 +18,7 @@ The run counts the FTP data connection and the RTP media stream as sessions of t
 
 - [x] 1. Find where a spawned flow becomes a session of its own
 - [x] 2. Verify the controller side against ENG-30 and CON-31: no change needed (clientTotals and the report read the series as they are, and the series now carry the whole session)
-- [ ] 3. Tests, wiki entry, shared page notes
+- [x] 3. Wiki entry, shared page notes (no controller test change was needed)
 - [x] 4. Remove FPS_GATE2_BASIS from qa-gate2.yml, open PR (docs follow the Gate 2 verdict)
 - [ ] 5. CI green, review
 
@@ -38,7 +38,7 @@ An engine change (below), then CTL-49 can verify the controller side and remove 
 
 ## Next action
 
-Read the qa-gate2 verdict of the first push, then update the docs (pass) or report deltas (miss). Earlier note: the coordinator decides who changes the engine counters. After that change merges, resume CTL-49 with `fps_swarm.py takeover 527`, run qa-gate2 on the bytes basis without the variable, and fix the controller or report only if a gap remains (the run report reads the same series).
+qa-gate2 passed on the bytes basis (run 43379299570, largest delta 1.354 pp). Docs and the log entry are in the second push; wait for CI, then run the review step. Earlier note: the coordinator decides who changes the engine counters. After that change merges, resume CTL-49 with `fps_swarm.py takeover 527`, run qa-gate2 on the bytes basis without the variable, and fix the controller or report only if a gap remains (the run report reads the same series).
 
 ## Blockers and open questions
 
