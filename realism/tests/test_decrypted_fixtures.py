@@ -32,8 +32,8 @@ TSHARK = os.environ.get("FPS_TSHARK") or shutil.which("tshark")
 # Module, sessions in the TLS part of the fixture, and the options of its view.
 CASES = [
     ("http1", 80, []),
-    ("smtp", 8, ["--plaintext", "upgrade", "--view-port", "587"]),
-    ("imap", 8, ["--view-port", "143"]),
+    ("smtp", 8, ["--plaintext", "upgrade", "--starttls-port", "5587:smtp", "--view-port", "587"]),
+    ("imap", 8, ["--starttls-port", "1143:imap", "--view-port", "143"]),
     ("http2", 40, []),
 ]
 

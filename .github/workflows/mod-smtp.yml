@@ -64,4 +64,5 @@ jobs:
         run: |
           python -m realism decrypted --pcap modules/smtp/fixtures/smtp.pcapng \
             --labels realism/examples/decrypted/smtp.labels.yaml --sessions 8 \
-            --plaintext upgrade --view-port 587 --parsers tshark,zeek --zeek /opt/zeek/bin/zeek
+            --plaintext upgrade --starttls-port 5587:smtp --view-port 587 \
+            --parsers tshark,zeek --zeek /opt/zeek/bin/zeek

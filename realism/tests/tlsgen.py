@@ -114,8 +114,10 @@ def add_session(
 ) -> None:
     """Append a TCP session that carries the flights, cut into segments of 1400 bytes.
 
-    ``first_segment`` cuts the first flight of the client (its ClientHello) after that many
-    octets, so its first TCP segment is short and the rest follows in the next one.
+    ``first_segment`` cuts the ClientHello after that many octets, so its first TCP segment is
+    short and the rest follows in the next one. The ClientHello is the first flight of the
+    client that starts with a handshake record (0x16), so a STARTTLS dialogue that sends
+    plain commands first keeps those whole.
     """
     (c, cp), (s, sp) = client, server
     cseq, sseq = 1000, 5000
@@ -126,7 +128,7 @@ def add_session(
     first = first_segment
     for from_client, data in flights:
         cuts = [0]
-        if from_client and first is not None:
+        if from_client and first is not None and data[:1] == b"\x16":
             cuts.append(first)
             first = None
         cuts += range(cuts[-1] + MSS, len(data), MSS)
