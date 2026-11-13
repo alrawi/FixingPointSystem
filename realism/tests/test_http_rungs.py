@@ -166,16 +166,16 @@ def test_the_committed_hls_capture_passes_with_labels_as_strong_as_hls_check() -
 
 
 def test_the_byte_numbers_equal_those_of_hls_check() -> None:
-    """The bit rate and the rung shares are the numbers of hls.playbacks.json, per playback."""
-    recorded = json.loads((FIXTURE / "hls.playbacks.json").read_text())["playbacks"]
+    """The bit rate and the rung shares are the numbers that hls_check.py recorded, per playback.
+
+    MOD-31 deleted hls_check.py and its record hls.playbacks.json, so the numbers of that
+    record for the committed capture are kept here.
+    """
+    vod = (373333, json.dumps({"0": 0.1452, "1": 0.2855, "2": 0.5693}))
     want = sorted(
-        (
-            p["segments"],
-            p["bits_per_second"],
-            p["configured_bits_per_second"],
-            json.dumps(p["rung_share"]),
-        )
-        for p in recorded
+        [(9, 375327, *vod)] * 3
+        + [(33, 375707, 373333, json.dumps({"0": 0.1454, "1": 0.2855, "2": 0.5691}))]
+        + [(8, 321440, 320000, json.dumps({"1": 1.0}))] * 3
     )
     report = check(CAPTURE, hls_labels()).to_dict()
     got = sorted(
