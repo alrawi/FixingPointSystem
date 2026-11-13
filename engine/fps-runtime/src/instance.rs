@@ -4,9 +4,19 @@
 //! A scenario with more than one flow runs as one [`fps_interp::ScenarioInstance`]
 //! per session start. The worker drives it with a [`FlowEnv`] over the kernel
 //! backend, which hands each flow side its opener and its module functions and
-//! keeps what the worker needs to count the side: its session id, its start,
-//! its end, and its extension instances. A scenario with one flow never comes
-//! here, it keeps the single session path of the worker.
+//! keeps what the worker needs to count the instance: the session id, the
+//! start, the end, and the extension instances of each side. A scenario with
+//! one flow never comes here, it keeps the single session path of the worker.
+//!
+//! # Sessions
+//!
+//! The instance is one session (CON-31). It starts with the entry flow and
+//! carries the labels of the entry flow. Every other flow side, spawned or
+//! ordered by `after`, adds its bytes to the session, and its failure fails
+//! the session once, with the reason of the first side that failed. The
+//! session is open until the last side ended, so `sessions.concurrent` and
+//! `sessions.duration` span the instance. The capture still holds one
+//! connection for each flow side, and the session ids stay those of the sides.
 //!
 //! # Session ids
 //!
@@ -55,8 +65,8 @@ use fps_capture::CaptureCell;
 use fps_flow::program::{Flow, L4};
 use fps_flow::{FnCall, FnError, Scenario, TemplateFn};
 use fps_interp::{
-    FlowEnv, InstanceConfig, OpenKind, OpenRequest, Opener, Reason, ScenarioInstance, Side, Sides,
-    TlsUpgrader,
+    FlowEnv, InstanceConfig, OpenKind, OpenRequest, Opener, Reason, ScenarioInstance, Side,
+    SideStats, Sides, TlsUpgrader,
 };
 use rand::RngCore;
 use tokio::time::{sleep, Instant};
@@ -443,7 +453,10 @@ impl FlowEnv for InstanceEnv {
             }
             None => (native, None),
         };
-        w.metrics_of(index).started(&mut w.shard.borrow_mut());
+        // Only the entry flow starts a session, the other flows belong to it.
+        if index == self.entry {
+            w.metrics().started(&mut w.shard.borrow_mut());
+        }
         self.log.push(SideLog {
             id,
             flow: index,
@@ -516,25 +529,35 @@ pub(crate) async fn run(worker: Rc<Worker>, local_id: u64, peer: Peer) {
             limits: worker.flow.limits,
         },
     );
-    // The instance fails as a whole when one side fails. The sides carry
-    // their own failure counts, so the error needs no further record.
-    let _ = instance
+    // The first side that fails fails the instance, and so the session of its
+    // entry flow, with its reason. The sides that the failure cuts short add
+    // no count of their own.
+    let outcome = instance
         .run(&mut env, &worker.filler, worker.aborted())
-        .await;
-    finish(&worker, &env, &instance, first_id);
+        .await
+        .err()
+        .map(|e| e.failure.reason);
+    finish(&worker, &env, &instance, first_id, outcome);
 }
 
-/// Records the end of every started side, and ends its extensions.
-fn finish(worker: &Worker, env: &InstanceEnv, instance: &ScenarioInstance<'_>, first_id: u64) {
+/// Records the session of the instance, and ends the extensions of its sides.
+///
+/// The instance is one session of the entry flow, see CON-31. It is
+/// established when the entry flow was, and it fails with `outcome`, the
+/// reason of the first side that failed. Its bytes are those of every side,
+/// and it lasts from the start of the entry flow to the end of the last side.
+fn finish(
+    worker: &Worker,
+    env: &InstanceEnv,
+    instance: &ScenarioInstance<'_>,
+    first_id: u64,
+    outcome: Option<Reason>,
+) {
     if let Some(tls) = &env.tls {
         worker.record_tls(tls.take_events());
     }
     let mut recorded = vec![false; env.log.len()];
-    let now = Instant::now();
-    let micros = |log: &SideLog| {
-        let end = log.ended.get().unwrap_or(now);
-        u64::try_from(end.saturating_duration_since(log.started).as_micros()).unwrap_or(u64::MAX)
-    };
+    let mut totals = SideStats::default();
     for record in instance.records() {
         let k = usize::try_from(record.session_id.wrapping_sub(first_id)).unwrap_or(usize::MAX);
         let log = env.log.get(k);
@@ -547,27 +570,38 @@ fn finish(worker: &Worker, env: &InstanceEnv, instance: &ScenarioInstance<'_>, f
         );
         let Some(log) = log else { continue };
         recorded[k] = true;
-        worker.metrics_of(log.flow).ended_with(
-            &mut worker.shard.borrow_mut(),
-            record.stats,
-            record.failed,
-            micros(log),
-        );
+        totals.bytes_tx = totals.bytes_tx.saturating_add(record.stats.bytes_tx);
+        totals.bytes_rx = totals.bytes_rx.saturating_add(record.stats.bytes_rx);
+        if log.flow == env.entry {
+            totals.established |= record.stats.established;
+        }
         end_extensions(log, record.failed);
     }
     // A side that started and left no record, which only a dropped instance
-    // does, counts as an internal failure so that its gauge returns to zero.
-    for (log, done) in env.log.iter().zip(recorded) {
-        if !done {
-            worker.metrics_of(log.flow).ended_with(
-                &mut worker.shard.borrow_mut(),
-                fps_interp::SideStats::default(),
-                Some(Reason::Internal),
-                micros(log),
-            );
-            end_extensions(log, Some(Reason::Internal));
-        }
+    // does, fails the session as an internal failure so that its gauge
+    // returns to zero.
+    let mut failed = outcome;
+    for (log, _) in env.log.iter().zip(&recorded).filter(|(_, done)| !**done) {
+        failed.get_or_insert(Reason::Internal);
+        end_extensions(log, Some(Reason::Internal));
     }
+    // The entry flow is the only flow that counted a start. An instance
+    // without an entry side counted none, and counts no end.
+    let Some(entry) = env.log.iter().find(|l| l.flow == env.entry) else {
+        return;
+    };
+    let now = Instant::now();
+    let end = env
+        .log
+        .iter()
+        .map(|l| l.ended.get().unwrap_or(now))
+        .max()
+        .unwrap_or(now);
+    let micros =
+        u64::try_from(end.saturating_duration_since(entry.started).as_micros()).unwrap_or(u64::MAX);
+    worker
+        .metrics()
+        .ended_with(&mut worker.shard.borrow_mut(), totals, failed, micros);
 }
 
 /// Ends the extension sessions of a side with the `on-close` hook. The

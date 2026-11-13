@@ -33,8 +33,10 @@ use fps_stats::{metric, Snapshot};
 
 const SEED: u64 = 20_261_112;
 
-/// The sessions of one call on one side: the dialog and the media flow.
-const FLOW_SESSIONS: u64 = 2;
+/// The connections of one call on one side: the dialog and the media flow. A
+/// call is one session (CON-31), so the counters count `calls` and the capture
+/// counts these connections.
+const FLOW_CONNECTIONS: u64 = 2;
 /// The RTP packets that each side sends in one call: `talk_ms` over `ptime_ms`.
 const RTP_PER_SIDE: u64 = 20;
 /// The size of an RTP packet of PCMU at 20 ms: the 12 byte header and 160 bytes.
@@ -182,9 +184,10 @@ fn run_calls(name: &str, rtp: (i64, i64), pool: u8, calls: u64) -> usize {
     config.capture.set(capture.clone());
     let (client, server) = run_pair(server, config);
 
-    // The counters: every call started the dialog and the media flow on both
-    // sides, and every side succeeded.
-    let sessions = calls * FLOW_SESSIONS;
+    // The counters: every call is one session of the dialog flow, which the
+    // media flow joins, and every session succeeded.
+    let sessions = calls;
+    let connections = calls * FLOW_CONNECTIONS;
     for (report, worker, side) in [(&client, 0, "client"), (&server, 10, "server")] {
         let s = exit(report, worker);
         assert_eq!(
@@ -216,7 +219,7 @@ fn run_calls(name: &str, rtp: (i64, i64), pool: u8, calls: u64) -> usize {
     let files = capture.flush();
     let stats = capture.stop();
     assert_eq!(stats.sessions_dropped_queue, 0, "{stats:?}");
-    assert_eq!(stats.sessions_written, sessions, "{stats:?}");
+    assert_eq!(stats.sessions_written, connections, "{stats:?}");
     assert_eq!(files.len(), 1, "{files:?}");
     let packets: Vec<_> = read_pcapng(&files[0])
         .packets
@@ -231,7 +234,7 @@ fn run_calls(name: &str, rtp: (i64, i64), pool: u8, calls: u64) -> usize {
         .collect();
     assert_eq!(
         flows.len() as u64,
-        sessions,
+        connections,
         "one 5-tuple per flow: {flows:?}"
     );
     let sip_port = sip.port();

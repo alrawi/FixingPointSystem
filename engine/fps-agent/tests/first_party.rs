@@ -146,10 +146,10 @@ fn succeeded(line: &Json, application: &str) -> u64 {
 
 /// AGT-16: `mixed_session` of the ftp module has a control flow and three
 /// spawned data flows. The agent runs it as a scenario instance, so every
-/// instance gives four client sessions: the control connection and one data
-/// connection per transfer. The scenario needs the `spawn` action, which the
-/// loader of single flow sessions refuses, and the `content` module through
-/// `requires`.
+/// instance gives one client session, which holds the control connection and
+/// one data connection per transfer (CON-31). The scenario needs the `spawn`
+/// action, which the loader of single flow sessions refuses, and the `content`
+/// module through `requires`.
 #[test]
 fn an_ftp_scenario_with_data_flows_runs_through_the_agent() {
     ftp_run();
@@ -181,9 +181,9 @@ fn ftp_run() {
     )
     .expect("JSON line");
     let ok = succeeded(&last, "ftp");
-    // One full instance is the control connection and three data
-    // connections, and the data connections count only inside an instance.
-    assert!(ok >= 4, "{ok} ftp sessions succeeded\n{log}");
+    // One full instance is one session: the control connection and the three
+    // data connections count only inside it.
+    assert!(ok >= 1, "{ok} ftp sessions succeeded\n{log}");
 }
 
 /// AGT-17: `interactive_shell` and `scp_upload` of the ssh module run a real
@@ -238,8 +238,8 @@ fn ssh_run() {
 
 /// AGT-20: `call_pcmu` of the sip_rtp module has a UDP signaling flow and a
 /// spawned UDP media flow. The agent runs it as a scenario instance in the
-/// runtime, so every call gives two client sessions: the SIP dialog and the RTP
-/// stream. The SIP port and the RTP range lie above 1023, because the test runs
+/// runtime, so every call gives one client session, which holds the SIP dialog
+/// and the RTP stream (CON-31). The SIP port and the RTP range lie above 1023, because the test runs
 /// without root. The registry gives each flow side its own `SipRtp`, so the RTP
 /// sequence numbers and the pacing clocks of the calls never mix.
 #[test]
@@ -267,9 +267,9 @@ fn a_sip_call_with_a_media_flow_runs_through_the_agent() {
     let last: Json =
         serde_json::from_str(out.lines().last().expect("a snapshot line")).expect("JSON line");
     // Four calls per second start for three seconds, and a call lasts about one
-    // second, so several whole calls of two sessions each finish.
+    // second, so several whole calls of one session each finish.
     let ok = succeeded(&last, "sip_rtp");
-    assert!(ok >= 4, "{ok} sip_rtp sessions succeeded\n{log}");
+    assert!(ok >= 2, "{ok} sip_rtp sessions succeeded\n{log}");
 }
 
 /// AGT-19: `download` and `upload` of the smb2 module run a synthetic NTLMv2
