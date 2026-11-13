@@ -131,7 +131,7 @@ An earlier run of the mix with guessed byte estimates missed the limit by up to 
 
 ### Limits
 
-- The mix leaves out `hls`, `ldap`, `mqtt`, and `ntp` until AGT-21 merges, and it runs on the session basis until the controller catalog carries `expected_bytes`. Gate 2 does not hold in full before both waivers end.
+- The CI run takes no waiver since CTL-49: the mix holds all 15 applications (AGT-21) and runs on the bytes basis, which the controller can compile from the manifests (CTL-47, MOD-25) and measure per scenario session (CON-31, ENG-30). `FPS_GATE2_MIX_WAIVE` and `FPS_GATE2_BASIS` still exist for a local run, and either one turns the verdict into `PASS WITH WAIVERS`.
 - Every manifest of a module with scenarios carries `expected_bytes` (MOD-25). The suite still stages the module trees with the estimates of `mix.yaml` for the mix scenarios, and does not change the tracked manifests.
 - The suite runs two agent identities, one per side, as the Gate 1 suite does.
 - The image stage needs Packer, QEMU, and a runner with KVM or the patience for TCG.
