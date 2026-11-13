@@ -432,6 +432,54 @@ def test_takeover_of_an_expired_holder_names_the_previous_agent() -> None:
     assert "status:in-progress" in gh.labels(11)
 
 
+def test_takeover_of_a_blocked_item_resumes_it() -> None:
+    gh, s, _ = claimed()
+    s.block(11, "Needs the owner to pick a host", needs_owner=True)
+    assert "status:blocked" in gh.labels(11)
+    with pytest.raises(fs.Refused, match="not claimable"):
+        swarm(gh, "claude-b").claim(11)
+    won = swarm(gh, "claude-b").claim(11, takeover=True)
+    assert won is not None and won.card.takeover_of == "claude-a"
+    labels = gh.labels(11)
+    assert "status:in-progress" in labels and "status:blocked" not in labels
+    cards = fs.cards_from_comments(gh.comments[11])
+    assert fs.holder(cards, gh.now).comment_id == won.comment_id  # type: ignore[union-attr]
+
+
+def test_takeover_command_accepts_a_blocked_item(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    gh, s, _ = claimed()
+    s.block(11, "Needs the owner to pick a host", needs_owner=True)
+    argv = ["--agent", "claude-b", "takeover", "11"]
+    assert fs.main(argv, runner=gh, sleep=lambda s: None) == 0
+    assert "key=OPS-02" in capsys.readouterr().out
+
+
+def test_takeover_still_refuses_a_blocked_item_that_needs_a_split() -> None:
+    gh, s, _ = claimed()
+    s.block(11, "Too large", needs_split=True)
+    with pytest.raises(fs.Refused, match="needs a split"):
+        swarm(gh, "claude-b").claim(11, takeover=True)
+
+
+def test_takeover_refuses_a_blocked_item_with_open_dependencies() -> None:
+    gh, s, _ = claimed()
+    s.block(11, "Needs the owner", needs_owner=True)
+    gh.issues[11]["body"] = "- **Depends on.** ENG-99\n"
+    gh.add_issue(99, "[ENG-99] Open", ["type:wp", "status:ready"])
+    with pytest.raises(fs.Refused, match="dependencies not closed"):
+        swarm(gh, "claude-b").claim(11, takeover=True)
+
+
+def test_takeover_refuses_a_done_item() -> None:
+    gh = ready_repo()
+    gh.issues[11]["labels"] = [{"name": "type:wp"}, {"name": "status:review"}]
+    post(gh, 11, make_card(state="done"))
+    with pytest.raises(fs.Refused, match="not open with"):
+        swarm(gh, "claude-a").claim(11, takeover=True)
+
+
 def test_takeover_needs_an_earlier_card() -> None:
     with pytest.raises(fs.Refused, match="no earlier card"):
         swarm(ready_repo(), "claude-a").claim(11, takeover=True)
@@ -524,6 +572,49 @@ def test_block_then_promotion_after_the_blocker_closes() -> None:
     assert (11, "status:ready") in sweeper.promotion_sweep()
     assert {"status:ready", "has-handoff"} <= set(gh.labels(11))
     assert "status:blocked" not in gh.labels(11)
+
+
+def test_promotion_sweep_reports_blocked_items_that_name_no_blocker() -> None:
+    gh, s, _ = claimed()
+    s.block(11, "Needs the owner to pick a host", needs_owner=True)
+    gh.add_issue(95, "[ENG-95] Relabelled by hand", ["type:wp", "status:blocked"])
+    gh.add_issue(96, "[ENG-96] Waits for 13", ["type:wp", "status:blocked"])
+    gh.add_comment(96, "<!-- fps:block agent=claude-x issues=13 -->\nBlocked\n")
+    lines: list[str] = []
+    sweeper = fs.Swarm(
+        fs.Api(gh.repo, gh), "claude-sweep", sleep=lambda s: None, log=lines.append
+    )
+    before = len(gh.mutations())
+    assert sweeper.promotion_sweep(dry_run=True) == []
+    reports = [m for m in lines if m.startswith("blocked:")]
+    assert len(reports) == 2
+    assert any(
+        "#11 has a blocking comment that names no blocking issue" in m for m in reports
+    )
+    assert any("#95 has no fps:block comment" in m for m in reports)
+    assert all("takeover" in m for m in reports)
+    assert not any("#96" in m for m in reports)
+    assert len(gh.mutations()) == before
+
+
+def test_sweep_command_reports_unnamed_blocks_on_stderr_only(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    gh, s, _ = claimed()
+    s.block(11, "Needs the owner", needs_owner=True)
+    capsys.readouterr()
+    assert fs.main(["sweep", "--dry-run"], runner=gh) == 0
+    out = capsys.readouterr()
+    assert out.out == ""
+    assert "blocked: #11" in out.err
+
+
+def test_protocol_text_and_tool_agree_on_takeover_of_a_blocked_item() -> None:
+    text = " ".join(PROTOCOL.read_text().split())
+    assert "whose newest card is expired, released, or blocked" in text
+    assert "status:blocked" in fs.TAKEOVER_STATUSES
+    for status in ("status:ready", "status:stale", "status:in-progress"):
+        assert status in fs.TAKEOVER_STATUSES
 
 
 def test_review_finishes_the_item() -> None:

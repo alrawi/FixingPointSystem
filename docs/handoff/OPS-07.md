@@ -6,7 +6,7 @@
 | Branch | `wp/OPS-07` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-291d9a, lease until 2026-11-13T18:06:12Z |
 | Last verified commit | none |
 
@@ -18,22 +18,22 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Plan
 
-- [ ] 1. Let `takeover` accept `status:blocked`, with a test that takes over a blocked item
-- [ ] 2. Report blocked items that name no blocking issue in the promotion sweep, with tests
-- [ ] 3. Update `tools/swarm/README.md`, the Operations page, and the log entry with the Shared page notes
+- [x] 1. Let `takeover` accept `status:blocked`, with a test that takes over a blocked item
+- [x] 2. Report blocked items that name no blocking issue in the promotion sweep, with tests
+- [x] 3. Update `tools/swarm/README.md`, the Operations page, and the log entry with the Shared page notes
 - [ ] 4. Run the checks, open the pull request, wait for CI
 
 ## Done and verified
 
-Nothing yet.
+- Steps 1 to 3: `python3 -m pytest -q tools/swarm` gives 76 passed (6 new tests); `ruff check` and `ruff format --check` pass on `tools/swarm`; `mypy tools/swarm/fps_swarm.py` passes; `plan.py check`, `render --check`, and `lint` pass.
 
 ## Remaining
 
-All steps.
+Step 4: open the pull request and wait for CI.
 
 ## Next action
 
-Edit `Swarm.precheck` in `tools/swarm/fps_swarm.py` so that the takeover label set includes `status:blocked`.
+Open the pull request, poll CI, then run `fps_swarm.py review 545`.
 
 ## Blockers and open questions
 
@@ -41,11 +41,12 @@ none
 
 ## Decisions taken in this package
 
-none yet
+- The sweep reports unnamed blocks on stderr only, because the scanner workflow and its tests read stdout rows of the form `<issue>\tstatus:...`.
+- Takeover of a blocked item does not require the blocking issues to be closed, because the protocol says a takeover never waits for permission and the new holder reads the blocking comment. It still refuses `needs:split` and `type:followup`.
 
 ## Pitfalls
 
-none yet
+- The global `--agent` flag goes before the subcommand in `fps_swarm.py`.
 
 ## Verify the current state
 
@@ -58,3 +59,4 @@ python3 -m pytest -q tools/swarm
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-13T16:36Z | claude-291d9a | claim | none | Claimed #545 with card 6858970572 |
+| 2026-11-13T16:55Z | claude-291d9a | checkpoint | see git log | Takeover accepts blocked, sweep reports unnamed blocks, docs and log entry written |
