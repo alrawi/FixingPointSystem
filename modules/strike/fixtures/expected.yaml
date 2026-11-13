@@ -1,13 +1,23 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Expected labels of strike.pcapng, which capture.sh records in the QA-01
-# harness. The slowloris phase runs on port 8080 and the churn phase moves
-# conn_churn to ports 8081 and 8082, so the structure check gives every
-# scenario a session pool of its own. nDPI must classify at least 99% of the
-# scored sessions, the slowloris trickle and the churn keepers, as HTTP from
-# payload. The churn children on 8082 carry no bytes and reset, so they are
-# left unassigned. tolerance_s covers the churn children that start while
-# the keeper close is already in flight. realism/schema/labels.schema.json
-# defines the format.
+# harness. Every scenario runs on its own server port: slowloris on 8080,
+# conn_churn on 8081 and 8082, bad_request_line on 8083, and te_cl_conflict
+# on 8084, so the structure check gives every scenario a session pool of its
+# own. nDPI must classify at least 99% of the scored sessions, the slowloris
+# trickle, the churn keepers, and the te_cl_conflict requests, as HTTP from
+# payload; the bad_request_line pool is named below as intentionally
+# unclassified because its GETT method line is malformed beyond nDPI's
+# parser. The churn children on 8082 carry no bytes and reset, so they
+# are left unassigned. The malformed scenarios are malformed on purpose, so
+# their rules declare with RLM-20 expect_findings the exact zeek weirds that
+# the captures show: unknown_HTTP_method for the GETT method line on 8083
+# and HTTP_content_length_and_chunked for the Content-Length plus
+# Transfer-Encoding framing on 8084. tshark raises no expert item on either
+# capture, so no tshark item is declared, and any finding beyond the
+# declared ones still fails the parse. tolerance_s covers the churn children
+# that start while the keeper close is already in flight. A future per-session
+# strictness setting (RLM-23) can tighten the any-session rule further.
+# realism/schema/labels.schema.json defines the format.
 labels: fps-realism-labels
 version: 1
 threshold: 0.99
@@ -16,8 +26,21 @@ sessions:
     match: {transport: tcp, server_port: 8080}
   - application: strike
     match: {transport: tcp, server_port: 8081}
+  - application: strike_unclassified
+    match: {transport: tcp, server_port: 8083}
+    expect_findings:
+      zeek: [unknown_HTTP_method]
+  - application: strike
+    match: {transport: tcp, server_port: 8084}
+    expect_findings:
+      zeek: [HTTP_content_length_and_chunked]
 applications:
   strike: {ndpi: [HTTP]}
+  # The bad_request_line pool is malformed on purpose and nDPI cannot name
+  # it, so its rule carries its own application whose accepted name is the
+  # unclassified one. That keeps the strike HTTP bar for every pool whose
+  # requests nDPI can parse.
+  strike_unclassified: {ndpi: ["Unknown"]}
 structure:
   tolerance_s: 0.5
   scenarios:
@@ -27,4 +50,12 @@ structure:
     - file: ../scenarios/conn_churn.yaml
       vars: {server_port: 8081, churn_port: 8082}
       match: {transport: tcp}
+      expected_instances: 20
+    - file: ../scenarios/bad_request_line.yaml
+      vars: {server_port: 8083}
+      match: {transport: tcp, server_port: 8083}
+      expected_instances: 20
+    - file: ../scenarios/te_cl_conflict.yaml
+      vars: {server_port: 8084}
+      match: {transport: tcp, server_port: 8084}
       expected_instances: 20
