@@ -41,10 +41,12 @@ labels:
     values: [client, server]
   reason:
     description: >-
-      Failure reason of a session. datagram_rejected means a received UDP
-      datagram broke the size limit or stop rule of its expect, template_error
-      means a template failed to render, and extension_error means a module
-      function failed.
+      Failure reason of a session, which is the reason of the first flow of
+      the scenario instance that failed. A flow that this failure cuts short
+      adds no second reason, so the cause is the only reason that the session
+      carries. datagram_rejected means a received UDP datagram broke the size
+      limit or stop rule of its expect, template_error means a template failed
+      to render, and extension_error means a module function failed.
     values:
       - connect_timeout
       - connect_refused
@@ -178,6 +180,17 @@ metrics:
   # --- scenario level --------------------------------------------------------
   # The application view of the API also serves these metrics, summed over the
   # scenario label. Flow action metrics belong to the scenario view.
+  #
+  # A session is one run of the entry flow of a scenario instance, which is the
+  # first flow of the scenario (CON-31, contracts/README.md, Sessions and
+  # flows). Every other flow of the instance, whether a spawn action starts it
+  # or after orders it, belongs to that session: it adds its bytes to bytes.tx
+  # and bytes.rx under the labels of the entry flow, and its failure fails the
+  # session once. A flow other than the entry flow is never a session, so an ftp
+  # transfer with a data connection and a sip_rtp call with a media stream count
+  # one session each. The descriptions of sessions.attempted, concurrent,
+  # failed, failed_ratio, and rate say only sessions, and this rule is what
+  # they mean.
   - name: sessions.attempted
     type: counter
     unit: sessions
@@ -191,14 +204,14 @@ metrics:
     level: scenario
     view: scenario
     labels: [application, scenario, side]
-    description: Sessions whose first connect or accept action completed.
+    description: Sessions whose entry flow completed its first connect or accept action.
   - name: sessions.succeeded
     type: counter
     unit: sessions
     level: scenario
     view: scenario
     labels: [application, scenario, side]
-    description: Sessions whose flow programs finished every action on both sides.
+    description: Sessions in which every flow of the scenario instance, the entry flow and every spawned or after flow, finished every action.
   - name: sessions.failed
     type: counter
     unit: sessions
@@ -241,7 +254,7 @@ metrics:
     level: scenario
     view: scenario
     labels: [application, scenario, side]
-    description: Time from session start to the end of its last action.
+    description: Time from the start of the entry flow to the end of the last action of any flow of the scenario instance.
   - name: transactions.attempted
     type: counter
     unit: transactions
@@ -262,14 +275,14 @@ metrics:
     level: scenario
     view: scenario
     labels: [application, scenario, side]
-    description: Application payload bytes that the side sent, excluding transport headers.
+    description: Application payload bytes that the side sent in every flow of the scenario instance, excluding transport headers. The bytes of a spawned or after flow count with the session of the entry flow.
   - name: bytes.rx
     type: counter
     unit: bytes
     level: scenario
     view: scenario
     labels: [application, scenario, side]
-    description: Application payload bytes that the side received, excluding transport headers.
+    description: Application payload bytes that the side received in every flow of the scenario instance, excluding transport headers. The bytes of a spawned or after flow count with the session of the entry flow.
   - name: throughput.bps
     type: gauge
     unit: bits_per_second
