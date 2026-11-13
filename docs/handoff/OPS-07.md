@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #545 |
 | Branch | `wp/OPS-07` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #552 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-291d9a, lease until 2026-11-13T18:06:12Z |
-| Last verified commit | none |
+| Last verified commit | c5c91ee |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 - [x] 1. Let `takeover` accept `status:blocked`, with a test that takes over a blocked item
 - [x] 2. Report blocked items that name no blocking issue in the promotion sweep, with tests
 - [x] 3. Update `tools/swarm/README.md`, the Operations page, and the log entry with the Shared page notes
-- [ ] 4. Run the checks, open the pull request, wait for CI
+- [x] 4. Run the checks, open the pull request, wait for CI
 
 ## Done and verified
 
@@ -29,11 +29,11 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Remaining
 
-Step 4: open the pull request and wait for CI.
+none
 
 ## Next action
 
-Open the pull request, poll CI, then run `fps_swarm.py review 545`.
+none; the coordinator reviews and merges #552.
 
 ## Blockers and open questions
 
@@ -60,3 +60,4 @@ python3 -m pytest -q tools/swarm
 |---|---|---|---|---|
 | 2026-11-13T16:36Z | claude-291d9a | claim | none | Claimed #545 with card 6858970572 |
 | 2026-11-13T16:55Z | claude-291d9a | checkpoint | see git log | Takeover accepts blocked, sweep reports unnamed blocks, docs and log entry written |
+| 2026-11-13T17:10Z | claude-291d9a | finish | see git log | CI green on c5c91ee (scripts, proto, contracts, rust, ops, licenses); ready for review |
