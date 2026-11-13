@@ -43,7 +43,7 @@ tests/gates/gate2/prove-failure.sh OUT  # the negative proofs
 | `FPS_GATE2_RAMP_S`, `FPS_GATE2_STEADY_S`, `FPS_GATE2_RAMP_DOWN_S` | `10`, `120`, `10` | Phases of the mix run in seconds |
 | `FPS_GATE2_SEED` | `7` | Seed of the mix test configuration |
 | `FPS_GATE2_MIX_WAIVE` | none | Modules that the mix leaves out because the agent does not run them yet (see Waivers) |
-| `FPS_GATE2_BASIS` | `bytes` | `profile.basis` of the controller run. `sessions` sets the session shares from the byte weights in the suite and needs `--allow-waivers` (see Waivers) |
+| `FPS_GATE2_BASIS` | `bytes` | `profile.basis` of the controller run. `sessions` sets the session shares from the byte weights in the suite and needs `--allow-waivers` (see Waivers). The CI workflow sets neither variable since CTL-49 |
 | `FPS_REALISM_PARSERS` | `tshark,zeek` | Reference parsers of the realism runner |
 | `FPS_NETNS` | `gate2` | Name prefix of the mix harness |
 | `FPS_ACCEL` | by `/dev/kvm` | `kvm` or `tcg`, the accelerator of the image stage |
@@ -82,6 +82,8 @@ A failed parser error check names each finding in the job log, so a failure can 
 **The port collision rule.** The realism runner applies it since RLM-19, for the mix and for every module (`realism/README.md`, Parser errors). The kernel picks the client port of each session at random, and tshark binds about 900 TCP and UDP ports to a dissector (`tshark -G decodes` lists them), among them 41170 (Manolito) and 44322 (Performance Co-Pilot proxy), so a clean session that draws such a client port gets findings by chance (QA-11 saw 31 in one run). The runner leaves such a tshark finding out of `errors_total` and lists it under `not_counted`, and `gate2_report.py` takes the verdict of the runner and prints each of them marked `not counted`. The suite has no copy of the rule of its own.
 
 ## Waivers
+
+The `qa-gate2` workflow sets no waiver since CTL-49, so the CI verdict is `PASS` or `FAIL`. The two variables below remain for local runs on a machine whose agent or controller lacks a piece.
 
 The agent runs a module only when `engine/fps-agent` links its native crate. AGT-21 adds `ntp`, `mqtt`, `ldap`, and `hls`. `FPS_GATE2_MIX_WAIVE` leaves such modules out of the mix, and the report then says `PASS WITH WAIVERS`, names them, and states that Gate 2 does not hold in full. A waiver only holds while the agent lacks the crate. Once `fps-agent` depends on it, the module is part of the mix again, so merging AGT-21 ends the waiver without an edit. `FPS_GATE2_BASIS=sessions` is a second waiver: the controller catalog does not pass the `expected_bytes` of the manifests to the compiler, so `profile.basis: bytes` fails with `ErrNoByteEstimate`. The suite then computes the session shares and the session rate from the estimates of `mix.yaml`, and the capture is still scored against the byte weights (`mix/score-config.yaml`). The report names this waiver and the verdict stays `PASS WITH WAIVERS`. The workflow sets the variable and the owner reads the verdict line before signing off the gate.
 
