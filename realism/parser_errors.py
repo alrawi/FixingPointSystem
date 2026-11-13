@@ -29,6 +29,13 @@ missing item fails the check, as does every finding that no rule declares. Expec
 come before the port collision rule, so a malformed session whose client port collides still
 shows its declared items. A declared item of a parser that did not run cannot be checked, and the
 entry lists it under ``unchecked_expectations``.
+
+A rule that sets ``expect_every_session`` (RLM-23) holds each of its sessions to the declaration.
+Every session of the rule must show every declared item of a parser that ran, and the entry of
+``missing_findings`` for each session that lacks one names the session, so a scenario that is
+malformed in only some of its sessions fails. A rule without the setting keeps the rule above: one
+session that shows an item meets it. A rule with the setting that matches no session lists each item
+once, without a session, as the other rules do.
 """
 
 from __future__ import annotations
@@ -224,6 +231,7 @@ def check(
     expected: list[dict[str, Any]] = []
     expected_total = 0
     seen: Counter[tuple[int, str, str]] = Counter()
+    seen_by_session: Counter[tuple[int, str, str]] = Counter()
     ran: list[dict[str, str]] = []
     for parser in parsers:
         ran.append({"parser": parser.name, "version": parser.version()})
@@ -242,6 +250,8 @@ def check(
                 matched, covered = _matched_items(finding, declared)
                 for item in matched:
                     seen[(rule_index, parser.name, item)] += 1
+                    if owner is not None:
+                        seen_by_session[(owner.id, parser.name, item)] += 1
                 if covered and owner is not None:
                     expected_total += 1
                     if len(expected) < MAX_ERRORS:
@@ -274,6 +284,11 @@ def check(
     ran_names = {p["parser"] for p in ran}
     missing_items: list[dict[str, Any]] = []
     unchecked: list[dict[str, Any]] = []
+    rule_sessions: dict[int, list[Session]] = {}
+    for session in sessions:
+        index = labels.rule_index_of(session)
+        if index is not None and labels.rules[index].expect_every_session:
+            rule_sessions.setdefault(index, []).append(session)
     for rule_index, rule in enumerate(labels.rules):
         for name, items in rule.expect_findings.items():
             for item in items:
@@ -285,6 +300,10 @@ def check(
                 }
                 if name not in ran_names:
                     unchecked.append(entry)
+                elif rule.expect_every_session and rule_index in rule_sessions:
+                    for session in rule_sessions[rule_index]:
+                        if not seen_by_session[(session.id, name, item)]:
+                            missing_items.append(entry | _session_fields(session))
                 elif not seen[(rule_index, name, item)]:
                     missing_items.append(entry)
     return ParserErrorsResult(
@@ -306,6 +325,16 @@ def check(
         missing_findings=missing_items,
         unchecked=unchecked,
     )
+
+
+def _session_fields(session: Session) -> dict[str, Any]:
+    """Return the fields that name the session of a missing item under ``expect_every_session``."""
+    return {
+        "session": session.id,
+        "transport": session.transport,
+        "client": _endpoint(session.client_ip, session.client_port),
+        "server": _endpoint(session.server_ip, session.server_port),
+    }
 
 
 def _error_entry(

@@ -1147,7 +1147,7 @@ export interface components {
             client: components["schemas"]["endpoint"] | null;
             server: components["schemas"]["endpoint"] | null;
         };
-        /** @description One item of expect_findings in a session rule of the labels. */
+        /** @description One item of expect_findings in a session rule of the labels, with the session that lacks it when the rule sets expect_every_session. */
         expectation: {
             /** @description Index of the rule in the sessions list of the labels. */
             session_rule: number;
@@ -1156,6 +1156,17 @@ export interface components {
             parser: "tshark" | "zeek";
             /** @description A zeek weird name, or a tshark protocol with an optional part of the message. */
             item: string;
+            /** @description The session that lacks the item, in the entries of a rule with expect_every_session (RLM-23). Absent for a rule without it, whose item is met by any one session of the rule, and for such a rule that matches no session. Reports before format 0.21.0 have no such field. */
+            session?: number;
+            /**
+             * @description The transport of that session. Present with session.
+             * @enum {unknown}
+             */
+            transport?: "tcp" | "udp";
+            /** @description The client of that session. Present with session. */
+            client?: components["schemas"]["endpoint"];
+            /** @description The server of that session. Present with session. */
+            server?: components["schemas"]["endpoint"];
         };
         /** @description Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran, no parser reported an error that counts, and no declared finding is missing. */
         parser_errors: {
@@ -1211,7 +1222,7 @@ export interface components {
             expected_findings?: components["schemas"]["parser_error"][];
             /** @description The number of findings that a rule declared, which can exceed the length of expected_findings. Reports before format 0.19.0 have no such field. */
             expected_total?: number;
-            /** @description The declared items that no session of their rule produced, for a parser that ran. Each one fails the check and counts once in realism.check_failures. A finding that no rule declares is not here: it is in errors and counts as before. Reports before format 0.19.0 have no such field. */
+            /** @description The declared items that no session of their rule produced, for a parser that ran. Each one fails the check and counts once in realism.check_failures. A rule with expect_every_session (RLM-23) gives one entry for each session that lacks an item, with the session, transport, client, and server of that session, and counts each entry. A finding that no rule declares is not here: it is in errors and counts as before. Reports before format 0.19.0 have no such field. */
             missing_findings?: components["schemas"]["expectation"][];
             /** @description The declared items of a parser that did not run, which the check cannot verify. They do not fail the check. Reports before format 0.19.0 have no such field. */
             unchecked_expectations?: components["schemas"]["expectation"][];
@@ -2038,7 +2049,7 @@ export interface components {
                     parser_errors: number;
                     malformed_packets: number;
                 };
-                /** @description One item of expect_findings in a session rule of the labels. */
+                /** @description One item of expect_findings in a session rule of the labels, with the session that lacks it when the rule sets expect_every_session. */
                 expectation: {
                     /** @description Index of the rule in the sessions list of the labels. */
                     session_rule: number;
@@ -2047,6 +2058,17 @@ export interface components {
                     parser: "tshark" | "zeek";
                     /** @description A zeek weird name, or a tshark protocol with an optional part of the message. */
                     item: string;
+                    /** @description The session that lacks the item, in the entries of a rule with expect_every_session (RLM-23). Absent for a rule without it, whose item is met by any one session of the rule, and for such a rule that matches no session. Reports before format 0.21.0 have no such field. */
+                    session?: number;
+                    /**
+                     * @description The transport of that session. Present with session.
+                     * @enum {unknown}
+                     */
+                    transport?: "tcp" | "udp";
+                    /** @description The client of that session. Present with session. */
+                    client?: components["schemas"]["endpoint"];
+                    /** @description The server of that session. Present with session. */
+                    server?: components["schemas"]["endpoint"];
                 };
                 /** @description Parser errors and malformed packets that reference parsers report, per intended application. The check passes when at least one parser ran, no parser reported an error that counts, and no declared finding is missing. */
                 parser_errors: {
@@ -2102,7 +2124,7 @@ export interface components {
                     expected_findings?: components["schemas"]["parser_error"][];
                     /** @description The number of findings that a rule declared, which can exceed the length of expected_findings. Reports before format 0.19.0 have no such field. */
                     expected_total?: number;
-                    /** @description The declared items that no session of their rule produced, for a parser that ran. Each one fails the check and counts once in realism.check_failures. A finding that no rule declares is not here: it is in errors and counts as before. Reports before format 0.19.0 have no such field. */
+                    /** @description The declared items that no session of their rule produced, for a parser that ran. Each one fails the check and counts once in realism.check_failures. A rule with expect_every_session (RLM-23) gives one entry for each session that lacks an item, with the session, transport, client, and server of that session, and counts each entry. A finding that no rule declares is not here: it is in errors and counts as before. Reports before format 0.19.0 have no such field. */
                     missing_findings?: components["schemas"]["expectation"][];
                     /** @description The declared items of a parser that did not run, which the check cannot verify. They do not fail the check. Reports before format 0.19.0 have no such field. */
                     unchecked_expectations?: components["schemas"]["expectation"][];

@@ -508,7 +508,7 @@ def test_the_report_carries_the_packet_gap_comparison_and_validates(tmp_path: Pa
         pcap = cap.write_pcap(tmp_path / f"{name}.pcap")
         report = score(pcap, labels, STUB).to_dict()
         _validate(report)
-        assert report["version"] == REPORT_VERSION == "0.20.0"
+        assert report["version"] == REPORT_VERSION == "0.21.0"
         entries.append(report["checks"][-1])
     ok, bad = entries
     assert (ok["check"], ok["passed"]) == ("temporal", True)

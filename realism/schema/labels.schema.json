@@ -390,6 +390,10 @@
               "tshark": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+(: \\S.*)?$"}}
             }
           },
+          "expect_every_session": {
+            "description": "When true, every session that this rule matches must show every item of expect_findings, for a parser that ran, and the parser error check names each session that lacks one under missing_findings. Without it, or when false, one session of the rule that shows an item meets it. Needs expect_findings in the same rule (RLM-23).",
+            "type": "boolean"
+          },
           "match": {
             "type": "object",
             "additionalProperties": false,
