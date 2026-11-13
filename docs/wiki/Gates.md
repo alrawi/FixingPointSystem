@@ -76,6 +76,8 @@ A local run on 2026-11-03 with debug builds on a 2 vCPU Firecracker microVM (Lin
 
 ## Gate 2
 
+The owner signed off Gate 2 on 2026-11-13, on the CI runs of CTL-49 and QA-13: the mix passes on the bytes basis with all 15 applications and no waiver.
+
 Gate 2 holds when all 15 application modules of decision D7 pass the realism checks in module CI, a byte weighted enterprise mix stays within 2 points of its weights, and the qcow2 image boots and runs a test unattended. QA-05 added the suite [`tests/gates/gate2/`](https://github.com/alrawi/FixingPointSystem/tree/main/tests/gates/gate2), and its [README](https://github.com/alrawi/FixingPointSystem/blob/main/tests/gates/gate2/README.md) lists every file, setting, and output.
 
 ```bash
