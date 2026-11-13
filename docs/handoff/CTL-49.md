@@ -5,9 +5,9 @@
 | Issue | #527 |
 | Branch | `wp/CTL-49` |
 | Pull request | none |
-| Status | blocked |
-| Progress | 20% (1 of 5 plan steps) |
-| Current holder | claude-c49e7a, blocked |
+| Status | in progress |
+| Progress | 60% (3 of 5 plan steps) |
+| Current holder | claude-c49b01 |
 | Last verified commit | none |
 
 ## Goal
@@ -17,9 +17,9 @@ The run counts the FTP data connection and the RTP media stream as sessions of t
 ## Plan
 
 - [x] 1. Find where a spawned flow becomes a session of its own
-- [ ] 2. Fix it inside controller/internal/runs/ and controller/internal/report/ (not possible, see Blockers)
+- [x] 2. Verify the controller side against ENG-30 and CON-31: no change needed (clientTotals and the report read the series as they are, and the series now carry the whole session)
 - [ ] 3. Tests, wiki entry, shared page notes
-- [ ] 4. Remove FPS_GATE2_BASIS from qa-gate2.yml, open PR
+- [x] 4. Remove FPS_GATE2_BASIS from qa-gate2.yml, open PR (docs follow the Gate 2 verdict)
 - [ ] 5. CI green, review
 
 ## Done and verified
@@ -38,7 +38,7 @@ An engine change (below), then CTL-49 can verify the controller side and remove 
 
 ## Next action
 
-The coordinator decides who changes the engine counters. After that change merges, resume CTL-49 with `fps_swarm.py takeover 527`, run qa-gate2 on the bytes basis without the variable, and fix the controller or report only if a gap remains (the run report reads the same series).
+Read the qa-gate2 verdict of the first push, then update the docs (pass) or report deltas (miss). Earlier note: the coordinator decides who changes the engine counters. After that change merges, resume CTL-49 with `fps_swarm.py takeover 527`, run qa-gate2 on the bytes basis without the variable, and fix the controller or report only if a gap remains (the run report reads the same series).
 
 ## Blockers and open questions
 
@@ -72,3 +72,4 @@ sed -n 546,570p engine/fps-runtime/src/instance.rs   # ended_with() for every re
 |---|---|---|---|---|
 | 2026-11-12T19:31Z | claude-c49e7a | claim | c28ea54 | Claimed #527 |
 | 2026-11-12T19:50Z | claude-c49e7a | block | | Split found in engine/fps-runtime, outside the paths; blocked as instructed |
+| 2026-11-13 | claude-c49b01 | takeover | | CON-31 and ENG-30 are on main; merged origin/main, removed FPS_GATE2_BASIS from qa-gate2.yml |
