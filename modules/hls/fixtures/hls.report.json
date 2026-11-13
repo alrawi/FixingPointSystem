@@ -1,6 +1,6 @@
 {
   "report": "fps-realism-report",
-  "version": "0.11.0",
+  "version": "0.20.0",
   "generator": "fps-realism 0.1.0",
   "passed": true,
   "capture": {
@@ -16,7 +16,7 @@
   },
   "labels": {
     "file": "expected.yaml",
-    "sha256": "abc829fb9e9ea5026eb9d4cd5a51b423fa5f410867312b51bf4bd6e002cae8f3"
+    "sha256": "9c1d26814a089ee36bfa713387fbbd092c2027a0f0a30d2e41a451305ddf41e8"
   },
   "checks": [
     {
@@ -57,6 +57,13 @@
             "classifier": "ndpi"
           },
           "value": 1.0
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "conformance"
+          },
+          "value": 0
         }
       ],
       "applications": [
@@ -120,7 +127,55 @@
     {
       "check": "parser_errors",
       "passed": true,
-      "metrics": [],
+      "metrics": [
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "hls_live",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "hls_playlist",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "hls_segment",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "hls_vod",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "all",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "parser_errors"
+          },
+          "value": 0
+        }
+      ],
       "parsers": [
         {
           "parser": "tshark",
@@ -186,7 +241,14 @@
         "tshark": 0
       },
       "errors": [],
-      "errors_total": 0
+      "errors_total": 0,
+      "not_counted": [],
+      "not_counted_total": 0,
+      "port_collision_ports": 922,
+      "expected_findings": [],
+      "expected_total": 0,
+      "missing_findings": [],
+      "unchecked_expectations": []
     },
     {
       "check": "temporal",
@@ -206,6 +268,13 @@
             "property": "inter_arrival"
           },
           "value": 1.0
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "temporal"
+          },
+          "value": 0
         }
       ],
       "passed": true,
@@ -224,12 +293,15 @@
             "parameters": {
               "value": 0.4
             },
+            "values": null,
             "median": 0.4,
             "source": null
           },
           "test": "constant",
           "method": "constant",
           "alpha": 0.01,
+          "path": null,
+          "min_samples": 30,
           "n": 32,
           "reference_n": null,
           "statistic": 0.0,
@@ -241,7 +313,289 @@
             "median": 0.399952,
             "mean": 0.400042,
             "max": 0.401553
+          },
+          "streams": null
+        },
+        {
+          "property": "packet_gap",
+          "application": "hls_vod",
+          "direction": "client",
+          "unit": "seconds",
+          "target": {
+            "dist": "constant",
+            "parameters": {
+              "value": 0.4,
+              "tolerance": 0.04,
+              "within": 0.9,
+              "mean_tolerance": 0.02
+            },
+            "values": [
+              0.4
+            ],
+            "median": 0.4,
+            "source": null
+          },
+          "test": "constant",
+          "method": "constant",
+          "alpha": 0.01,
+          "path": "/v\\d+/seg\\d+\\.ts$",
+          "min_samples": 3,
+          "n": 24,
+          "reference_n": null,
+          "statistic": 0.0,
+          "p_value": 1.0,
+          "status": "pass",
+          "reason": null,
+          "observed": {
+            "min": 0.399001,
+            "median": 0.40037,
+            "mean": 0.400221,
+            "max": 0.401931
+          },
+          "streams": {
+            "judged": 3,
+            "failed": 0,
+            "too_short": 0
           }
+        },
+        {
+          "property": "packet_gap",
+          "application": "hls_live",
+          "direction": "client",
+          "unit": "seconds",
+          "target": {
+            "dist": "constant",
+            "parameters": {
+              "value": 0.4,
+              "tolerance": 0.04,
+              "within": 0.9,
+              "mean_tolerance": 0.02
+            },
+            "values": [
+              0.4
+            ],
+            "median": 0.4,
+            "source": null
+          },
+          "test": "constant",
+          "method": "constant",
+          "alpha": 0.01,
+          "path": "/v\\d+/seg\\d+\\.ts$",
+          "min_samples": 3,
+          "n": 21,
+          "reference_n": null,
+          "statistic": 0.0,
+          "p_value": 1.0,
+          "status": "pass",
+          "reason": null,
+          "observed": {
+            "min": 0.398351,
+            "median": 0.400346,
+            "mean": 0.400163,
+            "max": 0.401721
+          },
+          "streams": {
+            "judged": 3,
+            "failed": 0,
+            "too_short": 0
+          }
+        },
+        {
+          "property": "packet_gap",
+          "application": "hls_segment",
+          "direction": "client",
+          "unit": "seconds",
+          "target": {
+            "dist": "constant",
+            "parameters": {
+              "value": 0.4,
+              "tolerance": 0.04,
+              "within": 0.9,
+              "mean_tolerance": 0.02
+            },
+            "values": [
+              0.4
+            ],
+            "median": 0.4,
+            "source": null
+          },
+          "test": "constant",
+          "method": "constant",
+          "alpha": 0.01,
+          "path": "/v\\d+/seg\\d+\\.ts$",
+          "min_samples": 3,
+          "n": 32,
+          "reference_n": null,
+          "statistic": 0.0,
+          "p_value": 1.0,
+          "status": "pass",
+          "reason": null,
+          "observed": {
+            "min": 0.398542,
+            "median": 0.399966,
+            "mean": 0.400043,
+            "max": 0.401567
+          },
+          "streams": {
+            "judged": 1,
+            "failed": 0,
+            "too_short": 0
+          }
+        }
+      ],
+      "rungs": [
+        {
+          "application": "hls_vod",
+          "path": "/v(\\d+)/seg\\d+\\.ts$",
+          "duration": 0.4,
+          "bits_per_second": [
+            160000.0,
+            320000.0,
+            640000.0
+          ],
+          "min_samples": 4,
+          "expected_streams": {
+            "min": 3,
+            "max": 3
+          },
+          "requests": 27,
+          "status": "pass",
+          "reason": null,
+          "streams": {
+            "judged": 3,
+            "failed": 0,
+            "too_short": 0
+          },
+          "playbacks": [
+            {
+              "name": "tcp session 10.201.0.2:40000 to 10.202.0.2:8090 (session 1)",
+              "requests": 9,
+              "failures": [],
+              "rung_share": {
+                "0": 0.1452,
+                "1": 0.2855,
+                "2": 0.5693
+              },
+              "bits_per_second": 375327,
+              "configured_bits_per_second": 373333
+            },
+            {
+              "name": "tcp session 10.201.0.2:40001 to 10.202.0.2:8090 (session 2)",
+              "requests": 9,
+              "failures": [],
+              "rung_share": {
+                "0": 0.1452,
+                "1": 0.2855,
+                "2": 0.5693
+              },
+              "bits_per_second": 375327,
+              "configured_bits_per_second": 373333
+            },
+            {
+              "name": "tcp session 10.201.0.2:40002 to 10.202.0.2:8090 (session 3)",
+              "requests": 9,
+              "failures": [],
+              "rung_share": {
+                "0": 0.1452,
+                "1": 0.2855,
+                "2": 0.5693
+              },
+              "bits_per_second": 375327,
+              "configured_bits_per_second": 373333
+            }
+          ]
+        },
+        {
+          "application": "hls_segment",
+          "path": "/v(\\d+)/seg\\d+\\.ts$",
+          "duration": 0.4,
+          "bits_per_second": [
+            160000.0,
+            320000.0,
+            640000.0
+          ],
+          "min_samples": 4,
+          "expected_streams": {
+            "min": 1,
+            "max": 1
+          },
+          "requests": 33,
+          "status": "pass",
+          "reason": null,
+          "streams": {
+            "judged": 1,
+            "failed": 0,
+            "too_short": 0
+          },
+          "playbacks": [
+            {
+              "name": "run of 33 sessions of 10.202.0.2:8092 from 10.201.0.2:40004",
+              "requests": 33,
+              "failures": [],
+              "rung_share": {
+                "0": 0.1454,
+                "1": 0.2855,
+                "2": 0.5691
+              },
+              "bits_per_second": 375707,
+              "configured_bits_per_second": 373333
+            }
+          ]
+        },
+        {
+          "application": "hls_live",
+          "path": "/v(\\d+)/seg\\d+\\.ts$",
+          "duration": 0.4,
+          "bits_per_second": [
+            160000.0,
+            320000.0,
+            640000.0
+          ],
+          "min_samples": 4,
+          "expected_streams": {
+            "min": 3,
+            "max": 3
+          },
+          "requests": 24,
+          "status": "pass",
+          "reason": null,
+          "streams": {
+            "judged": 3,
+            "failed": 0,
+            "too_short": 0
+          },
+          "playbacks": [
+            {
+              "name": "tcp session 10.201.0.2:40037 to 10.202.0.2:8093 (session 38)",
+              "requests": 8,
+              "failures": [],
+              "rung_share": {
+                "1": 1.0
+              },
+              "bits_per_second": 321440,
+              "configured_bits_per_second": 320000
+            },
+            {
+              "name": "tcp session 10.201.0.2:40038 to 10.202.0.2:8093 (session 39)",
+              "requests": 8,
+              "failures": [],
+              "rung_share": {
+                "1": 1.0
+              },
+              "bits_per_second": 321440,
+              "configured_bits_per_second": 320000
+            },
+            {
+              "name": "tcp session 10.201.0.2:40039 to 10.202.0.2:8093 (session 40)",
+              "requests": 8,
+              "failures": [],
+              "rung_share": {
+                "1": 1.0
+              },
+              "bits_per_second": 321440,
+              "configured_bits_per_second": 320000
+            }
+          ]
         }
       ],
       "insufficient_comparisons": 0,

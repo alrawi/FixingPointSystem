@@ -2,8 +2,8 @@
 #
 # Workflow of the hls module under modules/hls/. The rust job of ci.yml runs the
 # Rust tests. The module job validates the manifest and scenarios, scores the
-# committed fixture with nDPI and tshark, and runs the playback check, which
-# reads the segment cadence inside a connection and the byte share of the
+# committed fixture with nDPI and tshark. The temporal labels of expected.yaml
+# judge the segment cadence inside a connection and the byte share of the
 # rungs. The job runs on a GitHub hosted runner, never on a self hosted one.
 name: mod-hls
 
@@ -51,12 +51,10 @@ jobs:
         run: realism/ci/install-tools.sh
       - run: python -m pip install -r tools/contracts/requirements.txt
       - run: make lint-mod-hls PYTHON=python
-      - name: Unit tests of the playback check
+      - name: Unit tests of the temporal labels
         run: PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s modules/hls/fixtures
       - name: Score the committed fixture
         run: |
           python -m realism score --pcap modules/hls/fixtures/hls.pcapng \
             --labels modules/hls/fixtures/expected.yaml --parsers tshark --output report.json
           python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))'
-      - name: Check the segment cadence and the byte share of the committed fixture
-        run: python -I modules/hls/fixtures/hls_check.py modules/hls/fixtures/hls.pcapng
