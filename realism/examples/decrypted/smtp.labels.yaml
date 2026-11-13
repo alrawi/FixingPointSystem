@@ -6,7 +6,7 @@
 #
 #   python3 -m realism decrypted --pcap modules/smtp/fixtures/smtp.pcapng \
 #     --labels realism/examples/decrypted/smtp.labels.yaml \
-#     --plaintext upgrade --view-port 587 --sessions 8
+#     --plaintext upgrade --starttls-port 5587:smtp --view-port 587 --sessions 8
 labels: fps-realism-labels
 version: 1
 threshold: 0.99

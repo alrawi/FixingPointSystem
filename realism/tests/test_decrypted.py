@@ -32,6 +32,7 @@ from realism.decrypted import (
     parse_before,
     parse_follow,
     parse_hellos,
+    parse_starttls_port,
     read_sessions,
     write_view,
 )
@@ -252,6 +253,61 @@ def test_the_view_port_hides_the_capture_ports_from_the_labels(
         assert expected is None or expected in log.read_text()
 
 
+def test_a_starttls_port_is_decoded_as_its_protocol_and_not_as_tls(tmp_path: Path) -> None:
+    tshark, log = _fake_tshark(tmp_path)
+    ports = {5587: "smtp", 1143: "imap"}
+    read_sessions(tmp_path / "x.pcap", None, tshark, "inside", (8443, 5587), ports)
+    assert (
+        log.read_text()
+        .splitlines()[0]
+        .startswith(
+            f"-r {tmp_path / 'x.pcap'} -d tcp.port==8443,tls "
+            "-d tcp.port==1143,imap -d tcp.port==5587,smtp -Y"
+        )
+    )
+
+
+def test_the_run_passes_the_starttls_ports_to_every_tshark_run(
+    tmp_path: Path, fake_reader: Callable[..., Path]
+) -> None:
+    tshark, log = _fake_tshark(tmp_path)
+    labels = tmp_path / "labels.json"
+    labels.write_text(json.dumps(_labels(587, "SMTP")))
+    decrypted.run(
+        tmp_path / "x.pcap",
+        labels,
+        NdpiClassifier(reader=str(fake_reader(_http_view_csv(0)))),
+        tmp_path,
+        tshark=tshark,
+        view_port=587,
+        starttls_ports={5587: "smtp"},
+    )
+    assert log.read_text().count("-d tcp.port==5587,smtp") == 1  # no hello, so one run
+
+
+@pytest.mark.parametrize(
+    ("text", "parsed"),
+    [("5587:smtp", (5587, "smtp")), ("1143:imap", (1143, "imap")), ("110:pop", (110, "pop"))],
+)
+def test_a_starttls_port_option_names_a_port_and_a_protocol(text: str, parsed: object) -> None:
+    assert parse_starttls_port(text) == parsed
+
+
+@pytest.mark.parametrize(
+    "text", ["5587", "smtp", "0:smtp", "70000:smtp", "5587:tls", "x:imap", ":"]
+)
+def test_a_malformed_starttls_port_option_is_refused(text: str) -> None:
+    with pytest.raises(DecryptedError, match="PORT:PROTOCOL"):
+        parse_starttls_port(text)
+
+
+def test_the_command_refuses_a_malformed_starttls_port(tmp_path: Path) -> None:
+    pcap = pcapgen.mixed_capture(1, 1).write_pcap(tmp_path / "x.pcap")
+    with pytest.raises(SystemExit) as stop:
+        main(["decrypted", "--pcap", str(pcap), "--labels", "l.yaml", "--starttls-port", "25:ftp"])
+    assert stop.value.code == EXIT_ERROR
+
+
 # The tests below run the real tshark.
 
 CLIENT = tlsgen.ClientConfig()
@@ -362,6 +418,98 @@ def test_a_split_client_hello_on_a_non_standard_port_still_names_its_session(
     assert code == EXIT_PASS, result["failures"]
     assert result["tls_sessions"] == result["decrypted_sessions"] == 3
     assert result["server_ports"] == {"8443": 3}
+
+
+STARTTLS_DIALOGUES = {
+    "smtp": [
+        (False, b"220 mail.example.test ESMTP\r\n"),
+        (True, b"EHLO client\r\n"),
+        (False, b"250-mail.example.test\r\n250 STARTTLS\r\n"),
+        (True, b"STARTTLS\r\n"),
+        (False, b"220 Ready to start TLS\r\n"),
+    ],
+    "imap": [
+        (False, b"* OK IMAP ready\r\n"),
+        (True, b"a1 STARTTLS\r\n"),
+        (False, b"a1 OK Begin TLS negotiation now\r\n"),
+    ],
+}
+
+
+def _starttls_capture(
+    tmp_path: Path, protocol: str, port: int, cut: int | None, sessions: int = 3
+) -> Path:
+    cert, key = tlsgen.make_certificate(tmp_path)
+    keylog = tmp_path / "keys.log"
+    keylog.write_text("")
+    cap = pcapgen.Capture()
+    for i in range(sessions):
+        flights = tlsgen.handshake(cert, key, keylog, TLS12)
+        tlsgen.add_session(
+            cap,
+            ("10.0.0.10", 40000 + i),
+            ("10.0.1.43", port),
+            STARTTLS_DIALOGUES[protocol] + flights,
+            cut,
+        )
+    return cap.write_pcapng(tmp_path / "starttls.pcapng", tls_keys=keylog.read_bytes())
+
+
+@needs_tls_tools
+@pytest.mark.parametrize("cut", [None, 1, 4])
+@pytest.mark.parametrize(("protocol", "port"), [("smtp", 5587), ("imap", 1143)])
+def test_a_starttls_port_lists_every_session_even_when_the_hello_is_split(
+    tmp_path: Path, protocol: str, port: int, cut: int | None
+) -> None:
+    # Decoded as TLS from the first byte, the plain dialogue of the first session is no TLS
+    # (and a short first ClientHello segment defeats the heuristic), so sessions go missing.
+    # Decoded as the protocol, tshark switches each session to TLS after the STARTTLS reply.
+    pcap = _starttls_capture(tmp_path, protocol, port, cut)
+    assert len(read_sessions(pcap, None, TSHARK)) < 3
+    assert len(read_sessions(pcap, None, TSHARK, "inside", (port,))) < 3
+    found = read_sessions(pcap, None, TSHARK, "inside", (), {port: protocol})
+    assert [s.server[1] for s in found] == [port] * 3
+    assert all(s.decrypted for s in found)
+
+
+@needs_tls_tools
+@pytest.mark.parametrize("cut", [1, 4])
+def test_the_upgrade_view_of_a_split_starttls_capture_lists_every_session(
+    tmp_path: Path,
+    labels_file: Callable[..., Path],
+    fake_reader: Callable[..., Path],
+    cut: int,
+) -> None:
+    pcap = _starttls_capture(tmp_path, "smtp", 5587, cut)
+    reader = fake_reader(_http_view_csv(3, port=587, proto="SMTP"))
+    view = tmp_path / "view.pcap"
+    options = (
+        "--parsers",
+        "none",
+        "--plaintext",
+        "upgrade",
+        "--view-port",
+        "587",
+        "--sessions",
+        "3",
+        "--view",
+        str(view),
+    )
+    labels = labels_file(_labels(587, "SMTP"))
+    assert main(_args(tmp_path, pcap, labels, reader, *options)) == EXIT_FAIL
+    code = main(_args(tmp_path, pcap, labels, reader, *options, "--starttls-port", "5587:smtp"))
+    result = json.loads((tmp_path / "result.json").read_text())
+    assert code == EXIT_PASS, result["failures"]
+    assert result["tls_sessions"] == result["decrypted_sessions"] == 3
+    assert result["server_ports"] == {"5587": 3}
+    stream = subprocess.run(
+        [TSHARK.program, "-r", str(view), "-q", "-z", "follow,tcp,ascii,2"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "220 mail.example.test ESMTP" in stream
+    assert "GET /fps" in stream
 
 
 @needs_tls_tools

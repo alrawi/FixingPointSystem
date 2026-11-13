@@ -52,6 +52,13 @@ def _threshold(text: str) -> float:
     return value
 
 
+def _starttls_port(text: str) -> tuple[int, str]:
+    try:
+        return decrypted.parse_starttls_port(text)
+    except decrypted.DecryptedError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def _alpha(text: str) -> float:
     try:
         value = float(text)
@@ -328,6 +335,16 @@ def _parser() -> argparse.ArgumentParser:
         help="server port of every session of the view, default the port of the TLS session",
     )
     dec_cmd.add_argument(
+        "--starttls-port",
+        type=_starttls_port,
+        action="append",
+        default=[],
+        metavar="PORT:PROTOCOL",
+        help="capture port of STARTTLS sessions with their protocol (smtp, imap, or pop), for "
+        "example 5587:smtp. tshark decodes the port as that protocol, so TLS starts after the "
+        "upgrade. Repeat for several ports",
+    )
+    dec_cmd.add_argument(
         "--sessions", type=int, help="number of TLS sessions that the capture must hold"
     )
     dec_cmd.add_argument("--view", type=Path, help="keep the decrypted view in this pcap file")
@@ -420,6 +437,7 @@ def _decrypted(args: argparse.Namespace) -> int:
                 keylog=args.keylog,
                 plaintext=args.plaintext,
                 view_port=args.view_port,
+                starttls_ports=dict(args.starttls_port),
                 expected_sessions=args.sessions,
                 keep_view=args.view,
                 threshold=args.threshold,
