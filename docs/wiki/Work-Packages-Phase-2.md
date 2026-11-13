@@ -4,13 +4,14 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 170 work packages. Packages marked critical path gate the phase.
+This page lists 174 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
 
 ```mermaid
 flowchart LR
+  OPS_07["OPS-07<br/>Take over a blocked item"]
   CON_10["CON-10<br/>Behavior profiles and distributions in the scenario contract"]
   CTL_21["CTL-21<br/>Throughput rate calibration"]
   CON_05["CON-05<br/>Agent control protocol v0.2"]
@@ -134,6 +135,8 @@ flowchart LR
   MOD_27["MOD-27<br/>The strike module, application layer first slice"]
   MOD_28["MOD-28<br/>Fixtures for the strike module"]
   MOD_29["MOD-29<br/>Raw strikes in the strike module"]
+  MOD_30["MOD-30<br/>STARTTLS ports in the smtp and imap capture scripts"]
+  MOD_31["MOD-31<br/>HLS timing and bytes as labels"]
   TRN_16["TRN-16<br/>Per profile captures scored with the transport check"]
   CON_22["CON-22<br/>Realism report delivery and reservation conflicts in the REST API"]
   UI_08["UI-08<br/>Scenario table, criterion filters, and realism results in the report views"]
@@ -172,6 +175,7 @@ flowchart LR
   QA_10["QA-10<br/>Gate 1 without its own reuse rule"]
   QA_11["QA-11<br/>The parser findings of the Gate 2 mix stage"]
   QA_12["QA-12<br/>Calibration in the Gate 2 report"]
+  QA_13["QA-13<br/>The Zeek event queue weird at the end of the Gate 2 mix"]
   CTL_43["CTL-43<br/>Renewal cannot outlive a revocation"]
   CAP_06["CAP-06<br/>JSON credentials scrubbed whatever their spelling"]
   CTL_44["CTL-44<br/>A read-scoped download does not stop a capture"]
@@ -329,6 +333,8 @@ flowchart LR
   RLM_20 --> MOD_28
   MOD_28 --> MOD_29
   ENG_29 --> MOD_29
+  RLM_21 --> MOD_30
+  RLM_22 --> MOD_31
   RLM_09 --> TRN_16
   CON_21 --> CON_22
   CTL_39 --> UI_08
@@ -388,6 +394,7 @@ flowchart LR
 
 | ID | Title | Size | Depends on | Critical |
 |---|---|---|---|---|
+| [OPS-07](#ops-07-take-over-a-blocked-item) | Take over a blocked item | S | none |  |
 | [CON-10](#con-10-behavior-profiles-and-distributions-in-the-scenario-contract) | Behavior profiles and distributions in the scenario contract | M | CON-04 |  |
 | [CTL-21](#ctl-21-throughput-rate-calibration) | Throughput rate calibration | M | CTL-18, CTL-08 |  |
 | [CON-05](#con-05-agent-control-protocol-v02) | Agent control protocol v0.2 | S | CON-01 |  |
@@ -511,6 +518,8 @@ flowchart LR
 | [MOD-27](#mod-27-the-strike-module-application-layer-first-slice) | The strike module, application layer first slice | S | none |  |
 | [MOD-28](#mod-28-fixtures-for-the-strike-module) | Fixtures for the strike module | M | MOD-27, RLM-20 |  |
 | [MOD-29](#mod-29-raw-strikes-in-the-strike-module) | Raw strikes in the strike module | L | MOD-28, ENG-29 |  |
+| [MOD-30](#mod-30-starttls-ports-in-the-smtp-and-imap-capture-scripts) | STARTTLS ports in the smtp and imap capture scripts | S | RLM-21 |  |
+| [MOD-31](#mod-31-hls-timing-and-bytes-as-labels) | HLS timing and bytes as labels | S | RLM-22 |  |
 | [TRN-16](#trn-16-per-profile-captures-scored-with-the-transport-check) | Per profile captures scored with the transport check | S | RLM-09, TRN-03 |  |
 | [CON-22](#con-22-realism-report-delivery-and-reservation-conflicts-in-the-rest-api) | Realism report delivery and reservation conflicts in the REST API | S | CON-21 |  |
 | [UI-08](#ui-08-scenario-table-criterion-filters-and-realism-results-in-the-report-views) | Scenario table, criterion filters, and realism results in the report views | S | CTL-39, UI-05 |  |
@@ -549,6 +558,7 @@ flowchart LR
 | [QA-10](#qa-10-gate-1-without-its-own-reuse-rule) | Gate 1 without its own reuse rule | S | QA-09, RLM-17 |  |
 | [QA-11](#qa-11-the-parser-findings-of-the-gate-2-mix-stage) | The parser findings of the Gate 2 mix stage | S | QA-05 |  |
 | [QA-12](#qa-12-calibration-in-the-gate-2-report) | Calibration in the Gate 2 report | S | CTL-47 |  |
+| [QA-13](#qa-13-the-zeek-event-queue-weird-at-the-end-of-the-gate-2-mix) | The Zeek event queue weird at the end of the Gate 2 mix | S | none |  |
 | [CTL-43](#ctl-43-renewal-cannot-outlive-a-revocation) | Renewal cannot outlive a revocation | S | none |  |
 | [CAP-06](#cap-06-json-credentials-scrubbed-whatever-their-spelling) | JSON credentials scrubbed whatever their spelling | S | none |  |
 | [CTL-44](#ctl-44-a-read-scoped-download-does-not-stop-a-capture) | A read-scoped download does not stop a capture | S | none |  |
@@ -964,6 +974,23 @@ Acceptance.
 
 ## OPS Repository and swarm tooling
 
+### OPS-07 Take over a blocked item
+
+Phase 2 · size S · workstream OPS
+
+- **Depends on.** none
+- **Paths.** `tools/swarm/`
+
+Swarm Protocol says that takeover claims an item whose newest card expired, was released, or was blocked, but fps_swarm.py takeover refuses an issue labelled status:blocked ("not open with a ready, stale, or in-progress label"), so the coordinator had to relabel CTL-49 by hand (batch 34). The promotion sweep also never unblocks an item whose block names no blocking issue.
+
+Deliverables.
+
+- takeover accepts a blocked item as the protocol says, or the protocol says what the coordinator does instead, and the sweep reports blocked items that name no blocking issue.
+
+Acceptance.
+
+- [ ] A test takes over a blocked item, and the tool and the protocol text agree.
+
 ### OPS-05 Release workflow
 
 Phase 2 · size M · workstream OPS
@@ -1067,6 +1094,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A qa-gate2 run shows the calibration of its mix, and the report states when a run has none.
+
+### QA-13 The Zeek event queue weird at the end of the Gate 2 mix
+
+Phase 2 · size S · workstream QA
+
+- **Depends on.** none
+- **Paths.** `tests/gates/gate2/`
+
+One qa-gate2 mix run of CTL-49 failed its parser error check on the Zeek weird event_queue_overflow_drain at +141.023 s of a 141.023 s capture, with no session, and passed on rerun. Zeek reports it when its event queue overflows while it drains at the end of a large trace, which is a resource limit of the parser, not a fault of the traffic.
+
+Deliverables.
+
+- The cause confirmed, and a fix in how the suite runs Zeek or a named rule that leaves this weird out when it has no session.
+
+Acceptance.
+
+- [ ] Three consecutive qa-gate2 runs pass, and a weird of a session still fails.
 
 ## ENG Agent engine
 
@@ -2889,6 +2933,40 @@ Deliverables.
 Acceptance.
 
 - [ ] The raw scenarios validate, run through the agent, and their fixture scores with the expected findings declared.
+
+### MOD-30 STARTTLS ports in the smtp and imap capture scripts
+
+Phase 2 · size S · workstream MOD
+
+- **Depends on.** RLM-21
+- **Paths.** `modules/smtp/`, `modules/imap/`
+
+RLM-21 added --starttls-port to python3 -m realism decrypted and set it in mod-smtp.yml and mod-imap.yml, but modules/smtp/fixtures/capture.sh, modules/imap/fixtures/capture.sh and the fixture tests of both modules still call the command without it and rely on the TLS heuristic of tshark.
+
+Deliverables.
+
+- --starttls-port 5587:smtp and 1143:imap in the capture scripts and the fixture tests of the two modules.
+
+Acceptance.
+
+- [ ] The smtp and imap realism jobs pass, and a local capture scores the decrypted view with the option.
+
+### MOD-31 HLS timing and bytes as labels
+
+Phase 2 · size S · workstream MOD
+
+- **Depends on.** RLM-22
+- **Paths.** `modules/hls/`
+
+RLM-22 gave the labels the request cadence (path, join_ms, mean_tolerance_ms) and the bytes per rung (temporal.rungs) that modules/hls/fixtures/hls_check.py checks. Its log entry holds a passing temporal block for the committed fixture.
+
+Deliverables.
+
+- The temporal block in modules/hls/fixtures/expected.yaml, hls_check.py, its tests and hls.playbacks.json removed with their calls in capture.sh, mk/mod-hls.mk and the workflow, tests that a retimed or wrong rate capture fails, and a test that the labels match params.json.
+
+Acceptance.
+
+- [ ] The hls realism job passes on the labels alone, and the retimed and wrong rate captures fail.
 
 ## RLM Realism validation
 
