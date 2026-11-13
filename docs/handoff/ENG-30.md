@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #535 |
 | Branch | `wp/ENG-30` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Pull request | #542 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-d3e952, lease until 2026-11-13T06:39:19Z |
 | Last verified commit | none |
 
@@ -28,7 +28,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 2. fps-runtime tests (instances.rs, datagrams.rs, tls_sessions.rs)
 - [x] 3. fps-agent tests (first_party.rs, controller_e2e.sh)
 - [x] 4. Engine.md and the log entry with the Shared page notes
-- [ ] 5. Full checks, PR, CI, review
+- [x] 5. Full checks, PR, CI, review
 
 ## Done and verified
 
@@ -68,3 +68,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-13T05:10Z | claude-d3e952 | claim | - | claimed #535, branch from origin/main 61ff082 |
 | 2026-11-13T06:05Z | claude-d3e952 | checkpoint | - | engine, tests, Engine.md, log entry done; workspace tests, clippy, fmt pass; opening PR |
+| 2026-11-13T06:30Z | claude-d3e952 | review | b49213e | PR #542, CI green |
