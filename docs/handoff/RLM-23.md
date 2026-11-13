@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #551 |
 | Branch | `wp/RLM-23` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
+| Pull request | #554 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-72c43f, lease until 2026-11-13T18:06:13Z |
-| Last verified commit | none |
+| Last verified commit | 50f7bf4 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Add an optional setting of a session rule of the realism labels under which ever
 - [x] 1. Labels: `expect_every_session` on a rule (parser, schema, refusals).
 - [x] 2. Parser error check and report schema (format 0.21.0), controller schema copy, `ui/src/api/schema.d.ts`.
 - [x] 3. Tests, README, Realism page, log entry with the Shared page notes.
-- [ ] 4. Pull request, CI, review.
+- [x] 4. Pull request, CI, review.
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ Add an optional setting of a session rule of the realism labels under which ever
 
 ## Remaining
 
-Open the pull request and wait for CI. Go could not be built here, so the controller schema equality test runs only in CI (the copy was made with `cp` and is byte identical).
+CI is green on 50f7bf4 (all check runs succeeded), including the controller schema equality test.
 
 ## Next action
 
-Open the pull request with `gh api repos/alrawi/FixingPointSystem/pulls`, then poll the check runs.
+Coordinator reviews and merges PR #554.
 
 ## Blockers and open questions
 
@@ -66,3 +66,4 @@ python3 -m ruff check realism && python3 -m mypy --config-file realism/pyproject
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-13 | claude-72c43f | claim | none | claimed #551 |
+| 2026-11-13 | claude-72c43f | review | 50f7bf4 | PR #554 opened, CI green |
