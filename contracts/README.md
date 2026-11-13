@@ -19,12 +19,25 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 
 ## Flow program semantics
 
-Each flow runs one session. The client side and the server side each execute their action list in order. A flow fails when any action fails or times out.
+The client side and the server side of a flow each execute their action list in order. A flow fails when any action fails or times out.
+
+### Sessions and flows
+
+A scenario instance is the set of flows that one start of the scenario runs (see Variables across `after`). The contract counts sessions per scenario instance and not per flow. Six rules define the unit, and the metric catalog, the run report, and the calibration of the controller all use it (scenario contract v0.6 and metric catalog 0.8.0, with no change of version, see `changes/CON-31.md`).
+
+1. The entry flow of a scenario is the first flow of its `flows` list. It must not be `spawned`, because no client could start it.
+2. A session is one run of the entry flow of a scenario instance. A scenario with one flow has one session per run of that flow, as before. No flow other than the entry flow is a session of its own.
+3. Every other flow of the instance belongs to the session, whether a `spawn` action starts it or `after` orders it, and whether it runs once, several times, or beside the entry flow. It adds the application payload bytes that it sends and receives to the bytes of the session. The session carries the labels of its entry flow, so `application` is the module of the entry flow and `scenario` is the scenario name, and the bytes of the other flows are counted under them.
+4. A session succeeds when every flow of its instance finishes every action. It fails when any flow of its instance fails or times out, and it fails once, with the reason of the first flow that failed. The flows that this failure cuts short add no reason of their own, so they never count as `aborted` failures beside the cause.
+5. A session starts with its entry flow and ends when the last flow of its instance ends. It is established when the first `connect` or `accept` of the entry flow completes. Its duration runs from its start to its end, and a session is open until it ends, so `after` flows and spawned flows that outlive the entry flow keep it open.
+6. Both sides count the same sessions, and the label `side` says which side recorded a value. A client session starts when the client side starts the entry flow, and a server session starts when the server side accepts the first connection or datagram of the entry flow.
+
+The word connection names what one flow side opens with `connect` or `accept`. A session of an `ftp` scenario with three transfers holds one control connection and three data connections, and a capture shows each of them as its own connection. The series that count what happens inside a flow keep their meaning and their labels: `actions.*` count the actions of each flow, `transactions.*` and `sessions.response_time` count transactions, and the `tcp.*`, `tls.*`, and `port.*` series count the connections, handshakes, and packets of the transport. A realism capture or a classifier calls a connection a session too, as nDPI and Zeek do, and that use is not the unit of this section.
 
 | Action | Meaning |
 |---|---|
-| `connect` | Open a session to `host:port`. Without `host`, the engine picks an address from the server pool. |
-| `accept` | Listen on `port` and accept one session. |
+| `connect` | Open a connection to `host:port`. Without `host`, the engine picks an address from the server pool. |
+| `accept` | Listen on `port` and accept one connection. |
 | `send` | Render the template and write the bytes. |
 | `expect` | Read with one of three stop rules. `pattern` consumes through the first match. `bytes` consumes exactly N bytes. `min_bytes` waits for at least N bytes and consumes everything buffered. The default timeout is 10,000 ms. The consumed bytes become `last`. UDP flows follow the datagram rules below. |
 | `delay` | Wait a fixed time (`ms`) or a sample from `exponential`, `uniform`, `lognormal`, or `pareto`. Lognormal parameters apply to the natural log of the delay in `unit`, which defaults to seconds. |
@@ -32,7 +45,7 @@ Each flow runs one session. The client side and the server side each execute the
 | `loop` | Repeat `do` `count` times. |
 | `branch` | Choose one `do` block with probability `p`. Probabilities must sum to 1. |
 | `spawn` | Start the named flow, which must declare `spawned: true`. |
-| `tls_upgrade` | Wrap the transport of the running session in TLS in place. The side's role starts or accepts the handshake, and every later action runs over TLS. TCP flows only. |
+| `tls_upgrade` | Wrap the transport of the running connection in TLS in place. The side's role starts or accepts the handshake, and every later action runs over TLS. TCP flows only. |
 | `close` | `fin` shuts down the write side and drains until the peer closes. `rst` aborts. `half` shuts down the write side and continues. |
 | `raw` | Write hex bytes without templating. Only `strike` and `fuzzer` modules may use it. |
 
@@ -49,7 +62,7 @@ A UDP flow keeps datagram boundaries. The engine applies six rules.
 3. The stop rule checks that one datagram. `bytes: N` requires a datagram of exactly N bytes, `min_bytes: N` requires at least N bytes, and `pattern` requires the pattern somewhere in the datagram. A datagram that breaks the rule fails the session with reason `pattern_mismatch`.
 4. `max_datagram` sets the largest datagram that the `expect` accepts, from 1 to 65,507 bytes with a default of 65,507. A longer datagram fails the session with reason `pattern_mismatch`, and the engine never truncates it silently. The validator rejects `max_datagram` on TCP flows, and on UDP flows it rejects a fixed `bytes`, `min_bytes`, or pattern length that exceeds the limit.
 5. `timeout_ms` bounds the wait for that one datagram. A protocol that answers with several datagrams reads them with one `expect` each, for example inside a `loop`.
-6. A session receives only datagrams from its peer. The client socket connects to the peer address, and the server session binds to the source address of the first datagram, so datagrams from other sources belong to other sessions. The engine does not reorder, deduplicate, or retransmit datagrams.
+6. A connection receives only datagrams from its peer. The client socket connects to the peer address, and the server side binds to the source address of the first datagram, so datagrams from other sources belong to other connections. The engine does not reorder, deduplicate, or retransmit datagrams.
 
 The engine reads datagrams into one scratch buffer per worker and copies a datagram into the session only when a template of that side refers to `last`, so the limit costs no memory per session.
 
@@ -140,7 +153,7 @@ The grammar has five further rules.
 | Name | Type | Value |
 |---|---|---|
 | `vars.<name>` | type of the variable | Scenario variable, after test parameter overrides |
-| `session.id` | int | Session sequence number within the run |
+| `session.id` | int | Number that the engine gives to the run of the flow that renders the template, unique within the run and the key of its seeded draws. Both sides of one flow run share it. Each flow of a session has its own number, and so has each run of a spawned flow, so a spawned flow sees another number than the entry flow (the name predates the rule of Sessions and flows) |
 | `session.flow` | text | Flow id |
 | `last` | bytes | The bytes that the previous `expect` of the same side consumed |
 | `profiles.<name>` | text | The entries of a profile of the scenario, each rendered as `Name: value` and CRLF in declaration order (scenario contract v0.3) |
