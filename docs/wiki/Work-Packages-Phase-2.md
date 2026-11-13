@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 174 work packages. Packages marked critical path gate the phase.
+This page lists 175 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -162,6 +162,7 @@ flowchart LR
   RLM_20["RLM-20<br/>Expected parser findings in the realism labels"]
   RLM_21["RLM-21<br/>STARTTLS ports in the decrypted view"]
   RLM_22["RLM-22<br/>Request cadence and bytes for HLS in the realism labels"]
+  RLM_23["RLM-23<br/>Expected parser findings in every session of a rule"]
   CON_24["CON-24<br/>Capture drop counts in the agent protocol and the REST API"]
   AGT_21["AGT-21<br/>NTP, MQTT, LDAP, and HLS in the agent"]
   CON_25["CON-25<br/>The messages check in the metric catalog"]
@@ -545,6 +546,7 @@ flowchart LR
 | [RLM-20](#rlm-20-expected-parser-findings-in-the-realism-labels) | Expected parser findings in the realism labels | S | none |  |
 | [RLM-21](#rlm-21-starttls-ports-in-the-decrypted-view) | STARTTLS ports in the decrypted view | S | RLM-18 |  |
 | [RLM-22](#rlm-22-request-cadence-and-bytes-for-hls-in-the-realism-labels) | Request cadence and bytes for HLS in the realism labels | S | none |  |
+| [RLM-23](#rlm-23-expected-parser-findings-in-every-session-of-a-rule) | Expected parser findings in every session of a rule | S | none |  |
 | [CON-24](#con-24-capture-drop-counts-in-the-agent-protocol-and-the-rest-api) | Capture drop counts in the agent protocol and the REST API | S | ENG-27 |  |
 | [AGT-21](#agt-21-ntp-mqtt-ldap-and-hls-in-the-agent) | NTP, MQTT, LDAP, and HLS in the agent | S | MOD-15, MOD-16, MOD-17, MOD-18 |  |
 | [CON-25](#con-25-the-messages-check-in-the-metric-catalog) | The messages check in the metric catalog | S | CON-23, RLM-17 |  |
@@ -3277,6 +3279,23 @@ Deliverables.
 Acceptance.
 
 - [ ] The committed hls fixture passes with labels equal in strength to hls_check.py, and a capture with a wrong segment cadence or bit rate fails.
+
+### RLM-23 Expected parser findings in every session of a rule
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** none
+- **Paths.** `realism/`
+
+RLM-20 meets a declared item of expect_findings when any one session of the rule shows it, so a strike scenario that comes out malformed in only some of its sessions still passes. Issue #513 asked for the expectation per matched session. The other points of #513 are in RLM-20; matching on payload content stays out, because the session table holds no payload and a separate server port per scenario selects the sessions.
+
+Deliverables.
+
+- An optional setting of a session rule under which every session of the rule must show every declared item, with missing_findings naming each session that lacks one, the realism report schema and runner updated, rules without it keeping the RLM-20 behaviour, and the text for docs/wiki/Module-Development.md in the Shared page notes.
+
+Acceptance.
+
+- [ ] A test capture where one of several sessions of such a rule lacks a declared finding fails and names that session, the same capture passes without the setting, and every committed fixture still passes.
 
 ## CAP Capture compiler and profile extractor
 

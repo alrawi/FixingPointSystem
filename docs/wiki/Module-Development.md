@@ -553,6 +553,10 @@ These are problems that the project has already met while it built modules, with
 
 **Traffic that is malformed on purpose.** Declare the findings each rule must produce in `expect_findings`, and take their names from the `errors` of a first score without declarations, because a guessed weird name will not match (RLM-20).
 
+**Malformed scenarios that share a server port share one rule.** A label rule matches on the transport, addresses, and ports only, so every scenario on one port falls under the first rule for that port. Its declared items then form one pool: the check cannot require that each malformed scenario produced its own finding, and a finding of a well formed scenario on the same port is excused when it happens to be in the pool. Give each malformed scenario its own server port through a scenario variable in the capture script, and write one rule per port, declaring findings only on the malformed ones (issue #513).
+
+**A declared item is met by one session.** An item of `expect_findings` counts as present when any one session of its rule shows it, so a scenario that comes out malformed in only some of its sessions still passes (RLM-20; RLM-23 adds a per session option).
+
 **Zeek can overflow at the end of a large capture.** One Gate 2 mix run failed on the weird `event_queue_overflow_drain` at the last instant of a 141 s capture, with no session, and passed on rerun. It is a resource limit of Zeek and not a fault of the traffic (QA-13, open).
 
 ### TLS
