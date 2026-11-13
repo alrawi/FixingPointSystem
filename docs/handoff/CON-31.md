@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #537 |
 | Branch | `wp/CON-31` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #540 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-10fd70, lease until 2026-11-13T05:40:12Z |
-| Last verified commit | none |
+| Last verified commit | 34ec147 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,20 +22,20 @@ A session becomes one run of the entry flow of a scenario instance. Every other 
 - [x] 2. Change contracts/README.md and the sessions series descriptions in the metric catalog, decide the version question
 - [x] 3. Write contracts/changes/CON-31.md with the consumer and test list
 - [x] 4. Write the log entry with the Shared page notes (Module-Development expected_bytes text)
-- [ ] 5. Run checks, open the PR, wait for CI, review step
+- [x] 5. Run checks, open the PR, wait for CI, review step
 
 ## Done and verified
 
 - Steps 1 to 4: contracts/README.md (Sessions and flows), catalog descriptions, controller byte copy, contracts/changes/CON-31.md, Contracts.md, log entry with Shared page notes.
-- `python3 tools/contracts/validate.py`: 0 errors. `make test-con`: 350 passed. `plan.py check`, `render --check`, `lint`: ok.
+- `python3 tools/contracts/validate.py`: 0 errors. `make test-con`: 350 passed. `plan.py check`, `render --check`, `lint`: ok. CI on 34ec147: 22 of 22 check runs succeeded.
 
 ## Remaining
 
-Open the PR, wait for CI, run the review step.
+Nothing. The coordinator applies the Module Development text from the Shared page notes of the log entry, merges after the owner approves, and ENG-30 follows.
 
 ## Next action
 
-Open the PR against main and poll the check runs.
+Coordinator review and merge.
 
 ## Blockers and open questions
 
@@ -61,5 +61,6 @@ python3 tools/contracts/validate.py
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
-| 2026-11-13T04:10Z | claude-10fd70 | claim | none | Claimed #537, branch from origin/main ec730b4 |
-| 2026-11-13T04:50Z | claude-10fd70 | checkpoint | | Contract, entry, wiki and log entry written, checks pass |
+| 2026-11-13T04:12Z | claude-10fd70 | claim | none | Claimed #537, branch from origin/main ec730b4 |
+| 2026-11-13T04:22Z | claude-10fd70 | checkpoint | 34ec147 | Contract, entry, wiki and log entry written, checks pass, PR #540 opened |
+| 2026-11-13T04:35Z | claude-10fd70 | finish | | CI green on 34ec147, ready for review |
