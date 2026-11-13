@@ -45,6 +45,18 @@ pool of its own, and a listen port is any variable whose name ends in
 `_port`. `fixtures/expected.yaml` holds the labels, and the script ends with
 the realism score, which must pass.
 
+A peer that serves concurrent spawned flows must share one listener per port
+across the whole run, the way the engine's `DataPorts` does: binding per
+instance and accepting one connection races the next dialer against a
+listener that closes with its queue still non-empty, and the kernel answers
+those waiters with a reset (AGT-18). `fixture_peer` pre-binds every `*_port`
+before its first session and holds the listeners open; a spawned flow mirrors
+the runtime's open rules instead (retry a refusal from 2 ms doubling to 50 ms
+for 2 s, never retry a reset, and treat a reset that arrives during the
+connect of a spawned flow as the opened-and-reset session the scenario
+designs). `--spawn-delay-ms` puts the server's spawned opens behind the
+client on purpose, so the property is tested rather than won by luck.
+
 The malformed scenarios `bad_request_line` and `te_cl_conflict` are not in
 the scored fixture yet: their origin replies are protocol errors, and their
 expected-findings package lands with the RLM work.

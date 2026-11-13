@@ -12,20 +12,27 @@
 //! of its scenarios before the first session and keeps the listeners open
 //! for the whole run, so the churn children of `conn_churn` are accepted
 //! one by one from the backlog of a single listener, and a child that dials
-//! a moment early meets an open port instead of a refusal. The client also
-//! retries a refused connection for a short time.
+//! a moment early meets an open port instead of a refusal. The client
+//! retries a refused connect with the engine's open grace of 2 s and
+//! exponential backoff, and a spawned flow whose reset arrives while its
+//! `connect()` completes proceeds as a session that opened and was reset,
+//! which is the outcome `conn_churn` designs. This is the AGT-18 listener
+//! lifecycle race, and `strace -f` over the client makes it deterministic.
 //!
 //! ```text
 //! fixture_peer server --listen 10.202.0.2 [options]
 //! fixture_peer client --connect 10.202.0.2 --source 10.201.0.2 [options]
 //!
 //! options
-//!   --sessions N      sessions per scenario, default 10
-//!   --seed S          run seed, default 42
-//!   --var NAME=VALUE  replace a variable in every scenario that declares it
-//!   --scenario NAME   only run this scenario, repeatable; the name is the
-//!                     file stem, the manifest path, or the path with the
-//!                     extension, and the scenarios keep the manifest order
+//!   --sessions N        sessions per scenario, default 10
+//!   --seed S            run seed, default 42
+//!   --var NAME=VALUE    replace a variable in every scenario that declares it
+//!   --spawn-delay-ms N  delay the open of every spawned server flow by N ms,
+//!                       so a test can put the server behind the client on
+//!                       purpose instead of winning the race by luck
+//!   --scenario NAME     only run this scenario, repeatable; the name is the
+//!                       file stem, the manifest path, or the path with the
+//!                       extension, and the scenarios keep the manifest order
 //! ```
 //!
 //! A listen port is a variable whose name ends in `_port`, so a run can move
@@ -37,8 +44,10 @@ use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
+use std::pin::Pin;
 use std::process::ExitCode;
 use std::rc::Rc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use fps_backend_kernel::{ConnectConfig, Connector, KernelListener, KernelStream, ListenConfig};
@@ -51,7 +60,9 @@ use fps_interp::{
     ScenarioInstance, Side, Sides,
 };
 use fps_io::memory::MemoryDatagram;
+use fps_io::SessionIo;
 use rand::RngCore;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 /// The scenarios call no module function, and `rand_int` is a builtin of the
 /// template engine, so this resolver only rejects.
@@ -75,14 +86,92 @@ impl TemplateFn for NoFunctions {
 type Held = Rc<RefCell<Vec<Rc<KernelListener>>>>;
 
 /// Opens kernel TCP sessions for the interpreter.
+///
+/// One listener per port is held for the whole run, so accepts never race a
+/// bind and early connections wait in the kernel backlog. A spawned flow
+/// mirrors the runtime's open rules: it retries a refused connect with
+/// exponential backoff for the open grace, and a reset that arrives while
+/// its connect completes is the opened-and-reset session the scenario
+/// designs (AGT-18) rather than a failure.
 struct KernelOpener {
     server: IpAddr,
     source: Option<IpAddr>,
     held: Held,
+    spawned: bool,
+    spawn_delay: Duration,
 }
 
 fn to_io(e: fps_backend_kernel::BackendError) -> io::Error {
-    io::Error::other(e.to_string())
+    io::Error::new(e.io_kind().unwrap_or(io::ErrorKind::Other), e.to_string())
+}
+
+/// Grace a connect gives a port that still refuses, mirroring the engine's
+/// `OPEN_GRACE`, `RETRY_FIRST`, and `RETRY_MAX` for spawned flows.
+const OPEN_GRACE: Duration = Duration::from_secs(2);
+const RETRY_FIRST: Duration = Duration::from_millis(2);
+const RETRY_MAX: Duration = Duration::from_millis(50);
+
+/// The stream a session runs on.
+enum Stream {
+    /// A live kernel socket.
+    Kernel(KernelStream),
+    /// A connection the peer reset while `connect()` was completing. A churn
+    /// child closes with a reset as its first action, so the reset arriving
+    /// this early is the session `conn_churn` designs, not a failure. Every
+    /// operation then behaves like it does after [`SessionIo::abort`].
+    Reset,
+}
+
+impl AsyncRead for Stream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Self::Kernel(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::Reset => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection was reset",
+            ))),
+        }
+    }
+}
+
+impl AsyncWrite for Stream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            Self::Kernel(stream) => Pin::new(stream).poll_write(cx, buf),
+            Self::Reset => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection was reset",
+            ))),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Self::Kernel(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::Reset => Poll::Ready(Ok(())),
+        }
+    }
+}
+
+impl SessionIo for Stream {
+    fn abort(&mut self) {
+        match self {
+            Self::Kernel(stream) => stream.abort(),
+            Self::Reset => {}
+        }
+    }
 }
 
 impl KernelOpener {
@@ -95,12 +184,14 @@ impl KernelOpener {
 }
 
 impl Opener for KernelOpener {
-    type Io = KernelStream;
+    type Io = Stream;
 
-    fn open(&mut self, request: OpenRequest<'_>) -> impl Future<Output = io::Result<KernelStream>> {
+    fn open(&mut self, request: OpenRequest<'_>) -> impl Future<Output = io::Result<Stream>> {
         let (kind, port) = (request.kind, request.port);
         let addr = SocketAddr::new(self.server, port);
         let source = self.source.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+        let spawned = self.spawned;
+        let spawn_delay = self.spawn_delay;
         let held = self
             .held
             .borrow()
@@ -111,30 +202,53 @@ impl Opener for KernelOpener {
             match kind {
                 OpenKind::Connect => {
                     let connector = Connector::new(ConnectConfig::default());
-                    // The server binds its ports before the first session,
-                    // so a refusal here means the run started too early.
-                    let mut last = None;
-                    for _ in 0..100 {
+                    let deadline = tokio::time::Instant::now() + OPEN_GRACE;
+                    let mut wait = RETRY_FIRST;
+                    loop {
                         match connector.connect(source, addr).await {
-                            Ok(s) => return Ok(s),
-                            Err(e) if e.io_kind() == Some(io::ErrorKind::ConnectionRefused) => {
-                                last = Some(e);
-                                tokio::time::sleep(Duration::from_millis(10)).await;
+                            Ok(s) => return Ok(Stream::Kernel(s)),
+                            // The peer reset while the connect completed: a
+                            // spawned flow's first action is often a reset
+                            // close, so this is the session the scenario
+                            // designs, and it must not be retried or the real
+                            // defects would hide behind the retry.
+                            Err(e)
+                                if spawned
+                                    && e.io_kind() == Some(io::ErrorKind::ConnectionReset) =>
+                            {
+                                return Ok(Stream::Reset);
+                            }
+                            Err(e)
+                                if spawned
+                                    && e.io_kind() == Some(io::ErrorKind::ConnectionRefused)
+                                    && tokio::time::Instant::now() + wait < deadline =>
+                            {
+                                tokio::time::sleep(wait).await;
+                                wait = (wait * 2).min(RETRY_MAX);
                             }
                             Err(e) => return Err(to_io(e)),
                         }
                     }
-                    Err(last.map_or_else(|| io::Error::other("no attempt"), to_io))
                 }
                 OpenKind::Accept => {
+                    if spawned && !spawn_delay.is_zero() {
+                        tokio::time::sleep(spawn_delay).await;
+                    }
                     if let Some(l) = held {
-                        return l.accept().await.map(|(s, _)| s).map_err(to_io);
+                        return l
+                            .accept()
+                            .await
+                            .map(|(s, _)| Stream::Kernel(s))
+                            .map_err(to_io);
                     }
                     // A port that the run did not pre-bind: accept one
                     // connection and release the port when the listener
                     // drops.
                     let l = KernelListener::bind(addr, &ListenConfig::default()).map_err(to_io)?;
-                    l.accept().await.map(|(s, _)| s).map_err(to_io)
+                    l.accept()
+                        .await
+                        .map(|(s, _)| Stream::Kernel(s))
+                        .map_err(to_io)
                 }
             }
         }
@@ -156,17 +270,20 @@ struct Env {
     server: IpAddr,
     source: Option<IpAddr>,
     held: Held,
+    spawn_delay: Duration,
 }
 
 impl FlowEnv for Env {
     type Stream = KernelOpener;
     type Datagram = NoDatagrams;
 
-    fn stream(&mut self, _flow: &Flow, _side: Side) -> KernelOpener {
+    fn stream(&mut self, flow: &Flow, _side: Side) -> KernelOpener {
         KernelOpener {
             server: self.server,
             source: self.source,
             held: Rc::clone(&self.held),
+            spawned: flow.spawned,
+            spawn_delay: self.spawn_delay,
         }
     }
 
@@ -185,6 +302,7 @@ struct Options {
     source: Option<IpAddr>,
     sessions: u64,
     seed: u64,
+    spawn_delay: Duration,
     vars: Vec<(String, Value)>,
     only: Vec<String>,
 }
@@ -202,6 +320,7 @@ fn parse_args() -> Result<Options, String> {
         source: None,
         sessions: 10,
         seed: 42,
+        spawn_delay: Duration::ZERO,
         vars: Vec::new(),
         only: Vec::new(),
     };
@@ -214,16 +333,16 @@ fn parse_args() -> Result<Options, String> {
         match flag.as_str() {
             "--listen" | "--connect" => o.server = ip(args.next())?,
             "--source" => o.source = Some(ip(args.next())?),
-            "--sessions" | "--seed" => {
+            "--sessions" | "--seed" | "--spawn-delay-ms" => {
                 let n: u64 = args
                     .next()
                     .ok_or("missing number")?
                     .parse()
                     .map_err(|e| format!("bad number: {e}"))?;
-                if flag == "--seed" {
-                    o.seed = n;
-                } else {
-                    o.sessions = n;
+                match flag.as_str() {
+                    "--seed" => o.seed = n,
+                    "--spawn-delay-ms" => o.spawn_delay = Duration::from_millis(n),
+                    _ => o.sessions = n,
                 }
             }
             "--scenario" => o.only.push(args.next().ok_or("missing scenario name")?),
@@ -317,6 +436,7 @@ async fn run(o: Options) -> Result<(), String> {
         server: o.server,
         source: o.source,
         held: Rc::clone(&held),
+        spawn_delay: o.spawn_delay,
     };
     if o.side == Side::Server {
         // The server binds every listen port before its first session, so a
