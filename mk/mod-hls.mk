@@ -16,9 +16,9 @@ lint-mod-hls:
 	ln -sfn $(CURDIR)/modules/http1 $(MOD_HLS_OUT)/modules/http1
 	$(PYTHON) tools/contracts/validate.py --modules $(MOD_HLS_OUT)/modules --tests --no-openapi
 
-# The crate tests, the tests of the playback check, then the realism score of
-# the committed fixture and the playback check, which need ndpiReader and
-# tshark.
+# The crate tests, the tests of the temporal labels, then the realism score of
+# the committed fixture, which needs ndpiReader and tshark. The score judges the
+# segment cadence and the bytes of every playback through the temporal labels.
 TEST_TARGETS += test-mod-hls
 test-mod-hls:
 	$(CARGO) test -p fps-module-hls
@@ -29,15 +29,13 @@ test-mod-hls:
 	  $(PYTHON) -m realism score --pcap modules/hls/fixtures/hls.pcapng \
 	    --labels modules/hls/fixtures/expected.yaml --parsers tshark \
 	    --output $(MOD_HLS_OUT)/fixture.report.json; \
-	  echo "modules/hls/fixtures/hls_check.py modules/hls/fixtures/hls.pcapng"; \
-	  $(PYTHON) -I modules/hls/fixtures/hls_check.py modules/hls/fixtures/hls.pcapng; \
 	else \
-	  echo "test-mod-hls skipped the fixture score and the playback check because ndpiReader or tshark is not installed"; \
+	  echo "test-mod-hls skipped the fixture score because ndpiReader or tshark is not installed"; \
 	fi
 
-# Records a fresh capture in the QA-01 harness, scores it, and runs the session
-# count check and the playback check. It needs root, so make test leaves it
-# out, and it never overwrites the committed fixture.
+# Records a fresh capture in the QA-01 harness and runs the session count check
+# and the score. It needs root, so make test leaves it out, and it never
+# overwrites the committed fixture.
 E2E_TARGETS += e2e-mod-hls
 e2e-mod-hls:
 	modules/hls/fixtures/capture.sh $(MOD_HLS_OUT)/capture

@@ -12,7 +12,7 @@ The `hls` module generates HTTP Live Streaming traffic (RFC 8216) over HTTP/1.1.
 | `native/examples/fixture_peer.rs` | Runs one side of every scenario over kernel sockets, with a source port of its own per connection (MOD-21) |
 | `native/examples/print_catalog.rs` | Prints the `functions` block of the manifest |
 | `tests/` | Catalog, scenario, and golden transcript tests |
-| `fixtures/` | The capture `hls.pcapng`, its labels `expected.yaml`, `params.json`, `capture.sh`, and `hls_check.py` with its tests |
+| `fixtures/` | The capture `hls.pcapng`, its labels `expected.yaml` (with the temporal checks), the report `hls.report.json`, `params.json`, `capture.sh`, and `test_temporal_labels.py` |
 
 ## Scenarios
 
@@ -35,18 +35,18 @@ The size of a segment is `bit_rate * segment_ms / 8000` octets, rounded to whole
 The acceptance asks that the temporal check accepts the segment fetch cadence and that the byte share matches the configured bit rate within 5%.
 
 * The temporal check of the realism runner compares the gaps between the starts of sessions. `expected.yaml` gives the application `hls_segment` (port 8092) the constant arrival `400 ms ± 40 ms`. The capture holds one playback of 33 segments, so 32 gaps lie between 398.2 and 401.8 ms, and the check passes with `min_samples: 30`.
-* The runner cannot see the gaps between the requests inside one keepalive connection, and it reads no bytes. `fixtures/hls_check.py` reads both from the capture. For each playback it requires a mean gap within 5% of the segment duration and 90% of the gaps within 10%, a body within 188 octets of its configured size, the byte share of each rung within 5% of the share that the bit rates give, and the bit rate of the playback within 5% of the configured one. The vod playbacks must walk up the whole ladder. The result is in `fixtures/hls.playbacks.json`: the mean gaps are 400.1 to 400.3 ms, and the bit rate is 375327 against 373333 configured for `vod_ladder` (0.5%).
+* The gaps between the requests inside one keepalive connection and the bytes of the playbacks are labels too (RLM-22, MOD-31), where MOD-15 had a script, `hls_check.py`, for them. `temporal.packets` gives each application a client direction target that the request path `/v\d+/seg\d+\.ts$` restricts to the requests for segments, so the playlist refreshes of a keepalive connection do not count. The gaps must be 400 ms, with 90% of them within 40 ms (10%) and a mean within 20 ms (5%). `join_ms: 800` makes the segment connections of `vod_segments`, which start less than two segment durations apart, one playback. `temporal.rungs` gives the ladder `160000, 320000, 640000` bit/s and 400 ms per segment. For each playback it requires a body within 188 octets of its configured size, the byte share of each rung (counted on the wire, with the response head) within 5% of the share that the bit rates give, and the bit rate of the playback within 5% of the configured one. The vod playbacks must walk up the whole ladder (`walk: up`), and `streams` is the number of playbacks that the peers ran (3, 1, and 3). The mean gaps in the capture are 400.1 to 400.3 ms, and the bit rate is 375327 against 373333 configured for `vod_ladder` (0.5%). A playback with fewer requests than `min_samples` is not judged and the `streams` count then fails, where the script failed it directly.
 
 ## Fixture
 
-`fixtures/capture.sh` records the capture in the QA-01 harness. The parameters (ladder `160000@426x240,320000@640x360,640000@960x540`, segment duration 400 ms, the number of sessions and segments) are in `params.json`, which the script, the peer, and `hls_check.py` all read. The capture holds 40 TCP sessions, each with its own source port.
+`fixtures/capture.sh` records the capture in the QA-01 harness. The parameters (ladder `160000@426x240,320000@640x360,640000@960x540`, segment duration 400 ms, the number of sessions and segments) are in `params.json`, which the script and the peer read. `fixtures/test_temporal_labels.py` checks that the ladder, the segment duration, the playback counts, and the ports in `expected.yaml` agree with it. The capture holds 40 TCP sessions, each with its own source port.
 
 | Check | Result |
 |---|---|
 | nDPI 4.2.0 | 40 of 40 sessions as HTTP |
 | tshark 4.2.2 parser errors | none |
 | temporal check (n = 32 gaps) | passes |
-| `hls_check.py` | passes on all 7 playbacks |
+| temporal labels, packet gaps and rungs | pass on all 7 playbacks |
 
 Zeek did not run locally. The CI run with nDPI 4.14 gives the second nDPI result.
 
@@ -58,7 +58,7 @@ make test-mod-hls
 sudo make e2e-mod-hls
 ```
 
-`cargo test -p fps-module-hls` runs 31 unit tests, the catalog test, the scenario tests, and the golden transcripts (`UPDATE_GOLDEN=1` rewrites them). `python3 -m unittest discover -s modules/hls/fixtures` tests the check with synthetic captures.
+`cargo test -p fps-module-hls` runs 31 unit tests, the catalog test, the scenario tests, and the golden transcripts (`UPDATE_GOLDEN=1` rewrites them). `python3 -m unittest discover -s modules/hls/fixtures` runs the tests of the temporal labels, which need neither tshark nor nDPI. The committed capture passes, the capture with its time stretched by 1.15 or 0.8 fails in every kind of playback, a stretch of 1.06 (each gap inside 40 ms, the mean 24 ms off) fails only through `mean_tolerance_ms`, synthetic playbacks with a top rung 20% short, a live rung 25% long, wrong segment connections, a drift, a burst, a missing playback, or a ladder that does not walk fail, and the labels are compared with `params.json`.
 
 ## Limits
 

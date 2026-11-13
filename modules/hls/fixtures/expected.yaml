@@ -7,13 +7,28 @@
 # segments, one connection each, on 8092, and live_refresh on 8093. nDPI must
 # classify at least 99% of these sessions as HTTP from the payload alone.
 #
-# The temporal section is the acceptance of MOD-15. The segment connections of
-# vod_segments start one segment duration apart, 400 ms in this capture, on an
-# absolute schedule, so the gaps between their starts must all lie within 40 ms
-# of 400 ms. The capture holds one playback of 33 segments, which gives 32 gaps,
-# above the 30 observations that the check needs. The gaps inside a keepalive
-# connection are not session starts, so hls_check.py reads them, together with
-# the byte share of the rungs.
+# The temporal section is the acceptance of MOD-15 and says everything that the
+# playback check of that package (hls_check.py) said; MOD-31 moved it here.
+#
+#   arrivals  The segment connections of vod_segments start one segment duration
+#             apart, 400 ms in this capture, on an absolute schedule, so the gaps
+#             between their starts must all lie within 40 ms of 400 ms.
+#   packets   The requests for segments, which the path selects, follow each
+#             other 400 ms apart, within 40 ms for 90% of the gaps, with a mean
+#             within 20 ms (5%). A keepalive connection also fetches playlists,
+#             which the path leaves out. join_ms joins the segment connections
+#             of vod_segments, which start less than two segment durations
+#             apart, into the one playback that they are. A playback is short,
+#             so a target needs 3 gaps and not the 30 of the section.
+#   rungs     The body of a segment is within one transport stream packet (188
+#             octets) of rate * duration / 8, the share of each rung in the
+#             bytes and the bit rate of a playback are within 5% of the ladder,
+#             and the playbacks of the vod scenarios walk up the whole ladder.
+#             streams is the number of playbacks that the peers ran.
+#
+# The ladder, the segment duration, and the session counts are in params.json,
+# which capture.sh and the peer read, so test_temporal_labels.py checks that
+# these labels agree with it.
 labels: fps-realism-labels
 version: 1
 threshold: 0.99
@@ -37,3 +52,13 @@ temporal:
   arrivals:
     applications:
       hls_segment: {dist: constant, ms: 400, tolerance_ms: 40}
+  packets:
+    applications:
+      hls_vod: {direction: client, path: '/v\d+/seg\d+\.ts$', dist: constant, ms: 400, tolerance_ms: 40, within: 0.9, mean_tolerance_ms: 20, min_samples: 3}
+      hls_live: {direction: client, path: '/v\d+/seg\d+\.ts$', dist: constant, ms: 400, tolerance_ms: 40, within: 0.9, mean_tolerance_ms: 20, min_samples: 3}
+      hls_segment: {direction: client, path: '/v\d+/seg\d+\.ts$', dist: constant, ms: 400, tolerance_ms: 40, within: 0.9, mean_tolerance_ms: 20, min_samples: 3, join_ms: 800}
+  rungs:
+    applications:
+      hls_vod: {path: '/v(\d+)/seg\d+\.ts$', duration_ms: 400, bits_per_second: [160000, 320000, 640000], walk: up, streams: 3, min_samples: 4}
+      hls_segment: {path: '/v(\d+)/seg\d+\.ts$', duration_ms: 400, bits_per_second: [160000, 320000, 640000], walk: up, streams: 1, min_samples: 4, join_ms: 800}
+      hls_live: {path: '/v(\d+)/seg\d+\.ts$', duration_ms: 400, bits_per_second: [160000, 320000, 640000], streams: 3, min_samples: 4}
