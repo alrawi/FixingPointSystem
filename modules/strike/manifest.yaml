@@ -1,0 +1,25 @@
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Module
+name: strike
+version: 0.1.0
+type: strike
+summary: Application-layer attack traffic that exercises a device under test without the raw packet engine.
+engine_api: ">=0.2, <0.3"
+license: GPL-3.0-only
+provides:
+  - { protocol: http, transport: tcp, port: 8080 }
+fixtures:
+  - { capture: fixtures/strike.pcapng, expect: { ndpi: [HTTP] } }
+provenance:
+  source: synthetic
+  notes: >-
+    Flows follow well-documented attack shapes: slow HTTP request reads,
+    connection churn with resets, malformed request lines, and a
+    Content-Length paired with Transfer-Encoding. The raw packet path keeps
+    stateless floods and spoofed source pools out of scope until the engine
+    grows them.
+scenarios:
+  - scenarios/slowloris.yaml
+  - scenarios/conn_churn.yaml
+  - scenarios/bad_request_line.yaml
+  - scenarios/te_cl_conflict.yaml

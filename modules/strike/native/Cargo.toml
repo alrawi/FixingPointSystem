@@ -1,0 +1,18 @@
+[package]
+name = "fps-module-strike"
+description = "Fixture peer of the strike module; the scenarios are contract programs and need no native template functions."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+# The fixture_peer example drives the flows over kernel sockets.
+fps-backend-kernel = { path = "../../../engine/fps-backend-kernel" }
+fps-flow = { path = "../../../engine/fps-flow" }
+fps-interp = { path = "../../../engine/fps-interp" }
+fps-io = { path = "../../../engine/fps-io" }
+# RngCore appears in the signature of the TemplateFn trait.
+rand = { version = "0.8", default-features = false }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "time"] }

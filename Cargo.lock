@@ -1283,6 +1283,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fps-module-strike"
+version = "0.0.1"
+dependencies = [
+ "fps-backend-kernel",
+ "fps-flow",
+ "fps-interp",
+ "fps-io",
+ "rand 0.8.8",
+ "tokio",
+]
+
+[[package]]
 name = "fps-module-template"
 version = "0.0.1"
 
