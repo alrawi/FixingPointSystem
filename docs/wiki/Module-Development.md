@@ -570,7 +570,7 @@ These are problems that the project has already met while it built modules, with
 
 **A declared item is met by one session.** An item of `expect_findings` counts as present when any one session of its rule shows it, so a scenario that comes out malformed in only some of its sessions still passes. Set `expect_every_session: true` on the rule of a scenario whose sessions must all be malformed: every session of the rule must then show every declared item, and `missing_findings` names each session that lacks one. The setting cannot tell scenarios apart that share a server port, so give each malformed scenario its own port and rule first (RLM-20, RLM-23).
 
-**Zeek can overflow at the end of a large capture.** One Gate 2 mix run failed on the weird `event_queue_overflow_drain` at the last instant of a 141 s capture, with no session, and passed on rerun. It is a resource limit of Zeek and not a fault of the traffic (QA-13, open).
+**Zeek can overflow at the end of a large capture.** A Gate 2 mix run failed on the weird `event_queue_overflow_drain` at the last instant of a 141 s capture, with no session, and passed on rerun. Zeek raises it when its event queue exceeds `max_event_queue_size`, which happens when many connections end at once, and the weird names no connection, so the parser error check counts it. It is a resource limit of Zeek and not a fault of the traffic. For a large capture of your own, run Zeek with `max_event_queue_size=0` on its command line, as `tests/gates/gate2/zeek-gate2.sh` does for the mix (QA-13).
 
 ### TLS
 

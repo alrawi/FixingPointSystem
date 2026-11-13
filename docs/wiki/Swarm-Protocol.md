@@ -308,7 +308,7 @@ An agent that cannot continue because of a missing decision, a contract gap, or 
 2. Post a comment that names the blocker, links the blocking issue or opens one, and states what would unblock the work.
 3. Edit the card to state `blocked` and replace the status label with `status:blocked`. Add `needs:owner` when only the owner can resolve the blocker.
 
-The helper performs steps 2 and 3. Its blocking comment starts with a marker that names the blocking issues, and the promotion sweep reads the newest such marker. A marker without issues means that only the owner can unblock the item, so the sweep leaves it alone.
+The helper performs steps 2 and 3. Its blocking comment starts with a marker that names the blocking issues, and the promotion sweep reads the newest such marker. A marker without issues means that only the owner can unblock the item, so the sweep leaves it alone. The sweep prints a `blocked:` line on stderr for such an item, and for a blocked item without any marker, so the coordinator sees which items wait for a person.
 
 ```bash
 swarm block "$N" --reason "Needs the counter catalog from CON-02" --blocked-by 18 --needs-owner
@@ -322,7 +322,7 @@ Whoever resolves the blocker relabels the issue `status:ready`. The next agent r
 
 A takeover is a claim of an item whose newest card is expired, released, or blocked. [Claim or resume](#claim-or-resume) covers it, because step 3 names the previous holder and step 6 resumes the branch. The new holder never waits for permission, since the previous agent may have crashed. When the branch fails its verification commands, the new holder fixes it forward from the last commit that the handoff marks as verified and records the failure in the session log.
 
-The helper command `swarm takeover N` follows the claim steps and also accepts an item that still carries `status:in-progress` when its holder card has expired. It refuses an item without an earlier card, because that is a plain claim.
+The helper command `swarm takeover N` follows the claim steps and also accepts an item that still carries `status:in-progress` when its holder card has expired. It also accepts an item that carries `status:blocked`, and it still refuses an item that carries `needs:split` or `type:followup`, because those need a planner first (OPS-07). It refuses an item without an earlier card, because that is a plain claim.
 
 An agent that returns after its lease expired treats its own item like anybody else's. It reads the cards, and when another card holds the lease it edits its old card to `superseded`, pushes its local commits to a salvage branch, and stops.
 
