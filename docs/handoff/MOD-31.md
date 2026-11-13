@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #547 |
 | Branch | `wp/MOD-31` |
-| Pull request | #0 |
+| Pull request | #555 |
 | Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Progress | 90% (3 of 4 plan steps, CI pending the one outside test) |
 | Current holder | claude-7f1c9e, lease until 2026-11-13T18:06:32Z |
-| Last verified commit | none |
+| Last verified commit | 7b735ce |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -32,11 +32,11 @@ Move what `modules/hls/fixtures/hls_check.py` checks into the `temporal` labels 
 
 ## Remaining
 
-PR, CI, and the coordinator's change to `realism/tests/test_http_rungs.py`.
+The coordinator's change to `realism/tests/test_http_rungs.py`.
 
 ## Next action
 
-Open the pull request and wait for CI.
+The coordinator changes or deletes `realism/tests/test_http_rungs.py::test_the_byte_numbers_equal_those_of_hls_check` (the only red check that this package causes), then CI is green and the package goes to review.
 
 ## Blockers and open questions
 
@@ -65,3 +65,4 @@ python3 -m unittest discover -s modules/hls/fixtures
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-13T17:36Z | claude-7f1c9e | claim | 8f7aad3 | claimed #547 with card 6858978262 |
+| 2026-11-13T17:58Z | claude-7f1c9e | checkpoint | 7b735ce | PR 555 opened; CI: module (hls) green; test (realism) fails only on the test that reads the deleted hls.playbacks.json; mix fails on an unrelated Zeek weird (event_queue_overflow_drain) |
