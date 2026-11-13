@@ -49,6 +49,12 @@ python3 tools/swarm/project_sync.py     # sync every issue
 
 Agents in sandboxed sessions cannot reach the GraphQL API, so they never run it. The tests in `tools/swarm/test_project_sync.py` replay GraphQL responses from `tools/swarm/testdata/project_sync/` and never reach the network.
 
+## Swarm helper: blocked items
+
+`fps_swarm.py takeover N` accepts an open item that carries `status:blocked`, `status:ready`, `status:stale`, or `status:in-progress`, as the [Swarm Protocol](Swarm-Protocol.md#takeover) says, so the coordinator no longer relabels a blocked item by hand. The takeover still checks the dependencies and the holder rule, still refuses an item without an earlier card, and still refuses an item that carries `needs:split` or `type:followup`. It does not check whether the blocking issues are closed: the new holder reads the blocking comment and decides. The label change on a win replaces `status:blocked` with `status:in-progress`.
+
+The promotion sweep unblocks an item only when its newest `fps:block` comment names blocking issues and all of them closed as completed. For a blocked item that has no `fps:block` comment, or whose comment names no issue, the sweep now writes one line that starts with `blocked:` to stderr and leaves the labels alone. The line names the issue and says that the owner relabels it or an agent takes it over. Standard output still carries only the planned label changes, so the scanner workflow output keeps its format.
+
 ## Benchmark runner
 
 The nightly benchmark of QA-08 runs on a self hosted runner on the owner's Linux server with the label `fps-bench`. The owner registers it with the steps in [`bench/README.md`, section Registering the owner host](https://github.com/alrawi/FixingPointSystem/blob/main/bench/README.md#registering-the-owner-host), and [Benchmarks](Benchmarks.md) explains the comparison.

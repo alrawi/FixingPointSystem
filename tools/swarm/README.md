@@ -24,3 +24,5 @@ python3 -m pytest -q tools/swarm
 ```
 
 All requests go through one runner function that shells out to `gh api -i`, so the command reads GitHub server time from the `Date` header of every response. Tests pass `FakeGitHub` as that runner. The command needs only the Python standard library.
+
+`takeover` accepts an item with `status:blocked` as well as ready, stale, and in progress items. The promotion sweep writes a `blocked:` line to stderr for each blocked item that names no blocking issue, because it cannot unblock such an item.
