@@ -73,13 +73,15 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
-from realism import ks
+from realism import exchanges, ks, rungs
 from realism.capture import Session, SessionKey, decode, read_frames, summarize
 from realism.content import IGNORED_HEADERS, Unit, collect_units, read_flows
+from realism.exchanges import SessionExchanges
 from realism.labels import (
     Distribution,
     Labels,
     LabelsError,
+    RungTarget,
     TemporalLabels,
     TemporalTarget,
 )
@@ -110,6 +112,7 @@ class _Source:
         self.labels = labels
         self._units: list[Unit] | None = None
         self._streams: list[_Stream] | None = None
+        self._http: dict[str, list[SessionExchanges]] = {}
         self.skipped_encrypted = 0
 
     def arrivals(self, application: str | None) -> list[float]:
@@ -150,16 +153,41 @@ class _Source:
             and (application is None or self.labels.application_of(stream.session) == application)
         ]
 
+    def http(self, application: str) -> list[SessionExchanges]:
+        """Return the HTTP exchanges of the TCP sessions of one application (RLM-22)."""
+        if application not in self._http:
+            wanted = [s for s in self.sessions if self.labels.application_of(s) == application]
+            read = exchanges.read_exchanges(self.capture, wanted)
+            self._http[application] = list(read.values())
+        return self._http[application]
+
+    def gap_streams(self, target: TemporalTarget) -> tuple[list[_Stream], str | None]:
+        """Return the streams of a packet gap target, or the reason that they cannot be read.
+
+        A target with a ``path`` reads the requests of one kind, which is one stream per
+        session, or one per run of sessions when the target joins them.
+        """
+        if target.path is None:
+            return self.streams(target.application, target.direction), None
+        assert target.application is not None  # the labels keep a path under applications
+        read = self.http(target.application)
+        error = exchanges.first_error(read)
+        if error is not None:
+            return [], error
+        found = exchanges.runs(read, re.compile(target.path), target.join)
+        label = target.join is not None
+        return [
+            _Stream(run.session, "client", run.times, run.name if label else None)
+            for run in found
+        ], None
+
     def samples(self, target: TemporalTarget) -> list[float]:
         """Return the observations of a target."""
         if target.prop == PROP_ARRIVAL:
             return self.arrivals(target.application)
         if target.prop == PROP_GAP:
-            return [
-                gap
-                for stream in self.streams(target.application, target.direction)
-                for gap in stream.gaps
-            ]
+            streams, _ = self.gap_streams(target)
+            return [gap for stream in streams for gap in stream.gaps]
         return self.sizes(target.application, target.direction)
 
 
@@ -170,6 +198,7 @@ class _Stream:
     session: Session
     side: str
     times: list[float] = field(default_factory=list)
+    label: str | None = None
 
     @property
     def gaps(self) -> list[float]:
@@ -178,6 +207,8 @@ class _Stream:
 
     def name(self) -> str:
         """Name the stream by its session, its sender, and its receiver."""
+        if self.label is not None:
+            return f"stream of the requests of a {self.label} ({self.side} side)"
         s = self.session
         client = f"{s.client_ip}:{s.client_port}"
         server = f"{s.server_ip}:{s.server_port}"
@@ -281,7 +312,8 @@ def _name(target: TemporalTarget) -> str:
         return f"inter-arrival times of {who}"
     if target.prop == PROP_GAP:
         side = "" if target.direction == "both" else f" ({target.direction})"
-        return f"packet gaps{side} of {who}"
+        kind = "" if target.path is None else f" between requests for {target.path}"
+        return f"packet gaps{side}{kind} of {who}"
     side = "" if target.direction == "both" else f" ({target.direction})"
     return f"payload sizes{side} of {who}"
 
@@ -312,11 +344,12 @@ class TemporalResult:
     skipped_encrypted: int
     comparisons: list[dict[str, Any]] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
+    rungs: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
-        """True when there is a comparison and every one of them passed."""
-        return bool(self.comparisons) and not self.failures
+        """True when there is a comparison or a rung target and every one of them passed."""
+        return bool(self.comparisons or self.rungs) and not self.failures
 
     def metrics(self) -> list[dict[str, Any]]:
         """Return the KS statistic and p value of each comparison that the catalog names.
@@ -357,8 +390,9 @@ class TemporalResult:
             "sessions_total": self.sessions_total,
             "skipped_encrypted_sessions": self.skipped_encrypted,
             "comparisons": self.comparisons,
+            "rungs": self.rungs,
             "insufficient_comparisons": sum(
-                1 for c in self.comparisons if c["status"] == STATUS_INSUFFICIENT
+                1 for c in [*self.comparisons, *self.rungs] if c["status"] == STATUS_INSUFFICIENT
             ),
             "failures": self.failures,
         }
@@ -385,8 +419,9 @@ def check(
     comparisons = [
         _compare(main, target, level, minimum, references) for target in settings.targets
     ]
-    failures = [c["reason"] for c in comparisons if c["status"] != STATUS_PASS]
-    if not comparisons:
+    by_rung = [_rung_entry(main, target, minimum) for target in settings.rungs]
+    failures = [c["reason"] for c in [*comparisons, *by_rung] if c["status"] != STATUS_PASS]
+    if not comparisons and not by_rung:
         failures.append(
             "the labels give no target distribution: add a temporal section with arrivals or sizes"
         )
@@ -397,7 +432,14 @@ def check(
         skipped_encrypted=main.skipped_encrypted,
         comparisons=comparisons,
         failures=failures,
+        rungs=by_rung,
     )
+
+
+def _rung_entry(main: _Source, target: RungTarget, minimum: int) -> dict[str, Any]:
+    """Judge the bytes per rung of one application (RLM-22)."""
+    label = f"bytes per rung of application {target.application}"
+    return rungs.judge(target, main.http(target.application), minimum, label)
 
 
 def _compare(
@@ -408,6 +450,7 @@ def _compare(
     references: dict[tuple[str, str | None], _Source],
 ) -> dict[str, Any]:
     dist = target.distribution
+    minimum = target.min_samples or minimum
     observed = main.samples(target)
     name = _name(target)
     reference: list[float] | None = None
@@ -429,6 +472,8 @@ def _compare(
         "test": "ks_two_sample" if reference is not None else "ks_one_sample",
         "method": None,
         "alpha": alpha,
+        "path": target.path,
+        "min_samples": minimum,
         "n": len(observed),
         "reference_n": None if reference is None else len(reference),
         "statistic": None,
@@ -438,6 +483,12 @@ def _compare(
         "observed": _describe(observed),
         "streams": None,
     }
+    if target.prop == PROP_GAP and target.path is not None:
+        error = main.gap_streams(target)[1]
+        if error is not None:
+            entry["status"] = STATUS_FAIL
+            entry["reason"] = f"{name}: the {error}"
+            return entry
     short = None
     if len(observed) < minimum:
         short = f"{len(observed)} observations in the capture"
@@ -475,7 +526,7 @@ def _compare_paced(
     """Judge each stream with enough gaps against its packet time, and fill the entry."""
     dist = target.distribution
     name = _name(target)
-    streams = main.streams(target.application, target.direction)
+    streams = main.gap_streams(target)[0]
     judged: list[tuple[float, float, _Stream, list[float]]] = []
     for stream in streams:
         gaps = stream.gaps
@@ -492,7 +543,7 @@ def _compare_paced(
         )
         return entry
     worst = max(judged, key=lambda item: item[0])
-    failed = [item for item in judged if item[0] > 1.0 - dist.within + 1e-9]
+    failed = [item for item in judged if _off_pace(item, dist)]
     entry["test"] = "constant"
     entry["method"] = "constant"
     entry["statistic"] = round(worst[0], 6)
@@ -504,8 +555,18 @@ def _compare_paced(
         "too_short": len(streams) - len(judged),
     }
     if failed:
-        share, time, stream, gaps = worst
+        # The stream with the most late gaps is the worst, and a stream that is only off in
+        # its mean (the labels ask for that with mean_tolerance_ms) is named when none is late.
+        share, time, stream, gaps = max(failed, key=lambda item: (item[0], _drift(item)))
         times = " or ".join(_ms(v) for v in dist.values)
+        if share <= 1.0 - dist.within + 1e-9:
+            mean = statistics.fmean(gaps)
+            entry["reason"] = (
+                f"{name}: {len(failed)} of {len(judged)} streams are not paced at {times}, "
+                f"because the mean gap of the {stream.name()} is {_ms(mean)} over {len(gaps)} "
+                f"gaps, further than {_ms(dist.mean_tolerance or 0.0)} from {_ms(time)}"
+            )
+            return entry
         entry["reason"] = (
             f"{name}: {len(failed)} of {len(judged)} streams are not paced at {times}, because "
             f"more than {1.0 - dist.within:.1%} of their gaps are further than "
@@ -515,6 +576,18 @@ def _compare_paced(
             f"{_ms(statistics.median(gaps))})"
         )
     return entry
+
+
+def _drift(item: tuple[float, float, _Stream, list[float]]) -> float:
+    """Return the distance of the mean gap of a judged stream from its packet time."""
+    return abs(statistics.fmean(item[3]) - item[1])
+
+
+def _off_pace(item: tuple[float, float, _Stream, list[float]], dist: Distribution) -> bool:
+    """Return True when too many gaps are late, or the mean gap drifts past its tolerance."""
+    if item[0] > 1.0 - dist.within + 1e-9:
+        return True
+    return dist.mean_tolerance is not None and _drift(item) > dist.mean_tolerance + 1e-12
 
 
 def _failure_reason(target: TemporalTarget, entry: Mapping[str, Any], result: ks.KsResult) -> str:

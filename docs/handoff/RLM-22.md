@@ -6,7 +6,7 @@
 | Branch | `wp/RLM-22` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 60% (3 of 5 plan steps) |
 | Current holder | claude-r22a7c, lease until 2026-11-13T06:39:28Z |
 | Last verified commit | none |
 
@@ -18,23 +18,23 @@ Let the `temporal.packets` labels of the realism runner express what `modules/hl
 
 ## Plan
 
-- [ ] 1. Read the labels parser, the temporal check, the report schema, and the hls fixture; decide the label syntax.
-- [ ] 2. Labels parser: `path` selector, `min_samples` per target, byte target.
-- [ ] 3. Temporal check: request streams, per target minimum, byte shares and bit rate.
+- [x] 1. Read the labels parser, the temporal check, the report schema, and the hls fixture; decide the label syntax.
+- [x] 2. Labels parser: `path` selector, `min_samples` per target, byte target.
+- [x] 3. Temporal check: request streams, per target minimum, byte shares and bit rate.
 - [ ] 4. Report schema (0.20.0), controller schema copy, ui schema.d.ts, tests against the hls fixture.
 - [ ] 5. Docs, log entry with Shared page notes, checks, PR, CI.
 
 ## Done and verified
 
-Nothing yet.
+Labels parser (path, join_ms, min_samples, mean_tolerance_ms, rungs), realism/exchanges.py, realism/rungs.py, temporal.py wiring, both schemas, version 0.20.0. 874 realism tests pass. The committed hls capture passes with the new labels and shows the same bit rates as hls.playbacks.json.
 
 ## Remaining
 
-Everything.
+Step 4: controller schema copy, ui schema.d.ts, tests against the hls fixture. Step 5: docs, log entry, checks, PR.
 
 ## Next action
 
-Read `realism/labels.py` around `_temporal` and decide the syntax.
+Write realism/tests/test_http_rungs.py from /tmp scratch try-hls script, then refresh the schema copies.
 
 ## Blockers and open questions
 

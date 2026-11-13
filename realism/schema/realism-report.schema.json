@@ -1024,7 +1024,7 @@
       }
     },
     "temporal": {
-      "description": "Inter arrival times, payload sizes, and packet gaps inside sessions against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. A paced packet gap target (a constant with packet times) judges each stream on its own instead, and its p value is 1 when every judged stream passed and 0 otherwise. The check passes when there is at least one comparison and every one passed. failures names each reason in words.",
+      "description": "Inter arrival times, payload sizes, and packet gaps inside sessions against the target distributions of the labels, through the KS test. Each comparison is a pass when its p value is at least alpha, a fail below it, and insufficient_data when a sample has fewer than min_samples observations. A paced packet gap target (a constant with packet times) judges each stream on its own instead, and its p value is 1 when every judged stream passed and 0 otherwise. A packet gap target with a path reads only the requests of one kind, and the rungs entries judge the bytes of those requests per rung of a bit rate ladder (RLM-22). The check passes when there is at least one comparison or rung entry and every one passed. failures names each reason in words.",
       "type": "object",
       "required": [
         "check", "passed", "metrics", "alpha", "min_samples", "sessions_total",
@@ -1098,6 +1098,15 @@
                 "enum": ["exact", "asymptotic", "constant", null]
               },
               "alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+              "path": {
+                "description": "The regular expression on the request target that selected the requests of a packet gap comparison, null when every packet counts. Reports before format 0.20.0 have no such field.",
+                "type": ["string", "null"]
+              },
+              "min_samples": {
+                "description": "The fewest observations that this comparison needed: the min_samples of its target, or else of the check. Reports before format 0.20.0 have no such field.",
+                "type": "integer",
+                "minimum": 2
+              },
               "n": {"description": "Observations in the capture.", "type": "integer", "minimum": 0},
               "reference_n": {
                 "description": "Observations of the target sample in a two sample test, otherwise null.",
@@ -1147,9 +1156,89 @@
             }
           }
         },
+        "rungs": {
+          "description": "The bytes per rung of the temporal.rungs targets, one entry per application (RLM-22). The metric catalog has no series for them, so a failure shows in failures and in the realism.check_failures series. Reports before format 0.20.0 have no such field.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "application", "path", "duration", "bits_per_second", "min_samples",
+              "expected_streams", "requests", "status", "reason", "streams", "playbacks"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "application": {"type": "string", "minLength": 1},
+              "path": {"description": "The regular expression on the request target whose first group is the rung.", "type": "string", "minLength": 1},
+              "duration": {"description": "Seconds of media in one response.", "type": "number", "exclusiveMinimum": 0},
+              "bits_per_second": {
+                "description": "The bit rate of each rung, by rung number.",
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "number", "exclusiveMinimum": 0}
+              },
+              "min_samples": {"description": "The fewest requests that a stream needs to be judged.", "type": "integer", "minimum": 2},
+              "expected_streams": {
+                "description": "The number of judged streams that the labels expect, null when they name none.",
+                "oneOf": [
+                  {"type": "null"},
+                  {
+                    "type": "object",
+                    "required": ["min", "max"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "min": {"type": "integer", "minimum": 0},
+                      "max": {"type": ["integer", "null"], "minimum": 0}
+                    }
+                  }
+                ]
+              },
+              "requests": {"description": "Requests that matched the path, in all streams.", "type": "integer", "minimum": 0},
+              "status": {"enum": ["pass", "fail", "insufficient_data"]},
+              "reason": {"description": "Why the entry did not pass, null for a pass.", "type": ["string", "null"]},
+              "streams": {
+                "description": "Streams judged (with at least min_samples requests), failed, and too_short to be judged. Null when no stream was judged.",
+                "oneOf": [
+                  {"type": "null"},
+                  {
+                    "type": "object",
+                    "required": ["judged", "failed", "too_short"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "judged": {"type": "integer", "minimum": 1},
+                      "failed": {"type": "integer", "minimum": 0},
+                      "too_short": {"type": "integer", "minimum": 0}
+                    }
+                  }
+                ]
+              },
+              "playbacks": {
+                "description": "The judged streams, those that failed first, at most 100.",
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "object",
+                  "required": ["name", "requests", "failures"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {"type": "string", "minLength": 1},
+                    "requests": {"type": "integer", "minimum": 1},
+                    "failures": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                    "rung_share": {
+                      "description": "The share of each requested rung in the bytes of the stream, by rung number.",
+                      "type": "object",
+                      "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
+                    },
+                    "bits_per_second": {"description": "The bit rate of the stream, from its response bytes.", "type": "integer", "minimum": 0},
+                    "configured_bits_per_second": {"description": "The mean bit rate of the requested rungs.", "type": "integer", "minimum": 0}
+                  }
+                }
+              }
+            }
+          }
+        },
         "insufficient_comparisons": {"type": "integer", "minimum": 0},
         "failures": {
-          "description": "One sentence for each comparison that did not pass, and one when the labels name no target.",
+          "description": "One sentence for each comparison or rung entry that did not pass, and one when the labels name no target.",
           "type": "array",
           "items": {"type": "string", "minLength": 1}
         }
