@@ -5,12 +5,12 @@
   "passed": true,
   "capture": {
     "file": "strike.pcapng",
-    "sha256": "286b343ab72f34f05e8961ebbd3ac3a64a96a1f0ca898db34bd29857520933c4",
+    "sha256": "4a7db7cfd96b8a20ec8a8c2f2fcdf39483ba8c0a1c13d746739758989c88db85",
     "format": "pcapng",
     "link_types": [
       1
     ],
-    "frames": 4061,
+    "frames": 4021,
     "skipped_frames": 2,
     "sessions": 680
   },
