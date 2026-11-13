@@ -1,0 +1,30 @@
+scenario: slowloris
+description: >-
+  A slow HTTP request read. The client opens a request and dribbles header
+  lines with delays between them, so the server holds a request in flight far
+  longer than a normal fetch and a stateful device sees a connection that
+  never completes on a client timetable.
+vars:
+  host: www.slow.example.test
+  server_port: 8080
+  header_lines: 24
+flows:
+  - id: trickle
+    module: strike
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "GET /slow HTTP/1.1\r\n"
+      - send: "Host: {{ vars.host }}\r\n"
+      - loop:
+          count: "{{ vars.header_lines }}"
+          do:
+            - delay: { dist: exponential, mean_ms: 120 }
+            - send: "X-Track: {{ rand_int(1000, 9999) }}\r\n"
+      - send: "\r\n"
+      - expect: { pattern: "HTTP/1.1 200", timeout_ms: 15000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 30000 }
+      - send: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+      - close: fin

@@ -1,0 +1,22 @@
+scenario: te_cl_conflict
+description: >-
+  A framing conflict. The client sends a POST that declares both
+  Content-Length and Transfer-Encoding: chunked, the classic probe for
+  request-smuggling differences between a front device and an origin, and the
+  origin rejects the ambiguous framing with 400.
+vars:
+  host: www.smuggle.example.test
+  server_port: 8080
+flows:
+  - id: conflict
+    module: strike
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "POST /api HTTP/1.1\r\nHost: {{ vars.host }}\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n"
+      - expect: { pattern: "HTTP/1.1 400", timeout_ms: 5000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - send: "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+      - close: fin

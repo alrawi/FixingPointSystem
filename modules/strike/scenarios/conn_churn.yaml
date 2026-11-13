@@ -1,0 +1,42 @@
+scenario: conn_churn
+description: >-
+  Connection churn. A keeper connection holds the session open while its
+  client spawns a burst of short-lived connections that send no application
+  bytes and reset, matched one by one by server accepts that reset the same
+  way. The server sees a table that fills faster than it drains.
+vars:
+  host: www.churn.example.test
+  server_port: 8080
+  churn_port: 8081
+  connections: 32
+flows:
+  - id: keeper
+    module: strike
+    client:
+      - connect: { port: "{{ vars.server_port }}" }
+      - send: "GET /keeper HTTP/1.1\r\nHost: {{ vars.host }}\r\n\r\n"
+      - loop:
+          count: "{{ vars.connections }}"
+          do:
+            - spawn: { flow: churn }
+            - delay: { dist: uniform, min_ms: 1, max_ms: 6 }
+      - expect: { pattern: "HTTP/1.1 200", timeout_ms: 30000 }
+      - close: fin
+    server:
+      - accept: { port: "{{ vars.server_port }}" }
+      - expect: { pattern: "\r\n\r\n", timeout_ms: 5000 }
+      - loop:
+          count: "{{ vars.connections }}"
+          do:
+            - spawn: { flow: churn }
+      - send: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+      - close: fin
+  - id: churn
+    module: strike
+    spawned: true
+    client:
+      - connect: { port: "{{ vars.churn_port }}" }
+      - close: rst
+    server:
+      - accept: { port: "{{ vars.churn_port }}" }
+      - close: rst
