@@ -298,6 +298,23 @@ work_packages:
     acceptance:
       - "`make lint test` passes with no make warnings, and `plan.py batch` holds back packages that share a path."
 
+  - id: OPS-07
+    title: Take over a blocked item
+    phase: 2
+    workstream: OPS
+    size: S
+    depends_on: []
+    paths: [tools/swarm/]
+    summary: >-
+      Swarm Protocol says that takeover claims an item whose newest card expired, was released, or was blocked, but
+      fps_swarm.py takeover refuses an issue labelled status:blocked ("not open with a ready, stale, or in-progress
+      label"), so the coordinator had to relabel CTL-49 by hand (batch 34). The promotion sweep also never unblocks an
+      item whose block names no blocking issue.
+    deliverables:
+      - takeover accepts a blocked item as the protocol says, or the protocol says what the coordinator does instead, and the sweep reports blocked items that name no blocking issue.
+    acceptance:
+      - A test takes over a blocked item, and the tool and the protocol text agree.
+
   - id: QA-01
     title: Two arm network namespace harness
     phase: 1
@@ -3356,6 +3373,38 @@ work_packages:
     acceptance:
       - The raw scenarios validate, run through the agent, and their fixture scores with the expected findings declared.
 
+  - id: MOD-30
+    title: STARTTLS ports in the smtp and imap capture scripts
+    phase: 2
+    workstream: MOD
+    size: S
+    depends_on: [RLM-21]
+    paths: [modules/smtp/, modules/imap/]
+    summary: >-
+      RLM-21 added --starttls-port to python3 -m realism decrypted and set it in mod-smtp.yml and mod-imap.yml, but
+      modules/smtp/fixtures/capture.sh, modules/imap/fixtures/capture.sh and the fixture tests of both modules still call
+      the command without it and rely on the TLS heuristic of tshark.
+    deliverables:
+      - --starttls-port 5587:smtp and 1143:imap in the capture scripts and the fixture tests of the two modules.
+    acceptance:
+      - The smtp and imap realism jobs pass, and a local capture scores the decrypted view with the option.
+
+  - id: MOD-31
+    title: HLS timing and bytes as labels
+    phase: 2
+    workstream: MOD
+    size: S
+    depends_on: [RLM-22]
+    paths: [modules/hls/]
+    summary: >-
+      RLM-22 gave the labels the request cadence (path, join_ms, mean_tolerance_ms) and the bytes per rung
+      (temporal.rungs) that modules/hls/fixtures/hls_check.py checks. Its log entry holds a passing temporal block for
+      the committed fixture.
+    deliverables:
+      - The temporal block in modules/hls/fixtures/expected.yaml, hls_check.py, its tests and hls.playbacks.json removed with their calls in capture.sh, mk/mod-hls.mk and the workflow, tests that a retimed or wrong rate capture fails, and a test that the labels match params.json.
+    acceptance:
+      - The hls realism job passes on the labels alone, and the retimed and wrong rate captures fail.
+
   - id: TRN-16
     title: Per profile captures scored with the transport check
     phase: 2
@@ -3973,6 +4022,23 @@ work_packages:
       - The mix stage records the last calibration step (factor, entries, multipliers) of the client run, and the report shows it with the byte shares.
     acceptance:
       - A qa-gate2 run shows the calibration of its mix, and the report states when a run has none.
+
+  - id: QA-13
+    title: The Zeek event queue weird at the end of the Gate 2 mix
+    phase: 2
+    workstream: QA
+    size: S
+    depends_on: []
+    paths: [tests/gates/gate2/]
+    summary: >-
+      One qa-gate2 mix run of CTL-49 failed its parser error check on the Zeek weird event_queue_overflow_drain at
+      +141.023 s of a 141.023 s capture, with no session, and passed on rerun. Zeek reports it when its event queue
+      overflows while it drains at the end of a large trace, which is a resource limit of the parser, not a fault of the
+      traffic.
+    deliverables:
+      - The cause confirmed, and a fix in how the suite runs Zeek or a named rule that leaves this weird out when it has no session.
+    acceptance:
+      - Three consecutive qa-gate2 runs pass, and a weird of a session still fails.
 
   - id: CTL-43
     title: Renewal cannot outlive a revocation
