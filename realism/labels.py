@@ -101,8 +101,23 @@ _SIZE_FIELDS = {"direction", "median", "cv", "tolerance"}
 DIRECTIONS = ("client", "server", "both")
 DEFAULT_MAX_DUPLICATE_RATIO = 0.01
 DEFAULT_SIZE_TOLERANCE = 0.25
-_TEMPORAL_FIELDS = {"alpha", "min_samples", "arrivals", "sizes", "packets"}
+_TEMPORAL_FIELDS = {"alpha", "min_samples", "arrivals", "sizes", "packets", "rungs"}
 _TEMPORAL_TARGET_FIELDS = {"overall", "applications"}
+_RUNG_FIELDS = {
+    "path",
+    "duration_ms",
+    "bits_per_second",
+    "body_tolerance_bytes",
+    "share_tolerance",
+    "rate_tolerance",
+    "walk",
+    "streams",
+    "join_ms",
+    "min_samples",
+}
+DEFAULT_RUNG_BODY_TOLERANCE = 188.0  # one MPEG transport stream packet
+DEFAULT_RUNG_SHARE_TOLERANCE = 0.05
+DEFAULT_RUNG_RATE_TOLERANCE = 0.05
 DEFAULT_KS_ALPHA = 0.01
 DEFAULT_KS_MIN_SAMPLES = 30
 DEFAULT_PACED_WITHIN = 0.9
@@ -119,7 +134,7 @@ _TIME_PARAMS: dict[str, tuple[str, ...]] = {
 # how late a packet may be and how many of them may be late.
 _GAP_PARAMS: dict[str, tuple[str, ...]] = {
     **_TIME_PARAMS,
-    "constant": ("ms", "tolerance_ms", "within"),
+    "constant": ("ms", "tolerance_ms", "within", "mean_tolerance_ms"),
 }
 _SIZE_PARAMS: dict[str, tuple[str, ...]] = {
     "constant": ("value", "tolerance"),
@@ -259,8 +274,10 @@ class Distribution:
     The constant of a packet gap target is paced: ``values`` lists its packet times in
     seconds (one or more, because calls of one application can use different packet
     times), and ``within`` is the share of the gaps of each stream that must lie within
-    ``tolerance`` of the packet time of that stream. ``values`` is empty for the other
-    targets, and ``within`` stays 1.
+    ``tolerance`` of the packet time of that stream. ``mean_tolerance`` (RLM-22) also bounds
+    the distance of the mean gap of each stream from that packet time, in seconds, and is None
+    when the labels do not ask for it. ``values`` is empty for the other targets, and
+    ``within`` stays 1.
     """
 
     kind: str
@@ -268,6 +285,7 @@ class Distribution:
     tolerance: float = 0.0
     values: tuple[float, ...] = ()
     within: float = 1.0
+    mean_tolerance: float | None = None
     sample: tuple[float, ...] | None = None
     sample_file: str | None = None
     reference: Reference | None = None
@@ -283,12 +301,53 @@ class TemporalTarget:
     payload of one direction of a session). ``application`` is None for all sessions of the
     capture. ``direction`` selects the payloads of a size target and the streams of a packet
     gap target, and it is ``both`` for arrivals.
+
+    ``min_samples`` is the fewest observations of this target, and replaces the value of the
+    section and of the command line when set (RLM-22). ``path`` (a packet gap target of the
+    client direction) is a regular expression that selects the HTTP requests of one kind by
+    their request target: the stream of a session then holds only the matching requests, and
+    a gap is the time between two of them. ``join`` (seconds, with ``path``) makes the matching
+    requests of all sessions of the application one stream while the gap between neighbouring
+    requests stays below it, which is a playback whose segments each have a connection.
     """
 
     prop: str
     application: str | None
     direction: str
     distribution: Distribution
+    min_samples: int | None = None
+    path: str | None = None
+    join: float | None = None
+
+
+@dataclass(frozen=True)
+class RungTarget:
+    """The bytes per rung of the requests of one kind of an application (RLM-22).
+
+    The requests whose target matches ``path`` (a regular expression whose first group is the
+    index of the rung, a whole number) each carry ``duration`` seconds of media. ``rates`` is
+    the bit rate of each rung. A stream is the matching requests of one session, or with
+    ``join`` (seconds) of the sessions of the application that follow each other closer than
+    that. Each stream needs ``min_samples`` requests (the section value when None) to be
+    judged. The body of every response must lie within ``body_tolerance`` bytes of
+    ``rate * duration / 8``, the share of each rung in the bytes of the stream (response head
+    and body) within ``share_tolerance`` of the share that the rates of the requested rungs
+    give, and the bit rate of the stream within ``rate_tolerance`` of their mean. ``walk_up``
+    asks that the rungs rise through the whole ladder. ``streams`` is the number of judged
+    streams that the capture must hold, when set.
+    """
+
+    application: str
+    path: str
+    duration: float
+    rates: tuple[float, ...]
+    body_tolerance: float = 188.0
+    share_tolerance: float = 0.05
+    rate_tolerance: float = 0.05
+    walk_up: bool = False
+    streams: Count | None = None
+    join: float | None = None
+    min_samples: int | None = None
 
 
 @dataclass(frozen=True)
@@ -303,6 +362,7 @@ class TemporalLabels:
     alpha: float = DEFAULT_KS_ALPHA
     min_samples: int = DEFAULT_KS_MIN_SAMPLES
     targets: tuple[TemporalTarget, ...] = ()
+    rungs: tuple[RungTarget, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -818,16 +878,20 @@ def _temporal(value: Any, where: str) -> TemporalLabels:
             if not isinstance(name, str) or not name:
                 raise LabelsError(f"{here}.applications: names must be non empty strings")
             targets += _temporal_entries(entry, name, prop, quantity, f"{here}.applications.{name}")
-    seen: set[tuple[str, str | None, str]] = set()
+    seen: set[tuple[str, str | None, str, str | None]] = set()
     for target in targets:
-        key = (target.prop, target.application, target.direction)
+        key = (target.prop, target.application, target.direction, target.path)
         if key in seen:
             raise LabelsError(
                 f"{where} temporal: {target.prop} of {target.application or 'overall'} "
                 f"({target.direction}) has two targets"
+                + ("" if target.path is None else f" for the path {target.path!r}")
             )
         seen.add(key)
-    return TemporalLabels(alpha=float(alpha), min_samples=minimum, targets=tuple(targets))
+    rungs = _rungs(value["rungs"], f"{where} temporal.rungs") if "rungs" in value else ()
+    return TemporalLabels(
+        alpha=float(alpha), min_samples=minimum, targets=tuple(targets), rungs=rungs
+    )
 
 
 def _temporal_entries(
@@ -841,17 +905,136 @@ def _temporal_entries(
     for index, item in enumerate(items):
         here = where if len(items) == 1 else f"{where}[{index}]"
         direction = "both"
-        if quantity != "time":
-            if not isinstance(item, dict):
-                raise LabelsError(f"{here}: must be a mapping")
+        if isinstance(item, dict):
             item = dict(item)
+        elif quantity != "time":
+            raise LabelsError(f"{here}: must be a mapping")
+        if quantity != "time":
             direction = item.pop("direction", "both")
             if direction not in DIRECTIONS:
                 raise LabelsError(f"{here}.direction: must be one of {', '.join(DIRECTIONS)}")
+        minimum = _target_min_samples(item, here) if isinstance(item, dict) else None
+        path = join = None
+        if quantity == "gap" and isinstance(item, dict):
+            path, join = _request_selector(item, application, direction, here)
         out.append(
-            TemporalTarget(prop, application, direction, _distribution(item, quantity, here))
+            TemporalTarget(
+                prop,
+                application,
+                direction,
+                _distribution(item, quantity, here),
+                minimum,
+                path,
+                join,
+            )
         )
     return out
+
+
+def _target_min_samples(item: dict[str, Any], where: str) -> int | None:
+    """Remove and validate the ``min_samples`` of one target, which replaces the section's."""
+    if "min_samples" not in item:
+        return None
+    minimum = item.pop("min_samples")
+    if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 2:
+        raise LabelsError(f"{where}.min_samples: must be an integer of 2 or more")
+    return minimum
+
+
+def _request_selector(
+    item: dict[str, Any], application: str | None, direction: str, where: str
+) -> tuple[str | None, float | None]:
+    """Remove and validate ``path`` and ``join_ms``, which select the requests of one kind."""
+    path = item.pop("path", None)
+    join = item.pop("join_ms", None)
+    if path is None:
+        if join is not None:
+            raise LabelsError(f"{where}.join_ms: needs a path, which selects the requests to join")
+        return None, None
+    _pattern(path, where + ".path", groups=0)
+    if application is None:
+        raise LabelsError(
+            f"{where}.path: a path target belongs under applications, because the sessions of "
+            "an application are the ones that speak HTTP"
+        )
+    if direction != "client":
+        raise LabelsError(
+            f"{where}.path: needs direction client, because the server sends no request"
+        )
+    if join is None:
+        return path, None
+    if not _finite(join) or join <= 0:
+        raise LabelsError(f"{where}.join_ms: must be a number above 0")
+    return path, float(join) * 0.001
+
+
+def _pattern(value: Any, where: str, groups: int) -> re.Pattern[str]:
+    """Compile a request path pattern, which must have at least ``groups`` capture groups."""
+    if not isinstance(value, str) or not value:
+        raise LabelsError(f"{where}: must be a regular expression on the request target")
+    try:
+        compiled = re.compile(value)
+    except re.error as exc:
+        raise LabelsError(f"{where}: not a regular expression: {exc}") from exc
+    if compiled.groups < groups:
+        raise LabelsError(f"{where}: must have a capture group for the rung, as in (\\d+)")
+    return compiled
+
+
+def _rungs(value: Any, where: str) -> tuple[RungTarget, ...]:
+    """Validate the rungs section, which names the bytes per rung of each application."""
+    if not isinstance(value, dict) or set(value) - {"applications"}:
+        raise LabelsError(f"{where}: must be a mapping with only applications")
+    apps = value.get("applications")
+    if not isinstance(apps, dict) or not apps:
+        raise LabelsError(f"{where}.applications: must be a non empty mapping from application")
+    out = []
+    for name, spec in apps.items():
+        here = f"{where}.applications.{name}"
+        if not isinstance(name, str) or not name:
+            raise LabelsError(f"{where}.applications: names must be non empty strings")
+        if not isinstance(spec, dict) or set(spec) - _RUNG_FIELDS:
+            raise LabelsError(f"{here}: must be a mapping with only {sorted(_RUNG_FIELDS)}")
+        spec = dict(spec)
+        _pattern(spec.get("path"), here + ".path", groups=1)
+        rates = spec.get("bits_per_second")
+        if not isinstance(rates, list) or not rates or not all(_finite(r) and r > 0 for r in rates):
+            raise LabelsError(f"{here}.bits_per_second: must be a list of bit rates above 0")
+        duration = spec.get("duration_ms")
+        if not _finite(duration) or duration <= 0:
+            raise LabelsError(f"{here}.duration_ms: must be the media time of one request, above 0")
+        join = spec.get("join_ms")
+        if join is not None and (not _finite(join) or join <= 0):
+            raise LabelsError(f"{here}.join_ms: must be a number above 0")
+        walk = spec.get("walk")
+        if walk not in (None, "up"):
+            raise LabelsError(f"{here}.walk: must be up")
+        tolerances = {}
+        for key, default in (
+            ("body_tolerance_bytes", DEFAULT_RUNG_BODY_TOLERANCE),
+            ("share_tolerance", DEFAULT_RUNG_SHARE_TOLERANCE),
+            ("rate_tolerance", DEFAULT_RUNG_RATE_TOLERANCE),
+        ):
+            number = spec.get(key, default)
+            if not _finite(number) or number < 0:
+                raise LabelsError(f"{here}.{key}: must be a number of 0 or more")
+            tolerances[key] = float(number)
+        out.append(
+            RungTarget(
+                application=name,
+                path=spec["path"],
+                duration=float(duration) * 0.001,
+                rates=tuple(float(r) for r in rates),
+                body_tolerance=tolerances["body_tolerance_bytes"],
+                share_tolerance=tolerances["share_tolerance"],
+                rate_tolerance=tolerances["rate_tolerance"],
+                walk_up=walk == "up",
+                streams=_count(spec["streams"], here + ".streams") if "streams" in spec else None,
+                join=None if join is None else float(join) * 0.001,
+                min_samples=_target_min_samples(spec, here),
+            )
+        )
+    return tuple(out)
 
 
 def _param(spec: Mapping[str, Any], name: str, here: str, strict: bool) -> float:
@@ -932,6 +1115,10 @@ def _paced(spec: Mapping[str, Any], where: str) -> Distribution:
         raise LabelsError(f"{where}.within: must be a number above 0 and up to 1")
     values = tuple(sorted({float(t) * 0.001 for t in times}))
     params = {"tolerance": tolerance, "within": float(within)}
+    mean_tolerance = None
+    if "mean_tolerance_ms" in spec:
+        mean_tolerance = _param(spec, "mean_tolerance_ms", where, False) * 0.001
+        params["mean_tolerance"] = mean_tolerance
     if len(values) == 1:
         params = {"value": values[0], **params}
     return Distribution(
@@ -940,6 +1127,7 @@ def _paced(spec: Mapping[str, Any], where: str) -> Distribution:
         tolerance,
         values=values,
         within=float(within),
+        mean_tolerance=mean_tolerance,
         declared=dict(spec) | {"dist": "constant"},
     )
 

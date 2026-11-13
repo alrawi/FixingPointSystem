@@ -34,7 +34,7 @@ from realism.labels import Count, load
 from realism.parsers import ParserRunner
 
 REPORT_FORMAT = "fps-realism-report"
-REPORT_VERSION = "0.19.0"
+REPORT_VERSION = "0.20.0"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "realism-report.schema.json"
 LABELS_SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "labels.schema.json"
 

@@ -338,7 +338,7 @@ Each session rule names the intended application of the sessions that its `match
 | `tls` | `encryption` | Sessions decrypt with the embedded keys, and each ClientHello has the JA4 of its profile |
 | `content` | `content` | No application repeats more than 1 percent of its payloads |
 | `structure` | `session_structure` | The connections of each instance follow the `after` and `spawn` edges of the scenario |
-| `temporal` | `temporal` | Arrival times, sizes, and packet gaps agree with their targets, with a KS test for a distribution and a tolerance for a constant |
+| `temporal` | `temporal` | Arrival times, sizes, packet gaps, and the bytes per rung of a playback agree with their targets, with a KS test for a distribution and a tolerance for a constant |
 | `mix` | `mix_accuracy` | The achieved mix matches the configured weights |
 | `transport` | `transport_behavior` | The SYN options match the OS profile of the sending host |
 | `messages` | `messages` | Sessions show the expected number of requests, responses, commands, or messages |
@@ -353,7 +353,19 @@ temporal:
       rtp: {dist: constant, ms: [20, 30], tolerance_ms: 8, within: 0.9}
 ```
 
-A stream needs at least `min_samples` gaps (30 by default) to be judged, so record enough packets per stream. The labels do not see the gaps between the requests of one keepalive connection when playlist and segment requests alternate, and they do not read byte shares. A module that needs such a property still carries a small check script next to its fixture (`modules/hls/fixtures/hls_check.py`). Test the labels with a capture that you jitter on purpose, as `modules/sip_rtp/fixtures/test_packet_labels.py` does, so that you know they can fail.
+A stream needs at least `min_samples` gaps (30 by default) to be judged, so record enough packets per stream, or give the target its own `min_samples` when a stream is short. A target of the client direction of an HTTP application can select the requests of one kind with `path`, a regular expression on the request target, so that a keepalive connection that alternates playlist and segment requests keeps the cadence of its segments apart from its playlist refreshes. `join_ms` makes the matching requests of the sessions that follow each other one stream, for a playback whose segments each use a connection, and `mean_tolerance_ms` also bounds the mean gap, so a cadence that drifts inside `tolerance_ms` fails. The bytes of an adaptive bit rate playback go in a `temporal.rungs` entry of the application. It gives the request path of a segment (its first group is the rung number), `duration_ms` of media per response, and `bits_per_second` of each rung. Every stream of requests with at least `min_samples` requests then needs the body of each response within `body_tolerance_bytes` of `rate * duration / 8` (188 by default), the share of each rung in the bytes within `share_tolerance` (5% by default), and the bit rate of the stream within `rate_tolerance` (5%). `walk: up` asks for rungs that rise through the whole ladder, and `streams` for the number of playbacks that the capture must hold (`realism/README.md`, Temporal distribution check, RLM-22). The labels read HTTP/1.1 `GET` requests whose responses have a `Content-Length`, and fail a session that they cannot follow, so a module that answers with chunked bodies cannot use `path` or `rungs`.
+
+```yaml
+temporal:
+  packets:
+    applications:
+      hls_vod: {direction: client, path: '/v\d+/seg\d+\.ts$', dist: constant, ms: 400, tolerance_ms: 40, within: 0.9, mean_tolerance_ms: 20, min_samples: 3}
+  rungs:
+    applications:
+      hls_vod: {path: '/v(\d+)/seg\d+\.ts$', duration_ms: 400, bits_per_second: [160000, 320000, 640000], walk: up, streams: 3, min_samples: 4}
+```
+
+A property that no label expresses still needs a small check script next to the fixture. Test the labels with a capture that you change on purpose, as `modules/sip_rtp/fixtures/test_packet_labels.py` does, so that you know they can fail.
 
 For a module whose sessions run inside TLS, `python3 -m realism decrypted` scores the decrypted view with a labels file whose session rules match the server ports of the TLS sessions. Without `--view-port`, tshark decodes each TCP `server_port` that a rule names as TLS, so name the real server port of every TLS session in a rule (`realism/README.md`, Decrypted view, RLM-18). A TLS session on a port that no rule names is found only by the heuristic of tshark, which misses a ClientHello split after its first bytes.
 
