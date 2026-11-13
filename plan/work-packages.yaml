@@ -3808,6 +3808,23 @@ work_packages:
     acceptance:
       - The committed hls fixture passes with labels equal in strength to hls_check.py, and a capture with a wrong segment cadence or bit rate fails.
 
+  - id: RLM-23
+    title: Expected parser findings in every session of a rule
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: []
+    paths: [realism/]
+    summary: >-
+      RLM-20 meets a declared item of expect_findings when any one session of the rule shows it, so a strike scenario
+      that comes out malformed in only some of its sessions still passes. Issue #513 asked for the expectation per
+      matched session. The other points of #513 are in RLM-20; matching on payload content stays out, because the
+      session table holds no payload and a separate server port per scenario selects the sessions.
+    deliverables:
+      - An optional setting of a session rule under which every session of the rule must show every declared item, with missing_findings naming each session that lacks one, the realism report schema and runner updated, rules without it keeping the RLM-20 behaviour, and the text for docs/wiki/Module-Development.md in the Shared page notes.
+    acceptance:
+      - A test capture where one of several sessions of such a rule lacks a declared finding fails and names that session, the same capture passes without the setting, and every committed fixture still passes.
+
   - id: CON-24
     title: Capture drop counts in the agent protocol and the REST API
     phase: 2
