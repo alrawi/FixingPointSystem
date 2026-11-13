@@ -60,6 +60,19 @@ allow_waivers=
 [[ -z $requested_waiver && $basis == bytes ]] || allow_waivers=--allow-waivers
 mix_config="$here/mix_config.py"
 
+# The realism runner starts Zeek through zeek-gate2.sh, which switches off the event queue
+# limit of Zeek for the large capture (QA-13). The real Zeek is FPS_ZEEK, the search path,
+# or /opt/zeek/bin/zeek. Without any of them FPS_ZEEK stays as it is, so the runner reports
+# the missing parser as before.
+zeek_real=${FPS_ZEEK:-$(command -v zeek || true)}
+if [[ -z $zeek_real && -x /opt/zeek/bin/zeek ]]; then
+  zeek_real=/opt/zeek/bin/zeek
+fi
+if [[ -n $zeek_real ]]; then
+  export FPS_GATE2_ZEEK=$zeek_real
+  export FPS_ZEEK="$here/zeek-gate2.sh"
+fi
+
 usage() {
   echo "usage: mix.sh FPS_CONTROLLER FPS_AGENT OUT_DIR | mix.sh --rescore OUT_DIR" >&2
   exit 2

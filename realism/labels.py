@@ -161,6 +161,7 @@ class Rule:
     match: Mapping[str, str | int]
     tls_profile: str | None = None
     expect_findings: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    expect_every_session: bool = False
 
     def matches(self, session: Session) -> bool:
         """Return True when every field of the rule equals the session field."""
@@ -1255,9 +1256,11 @@ def _rule(item: Any, where: str) -> Rule:
         "match",
         "tls_profile",
         "expect_findings",
+        "expect_every_session",
     }:
         raise LabelsError(
-            f"{where}: a rule has only application, match, tls_profile, and expect_findings"
+            f"{where}: a rule has only application, match, tls_profile, expect_findings, "
+            "and expect_every_session"
         )
     tls_profile = item.get("tls_profile")
     if tls_profile is not None and (not isinstance(tls_profile, str) or not tls_profile):
@@ -1265,6 +1268,11 @@ def _rule(item: Any, where: str) -> Rule:
     application = item.get("application")
     if not isinstance(application, str) or not application:
         raise LabelsError(f"{where}: application must be a non empty string")
+    every_session = item.get("expect_every_session", False)
+    if not isinstance(every_session, bool):
+        raise LabelsError(f"{where}: expect_every_session must be true or false")
+    if every_session and "expect_findings" not in item:
+        raise LabelsError(f"{where}: expect_every_session needs expect_findings in the same rule")
     return Rule(
         application=application,
         match=_match_fields(item.get("match", {}), where),
@@ -1272,6 +1280,7 @@ def _rule(item: Any, where: str) -> Rule:
         expect_findings=_expect_findings(item["expect_findings"], where)
         if "expect_findings" in item
         else {},
+        expect_every_session=every_session,
     )
 
 
