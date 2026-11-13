@@ -507,6 +507,86 @@ A module that fails a step fails the plan, because a run without it would measur
 
 You can run a plan without a controller with `fps-agent run --plan FILE --modules DIR` (`docs/wiki/Agent.md`, Standalone mode). The plan is JSON in the canonical mapping of `fps.agent.v1.Plan` and carries your module digest, which `check_plans.py --print-digests` prints. The example `contracts/examples/plans/http_dns_smoke.json` shows the shape, and `check_plans.py` validates a plan file.
 
+## Watch out for
+
+These are problems that the project has already met while it built modules, with what you see, why it happens, and what to do. Most of them cost a package a day or more to find. Read this section before you write a fixture peer or record a fixture, and check a failure against it before you debug. Each entry names the package whose log entry or handoff holds the evidence. A package that resolves a problem that a module author could meet adds it here (see [Coding Standards](Coding-Standards.md), Modules).
+
+### Listeners, ports, and spawned flows
+
+**Concurrent spawned flows on one fixed port.** You see a connect that fails with `ECONNRESET` right after the handshake (SYN, SYN-ACK, then RST), for some of the children only. It gets worse on a slow or cold machine, and under `strace` every child fails. The cause is a peer that gives each spawned server flow a listener of its own, which binds the port, accepts one connection, and closes: the next child's SYN lands in the queue of a listener that then closes, and the kernel resets every connection still queued on it. A missing listener looks different, because Linux answers that SYN with an RST that the client reports as `ECONNREFUSED`. Do what the engine does. Keep one listener per port open for as long as any flow waits on it, hand each accepted connection to the oldest waiting flow, and hold a connection that arrives before its waiter for up to 2 s (`engine/fps-runtime/src/data_ports.rs`, `rendezvous.rs`, `PENDING_GRACE`). On the client side retry a connect only when it is refused, from 2 ms doubling up to 50 ms within 2 s (`instance.rs`, `OPEN_GRACE`). Never retry a reset, which would hide a real fault. Do not narrow the window with a delay before the first spawn or a warm up run, which only moves the race (AGT-18, ENG-26, the strike module of issue #491).
+
+**A spawned flow whose port is bound too late.** A UDP spawned flow loses its first datagram, and the call fails with a port unreachable, when the peer sends before the receiving side has bound the port. Spawn the receiving side before the other side sends, for example before the ring time of a call rather than after it. UDP has no handshake and no retry to save you (MOD-14).
+
+**Drawn ports repeat.** `rand_int` is seeded, so concurrent instances and repeated runs draw the same values, and a narrow range makes two instances meet on one data port. Draw data ports from a wide range, as the ftp tests do with 53000 to 62999 (AGT-18, ENG-26).
+
+**The kernel reuses a client source port.** Clients bind with `IP_BIND_ADDRESS_NO_PORT`, so the kernel picks the source port at connect time and may give one host the same port twice. Two sessions then share one 5-tuple: the capture holds fewer sessions than ran, the parsers report errors for the joined stream, and Zeek raises `premature_connection_reuse` (MOD-21, QA-09). Give every session of a fixture peer its own source port, make `capture.sh` fail with the cause when the capture holds fewer sessions than ran, and key connections in tests by the four tuple, never by source host and port alone (ENG-28).
+
+**Spawned flows from one host are interchangeable.** The runtime matches an arriving session to a waiting flow by the source host, so it cannot tell apart two concurrent instances whose clients dial from the same host, and the oldest waiter takes the first session. Write spawned flows so that any child may get any connection, or give the client pool more hosts than concurrent sessions (ENG-26).
+
+**The accept timeout is 5 s, and flows have no arithmetic.** The k-th server spawn pairs with the k-th client spawn and waits at most 5 s. A count derived from others, such as segments as stages times segments per stage, goes into the scenario variables, and every place that uses it must agree (MOD-15, AGT-21).
+
+**`close: fin` waits for the peer.** A side that closes with `fin` waits until the peer closes too, so a test listener that never closes its side makes the session fail with `expect_timeout` (ENG-29).
+
+### Timing and pacing
+
+**Sleeps drift.** A plain `delay` of the packet time after every packet drifts, because every sleep wakes late and the delays add up: the harness showed 21.5 ms for a 20 ms packet time. Keep an absolute due time per flow side, so that a late wake shortens the next sleep, as `sip_rtp.pace` does (MOD-14).
+
+**A real capture is never exactly paced.** The committed sip_rtp fixture has gaps from 0.09 ms to 63.7 ms in a 20 ms stream. A paced `constant` target needs a `tolerance_ms` and a `within` share, and it tests no mean unless you give `mean_tolerance_ms`, so a slow drift inside the tolerance passes without it (RLM-15, MOD-24, RLM-22). Test your labels with a capture that you retime or jitter on purpose, so that you know they can fail.
+
+**A packet gap target needs enough gaps, and one kind of gap.** A stream is judged only with at least `min_samples` gaps (30 by default). A keepalive connection that alternates two kinds of request, such as playlists and segments, gives gaps of two populations, so a third to a half of them are under a millisecond and a single target fails. Select one kind of request with `path` (RLM-22, MOD-24).
+
+**The arrival check sees session starts only.** The `arrivals` labels compare the gaps between the starts of sessions. Pacing inside a session needs `temporal.packets` (RLM-15).
+
+### Classifiers and parsers
+
+**nDPI needs the standard port or a full dialogue.** nDPI 4.2 classifies NTP only when one side uses port 123, and called every flow on port 5123 `Unknown`, so the ntp fixture records on port 123 (MOD-16). It never identifies a POP3 session that logs in with `APOP` alone, because its stage counter is a two bit field, so the pop3 fixture leaves `apop_login` out (MOD-09). Check the classification of every scenario in your first capture, not only the total.
+
+**nDPI 4.2 differs from the CI's nDPI 4.14.** The Ubuntu package is 4.2.0 and has no HTTP/2, so CI builds the pinned 4.14 (`realism/ci/ndpi.version`). A local result with 4.2 is not the CI result (RLM-12).
+
+**STARTTLS sessions keep their plain label.** nDPI 4.2 labels an smtp STARTTLS session `SMTP` and an imap one `IMAPS`. Accept both forms in the labels of such a scenario (MOD-20).
+
+**A session without payload is `Unknown`.** nDPI cannot classify a connection that carries no application bytes. Give such sessions no conformance rule in the labels, so that they are not held to a label, and judge them with the session structure check instead.
+
+**tshark checks the payload formats inside your protocol.** A synthetic payload must still be well framed. A random first byte of an Opus packet gave one parser error per packet, and MPEG-TS segments whose continuity counters restarted in every segment gave "missing TS frames" (MOD-14, MOD-15).
+
+**A random client port can collide with a tshark dissector.** tshark binds about 900 TCP and UDP ports to a dissector, among them 41170 and 44322, so a clean session whose client draws such a port gets findings by chance. The runner lists them under `not_counted` and leaves them out of the verdict, but a real fault in such a session is listed there too, so read that list when a count looks wrong (QA-11, RLM-19).
+
+**Traffic that is malformed on purpose.** Declare the findings each rule must produce in `expect_findings`, and take their names from the `errors` of a first score without declarations, because a guessed weird name will not match (RLM-20).
+
+**Zeek can overflow at the end of a large capture.** One Gate 2 mix run failed on the weird `event_queue_overflow_drain` at the last instant of a 141 s capture, with no session, and passed on rerun. It is a resource limit of Zeek and not a fault of the traffic (QA-13, open).
+
+### TLS
+
+**TLS on a port that is not 443.** tshark finds TLS on another port only by a heuristic, which misses a session whose ClientHello the sender split after its first bytes. Name the real server port of every TLS session in a rule of the decrypted labels, so the runner decodes it as TLS (MOD-23, RLM-18).
+
+**STARTTLS ports.** Never decode a STARTTLS port as TLS from its first byte, because the dialogue starts in clear text. Pass `--starttls-port PORT:smtp` (or `imap`, `pop`) to `python3 -m realism decrypted`, and name the capture port, not the view port (RLM-21).
+
+**Zeek does not decrypt TLS.** Checks of the dialogue inside TLS run on the decrypted view of `python3 -m realism decrypted` (MOD-04, RLM-12).
+
+### Captures and the harness
+
+**Sessions still open at the capture stop count as dropped.** Quiesce a run before you stop its capture (AGT-18, ENG-27).
+
+**Namespaces inherit the host's TCP buffers.** A new network namespace copies `net.ipv4.tcp_rmem` of the host, so a fixture recorded without an OS profile shows window scale 10 where the `linux6` profile says 7. Record with the profile that the transport check expects, or expect the host's value (TRN-16, RLM-09).
+
+**A capture script should fail with its cause.** Count what the capture holds against what the peers ran, and print the difference, so that a short capture names itself instead of failing a later check (MOD-21, MOD-23).
+
+### Byte estimates and sessions
+
+**Measure the estimate, never write it by hand.** Four hand written sip_rtp estimates were 12 to 21 percent too high. Sizes drawn by the session generator vary five to tenfold between sessions, so a guard test averages over 10 to 100 session ids (MOD-25).
+
+**A session holds all its flows.** The bytes of spawned and `after` flows belong to the session of the entry flow, every time they run (CON-31, ENG-30). A run that counted them as sessions of their own halved the bytes per session of ftp and sip_rtp and moved the Gate 2 mix by 7.8 points (MOD-25, CTL-49).
+
+**The estimate is plaintext, nDPI counts the wire.** `expected_bytes` counts application bytes above TLS, while the classifier measures the bytes on the wire, which include the TLS records. A mix with much TLS has its thinnest margin there (QA-05).
+
+### Native code (first party modules)
+
+**Libraries with their own event loop do not fit.** The interpreter drives a protocol one message at a time. A full library such as `russh` runs its own async session loop, so the ssh module builds the packet layer on primitives, and the ldap module writes its own BER codec (MOD-11, MOD-17).
+
+**rustfmt follows the stable toolchain.** CI installs `stable`, and a new rustfmt changed how it formats macro arguments, which stopped the `rust` job at its format step on every pull request, so clippy and the tests did not run until it was fixed (PR #533). Run `cargo fmt --all -- --check` with the current stable before you push.
+
+**Local tests skip without the tools.** Tests that need tshark, Zeek, or nDPI 4.14 skip themselves when the tool is missing. Set `FPS_REQUIRE_CAPTURE_TOOLS=1` in the module workflow, so that they cannot skip in CI (MOD-12).
+
 ## Before you publish
 
 Work through this list for a new version.
@@ -518,6 +598,7 @@ Work through this list for a new version.
 - The manifest declares `functions` only when the module ships `extension.wasm`, and it declares no `settings`.
 - The tree holds no symbolic link and no file name outside the `relpath` characters, which `validate.py` checks.
 - The README names the scenarios, the parameters, and the results that you measured.
+- The fixture shows none of the symptoms of [Watch out for](#watch-out-for).
 
 ## Gaps
 
