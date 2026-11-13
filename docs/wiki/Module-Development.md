@@ -18,7 +18,8 @@ The table separates what works from what does not. The sections below give the d
 | Publish to a shared registry | Not supported. A registry is one local directory of one controller, and an operator uploads a module to it. | `controller/internal/registry/doc.go` |
 | Sign a module | Works with any Ed25519 library, and the procedure is below. The repository has no signing command. | `controller/internal/registry/signing/`, `docs/wiki/Controller.md` |
 | Have the controller send a module to the agents | Not supported. An operator copies the module tree into the modules directory of every agent. | `docs/wiki/Agent.md` |
-| Use the types `tunnel`, `strike`, `evasion`, and `fuzzer`, or the `raw` action | Not supported. The schema accepts the types, and the specification reserves them. | `docs/spec/specification.md`, `tools/contracts/validate.py` |
+| Use the types `tunnel`, `evasion`, and `fuzzer` | Not supported. The schema accepts the types, and the specification reserves them. | `docs/spec/specification.md`, `tools/contracts/validate.py` |
+| Write bytes without templating with the `raw` action | Works in a module of type `strike` or `fuzzer`, see [Module types](#module-types). Any other module type fails to load. | `engine/fps-flow/src/check.rs`, `engine/fps-flow/src/program.rs` |
 
 ## The contracts at a glance
 
@@ -106,7 +107,7 @@ The manifest is `manifest.yaml` at the root. The schema sets `additionalProperti
 | `parameters` | A JSON Schema (draft 2020-12) with an object root. A test sets it per mix entry in `profile.mix[].params`. | `validate.py`, controller compiler, agent |
 | `settings` | A JSON Schema with an object root. A test sets it once per module under `modules.<name>.settings`. A module without it accepts no settings. | Controller compiler |
 | `scenarios` | Scenario files relative to the manifest, unique, each of which must exist. | `validate.py`, registry, agent |
-| `expected_bytes` | Application payload bytes per session in both directions with default parameters, keyed by scenario name, each an integer of at least 1. The controller reads it into the scenario catalog (CTL-47), see [below](#expected_bytes-bytes-per-session-of-each-scenario). `validate.py` rejects a key that names no scenario of `scenarios`. | Controller compiler, `validate.py` (keys) |
+| `expected_bytes` | Application payload bytes per session in both directions with default parameters, keyed by scenario name, each an integer of at least 1. The controller reads it into the scenario catalog (CTL-47), see [below](#expected_bytes-bytes-per-session-of-each-scenario). The registry and `validate.py` reject a key that names no scenario of `scenarios`. | Controller compiler, registry (keys), `validate.py` (keys) |
 | `assets` | Items with a `name` and exactly one of `path` and `generator` (`module.function`). | Existence check only |
 | `functions` | The template function catalog, see [Template functions](#template-functions-and-the-catalog). | `validate.py`, agent, registry |
 | `extension` | `wasm`, which must be the text `extension.wasm` because the agent loads only that file at the module root, and `hooks` (a non empty list from `on_open`, `on_data`, `on_timer`, `on_close`, `render`). | Schema, `validate.py`, registry, agent |
@@ -123,7 +124,7 @@ Three details need care.
 
 #### `expected_bytes`: bytes per session of each scenario
 
-`expected_bytes` maps the name of each scenario to the estimated application payload bytes that one session of the scenario moves, in both directions together, with the default parameters of the scenario. Each value is an integer of at least 1, and each key follows the identifier pattern of scenario names (`contracts/schemas/module-manifest.schema.json`, key `expected_bytes`). Each key must also be the name of a scenario that `scenarios` lists, and `validate.py` reports a key that is not (a typo in a key leaves the real scenario without an estimate). The registry does not check the keys yet. The schema marks the field as optional, but a module that has scenarios needs an entry for each of them.
+`expected_bytes` maps the name of each scenario to the estimated application payload bytes that one session of the scenario moves, in both directions together, with the default parameters of the scenario. A session is one run of the entry flow, and every other flow of the instance, spawned or ordered with `after`, belongs to it, so the estimate counts the bytes of all of them (see [Spawned flows, profiles, and TLS](#spawned-flows-profiles-and-tls)). Each value is an integer of at least 1, and each key follows the identifier pattern of scenario names (`contracts/schemas/module-manifest.schema.json`, key `expected_bytes`). Each key must also be the name of a scenario that `scenarios` lists, and both the registry and `validate.py` report a key that is not, with the finding `/expected_bytes/<key>` at install (a typo in a key would otherwise leave the real scenario without an estimate). The schema marks the field as optional, but a module that has scenarios needs an entry for each of them.
 
 ```yaml
 scenarios:
@@ -143,20 +144,22 @@ expected_bytes:
 
 **The estimate is a starting point.** During a run the controller measures the real bytes per session and replaces the manifest estimate of a scenario after 20 pooled sessions (`controller/internal/runs/calibrate/`, the Throughput rate calibration section of [Controller](Controller.md)). A good estimate keeps the first seconds of a run on target, so measure it and do not guess it.
 
+**What the run counts.** The contract defines one session for each start of the entry flow, with `bytes.tx` and `bytes.rx` holding the bytes of all its flows under the labels of the entry flow, so the controller measures bytes per session in the same unit as your estimate. The engine counts this way since ENG-30. A scenario whose flows counted as sessions of their own needs no new estimate, because `expected_bytes` always meant the bytes of the whole session.
+
 **How to measure it.**
 
 1. Run the scenario to its end with the default parameters, in a test of your module over the in memory network, as `modules/hls/tests/scenarios.rs` does. A scenario whose sizes come from the session generator, such as a message with `attachment_min` and `attachment_max` or a file with `file_min` and `file_max`, moves a different number of bytes in every session. One session then says little about the mean that the controller needs. In the first party `ftp` module the `retr_epsv` scenario moved between 46000 and 413000 bytes over 100 sessions. Run such a scenario with the session ids 1 to N under one seed and take the mean. A scenario without drawn sizes gives the same count in every session, and one session is enough, as in `hls`. The tests of `modules/ftp/tests/scenarios.rs` (`ESTIMATE_SESSIONS`, 100 sessions) and `modules/smtp/tests/scenarios.rs` (100 sessions) show the loop. A larger N narrows the mean and lengthens the test, since a session of the `ssh` module takes about 150 milliseconds in a debug build. The first party modules use between 10 and 100 sessions.
-2. Add the payload bytes of every connection that the session opens, client to server and server to client. `modules/hls/tests/scenarios.rs` does this with `c2s().len() + s2c().len()` over `net.conns()`, and that sum includes the connections that a spawned flow opens, such as the FTP data connection and the RTP media of `sip_rtp`. A datagram counts with its whole payload (`modules/dns/tests/scenarios.rs`, `modules/ntp/tests/scenarios.rs`, `modules/sip_rtp/tests/scenarios.rs`). For a session over TLS count the plaintext above the TLS layer, which is what `Run::c2s` and `Run::s2c` hold in the `http1`, `http2`, `smtp`, `imap`, and `pop3` tests. The handshake and the record overhead in `TlsRun::wire_c2s` are not application payload. The plaintext before a STARTTLS upgrade counts.
+2. Add the payload bytes of every connection that the session opens, client to server and server to client, for every flow of the instance. That sum includes the connections of the flows that the entry flow spawns, once for every run of a spawned flow (the three data connections of an FTP session with three transfers, the RTP media of `sip_rtp`), and the connections of the flows that `after` orders. `modules/hls/tests/scenarios.rs` does this with `c2s().len() + s2c().len()` over `net.conns()`. A datagram counts with its whole payload (`modules/dns/tests/scenarios.rs`, `modules/ntp/tests/scenarios.rs`, `modules/sip_rtp/tests/scenarios.rs`). For a session over TLS count the plaintext above the TLS layer, which is what `Run::c2s` and `Run::s2c` hold in the `http1`, `http2`, `smtp`, `imap`, and `pop3` tests. The handshake and the record overhead in `TlsRun::wire_c2s` are not application payload. The plaintext before a STARTTLS upgrade counts.
 3. Write the result into the manifest as an integer. Round to a figure that you can reproduce, since the value is an estimate and the calibration corrects the rest. The first party manifests of MOD-25 keep three significant digits from 1000 bytes up and the whole number below that, which stays within 0.5 percent of the measurement.
 4. Keep the estimate true. A test like `default_parameters_move_the_expected_bytes` reads `expected_bytes` from the manifest, runs each scenario, and fails when the measured bytes differ from the estimate by 2 percent or more. `modules/hls/tests/scenarios.rs` has the single session form, and the other first party modules have the form of step 1 with a mean over `ESTIMATE_SESSIONS` sessions. The test also fails for a key that names no scenario, and with `--nocapture` it prints each mean, minimum, and maximum as `MEASURED` lines, which is where the number of step 3 comes from. Add the same test to your module, so that a change of a template or a fixture that alters the size of a session also changes the manifest. A guard of this kind found four hand written estimates of `sip_rtp` that were 12 to 21 percent above the measurement (MOD-25), so do not skip the measurement.
 
 The schema defines the estimate as application payload bytes. It holds for the default parameters, so a test configuration that sets a size parameter such as `body_size` moves more or fewer bytes than the estimate says, and the calibration absorbs the difference. The Gate 2 suite sets such parameters, and it stages its module trees with the estimates of its own `mix.yaml` for them (`tests/gates/gate2/mix_config.py`, `stage_modules`), which replace the manifest value for the scenarios of the mix only.
 
-Neither the registry nor `tools/contracts/validate.py` checks that a key names a scenario of the manifest, so a misspelled key surfaces only as the missing estimate of the scenario that you meant. Check the keys against the `scenarios` list yourself.
+The registry refuses an install, and `tools/contracts/validate.py` reports an error, when a key names no scenario of the manifest, so a misspelled key cannot reach a controller. A key must name a scenario that `scenarios` lists, and the files of `scenarios-pending/` do not count.
 
 ### Names
 
-A module name must not collide with a template root. The grammar reserves `vars`, `session`, `last`, `profiles`, `dist`, `true`, and `false`, and the metric catalog reserves `all` as the label value that totals every application (`contracts/README.md`, `tools/contracts/validate.py`, `RESERVED_ROOTS` and `ALL_APPLICATIONS`). The registry refuses only `vars`, `session`, `last`, `true`, and `false` (`controller/internal/registry/manifest.go`, `reservedModuleNames`), so a module named `profiles`, `dist`, or `all` passes the install and fails the validator, which rejects all eight. Treat all eight as reserved.
+A module name must not collide with a template root. The grammar reserves `vars`, `session`, `last`, `profiles`, `dist`, `true`, and `false`, and the metric catalog reserves `all` as the label value that totals every application (`contracts/README.md`, `tools/contracts/validate.py`, `RESERVED_ROOTS` and `ALL_APPLICATIONS`). Both the registry (`controller/internal/registry/manifest.go`, `reservedModuleNames`) and the validator refuse all eight, so a module with one of these names fails at install with the finding `/name` and fails the validator.
 
 Choose a name that no first party module uses. The agent hands a module the native functions of its own registry when the module has the name of a first party module and a manifest catalog that equals the catalog of that crate (`modules.rs`, `NativeFunctions::for_modules`), so a module named `dns` with the catalog of `dns` runs the code of the agent and not yours.
 
@@ -170,9 +173,10 @@ The specification defines eight types (`docs/spec/specification.md`, Module type
 | `transport` | v1 (TLS) | The TLS profiles belong to the agent, see [Transport](Transport.md). A scenario names a profile in `tls_upgrade`. |
 | `host` | v1 | Host behavior belongs to the project, see [Hosts](Hosts.md). |
 | `content` | v1 | The first party `content` module renders bodies with a native crate. A module outside the repository has no way to add native functions. |
-| `tunnel`, `strike`, `evasion`, `fuzzer` | Reserved | Not supported. |
+| `tunnel`, `evasion` | Reserved | Not supported. |
+| `strike`, `fuzzer` | Reserved | Write scenarios that use the `raw` action. The engine runs no other behavior for these types. |
 
-The schema description names `tunnel`, `strike`, `evasion`, and `fuzzer` as reserved. The schema accepts them and no reader rejects them, so a manifest of such a type validates and installs, and no engine behavior exists for it. The one rule that depends on the type is the `raw` action, which the validator and the contract check of the engine admit only in `strike` and `fuzzer` modules (`tools/contracts/validate.py`, `RESERVED_ACTION_TYPES`, and `engine/fps-flow/src/check.rs`). The interpreter does not run it yet: a runnable program with `raw` fails to load as an unsupported action (`engine/fps-flow/src/program.rs`) until ENG-29. A strike scenario with `raw` therefore validates and installs, and the agent refuses to run it.
+The schema description names `tunnel`, `strike`, `evasion`, and `fuzzer` as reserved. The schema accepts them and no reader rejects them, so a manifest of such a type validates and installs. The one rule that depends on the type is the `raw` action, which the validator and the contract check of the engine admit only in `strike` and `fuzzer` modules (`tools/contracts/validate.py`, `RESERVED_ACTION_TYPES`, and `engine/fps-flow/src/check.rs`). A module of any other type that uses `raw`, in a loop or a branch arm as well, fails to load with the error `ReservedAction`, which names the action and the two types that may use it, for example `flow 'a': client: action 2: 'raw' is reserved for module types ["fuzzer", "strike"]`. In a `strike` or `fuzzer` module the engine runs the action: it decodes `hex` once at load time and writes the bytes on the session exactly as given (`engine/fps-flow/src/program.rs`, ENG-29). The bytes are not a template, so `{{` and `}}` in them stay as written, and the engine draws nothing from the session generator for them. On a TCP flow the bytes join the stream, and on a UDP flow they form one datagram of at most 65,507 bytes, as with `send`. The action writes on the session socket of the flow and nothing more. It does not send stateless packets such as a SYN flood, and it does not forge source addresses, so a scenario that needs either of them cannot be written yet.
 
 ### Licenses
 
@@ -196,7 +200,7 @@ A scenario is a YAML file with the keys `scenario` (an identifier), `description
 
 ### Flows
 
-Each flow runs one session, and the client side and the server side each run their action list in order. A flow fails when an action fails or times out (`contracts/README.md`, Flow program semantics).
+Each flow has a client side and a server side that each run their action list in order. A flow fails when an action fails or times out (`contracts/README.md`, Flow program semantics). A session is one run of the first flow of the scenario, which is the entry flow, and every other flow of the scenario instance belongs to that session (see [Spawned flows, profiles, and TLS](#spawned-flows-profiles-and-tls)).
 
 | Key | Meaning | Rule |
 |---|---|---|
@@ -225,7 +229,7 @@ An action is a mapping with exactly one key.
 | `spawn` | `flow` | The named flow must declare `spawned: true` |
 | `tls_upgrade` | `profile` (required), `role`, `server_name` | TCP only. Wraps the running session in TLS, and every later action runs over TLS. |
 | `close` | `fin`, `rst`, or `half` | `fin` shuts down the write side and drains until the peer closes. `rst` aborts. `half` shuts down the write side and goes on. |
-| `raw` | `hex` | Reserved for `strike` and `fuzzer` modules, so do not use it |
+| `raw` | `hex` | Only in `strike` and `fuzzer` modules. Writes the decoded bytes without templating. `hex` is an even number of hexadecimal digits with no spaces, and at least one byte. Any other module type fails to load with `ReservedAction`. |
 
 The sources are `contracts/schemas/scenario.schema.json` for the fields and `contracts/README.md` for the semantics. The validator adds the semantic rules that the schema cannot express (`check_scenario`). It reports a duplicate flow id, an unknown or cyclic `after`, a spawn of a flow that is not `spawned`, a branch whose probabilities do not sum to 1, a uniform delay with `min_ms` above `max_ms`, a side that does not start with its opener, and `tls_upgrade` or `transport` in a UDP flow.
 
@@ -246,7 +250,7 @@ The references and the core functions are these (`contracts/README.md`, `tools/c
 | Name | Type | Value |
 |---|---|---|
 | `vars.<name>` | type of the variable | A scenario variable, after the parameter overrides |
-| `session.id`, `session.flow` | int, text | The session sequence number and the flow id |
+| `session.id`, `session.flow` | int, text | The number of the run of the flow that renders the template, shared by both sides and different for every flow and every run of a spawned flow, and the flow id |
 | `last` | bytes | The bytes that the previous `expect` of the same side consumed |
 | `profiles.<name>` | text | The entries of a scenario profile, rendered as `Name: value` lines that end with CRLF, in declaration order |
 | `fill(n)` | text | `n` printable bytes from the seeded generator |
@@ -263,6 +267,8 @@ A variable that a `set` action binds lives in the scenario instance. A flow that
 ### Spawned flows, profiles, and TLS
 
 A flow that declares `spawned: true` starts through a `spawn` action. The first party `ftp` scenarios use it for their data connections (`modules/ftp/`, `docs/wiki/Modules.md`). The agent runs a scenario with several flows as an instance, and the entry flow, which is the first flow, must not be spawned (`docs/wiki/Agent.md`, Scenarios with several flows).
+
+**How spawned flows count.** A session is one run of the entry flow of a scenario instance. A flow that the entry flow spawns, and a flow that `after` orders, belongs to that session and is never a session of its own. It adds its payload bytes to the bytes of the session, every time it runs, and its failure fails the session. An `ftp` scenario with three transfers is one session that holds one control connection and three data connections, and a `sip_rtp` call is one session that holds the SIP dialog and the RTP media stream. A capture still shows every flow as its own connection. The session ends when its last flow ends, and a session fails with the reason of the first flow that failed (`contracts/README.md`, Sessions and flows, CON-31).
 
 A `profiles` block holds named header sets, which a template reads as `profiles.<name>` (`contracts/examples/modules/http1/scenarios/web_profile.yaml` shows one). The validator reports a reference to an undeclared profile.
 
@@ -332,13 +338,38 @@ Each session rule names the intended application of the sessions that its `match
 | `tls` | `encryption` | Sessions decrypt with the embedded keys, and each ClientHello has the JA4 of its profile |
 | `content` | `content` | No application repeats more than 1 percent of its payloads |
 | `structure` | `session_structure` | The connections of each instance follow the `after` and `spawn` edges of the scenario |
-| `temporal` | `temporal` | Arrival times, sizes, and packet gaps agree with the target distributions in a KS test |
+| `temporal` | `temporal` | Arrival times, sizes, packet gaps, and the bytes per rung of a playback agree with their targets, with a KS test for a distribution and a tolerance for a constant |
 | `mix` | `mix_accuracy` | The achieved mix matches the configured weights |
 | `transport` | `transport_behavior` | The SYN options match the OS profile of the sending host |
 | `messages` | `messages` | Sessions show the expected number of requests, responses, commands, or messages |
 | `hosts` | `host_identity` | The host count and the address and MAC pairs make sense |
 
+For a module whose traffic is paced, such as audio or video with a fixed packet time, write the pacing as a `temporal.packets` target in the labels, and do not write a timing script for the fixture. The check reads the gaps between consecutive packets with payload in one direction of a session, judges each such stream on its own, and fails a call with jittered packets even among many good calls. The `sip_rtp` module labels its RTP media like this, where `ms` lists the packet times that its scenarios use, `tolerance_ms` is the lateness that a loaded host may add, and `within` is the share of the gaps of a stream that must be on time (`modules/sip_rtp/fixtures/expected.yaml`, `realism/README.md`, Temporal distribution check).
+
+```yaml
+temporal:
+  packets:
+    applications:
+      rtp: {dist: constant, ms: [20, 30], tolerance_ms: 8, within: 0.9}
+```
+
+A stream needs at least `min_samples` gaps (30 by default) to be judged, so record enough packets per stream, or give the target its own `min_samples` when a stream is short. A target of the client direction of an HTTP application can select the requests of one kind with `path`, a regular expression on the request target, so that a keepalive connection that alternates playlist and segment requests keeps the cadence of its segments apart from its playlist refreshes. `join_ms` makes the matching requests of the sessions that follow each other one stream, for a playback whose segments each use a connection, and `mean_tolerance_ms` also bounds the mean gap, so a cadence that drifts inside `tolerance_ms` fails. The bytes of an adaptive bit rate playback go in a `temporal.rungs` entry of the application. It gives the request path of a segment (its first group is the rung number), `duration_ms` of media per response, and `bits_per_second` of each rung. Every stream of requests with at least `min_samples` requests then needs the body of each response within `body_tolerance_bytes` of `rate * duration / 8` (188 by default), the share of each rung in the bytes within `share_tolerance` (5% by default), and the bit rate of the stream within `rate_tolerance` (5%). `walk: up` asks for rungs that rise through the whole ladder, and `streams` for the number of playbacks that the capture must hold (`realism/README.md`, Temporal distribution check, RLM-22). The labels read HTTP/1.1 `GET` requests whose responses have a `Content-Length`, and fail a session that they cannot follow, so a module that answers with chunked bodies cannot use `path` or `rungs`.
+
+```yaml
+temporal:
+  packets:
+    applications:
+      hls_vod: {direction: client, path: '/v\d+/seg\d+\.ts$', dist: constant, ms: 400, tolerance_ms: 40, within: 0.9, mean_tolerance_ms: 20, min_samples: 3}
+  rungs:
+    applications:
+      hls_vod: {path: '/v(\d+)/seg\d+\.ts$', duration_ms: 400, bits_per_second: [160000, 320000, 640000], walk: up, streams: 3, min_samples: 4}
+```
+
+A property that no label expresses still needs a small check script next to the fixture. Test the labels with a capture that you change on purpose, as `modules/sip_rtp/fixtures/test_packet_labels.py` does, so that you know they can fail.
+
 For a module whose sessions run inside TLS, `python3 -m realism decrypted` scores the decrypted view with a labels file whose session rules match the server ports of the TLS sessions. Without `--view-port`, tshark decodes each TCP `server_port` that a rule names as TLS, so name the real server port of every TLS session in a rule (`realism/README.md`, Decrypted view, RLM-18). A TLS session on a port that no rule names is found only by the heuristic of tshark, which misses a ClientHello split after its first bytes.
+
+A STARTTLS session starts in clear text, so do not name its port as a TLS port. Name the capture port of every STARTTLS session with `--starttls-port PORT:PROTOCOL` (`smtp`, `imap`, or `pop`), for example `--starttls-port 5587:smtp`, in the workflow and in the capture script that run `python3 -m realism decrypted`. tshark then decodes the port as that protocol and starts TLS after the STARTTLS reply, so a ClientHello split after its first bytes still counts. This is needed when the labels use `--view-port` (the labels then name the port of the view, not of the capture) or when the capture port is not the standard one of the protocol (`realism/README.md`, Decrypted view, STARTTLS ports, RLM-21).
 
 You score a capture that you recorded yourself with the runner of the checkout. It needs `ndpiReader` and tshark, and Zeek is optional.
 
@@ -351,6 +382,19 @@ The exit code is 0 when every check passes, 1 when a check fails, and 2 when the
 
 A fixture score can list a parser finding as not counted. The operating system picks the client port of each session at random, and tshark decodes the traffic of about 900 TCP and UDP ports with the dissector that is bound to the port (UDP 41170 is Manolito, and TCP 44322 is the Performance Co-Pilot proxy). When a session of your module uses such a port as its client port, tshark reports malformed packets for payload that is well formed. The runner leaves a tshark finding out of the count when the client port of its session is bound to a dissector for the transport and the server port is not bound to the same dissector. The `parser_errors` entry of the report lists it under `not_counted` with the rule `port_collision` and the dissector, and the job summary of a module says `N findings not counted (port collision)`. A finding that is not counted does not change `errors_total` or the verdict. You do not change your traffic or your labels for it, and a recording that you make again draws another client port. Findings of Zeek, findings in a session whose client port is free, and findings that belong to no session always count, so a malformed message of your module still fails the check. A runner older than report format 0.18.0 counts these findings, so score with the runner of the checkout that you build against (`realism/README.md`, Parser errors).
 
+A module whose traffic is malformed on purpose, such as a scenario that sends an invalid request line, produces parser findings that you want, and the check must not count them as faults. Declare them in the label rule of the session. A rule takes `expect_findings`, which lists per parser the items that its sessions must produce.
+
+```yaml
+sessions:
+  - application: http1
+    match: {transport: tcp, server_port: 8080}
+    expect_findings:
+      zeek: [bad_HTTP_request]
+      tshark: ["http: Illegal characters"]
+```
+
+A Zeek item is the name of a weird, as `weird.log` prints it in its `name` column. A tshark item is the protocol of the frame with the expert item, which is the last name in the `frame.protocols` field of that frame (`http`, `dns`, `tcp`), and optionally a colon, a space, and a part of the expert message, which the first expert item of error severity of the frame must contain. List exactly what a recording of your scenario shows: take the items from the `errors` of the `parser_errors` entry of a first score that has no declaration, and check each against the traffic that you meant to send. A declared finding does not count, and the entry lists it under `expected_findings`. A declared item that no session of the rule produced fails the check and is listed under `missing_findings`, so a scenario that stops being malformed fails, and a finding that no rule declares fails as before, so a second fault in the same scenario does not hide behind the first. The first rule that matches a session applies, so declare the items on the rule that the sessions of the malformed scenario match first, and keep well formed scenarios on their own rules. One finding of any session of the rule meets an item. When a parser is not installed, its items are listed under `unchecked_expectations` and do not fail the check, so score with `--parsers tshark,zeek` to require both (`realism/README.md`, Parser errors).
+
 What the repository does for first party modules goes further than what it does for yours. A first party module records its capture with `fixtures/capture.sh` in the QA-01 namespace harness (`tests/harness/netns.sh`), which needs root, a checkout, and a peer program built from the native crate (`modules/dns/fixtures/capture.sh`). The `realism` workflow runs a module only when it has `native/Cargo.toml`, `fixtures/capture.sh`, and `fixtures/expected.yaml` (`realism/modules.py`, `docs/wiki/Realism.md`, Module realism job). A module outside the repository therefore gets no recording in CI, and the project rule that fixtures come from harness runs and never from third party captures (Coding Standards, Modules) applies to modules that join the repository. The template has no `fixtures/` directory for this reason, and its native crate is not selected by the job.
 
 ## Validate
@@ -361,7 +405,7 @@ Run the validator on every change. It checks three things (`tools/contracts/vali
 2. **Module rules.** The directory name equals `name`, the name is not reserved, the license is on the allow list, every file and directory of the tree has a path of letters, digits, `_`, `.`, and `-`, the tree holds no symbolic link, no module requires itself, function and parameter names are unique, parameter defaults match their types, every path that `scenarios`, `assets`, `fixtures`, and `extension.wasm` names is a regular file of the tree, and every key of `expected_bytes` names a scenario of `scenarios`.
 3. **Scenario rules.** The rules of [Actions](#actions) and [Templates](#templates), including each module call against the catalog of its manifest. A call into a required module whose manifest the run does not hold is a warning and stays unchecked (`_resolve_call`).
 
-The validator applies the rules that the registry applies to a tree: the license, the file names, links, and named files (`tools/contracts/validate.py`, `license_problem`, `tree_problems`, `names_regular_file`). It is stricter than the registry for the reserved names `profiles`, `dist`, and `all` and for the keys of `expected_bytes`. It does not check the `settings` schema or the signature, and it never runs extension code. Check these by hand before you package.
+The validator applies the rules that the registry applies to a tree: the license, the file names, links, and named files (`tools/contracts/validate.py`, `license_problem`, `tree_problems`, `names_regular_file`). It applies the same rules for the reserved names and for the keys of `expected_bytes`, and it does not check the `settings` schema or the signature, and it never runs extension code. Check these by hand before you package.
 
 ## Package
 
@@ -486,9 +530,8 @@ We recorded what the repository does not support yet, so that you do not look fo
 5. **No settings for third party modules.** The agent refuses them for a module without native functions (`engine/fps-agent/src/modules.rs`).
 6. **Native crates are first party only**, and decision D10 still has the status Proposed (`docs/decisions/0010-native-extensions.md`).
 7. **Declared and not enforced.** `engine_api` is read by nothing that compares it with an engine version, `assets` and `fixtures[].expect` are never read beyond the existence of a file, and `provides` and the version of `requires` document only (`controller/internal/registry/manifest.go`, `tools/contracts/validate.py`). A search of `controller/`, `engine/`, and `realism/` found no other reader. The module types `tunnel`, `strike`, `evasion`, and `fuzzer` are reserved in the schema text and no reader rejects them.
-8. **The registry is looser than the validator in two places.** It accepts the names `profiles`, `dist`, and `all`, which the validator rejects, and it does not check that a key of `expected_bytes` names a scenario (`controller/internal/registry/manifest.go`, `reservedModuleNames`, and `registry.go`, `checkTree`). Both are safe for the author, because a module that validates also installs.
-9. **No realism job for third party modules.** The job selects modules that have a native crate and a recording script, and the harness records only the traffic of first party peers (`realism/modules.py`).
-10. **The agent reads `version` by line.** A trailing comment on the line makes it differ from the plan (`engine/fps-agent/src/modules.rs`, `version_of`).
+8. **No realism job for third party modules.** The job selects modules that have a native crate and a recording script, and the harness records only the traffic of first party peers (`realism/modules.py`).
+9. **The agent reads `version` by line.** A trailing comment on the line makes it differ from the plan (`engine/fps-agent/src/modules.rs`, `version_of`).
 
 ## Sources
 

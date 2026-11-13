@@ -244,7 +244,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 	if reservedModuleNames[m.Name] {
 		verr.Findings = append(verr.Findings, Finding{
 			Path:    "/name",
-			Message: fmt.Sprintf("module name %s is reserved by the template grammar", m.Name),
+			Message: fmt.Sprintf("module name %s is reserved by the template grammar or the metric catalog", m.Name),
 		})
 	}
 	if len(verr.Findings) > 0 {
@@ -254,8 +254,13 @@ func ParseManifest(data []byte) (Manifest, error) {
 }
 
 // reservedModuleNames are the names that templates cannot tell apart from
-// references and literals, rule 5 of the template grammar.
-var reservedModuleNames = map[string]bool{"vars": true, "session": true, "last": true, "true": true, "false": true}
+// references and literals, rule 5 of the template grammar, plus profiles and
+// dist, which the grammar reserves as roots, and all, which the metric catalog
+// uses as the label value that totals every application.
+var reservedModuleNames = map[string]bool{
+	"vars": true, "session": true, "last": true, "profiles": true,
+	"dist": true, "all": true, "true": true, "false": true,
+}
 
 func moduleLabel(m Manifest) string {
 	if m.Name == "" {

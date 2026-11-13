@@ -14,7 +14,7 @@ adds what Zeek reads from the SIP dialogs:
 * ``weird.log`` holds no entry whose name starts with ``sip``.
 
 Zeek logs the SIP dialogs only. The RTP streams have no Zeek log, so the RTP
-packet interval has its own check, rtp_check.py.
+packet interval is checked by the ``temporal.packets`` labels of expected.yaml.
 
 Usage::
 

@@ -627,7 +627,7 @@ def test_the_report_entry_validates_against_the_schema(tmp_path: Path) -> None:
         ).to_dict()
         jsonschema.validate(report, schema)
         entry = next(c for c in report["checks"] if c["check"] == "mix_accuracy")
-        assert report["version"] == "0.18.0"
+        assert report["version"] == "0.20.0"
         assert entry["passed"] is expected
         assert {m["name"] for m in entry["metrics"]} == {
             "mix.share_pct",

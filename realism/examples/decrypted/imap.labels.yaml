@@ -7,7 +7,7 @@
 #
 #   python3 -m realism decrypted --pcap modules/imap/fixtures/imap.pcapng \
 #     --labels realism/examples/decrypted/imap.labels.yaml \
-#     --view-port 143 --sessions 8
+#     --starttls-port 1143:imap --view-port 143 --sessions 8
 labels: fps-realism-labels
 version: 1
 threshold: 0.99

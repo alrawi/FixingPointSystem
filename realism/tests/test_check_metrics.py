@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """The metric series of every check of the realism report (CON-23, CON-25, CON-27, CON-28).
 
-Report format 0.18.0 carries them. Every check kind of the metric catalog carries
+Report format 0.20.0 carries them. Every check kind of the metric catalog carries
 ``realism.check_failures``, and most carry a series of their own. Each case below builds a
 small capture or a committed fixture, runs one check, and compares the whole ``metrics``
 array with a literal, once for a passing and once for a failing check. The entry then has to
@@ -556,7 +556,7 @@ def test_transport_behavior_failing_without_a_handshake_carries_only_the_failure
 
 
 def test_the_report_format_is_0_14_0() -> None:
-    assert REPORT_VERSION == "0.18.0"
+    assert REPORT_VERSION == "0.20.0"
 
 
 def test_a_check_without_its_failures_series_is_refused(tmp_path: Path) -> None:

@@ -319,6 +319,21 @@ CON-28 moves the metric catalog from 0.7.0 to 0.8.0. RLM-15 measures the gaps be
 
 The controller copy of the catalog, the `fps-stats` tables, the version pins, the controller mapping of the comparison, and the realism runner (report format 0.17.0) follow the contract in the same pull request.
 
+## A session is a scenario session
+
+CON-31 changes what a session means. The engine made every flow of a scenario instance a session of its own, so the FTP data connection and the RTP media stream counted beside their control flow and dialog, and the run metrics, the calibration, and the Gate 2 byte basis saw half the bytes of an ftp or sip_rtp session (CTL-49 found the split). The owner approved the contract change on 2026-11-12 and decided that flows ordered with `after` fold in as spawned flows do. The change is a change of meaning and adds no field, and the entry `contracts/changes/CON-31.md` records it.
+
+| Rule | Text |
+|---|---|
+| Session | One run of the entry flow of a scenario instance. The entry flow is the first flow of the scenario and is never `spawned` |
+| Other flows | Every other flow of the instance, spawned or ordered with `after`, adds its bytes to the session and fails it when it fails. It is never a session of its own |
+| Failure | A session fails once, with the reason of the first flow that failed, and the flows that the failure cuts short add no `aborted` count |
+| Start and end | A session starts with the entry flow and ends with the last flow of its instance, so `sessions.concurrent` and `sessions.duration` span the whole instance |
+| Labels | The session carries the labels of its entry flow, and the bytes of the other flows count under them |
+| Unchanged | `actions.*`, `transactions.*`, `sessions.response_time`, `tcp.*`, `tls.*`, and `port.*` count what a flow or a connection does, and a capture still shows each flow as its own connection |
+
+No version moves. The catalog stays at 0.8.0 and the scenario contract at v0.6, because only text changes, as the agent protocol stayed at 0.2.3 when only a comment changed (CON-16). The engine counts the new meaning with ENG-30, and CTL-49 resumes after it. The controller copy of the catalog follows the contract in the same pull request, and the entry lists every consumer and every test that counts the sessions of a multi flow scenario.
+
 ## Capture drop counts
 
 CON-24 moves the controller API from 0.10.0 to 0.11.0 and the agent protocol from 0.2.3 to 0.2.4. The owner approved the change on 2026-11-10 and asked for an additive one. `StopCaptureResult.dropped` and `CaptureFile.dropped` were documented as packets, but they count sessions, and they mixed three causes. The entry `contracts/changes/CON-24.md` records the reasons, the compatibility, and the consumers.

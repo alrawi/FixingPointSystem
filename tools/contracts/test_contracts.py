@@ -1078,16 +1078,11 @@ def test_every_registry_reserved_name_is_rejected(tmp_path, name):
     assert any("reserved" in m for m in module_errors(module_copy(tmp_path, name)))
 
 
-@pytest.mark.parametrize("name", ["profiles", "dist", "all"])
-def test_validator_also_rejects_the_names_the_registry_lacks(tmp_path, name):
-    assert any("reserved" in m for m in module_errors(module_copy(tmp_path, name)))
-
-
 def test_reserved_names_equal_the_registry_list():
     source = (REGISTRY / "manifest.go").read_text()
     body = re.search(r"reservedModuleNames = map\[string\]bool\{([^}]*)\}", source).group(1)
     assert set(re.findall(r'"(\w+)"', body)) == set(v.REGISTRY_RESERVED_NAMES)
-    assert v.REGISTRY_RESERVED_NAMES <= v.RESERVED_ROOTS
+    assert v.REGISTRY_RESERVED_NAMES == v.RESERVED_ROOTS | {v.ALL_APPLICATIONS}
 
 
 def test_license_lists_equal_the_registry_lists():

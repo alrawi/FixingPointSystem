@@ -226,10 +226,10 @@ ALL_APPLICATIONS = "all"
 RESERVED_ROOTS = {"vars", "session", "last", "true", "false", "profiles", "dist"}
 
 # The module names that the controller registry refuses at install
-# (controller/internal/registry/manifest.go, reservedModuleNames). RESERVED_ROOTS
-# and ALL_APPLICATIONS name three more that the registry does not refuse yet, so
-# the validator is stricter than the registry for them and never looser.
-REGISTRY_RESERVED_NAMES = frozenset({"vars", "session", "last", "true", "false"})
+# (controller/internal/registry/manifest.go, reservedModuleNames). Since CTL-50 the
+# registry refuses every name that the validator reserves: the template roots and
+# the application name of the metric catalog.
+REGISTRY_RESERVED_NAMES = frozenset(RESERVED_ROOTS | {ALL_APPLICATIONS})
 
 # Calls may nest at most this deep, counting the outermost call as 1.
 MAX_CALL_DEPTH = 8

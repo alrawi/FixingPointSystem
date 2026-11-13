@@ -281,7 +281,7 @@
           }
         },
         "packets": {
-          "description": "Targets for the gaps in seconds between consecutive packets with payload inside one session. Each direction of a session is a stream, and a gap never spans two directions. Parameters have the names of a scenario delay. The constant of paced media, such as the 20 ms of G.711 audio, lists its packet times, takes a tolerance, and judges each stream on its own. An application can have one target per direction, written as a list.",
+          "description": "Targets for the gaps in seconds between consecutive packets with payload inside one session. Each direction of a session is a stream, and a gap never spans two directions. Parameters have the names of a scenario delay. The constant of paced media, such as the 20 ms of G.711 audio, lists its packet times, takes a tolerance, and judges each stream on its own. An application can have one target per direction, written as a list. A target of the client direction of an application can select the requests of one kind with path, and then reads the gaps between those requests (RLM-22). Every target can set its own min_samples.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -289,6 +289,19 @@
             "applications": {
               "type": "object",
               "additionalProperties": {"$ref": "#/$defs/gap_target_entry"}
+            }
+          }
+        },
+        "rungs": {
+          "description": "Bytes per rung of an adaptive bit rate playback, for the applications whose requests name the rung in their path (RLM-22). Each application gives the request path of a segment, the media time of one segment, and the bit rate of each rung. A stream of requests (one session, or the sessions of a playback that follow each other when join_ms is set) with at least min_samples requests must carry the bytes that those bit rates give: every body, the share of every rung, and the bit rate of the whole stream.",
+          "type": "object",
+          "required": ["applications"],
+          "additionalProperties": false,
+          "properties": {
+            "applications": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {"$ref": "#/$defs/rung_target"}
             }
           }
         }
@@ -367,6 +380,16 @@
             "type": "string",
             "minLength": 1
           },
+          "expect_findings": {
+            "description": "Parser findings that the sessions of this rule are expected to produce, because their traffic is malformed on purpose. The parser error check does not count a finding that a rule of its session declares, fails when a declared item shows in no session of the rule, and fails for every finding that no rule declares. A zeek item is the name of a weird, such as bad_HTTP_request. A tshark item is the protocol of the frame with the expert item, such as http, optionally followed by a colon, a space, and a part of the expert message, such as http: Illegal characters. The rule that matches a session first applies.",
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "zeek": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9_]+$"}},
+              "tshark": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+(: \\S.*)?$"}}
+            }
+          },
           "match": {
             "type": "object",
             "additionalProperties": false,
@@ -419,6 +442,9 @@
           "required": ["pcap"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
+            "path": {"description": "Regular expression on the request target of an HTTP application, for a target of the client direction: only the requests that match count, and a gap is the time between two of them (RLM-22).", "type": "string", "minLength": 1},
+            "join_ms": {"description": "With path, makes the matching requests of all sessions of the application one stream while the gap between neighbouring requests stays below this (RLM-22).", "type": "number", "exclusiveMinimum": 0},
             "pcap": {"description": "Reference capture, relative to the labels file.", "type": "string", "minLength": 1},
             "labels": {
               "description": "Labels file of the reference capture, relative to the labels file. Without it the rules of this file label the sessions of the reference.",
@@ -442,6 +468,7 @@
           "required": ["ms"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
             "dist": {"const": "constant"},
             "ms": {"type": "number", "minimum": 0},
             "tolerance_ms": {"description": "Distance that still counts as equal. The default is 0.", "type": "number", "minimum": 0}
@@ -452,6 +479,7 @@
           "required": ["dist", "mean_ms"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
             "dist": {"const": "exponential"},
             "mean_ms": {"type": "number", "exclusiveMinimum": 0}
           }
@@ -461,6 +489,7 @@
           "required": ["dist", "min_ms", "max_ms"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
             "dist": {"const": "uniform"},
             "min_ms": {"type": "number", "minimum": 0},
             "max_ms": {"type": "number", "minimum": 0}
@@ -471,6 +500,7 @@
           "required": ["dist", "mu", "sigma"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
             "dist": {"const": "lognormal"},
             "mu": {"type": "number"},
             "sigma": {"type": "number", "exclusiveMinimum": 0},
@@ -482,6 +512,7 @@
           "required": ["dist", "alpha", "scale_ms"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
             "dist": {"const": "pareto"},
             "alpha": {"type": "number", "exclusiveMinimum": 0},
             "scale_ms": {"type": "number", "exclusiveMinimum": 0}
@@ -498,6 +529,9 @@
           "required": ["ms", "tolerance_ms"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
+            "path": {"description": "Regular expression on the request target of an HTTP application, for a target of the client direction: only the requests that match count, and a gap is the time between two of them (RLM-22).", "type": "string", "minLength": 1},
+            "join_ms": {"description": "With path, makes the matching requests of all sessions of the application one stream while the gap between neighbouring requests stays below this (RLM-22).", "type": "number", "exclusiveMinimum": 0},
             "direction": {"enum": ["client", "server", "both"]},
             "dist": {"const": "constant"},
             "ms": {
@@ -507,7 +541,8 @@
               ]
             },
             "tolerance_ms": {"description": "Lateness in milliseconds that still counts as on time. Required.", "type": "number", "minimum": 0},
-            "within": {"description": "Share of the gaps of a stream that must be on time. The default is 0.9.", "type": "number", "exclusiveMinimum": 0, "maximum": 1}
+            "within": {"description": "Share of the gaps of a stream that must be on time. The default is 0.9.", "type": "number", "exclusiveMinimum": 0, "maximum": 1},
+            "mean_tolerance_ms": {"description": "Also requires the mean gap of each stream to lie within this many milliseconds of its packet time, so a cadence that drifts inside the tolerance fails (RLM-22).", "type": "number", "minimum": 0}
           }
         },
         {
@@ -515,6 +550,9 @@
           "required": ["dist", "mean_ms"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
+            "path": {"description": "Regular expression on the request target of an HTTP application, for a target of the client direction: only the requests that match count, and a gap is the time between two of them (RLM-22).", "type": "string", "minLength": 1},
+            "join_ms": {"description": "With path, makes the matching requests of all sessions of the application one stream while the gap between neighbouring requests stays below this (RLM-22).", "type": "number", "exclusiveMinimum": 0},
             "direction": {"enum": ["client", "server", "both"]},
             "dist": {"const": "exponential"},
             "mean_ms": {"type": "number", "exclusiveMinimum": 0}
@@ -525,6 +563,9 @@
           "required": ["dist", "min_ms", "max_ms"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
+            "path": {"description": "Regular expression on the request target of an HTTP application, for a target of the client direction: only the requests that match count, and a gap is the time between two of them (RLM-22).", "type": "string", "minLength": 1},
+            "join_ms": {"description": "With path, makes the matching requests of all sessions of the application one stream while the gap between neighbouring requests stays below this (RLM-22).", "type": "number", "exclusiveMinimum": 0},
             "direction": {"enum": ["client", "server", "both"]},
             "dist": {"const": "uniform"},
             "min_ms": {"type": "number", "minimum": 0},
@@ -536,6 +577,9 @@
           "required": ["dist", "mu", "sigma"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
+            "path": {"description": "Regular expression on the request target of an HTTP application, for a target of the client direction: only the requests that match count, and a gap is the time between two of them (RLM-22).", "type": "string", "minLength": 1},
+            "join_ms": {"description": "With path, makes the matching requests of all sessions of the application one stream while the gap between neighbouring requests stays below this (RLM-22).", "type": "number", "exclusiveMinimum": 0},
             "direction": {"enum": ["client", "server", "both"]},
             "dist": {"const": "lognormal"},
             "mu": {"type": "number"},
@@ -548,6 +592,9 @@
           "required": ["dist", "alpha", "scale_ms"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
+            "path": {"description": "Regular expression on the request target of an HTTP application, for a target of the client direction: only the requests that match count, and a gap is the time between two of them (RLM-22).", "type": "string", "minLength": 1},
+            "join_ms": {"description": "With path, makes the matching requests of all sessions of the application one stream while the gap between neighbouring requests stays below this (RLM-22).", "type": "number", "exclusiveMinimum": 0},
             "direction": {"enum": ["client", "server", "both"]},
             "dist": {"const": "pareto"},
             "alpha": {"type": "number", "exclusiveMinimum": 0},
@@ -556,6 +603,29 @@
         },
         {"$ref": "#/$defs/empirical"}
       ]
+    },
+    "target_min_samples": {
+      "description": "The fewest observations of this target, in place of the min_samples of the temporal section and of the command line (RLM-22).",
+      "type": "integer",
+      "minimum": 2
+    },
+    "rung_target": {
+      "description": "The bytes per rung of the requests of one kind of an application.",
+      "type": "object",
+      "required": ["path", "duration_ms", "bits_per_second"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"description": "Regular expression on the request target, such as /v(\\d+)/seg\\d+\\.ts$. Its first group is the rung number.", "type": "string", "minLength": 1},
+        "duration_ms": {"description": "Milliseconds of media in the response to one request.", "type": "number", "exclusiveMinimum": 0},
+        "bits_per_second": {"description": "The bit rate of each rung, by rung number.", "type": "array", "minItems": 1, "items": {"type": "number", "exclusiveMinimum": 0}},
+        "body_tolerance_bytes": {"description": "How far a body may be from rate * duration / 8. The default is 188, one MPEG transport stream packet.", "type": "number", "minimum": 0},
+        "share_tolerance": {"description": "Relative distance of the share of a rung in the bytes of a stream from its share by bit rate. The default is 0.05.", "type": "number", "minimum": 0},
+        "rate_tolerance": {"description": "Relative distance of the bit rate of a stream from the mean bit rate of its requested rungs. The default is 0.05.", "type": "number", "minimum": 0},
+        "walk": {"description": "up asks that the rungs of a stream rise and visit the whole ladder.", "const": "up"},
+        "streams": {"description": "The number of judged streams that the capture must hold, a number or a range.", "$ref": "#/$defs/count"},
+        "join_ms": {"description": "Makes the matching requests of all sessions of the application one stream while the gap between neighbouring requests stays below this, for a playback whose segments each use a connection.", "type": "number", "exclusiveMinimum": 0},
+        "min_samples": {"description": "The fewest requests that a stream needs to be judged. The default is the min_samples of the temporal section.", "type": "integer", "minimum": 2}
+      }
     },
     "gap_target_entry": {
       "oneOf": [
@@ -571,6 +641,7 @@
           "required": ["dist", "value"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
             "direction": {"enum": ["client", "server", "both"]},
             "dist": {"const": "constant"},
             "value": {"type": "number", "minimum": 0},
@@ -582,6 +653,7 @@
           "required": ["dist", "mean"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
             "direction": {"enum": ["client", "server", "both"]},
             "dist": {"const": "exponential"},
             "mean": {"type": "number", "exclusiveMinimum": 0}
@@ -592,6 +664,7 @@
           "required": ["dist", "min", "max"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
             "direction": {"enum": ["client", "server", "both"]},
             "dist": {"const": "uniform"},
             "min": {"type": "number", "minimum": 0},
@@ -603,6 +676,7 @@
           "required": ["dist", "mu", "sigma"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
             "direction": {"enum": ["client", "server", "both"]},
             "dist": {"const": "lognormal"},
             "mu": {"type": "number"},
@@ -614,6 +688,7 @@
           "required": ["dist", "alpha", "scale"],
           "additionalProperties": false,
           "properties": {
+            "min_samples": {"$ref": "#/$defs/target_min_samples"},
             "direction": {"enum": ["client", "server", "both"]},
             "dist": {"const": "pareto"},
             "alpha": {"type": "number", "exclusiveMinimum": 0},

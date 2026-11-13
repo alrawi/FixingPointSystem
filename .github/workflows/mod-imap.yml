@@ -58,4 +58,5 @@ jobs:
         run: |
           python -m realism decrypted --pcap modules/imap/fixtures/imap.pcapng \
             --labels realism/examples/decrypted/imap.labels.yaml --sessions 8 \
-            --view-port 143 --parsers tshark,zeek --zeek /opt/zeek/bin/zeek
+            --starttls-port 1143:imap --view-port 143 \
+            --parsers tshark,zeek --zeek /opt/zeek/bin/zeek

@@ -10,9 +10,11 @@
 //! typed [`Location`]. The interpreter in `fps-interp` runs the programs.
 //!
 //! [`Scenario::check`] accepts every scenario that the contract allows.
-//! [`Scenario::load`] also rejects spawned flows and the `spawn` and `raw`
-//! actions, which later ENG packages add. The flow keyword `transport` is
-//! sugar for a leading `tls_upgrade` on each side, and the loader desugars it.
+//! [`Scenario::load`] also rejects spawned flows and the `spawn` action, which
+//! the scenario instance runner runs. The `raw` action compiles to a send of
+//! its bytes without template parsing, and the contract check admits it only in
+//! modules of type `strike` and `fuzzer` (`LoadError::ReservedAction`). The flow keyword
+//! `transport` is sugar for a leading `tls_upgrade` on each side, and the loader desugars it.
 //! [`Scenario::parse_instance`] accepts spawned flows and the `spawn` action
 //! for the scenario instance runner of `fps-interp`.
 #![forbid(unsafe_code)]
