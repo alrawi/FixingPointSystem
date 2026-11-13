@@ -353,6 +353,8 @@ A stream needs at least `min_samples` gaps (30 by default) to be judged, so reco
 
 For a module whose sessions run inside TLS, `python3 -m realism decrypted` scores the decrypted view with a labels file whose session rules match the server ports of the TLS sessions. Without `--view-port`, tshark decodes each TCP `server_port` that a rule names as TLS, so name the real server port of every TLS session in a rule (`realism/README.md`, Decrypted view, RLM-18). A TLS session on a port that no rule names is found only by the heuristic of tshark, which misses a ClientHello split after its first bytes.
 
+A STARTTLS session starts in clear text, so do not name its port as a TLS port. Name the capture port of every STARTTLS session with `--starttls-port PORT:PROTOCOL` (`smtp`, `imap`, or `pop`), for example `--starttls-port 5587:smtp`, in the workflow and in the capture script that run `python3 -m realism decrypted`. tshark then decodes the port as that protocol and starts TLS after the STARTTLS reply, so a ClientHello split after its first bytes still counts. This is needed when the labels use `--view-port` (the labels then name the port of the view, not of the capture) or when the capture port is not the standard one of the protocol (`realism/README.md`, Decrypted view, STARTTLS ports, RLM-21).
+
 You score a capture that you recorded yourself with the runner of the checkout. It needs `ndpiReader` and tshark, and Zeek is optional.
 
 ```bash
