@@ -51,10 +51,11 @@
 #
 # A sixth test (AGT-16) runs the ftp/mixed_session scenario of the first party ftp
 # module, which has a control flow and three spawned data flows. The agent runs
-# it as a scenario instance, so every instance gives four succeeded sessions of
-# the application ftp, the control connection and one data connection for each
-# of the three transfers. The run passes only when the agent lifts the check on
-# the number of flows and compiles the scenario with its `spawn` actions.
+# it as a scenario instance, so every instance gives one succeeded session of
+# the application ftp, which holds the control connection and one data connection
+# for each of the three transfers (CON-31). The run passes only when the agent
+# lifts the check on the number of flows and compiles the scenario with its
+# `spawn` actions.
 #
 # A seventh test (AGT-17) runs ssh/interactive_shell and ssh/scp_upload of the
 # first party ssh module, one run each. Every session does a real curve25519
@@ -75,8 +76,8 @@
 #
 # A ninth test (AGT-20) runs sip_rtp/call_pcmu of the first party sip_rtp module,
 # a SIP dialog over UDP that spawns an RTP media flow, so the agent runs it as
-# a scenario instance with two UDP flows. Every call gives two succeeded
-# sessions of the application sip_rtp. The SIP port (18689) and the RTP range
+# a scenario instance with two UDP flows. Every call gives one succeeded
+# session of the application sip_rtp (CON-31). The SIP port (18689) and the RTP range
 # (28000 to 28998) lie above 1023 because the script runs without root. The run
 # parameters shorten the ring time and the talk time, so whole calls finish
 # within the three seconds of a run. A capture of the port server0 on a second
@@ -455,7 +456,7 @@ echo "controller_e2e: run $run relayed mail through the first party smtp and con
 # connections, a listing, a download, and an upload. The data ports come from a
 # range of the scenario variables. The criteria bound the failed ratio, which
 # allows for an instance that the stop of the run cuts, and the script checks
-# that at least one whole instance of four sessions succeeded.
+# that at least one whole instance, which is one session, succeeded.
 cat >"$work/ftp_mixed.yaml" <<EOF
 apiVersion: fixingpoint.dev/v1alpha1
 kind: Test
@@ -483,13 +484,13 @@ load:
 timeline: { seed: 13 }
 criteria:
   - { metric: sessions.failed_ratio, op: "<=", value: 0.1 }
-  - { metric: sessions.succeeded, op: ">", value: 3 }
+  - { metric: sessions.succeeded, op: ">", value: 0 }
 EOF
 run_test "$work/ftp_mixed.yaml"
 [[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the ftp run $run did not pass: $summary"
 ftp_succeeded=$(succeeded_of ftp)
-[[ $ftp_succeeded -ge 4 ]] || fail "the ftp run $run counted $ftp_succeeded succeeded sessions, want at least one instance of four: $metrics"
-echo "controller_e2e: run $run ran ftp scenario instances with $ftp_succeeded succeeded sessions (control and data connections), verdict passed"
+[[ $ftp_succeeded -ge 1 ]] || fail "the ftp run $run counted $ftp_succeeded succeeded sessions, want at least one whole instance: $metrics"
+echo "controller_e2e: run $run ran ftp scenario instances with $ftp_succeeded succeeded sessions (each with its control and data connections), verdict passed"
 
 # The ssh sessions of AGT-17. ssh_test SCENARIO PARAMS PORT SEED prints a test
 # configuration for one scenario of the first party ssh module, with the
@@ -591,7 +592,7 @@ echo "controller_e2e: run $run ran smb2/upload with $smb2_upload_succeeded succe
 
 # The sip_rtp calls of AGT-20. sip_test prints a test configuration for
 # sip_rtp/call_pcmu with the SIP port 18689. The call is a UDP signaling flow
-# and a spawned UDP media flow, so each call gives two sessions. The criteria
+# and a spawned UDP media flow, so each call gives one session. The criteria
 # bound the failed ratio, which allows for the calls that the stop of the run
 # cuts, and the script checks the succeeded sessions of the sip_rtp
 # application afterwards.
@@ -623,7 +624,7 @@ load:
 timeline: { seed: 31 }
 criteria:
   - { metric: sessions.failed_ratio, op: "<=", value: 0.5 }
-  - { metric: sessions.succeeded, op: ">", value: 3 }
+  - { metric: sessions.succeeded, op: ">", value: 1 }
 EOF
 }
 
@@ -631,8 +632,8 @@ sip_test >"$work/sip_rtp.yaml"
 run_test "$work/sip_rtp.yaml"
 [[ $(json_field verdict.passed <<<"$summary") == True ]] || fail "the sip_rtp run $run did not pass: $summary"
 sip_succeeded=$(succeeded_of sip_rtp)
-[[ $sip_succeeded -ge 4 ]] || fail "the sip_rtp run $run counted $sip_succeeded succeeded sessions, want at least two whole calls of two sessions: $metrics"
-echo "controller_e2e: run $run ran sip_rtp/call_pcmu with $sip_succeeded succeeded sessions (SIP dialog and RTP media flow), verdict passed"
+[[ $sip_succeeded -ge 2 ]] || fail "the sip_rtp run $run counted $sip_succeeded succeeded sessions, want at least two whole calls: $metrics"
+echo "controller_e2e: run $run ran sip_rtp/call_pcmu with $sip_succeeded succeeded sessions (each with its SIP dialog and RTP media flow), verdict passed"
 
 # The sessions of AGT-21. module_test MODULE SCENARIO PARAMS SUBNET SEED prints a
 # test configuration for one scenario of a first party module, with the
@@ -690,8 +691,8 @@ module_run mqtt publish_qos0 'server_port: 18691, messages: 2, interval_min_ms: 
 module_run ldap bind_search 'server_port: 18692' 111 43 1
 # hls/vod_segments is a playlist flow that spawns one segment flow per segment
 # (multi flow TCP). The segments must equal stages times stage_segments, so one
-# whole instance gives one session for the playlists and six for the segments.
-module_run hls vod_segments 'server_port: 18693, segment_port: 18694, segment_ms: 100, segments: 6, stages: 3, stage_segments: 2' 113 47 7
+# whole instance gives one session, with the playlists and the six segments.
+module_run hls vod_segments 'server_port: 18693, segment_port: 18694, segment_ms: 100, segments: 6, stages: 3, stage_segments: 2' 113 47 1
 
 # The https fetch of AGT-14. Both sides of every session upgrade to TLS at
 # once: the client with the browser profile chrome-136, the server with

@@ -227,9 +227,10 @@ fn start_capture(name: &str) -> Capture {
     Capture::start(config, Arc::new(StepClock::default())).unwrap()
 }
 
-/// The sessions that each run of `mixed_session` has: the control connection
-/// and one data connection per transfer.
-const FLOW_SESSIONS: u64 = 4;
+/// The connections that each run of `mixed_session` has: the control connection
+/// and one data connection per transfer. The run is one session (CON-31), so
+/// the counters count `INSTANCES` and the capture counts these connections.
+const FLOW_CONNECTIONS: u64 = 4;
 const TRANSFERS: u64 = 3;
 const INSTANCES: u64 = 8;
 
@@ -267,9 +268,9 @@ fn mixed_session_runs_with_one_data_connection_per_transfer() {
     config.capture.set(capture.clone());
     let (client, server) = run_pair(server, config);
 
-    // The counters: every instance started the control flow and three data
-    // flows on both sides, and every side succeeded.
-    let sessions = INSTANCES * FLOW_SESSIONS;
+    // The counters: every instance is one session of the control flow, which
+    // the three data flows join, and every session succeeded.
+    let sessions = INSTANCES;
     for (report, worker, side) in [(&client, 0, "client"), (&server, 10, "server")] {
         let s = exit(report, worker);
         let side = ("side", side);
@@ -308,6 +309,12 @@ fn mixed_session_runs_with_one_data_connection_per_transfer() {
     );
     assert_eq!(tx, rx, "what the client sent, the server received");
     assert!(tx > INSTANCES * 40_000, "{tx} bytes uploaded");
+    // The data flows add their bytes to the session of the control flow, under
+    // its labels, so no series of another label holds bytes.
+    assert_eq!(
+        counted(exit(&client, 0), metric::BYTES_TX, ("application", "ftp")),
+        tx
+    );
 
     // The capture: every session has one control connection and three data
     // connections from its own source host, and no connection resets.
@@ -346,7 +353,12 @@ fn mixed_session_runs_with_one_data_connection_per_transfer() {
         INSTANCES,
         "one source host per session"
     );
-    assert_eq!(stats.sessions_written, sessions, "{stats:?}");
+    // The capture counts connections, which each flow still owns.
+    assert_eq!(
+        stats.sessions_written,
+        INSTANCES * FLOW_CONNECTIONS,
+        "{stats:?}"
+    );
     for (host, dports) in &dialed {
         let to_control = dports.iter().filter(|p| **p == control.port()).count();
         let to_data = dports
@@ -361,7 +373,11 @@ fn mixed_session_runs_with_one_data_connection_per_transfer() {
         let mut distinct = dports.clone();
         distinct.sort_unstable();
         distinct.dedup();
-        assert_eq!(distinct.len() as u64, FLOW_SESSIONS, "{host}: {dports:?}");
+        assert_eq!(
+            distinct.len() as u64,
+            FLOW_CONNECTIONS,
+            "{host}: {dports:?}"
+        );
     }
 }
 
@@ -412,9 +428,9 @@ fn a_data_connect_before_the_listener_is_retried() {
     let (client, server) = run_pair(server, config);
     for (report, worker) in [(&client, 0), (&server, 10)] {
         let s = exit(report, worker);
-        // Each of the two flow sessions counts.
-        assert_eq!(s.counter_total(metric::SESSIONS_ATTEMPTED), 2);
-        assert_eq!(s.counter_total(metric::SESSIONS_SUCCEEDED), 2);
+        // The two flows are one session.
+        assert_eq!(s.counter_total(metric::SESSIONS_ATTEMPTED), 1);
+        assert_eq!(s.counter_total(metric::SESSIONS_SUCCEEDED), 1);
         assert_eq!(s.counter_total(metric::SESSIONS_FAILED), 0);
     }
 }
@@ -443,6 +459,7 @@ flows:
     after: [first]
     client:
       - connect: { port: 52510 }
+      - delay: { dist: uniform, min_ms: 200, max_ms: 200 }
       - send: "two\r\n"
       - expect: { pattern: "ok\r\n", timeout_ms: 5000 }
       - close: fin
@@ -466,15 +483,30 @@ fn a_flow_with_after_runs_when_its_predecessor_is_done() {
     let (client, server) = run_pair(server, config);
     for (report, worker) in [(&client, 0), (&server, 10)] {
         let s = exit(report, worker);
-        assert_eq!(s.counter_total(metric::SESSIONS_ATTEMPTED), 4);
-        assert_eq!(s.counter_total(metric::SESSIONS_SUCCEEDED), 4);
+        // Two instances of two flows each are two sessions.
+        assert_eq!(s.counter_total(metric::SESSIONS_ATTEMPTED), 2);
+        assert_eq!(s.counter_total(metric::SESSIONS_SUCCEEDED), 2);
         assert_eq!(s.counter_total(metric::SESSIONS_FAILED), 0);
     }
+    // The session lasts until the last flow ends, so each of the two sessions
+    // includes the 200 ms that the client of the second flow waits after it
+    // connected, and no shorter sample of the first flow alone exists.
+    let (count, shortest) = exit(&client, 0)
+        .iter()
+        .filter(|(k, _)| k.metric() == metric::SESSIONS_DURATION)
+        .filter_map(|(_, v)| match v {
+            SeriesValue::Histogram(h) => Some((h.len(), h.min())),
+            _ => None,
+        })
+        .fold((0, u64::MAX), |(n, m), (len, min)| (n + len, m.min(min)));
+    assert_eq!(count, 2, "one duration sample for each session");
+    assert!(shortest >= 199_000, "{shortest} us");
 }
 
 /// A data flow whose peer never comes fails the instance: the client side of
 /// the data flow expects bytes that the server never sends, the instance
-/// aborts the control flow, and every side counts under its own reason.
+/// aborts the control flow, and the session fails once, with the reason of the
+/// first side that failed.
 const STALLED: &str = r#"
 scenario: stalled
 flows:
@@ -516,21 +548,24 @@ fn a_failing_flow_fails_the_instance_and_aborts_the_others() {
         "the abort ends the sides"
     );
     let c = exit(&client, 0);
-    assert_eq!(c.counter_total(metric::SESSIONS_ATTEMPTED), 2);
+    assert_eq!(c.counter_total(metric::SESSIONS_ATTEMPTED), 1);
     assert_eq!(c.counter_total(metric::SESSIONS_SUCCEEDED), 0);
     assert_eq!(
         counted(c, metric::SESSIONS_FAILED, ("reason", "expect_timeout")),
         1
     );
+    // The control flow that the failure cuts short adds no count of its own.
     assert_eq!(
         counted(c, metric::SESSIONS_FAILED, ("reason", "aborted")),
-        1
+        0
     );
-    // The server sides end with the instance of their own worker: the data
-    // flow stays quiet too, so they time out or abort when the client resets.
+    assert_eq!(c.counter_total(metric::SESSIONS_FAILED), 1);
+    // The server session ends with the instance of its own worker: the data
+    // flow stays quiet too, so it fails once, with the reason of its first
+    // failing flow.
     let s = exit(&server, 10);
-    assert_eq!(s.counter_total(metric::SESSIONS_ATTEMPTED), 2);
-    assert_eq!(s.counter_total(metric::SESSIONS_FAILED), 2);
+    assert_eq!(s.counter_total(metric::SESSIONS_ATTEMPTED), 1);
+    assert_eq!(s.counter_total(metric::SESSIONS_FAILED), 1);
     // The concurrent gauge returns to zero on both sides.
     for snapshot in [c, s] {
         for (k, v) in snapshot.iter() {
@@ -605,8 +640,9 @@ fn every_flow_of_an_instance_calls_its_extensions() {
     );
     for (report, worker) in [(&client, 0), (&server, 10)] {
         let s = exit(report, worker);
-        assert_eq!(s.counter_total(metric::SESSIONS_ATTEMPTED), 4);
-        assert_eq!(s.counter_total(metric::SESSIONS_SUCCEEDED), 4);
+        // Two instances of two flows each are two sessions.
+        assert_eq!(s.counter_total(metric::SESSIONS_ATTEMPTED), 2);
+        assert_eq!(s.counter_total(metric::SESSIONS_SUCCEEDED), 2);
         assert_eq!(s.counter_total(metric::SESSIONS_FAILED), 0);
     }
 
@@ -729,7 +765,8 @@ fn concurrent_instances_that_draw_the_same_data_port_all_succeed() {
     let capture = start_capture("instances-same-port");
     config.capture.set(capture.clone());
     let (client, server) = run_pair(server, config);
-    let sessions = INSTANCES * FLOW_SESSIONS;
+    // One session for each instance, whatever the number of its connections.
+    let sessions = INSTANCES;
     for (report, worker, side) in [(&client, 0, "client"), (&server, 10, "server")] {
         let s = exit(report, worker);
         let side = ("side", side);

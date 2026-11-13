@@ -144,7 +144,7 @@ expected_bytes:
 
 **The estimate is a starting point.** During a run the controller measures the real bytes per session and replaces the manifest estimate of a scenario after 20 pooled sessions (`controller/internal/runs/calibrate/`, the Throughput rate calibration section of [Controller](Controller.md)). A good estimate keeps the first seconds of a run on target, so measure it and do not guess it.
 
-**What the run counts.** The contract defines one session for each start of the entry flow, with `bytes.tx` and `bytes.rx` holding the bytes of all its flows under the labels of the entry flow, so the controller measures bytes per session in the same unit as your estimate. The engine counts this way from ENG-30. Until then it reports every spawned or `after` flow as a session of its own, which halves the measured bytes per session of a scenario like `ftp/retr_epsv`. A scenario whose flows counted as sessions of their own needs no new estimate, because `expected_bytes` always meant the bytes of the whole session.
+**What the run counts.** The contract defines one session for each start of the entry flow, with `bytes.tx` and `bytes.rx` holding the bytes of all its flows under the labels of the entry flow, so the controller measures bytes per session in the same unit as your estimate. The engine counts this way since ENG-30. A scenario whose flows counted as sessions of their own needs no new estimate, because `expected_bytes` always meant the bytes of the whole session.
 
 **How to measure it.**
 

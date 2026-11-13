@@ -2,7 +2,6 @@
 //! One worker thread with its own single threaded Tokio runtime.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
@@ -99,11 +98,13 @@ pub(crate) struct Worker {
     pub(crate) flow: FlowRef,
     pub(crate) filler: Filler,
     pub(crate) shard: RefCell<Shard>,
+    /// The session series of the worker. They carry the labels of the entry
+    /// flow, so a scenario instance counts as one session in them, with the
+    /// bytes of every flow of the instance, see [`instance`].
     metrics: SessionMetrics,
-    /// The series of every flow of the scenario, by flow index, for a worker
-    /// that runs scenario instances, and empty for a single flow scenario.
-    /// Flows of one module share their series.
-    flow_metrics: Vec<SessionMetrics>,
+    /// True when the scenario has several flows, so a session start runs a
+    /// scenario instance.
+    instance: bool,
     /// The TCP data ports that the instances of the worker share.
     pub(crate) data_ports: DataPorts,
     /// The UDP ports that the server sides of the instances share.
@@ -134,27 +135,6 @@ impl Worker {
         let stats = |source| RuntimeError::Stats { worker: id, source };
         let metrics = SessionMetrics::register(&mut shard, &f.module, &flow.scenario.name, side)
             .map_err(stats)?;
-        let mut flow_metrics = Vec::new();
-        if flow.scenario.flows.len() > 1 {
-            let mut by_module: HashMap<&str, SessionMetrics> = HashMap::new();
-            for f in &flow.scenario.flows {
-                let m = match by_module.get(f.module.as_str()) {
-                    Some(m) => m.clone(),
-                    None => {
-                        let m = SessionMetrics::register(
-                            &mut shard,
-                            &f.module,
-                            &flow.scenario.name,
-                            side,
-                        )
-                        .map_err(stats)?;
-                        by_module.insert(f.module.as_str(), m.clone());
-                        m
-                    }
-                };
-                flow_metrics.push(m);
-            }
-        }
         Ok(Self {
             id,
             seed: start.seed,
@@ -163,7 +143,7 @@ impl Worker {
             filler: Filler::new(start.seed),
             shard: RefCell::new(shard),
             metrics,
-            flow_metrics,
+            instance: flow.scenario.flows.len() > 1,
             data_ports: DataPorts::new(listen_config),
             datagram_ports: DatagramPorts::new(),
             open: Cell::new(0),
@@ -187,7 +167,7 @@ impl Worker {
     /// Returns true when the scenario has several flows, so a session start
     /// runs a scenario instance.
     fn is_instance(&self) -> bool {
-        !self.flow_metrics.is_empty()
+        self.instance
     }
 
     /// Returns the upgrader of a session or instance, which collects its
@@ -206,9 +186,10 @@ impl Worker {
         }
     }
 
-    /// Returns the series of flow `index`.
-    pub(crate) fn metrics_of(&self, index: usize) -> &SessionMetrics {
-        self.flow_metrics.get(index).unwrap_or(&self.metrics)
+    /// Returns the session series of the worker, which belong to the entry
+    /// flow of the scenario.
+    pub(crate) fn metrics(&self) -> &SessionMetrics {
+        &self.metrics
     }
 
     /// Sends the cumulative snapshot of the shard to the collector.

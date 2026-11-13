@@ -490,8 +490,8 @@ fn a_spawned_flow_upgrades_to_tls() {
     let (client, server) = run_pair(server, client_config(&scenario, addr, 79, client_tls));
     for (report, side) in [(&client, Side::Client), (&server, Side::Server)] {
         let s = total(report, side);
-        // The control and the data flow of every instance count as sessions.
-        assert_eq!(s.counter_total(metric::SESSIONS_SUCCEEDED), 2 * SESSIONS);
+        // The control and the data flow of an instance are one session.
+        assert_eq!(s.counter_total(metric::SESSIONS_SUCCEEDED), SESSIONS);
         assert_eq!(s.counter_total(metric::SESSIONS_FAILED), 0);
         // Only the data flow runs over TLS.
         let l = [("port", "https"), ("side", label(side))];
