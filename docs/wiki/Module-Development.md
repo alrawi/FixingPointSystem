@@ -557,6 +557,8 @@ These are problems that the project has already met while it built modules, with
 
 **A declared item is met by one session.** An item of `expect_findings` counts as present when any one session of its rule shows it, so a scenario that comes out malformed in only some of its sessions still passes (RLM-20; RLM-23 adds a per session option).
 
+**A declared finding of a parser that did not run is not checked.** `expect_findings` is checked only for the parsers named in `--parsers`. If your labels declare Zeek weirds and a script or CI job scores with `--parsers tshark`, the score passes without looking at them, and the committed `report.json` lists no `expected_findings`. Score with every parser you declare items for, in `capture.sh` and in every job of your module workflow, and install those parsers in each job: `realism/ci/install-tools.sh` installs nDPI, tshark, and the pinned Zeek. A job that names a parser it has not installed fails before it scores (`resolve parsers: zeek program zeek not found`). Record the committed report with the same tool versions as CI (MOD-32).
+
 **Zeek can overflow at the end of a large capture.** One Gate 2 mix run failed on the weird `event_queue_overflow_drain` at the last instant of a 141 s capture, with no session, and passed on rerun. It is a resource limit of Zeek and not a fault of the traffic (QA-13, open).
 
 ### TLS

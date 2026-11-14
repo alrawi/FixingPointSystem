@@ -2,9 +2,12 @@
 #
 # Workflow of the strike module under modules/strike/. The rust job of ci.yml
 # runs its Rust tests. The module job validates the manifest and scenarios and
-# scores the committed fixture with nDPI and tshark. The harness job records a
-# fresh capture in the QA-01 namespace harness over kernel sockets and scores
-# it, so the fixture stays reproducible.
+# scores the committed fixture with nDPI, tshark, and Zeek. The harness job
+# records a fresh capture in the QA-01 namespace harness over kernel sockets and
+# scores it the same way, so the fixture stays reproducible. Both jobs need Zeek,
+# because the labels declare the Zeek weirds of the malformed scenarios
+# (expect_findings), and a declared item of a parser that did not run is not
+# checked.
 name: mod-strike
 
 on:
@@ -45,16 +48,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install nDPI and tshark, which the realism runner calls out of process
-        run: |
-          echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
-          tools/ci/apt-install.sh --install-recommends libndpi-bin tshark
+      - name: Install nDPI, tshark, and Zeek, which the realism runner calls out of process
+        run: realism/ci/install-tools.sh
       - run: python -m pip install -r tools/contracts/requirements.txt
       - run: make lint-mod-strike PYTHON=python
       - name: Score the committed fixture
         run: |
           python -m realism score --pcap modules/strike/fixtures/strike.pcapng \
-            --labels modules/strike/fixtures/expected.yaml --parsers tshark --output report.json
+            --labels modules/strike/fixtures/expected.yaml --parsers tshark,zeek --output report.json
           python -c 'import json; r = json.load(open("report.json")); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))'
 
   harness:
@@ -64,10 +65,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install the harness and realism tools
-        run: |
-          echo "wireshark-common wireshark-common/install-setuid boolean false" | sudo debconf-set-selections
-          tools/ci/apt-install.sh iproute2 tcpdump ethtool libndpi-bin tshark python3-yaml
+      - name: Install the harness, nDPI, tshark, and Zeek
+        run: realism/ci/install-tools.sh
       - run: cargo build -p fps-module-strike --example fixture_peer
       - name: Record and score a fresh capture in the namespace harness
         run: |
