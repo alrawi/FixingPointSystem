@@ -6,7 +6,7 @@
 # The script builds the fixture_peer example, brings up a harness under its
 # own name prefix, runs the server side of every scenario in the server
 # namespace and the client side in the client namespace over kernel sockets,
-# captures the router's client arm, and checks the capture three ways:
+# captures the router's client arm, and checks the capture two ways:
 #
 #   1. The capture holds one session for every TCP connection that the client
 #      peer opened. The peer gives every connection its own source port
@@ -14,21 +14,21 @@
 #      packets, and the script names that cause.
 #   2. The realism runner scores it with nDPI and tshark against expected.yaml.
 #      Its temporal check compares the gaps between the starts of the segment
-#      sessions of vod_segments with the segment duration.
-#   3. hls_check.py reads the playbacks and checks the segment cadence inside
-#      each of them and the byte share of each rung against the configured
-#      bit rates.
+#      sessions of vod_segments with the segment duration, the gaps between the
+#      segment requests inside each playback with the same duration, and the
+#      bytes of every segment, the byte share of each rung, and the bit rate of
+#      each playback with the ladder (MOD-31).
 #
 # It needs root, ip, tcpdump, ss, ndpiReader, and tshark.
 #
 #   sudo modules/hls/fixtures/capture.sh [OUTPUT_DIR]
 #
 # OUTPUT_DIR defaults to modules/hls/fixtures, where the capture lands as
-# hls.pcapng, the realism report as hls.report.json, and the playback check
-# as hls.playbacks.json. The parameters of the capture, which are the ladder,
-# the segment duration, and the length of every playback, are in params.json,
-# next to this script. The script exits with the first nonzero code of the
-# three checks, so a capture that fails one fails.
+# hls.pcapng and the realism report as hls.report.json. The parameters of the
+# capture, which are the ladder, the segment duration, and the length of every
+# playback, are in params.json, next to this script, and the temporal labels of
+# expected.yaml must agree with them (test_temporal_labels.py checks that). The
+# script stops at the first check that fails, so a capture that fails one fails.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -43,7 +43,7 @@ if [[ $(id -u) -ne 0 ]]; then
 fi
 
 # The peer takes its variables and session counts from params.json, so the
-# capture and the playback check read one set of numbers.
+# capture and the labels test read one set of numbers.
 mapfile -t peer_args < <(python3 -I - "$params" <<'PY'
 import json
 import sys
@@ -125,10 +125,5 @@ if found != expected:
         "connections, so sessions share a 5-tuple (a reused source port) or lost their packets"
     )
 PY
-score_rc=0
 python3 -m realism score --pcap "$out/hls.pcapng" --labels "$here/expected.yaml" \
-  --parsers tshark --output "$out/hls.report.json" || score_rc=$?
-check_rc=0
-python3 -I "$here/hls_check.py" "$out/hls.pcapng" --params "$params" \
-  --output "$out/hls.playbacks.json" || check_rc=$?
-exit $(( score_rc != 0 ? score_rc : check_rc ))
+  --parsers tshark --output "$out/hls.report.json"

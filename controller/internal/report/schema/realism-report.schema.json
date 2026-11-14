@@ -455,7 +455,7 @@
       }
     },
     "expectation": {
-      "description": "One item of expect_findings in a session rule of the labels.",
+      "description": "One item of expect_findings in a session rule of the labels, with the session that lacks it when the rule sets expect_every_session.",
       "type": "object",
       "required": ["session_rule", "application", "parser", "item"],
       "additionalProperties": false,
@@ -463,7 +463,17 @@
         "session_rule": {"description": "Index of the rule in the sessions list of the labels.", "type": "integer", "minimum": 0},
         "application": {"type": "string", "minLength": 1},
         "parser": {"enum": ["tshark", "zeek"]},
-        "item": {"description": "A zeek weird name, or a tshark protocol with an optional part of the message.", "type": "string", "minLength": 1}
+        "item": {"description": "A zeek weird name, or a tshark protocol with an optional part of the message.", "type": "string", "minLength": 1},
+        "session": {"description": "The session that lacks the item, in the entries of a rule with expect_every_session (RLM-23). Absent for a rule without it, whose item is met by any one session of the rule, and for such a rule that matches no session. Reports before format 0.21.0 have no such field.", "type": "integer", "minimum": 1},
+        "transport": {"description": "The transport of that session. Present with session.", "enum": ["tcp", "udp"]},
+        "client": {"description": "The client of that session. Present with session.", "$ref": "#/$defs/endpoint"},
+        "server": {"description": "The server of that session. Present with session.", "$ref": "#/$defs/endpoint"}
+      },
+      "dependentRequired": {
+        "session": ["transport", "client", "server"],
+        "transport": ["session"],
+        "client": ["session"],
+        "server": ["session"]
       }
     },
     "parser_errors": {
@@ -603,7 +613,7 @@
           "minimum": 0
         },
         "missing_findings": {
-          "description": "The declared items that no session of their rule produced, for a parser that ran. Each one fails the check and counts once in realism.check_failures. A finding that no rule declares is not here: it is in errors and counts as before. Reports before format 0.19.0 have no such field.",
+          "description": "The declared items that no session of their rule produced, for a parser that ran. Each one fails the check and counts once in realism.check_failures. A rule with expect_every_session (RLM-23) gives one entry for each session that lacks an item, with the session, transport, client, and server of that session, and counts each entry. A finding that no rule declares is not here: it is in errors and counts as before. Reports before format 0.19.0 have no such field.",
           "type": "array",
           "items": {"$ref": "#/$defs/expectation"}
         },

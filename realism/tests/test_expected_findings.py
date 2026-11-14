@@ -21,7 +21,7 @@ from realism.capture import summarize
 from realism.classifier import StubClassifier
 from realism.labels import LabelsError, parse
 from realism.parser_errors import ParserErrorsResult, check
-from realism.parsers import KIND_WEIRD, Finding, StubParser, TsharkRunner
+from realism.parsers import KIND_MALFORMED, KIND_WEIRD, Finding, StubParser, TsharkRunner
 from realism.report import SCHEMA_PATH, score
 from realism.tests import pcapgen
 from realism.tests.conftest import LABELS_HTTP_DNS
@@ -284,3 +284,230 @@ def test_real_tshark_declared_malformed_traffic_passes_and_the_rest_fails(tmp_pa
 
 def _tshark_runner() -> Any:
     return TsharkRunner()
+
+
+OTHER_CLIENT = ("10.0.0.11", 50101)
+THIRD_CLIENT = ("10.0.0.12", 50102)
+ALL_CLIENTS = (DNS_CLIENT, OTHER_CLIENT, THIRD_CLIENT)
+
+
+def _three_malformed_dns_capture(tmp_path: Path) -> Path:
+    """A capture whose three DNS sessions all answer with a malformed message."""
+    cap = pcapgen.mixed_capture(http_sessions=1, dns_lookups=0)
+    for number, client in enumerate(ALL_CLIENTS):
+        cap.dns_malformed_answer(client, DNS_SERVER, 0x2222 + number)
+    return cap.write_pcap(tmp_path / "three-malformed-dns.pcap")
+
+
+def _every_labels(expect: dict[str, list[str]], every: bool | None = True) -> Any:
+    doc = copy.deepcopy(LABELS_HTTP_DNS)
+    doc["sessions"][1]["expect_findings"] = expect  # type: ignore[index]
+    if every is not None:
+        doc["sessions"][1]["expect_every_session"] = every  # type: ignore[index]
+    return parse(doc)
+
+
+def _reply_of(client: tuple[str, int], **over: Any) -> Finding:
+    return _reply_finding("tshark", dst_ip=client[0], dst_port=client[1], **over)
+
+
+def _all_replies() -> list[Finding]:
+    return [_reply_of(client, frame=26 + n) for n, client in enumerate(ALL_CLIENTS)]
+
+
+def _http_finding() -> Finding:
+    return Finding(
+        parser="tshark",
+        kind=KIND_MALFORMED,
+        name="http",
+        message="Bad request",
+        frame=4,
+        timestamp=1.0,
+        transport="tcp",
+        src_ip="10.0.0.10",
+        src_port=40000,
+        dst_ip="10.0.1.80",
+        dst_port=80,
+    )
+
+
+def test_every_session_names_the_session_that_lacks_a_declared_finding(tmp_path: Path) -> None:
+    """Acceptance of RLM-23: two of three sessions are malformed, and the third is named."""
+    pcap = _three_malformed_dns_capture(tmp_path)
+    findings = [_reply_of(DNS_CLIENT), _reply_of(OTHER_CLIENT, frame=30)]
+    sessions = {s.client_port: s for s in summarize(pcap).sessions}
+    result = _run(pcap, _every_labels({"tshark": ["dns"]}), _tshark(*findings))
+    assert not result.passed
+    entry = result.to_dict()
+    assert (entry["errors_total"], entry["expected_total"]) == (0, 2)
+    assert entry["missing_findings"] == [
+        {
+            "session_rule": 1,
+            "application": "dns",
+            "parser": "tshark",
+            "item": "dns",
+            "session": sessions[THIRD_CLIENT[1]].id,
+            "transport": "udp",
+            "client": {"ip": THIRD_CLIENT[0], "port": THIRD_CLIENT[1]},
+            "server": {"ip": DNS_SERVER[0], "port": DNS_SERVER[1]},
+        }
+    ]
+    assert result.failures_total == 1
+
+
+def test_the_same_capture_passes_without_the_setting(tmp_path: Path) -> None:
+    pcap = _three_malformed_dns_capture(tmp_path)
+    findings = [_reply_of(DNS_CLIENT), _reply_of(OTHER_CLIENT, frame=30)]
+    for every in (None, False):
+        result = _run(pcap, _every_labels({"tshark": ["dns"]}, every), _tshark(*findings))
+        assert result.passed
+        assert result.missing_findings == []
+
+
+def test_every_session_passes_when_each_session_shows_each_item(tmp_path: Path) -> None:
+    pcap = _three_malformed_dns_capture(tmp_path)
+    result = _run(pcap, _every_labels({"tshark": ["dns"]}), _tshark(*_all_replies()))
+    assert result.passed and result.expected_total == 3
+
+
+def test_every_session_names_each_session_and_each_item_that_is_lacking(tmp_path: Path) -> None:
+    pcap = _three_malformed_dns_capture(tmp_path)
+    labels = _every_labels(
+        {"tshark": ["dns", "dns: Exception occurred"], "zeek": ["bad_UDP_checksum"]}
+    )
+    zeek_weird = _weird(
+        "bad_UDP_checksum",
+        src_ip=DNS_SERVER[0],
+        src_port=DNS_SERVER[1],
+        dst_ip=OTHER_CLIENT[0],
+        dst_port=OTHER_CLIENT[1],
+    )
+    result = _run(pcap, labels, _tshark(_reply_of(DNS_CLIENT)), _zeek(zeek_weird))
+    entry = result.to_dict()
+    pairs = {(m["parser"], m["item"], m["client"]["port"]) for m in entry["missing_findings"]}
+    assert pairs == {
+        ("tshark", "dns", OTHER_CLIENT[1]),
+        ("tshark", "dns", THIRD_CLIENT[1]),
+        ("tshark", "dns: Exception occurred", OTHER_CLIENT[1]),
+        ("tshark", "dns: Exception occurred", THIRD_CLIENT[1]),
+        ("zeek", "bad_UDP_checksum", DNS_CLIENT[1]),
+        ("zeek", "bad_UDP_checksum", THIRD_CLIENT[1]),
+    }
+    assert result.failures_total == 6
+
+
+def test_a_finding_of_one_session_does_not_meet_the_item_of_another(tmp_path: Path) -> None:
+    pcap = _three_malformed_dns_capture(tmp_path)
+    findings = [_reply_of(DNS_CLIENT, frame=26 + n) for n in range(5)]
+    result = _run(pcap, _every_labels({"tshark": ["dns"]}), _tshark(*findings))
+    assert sorted(m["client"]["port"] for m in result.missing_findings) == [
+        OTHER_CLIENT[1],
+        THIRD_CLIENT[1],
+    ]
+
+
+def test_the_setting_of_one_rule_leaves_the_other_rules_alone(tmp_path: Path) -> None:
+    pcap = _three_malformed_dns_capture(tmp_path)
+    doc = copy.deepcopy(LABELS_HTTP_DNS)
+    doc["sessions"][0]["expect_findings"] = {"tshark": ["http"]}  # type: ignore[index]
+    doc["sessions"][1]["expect_every_session"] = True  # type: ignore[index]
+    doc["sessions"][1]["expect_findings"] = {"tshark": ["dns"]}  # type: ignore[index]
+    result = _run(pcap, parse(doc), _tshark(_http_finding(), *_all_replies()))
+    assert result.passed
+    # The http rule has no setting, and its one session that shows the item meets it.
+    absent = _run(pcap, parse(doc), _tshark(*_all_replies()))
+    assert [(m["session_rule"], "session" in m) for m in absent.missing_findings] == [(0, False)]
+
+
+def test_every_session_with_no_matching_session_lists_each_item_once(tmp_path: Path) -> None:
+    pcap = pcapgen.mixed_capture(http_sessions=1, dns_lookups=0).write_pcap(tmp_path / "http.pcap")
+    result = _run(pcap, _every_labels({"tshark": ["dns", "dns: Bad"]}), _tshark())
+    assert not result.passed
+    assert [(m["item"], "session" in m) for m in result.missing_findings] == [
+        ("dns", False),
+        ("dns: Bad", False),
+    ]
+
+
+def test_every_session_leaves_an_item_of_a_parser_that_did_not_run_unchecked(
+    tmp_path: Path,
+) -> None:
+    pcap = _three_malformed_dns_capture(tmp_path)
+    labels = _every_labels({"tshark": ["dns"], "zeek": ["bad_UDP_checksum"]})
+    result = _run(pcap, labels, _tshark(*_all_replies()))
+    assert result.passed
+    assert [u["parser"] for u in result.to_dict()["unchecked_expectations"]] == ["zeek"]
+
+
+def test_the_report_validates_with_and_without_the_session_fields(
+    tmp_path: Path, labels_file: Callable[..., Path]
+) -> None:
+    pcap = _three_malformed_dns_capture(tmp_path)
+    reports = {}
+    for every, count in ((True, 2), (False, 0)):
+        doc = copy.deepcopy(LABELS_HTTP_DNS)
+        doc["sessions"][1]["expect_findings"] = {"tshark": ["dns"]}  # type: ignore[index]
+        doc["sessions"][1]["expect_every_session"] = every  # type: ignore[index]
+        parser = _tshark(_reply_of(DNS_CLIENT))
+        report = score(pcap, labels_file(doc), CLASSIFIER, parsers=[parser]).to_dict()
+        _validate(report)
+        assert len(_parser_entry(report)["missing_findings"]) == count
+        assert report["passed"] is (count == 0)
+        reports[every] = report
+    broken = reports[True]
+    del _parser_entry(broken)["missing_findings"][0]["client"]
+    with pytest.raises(jsonschema.ValidationError):
+        _validate(broken)  # a session without its client
+
+
+@pytest.mark.parametrize(
+    ("value", "has_findings", "message"),
+    [
+        ("yes", True, "must be true or false"),
+        (1, True, "must be true or false"),
+        (True, False, "needs expect_findings"),
+    ],
+)
+def test_the_labels_refuse_a_malformed_every_session_setting(
+    value: Any, has_findings: bool, message: str
+) -> None:
+    doc = copy.deepcopy(LABELS_HTTP_DNS)
+    doc["sessions"][1]["expect_every_session"] = value  # type: ignore[index]
+    if has_findings:
+        doc["sessions"][1]["expect_findings"] = {"tshark": ["dns"]}  # type: ignore[index]
+    with pytest.raises(LabelsError, match=message):
+        parse(doc)
+
+
+def test_the_labels_schema_knows_the_every_session_setting() -> None:
+    import json
+
+    validator = jsonschema.Draft202012Validator(json.loads(LABELS_SCHEMA.read_text()))
+    doc = copy.deepcopy(LABELS_HTTP_DNS)
+    doc["sessions"][1]["expect_findings"] = {"tshark": ["dns"]}  # type: ignore[index]
+    doc["sessions"][1]["expect_every_session"] = True  # type: ignore[index]
+    validator.validate(doc)
+    assert parse(doc).rules[1].expect_every_session is True
+    assert parse(LABELS_HTTP_DNS).rules[1].expect_every_session is False
+    doc["sessions"][1]["expect_every_session"] = "yes"  # type: ignore[index]
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate(doc)
+
+
+@pytest.mark.skipif(shutil.which("tshark") is None, reason="tshark is not installed")
+def test_real_tshark_every_session_names_the_session_that_is_well_formed(tmp_path: Path) -> None:
+    """Acceptance of RLM-23 with the real tshark: two malformed DNS answers and one clean lookup."""
+    cap = pcapgen.mixed_capture(http_sessions=1, dns_lookups=0)
+    cap.dns_malformed_answer(DNS_CLIENT, DNS_SERVER, 0x2222)
+    cap.dns_malformed_answer(OTHER_CLIENT, DNS_SERVER, 0x2223)
+    cap.dns_lookup(THIRD_CLIENT, DNS_SERVER, 0x3000)
+    pcap = cap.write_pcap(tmp_path / "two-malformed-one-clean.pcap")
+    sessions = {s.client_port: s for s in summarize(pcap).sessions}
+
+    each = _run(pcap, _every_labels({"tshark": ["dns"]}), _tshark_runner())
+    assert not each.passed
+    assert [m["session"] for m in each.missing_findings] == [sessions[THIRD_CLIENT[1]].id]
+    assert each.errors_total == 0 and each.expected_total == 2
+
+    one = _run(pcap, _every_labels({"tshark": ["dns"]}, every=None), _tshark_runner())
+    assert one.passed and one.missing_findings == []
