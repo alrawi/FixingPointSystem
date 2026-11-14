@@ -3355,6 +3355,23 @@ work_packages:
     acceptance:
       - The committed capture passes the realism checks with the expected findings declared, and the harness job records and scores a fresh capture.
 
+  - id: MOD-32
+    title: Strike malformed scenario fixtures scored with expected findings
+    phase: 2
+    workstream: MOD
+    size: S
+    depends_on: [MOD-28, RLM-20, RLM-23]
+    paths: [modules/strike/fixtures/]
+    owner_action: The owner's team implements this package by hand (issue #557). Workers do not claim it, and the coordinator does not dispatch it.
+    summary: >-
+      The third fixture package of issue #491. The strike fixture records bad_request_line and te_cl_conflict, each on
+      a server port of its own, and the labels declare the Zeek weirds of the two malformed scenarios with
+      expect_findings, so the parser error check passes on the declared findings and fails on any other.
+    deliverables:
+      - Two more phases in fixtures/capture.sh on ports 8083 and 8084, rules with expect_findings and expect_every_session in fixtures/expected.yaml, a re-recorded strike.pcapng, and strike.report.json scored with tshark and Zeek at the CI versions.
+    acceptance:
+      - The module and harness jobs of mod-strike.yml score with tshark and Zeek and pass, every session of each malformed rule shows its declared finding, and the report lists them under expected_findings.
+
   - id: MOD-29
     title: Raw strikes in the strike module
     phase: 2

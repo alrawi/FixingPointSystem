@@ -3,10 +3,12 @@
 #
 # Records the strike fixture inside the QA-01 namespace harness.
 #
-# The capture has two phases under one pcap. The slowloris phase runs the
-# scenario on its default port 8080. The churn phase runs conn_churn on its
-# own ports, so the structure check of the realism runner gives every
-# scenario a session pool of its own (modules/strike/fixtures/expected.yaml).
+# The capture has four phases under one pcap, one per scenario, each on its
+# own server port: slowloris on 8080, conn_churn on 8081 and 8082,
+# bad_request_line on 8083, and te_cl_conflict on 8084. Separate ports give
+# every scenario its own session pool in the structure check and let the
+# labels declare expect_findings only on the malformed rules, as RLM-20
+# requires (modules/strike/fixtures/expected.yaml).
 # The server side runs in the server namespace and the client side in the
 # client namespace, and the router's client leg records the traffic between
 # them.
@@ -88,7 +90,23 @@ wait_ready 8081
 "$harness" exec client "$peer" client --connect "$server_addr" --source "$client_addr" --scenario conn_churn --sessions "$sessions" "${churn_vars[@]}"
 wait "$server_pid"
 
+# The bad-request-line phase: a malformed method on its own port 8083, so
+# its declared findings cannot pool with another scenario's.
+"$harness" exec server "$peer" server --listen "$server_addr" --scenario bad_request_line --sessions "$sessions" --var server_port=8083 &
+server_pid=$!
+wait_ready 8083
+"$harness" exec client "$peer" client --connect "$server_addr" --source "$client_addr" --scenario bad_request_line --sessions "$sessions" --var server_port=8083
+wait "$server_pid"
+
+# The framing-conflict phase: Content-Length plus Transfer-Encoding on its
+# own port 8084.
+"$harness" exec server "$peer" server --listen "$server_addr" --scenario te_cl_conflict --sessions "$sessions" --var server_port=8084 &
+server_pid=$!
+wait_ready 8084
+"$harness" exec client "$peer" client --connect "$server_addr" --source "$client_addr" --scenario te_cl_conflict --sessions "$sessions" --var server_port=8084
+wait "$server_pid"
+
 "$harness" capture stop
 
 cd "$root"
-python3 -m realism score --pcap "$out/strike.pcapng" --labels modules/strike/fixtures/expected.yaml --parsers tshark --output "$out/strike.report.json"
+python3 -m realism score --pcap "$out/strike.pcapng" --labels modules/strike/fixtures/expected.yaml --parsers tshark,zeek --output "$out/strike.report.json"

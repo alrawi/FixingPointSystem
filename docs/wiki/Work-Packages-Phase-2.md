@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 175 work packages. Packages marked critical path gate the phase.
+This page lists 176 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -134,6 +134,7 @@ flowchart LR
   MOD_26["MOD-26<br/>A module development guide for third party authors"]
   MOD_27["MOD-27<br/>The strike module, application layer first slice"]
   MOD_28["MOD-28<br/>Fixtures for the strike module"]
+  MOD_32["MOD-32<br/>Strike malformed scenario fixtures scored with expected findings"]
   MOD_29["MOD-29<br/>Raw strikes in the strike module"]
   MOD_30["MOD-30<br/>STARTTLS ports in the smtp and imap capture scripts"]
   MOD_31["MOD-31<br/>HLS timing and bytes as labels"]
@@ -332,6 +333,9 @@ flowchart LR
   CTL_47 --> MOD_25
   MOD_27 --> MOD_28
   RLM_20 --> MOD_28
+  MOD_28 --> MOD_32
+  RLM_20 --> MOD_32
+  RLM_23 --> MOD_32
   MOD_28 --> MOD_29
   ENG_29 --> MOD_29
   RLM_21 --> MOD_30
@@ -518,6 +522,7 @@ flowchart LR
 | [MOD-26](#mod-26-a-module-development-guide-for-third-party-authors) | A module development guide for third party authors | M | none |  |
 | [MOD-27](#mod-27-the-strike-module-application-layer-first-slice) | The strike module, application layer first slice | S | none |  |
 | [MOD-28](#mod-28-fixtures-for-the-strike-module) | Fixtures for the strike module | M | MOD-27, RLM-20 |  |
+| [MOD-32](#mod-32-strike-malformed-scenario-fixtures-scored-with-expected-findings) | Strike malformed scenario fixtures scored with expected findings | S | MOD-28, RLM-20, RLM-23 |  |
 | [MOD-29](#mod-29-raw-strikes-in-the-strike-module) | Raw strikes in the strike module | L | MOD-28, ENG-29 |  |
 | [MOD-30](#mod-30-starttls-ports-in-the-smtp-and-imap-capture-scripts) | STARTTLS ports in the smtp and imap capture scripts | S | RLM-21 |  |
 | [MOD-31](#mod-31-hls-timing-and-bytes-as-labels) | HLS timing and bytes as labels | S | RLM-22 |  |
@@ -2916,6 +2921,24 @@ Deliverables.
 Acceptance.
 
 - [ ] The committed capture passes the realism checks with the expected findings declared, and the harness job records and scores a fresh capture.
+
+### MOD-32 Strike malformed scenario fixtures scored with expected findings
+
+Phase 2 · size S · workstream MOD
+
+- **Depends on.** MOD-28, RLM-20, RLM-23
+- **Paths.** `modules/strike/fixtures/`
+- **Owner action.** The owner's team implements this package by hand (issue
+
+The third fixture package of issue #491. The strike fixture records bad_request_line and te_cl_conflict, each on a server port of its own, and the labels declare the Zeek weirds of the two malformed scenarios with expect_findings, so the parser error check passes on the declared findings and fails on any other.
+
+Deliverables.
+
+- Two more phases in fixtures/capture.sh on ports 8083 and 8084, rules with expect_findings and expect_every_session in fixtures/expected.yaml, a re-recorded strike.pcapng, and strike.report.json scored with tshark and Zeek at the CI versions.
+
+Acceptance.
+
+- [ ] The module and harness jobs of mod-strike.yml score with tshark and Zeek and pass, every session of each malformed rule shows its declared finding, and the report lists them under expected_findings.
 
 ### MOD-29 Raw strikes in the strike module
 

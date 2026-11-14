@@ -1,22 +1,22 @@
 {
   "report": "fps-realism-report",
-  "version": "0.15.0",
+  "version": "0.20.0",
   "generator": "fps-realism 0.1.0",
   "passed": true,
   "capture": {
     "file": "strike.pcapng",
-    "sha256": "4a7db7cfd96b8a20ec8a8c2f2fcdf39483ba8c0a1c13d746739758989c88db85",
+    "sha256": "b824ca7d2133aa17aa3542dfdbb0ec1115e77365cafc314d243c7e1f23ff292c",
     "format": "pcapng",
     "link_types": [
       1
     ],
-    "frames": 4021,
+    "frames": 4636,
     "skipped_frames": 2,
-    "sessions": 680
+    "sessions": 720
   },
   "labels": {
     "file": "expected.yaml",
-    "sha256": "06bcdc9289d4742519352bc1546e6b8c279b1bef91f66a8c83431a847d9f32f5"
+    "sha256": "bcd843bbe69e27e8df034bfb406b26acf4d3c1f57bad02342b0f5d6c6afd866f"
   },
   "checks": [
     {
@@ -35,6 +35,14 @@
           "value": 1.0
         },
         {
+          "name": "realism.conformance_ratio",
+          "labels": {
+            "application": "strike_unclassified",
+            "classifier": "ndpi"
+          },
+          "value": 1.0
+        },
+        {
           "name": "realism.check_failures",
           "labels": {
             "check": "conformance"
@@ -48,12 +56,25 @@
           "accepted": [
             "HTTP"
           ],
-          "sessions": 40,
-          "conforming": 40,
+          "sessions": 60,
+          "conforming": 60,
           "ratio": 1.0,
           "passed": true,
           "observed": {
-            "HTTP": 40
+            "HTTP": 60
+          }
+        },
+        {
+          "application": "strike_unclassified",
+          "accepted": [
+            "Unknown"
+          ],
+          "sessions": 20,
+          "conforming": 20,
+          "ratio": 1.0,
+          "passed": true,
+          "observed": {
+            "Unknown": 20
           }
         }
       ],
@@ -69,6 +90,14 @@
           "name": "realism.parser_errors",
           "labels": {
             "application": "strike",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "strike_unclassified",
             "parser": "tshark"
           },
           "value": 0
@@ -100,7 +129,19 @@
       "applications": [
         {
           "application": "strike",
-          "sessions": 40,
+          "sessions": 60,
+          "parser_errors": 0,
+          "malformed_packets": 0,
+          "by_parser": {
+            "tshark": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            }
+          }
+        },
+        {
+          "application": "strike_unclassified",
+          "sessions": 20,
           "parser_errors": 0,
           "malformed_packets": 0,
           "by_parser": {
@@ -118,7 +159,27 @@
         "tshark": 0
       },
       "errors": [],
-      "errors_total": 0
+      "errors_total": 0,
+      "not_counted": [],
+      "not_counted_total": 0,
+      "port_collision_ports": 935,
+      "expected_findings": [],
+      "expected_total": 0,
+      "missing_findings": [],
+      "unchecked_expectations": [
+        {
+          "session_rule": 2,
+          "application": "strike_unclassified",
+          "parser": "zeek",
+          "item": "unknown_HTTP_method"
+        },
+        {
+          "session_rule": 3,
+          "application": "strike",
+          "parser": "zeek",
+          "item": "HTTP_content_length_and_chunked"
+        }
+      ]
     },
     {
       "check": "session_structure",
@@ -138,6 +199,20 @@
           "value": 0
         },
         {
+          "name": "realism.structure_failures",
+          "labels": {
+            "scenario": "bad_request_line"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.structure_failures",
+          "labels": {
+            "scenario": "te_cl_conflict"
+          },
+          "value": 0
+        },
+        {
           "name": "realism.check_failures",
           "labels": {
             "check": "session_structure"
@@ -148,10 +223,10 @@
       "passed": true,
       "max_gap_s": null,
       "tolerance_s": 0.5,
-      "sessions_total": 680,
-      "sessions_assigned": 680,
+      "sessions_total": 720,
+      "sessions_assigned": 720,
       "sessions_unassigned": 0,
-      "instances": 40,
+      "instances": 80,
       "failed_instances": 0,
       "scenarios": [
         {
@@ -214,6 +289,50 @@
               "to": "churn"
             }
           ]
+        },
+        {
+          "scenario": "bad_request_line",
+          "source": "/home/tohaa1/fixpoint-strike-20261112/wt/modules/strike/fixtures/../scenarios/bad_request_line.yaml",
+          "expected_instances": 20,
+          "instances": 20,
+          "failed_instances": 0,
+          "sessions": 20,
+          "flows": [
+            {
+              "id": "probe",
+              "module": "strike",
+              "transport": "tcp",
+              "server_port": 8083,
+              "spawned": false,
+              "after": [],
+              "min_connections": 1,
+              "max_connections": 1,
+              "connections": 20
+            }
+          ],
+          "edges": []
+        },
+        {
+          "scenario": "te_cl_conflict",
+          "source": "/home/tohaa1/fixpoint-strike-20261112/wt/modules/strike/fixtures/../scenarios/te_cl_conflict.yaml",
+          "expected_instances": 20,
+          "instances": 20,
+          "failed_instances": 0,
+          "sessions": 20,
+          "flows": [
+            {
+              "id": "conflict",
+              "module": "strike",
+              "transport": "tcp",
+              "server_port": 8084,
+              "spawned": false,
+              "after": [],
+              "min_connections": 1,
+              "max_connections": 1,
+              "connections": 20
+            }
+          ],
+          "edges": []
         }
       ],
       "failed_instance_details": [],
