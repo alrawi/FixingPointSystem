@@ -23,6 +23,7 @@ The module has two packages after CTL-01.
 | `internal/report/html/` | The self contained HTML run report with inline SVG charts (CTL-13) |
 | `internal/wiring/` | Builds the controller from its packages, the registry and agent adapters, and the combined REST server (CTL-17) |
 | `internal/pki/` | The controller CA, enrollment tokens, agent certificates, rotation, revocation, and the mutual TLS configuration (CTL-15) |
+| `internal/multiagent/` | Multi agent runs: the clock offset check, the plan split check, the common start instant, and exact counter aggregation (CTL-16) |
 
 Later packages add their own directories under `internal/`, as the [Implementation Plan](Implementation-Plan.md) assigns them. The `app.App` type owns every dependency, and the module has no package level mutable state. A later package mounts its handlers with `App.Handle` before `App.Run` starts, for example CTL-02 for the `/v1` API.
 
@@ -1246,3 +1247,23 @@ The tests open real TLS connections on the loopback interface. `TestMutualTLSAdm
 - `TestExpiredCertificateEndsAnIdleAgentSession` moves the clock past the lifetime of a certificate, and the sweep ends the session of the idle agent. The agent manager tests in `internal/agents` show that a busy agent keeps its session, and that `EndSession` and the expiry give their reasons.
 - `TestAdminSocket`, `TestAdminSocketReplacesAStaleFile`, and `TestAdminHandlerValidatesRequests` cover the admin socket: mode 0600, the refusal of a live socket, the replacement of a stale one, and the validation of every request.
 - `TestEndToEndMutualTLS` in `cmd/fps-controller` builds the binary in its default mode and runs the path with a Go fake agent. It mints a token with the `token` subcommand, enrolls over HTTPS with the CA file from the PKI directory, registers over mutual TLS, shows that no certificate, a plain client, a certificate of another CA, and another identity cannot register, revokes with the `revoke` subcommand, and enrolls again with a new token. It checks that the token never reaches the logs. `TestEndToEnd` keeps its Go fake agent over the plain mode.
+
+## Multi agent runs
+
+CTL-16 added the package `internal/multiagent/`. A `Coordinator` starts one test on several agents at once, and a `Collector` sums their counters. The package reaches the agent manager, the compiler, and the clock measurements through interfaces, and `*agents.Manager` satisfies `AgentManager`.
+
+`Coordinator.Start` works in a fixed order, so that a refusal leaves no trace on any agent.
+
+1. It reads the clock offset of every agent from a `ClockSource` and refuses with `ErrClockOffset` when the absolute offset of any agent is above 10 ms (`MaxClockOffset`). An offset of exactly 10 ms passes. The error is a `*ClockError` that lists every offender. An agent without a measurement is refused with `ErrNoClockOffset`, because the run does not start on a guess.
+2. It reads the capabilities of the agents and splits the test with the compiler. `Split` checks that every agent has exactly one plan, that no plan names a stranger, and that all plans share the run id and one nonzero seed, and fails with `ErrSplit` otherwise.
+3. It reserves the agents for the run id, prepares all of them in parallel, and sends every agent the same start instant, which is the controller time after the last prepare plus `StartLead` (two seconds by default). Each `StartCommand.start_at` is that instant plus the measured offset of the agent, so it names the same moment on the clock of each agent.
+
+When a step from 3 on fails, `Start` aborts every agent, releases the reservations, and returns the error with the agent ids.
+
+The `Collector` takes snapshots through `Run.Observe`, which the caller wires into `agents.Config.Observer`, and through the final snapshot of each stop result. Counters are cumulative, so the newest snapshot of an agent replaces the older ones, and a repeated or older sequence and a snapshot of another plan are dropped. The sum is exact: counters add in unsigned 64 bit integers, never through a float, and a sum above 2^64-1 fails with `ErrCounterOverflow`. Gauges add as floats. `Totals` returns the counters without labels, and `Series` returns every series with its labels. `Run.Stop` stops all agents, adds their final snapshots, releases the reservations, and returns the aggregate together with any stop error.
+
+### Clock offset source
+
+The wire contract has what the check needs: `Heartbeat.agent_time` and `HeartbeatAck.controller_time`. The agent manager does not keep `agent_time` yet, and `fakeagent` always sends its own wall clock, so the controller has no `ClockSource` of its own. Until a package that owns `internal/agents` adds one, a caller passes its own source, and the tests use a table. A source that computes `agent_time` minus the controller receive time includes the one way delay of the heartbeat, because the acknowledgement does not echo `agent_time` back.
+
+The limit applies to each agent against the controller. Two agents at +10 ms and -10 ms both pass and differ by 20 ms from each other.
