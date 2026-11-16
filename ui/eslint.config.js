@@ -29,7 +29,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/*.{js,mjs}", "mock/**", "e2e/**", "*.config.ts"],
+    files: ["**/*.{js,mjs}", "mock/**", "e2e/**", "e2e-controller/**", "*.config.ts"],
     languageOptions: { globals: { ...globals.node } },
   },
   {
