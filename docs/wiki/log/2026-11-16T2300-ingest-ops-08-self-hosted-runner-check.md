@@ -1,0 +1,33 @@
+## [2026-11-16] ingest | OPS-08 CI check that keeps self hosted runners off untrusted triggers
+
+`tools/swarm/check_self_hosted.py` reads every file of `.github/workflows/` and fails a job that names a self hosted runner unless the workflow starts only on `workflow_dispatch` and `schedule`, the job (or else the workflow) has `permissions` with `contents: read` and no write value, every `actions/checkout` step of the job sets `persist-credentials: false` (and the job has one), and the job sets `timeout-minutes` to a positive whole number (issue #579). A job is self hosted unless every `runs-on` label is `ubuntu-*`, `windows-*`, or `macos-*`, so `self-hosted`, `fps-bench`, any other name, a runner group, and an unresolved expression all count. The command exits with 0, 1 for a broken rule, and 2 for a file that cannot be parsed. [Operations](Operations.md) has the new section "Self hosted runner check".
+
+Design choices:
+
+- **A job level `if:` is not accepted in place of the trigger rule.** Rule 1 of "Owner host" says the workflow has no pull request, push, comment, `workflow_run`, or `workflow_call` trigger, and D13 says the same. A guard lives in the file that a branch can change, and one wrong clause sends code of a fork to fat-nuc, while the trigger list is a set that the check reads exactly. The guard stays useful as a second layer, so the check warns on stderr, without failing, when a self hosted job has no `if:` that names `github.ref == 'refs/heads/main'`, because `workflow_dispatch` starts the file on any branch.
+- **Fail closed.** Anything that is not a hosted label counts as self hosted, including a matrix reference with a non hosted value and an expression that cannot be resolved.
+- **Only self hosted jobs are held to rules 2 to 4.** The hosted jobs of the same workflow are not checked, and a job that calls a reusable workflow has no runner of its own (the callee must have `workflow_call`, so it fails on the trigger rule if it names a self hosted label).
+- **Not checked:** the ban on a secret in rule 2 and rules 3 to 5 (inputs through `env`, no sudo, no host changes), which need a reading of the steps and stay with the reviewer.
+
+Evidence: `tools/swarm/test_check_self_hosted.py` has 76 test cases. They fail a self hosted workflow with each of `push`, `pull_request`, `pull_request_target`, `issue_comment`, `workflow_run`, `workflow_call` and four more events, in the mapping, list, and single name forms of `on:`, and with the YAML 1.1 reading of `on` as `True`. They also cover every non hosted label form, hosted and mixed matrices, the permission, checkout, and timeout variants, the guard that does not excuse a `push`, and the exit codes. `ruff` and `mypy --strict` pass on both files, and `python3 -m pytest -q tools/swarm` passes (152 tests).
+
+Findings:
+
+- **The check fails on `main` today, for one reason.** `.github/workflows/qa-bench.yml` has the triggers `push`, `pull_request`, `schedule`, and `workflow_dispatch`, and its job `nightly` runs on `[self-hosted, linux, fps-bench]`. The output is `qa-bench.yml: trigger: names a self hosted runner in job(s) nightly but is also started by: pull_request, push`. The job passes every other rule already (workflow level `contents: read`, `persist-credentials: false`, `timeout-minutes: 45`, and a guard that names `refs/heads/main`). All 43 other workflows have only hosted jobs. The job `if:` that guards `nightly` skips it for a pull request, which is why it is safe in practice, but rule 1 says the workflow has no such trigger, so the file must change.
+- **What the coordinator must change** (workflows are shared files, so this package did not edit them). Move the job `nightly` into a new file `.github/workflows/qa-bench-nightly.yml` with `name: qa-bench-nightly`, `on:` holding only `schedule` (cron `"17 2 * * *"`) and `workflow_dispatch` (with the `baseline` input), `permissions: contents: read`, and the unchanged job, keeping its `if:` (the repository and `refs/heads/main` guard), `timeout-minutes: 45`, `concurrency`, `env`, and steps. In `qa-bench.yml`, delete the job `nightly`, the `schedule` trigger, the `baseline` input (keep `workflow_dispatch` only if wanted for the `test` job), and the `if: github.event_name != 'schedule'` line of `test`, and update the header comment. A test in the suite (`test_qa_bench_nightly_job_alone_would_pass_in_a_workflow_of_its_own`) builds exactly that split from the real file and shows that both halves pass. It keeps passing after the real split. References to update: `bench/README.md` (lines 30 and 77, the workflow name and file), `docs/wiki/Testing.md` line 18 (`nightly` job of `qa-bench.yml`).
+- **Order matters.** Add the CI step below only in the same pull request as the split, or after it. With the step in place and `qa-bench.yml` unchanged, the job `ops` fails on every push to `main` that touches `.github/**`, and D13 stops the coordinator after `main` is red twice.
+- The check does not stop a pull request from editing the check itself or removing its step. The reviewer still reads any diff of `tools/swarm/check_self_hosted.py` and of the `ops` workflow, as D13 already asks for the self hosted runner rule of the Jev gate.
+
+Shared page notes:
+
+- **`.github/workflows/ops.yml`** (shared file, coordinator only). In the job `ops`, add this step after `- run: make lint-ops test-ops` (the step before it installs PyYAML through `tools/contracts/requirements.txt`, and the workflow already runs for any change under `.github/**` and `tools/swarm/**`):
+
+  ```yaml
+      - name: Keep self hosted runners off untrusted triggers
+        run: python3 -I tools/swarm/check_self_hosted.py
+  ```
+
+  `tools/swarm/test_check_self_hosted.py` already runs in `ci.yml` (`python -m pytest -q tools/contracts tools/plan tools/swarm spikes/s4-trex-astf`), so the tests need no further step. Optionally, `mk/ops.mk` (a shared file) can run the same command from `lint-ops` with the line `$(PYTHON) tools/swarm/check_self_hosted.py`, so an agent runs it locally with `make lint`.
+- **[Testing](Testing.md), line 18** (Performance row): after the split, change "through the `nightly` job of `qa-bench.yml`" to "through the workflow `qa-bench-nightly.yml`".
+- **`bench/README.md`** (outside this package's paths): in the paragraph that starts "Decision D12 item 6", change "the `nightly` job of `.github/workflows/qa-bench.yml`" to "the job of `.github/workflows/qa-bench-nightly.yml`", and in step 6 of "Registering the owner host" change "Run the workflow `qa-bench`" to "Run the workflow `qa-bench-nightly`".
+- **[Module Development](Module-Development.md):** no change, because this package changes nothing that a module author writes or meets.
