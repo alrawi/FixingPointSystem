@@ -63,7 +63,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from realism.capture import Segment, Session, SessionKey, decode_segment, read_frames
+from realism.capture import Segment, Session, SessionResolver, decode_segment, read_frames
 from realism.labels import ContentLabels, Labels, SizeExpectation
 from realism.series import failures_series
 
@@ -159,7 +159,7 @@ class Stats:
 
 def read_flows(capture: Path, sessions: Sequence[Session]) -> dict[int, _Flow]:
     """Read the payload bytes of every session of a capture, keyed by session id."""
-    by_key: dict[SessionKey, Session] = {s.key: s for s in sessions}
+    resolver = SessionResolver(sessions)
     flows: dict[int, _Flow] = {}
     _, frames = read_frames(capture)
     for frame in frames:
@@ -167,7 +167,7 @@ def read_flows(capture: Path, sessions: Sequence[Session]) -> dict[int, _Flow]:
         if segment is None:
             continue
         p = segment.packet
-        session = by_key.get(SessionKey.of(p.transport, p.src_ip, p.src_port, p.dst_ip, p.dst_port))
+        session = resolver.session_of(p)
         if session is None:
             continue
         from_client = (p.src_ip, p.src_port) == (session.client_ip, session.client_port)
