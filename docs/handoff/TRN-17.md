@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #571 |
 | Branch | `wp/TRN-17` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 83% (5 of 6 plan steps) |
+| Pull request | #586 |
+| Status | blocked |
+| Progress | 92% (5 of 6 plan steps, CI pending) |
 | Current holder | claude-7e8c87, lease until 2026-11-17T00:23:35Z |
 | Last verified commit | none |
 
@@ -23,7 +23,7 @@ Build `engine/fps-tcp/`, a harness that drives a user space TCP stack behind `Se
 - [x] 3. The `TcpStack` seam, the smoltcp adapter, and the `SessionIo` stream.
 - [x] 4. The three measures (sessions per second, throughput, socket scaling).
 - [x] 5. The bench binary with plain argv, tests, and committed CI results.
-- [ ] 6. Docs, log entry, pull request, and CI.
+- [x] 6. Docs, log entry, pull request, and CI.
 
 ## Done and verified
 
@@ -101,3 +101,4 @@ The fat-nuc result is the host that TRN-10 compares smoltcp and the own stack on
 |---|---|---|---|---|
 | 2026-11-16 | claude-7e8c87 | claim | none | Claimed #571 with 6 steps |
 | 2026-11-16 | claude-7e8c87 | checkpoint | 5a24511 | The three workloads, the tcp_bench command, tests, and sandbox results |
+| 2026-11-17 | claude-7e8c87 | block | ed0d90a | PR #586 open. Jobs `rust` and `licenses` stayed queued for over an hour (runner backlog). Blocked on the owner allowing 0BSD in deny.toml |
