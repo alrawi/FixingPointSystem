@@ -6,7 +6,7 @@
 | Branch | `wp/CTL-16` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-f9c390, lease until 2026-11-17T00:23:07Z |
 | Last verified commit | none |
 
@@ -18,23 +18,25 @@ Split plans across several agents, check clock synchronization before the start,
 
 ## Plan
 
-- [ ] 1. Package skeleton, errors, and the clock offset check (`clock.go`)
-- [ ] 2. Exact counter aggregation across agents (`aggregate.go`)
-- [ ] 3. Plan splitting wrapper (`split.go`)
-- [ ] 4. The multi agent run: check, reserve, prepare, start at a common instant, stop, aggregate (`run.go`)
+- [x] 1. Package skeleton, errors, and the clock offset check (`clock.go`)
+- [x] 2. Exact counter aggregation across agents (`aggregate.go`)
+- [x] 3. Plan splitting wrapper (`split.go`)
+- [x] 4. The multi agent run: check, reserve, prepare, start at a common instant, stop, aggregate (`run.go`)
 - [ ] 5. Tests with three fake agents, wiki page and log entry, PR
 
 ## Done and verified
 
-Nothing yet.
+- Steps 1 to 4: `clock.go`, `aggregate.go`, `split.go`, `run.go`, and `doc.go` in `controller/internal/multiagent/`. `gofmt -l controller/internal/multiagent` prints nothing. The Go build cannot run in this sandbox (no module proxy), so the pull request CI is the build and test loop.
+- Tests written: `clock_test.go`, `aggregate_test.go`, `split_test.go`, `run_test.go`. `run_test.go` uses the real agent manager, the real compiler, and three fake agents over in memory gRPC.
+- `plan.py check`, `render --check`, and `lint` pass.
 
 ## Remaining
 
-Everything above.
+Step 5: open the PR, wait for CI, fix failures inside the package, then `fps_swarm.py review`.
 
 ## Next action
 
-Write `controller/internal/multiagent/clock.go`.
+Open the pull request and poll its check runs.
 
 ## Blockers and open questions
 
@@ -42,7 +44,13 @@ none
 
 ## Decisions taken in this package
 
-None yet.
+- `ClockSource` is an interface of this package. The agent manager discards `Heartbeat.agent_time`, and `internal/agents` and `internal/fakeagent` are outside this package's paths, so the controller has no production source yet. The contract (`agent.proto`) has the fields that the estimate needs, so no contract change is requested. Follow up for the owner of CTL-06: record `agent_time` minus the receive time per agent and expose it.
+- The 10 ms limit applies to the absolute offset of each agent against the controller, as the acceptance reads. An offset of exactly 10 ms passes.
+- A missing measurement refuses the start (fail closed).
+- The check runs before reserve, prepare, or any command, so a refusal leaves the agents untouched. The test asserts zero received commands.
+- Counters sum in uint64 with overflow detection, never through a float.
+- The start instant is controller time after the last prepare plus a lead of 2 s, converted per agent with its offset.
+- No wiring into `internal/wiring` or the REST layer: the catalog path list is only `controller/internal/multiagent/`.
 
 ## Pitfalls
 
@@ -61,3 +69,4 @@ Expected result: no output.
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-16T22:53Z | claude-f9c390 | claim | none | Claimed #567 with card 6931811598 |
+| 2026-11-16T23:30Z | claude-f9c390 | checkpoint | see branch | Package, tests, wiki page, and log entry written |
