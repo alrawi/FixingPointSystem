@@ -31,6 +31,7 @@ The npm scripts behind them work on their own inside `ui/`.
 | `npm run check:bundle` | Fails when the initial JavaScript of `dist/` passes 250 kB gzip |
 | `npm test` | Vitest once |
 | `npm run e2e` | Playwright, after `npx playwright install chromium-headless-shell` |
+| `npm run e2e:controller` | The Playwright suite against a real `fps-controller` with fake agents (UI-07), after `npm run build`. It builds the Go binaries with `go build`, or takes `FPS_CONTROLLER_BIN` and `FPS_FAKEAGENT_BIN` |
 
 To try the UI against the mock server, run `npm run mock` and `npm run dev` in two terminals, open http://localhost:5173, and sign in with the token `fps-mock-token`.
 
@@ -47,7 +48,8 @@ To try the UI against the mock server, run `npm run mock` and `npm run dev` in t
 | `src/pages/` | One file per view |
 | `mock/` | The mock controller API, built from `contracts/examples/` and the schema examples |
 | `scripts/` | The generator, the license check, and the bundle check |
-| `e2e/` | Playwright smoke tests |
+| `e2e/` | Playwright smoke tests against the mock server |
+| `e2e-controller/` | Playwright suite against a real controller and fake agents, with its stack setup in `stack.ts` |
 
 ## Sign in
 

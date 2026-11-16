@@ -247,4 +247,38 @@ The mock now keeps the agent states per server and follows the controller. `POST
 
 ### Tests
 
-`ui/src/pages/Agents.test.tsx` runs the whole UI against the mock with four agents in four states and states every value as a literal. It covers the table and the port table, the summary sentence, the empty and error states, the navigation entry, reserve then release, release of a reserved agent, a second reservation by another caller, two reservation conflicts (the agent went offline, the agent started a run) where the alert shows the controller's detail and the list refreshes to the new state, a problem that names a holder (injected as a fault, because the controller has no such case), a 404 that drops the agent from the list, the clearing of an old message, the absence of buttons for busy and offline agents, and a rejected token. Axe-core scans the document in the listing, the empty, the success, and the conflict states, with the contrast rule off because jsdom has no layout. Unit tests in `ui/src/pages/agentFormat.test.ts` cover the speed and label formats. The sandbox has no browser, so no Playwright test covers the view.
+`ui/src/pages/Agents.test.tsx` runs the whole UI against the mock with four agents in four states and states every value as a literal. It covers the table and the port table, the summary sentence, the empty and error states, the navigation entry, reserve then release, release of a reserved agent, a second reservation by another caller, two reservation conflicts (the agent went offline, the agent started a run) where the alert shows the controller's detail and the list refreshes to the new state, a problem that names a holder (injected as a fault, because the controller has no such case), a 404 that drops the agent from the list, the clearing of an old message, the absence of buttons for busy and offline agents, and a rejected token. Axe-core scans the document in the listing, the empty, the success, and the conflict states, with the contrast rule off because jsdom has no layout. Unit tests in `ui/src/pages/agentFormat.test.ts` cover the speed and label formats. The sandbox has no browser, so no Playwright test covers the view. Since UI-07 the end to end suite covers the view against a real controller.
+
+## End to end suite (UI-07)
+
+The component tests and the smoke tests run against the mock server, which follows the contract but is not the controller. UI-07 adds a browser suite that runs the built UI against the real `fps-controller` and the fake agents of `fps-fakeagent`, in Chromium. It lives in `ui/e2e-controller/` and runs with `npm run e2e:controller` after `npm run build`, through the configuration `ui/playwright.controller.config.ts`.
+
+### Stack
+
+The global setup (`ui/e2e-controller/stack.ts`) starts the stack once for the whole run and ends it afterwards.
+
+1. It takes the binaries from `FPS_CONTROLLER_BIN` and `FPS_FAKEAGENT_BIN`, and otherwise builds both with `go build` in `controller/` with `GOWORK=off`. A machine that cannot build them fails the suite with the build output, because a skipped suite proves nothing. The Go module proxy must be reachable, as for the end to end test of the command line client.
+2. It writes a controller configuration into a temporary directory: free ports, `insecure_plain_grpc`, a temporary data directory, and three plain tokens for the admin, run, and read scopes. The controller reports its ports in the log records `controller listening` and `agent service listening`, which the setup reads.
+3. It enrolls the agents `local` and `spare` through `POST /v1/agents` with the admin token, installs the example modules `http1` and `dns` through `POST /v1/modules` as gzip tar archives, and starts `fps-fakeagent` with both agents and `-finish-after 10s`. The agent `local` is the one that the port locations of the example configurations name. The agent `spare` serves the reservation tests.
+4. It starts `vite preview` on port 4174 (`FPS_E2E_PORT` changes it) with `FPS_API_TARGET` set to the controller, so the browser reaches the controller through the same proxy path as in development, and it checks that `GET /v1/capabilities` answers through the proxy.
+
+The logs of every process go to `ui/test-results/stack/` for CI to keep. The specs run one at a time, because they share the controller and the agents. A spec that needs a finished run makes it through the REST API (`runToEnd` in `helpers.ts`), waits for the agent to be online first, and reads the run to its final state, so the UI tests read the results of a run and do not depend on how long it takes.
+
+### Specs
+
+| Spec | Flow |
+|---|---|
+| `configurations.spec.ts` | Create a configuration in the editor, validate it on the controller (the editor stores the text first), save it as a new copy, find it in the list with the id of the notice, and reopen it. A configuration with an unknown scenario shows the finding of the controller next to the Scenario field. A stored configuration keeps its values in the forms |
+| `runs.spec.ts` | Start a run on the agent `local` from the form, follow the state and the live counters of the metrics stream until the fake agent ends its plan, and find the run in the list with a link to its report. Stop a run early (a graceful stop ends as completed). Open a run that started elsewhere. A missing run shows a message. The start form needs a configuration and offers both agents |
+| `reports.spec.ts` | Two runs made in `beforeAll`: one passes `sessions.failed_ratio == 0`, one fails `sessions.attempted < 0` and ends as failed with the reason `criteria failed`. The tests read the verdict, the criteria, the scenario table, and the totals of each report, follow the links between the list, the report, and the live view, and compare the two runs |
+| `agents.spec.ts` | The agents that registered over gRPC and their ports, and reserve then release of `spare` with a reload in between, which shows that the controller holds the state |
+
+Every page runs axe-core with the color contrast rule, as the smoke tests do. The fake agents report simulated counters, so the tests state facts that hold for them (sessions attempted and succeeded above zero, no failed sessions) and never exact numbers, and they read no latency chart, because the simulation reports no histograms.
+
+### Difference from the mock
+
+A stopped run ends as `completed` on the controller and as `aborted` in the mock. The mock offers every agent state that a test asks for, while the real stack has two agents that are online. The suite therefore tests what the UI shows for the states that a real controller reaches, and the component tests keep the other states.
+
+### CI
+
+The job that runs the suite needs Go and Node, installs the Chromium browser, builds the UI, and runs `npm run e2e:controller`. The workflow change is a coordinator file, and its exact text is in the Shared page notes of the log entry of UI-07.
