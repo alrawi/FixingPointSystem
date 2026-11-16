@@ -73,6 +73,43 @@ def test_examples_are_valid():
     assert v.main(["--quiet"]) == 0
 
 
+# --- example tests pair with modules (CON-33, issue #482) -------------------
+
+def first_party_report(tmp_path: Path, scenario: str) -> v.Report:
+    """Validate http1_first_party.yaml with its scenario replaced, against the first party http1 module."""
+    doc = v.load_yaml(EXAMPLES / "tests/http1_first_party.yaml")
+    doc["profile"]["mix"][0]["scenario"] = scenario
+    path = tmp_path / "http1_first_party.yaml"
+    path.write_text(yaml.safe_dump(doc))
+    return v.run_first_party([path], v.CATALOG)
+
+
+def test_first_party_tests_are_registered():
+    assert v.FIRST_PARTY_TESTS["dns_zone.yaml"] == "dns"
+    assert v.FIRST_PARTY_TESTS["http1_first_party.yaml"] == "http1"
+    for name in v.FIRST_PARTY_TESTS:
+        assert (EXAMPLES / "tests" / name).is_file()
+
+
+def test_http1_first_party_test_passes_against_the_first_party_module(tmp_path):
+    assert not first_party_report(tmp_path, "http1/single_fetch").errors
+
+
+def test_a_scenario_no_first_party_manifest_defines_fails(tmp_path):
+    # http1/web_get belongs to the example module, so the first party http1 module does not define it.
+    msgs = messages(first_party_report(tmp_path, "http1/web_get"))
+    assert any("unknown scenario" in m and "web_get" in m for m in msgs), msgs
+
+
+def test_http_smoke_pairs_with_the_example_modules():
+    # The example test keeps http1/web_get, and the default run validates it against the example modules.
+    smoke = v.load_yaml(EXAMPLES / "tests/http_smoke.yaml")
+    assert smoke["profile"]["mix"][0]["scenario"] == "http1/web_get"
+    assert "http_smoke.yaml" not in v.FIRST_PARTY_TESTS
+    assert (EXAMPLES / "modules/http1/scenarios/web_get.yaml").is_file()
+    assert not (v.REPO / "modules/http1/scenarios/web_get.yaml").exists()
+
+
 def test_schemas_are_valid_json_schema():
     for name in ("module-manifest.schema.json", "scenario.schema.json", "test-config.schema.json"):
         v.Draft202012Validator.check_schema(v.load_schema(name))
