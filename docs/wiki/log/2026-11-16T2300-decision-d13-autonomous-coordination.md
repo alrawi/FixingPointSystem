@@ -1,6 +1,6 @@
 ## [2026-11-16] decision | D13, autonomous coordination, and the Phase 3 plan
 
-On 2026-11-16 the owner asked the coordinator to run on its own until the project is complete, approving its own batches and delegating the owner's decisions to a vetting agent. [D13](../decisions/0013-autonomous-coordination.md) records that delegation and its limits. The coordinator put five questions to the vetting agent, and all five answers below are vetted by Fable 5.2.
+On 2026-11-16 the owner asked the coordinator to run on its own until the project is complete, approving its own batches and delegating the owner's decisions to a vetting agent. [D13](../../decisions/0013-autonomous-coordination.md) records that delegation and its limits. The coordinator put five questions to the vetting agent, and all five answers below are vetted by Fable 5.2.
 
 The questions and answers:
 
