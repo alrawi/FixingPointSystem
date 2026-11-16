@@ -55,9 +55,25 @@ Agents in sandboxed sessions cannot reach the GraphQL API, so they never run it.
 
 The promotion sweep unblocks an item only when its newest `fps:block` comment names blocking issues and all of them closed as completed. For a blocked item that has no `fps:block` comment, or whose comment names no issue, the sweep now writes one line that starts with `blocked:` to stderr and leaves the labels alone. The line names the issue and says that the owner relabels it or an agent takes it over. Standard output still carries only the planned label changes, so the scanner workflow output keeps its format.
 
-## Benchmark runner
+## Owner host
 
-The nightly benchmark of QA-08 runs on a self hosted runner on the owner's Linux server with the label `fps-bench`. The owner registers it with the steps in [`bench/README.md`, section Registering the owner host](https://github.com/alrawi/FixingPointSystem/blob/main/bench/README.md#registering-the-owner-host), and [Benchmarks](Benchmarks.md) explains the comparison.
+The owner's Linux server fat-nuc runs two kinds of work.
+
+**Benchmark runner.** The nightly benchmark of QA-08 runs on a self hosted runner on fat-nuc with the label `fps-bench`. The owner registers it with the steps in [`bench/README.md`, section Registering the owner host](https://github.com/alrawi/FixingPointSystem/blob/main/bench/README.md#registering-the-owner-host), and [Benchmarks](Benchmarks.md) explains the comparison. The repository is public, so we keep five rules for every workflow:
+
+1. A job that names a self hosted label runs only on `workflow_dispatch` or `schedule` on `main`, and its workflow has no pull request, push, comment, `workflow_run`, or `workflow_call` trigger.
+2. The job holds `contents: read`, no secret, `persist-credentials: false`, and `timeout-minutes`.
+3. Inputs are choices that reach scripts through `env`.
+4. No step uses sudo or changes the network, firewall, kernel, services, or packages of the host.
+5. Only the owner changes the host, the runner, or these rules.
+
+**Host tests.** Since decision [D13](https://github.com/alrawi/FixingPointSystem/blob/main/docs/decisions/0013-autonomous-coordination.md), tests that need a real host run on fat-nuc through the owner's relay, never through a workflow:
+
+- The coordinator writes a job file that names a commit on GitHub and a command, into a bridge folder on the owner's laptop. A Claude Code session there runs the job on fat-nuc over SSH, in a clone at `~/fps-hosttest/repo` that is separate from the runner.
+- The relay rejects a job whose command reaches the runner, Tailscale, nftables, systemd, packages, or the network outside the repository.
+- The relay takes a snapshot of the protected services before and after each job, deletes the network namespaces the job created, and stops all jobs if anything else changed.
+- The coordinator sends only commits that passed CI and the Jev gate, never sends a job between 00:50 and 03:30 UTC, and never sends a secret.
+- Logs that come back are redacted, and a host test result in a pull request quotes only the outcome and the measured values, never an address of the host.
 
 ## Release workflow
 

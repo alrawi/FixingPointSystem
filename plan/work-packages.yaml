@@ -2111,32 +2111,33 @@ work_packages:
     title: User space TCP stack decision
     phase: 3
     workstream: TRN
-    size: M
-    owner_action: The owner accepts or rejects decision record 0012.
-    depends_on: [TRN-01]
+    size: S
+    owner_action: The vetting agent accepts or rejects decision record 0014 under decision D13, unless the record alters decision D1 or a tier target, which only the owner decides.
+    depends_on: [TRN-01, TRN-17, TRN-18]
     paths: [docs/decisions/, engine/fps-tcp/]
     summary: >-
-      Compare smoltcp, an own TCP stack, and F-Stack for the AF_XDP and DPDK backends and
-      propose decision record 0012 with measurements.
+      Compare smoltcp, an own TCP stack, and F-Stack for the AF_XDP and DPDK backends and propose decision record 0014.
+      TRN-17 and TRN-18 measure smoltcp and an own stack on one harness, and this package assesses F-Stack on paper,
+      since TRN-13 measures it on SR-IOV or bare metal.
     deliverables:
-      - A prototype benchmark for each candidate behind SessionIo and a license review.
+      - Decision record 0014 with the measurements of TRN-17 and TRN-18, the paper assessment of F-Stack, and a license review.
     acceptance:
-      - The decision record reports sessions per second and throughput for each candidate on the same host.
+      - The decision record reports sessions per second, throughput, and socket scaling for each measured candidate on the same host.
 
   - id: TRN-11
     title: AF_XDP packet input and output
     phase: 3
     workstream: TRN
     size: M
-    depends_on: [TRN-10]
+    depends_on: [TRN-01]
     paths: [engine/fps-backend-afxdp/]
     summary: >-
       Implement UMEM, fill, completion, receive, and transmit rings with batching per queue,
-      using the S3 results to choose defaults.
+      using the S3 results to choose defaults. The rate test on KVM guests is TRN-19.
     deliverables:
-      - Zero copy mode with fallback to copy mode, and per queue workers.
+      - Zero copy mode with fallback to copy mode, per queue workers, and a published frame trait with batched receive and transmit per queue.
     acceptance:
-      - A two VM test on KVM reaches the packet rate that S3 measured within 10%.
+      - AF_XDP on a veth pair in the namespace harness passes frames both ways in CI, falls back to copy mode, and reads the bind mode from the socket.
 
   - id: TRN-12
     title: User space TCP over AF_XDP
@@ -2147,22 +2148,21 @@ work_packages:
     paths: [engine/fps-tcp/, engine/fps-backend-afxdp/]
     summary: >-
       Run the chosen TCP stack over AF_XDP and expose SessionIo. Split this epic after
-      decision record 0012 is accepted.
+      decision record 0014 is accepted.
     deliverables:
       - Child packages for connection setup, data transfer, timers and retransmission, and OS profile options.
     acceptance:
       - The http1 module passes realism CI on the AF_XDP backend.
 
   - id: HST-03
-    title: ARP, ND, and DHCP for user space backends
+    title: ARP and ND for user space backends
     phase: 3
     workstream: HST
     size: M
     depends_on: [TRN-11]
     paths: [engine/fps-hosts/]
     summary: >-
-      Answer ARP and neighbor discovery for host pools, obtain addresses through DHCP when
-      configured, and assign MAC addresses per host.
+      Answer ARP and neighbor discovery for host pools and assign MAC addresses per host. DHCP is HST-04.
     deliverables:
       - Responders and a MAC allocator that avoids conflicts.
     acceptance:
@@ -2173,6 +2173,7 @@ work_packages:
     phase: 3
     workstream: TRN
     size: M
+    owner_action: The owner provides an SR-IOV or bare metal host. The coordinator does not dispatch this package before then.
     depends_on: [TRN-10]
     paths: [engine/fps-backend-dpdk/]
     summary: >-
@@ -2191,9 +2192,11 @@ work_packages:
     depends_on: [TRN-11, AGT-03]
     paths: [engine/fps-backend-kernel/, engine/fps-backend-afxdp/]
     summary: >-
-      Select the fastest working backend from detected capabilities and report the choice.
+      Select the fastest working backend from detected capabilities and report the choice. HostCapabilities lives in
+      fps-agent, which depends on the backends, so the selection takes an input type of its own, and AGT-22 wires it into
+      the agent.
     deliverables:
-      - A selection function with a forced override.
+      - A selection function over its own input type, with a forced override.
     acceptance:
       - Tests cover a virtio-net guest with and without zero copy support.
 
@@ -2230,10 +2233,10 @@ work_packages:
     phase: 3
     workstream: QA
     size: M
-    depends_on: [TRN-14, QA-03]
+    depends_on: [TRN-14, QA-03, AGT-22, TRN-12]
     paths: [bench/]
     summary: >-
-      Run the standard benchmark set on each supported hypervisor and publish the results.
+      Run the standard benchmark set on KVM and publish the results. Other hypervisors follow v1.
     deliverables:
       - Benchmark definitions for throughput, session rate, concurrency, and TLS.
     acceptance:
@@ -2245,6 +2248,7 @@ work_packages:
     workstream: QA
     size: M
     critical: true
+    owner_action: The owner names the reference KVM host, which gives one guest 16 vCPUs without overcommit, and signs off Gate 3.
     depends_on: [QA-06, CTL-16, UI-07, IMG-03, TRN-12, HST-03]
     paths: [tests/gates/gate3/]
     summary: >-
@@ -2252,7 +2256,98 @@ work_packages:
     deliverables:
       - A gate script and report for tier T1, multi agent runs, image formats, and the UI suite.
     acceptance:
-      - The suite passes on the reference KVM host and records every measured value.
+      - The suite passes on the reference KVM host and records every measured value, and its small profile on fat-nuc prints NOT A GATE RESULT.
+
+  - id: TRN-17
+    title: TCP stack bench harness and smoltcp behind SessionIo
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-01]
+    paths: [engine/fps-tcp/]
+    summary: >-
+      The first measured candidate of TRN-10. A harness that drives a TCP stack behind SessionIo and measures sessions
+      per second, throughput, and scaling to 1,000,000 sockets, with smoltcp as the first stack.
+    deliverables:
+      - The harness and a smoltcp adapter behind SessionIo, with results committed for the CI runner and for fat-nuc through a host test.
+    acceptance:
+      - The harness reports the three measures for smoltcp, and its tests run in CI.
+
+  - id: TRN-18
+    title: A minimal own TCP stack on the bench harness
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-17]
+    paths: [engine/fps-tcp/]
+    summary: >-
+      The second measured candidate of TRN-10: a minimal TCP stack of our own behind SessionIo, measured on the TRN-17
+      harness.
+    deliverables:
+      - The stack with connection setup, data transfer, and teardown, its tests, and results on the same hosts as TRN-17.
+    acceptance:
+      - The harness reports the three measures for the own stack on the same hosts as smoltcp.
+
+  - id: TRN-19
+    title: AF_XDP rate between two KVM guests
+    phase: 3
+    workstream: TRN
+    size: S
+    depends_on: [TRN-11]
+    paths: [engine/fps-backend-afxdp/]
+    summary: >-
+      The rate test that TRN-11 left out. Two guests at the S3 small size on fat-nuc, run as a host test under decision
+      D13.
+    deliverables:
+      - A test that boots two guests, runs AF_XDP between them, and compares the packet rate with S3.
+    acceptance:
+      - The packet rate is within 20% of the rate that S3 measured, since S3 records 20% noise.
+
+  - id: HST-04
+    title: DHCP for user space backends
+    phase: 3
+    workstream: HST
+    size: S
+    owner_action: Waits for a contract package that adds DHCP configuration to the host pool schema, which no schema field configures today. The coordinator does not dispatch it before then.
+    depends_on: [HST-03]
+    paths: [engine/fps-hosts/]
+    summary: >-
+      Obtain host addresses through DHCP when the host pool configures it.
+    deliverables:
+      - A DHCP client per host for user space backends.
+    acceptance:
+      - Hosts of a pool configured for DHCP obtain and renew addresses in the namespace harness.
+
+  - id: AGT-22
+    title: The agent selects and reports its backend
+    phase: 3
+    workstream: AGT
+    size: S
+    depends_on: [TRN-14, CON-32]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Wire the selection of TRN-14 into the agent, and fill the capabilities fields of CON-32.
+    deliverables:
+      - The agent maps HostCapabilities to the selection input, starts the selected backend, and reports kernel_release, selected_backend, and xdp_driver_mode.
+    acceptance:
+      - The agent contract test passes against CON-32, and a test covers a forced backend and an unsupported one.
+
+  - id: CON-32
+    title: Kernel release, selected backend, and XDP mode in the agent capabilities
+    phase: 3
+    workstream: CON
+    size: S
+    depends_on: []
+    paths: [contracts/]
+    owner_action: An additive contract change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #74 in part).
+    summary: >-
+      Issue #74 in part. Agent protocol 0.2.4 to 0.2.5 and an OpenAPI minor version. REST Agent.backend takes the first
+      entry of backends, which is always kernel, so the agent reports the backend it selected. NUMA fields stay open in #74,
+      because v1 has no consumer of them.
+    deliverables:
+      - Capabilities.kernel_release (string, 9), Capabilities.selected_backend (Backend, 10), PortInfo.xdp_driver_mode (6) with an enum XdpMode of UNSPECIFIED, GENERIC, NATIVE, and ZERO_COPY documented as a driver table hint, the REST mirror Agent.kernel_release and ports[].xdp_driver_mode, and contracts/changes/CON-32.md.
+    acceptance:
+      - The contracts validate, the versions are bumped, and the change file names the consumers, AGT-22 first.
 
   # Phase 1 integration follow-ups found while building CTL-18, CTL-20, ENG-14, and MOD-19.
 
@@ -3825,6 +3920,60 @@ work_packages:
     acceptance:
       - A test capture where one of several sessions of such a rule lacks a declared finding fails and names that session, the same capture passes without the setting, and every committed fixture still passes.
 
+
+  - id: CON-33
+    title: Example tests pair with the example modules
+    phase: 2
+    workstream: CON
+    size: S
+    depends_on: []
+    paths: [contracts/, tools/contracts/]
+    owner_action: A fix inside the examples, with no schema or version change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #482).
+    summary: >-
+      Issue #482. contracts/examples/tests/http_smoke.yaml names http1/web_get, which belongs to the example module under
+      contracts/examples/modules/http1 and not to the first party http1 module. The validator, the plan example, the UI
+      mock, the CLI end to end test, and S4 rely on it, so it keeps its name, and the examples say which modules a test
+      pairs with.
+    deliverables:
+      - A comment line atop http_smoke.yaml and a sentence in contracts/README.md that example tests pair with the example modules, a new contracts/examples/tests/http1_first_party.yaml with http1/single_fetch registered in FIRST_PARTY_TESTS of tools/contracts/validate.py as dns_zone.yaml is, a test that a wrong scenario fails, and contracts/changes/CON-33.md.
+    acceptance:
+      - The contracts validate, the new test fails on a scenario no first party manifest defines, and the controller, UI, CLI, and fps-flow tests that read the examples pass.
+
+  - id: RLM-24
+    title: A reused TCP client port starts a new session
+    phase: 2
+    workstream: RLM
+    size: S
+    depends_on: []
+    paths: [realism/]
+    summary: >-
+      realism/capture.py keys a session by its 5-tuple alone, so two TCP connections that reuse a client port merge
+      into one session. The decrypted view of realism/decrypted.py makes this visible, because it keeps every client
+      port and starts every session with the same sequence numbers: in batch 35 the http2 view of the harness and
+      Gate 2 modules jobs counted 14 HTTP/2 messages in a session that should hold 7, while tshark, which follows
+      tcp.stream, saw two connections. The session table should split on a new SYN without ACK once the session
+      has closed, the way tshark does.
+    deliverables:
+      - The session table of realism/capture.py starts a new session when a SYN without ACK arrives on a key whose session has seen a FIN or RST, keeps a retransmitted SYN of an open session in that session, and the decrypted view gives each session distinct initial sequence numbers; tests on synthetic captures, and the "Watch out for" text for docs/wiki/Module-Development.md in the Shared page notes.
+    acceptance:
+      - A capture with two connections on one reused client port scores as two sessions in the raw capture and in the decrypted view, a retransmitted SYN stays one session, and every committed fixture still passes.
+
+  - id: OPS-08
+    title: CI check that keeps self hosted runners off untrusted triggers
+    phase: 2
+    workstream: OPS
+    size: S
+    depends_on: []
+    paths: [tools/swarm/]
+    summary: >-
+      Decision D13 and Operations keep the self hosted fps-bench runner to workflow_dispatch and schedule on main. A
+      workflow pushed on a branch with a self hosted label and a push trigger would run on fat-nuc before any review. A
+      check in CI fails any workflow that names a self hosted label and has another trigger, or lacks contents read,
+      persist-credentials false, or timeout-minutes.
+    deliverables:
+      - tools/swarm/check_self_hosted.py with tests, and the exact step for the coordinator to add to an existing workflow in the Shared page notes.
+    acceptance:
+      - The check passes on every workflow on main, and its tests fail a workflow with a self hosted label and a push, pull_request, pull_request_target, issue_comment, workflow_run, or workflow_call trigger.
   - id: CON-24
     title: Capture drop counts in the agent protocol and the REST API
     phase: 2

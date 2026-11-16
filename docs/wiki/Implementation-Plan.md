@@ -86,7 +86,7 @@ The [metric catalog](https://github.com/alrawi/FixingPointSystem/blob/main/contr
 1. Code uses catalog names exactly, and ENG-09 checks its snapshot names against the catalog file.
 2. A criterion or an API field that names a histogram appends one statistic, for example `sessions.response_time.p99`.
 3. An OpenAPI field that carries a metric names it with `x-fps-metric`, and the validator rejects names that the catalog lacks.
-4. A new metric is a contract change, so it needs a CON package and owner approval.
+4. A new metric is a contract change, so it needs a CON package and the approval of the owner or, under D13, of the vetting agent.
 
 ### Capability detection
 
@@ -112,7 +112,7 @@ The realism runner from RLM-01 writes one JSON report per capture with `python3 
 
 ## Phases and gates
 
-Each phase ends at a gate, and a QA package automates the gate as a test suite. The owner signs off each gate.
+Each phase ends at a gate, and a QA package automates the gate as a test suite. The owner signs off each gate. Since 2026-11-16, decision [D13](https://github.com/alrawi/FixingPointSystem/blob/main/docs/decisions/0013-autonomous-coordination.md) lets the vetting agent sign off a gate whose suite passes in CI with no waiver and unchanged criteria. The Gate 3 sign-off, which is the v1 release, stays with the owner.
 
 | Phase | Name | Gate suite | Exit criterion |
 |---|---|---|---|
@@ -184,7 +184,7 @@ A package is done when every item below holds. The reviewer agent checks each it
 
 ## Changing the plan
 
-The catalog changes through plan pull requests. A plan pull request touches only `plan/work-packages.yaml` and the generated wiki pages, and the owner approves it.
+The catalog changes through plan pull requests. A plan pull request touches only `plan/work-packages.yaml` and the generated wiki pages, and the owner approves it, or under D13 the vetting agent.
 
 ```bash
 python3 tools/plan/plan.py check          # validate ids, paths, dependencies, cycles

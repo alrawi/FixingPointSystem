@@ -4,7 +4,7 @@
 
 Gate 2. All 15 application modules of decision D7 pass the eight realism checks in module CI, byte weighted mixes stay within 2 points of their targets, and the qcow2 image boots and runs a test unattended.
 
-This page lists 175 work packages. Packages marked critical path gate the phase.
+This page lists 178 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -163,6 +163,9 @@ flowchart LR
   RLM_21["RLM-21<br/>STARTTLS ports in the decrypted view"]
   RLM_22["RLM-22<br/>Request cadence and bytes for HLS in the realism labels"]
   RLM_23["RLM-23<br/>Expected parser findings in every session of a rule"]
+  CON_33["CON-33<br/>Example tests pair with the example modules"]
+  RLM_24["RLM-24<br/>A reused TCP client port starts a new session"]
+  OPS_08["OPS-08<br/>CI check that keeps self hosted runners off untrusted triggers"]
   CON_24["CON-24<br/>Capture drop counts in the agent protocol and the REST API"]
   AGT_21["AGT-21<br/>NTP, MQTT, LDAP, and HLS in the agent"]
   CON_25["CON-25<br/>The messages check in the metric catalog"]
@@ -547,6 +550,9 @@ flowchart LR
 | [RLM-21](#rlm-21-starttls-ports-in-the-decrypted-view) | STARTTLS ports in the decrypted view | S | RLM-18 |  |
 | [RLM-22](#rlm-22-request-cadence-and-bytes-for-hls-in-the-realism-labels) | Request cadence and bytes for HLS in the realism labels | S | none |  |
 | [RLM-23](#rlm-23-expected-parser-findings-in-every-session-of-a-rule) | Expected parser findings in every session of a rule | S | none |  |
+| [CON-33](#con-33-example-tests-pair-with-the-example-modules) | Example tests pair with the example modules | S | none |  |
+| [RLM-24](#rlm-24-a-reused-tcp-client-port-starts-a-new-session) | A reused TCP client port starts a new session | S | none |  |
+| [OPS-08](#ops-08-ci-check-that-keeps-self-hosted-runners-off-untrusted-triggers) | CI check that keeps self hosted runners off untrusted triggers | S | none |  |
 | [CON-24](#con-24-capture-drop-counts-in-the-agent-protocol-and-the-rest-api) | Capture drop counts in the agent protocol and the REST API | S | ENG-27 |  |
 | [AGT-21](#agt-21-ntp-mqtt-ldap-and-hls-in-the-agent) | NTP, MQTT, LDAP, and HLS in the agent | S | MOD-15, MOD-16, MOD-17, MOD-18 |  |
 | [CON-25](#con-25-the-messages-check-in-the-metric-catalog) | The messages check in the metric catalog | S | CON-23, RLM-17 |  |
@@ -837,6 +843,24 @@ Acceptance.
 
 - [ ] validate.py passes, the catalog and schema examples cover each check kind with a passing and a failing value, and the change entry lists the consumers (realism runner RLM, controller CTL-41, fps-stats tables).
 
+### CON-33 Example tests pair with the example modules
+
+Phase 2 · size S · workstream CON
+
+- **Depends on.** none
+- **Paths.** `contracts/`, `tools/contracts/`
+- **Owner action.** A fix inside the examples, with no schema or version change, approved by the vetting agent under decision D13 on 2026-11-16 (issue
+
+Issue #482. contracts/examples/tests/http_smoke.yaml names http1/web_get, which belongs to the example module under contracts/examples/modules/http1 and not to the first party http1 module. The validator, the plan example, the UI mock, the CLI end to end test, and S4 rely on it, so it keeps its name, and the examples say which modules a test pairs with.
+
+Deliverables.
+
+- A comment line atop http_smoke.yaml and a sentence in contracts/README.md that example tests pair with the example modules, a new contracts/examples/tests/http1_first_party.yaml with http1/single_fetch registered in FIRST_PARTY_TESTS of tools/contracts/validate.py as dns_zone.yaml is, a test that a wrong scenario fails, and contracts/changes/CON-33.md.
+
+Acceptance.
+
+- [ ] The contracts validate, the new test fails on a scenario no first party manifest defines, and the controller, UI, CLI, and fps-flow tests that read the examples pass.
+
 ### CON-24 Capture drop counts in the agent protocol and the REST API
 
 Phase 2 · size S · workstream CON
@@ -1009,6 +1033,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A release candidate tag produces every artifact in a dry run.
+
+### OPS-08 CI check that keeps self hosted runners off untrusted triggers
+
+Phase 2 · size S · workstream OPS
+
+- **Depends on.** none
+- **Paths.** `tools/swarm/`
+
+Decision D13 and Operations keep the self hosted fps-bench runner to workflow_dispatch and schedule on main. A workflow pushed on a branch with a self hosted label and a push trigger would run on fat-nuc before any review. A check in CI fails any workflow that names a self hosted label and has another trigger, or lacks contents read, persist-credentials false, or timeout-minutes.
+
+Deliverables.
+
+- tools/swarm/check_self_hosted.py with tests, and the exact step for the coordinator to add to an existing workflow in the Shared page notes.
+
+Acceptance.
+
+- [ ] The check passes on every workflow on main, and its tests fail a workflow with a self hosted label and a push, pull_request, pull_request_target, issue_comment, workflow_run, or workflow_call trigger.
 
 ## QA Test infrastructure and gate suites
 
@@ -3296,6 +3337,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A test capture where one of several sessions of such a rule lacks a declared finding fails and names that session, the same capture passes without the setting, and every committed fixture still passes.
+
+### RLM-24 A reused TCP client port starts a new session
+
+Phase 2 · size S · workstream RLM
+
+- **Depends on.** none
+- **Paths.** `realism/`
+
+realism/capture.py keys a session by its 5-tuple alone, so two TCP connections that reuse a client port merge into one session. The decrypted view of realism/decrypted.py makes this visible, because it keeps every client port and starts every session with the same sequence numbers: in batch 35 the http2 view of the harness and Gate 2 modules jobs counted 14 HTTP/2 messages in a session that should hold 7, while tshark, which follows tcp.stream, saw two connections. The session table should split on a new SYN without ACK once the session has closed, the way tshark does.
+
+Deliverables.
+
+- The session table of realism/capture.py starts a new session when a SYN without ACK arrives on a key whose session has seen a FIN or RST, keeps a retransmitted SYN of an open session in that session, and the decrypted view gives each session distinct initial sequence numbers; tests on synthetic captures, and the "Watch out for" text for docs/wiki/Module-Development.md in the Shared page notes.
+
+Acceptance.
+
+- [ ] A capture with two connections on one reused client port scores as two sessions in the raw capture and in the decrypted view, a retransmitted SYN stays one session, and every committed fixture still passes.
 
 ## CAP Capture compiler and profile extractor
 

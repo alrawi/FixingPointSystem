@@ -46,7 +46,7 @@ A self hosted runner executes the job's code on the owner's machine with the rig
 | Rust | A stable toolchain from rustup for the runner user, with `cargo` and `rustc` on its `PATH`, and a C linker (`build-essential`) |
 | Python | Python 3.10 or newer as `python3`, with only the standard library needed for the benchmark |
 | Tools | `git`, `make`, `curl`, and `tar` |
-| Quiet | Nothing else heavy during 02:00 to 03:00 UTC, because the run takes about three minutes and tolerates 10% noise |
+| Quiet | Nothing else heavy during 00:50 to 03:30 UTC, because the run takes about three minutes and tolerates 10% noise, and a host test of up to an hour that starts before 00:50 ends before the run |
 | Stable | The same CPU model and vCPU count as when the baseline was recorded, which `--require-same-host` enforces, and a fixed CPU governor such as `performance` |
 | Limits | A hard limit of 65536 open files or more, because the script raises the soft limit to the hard limit for 4000 connections |
 | Conntrack | No connection tracking on loopback when the `nf_conntrack` module is loaded, for example by Tailscale, Docker, or a firewall. The suite opens about 50,000 loopback connections a second, and conntrack keeps each closed one for 120 seconds, so the table fills and the kernel logs `nf_conntrack: table full, dropping packet`. Every scenario after the first then fails with `connect_timedout`. See [Tuning the host](#tuning-the-host) |
