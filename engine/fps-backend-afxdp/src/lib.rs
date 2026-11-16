@@ -18,7 +18,7 @@
 //! same trait for tests above this crate.
 //!
 //! The defaults of [`QueueConfig`] come from spike S3. The crate depends only
-//! on `libc`. It needs Linux 5.4 or newer for AF_XDP, 5.7 for the BPF link
+//! on `libc`. It needs Linux 5.4 or newer for AF_XDP with wake up flags, 5.9 for the BPF link
 //! that attaches the program, and root or the capabilities that
 //! [`open_port`] lists.
 //!

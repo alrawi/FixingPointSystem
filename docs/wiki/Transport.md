@@ -1,6 +1,6 @@
 # Transport
 
-This page describes the transport backends of the TRN workstream, which implement the `SessionIo` and `DatagramIo` seams of [Engine](Engine.md) over real networks. TRN-01 created the first backend, the kernel TCP backend in `engine/fps-backend-kernel`. Later TRN packages add kernel UDP, operating system profiles, TLS, and the AF_XDP and DPDK backends that the [Implementation Plan](Implementation-Plan.md#target-repository-layout) lists. TRN-04 added the TLS wrapper, see [TLS module](#tls-module).
+This page describes the transport backends of the TRN workstream, which implement the `SessionIo` and `DatagramIo` seams of [Engine](Engine.md) over real networks. TRN-01 created the first backend, the kernel TCP backend in `engine/fps-backend-kernel`. Later TRN packages add kernel UDP, operating system profiles, TLS, and the AF_XDP and DPDK backends that the [Implementation Plan](Implementation-Plan.md#target-repository-layout) lists. TRN-04 added the TLS wrapper, see [TLS module](#tls-module), and TRN-11 added the AF_XDP frame input and output, see [AF_XDP backend](#af_xdp-backend).
 
 ## Crates
 
@@ -10,6 +10,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 |---|---|---|
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `Connector`, `KernelListener`, and `KernelStream`, which implement `SessionIo` over kernel TCP sockets, the operating system profiles of TRN-03, and `KernelDatagram`, `KernelDatagramListener`, and the two datagram openers of TRN-02, see [Kernel UDP backend](#kernel-udp-backend) | TRN-04 added TLS, see below |
 | [`fps-module-tls`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/tls) | `TlsConnector`, `TlsAcceptor`, and `TlsSession`, which wrap any `SessionIo` in TLS 1.2 or 1.3, the client and server profiles, `RunAuthority`, and `NssKeyLog`, see [TLS module](#tls-module) | TRN-05 added the browser profiles, see [Browser profiles and JA4](#browser-profiles-and-ja4), and TRN-15 the mail and h2 profiles, see [Mail and h2 profiles](#mail-and-h2-profiles) |
+| [`fps-backend-afxdp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-afxdp) | `FrameIo`, the frame trait with batched receive and send per queue, `open_port` with `AfXdpQueue`, `Workers`, and the in memory `memory::frame_pair`, see [AF_XDP backend](#af_xdp-backend) | TRN-12 runs a user space TCP stack over it, and TRN-19 measures its rate on KVM |
 
 The `test-eng` target and the `rust` job of `ci.yml` run the tests of every crate under `engine/`, so the backend needs no make file or workflow of its own.
 
@@ -381,3 +382,92 @@ The async wrapper costs more than the profile code. `handshake_bench --mode sess
 | A transport that ends without `close_notify` reads as a clean end | Truncation is not an error, which suits servers that close this way |
 | `alert_sent` is known only for plaintext alerts and for errors that imply one | Rustls sends the other alerts encrypted and does not report them |
 | Certificate and key generation use the system random source | No run seed controls them |
+
+## AF_XDP backend
+
+TRN-11 added the crate `fps-backend-afxdp`. It gives a user space transport whole Ethernet frames in batches on one queue of a network device, and it does not parse a frame. TRN-12 builds the user space TCP stack on top of it, and HST-03 answers ARP and neighbor discovery over it. The crate depends only on `libc` and `thiserror`, needs Linux 5.9 or newer for the BPF link that attaches its program, and needs root or the capabilities `CAP_NET_ADMIN`, `CAP_NET_RAW`, and `CAP_BPF`. The tests ran only as root, so the capability list is untested.
+
+### The frame trait
+
+`FrameIo` is the seam between a transport and a device. A queue belongs to one thread, so no method takes a lock, and no method blocks except `wait_readable`.
+
+| Method | Behavior |
+|---|---|
+| `recv_batch(max, frame)` | Calls `frame` once for each of at most `max` received frames and returns the count. The slice lives only inside the call, and the queue recycles the memory after the batch, so a batch costs no allocation |
+| `send_batch_with(count, fill)` | Lends up to `count` transmit buffers of `max_frame_len` bytes, calls `fill(index, buffer)` for each, and queues the frame of the length that `fill` returns. A return value of 0 ends the batch. The call returns the number queued, which is lower than `count` when the queue has no free frame or slot |
+| `send_batch(frames)` | Copies each frame into queue memory and rejects an empty or oversized frame before it queues any |
+| `flush()` | Wakes the kernel to send and takes back the memory of sent frames. A worker with nothing to receive calls it |
+| `wait_readable(timeout)` | Sleeps until a frame arrives or the timeout passes |
+| `stats()` | The counters of the queue, such as frames, bytes, full sends, and kicks |
+
+The crate keeps the trait here and not in `fps-io`, because the catalog paths of TRN-11 exclude `engine/fps-io`. A DPDK backend can implement the same trait, and `memory::frame_pair` gives tests of the code above it a fake with a bounded depth, so a full link makes a send return short as a full transmit ring does.
+
+### Opening a port
+
+`open_port(&PortConfig)` opens one socket per queue, attaches the XDP program, and returns an `OpenedPort` with a `PortInfo` and one `AfXdpQueue` per queue in the order of `PortConfig::queues`. It runs five steps.
+
+1. Look up the interface index and create an XSK map with one slot per queue number.
+2. For each queue, map a UMEM, register it, size and map the four rings, fill the fill ring with the whole receive pool, and bind with the requested mode.
+3. Read the bind mode back from the socket with `getsockopt(XDP_OPTIONS)` and store the socket in the map.
+4. Load the program, which has six BPF instructions. It sends a frame of queue `n` to the socket at slot `n` and passes the frame to the kernel stack when the map has no socket for that queue, so queues that the port does not open keep working.
+5. Attach the program through a BPF link, in the driver when the device supports it and in the generic hook after an `EOPNOTSUPP`. `PortInfo::xdp_mode` says which.
+
+The link detaches when the last queue of the port drops, so no program outlives the process. A second port on an interface that already has an XDP program fails with `EBUSY`, at the `bind` step when a queue is taken and at the step `attach XDP program` otherwise. Every failure is an `AfXdpError` that names the step, the interface, and the queue, and keeps the operating system error as its source.
+
+### Bind modes and the copy fallback
+
+`BindMode::Auto` binds without a mode flag, so the kernel tries zero copy and falls back to copy mode when the driver cannot do it. `BindMode::ZeroCopy` fails at the step `bind` on such a driver, and `AfXdpError::is_zero_copy_unsupported` recognizes that failure. `BindMode::Copy` forces copy mode. The request never says what runs, so `PortInfo::queues` and `AfXdpQueue::bind_mode` return the `BoundMode` that the socket reports through `XDP_OPTIONS`. A veth pair has no zero copy driver, so `Auto` reports `Copy` there and `ZeroCopy` fails with `EOPNOTSUPP` (errno 95).
+
+### Queue memory
+
+Each queue owns its UMEM, so queues share no memory. The UMEM holds `2 * ring_size` frames of `frame_size` bytes in aligned chunk mode. The first half is the receive pool. It starts in the fill ring, comes back through the receive ring, and returns to the fill ring after `recv_batch` called the callback. The second half is the transmit pool. A frame leaves a free list for the transmit ring and returns from the completion ring. The rings are single producer and single consumer queues of indices that only grow and wrap, with release stores to publish and acquire loads to read, and a unit test moves one million entries between two threads. A frame that the kernel returns with an address outside the pool is counted in `rx_invalid` and dropped, and the crate never panics on kernel data.
+
+The kernel asks for wake ups through a ring flag (`XDP_USE_NEED_WAKEUP`). In zero copy mode the queue calls `sendto` or `recvfrom` only when the flag is set. In copy mode the kernel sends inside `sendto`, at most 32 frames per call, and answers `EAGAIN` while more wait, so `send_batch_with` repeats the call until the transmit ring is empty. A frame must fit in `frame_size - 256` bytes, because the kernel keeps `XDP_PACKET_HEADROOM` in front of a received frame, and `max_frame_len` is that number for both directions.
+
+### Workers
+
+`Workers::spawn(queues, &WorkerOptions, make)` starts one thread per queue and calls `make(queue_id)` for the `QueueLoop` of each. A closure `FnMut(&mut dyn FrameIo) -> io::Result<bool>` is a loop, and it returns whether it moved a frame. `WorkerOptions` pins worker `i` to `cpus[i % cpus.len()]` and picks what an idle worker does with `Idle`, which is `Spin`, `Yield`, or `Wait(duration)` in `wait_readable`. The default is a 1 ms wait without pinning, and a rate test uses `Spin`. `Workers::stop` returns one `WorkerReport` per queue with the turn counts, the final counters, and the error that ended the worker early. A loop that returns an error ends only its own worker. Workers are generic over `FrameIo`, so the same code runs over `memory::frame_pair` in unit tests.
+
+### Defaults from spike S3
+
+`QueueConfig::default` takes its values from `spikes/s3-afxdp/RESULTS.md` and from the logs of that run.
+
+| Setting | Default | Reason |
+|---|---|---|
+| `batch` | 32 | The `testpmd` runs of S3 forwarded 32 packets per burst, as their logs show |
+| Queues per worker | one | S3 reached 10 Gbps of 1,500 byte frames with one or two queues of a three vCPU guest, one core each |
+| `mode` | `Auto` | Default mode did not beat forced copy mode beyond the noise of the host, so zero copy is a gain where a driver offers it and costs nothing where it does not |
+| `frame_size` | 2048 | The chunk leaves 1792 bytes after the kernel headroom, which holds a 1500 byte MTU |
+| `ring_size` | 2048 | A choice. S3 did not vary the ring size, and TRN-19 tunes it |
+
+S3 ran on a small host, so its results are indicative. Its `zero_copy_log_lines` column counts a DPDK buffer message and not the bind mode of the kernel, which is why this crate reads the mode from the socket.
+
+### Tests
+
+The unit tests need no privilege. They cover the settings, the rings (order, wrap, full, index overflow, the wake up flag, and two threads), the system call layer (structure sizes, the BPF instructions, mappings, and the CPU pin), the in memory pair, and the workers over it.
+
+`engine/fps-backend-afxdp/tests/veth.rs` is the acceptance test of TRN-11. It brings up the [QA-01 harness](Testing.md#namespace-harness) and runs helper processes, which are the test binary again, in the client and router namespaces with `ip netns exec`. It has three parts.
+
+| Part | Result |
+|---|---|
+| Modes on `eth0` | `ZeroCopy` fails with `EOPNOTSUPP`, a ring size of 100 is refused before any system call, `Copy` and `Auto` bind in copy mode and the socket confirms it, and a second port on the interface fails with `EBUSY` |
+| One queue | The client sends 4,000 frames of 60 to 1,514 bytes from `eth0`, the router echoes them from `cli0` with the MAC addresses swapped, and all 4,000 return with their payloads intact |
+| Two queues | The same over a veth pair with two queues, `xq0` and `xq1`, with one `Workers` thread per queue on both ends. Each frame returns on the queue that sent it, and the router echoes exactly 4,000 frames on each queue. One queue sends with `send_batch` and the other with `send_batch_with` |
+
+The test needs root. As a normal user it runs itself again with `sudo -n env FPS_AFXDP_UNDER_SUDO=1`, and it skips with a message when neither works. `CI=true` or `FPS_REQUIRE_AFXDP=1` turn a skip into a failure, so a runner that cannot run it does not pass silently. `FPS_AFXDP_FRAMES` sets the frames per queue, and a run with 100,000 frames per queue in the sandbox of the package passed. The test runs inside `cargo test -p fps-backend-afxdp`, and so inside the `cargo test --workspace` step of the `rust` job of `ci.yml`.
+
+```bash
+cargo test -p fps-backend-afxdp                          # unit tests and the veth test, which uses sudo
+FPS_AFXDP_FRAMES=100000 cargo test -p fps-backend-afxdp --test veth -- --nocapture
+```
+
+### Limits
+
+| Limit | Reason |
+|---|---|
+| The zero copy bind has no test | The sandbox and CI have only veth pairs, which have no zero copy driver. TRN-19 binds in zero copy mode on virtio-net guests |
+| One XDP program per interface | The kernel allows one program on a device. A port that meets another program fails with `EBUSY` and does not replace it |
+| A closed queue stays busy for a moment | The kernel releases the queue of a closed socket in a work queue, so a bind right after a close can fail with `EBUSY` for a few milliseconds, and the test retries for up to five seconds |
+| No shared UMEM and no unaligned chunks | One UMEM per queue keeps workers independent, and the aligned mode needs a power of two frame size from 2048 bytes up to the page size |
+| No busy polling | S3 ran DPDK with a busy poll budget of 64, and TRN-19 decides whether this crate needs `SO_PREFER_BUSY_POLL` |
+| Linux on 64 bit only | The ring offsets and the `bpf` call use the 64 bit layout, and other targets get only the trait, the settings, the workers, and the in memory pair |
