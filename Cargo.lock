@@ -955,6 +955,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fps-backend-afxdp"
+version = "0.0.1"
+dependencies = [
+ "libc",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "fps-backend-kernel"
 version = "0.0.1"
 dependencies = [
