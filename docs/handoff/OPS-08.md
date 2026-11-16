@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #579 |
 | Branch | `wp/OPS-08` |
-| Pull request | not opened yet |
+| Pull request | #580 |
 | Status | in progress |
 | Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-8c41d2, lease until 2026-11-17T00:23:00Z |
@@ -20,7 +20,7 @@ Add `tools/swarm/check_self_hosted.py` with tests. For every file of `.github/wo
 - [x] 2. Write the check and its tests.
 - [x] 3. Document it in Operations and the swarm README, and write the log entry with the Shared page notes.
 - [x] 4. Run ruff, mypy, pytest, and the plan checks.
-- [ ] 5. Open the pull request, wait for CI, and send it to review.
+- [ ] 5. Wait for CI on pull request #580, and send it to review.
 
 ## Done and verified
 
@@ -30,11 +30,11 @@ Add `tools/swarm/check_self_hosted.py` with tests. For every file of `.github/wo
 
 ## Remaining
 
-The pull request and CI. The coordinator must split `nightly` out of `qa-bench.yml` and add the step to `ops.yml` (both in the Shared page notes of the log entry), in one pull request, before the check can pass on `main`.
+CI on pull request #580. The coordinator must split `nightly` out of `qa-bench.yml` and add the step to `ops.yml` (both in the Shared page notes of the log entry), in one pull request, before the check can pass on `main`.
 
 ## Next action
 
-Open the pull request against `main` and poll its check runs.
+Poll the check runs of pull request #580.
 
 ## Blockers and open questions
 
