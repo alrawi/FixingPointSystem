@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #567 |
 | Branch | `wp/CTL-16` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #582 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-f9c390, lease until 2026-11-17T00:23:07Z |
-| Last verified commit | none |
+| Last verified commit | f9becbb (CI green on PR #582, controller test job ran `internal/multiagent`) |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Split plans across several agents, check clock synchronization before the start,
 - [x] 2. Exact counter aggregation across agents (`aggregate.go`)
 - [x] 3. Plan splitting wrapper (`split.go`)
 - [x] 4. The multi agent run: check, reserve, prepare, start at a common instant, stop, aggregate (`run.go`)
-- [ ] 5. Tests with three fake agents, wiki page and log entry, PR
+- [x] 5. Tests with three fake agents, wiki page and log entry, PR
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ Split plans across several agents, check clock synchronization before the start,
 
 ## Remaining
 
-Step 5: open the PR, wait for CI, fix failures inside the package, then `fps_swarm.py review`.
+Nothing in this package. Follow up outside it: record `agent_time` in `internal/agents` and wire a `ClockSource` (see Decisions).
 
 ## Next action
 
-Open the pull request and poll its check runs.
+Coordinator review and merge.
 
 ## Blockers and open questions
 
@@ -70,3 +70,4 @@ Expected result: no output.
 |---|---|---|---|---|
 | 2026-11-16T22:53Z | claude-f9c390 | claim | none | Claimed #567 with card 6931811598 |
 | 2026-11-16T23:30Z | claude-f9c390 | checkpoint | see branch | Package, tests, wiki page, and log entry written |
+| 2026-11-16T23:25Z | claude-f9c390 | finish | f9becbb | PR #582 open, all CI checks green, set to ready for review |
