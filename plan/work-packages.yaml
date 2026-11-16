@@ -3958,6 +3958,22 @@ work_packages:
     acceptance:
       - A capture with two connections on one reused client port scores as two sessions in the raw capture and in the decrypted view, a retransmitted SYN stays one session, and every committed fixture still passes.
 
+  - id: CTL-51
+    title: Clock offsets of agents from heartbeats
+    phase: 3
+    workstream: CTL
+    size: S
+    depends_on: [CTL-16]
+    paths: [controller/internal/agents/, controller/internal/fakeagent/]
+    summary: >-
+      CTL-16 refuses a multi agent run when an agent's clock is more than 10 ms off, but the controller has no production
+      source of the offsets: agents.Manager ignores Heartbeat.agent_time, and fakeagent always sends the current time.
+      The contract already carries Heartbeat.agent_time and HeartbeatAck.controller_time, so no contract change is needed.
+    deliverables:
+      - The agent manager records agent_time minus the receive time per agent and exposes it as a multiagent ClockSource, fakeagent gains a clock skew option, and a test runs the CTL-16 check over real heartbeats.
+    acceptance:
+      - A fake agent with a skew of 15 ms makes a three agent run refuse to start through the real heartbeat path, and one with 2 ms starts.
+
   - id: OPS-08
     title: CI check that keeps self hosted runners off untrusted triggers
     phase: 2

@@ -4,7 +4,7 @@
 
 Gate 3 (v1 release). One 16 vCPU agent meets the tier T1 targets on KVM, multi agent runs aggregate correctly, every image format boots, and the web UI passes its end to end suite.
 
-This page lists 16 work packages. Packages marked critical path gate the phase.
+This page lists 17 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -27,6 +27,7 @@ flowchart LR
   HST_04["HST-04<br/>DHCP for user space backends"]
   AGT_22["AGT-22<br/>The agent selects and reports its backend"]
   CON_32["CON-32<br/>Kernel release, selected backend, and XDP mode in the agent capabilities"]
+  CTL_51["CTL-51<br/>Clock offsets of agents from heartbeats"]
   TRN_17 --> TRN_10
   TRN_18 --> TRN_10
   TRN_10 --> TRN_12
@@ -47,6 +48,7 @@ flowchart LR
   HST_03 --> HST_04
   TRN_14 --> AGT_22
   CON_32 --> AGT_22
+  CTL_16 --> CTL_51
   classDef critical stroke-width:3px
   class QA_07 critical
 ```
@@ -71,6 +73,7 @@ flowchart LR
 | [HST-04](#hst-04-dhcp-for-user-space-backends) | DHCP for user space backends | S | HST-03 |  |
 | [AGT-22](#agt-22-the-agent-selects-and-reports-its-backend) | The agent selects and reports its backend | S | TRN-14, CON-32 |  |
 | [CON-32](#con-32-kernel-release-selected-backend-and-xdp-mode-in-the-agent-capabilities) | Kernel release, selected backend, and XDP mode in the agent capabilities | S | none |  |
+| [CTL-51](#ctl-51-clock-offsets-of-agents-from-heartbeats) | Clock offsets of agents from heartbeats | S | CTL-16 |  |
 
 ## CON Contracts
 
@@ -344,6 +347,23 @@ Deliverables.
 Acceptance.
 
 - [ ] A run with three fake agents aggregates counters exactly and refuses to start with an offset above 10 ms.
+
+### CTL-51 Clock offsets of agents from heartbeats
+
+Phase 3 · size S · workstream CTL
+
+- **Depends on.** CTL-16
+- **Paths.** `controller/internal/agents/`, `controller/internal/fakeagent/`
+
+CTL-16 refuses a multi agent run when an agent's clock is more than 10 ms off, but the controller has no production source of the offsets: agents.Manager ignores Heartbeat.agent_time, and fakeagent always sends the current time. The contract already carries Heartbeat.agent_time and HeartbeatAck.controller_time, so no contract change is needed.
+
+Deliverables.
+
+- The agent manager records agent_time minus the receive time per agent and exposes it as a multiagent ClockSource, fakeagent gains a clock skew option, and a test runs the CTL-16 check over real heartbeats.
+
+Acceptance.
+
+- [ ] A fake agent with a skew of 15 ms makes a three agent run refuse to start through the real heartbeat path, and one with 2 ms starts.
 
 ## UI Web UI
 
