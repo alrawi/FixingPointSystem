@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-17` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 50% (3 of 6 plan steps) |
+| Progress | 67% (4 of 6 plan steps) |
 | Current holder | claude-7e8c87, lease until 2026-11-17T00:23:35Z |
 | Last verified commit | none |
 
@@ -21,7 +21,7 @@ Build `engine/fps-tcp/`, a harness that drives a user space TCP stack behind `Se
 - [x] 1. Claim, branch, handoff, and a claim commit.
 - [x] 2. Crate skeleton, smoltcp license check with cargo deny.
 - [x] 3. The `TcpStack` seam, the smoltcp adapter, and the `SessionIo` stream.
-- [ ] 4. The three measures (sessions per second, throughput, socket scaling).
+- [x] 4. The three measures (sessions per second, throughput, socket scaling).
 - [ ] 5. The bench binary with plain argv, tests, and committed CI results.
 - [ ] 6. Docs, log entry, pull request, and CI.
 
@@ -33,11 +33,11 @@ Build `engine/fps-tcp/`, a harness that drives a user space TCP stack behind `Se
 
 ## Remaining
 
-The three measures, the bench binary, committed results, docs, and the pull request.
+Committed results, docs, the Host test section, and the pull request.
 
 ## Next action
 
-Write `src/bench.rs` with the rate, throughput, and scale workloads.
+Run the small profile, commit its results under `engine/fps-tcp/results/`, write the README, the Transport page section, the log entry, and the Host test section, then open the pull request.
 
 ## Blockers and open questions
 

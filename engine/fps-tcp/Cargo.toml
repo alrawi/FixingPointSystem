@@ -11,7 +11,7 @@ publish.workspace = true
 fps-io = { path = "../fps-io" }
 smoltcp = { version = "0.14", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "socket-tcp", "async"] }
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "rt", "time"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["io-util", "macros", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "rt", "time"] }

@@ -18,12 +18,21 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+pub mod cli;
 pub mod clock;
 pub mod link;
+pub mod report;
 pub mod smol;
 pub mod stack;
+pub mod sysinfo;
+pub mod workload;
 
 pub use clock::{Clock, ManualClock, MonotonicClock};
 pub use link::LinkConfig;
+pub use report::BenchReport;
 pub use smol::{SmolConfig, SmolSession, SmolStack, TimeWait};
 pub use stack::{StackStats, TcpStack};
+pub use workload::{
+    session_rate, socket_scaling, throughput, BenchError, Direction, RateConfig, RateReport,
+    ScaleConfig, ScaleReport, ThroughputConfig, ThroughputReport,
+};
