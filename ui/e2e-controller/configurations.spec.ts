@@ -50,10 +50,12 @@ test("creates, validates, saves, and lists a configuration", async ({ page }) =>
 
 test("shows the findings of the controller next to the field", async ({ page }) => {
   // The schema accepts any scenario name. Only the controller knows the registry.
+  // The example file names the scenario in a comment too, so the replacement names the key.
   const yaml = smokeConfig("ui_e2e_unknown_scenario").replace(
-    "http1/web_get",
-    "http1/no_such_scenario",
+    "scenario: http1/web_get",
+    "scenario: http1/no_such_scenario",
   );
+  expect(yaml).toContain("scenario: http1/no_such_scenario");
   const id = await createConfig(yaml);
   await signIn(page);
   await page.goto(`/configs/${id}`);

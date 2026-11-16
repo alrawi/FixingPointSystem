@@ -25,7 +25,7 @@ async function startFromForm(page: Page, configId: string) {
   await openFromNavigation(page, "Runs");
   await expect(page.getByRole("heading", { level: 1, name: "Runs" })).toBeVisible();
   await page.getByLabel("Configuration").selectOption(configId);
-  await page.getByLabel(/^local \(online\)/).check();
+  await page.getByRole("checkbox", { name: /^local \(online\)/ }).check();
   await page.getByRole("button", { name: "Start run" }).click();
   await expect(page.getByRole("heading", { level: 1, name: /^Run \S+$/ })).toBeVisible();
   const heading = (await page.getByRole("heading", { level: 1 }).textContent()) ?? "";
@@ -109,7 +109,7 @@ test("offers the agents of the controller and starts only with a configuration",
   await signIn(page);
   await openFromNavigation(page, "Runs");
   await expect(page.getByRole("button", { name: "Start run" })).toBeDisabled();
-  await expect(page.getByLabel(/^local \(online\)/)).toBeEnabled();
-  await expect(page.getByLabel(/^spare \(online\)/)).toBeEnabled();
+  await expect(page.getByRole("checkbox", { name: /^local \(online\)/ })).toBeEnabled();
+  await expect(page.getByRole("checkbox", { name: /^spare \(online\)/ })).toBeEnabled();
   await expectAccessible(page);
 });
