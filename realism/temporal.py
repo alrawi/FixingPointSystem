@@ -74,7 +74,7 @@ from pathlib import Path
 from typing import Any
 
 from realism import exchanges, ks, rungs
-from realism.capture import Session, SessionKey, decode, read_frames, summarize
+from realism.capture import Session, SessionResolver, decode, read_frames, summarize
 from realism.content import IGNORED_HEADERS, Unit, collect_units, read_flows
 from realism.exchanges import SessionExchanges
 from realism.labels import (
@@ -217,18 +217,15 @@ class _Stream:
 
 def _read_streams(capture: Path, sessions: Sequence[Session]) -> list[_Stream]:
     """Read the send times of every side of every session, in the order of the sessions."""
-    by_key: dict[SessionKey, Session] = {s.key: s for s in sessions}
+    resolver = SessionResolver(sessions)
     streams: dict[tuple[int, str], _Stream] = {}
     _, frames = read_frames(capture)
     for frame in frames:
         packet = decode(frame)
-        if packet is None or packet.payload_len == 0:
+        if packet is None:
             continue
-        key = SessionKey.of(
-            packet.transport, packet.src_ip, packet.src_port, packet.dst_ip, packet.dst_port
-        )
-        session = by_key.get(key)
-        if session is None:
+        session = resolver.session_of(packet)
+        if session is None or packet.payload_len == 0:
             continue
         from_client = (packet.src_ip, packet.src_port) == (session.client_ip, session.client_port)
         side = "client" if from_client else "server"

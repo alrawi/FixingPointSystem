@@ -339,7 +339,19 @@ def _frame(
     src_ip, dst_ip = ipaddress.ip_address(src[0]), ipaddress.ip_address(dst[0])
     if src_ip.version != dst_ip.version:
         raise DecryptedError(f"session between {src[0]} and {dst[0]} mixes IP versions")
-    tcp = struct.pack("!HHIIBBHHH", src[1], dst[1], seq, ack, 5 << 4, flags, 65535, 0, 0) + payload
+    tcp = struct.pack(
+        "!HHIIBBHHH",
+        src[1],
+        dst[1],
+        seq & 0xFFFFFFFF,
+        ack & 0xFFFFFFFF,
+        5 << 4,
+        flags,
+        65535,
+        0,
+        0,
+    )
+    tcp += payload
     if src_ip.version == 4:
         pseudo = src_ip.packed + dst_ip.packed + struct.pack("!BBH", 0, 6, len(tcp))
     else:
@@ -357,12 +369,27 @@ def _frame(
     return macs + ethertype + header + tcp
 
 
+def initial_sequence_numbers(index: int) -> tuple[int, int]:
+    """Return the client and server initial sequence numbers of the session at ``index``.
+
+    Sessions of a view that share a client port and a server must not share an initial
+    sequence number, or a dissector cannot tell the second connection from a retransmission
+    of the first. The steps are odd, so no two of the 2**32 indexes share a number, and
+    they are large, so the sequence ranges of neighbouring sessions do not overlap.
+    """
+    return (1000 + index * 0x9E3779B1) & 0xFFFFFFFF, (5000 + index * 0x85EBCA6B) & 0xFFFFFFFF
+
+
 def session_frames(
-    client: Endpoint, server: Endpoint, chunks: Sequence[Chunk], ident: int
+    client: Endpoint, server: Endpoint, chunks: Sequence[Chunk], ident: int, index: int = 0
 ) -> list[bytes]:
-    """Return the frames of one plain TCP session that carries the chunks."""
+    """Return the frames of one plain TCP session that carries the chunks.
+
+    ``index`` is the position of the session in its view and picks its initial sequence
+    numbers, see :func:`initial_sequence_numbers`.
+    """
     syn, ack_flag, psh, fin = 0x02, 0x10, 0x08, 0x01
-    c_seq, s_seq = 1000, 5000
+    c_seq, s_seq = initial_sequence_numbers(index)
     out = [
         _frame(client, server, c_seq, 0, syn, b"", True, ident),
         _frame(server, client, s_seq, c_seq + 1, syn | ack_flag, b"", False, ident + 1),
@@ -395,7 +422,9 @@ def write_view(
 ) -> int:
     """Write the plaintext of the sessions as a classic pcap and return the frame count.
 
-    Every session keeps its addresses and client port. The server port is the one of
+    Every session keeps its addresses and client port, and gets initial sequence numbers
+    of its own, so two sessions that reused a client port stay two connections to a
+    dissector. The server port is the one of
     the session unless ``view_port`` names another, which lets a view put sessions on
     the well known port of their protocol.
     """
@@ -405,9 +434,11 @@ def write_view(
     try:
         with path.open("wb") as out:
             out.write(struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1))
-            for session in sessions:
+            for index, session in enumerate(sessions):
                 server = (session.server[0], view_port or session.server[1])
-                frames = session_frames(session.client, server, session.chunks(plaintext), ident)
+                frames = session_frames(
+                    session.client, server, session.chunks(plaintext), ident, index
+                )
                 ident += len(frames)
                 for data in frames:
                     tick += 1000

@@ -175,6 +175,10 @@ func mustCanonical(t *testing.T, data []byte) []byte {
 // contracts/examples/tests/dns_zone.yaml names since CON-15, to dns/resolve of
 // the example dns module under contracts/examples/modules/, which these tests
 // install. Both modules have the same name, version, and zone_file setting.
+// It also maps http1/single_fetch, which
+// contracts/examples/tests/http1_first_party.yaml names since CON-33, to
+// http1/web_get of the example http1 module.
 func exampleModuleScenarios(data []byte) []byte {
-	return bytes.ReplaceAll(data, []byte("dns/lookup_a"), []byte("dns/resolve"))
+	data = bytes.ReplaceAll(data, []byte("dns/lookup_a"), []byte("dns/resolve"))
+	return bytes.ReplaceAll(data, []byte("http1/single_fetch"), []byte("http1/web_get"))
 }

@@ -62,7 +62,7 @@ from pathlib import Path
 from typing import Any
 
 from realism import scenario_graph
-from realism.capture import Session, SessionKey, decode, read_frames
+from realism.capture import Session, SessionResolver, decode, read_frames
 from realism.labels import Labels, Rule, StructureLabels, StructureScenario
 from realism.scenario_graph import Edge, FlowNode, ScenarioGraph
 from realism.series import failures_series
@@ -260,18 +260,14 @@ def connections(capture: Path, sessions: Sequence[Session]) -> dict[int, Connect
     A session completes at its last packet with payload, FIN, or RST. A session without
     any of them completes at its last packet.
     """
-    by_key: dict[SessionKey, Session] = {s.key: s for s in sessions}
+    resolver = SessionResolver(sessions)
     ends: dict[int, float] = {}
     _, frames = read_frames(capture)
     for frame in frames:
         packet = decode(frame)
         if packet is None:
             continue
-        session = by_key.get(
-            SessionKey.of(
-                packet.transport, packet.src_ip, packet.src_port, packet.dst_ip, packet.dst_port
-            )
-        )
+        session = resolver.session_of(packet)
         if session is None:
             continue
         if packet.payload_len > 0 or packet.tcp_flags & (_TCP_FIN | _TCP_RST):
