@@ -6,7 +6,7 @@
 | Branch | `wp/HST-03` |
 | Pull request | not yet opened |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 90% (4 of 4 plan steps, CI pending) |
 | Current holder | claude-9c41d7, lease until 2026-11-17T01:15:10Z |
 | Last verified commit | none |
 
@@ -16,22 +16,25 @@ Answer ARP and IPv6 neighbor discovery for host pools of user space backends, an
 
 ## Plan
 
-- [ ] 1. MAC allocator with conflict checks (`mac.rs`)
-- [ ] 2. Neighbor table with reverse address lookup, ARP and ND responders on bytes (`neighbor.rs`)
-- [ ] 3. Port loop over `fps_backend_afxdp::FrameIo`, tested on the in memory pair
-- [ ] 4. 20,000 host capture scored by `realism.hosts`, wiki page, log entry, PR
+- [x] 1. MAC allocator with conflict checks (`mac.rs`)
+- [x] 2. Neighbor table with reverse address lookup, ARP and ND responders on bytes (`neighbor.rs`)
+- [x] 3. Port loop over `fps_backend_afxdp::FrameIo`, tested on the in memory pair
+- [x] 4. 20,000 host capture scored by `realism.hosts`, wiki page, log entry, PR
 
 ## Done and verified
 
-Nothing yet.
+- `cargo test -p fps-hosts`: 60 unit tests, 9 integration tests in `tests/neighbor_port.rs`, all pass.
+- `cargo clippy -p fps-hosts --all-targets -- -D warnings` and `cargo fmt -p fps-hosts -- --check` pass.
+- 20,000 host captures (IPv4, IPv6, two pools) pass `realism.hosts.check` through `tests/score_hosts.py`; a two responder conflict capture fails it.
+- `plan.py check`, `render --check`, `lint` pass.
 
 ## Remaining
 
-All steps.
+CI result and the review request.
 
 ## Next action
 
-Write `engine/fps-hosts/src/mac.rs`.
+Open the PR and wait for CI.
 
 ## Blockers and open questions
 
@@ -43,7 +46,8 @@ none
 
 ## Pitfalls
 
-none yet
+- A pool that starts at the router address: the router's request becomes an announcement with no answer. Name the router as `gateway`.
+- The worktree guard refuses heredocs that share a command with cargo or git; write files with the editor tools.
 
 ## Verify the current state
 
@@ -51,8 +55,12 @@ none yet
 cargo test -p fps-hosts
 ```
 
+- Host test: none needed. Everything runs on the in memory frame pair without root. Argv for the scoring step alone: `python3 -I engine/fps-hosts/tests/score_hosts.py <capture.pcap> --hosts 20001 --macs 20001`.
+- Replies for the gateway or for hosts outside the slice are never sent. ARP probes are defended.
+
 ## Session log
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-16 | claude-9c41d7 | claim | none | claimed #564 with 4 plan steps |
+| 2026-11-17 | claude-9c41d7 | implementation done | pending | code, tests, wiki, log entry |

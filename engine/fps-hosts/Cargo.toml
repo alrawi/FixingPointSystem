@@ -8,6 +8,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+fps-backend-afxdp = { path = "../fps-backend-afxdp" }
 rand = { version = "0.8", default-features = false }
 rand_pcg = "0.3"
 serde_json = "1"

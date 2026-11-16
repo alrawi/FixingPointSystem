@@ -248,13 +248,13 @@ impl fmt::Display for Ipv6Prefix {
 pub struct MacAddr(pub [u8; 6]);
 
 impl MacAddr {
-    fn to_u64(self) -> u64 {
+    pub(crate) fn to_u64(self) -> u64 {
         self.0
             .iter()
             .fold(0u64, |acc, b| (acc << 8) | u64::from(*b))
     }
 
-    fn from_u64(v: u64) -> Self {
+    pub(crate) fn from_u64(v: u64) -> Self {
         let b = v.to_be_bytes();
         Self([b[2], b[3], b[4], b[5], b[6], b[7]])
     }
@@ -523,6 +523,58 @@ impl HostPool {
             }
         }
         Ok(Some(Ipv6Addr::from(cand)))
+    }
+
+    /// The host index of an IPv4 address, the inverse of [`HostPool::ipv4_addr`].
+    ///
+    /// It returns `None` for an address outside the usable part of the prefix,
+    /// for the gateway, and for an index at or above the pool count. The call
+    /// does arithmetic only, so it fits the hot path.
+    pub fn index_of_ipv4(&self, addr: Ipv4Addr) -> Option<u32> {
+        let p = self.ipv4?;
+        let net = u32::from(p.network());
+        let a = u32::from(addr);
+        if !p.contains(addr) || a <= net || addr == p.broadcast() {
+            return None;
+        }
+        let mut index = a - net - 1;
+        if let Some(g) = self.gateway_v4() {
+            if g > net && g <= a {
+                if g == a {
+                    return None;
+                }
+                index -= 1;
+            }
+        }
+        (index < self.count).then_some(index)
+    }
+
+    /// The host index of an IPv6 address, the inverse of [`HostPool::ipv6_addr`].
+    ///
+    /// It returns `None` for an address outside the prefix, for the network
+    /// address, for the gateway, and for an index at or above the pool count.
+    pub fn index_of_ipv6(&self, addr: Ipv6Addr) -> Option<u32> {
+        let p = self.ipv6?;
+        let net = u128::from(p.network());
+        let a = u128::from(addr);
+        if !p.contains(addr) || a <= net {
+            return None;
+        }
+        let mut offset = a - net - 1;
+        if let Some(g) = self.gateway_v6() {
+            if g > net && g <= a {
+                if g == a {
+                    return None;
+                }
+                offset -= 1;
+            }
+        }
+        u32::try_from(offset).ok().filter(|i| *i < self.count)
+    }
+
+    /// The configured MAC address of host index 0, if the pool names one.
+    pub fn mac_base(&self) -> Option<MacAddr> {
+        self.mac_base
     }
 
     /// The MAC address of host `index`, or `None` when the pool has no MAC base.
