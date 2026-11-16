@@ -11,6 +11,8 @@ These tools run the [Swarm Protocol](https://github.com/alrawi/FixingPointSystem
 | `bootstrap-labels.sh` | Creates the label set of the protocol |
 | `project_sync.py` | Copies each status label into the Status field of the owner's project over GraphQL, run by `../../.github/workflows/project-sync.yml` with the secret `FPS_PROJECT_TOKEN`; see the wiki page Operations |
 | `test_project_sync.py` | Tests of the project sync that replay GraphQL responses from `testdata/project_sync/` |
+| `check_self_hosted.py` | Fails a workflow that names a self hosted runner and has a trigger other than `workflow_dispatch` and `schedule`, or lacks `contents: read`, `persist-credentials: false`, or `timeout-minutes`; see the wiki page Operations, section Self hosted runner check |
+| `test_check_self_hosted.py` | Tests of that check, with workflows built in a temporary directory and the real workflows of the repository |
 | `../../.github/workflows/swarm-scan.yml` | The scanner, which runs `fps_swarm.py sweep` every 30 minutes and on manual dispatch with a `dry_run` input |
 
 We call every subcommand with the agent identifier in `FPS_AGENT_ID`.
