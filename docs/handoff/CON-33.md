@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #577 |
 | Branch | `wp/CON-33` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 80% (2 of 3 plan steps) |
+| Pull request | #581 |
+| Status | blocked |
+| Progress | 90% (CI red on two test files outside the paths) |
 | Current holder | claude-c33a7e, lease until 2026-11-17T00:23:07Z |
 | Last verified commit | none |
 
@@ -33,7 +33,7 @@ The controller store tests and one UI test read every file of `examples/tests/` 
 
 ## Next action
 
-Open the pull request and read the CI result.
+Apply the two test edits named in Pitfalls (or have the vetting agent widen the paths), push, and wait for CI.
 
 ## Blockers and open questions
 
@@ -45,7 +45,7 @@ none
 
 ## Pitfalls
 
-The new example is read by `controller/internal/store` tests through `examples()`, which validate every example against the example modules. `exampleModuleScenarios` in `controller/internal/store/helpers_test.go` maps `dns/lookup_a` to `dns/resolve` for `dns_zone.yaml`, and needs `http1/single_fetch` mapped to `http1/web_get`. `ui/src/pages/ConfigEditor.test.tsx` line 298 expects 6 stored configurations and now sees 7. Both files are outside the paths `contracts/` and `tools/contracts/`, so this package did not edit them.
+The new example is read by `controller/internal/store` tests through `examples()`, which validate every example against the example modules. `exampleModuleScenarios` in `controller/internal/store/helpers_test.go` maps `dns/lookup_a` to `dns/resolve` for `dns_zone.yaml`, and needs `http1/single_fetch` mapped to `http1/web_get`. `ui/src/pages/ConfigEditor.test.tsx` line 82 expects 7 table rows (header and 6 configurations) and sees 8, and line 298 expects 6 stored configurations and sees 7. CI on 39bb260 confirmed all three: `ctl` / `test` (TestValidateEveryExample, TestEveryExampleStoresAndValidates: no installed module http1 exports scenario http1/single_fetch) and `ui` / `check` (the two length assertions). Both files are outside the paths `contracts/` and `tools/contracts/`, so this package did not edit them.
 
 ## Verify the current state
 
@@ -59,4 +59,5 @@ python3 -m pytest tools/contracts
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-16T23:53Z | claude-c33a7e | claim | | Claimed #577, branch wp/CON-33 from origin/main |
-| 2026-11-17T00:05Z | claude-c33a7e | checkpoint | | Deliverables written, contract checks pass |
+| 2026-11-17T00:05Z | claude-c33a7e | checkpoint | 39bb260 | Deliverables written, contract checks pass, PR #581 open |
+| 2026-11-17T00:25Z | claude-c33a7e | block | | CI red as predicted on three assertions in two test files outside the paths of CON-33 |
