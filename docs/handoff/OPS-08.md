@@ -5,10 +5,10 @@
 | Issue | #579 |
 | Branch | `wp/OPS-08` |
 | Pull request | #580 |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-8c41d2, lease until 2026-11-17T00:23:00Z |
-| Last verified commit | none |
+| Last verified commit | 79004b1 |
 
 ## Goal
 
@@ -20,7 +20,7 @@ Add `tools/swarm/check_self_hosted.py` with tests. For every file of `.github/wo
 - [x] 2. Write the check and its tests.
 - [x] 3. Document it in Operations and the swarm README, and write the log entry with the Shared page notes.
 - [x] 4. Run ruff, mypy, pytest, and the plan checks.
-- [ ] 5. Wait for CI on pull request #580, and send it to review.
+- [x] 5. Wait for CI on pull request #580, and send it to review.
 
 ## Done and verified
 
@@ -30,11 +30,11 @@ Add `tools/swarm/check_self_hosted.py` with tests. For every file of `.github/wo
 
 ## Remaining
 
-CI on pull request #580. The coordinator must split `nightly` out of `qa-bench.yml` and add the step to `ops.yml` (both in the Shared page notes of the log entry), in one pull request, before the check can pass on `main`.
+CI of 79004b1: scripts, proto, contracts, licenses, ops green; the rust job (unrelated to this package) was still running after 35 minutes. The coordinator must split `nightly` out of `qa-bench.yml` and add the step to `ops.yml` (both in the Shared page notes of the log entry), in one pull request, before the check can pass on `main`.
 
 ## Next action
 
-Poll the check runs of pull request #580.
+Coordinator: split qa-bench.yml and add the ops.yml step in one pull request.
 
 ## Blockers and open questions
 
