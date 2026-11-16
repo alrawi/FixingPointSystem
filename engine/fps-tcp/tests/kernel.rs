@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Component tests of the smoltcp adapter through its `SessionIo` interface.
+//! Component tests of the kernel reference stack through its `SessionIo` interface.
 
 use std::io::ErrorKind;
-use std::sync::Arc;
 use std::time::Duration;
 
-use fps_tcp::{ManualClock, MonotonicClock, SmolConfig, SmolStack, TcpStack, TimeWait};
+use fps_tcp::{KernelConfig, KernelStack, TcpStack};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinHandle;
 
 const PORT: u16 = 8080;
 
-fn stack(config: SmolConfig) -> SmolStack {
-    SmolStack::new(config, Arc::new(MonotonicClock::new()))
+fn stack(config: KernelConfig) -> KernelStack {
+    KernelStack::new(config)
 }
 
-fn start_driver(stack: &SmolStack) -> JoinHandle<()> {
+fn start_driver(stack: &KernelStack) -> JoinHandle<()> {
     let driver = stack.clone();
     tokio::spawn(async move { driver.drive().await })
 }
@@ -34,7 +33,7 @@ fn pattern(len: usize) -> Vec<u8> {
 
 #[tokio::test(flavor = "current_thread")]
 async fn request_and_response_round_trip() {
-    let stack = stack(SmolConfig::default());
+    let stack = stack(KernelConfig::default());
     stack.listen(PORT).expect("listen");
     let driver = start_driver(&stack);
     within(async {
@@ -55,11 +54,10 @@ async fn request_and_response_round_trip() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn bulk_transfer_through_small_buffers_keeps_every_byte() {
-    // 4 KiB buffers make the writer wait for window updates many times.
-    let config = SmolConfig {
-        rx_buffer: 4096,
-        tx_buffer: 4096,
-        ..SmolConfig::default()
+    // Small buffers make the writer wait for window updates many times.
+    let config = KernelConfig {
+        buffer_bytes: Some(4096),
+        ..KernelConfig::default()
     };
     let stack = stack(config);
     stack.listen(PORT).expect("listen");
@@ -90,7 +88,7 @@ async fn bulk_transfer_through_small_buffers_keeps_every_byte() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn shutdown_gives_the_peer_end_of_stream_after_the_data() {
-    let stack = stack(SmolConfig::default());
+    let stack = stack(KernelConfig::default());
     stack.listen(PORT).expect("listen");
     let driver = start_driver(&stack);
     within(async {
@@ -114,7 +112,7 @@ async fn shutdown_gives_the_peer_end_of_stream_after_the_data() {
 #[tokio::test(flavor = "current_thread")]
 async fn abort_resets_the_peer_and_ends_later_operations() {
     use fps_io::SessionIo;
-    let stack = stack(SmolConfig::default());
+    let stack = stack(KernelConfig::default());
     stack.listen(PORT).expect("listen");
     let driver = start_driver(&stack);
     within(async {
@@ -125,8 +123,16 @@ async fn abort_resets_the_peer_and_ends_later_operations() {
         client.abort();
         let error = client.write_all(b"x").await.expect_err("aborted write");
         assert_eq!(error.kind(), ErrorKind::NotConnected);
+        // The kernel may hand over the bytes that arrived before the reset
+        // first, and then the reset shows.
         let mut buf = [0u8; 16];
-        let error = server.read(&mut buf).await.expect_err("reset read");
+        let error = loop {
+            match server.read(&mut buf).await {
+                Ok(0) => panic!("end of stream instead of a reset"),
+                Ok(_) => {}
+                Err(error) => break error,
+            }
+        };
         assert_eq!(error.kind(), ErrorKind::ConnectionReset);
     })
     .await;
@@ -135,32 +141,27 @@ async fn abort_resets_the_peer_and_ends_later_operations() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn connecting_to_a_port_without_listener_is_refused() {
-    let stack = stack(SmolConfig::default());
+    let stack = stack(KernelConfig::default());
     stack.listen(PORT).expect("listen");
     let driver = start_driver(&stack);
     let error = within(stack.connect(PORT + 1))
         .await
-        .err()
-        .expect("refused connect");
+        .expect_err("refused connect");
     assert_eq!(error.kind(), ErrorKind::ConnectionRefused);
     driver.abort();
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn listening_twice_on_one_port_fails() {
-    let stack = stack(SmolConfig::default());
+    let stack = stack(KernelConfig::default());
     stack.listen(PORT).expect("listen");
     let error = stack.listen(PORT).expect_err("second listen");
     assert_eq!(error.kind(), ErrorKind::AddrInUse);
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_burst_larger_than_the_backlog_all_connects() {
-    let config = SmolConfig {
-        backlog: 2,
-        ..SmolConfig::default()
-    };
-    let stack = stack(config);
+async fn a_burst_of_connects_all_arrive() {
+    let stack = stack(KernelConfig::default());
     stack.listen(PORT).expect("listen");
     let driver = start_driver(&stack);
     let accepted = within(async {
@@ -185,7 +186,7 @@ async fn a_burst_larger_than_the_backlog_all_connects() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn ended_sessions_leave_no_sockets_behind() {
-    let stack = stack(SmolConfig::default());
+    let stack = stack(KernelConfig::default());
     stack.listen(PORT).expect("listen");
     let baseline = stack.stats().sockets_open;
     let driver = start_driver(&stack);
@@ -203,55 +204,8 @@ async fn ended_sessions_leave_no_sockets_behind() {
             drop(client);
             drop(server);
         }
-        // The driver reaps closed sockets on its next passes.
-        for _ in 0..1000 {
-            if stack.stats().sockets_open == baseline {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
     })
     .await;
     driver.abort();
     assert_eq!(stack.stats().sockets_open, baseline);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn time_wait_sockets_stay_under_the_keep_policy() {
-    let config = SmolConfig {
-        time_wait: TimeWait::Keep,
-        ..SmolConfig::default()
-    };
-    let clock = Arc::new(ManualClock::new());
-    let stack = SmolStack::new(config, clock.clone());
-    stack.listen(PORT).expect("listen");
-    let baseline = stack.stats().sockets_open;
-    let driver = start_driver(&stack);
-    within(async {
-        let (client, server) = tokio::join!(stack.connect(PORT), stack.accept(PORT));
-        let (mut client, mut server) = (client.expect("connect"), server.expect("accept"));
-        client.shutdown().await.expect("shutdown");
-        let mut rest = Vec::new();
-        server.read_to_end(&mut rest).await.expect("read");
-        server.shutdown().await.expect("shutdown");
-        let mut rest = Vec::new();
-        client.read_to_end(&mut rest).await.expect("read");
-        drop(client);
-        drop(server);
-        for _ in 0..200 {
-            tokio::task::yield_now().await;
-        }
-        // The client side waits in TIME-WAIT while the manual clock stands still.
-        assert_eq!(stack.stats().sockets_open, baseline + 1);
-        clock.advance_micros(11_000_000);
-        for _ in 0..1000 {
-            if stack.stats().sockets_open == baseline {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(stack.stats().sockets_open, baseline);
-    })
-    .await;
-    driver.abort();
 }

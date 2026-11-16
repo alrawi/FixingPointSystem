@@ -1,13 +1,17 @@
 Host of the results in this directory (recorded 2026-11-16 by TRN-17)
 
 what      the agent sandbox of the swarm, a Firecracker microVM, not the GitHub hosted runner and not fat-nuc
-cpu       Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vCPUs
+stack     the kernel loopback reference stack (kernel loopback TCP), the only stack of TRN-17. The smoltcp adapter is TRN-20.
+cpu       Intel(R) Xeon(R) Processor @ 2.30GHz, 2 vCPUs
 memory    8 GiB, shared with other workers while the runs executed
-kernel    6.18.44-fc-v470
+kernel    6.18.44-fc-v509
 rustc     1.97.0 (2d8144b78 2026-07-07), release profile of the workspace
-smoltcp   0.14.0
+limits    open files 20000 soft and hard, so the scaling run ends near 20,000 sockets (see the stopped line of the report)
 
-small.json      cargo run --release -p fps-tcp --example tcp_bench -- --profile small --label "sandbox 2 vcpu, profile small" --out engine/fps-tcp/results/sandbox-2vcpu/small.json
-scale-1m.json   cargo run --release -p fps-tcp --example tcp_bench -- --profile full --workload scale --label "sandbox 2 vcpu, scale to 1,000,000 sockets" --out engine/fps-tcp/results/sandbox-2vcpu/scale-1m.json
+kernel-small.json   cargo run --release -p fps-tcp --example tcp_bench -- --profile small --label "sandbox 2 vcpu, kernel reference, profile small" --out engine/fps-tcp/results/sandbox-2vcpu/kernel-small.json
+kernel-scale.json   cargo run --release -p fps-tcp --example tcp_bench -- --profile full --workload scale --label "sandbox 2 vcpu, kernel reference, scale until the open files limit" --out engine/fps-tcp/results/sandbox-2vcpu/kernel-scale.json
 
-The host was shared with other workers, so treat differences below 20 percent as noise.
+These are results of the reference stack from the sandbox, labelled as such. The host was shared with other workers, so the
+session rate varied between 14,000 and 35,000 per second from run to run, and differences below a factor of two are noise.
+The kernel keeps socket memory outside the resident set, so bytes_per_socket shows only the user space cost of a socket.
+The draft numbers of smoltcp (1,000,584 sockets at 1.59 KB per socket, idle poll 15 to 52 ns per socket) are on the branch wp/TRN-20.

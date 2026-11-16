@@ -7,15 +7,14 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, Barrier};
+use std::sync::Barrier;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::clock::MonotonicClock;
+use crate::kernel::{KernelConfig, KernelStack};
 use crate::report::BenchReport;
-use crate::smol::{SmolConfig, SmolStack, TimeWait};
 use crate::stack::TcpStack;
-use crate::sysinfo::HostInfo;
+use crate::sysinfo::{self, HostInfo};
 use crate::workload::{
     session_rate, socket_scaling, throughput, BenchError, Direction, RateConfig, RateReport,
     RateRun, ScaleConfig, ThroughputConfig, ThroughputReport, ThroughputRun,
@@ -23,7 +22,7 @@ use crate::workload::{
 
 /// The text that `--help` prints.
 pub const USAGE: &str = "\
-usage: tcp_bench [--stack smoltcp] [--workload rate|throughput|scale|all] [--profile small|full]
+usage: tcp_bench [--stack kernel] [--workload rate|throughput|scale|all] [--profile small|full]
                  [--label TEXT] [--out PATH|-]
   rate:        [--duration-secs N] [--concurrency N] [--threads N]
                [--request-bytes N] [--response-bytes N]
@@ -31,8 +30,10 @@ usage: tcp_bench [--stack smoltcp] [--workload rate|throughput|scale|all] [--pro
                [--direction upload|download] [--threads N]
   scale:       [--scale-steps N,N,...] [--shards N] [--scale-buffer-bytes N]
                [--step-seconds N] [--probe-sessions N] [--batch N]
-  stack:       [--mtu N] [--checksums on|off] [--buffer-kib N] [--time-wait skip|keep]
-               [--idle-poll-ms N]
+  stack:       [--nodelay on|off] [--buffer-kib N] [--backlog N]
+The stack kernel is the TCP of the operating system on the loopback interface, and it
+is the reference that other stacks are compared with. Without --buffer-kib the kernel
+sizes the socket buffers itself.
 The profile small finishes within a minute and fits a hosted CI runner. The profile
 full measures up to 1,000,000 sockets and is meant for a host with 16 GiB of memory.
 Every flag after the profile overrides the profile. Sockets count both hosts of a pair.
@@ -74,8 +75,8 @@ struct Options {
     transfer_threads: usize,
     scale: ScaleConfig,
     shards: usize,
-    scale_buffer: usize,
-    smol: SmolConfig,
+    scale_buffer: Option<usize>,
+    kernel: KernelConfig,
 }
 
 /// A mistake in the command line.
@@ -87,14 +88,14 @@ enum UsageError {
     MissingValue(String),
     #[error("flag {flag} has the invalid value {value}")]
     BadValue { flag: String, value: String },
-    #[error("unknown stack {0}, the stacks are: smoltcp")]
+    #[error("unknown stack {0}, the stacks are: kernel")]
     UnknownStack(String),
 }
 
 fn profile_defaults(profile: &str) -> Option<Options> {
-    let smol = SmolConfig::default();
+    let kernel = KernelConfig::default();
     let mut options = Options {
-        stack: "smoltcp".into(),
+        stack: "kernel".into(),
         selection: Selection::All,
         profile: profile.into(),
         label: "local".into(),
@@ -105,8 +106,8 @@ fn profile_defaults(profile: &str) -> Option<Options> {
         transfer_threads: 1,
         scale: ScaleConfig::default(),
         shards: 1,
-        scale_buffer: 512,
-        smol,
+        scale_buffer: None,
+        kernel,
     };
     match profile {
         "small" => {
@@ -227,13 +228,12 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
                 o.scale.steps = steps?;
             }
             "--shards" => o.shards = number::<usize>(f, v)?.max(1),
-            "--scale-buffer-bytes" => o.scale_buffer = number(f, v)?,
+            "--scale-buffer-bytes" => o.scale_buffer = Some(number(f, v)?),
             "--step-seconds" => o.scale.step_budget = Duration::from_secs(number(f, v)?),
             "--probe-sessions" => o.scale.probe_sessions = number(f, v)?,
             "--batch" => o.scale.batch = number(f, v)?,
-            "--mtu" => o.smol.link.mtu = number(f, v)?,
-            "--checksums" => {
-                o.smol.link.checksums = match v {
+            "--nodelay" => {
+                o.kernel.nodelay = match v {
                     "on" => true,
                     "off" => false,
                     _ => return Err(bad(f, v)),
@@ -241,32 +241,22 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
             }
             "--buffer-kib" => {
                 let kib: usize = number(f, v)?;
-                o.smol.rx_buffer = kib.saturating_mul(1024);
-                o.smol.tx_buffer = kib.saturating_mul(1024);
+                o.kernel.buffer_bytes = Some(kib.saturating_mul(1024));
             }
-            "--idle-poll-ms" => {
-                let millis: i64 = number(f, v)?;
-                o.smol.idle_poll_micros = millis.saturating_mul(1000);
-            }
-            "--time-wait" => {
-                o.smol.time_wait = match v {
-                    "skip" => TimeWait::Skip,
-                    "keep" => TimeWait::Keep,
-                    _ => return Err(bad(f, v)),
-                }
-            }
+            "--backlog" => o.kernel.backlog = number(f, v)?,
             _ => return Err(UsageError::UnknownFlag(flag.clone())),
         }
     }
-    if o.stack != "smoltcp" {
+    if o.stack != "kernel" {
         return Err(UsageError::UnknownStack(o.stack));
     }
     Ok(o)
 }
 
-/// Runs `body` on a current thread runtime with timers.
+/// Runs `body` on a current thread runtime with timers and the I/O reactor.
 fn on_runtime<F: std::future::Future>(body: F) -> Result<F::Output, BenchError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
         .enable_time()
         .build()
         .map_err(|source| BenchError::Io {
@@ -301,17 +291,15 @@ where
     })
 }
 
+fn buffer_text(bytes: Option<usize>) -> String {
+    bytes.map_or_else(|| "kernel default".to_string(), |b| b.to_string())
+}
+
 fn describe(o: &Options) -> Vec<(String, String)> {
     let mut config = vec![
         ("profile".to_string(), o.profile.clone()),
-        ("mtu".into(), o.smol.link.mtu.to_string()),
-        ("checksums".into(), o.smol.link.checksums.to_string()),
-        ("time_wait".into(), format!("{:?}", o.smol.time_wait)),
-        ("nagle".into(), o.smol.nagle.to_string()),
-        (
-            "idle_poll_ms".into(),
-            (o.smol.idle_poll_micros / 1000).to_string(),
-        ),
+        ("nodelay".into(), o.kernel.nodelay.to_string()),
+        ("backlog".into(), o.kernel.backlog.to_string()),
     ];
     if o.selection.rate() {
         config.push((
@@ -328,7 +316,10 @@ fn describe(o: &Options) -> Vec<(String, String)> {
             "rate.response_bytes".into(),
             o.rate.response_bytes.to_string(),
         ));
-        config.push(("rate.buffer_bytes".into(), o.smol.rx_buffer.to_string()));
+        config.push((
+            "rate.buffer_bytes".into(),
+            buffer_text(o.kernel.buffer_bytes),
+        ));
     }
     if o.selection.throughput() {
         config.push((
@@ -347,14 +338,21 @@ fn describe(o: &Options) -> Vec<(String, String)> {
         config.push(("throughput.threads".into(), o.transfer_threads.to_string()));
         config.push((
             "throughput.buffer_bytes".into(),
-            o.smol.rx_buffer.to_string(),
+            buffer_text(o.kernel.buffer_bytes),
         ));
     }
     if o.selection.scale() {
         let steps: Vec<String> = o.scale.steps.iter().map(usize::to_string).collect();
         config.push(("scale.steps".into(), steps.join(",")));
         config.push(("scale.shards".into(), o.shards.to_string()));
-        config.push(("scale.buffer_bytes".into(), o.scale_buffer.to_string()));
+        config.push((
+            "open_files_soft_limit".into(),
+            sysinfo::open_files_limit().map_or_else(|| "unlimited".to_string(), |n| n.to_string()),
+        ));
+        config.push((
+            "scale.buffer_bytes".into(),
+            buffer_text(o.scale_buffer.or(o.kernel.buffer_bytes)),
+        ));
         config.push((
             "scale.step_budget_secs".into(),
             o.scale.step_budget.as_secs().to_string(),
@@ -367,22 +365,19 @@ fn describe(o: &Options) -> Vec<(String, String)> {
     config
 }
 
-fn make_smol(config: &SmolConfig, index: usize) -> SmolStack {
-    let config = SmolConfig {
-        seed: config.seed.wrapping_add(index as u64 * 2),
-        ..config.clone()
-    };
-    SmolStack::new(config, Arc::new(MonotonicClock::new()))
+fn make_kernel(config: &KernelConfig, _index: usize) -> KernelStack {
+    KernelStack::new(config.clone())
 }
 
 fn measure<S: TcpStack>(
     options: &Options,
     key: &str,
-    make: &(dyn Fn(usize, &SmolConfig) -> S + Sync),
+    make: &(dyn Fn(usize, &KernelConfig) -> S + Sync),
 ) -> Result<BenchReport, BenchError> {
     let mut report = BenchReport {
         stack_key: key.into(),
-        stack_name: make(0, &options.smol).name(),
+        stack_name: make(0, &options.kernel).name(),
+        stack_notes: make(0, &options.kernel).notes(),
         label: options.label.clone(),
         host: HostInfo::detect(),
         config: describe(options),
@@ -393,7 +388,7 @@ fn measure<S: TcpStack>(
     };
     if options.selection.rate() {
         let runs: Vec<RateRun> = on_threads(options.rate_threads, |index, barrier| {
-            let stack = make(index, &options.smol);
+            let stack = make(index, &options.kernel);
             barrier.wait();
             on_runtime(session_rate(&stack, &options.rate))?
         })?;
@@ -401,17 +396,18 @@ fn measure<S: TcpStack>(
     }
     if options.selection.throughput() {
         let runs: Vec<ThroughputRun> = on_threads(options.transfer_threads, |index, barrier| {
-            let stack = make(index, &options.smol);
+            let stack = make(index, &options.kernel);
             barrier.wait();
             on_runtime(throughput(&stack, &options.transfer))?
         })?;
         report.throughput = Some(ThroughputReport::from_runs(&runs));
     }
     if options.selection.scale() {
-        let mut smol = options.smol.clone();
-        smol.rx_buffer = options.scale_buffer;
-        smol.tx_buffer = options.scale_buffer;
-        let stacks: Vec<S> = (0..options.shards).map(|i| make(i, &smol)).collect();
+        let mut kernel = options.kernel.clone();
+        if options.scale_buffer.is_some() {
+            kernel.buffer_bytes = options.scale_buffer;
+        }
+        let stacks: Vec<S> = (0..options.shards).map(|i| make(i, &kernel)).collect();
         report.scale = Some(on_runtime(socket_scaling(&stacks, &options.scale))??);
     }
     report.finished_unix_secs = SystemTime::now()
@@ -434,8 +430,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             return 2;
         }
     };
-    let report = match measure(&options, "smoltcp", &|index, config| {
-        make_smol(config, index)
+    let report = match measure(&options, "kernel", &|index, config| {
+        make_kernel(config, index)
     }) {
         Ok(report) => report,
         Err(error) => {
@@ -532,24 +528,32 @@ mod tests {
     }
 
     #[test]
-    fn stack_flags_reach_the_smoltcp_config() {
+    fn stack_flags_reach_the_kernel_config() {
         let o = parse(&args(&[
-            "--mtu",
-            "9000",
-            "--checksums=off",
+            "--nodelay=off",
             "--buffer-kib",
             "128",
-            "--time-wait",
-            "keep",
-            "--idle-poll-ms",
-            "5",
+            "--backlog",
+            "512",
+            "--scale-buffer-bytes",
+            "2048",
         ]))
         .expect("parse");
-        assert_eq!(o.smol.idle_poll_micros, 5000);
-        assert_eq!(o.smol.link.mtu, 9000);
-        assert!(!o.smol.link.checksums);
-        assert_eq!(o.smol.rx_buffer, 128 * 1024);
-        assert_eq!(o.smol.time_wait, TimeWait::Keep);
+        assert!(!o.kernel.nodelay);
+        assert_eq!(o.kernel.buffer_bytes, Some(128 * 1024));
+        assert_eq!(o.kernel.backlog, 512);
+        assert_eq!(o.scale_buffer, Some(2048));
+        assert_eq!(parse(&args(&[])).expect("parse").kernel.buffer_bytes, None);
+    }
+
+    #[test]
+    fn flags_of_removed_stacks_are_unknown() {
+        for flag in ["--mtu", "--checksums", "--time-wait", "--idle-poll-ms"] {
+            assert!(matches!(
+                parse(&args(&[flag, "1"])),
+                Err(UsageError::UnknownFlag(_))
+            ));
+        }
     }
 
     #[test]
@@ -583,11 +587,9 @@ mod tests {
         assert!(text.contains("throughput:"), "{text}");
         assert!(text.contains("socket scaling"), "{text}");
         let json = std::fs::read_to_string(&path).expect("json");
-        assert!(
-            json.contains("smoltcp.scale.400.bytes_per_socket")
-                || json.contains("smoltcp.scale.400.idle_poll_us")
-        );
-        assert!(json.contains("smoltcp.rate.sessions_per_s"));
+        assert!(json.contains("kernel.scale.400.idle_poll_us"));
+        assert!(json.contains("kernel.rate.sessions_per_s"));
+        assert!(json.contains("loopback interface"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

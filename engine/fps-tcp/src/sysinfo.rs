@@ -15,6 +15,22 @@ pub fn resident_bytes() -> Option<u64> {
     Some(kib * 1024)
 }
 
+/// Returns the soft limit of open files of this process, which caps the
+/// sockets that a kernel stack can hold, or `None` when it is unlimited or
+/// unknown.
+pub fn open_files_limit() -> Option<u64> {
+    parse_open_files_limit(&fs::read_to_string("/proc/self/limits").ok()?)
+}
+
+fn parse_open_files_limit(limits: &str) -> Option<u64> {
+    let line = limits.lines().find(|l| l.starts_with("Max open files"))?;
+    let soft = line
+        .strip_prefix("Max open files")?
+        .split_whitespace()
+        .next()?;
+    soft.parse().ok()
+}
+
 /// The host facts that a report carries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostInfo {
@@ -77,6 +93,16 @@ mod tests {
             Some(2048 * 1024)
         );
         assert_eq!(parse_mem_total(""), None);
+    }
+
+    #[test]
+    fn open_files_limit_is_the_soft_value() {
+        let text = "Limit  Soft Limit  Hard Limit  Units\nMax open files            1024                 4096                 files\n";
+        assert_eq!(parse_open_files_limit(text), Some(1024));
+        let unlimited =
+            "Max open files            unlimited            unlimited            files\n";
+        assert_eq!(parse_open_files_limit(unlimited), None);
+        assert_eq!(parse_open_files_limit(""), None);
     }
 
     #[test]

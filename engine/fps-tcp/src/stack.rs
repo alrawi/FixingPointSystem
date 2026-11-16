@@ -12,8 +12,10 @@ pub struct StackStats {
     /// Sockets that the pair holds now, counted on both hosts.
     pub sockets_open: u64,
     /// Passes of the driver that moved at least one frame or socket event.
+    /// A stack without a user space driver reports zero.
     pub pump_passes: u64,
-    /// Frames that both hosts transmitted since the pair was created.
+    /// Frames that both hosts transmitted since the pair was created. A stack
+    /// that cannot see its frames reports zero.
     pub frames: u64,
 }
 
@@ -31,6 +33,10 @@ pub trait TcpStack: Clone + Send + Sync + 'static {
     /// Names the stack and its version for the reports.
     fn name(&self) -> String;
 
+    /// Lists the facts about the stack and its link that a reader needs to
+    /// interpret its numbers, one sentence each.
+    fn notes(&self) -> Vec<String>;
+
     /// Starts listening on `port` at the server host.
     ///
     /// A port may be listened on once.
@@ -44,11 +50,13 @@ pub trait TcpStack: Clone + Send + Sync + 'static {
     /// host.
     fn accept(&self, port: u16) -> impl Future<Output = io::Result<Self::Session>> + Send;
 
-    /// Moves frames and timers for both hosts until the future is dropped.
+    /// Moves frames and timers for both hosts until the future is dropped. A
+    /// stack that the operating system drives waits forever.
     fn drive(&self) -> impl Future<Output = ()> + Send;
 
     /// Runs one complete poll of both hosts at once and returns, so a
-    /// benchmark can time the cost of holding the current sockets.
+    /// benchmark can time the cost of holding the current sockets. A stack
+    /// without a user space poll does nothing.
     fn poll_once(&self);
 
     /// Returns the counters of the pair.

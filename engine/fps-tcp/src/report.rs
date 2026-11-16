@@ -45,10 +45,12 @@ pub struct Metric {
 /// Everything that one run of the harness measured.
 #[derive(Clone, Debug)]
 pub struct BenchReport {
-    /// The short name of the stack, used in metric names, such as `smoltcp`.
+    /// The short name of the stack, used in metric names, such as `kernel`.
     pub stack_key: String,
     /// The long name of the stack, with its version.
     pub stack_name: String,
+    /// The facts about the stack and its link, from [`crate::TcpStack::notes`].
+    pub stack_notes: Vec<String>,
     /// The label of the host or profile that the run belongs to.
     pub label: String,
     /// The facts about the host.
@@ -216,10 +218,10 @@ impl BenchReport {
 
     /// Lists the facts that a reader needs to interpret the numbers.
     fn notes(&self) -> Vec<String> {
-        let mut notes = vec![
-            "client and server host of one stack pair share one process and one in memory link without delay or loss".to_string(),
+        let mut notes = self.stack_notes.clone();
+        notes.push(
             "sockets counts both hosts of a pair and includes the listening sockets".to_string(),
-        ];
+        );
         if let Some(scale) = &self.scale {
             if let Some(reason) = &scale.stopped {
                 notes.push(reason.clone());
@@ -288,7 +290,7 @@ impl BenchReport {
                     s.idle_poll_us,
                     s.probe_sessions_per_s,
                     s.probe_latency.p99_us,
-                    if s.reached { "" } else { "  (over budget)" }
+                    if s.reached { "" } else { "  (not reached)" }
                 );
             }
             if let Some(reason) = &scale.stopped {
@@ -389,8 +391,9 @@ mod tests {
 
     fn report() -> BenchReport {
         BenchReport {
-            stack_key: "smoltcp".into(),
-            stack_name: "smoltcp 0.14".into(),
+            stack_key: "kernel".into(),
+            stack_name: "kernel loopback TCP".into(),
+            stack_notes: vec!["a note of the stack".into()],
             label: "unit".into(),
             host: host(),
             config: vec![("workload".into(), "all".into())],
@@ -448,12 +451,12 @@ mod tests {
     fn metrics_name_every_measure_and_skip_unreached_steps() {
         let names: Vec<String> = report().metrics().into_iter().map(|m| m.name).collect();
         for expected in [
-            "smoltcp.rate.sessions_per_s",
-            "smoltcp.rate.latency_p99_us",
-            "smoltcp.throughput.gbit_per_s",
-            "smoltcp.scale.max_sockets",
-            "smoltcp.scale.1000.bytes_per_socket",
-            "smoltcp.scale.1000.idle_poll_us",
+            "kernel.rate.sessions_per_s",
+            "kernel.rate.latency_p99_us",
+            "kernel.throughput.gbit_per_s",
+            "kernel.scale.max_sockets",
+            "kernel.scale.1000.bytes_per_socket",
+            "kernel.scale.1000.idle_poll_us",
         ] {
             assert!(names.iter().any(|n| n == expected), "missing {expected}");
         }
@@ -478,6 +481,6 @@ mod tests {
         let text = report().to_text();
         assert!(text.contains("sessions per second: 100"));
         assert!(text.contains("throughput: 2.500 Gbit/s"));
-        assert!(text.contains("(over budget)"));
+        assert!(text.contains("(not reached)"));
     }
 }
