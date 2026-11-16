@@ -79,7 +79,7 @@ describe("configuration list", () => {
     const { user } = await renderAt("/configs");
     const table = await screen.findByRole("table", { name: "Stored configurations" });
     const rows = within(table).getAllByRole("row");
-    expect(rows).toHaveLength(7);
+    expect(rows).toHaveLength(8);
     expect(within(rows[1] as HTMLElement).getByRole("link").textContent).toBe("seedless_smoke");
     expect(screen.getByRole("link", { name: "New configuration" }).getAttribute("href")).toBe(
       "/configs/new",
@@ -295,7 +295,7 @@ describe("saving and validating on the controller", () => {
     const list = await fetch(`${mock.baseUrl}/configs`, {
       headers: { Authorization: `Bearer ${MOCK_TOKEN}` },
     });
-    expect(((await list.json()) as { items: unknown[] }).items).toHaveLength(6);
+    expect(((await list.json()) as { items: unknown[] }).items).toHaveLength(7);
   });
 
   it("stores changed text before it validates, and validates the stored copy", async () => {

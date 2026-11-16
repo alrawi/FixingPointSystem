@@ -1418,7 +1418,7 @@ def run(modules_dirs: list[Path], tests: list[Path], openapi: Path | None,
 # Example tests that name a scenario of a first party module under modules/. The
 # example modules of contracts/examples/modules/ have their own scenarios, so
 # these tests are validated against the first party module they name (CON-15).
-FIRST_PARTY_TESTS = {"dns_zone.yaml": "dns"}
+FIRST_PARTY_TESTS = {"dns_zone.yaml": "dns", "http1_first_party.yaml": "http1"}
 
 
 def run_first_party(tests: list[Path], catalog_path: Path) -> Report:

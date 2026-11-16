@@ -15,7 +15,7 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 | `metrics/catalog.schema.json` | Format of the metric catalog |
 | `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.4 between the controller and agents (gRPC, proto3). Agents dial the controller. |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |
-| `examples/` | Example modules, tests, and agent plans that every validator run checks |
+| `examples/` | Example modules, tests, and agent plans that every validator run checks. An example test pairs with the example modules of `examples/modules/`, so `examples/tests/http_smoke.yaml` names the scenario `http1/web_get` of the example http1 module. A test that names a scenario of a first party module under `modules/` pairs with that module instead, as `dns_zone.yaml` and `http1_first_party.yaml` do, and `tools/contracts/validate.py` lists it in `FIRST_PARTY_TESTS`. |
 
 ## Flow program semantics
 
