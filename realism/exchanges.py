@@ -22,7 +22,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from realism.capture import Session, SessionKey, decode_segment, read_frames
+from realism.capture import Session, SessionResolver, decode_segment, read_frames
 
 _REQUEST_LINE = re.compile(rb"^GET (\S+) HTTP/1\.1\r\n")
 _CONTENT_LENGTH = re.compile(r"(?im)^content-length:\s*(\d+)\s*$")
@@ -57,16 +57,17 @@ def read_exchanges(capture: Path, sessions: Iterable[Session]) -> dict[int, Sess
     Only these sessions are reassembled, so a capture with many other sessions costs only
     the time to decode its frames.
     """
-    wanted: dict[SessionKey, Session] = {s.key: s for s in sessions if s.transport == "tcp"}
+    wanted: list[Session] = [s for s in sessions if s.transport == "tcp"]
+    resolver = SessionResolver(wanted)
     parts: dict[int, dict[str, list[tuple[int, float, bytes]]]] = {}
     _, frames = read_frames(capture)
     for frame in frames:
         segment = decode_segment(frame)
-        if segment is None or segment.packet.transport != "tcp" or not segment.payload:
+        if segment is None or segment.packet.transport != "tcp":
             continue
         p = segment.packet
-        session = wanted.get(SessionKey.of("tcp", p.src_ip, p.src_port, p.dst_ip, p.dst_port))
-        if session is None:
+        session = resolver.session_of(p)
+        if session is None or not segment.payload:
             continue
         from_client = (p.src_ip, p.src_port) == (session.client_ip, session.client_port)
         side = parts.setdefault(session.id, {"client": [], "server": []})
@@ -74,7 +75,7 @@ def read_exchanges(capture: Path, sessions: Iterable[Session]) -> dict[int, Sess
             (segment.seq, p.timestamp, segment.payload)
         )
     out: dict[int, SessionExchanges] = {}
-    for session in wanted.values():
+    for session in wanted:
         result = SessionExchanges(session)
         sides = parts.get(session.id)
         if sides is None or not sides["client"]:
