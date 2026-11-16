@@ -9,7 +9,7 @@ The files under `contracts/` define the interfaces between workstreams. A pull r
 1. Change only contract files, examples, and the validator in that pull request.
 2. Pass `python3 tools/contracts/validate.py` and `python3 -m pytest tools/contracts`.
 3. Bump the contract version in the changed file and record the change in a new file `contracts/changes/<ID>.md`.
-4. Receive approval from the repository owner before merge.
+4. Receive approval before merge, from the repository owner or, for an additive change, from the vetting agent under decision D13 (`docs/decisions/0013-autonomous-coordination.md`).
 
 Implementation pull requests must not edit contract files.
 
@@ -19,7 +19,7 @@ Each pull request touches one workstream directory, such as `spikes/s1-engine/` 
 
 ## Gates
 
-Each phase ends at a gate with an automated acceptance suite. The owner signs off each gate. See `docs/phase0/README.md` for Gate 0.
+Each phase ends at a gate with an automated acceptance suite. The owner signs off each gate, and decision D13 lets the vetting agent sign off a gate whose suite passes in CI with no waiver and unchanged criteria, except Gate 3. See `docs/phase0/README.md` for Gate 0.
 
 ## Licensing
 

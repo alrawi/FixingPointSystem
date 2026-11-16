@@ -16,7 +16,8 @@ We build the protocol on five rules.
 
 | Role | Who | Responsibilities |
 |---|---|---|
-| Owner | The human repository owner | Approves contracts, decisions, gates, and catalog changes. Resolves the conflicts that the coordinator cannot resolve mechanically. |
+| Owner | The human repository owner | Approves contracts, decisions, gates, and catalog changes, except those that [D13](https://github.com/alrawi/FixingPointSystem/blob/main/docs/decisions/0013-autonomous-coordination.md) delegates. Resolves the conflicts that the coordinator cannot resolve mechanically. |
+| Vetting agent | Claude Fable 5.2 with extra high reasoning, in a separate read only session | Since 2026-11-16, under D13, decides batches, additive contract changes, `needs:owner` packages, plan pull requests, technical decision records, and gate sign-offs whose suite passes in CI with no waiver, except Gate 3. It may defer a question to the owner. |
 | Worker agent | Any coding agent | Claims one work package at a time, implements it, and hands it off or finishes it. |
 | Reviewer agent | Any coding agent that did not write the change | Reviews a pull request against the Definition of Done and posts a structured review comment. |
 | Planner agent | Any coding agent asked by the owner | Splits epics, seeds issues from the catalog, and keeps the wiki current. |
@@ -342,7 +343,7 @@ The helper performs steps 4 and 5 and takes the pull request number from the car
 swarm review "$N" --pr 57
 ```
 
-A reviewer agent then reviews the pull request. The coordinator merges it after an approving review and green CI, except for contract and decision pull requests, which wait for the owner's approval, and the `Closes #<issue>` text closes the issue. The promotion sweep then replaces the status label with `status:done`.
+A reviewer agent then reviews the pull request. The coordinator merges it after an approving review and green CI, except for contract and decision pull requests, which wait for the approval of the owner or, under D13, of the vetting agent, and the `Closes #<issue>` text closes the issue. The promotion sweep then replaces the status label with `status:done`.
 
 ## Review
 
@@ -426,7 +427,7 @@ Two packages in the same directory, such as ENG-02 and ENG-03 in `engine/fps-flo
 
 ### Merge train
 
-The owner delegated merging to the coordinator on 2026-11-03. As each pull request finishes, the coordinator reviews it, merges `origin/main` into it when `main` moved, resolves mechanical conflicts such as two additions to one page, `Cargo.lock`, or `go.mod` with `go mod tidy`, waits for CI, and merges it. The coordinator hands the owner only three kinds of pull request, which are a conflict that needs a design choice, a contract change, and a decision record. Worker agents never merge.
+The owner delegated merging to the coordinator on 2026-11-03. As each pull request finishes, the coordinator reviews it, merges `origin/main` into it when `main` moved, resolves mechanical conflicts such as two additions to one page, `Cargo.lock`, or `go.mod` with `go mod tidy`, waits for CI, and merges it. The coordinator hands the owner only three kinds of pull request, which are a conflict that needs a design choice, a contract change, and a decision record. Worker agents never merge. Since 2026-11-16, decision D13 lets the vetting agent approve contract changes and decision records within its limits, so the coordinator hands the owner only what D13 keeps with the owner.
 
 ### Coordinator duties after a batch
 

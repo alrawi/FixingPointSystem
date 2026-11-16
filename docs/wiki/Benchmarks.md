@@ -47,7 +47,7 @@ The owner registers the runner, and the full steps are in the [README](https://g
 
 ### Security caveat
 
-The repository is public, so a self hosted runner must never run a job for a pull request, in particular not for a fork, because the job would run foreign code on the owner's server. The `nightly` job therefore listens only to `schedule` and `workflow_dispatch` on `main`, and the setting "Require approval for all outside collaborators" stays on. Never add a pull request trigger to a job that selects `fps-bench`. The test job and every other job of the repository stay on hosted runners, so no pull request waits for the self hosted runner.
+The repository is public, so a self hosted runner must never run a job for a pull request, in particular not for a fork, because the job would run foreign code on the owner's server. The `nightly` job therefore listens only to `schedule` and `workflow_dispatch` on `main`, and the setting "Require approval for all outside collaborators" stays on. Never add a pull request trigger to a job that selects `fps-bench`. The test job and every other job of the repository stay on hosted runners, so no pull request waits for the self hosted runner. The host tests of decision D13 run through the owner's relay and not through the runner, and no host test starts between 00:50 and 03:30 UTC, so they never overlap the nightly run ([Operations, Owner host](Operations.md#owner-host)).
 
 ## Refreshing a baseline
 
