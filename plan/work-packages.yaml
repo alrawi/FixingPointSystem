@@ -2113,7 +2113,7 @@ work_packages:
     workstream: TRN
     size: S
     owner_action: The vetting agent accepts or rejects decision record 0014 under decision D13, unless the record alters decision D1 or a tier target, which only the owner decides.
-    depends_on: [TRN-01, TRN-17, TRN-18]
+    depends_on: [TRN-01, TRN-17, TRN-18, TRN-20]
     paths: [docs/decisions/, engine/fps-tcp/]
     summary: >-
       Compare smoltcp, an own TCP stack, and F-Stack for the AF_XDP and DPDK backends and propose decision record 0014.
@@ -2259,19 +2259,36 @@ work_packages:
       - The suite passes on the reference KVM host and records every measured value, and its small profile on fat-nuc prints NOT A GATE RESULT.
 
   - id: TRN-17
-    title: TCP stack bench harness and smoltcp behind SessionIo
+    title: TCP stack bench harness with a kernel reference stack
     phase: 3
     workstream: TRN
     size: M
     depends_on: [TRN-01]
     paths: [engine/fps-tcp/]
     summary: >-
-      The first measured candidate of TRN-10. A harness that drives a TCP stack behind SessionIo and measures sessions
-      per second, throughput, and scaling to 1,000,000 sockets, with smoltcp as the first stack.
+      The harness that TRN-10 measures its candidates on. It drives a TCP stack behind a TcpStack seam and SessionIo and
+      measures sessions per second, throughput, and scaling to 1,000,000 sockets. The kernel loopback stack is the reference.
+      The smoltcp adapter is TRN-20, because smoltcp and managed are licensed 0BSD, which deny.toml does not allow yet.
     deliverables:
-      - The harness and a smoltcp adapter behind SessionIo, with results committed for the CI runner and for fat-nuc through a host test.
+      - The harness with the TcpStack seam and a kernel loopback reference stack, with no dependency on smoltcp, and results committed for the CI runner.
     acceptance:
-      - The harness reports the three measures for smoltcp, and its tests run in CI.
+      - The harness reports the three measures for the kernel reference stack, cargo deny passes, and its tests run in CI.
+
+  - id: TRN-20
+    title: smoltcp on the TCP stack bench harness
+    phase: 3
+    workstream: TRN
+    size: S
+    owner_action: The owner allows 0BSD in deny.toml, or allows smoltcp and managed by exception. The coordinator does not dispatch this package before then.
+    depends_on: [TRN-17]
+    paths: [engine/fps-tcp/]
+    summary: >-
+      The smoltcp adapter of the TRN-17 harness. The first draft in PR #586 reached 1,000,584 sockets at 1.59 KB per socket,
+      with an idle poll cost that grows from 15 ns to 52 ns per socket.
+    deliverables:
+      - The smoltcp adapter behind the TcpStack seam, with results committed for the CI runner and for fat-nuc through a host test.
+    acceptance:
+      - The harness reports the three measures for smoltcp on the same hosts as the reference stack.
 
   - id: TRN-18
     title: A minimal own TCP stack on the bench harness
@@ -2309,7 +2326,7 @@ work_packages:
     workstream: HST
     size: S
     owner_action: Waits for a contract package that adds DHCP configuration to the host pool schema, which no schema field configures today. The coordinator does not dispatch it before then.
-    depends_on: [HST-03]
+    depends_on: [HST-03, CON-34]
     paths: [engine/fps-hosts/]
     summary: >-
       Obtain host addresses through DHCP when the host pool configures it.
@@ -2339,7 +2356,7 @@ work_packages:
     size: S
     depends_on: []
     paths: [contracts/]
-    owner_action: An additive contract change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #74 in part).
+    owner_action: "An additive contract change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #74 in part)."
     summary: >-
       Issue #74 in part. Agent protocol 0.2.4 to 0.2.5 and an OpenAPI minor version. REST Agent.backend takes the first
       entry of backends, which is always kernel, so the agent reports the backend it selected. NUMA fields stay open in #74,
@@ -3928,7 +3945,7 @@ work_packages:
     size: S
     depends_on: []
     paths: [contracts/, tools/contracts/]
-    owner_action: A fix inside the examples, with no schema or version change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #482).
+    owner_action: "A fix inside the examples, with no schema or version change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #482)."
     summary: >-
       Issue #482. contracts/examples/tests/http_smoke.yaml names http1/web_get, which belongs to the example module under
       contracts/examples/modules/http1 and not to the first party http1 module. The validator, the plan example, the UI
@@ -3964,7 +3981,7 @@ work_packages:
     workstream: CTL
     size: S
     depends_on: [CTL-16]
-    paths: [controller/internal/agents/, controller/internal/fakeagent/]
+    paths: [controller/internal/agents/, controller/internal/fakeagent/, controller/internal/multiagent/]
     summary: >-
       CTL-16 refuses a multi agent run when an agent's clock is more than 10 ms off, but the controller has no production
       source of the offsets: agents.Manager ignores Heartbeat.agent_time, and fakeagent always sends the current time.
@@ -3973,6 +3990,51 @@ work_packages:
       - The agent manager records agent_time minus the receive time per agent and exposes it as a multiagent ClockSource, fakeagent gains a clock skew option, and a test runs the CTL-16 check over real heartbeats.
     acceptance:
       - A fake agent with a skew of 15 ms makes a three agent run refuse to start through the real heartbeat path, and one with 2 ms starts.
+
+  - id: CTL-52
+    title: Multi agent runs through the run orchestrator
+    phase: 3
+    workstream: CTL
+    size: M
+    depends_on: [CTL-51]
+    paths: [controller/internal/runs/, controller/internal/wiring/]
+    summary: >-
+      No production code calls controller/internal/multiagent, and runs.Orchestrator starts a run on several agents without
+      the clock check of CTL-16. Gate 3 needs multi agent runs through the REST API.
+    deliverables:
+      - The orchestrator starts a run on several agents through multiagent.Coordinator with the clock source of CTL-51, and aggregates its results.
+    acceptance:
+      - An end to end test over REST runs one configuration on three fake agents, refuses it with one agent 15 ms off, and reports exact totals.
+
+  - id: CTL-53
+    title: The controller reports kernel release, selected backend, and XDP mode
+    phase: 3
+    workstream: CTL
+    size: S
+    depends_on: [CON-32, AGT-22]
+    paths: [controller/internal/agents/]
+    summary: >-
+      The REST mirror of CON-32 in controller/internal/agents/rest.go, after AGT-22 fills the fields and the generated code is
+      regenerated. Agent.backend reports the selected backend instead of the first entry of backends.
+    deliverables:
+      - The REST agent view carries kernel_release, selected_backend, and ports[].xdp_driver_mode from the capabilities.
+    acceptance:
+      - The agent contract test and a REST test with a fake agent that selects a non kernel backend pass.
+
+  - id: CON-34
+    title: DHCP configuration of a host pool
+    phase: 3
+    workstream: CON
+    size: S
+    depends_on: []
+    paths: [contracts/]
+    owner_action: An additive contract change, to be vetted by the vetting agent under decision D13 before a worker starts.
+    summary: >-
+      HST-04 obtains host addresses through DHCP when a host pool configures it, and no schema field configures DHCP today.
+    deliverables:
+      - An optional DHCP setting of a host pool in the configuration schema and the plan, with a version bump and contracts/changes/CON-34.md naming HST-04.
+    acceptance:
+      - The contracts validate, and an example host pool with DHCP passes the validator.
 
   - id: OPS-08
     title: CI check that keeps self hosted runners off untrusted triggers

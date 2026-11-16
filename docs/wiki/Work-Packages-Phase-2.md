@@ -849,7 +849,7 @@ Phase 2 · size S · workstream CON
 
 - **Depends on.** none
 - **Paths.** `contracts/`, `tools/contracts/`
-- **Owner action.** A fix inside the examples, with no schema or version change, approved by the vetting agent under decision D13 on 2026-11-16 (issue
+- **Owner action.** A fix inside the examples, with no schema or version change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #482).
 
 Issue #482. contracts/examples/tests/http_smoke.yaml names http1/web_get, which belongs to the example module under contracts/examples/modules/http1 and not to the first party http1 module. The validator, the plan example, the UI mock, the CLI end to end test, and S4 rely on it, so it keeps its name, and the examples say which modules a test pairs with.
 

@@ -4,7 +4,7 @@
 
 Gate 3 (v1 release). One 16 vCPU agent meets the tier T1 targets on KVM, multi agent runs aggregate correctly, every image format boots, and the web UI passes its end to end suite.
 
-This page lists 17 work packages. Packages marked critical path gate the phase.
+This page lists 21 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -21,15 +21,20 @@ flowchart LR
   UI_07["UI-07<br/>Web UI end to end suite"]
   QA_06["QA-06<br/>Benchmark suite per hypervisor"]
   QA_07["QA-07<br/>Gate 3 acceptance suite"]
-  TRN_17["TRN-17<br/>TCP stack bench harness and smoltcp behind SessionIo"]
+  TRN_17["TRN-17<br/>TCP stack bench harness with a kernel reference stack"]
+  TRN_20["TRN-20<br/>smoltcp on the TCP stack bench harness"]
   TRN_18["TRN-18<br/>A minimal own TCP stack on the bench harness"]
   TRN_19["TRN-19<br/>AF_XDP rate between two KVM guests"]
   HST_04["HST-04<br/>DHCP for user space backends"]
   AGT_22["AGT-22<br/>The agent selects and reports its backend"]
   CON_32["CON-32<br/>Kernel release, selected backend, and XDP mode in the agent capabilities"]
   CTL_51["CTL-51<br/>Clock offsets of agents from heartbeats"]
+  CTL_52["CTL-52<br/>Multi agent runs through the run orchestrator"]
+  CTL_53["CTL-53<br/>The controller reports kernel release, selected backend, and XDP mode"]
+  CON_34["CON-34<br/>DHCP configuration of a host pool"]
   TRN_17 --> TRN_10
   TRN_18 --> TRN_10
+  TRN_20 --> TRN_10
   TRN_10 --> TRN_12
   TRN_11 --> TRN_12
   TRN_11 --> HST_03
@@ -43,12 +48,17 @@ flowchart LR
   UI_07 --> QA_07
   TRN_12 --> QA_07
   HST_03 --> QA_07
+  TRN_17 --> TRN_20
   TRN_17 --> TRN_18
   TRN_11 --> TRN_19
   HST_03 --> HST_04
+  CON_34 --> HST_04
   TRN_14 --> AGT_22
   CON_32 --> AGT_22
   CTL_16 --> CTL_51
+  CTL_51 --> CTL_52
+  CON_32 --> CTL_53
+  AGT_22 --> CTL_53
   classDef critical stroke-width:3px
   class QA_07 critical
 ```
@@ -57,7 +67,7 @@ flowchart LR
 
 | ID | Title | Size | Depends on | Critical |
 |---|---|---|---|---|
-| [TRN-10](#trn-10-user-space-tcp-stack-decision) | User space TCP stack decision | S | TRN-01, TRN-17, TRN-18 |  |
+| [TRN-10](#trn-10-user-space-tcp-stack-decision) | User space TCP stack decision | S | TRN-01, TRN-17, TRN-18, TRN-20 |  |
 | [TRN-11](#trn-11-af_xdp-packet-input-and-output) | AF_XDP packet input and output | M | TRN-01 |  |
 | [TRN-12](#trn-12-user-space-tcp-over-af_xdp) | User space TCP over AF_XDP | L | TRN-10, TRN-11 |  |
 | [HST-03](#hst-03-arp-and-nd-for-user-space-backends) | ARP and ND for user space backends | M | TRN-11 |  |
@@ -67,13 +77,17 @@ flowchart LR
 | [UI-07](#ui-07-web-ui-end-to-end-suite) | Web UI end to end suite | M | UI-03, UI-04, UI-05, UI-06, CTL-08 |  |
 | [QA-06](#qa-06-benchmark-suite-per-hypervisor) | Benchmark suite per hypervisor | M | TRN-14, QA-03, AGT-22, TRN-12 |  |
 | [QA-07](#qa-07-gate-3-acceptance-suite) | Gate 3 acceptance suite | M | QA-06, CTL-16, UI-07, IMG-03, TRN-12, HST-03 | yes |
-| [TRN-17](#trn-17-tcp-stack-bench-harness-and-smoltcp-behind-sessionio) | TCP stack bench harness and smoltcp behind SessionIo | M | TRN-01 |  |
+| [TRN-17](#trn-17-tcp-stack-bench-harness-with-a-kernel-reference-stack) | TCP stack bench harness with a kernel reference stack | M | TRN-01 |  |
+| [TRN-20](#trn-20-smoltcp-on-the-tcp-stack-bench-harness) | smoltcp on the TCP stack bench harness | S | TRN-17 |  |
 | [TRN-18](#trn-18-a-minimal-own-tcp-stack-on-the-bench-harness) | A minimal own TCP stack on the bench harness | M | TRN-17 |  |
 | [TRN-19](#trn-19-af_xdp-rate-between-two-kvm-guests) | AF_XDP rate between two KVM guests | S | TRN-11 |  |
-| [HST-04](#hst-04-dhcp-for-user-space-backends) | DHCP for user space backends | S | HST-03 |  |
+| [HST-04](#hst-04-dhcp-for-user-space-backends) | DHCP for user space backends | S | HST-03, CON-34 |  |
 | [AGT-22](#agt-22-the-agent-selects-and-reports-its-backend) | The agent selects and reports its backend | S | TRN-14, CON-32 |  |
 | [CON-32](#con-32-kernel-release-selected-backend-and-xdp-mode-in-the-agent-capabilities) | Kernel release, selected backend, and XDP mode in the agent capabilities | S | none |  |
 | [CTL-51](#ctl-51-clock-offsets-of-agents-from-heartbeats) | Clock offsets of agents from heartbeats | S | CTL-16 |  |
+| [CTL-52](#ctl-52-multi-agent-runs-through-the-run-orchestrator) | Multi agent runs through the run orchestrator | M | CTL-51 |  |
+| [CTL-53](#ctl-53-the-controller-reports-kernel-release-selected-backend-and-xdp-mode) | The controller reports kernel release, selected backend, and XDP mode | S | CON-32, AGT-22 |  |
+| [CON-34](#con-34-dhcp-configuration-of-a-host-pool) | DHCP configuration of a host pool | S | none |  |
 
 ## CON Contracts
 
@@ -83,7 +97,7 @@ Phase 3 · size S · workstream CON
 
 - **Depends on.** none
 - **Paths.** `contracts/`
-- **Owner action.** An additive contract change, approved by the vetting agent under decision D13 on 2026-11-16 (issue
+- **Owner action.** An additive contract change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #74 in part).
 
 Issue #74 in part. Agent protocol 0.2.4 to 0.2.5 and an OpenAPI minor version. REST Agent.backend takes the first entry of backends, which is always kernel, so the agent reports the backend it selected. NUMA fields stay open in #74, because v1 has no consumer of them.
 
@@ -94,6 +108,24 @@ Deliverables.
 Acceptance.
 
 - [ ] The contracts validate, the versions are bumped, and the change file names the consumers, AGT-22 first.
+
+### CON-34 DHCP configuration of a host pool
+
+Phase 3 · size S · workstream CON
+
+- **Depends on.** none
+- **Paths.** `contracts/`
+- **Owner action.** An additive contract change, to be vetted by the vetting agent under decision D13 before a worker starts.
+
+HST-04 obtains host addresses through DHCP when a host pool configures it, and no schema field configures DHCP today.
+
+Deliverables.
+
+- An optional DHCP setting of a host pool in the configuration schema and the plan, with a version bump and contracts/changes/CON-34.md naming HST-04.
+
+Acceptance.
+
+- [ ] The contracts validate, and an example host pool with DHCP passes the validator.
 
 ## QA Test infrastructure and gate suites
 
@@ -138,7 +170,7 @@ Acceptance.
 
 Phase 3 · size S · workstream TRN
 
-- **Depends on.** TRN-01, TRN-17, TRN-18
+- **Depends on.** TRN-01, TRN-17, TRN-18, TRN-20
 - **Paths.** `docs/decisions/`, `engine/fps-tcp/`
 - **Owner action.** The vetting agent accepts or rejects decision record 0014 under decision D13, unless the record alters decision D1 or a tier target, which only the owner decides.
 
@@ -222,22 +254,40 @@ Acceptance.
 
 - [ ] Tests cover a virtio-net guest with and without zero copy support.
 
-### TRN-17 TCP stack bench harness and smoltcp behind SessionIo
+### TRN-17 TCP stack bench harness with a kernel reference stack
 
 Phase 3 · size M · workstream TRN
 
 - **Depends on.** TRN-01
 - **Paths.** `engine/fps-tcp/`
 
-The first measured candidate of TRN-10. A harness that drives a TCP stack behind SessionIo and measures sessions per second, throughput, and scaling to 1,000,000 sockets, with smoltcp as the first stack.
+The harness that TRN-10 measures its candidates on. It drives a TCP stack behind a TcpStack seam and SessionIo and measures sessions per second, throughput, and scaling to 1,000,000 sockets. The kernel loopback stack is the reference. The smoltcp adapter is TRN-20, because smoltcp and managed are licensed 0BSD, which deny.toml does not allow yet.
 
 Deliverables.
 
-- The harness and a smoltcp adapter behind SessionIo, with results committed for the CI runner and for fat-nuc through a host test.
+- The harness with the TcpStack seam and a kernel loopback reference stack, with no dependency on smoltcp, and results committed for the CI runner.
 
 Acceptance.
 
-- [ ] The harness reports the three measures for smoltcp, and its tests run in CI.
+- [ ] The harness reports the three measures for the kernel reference stack, cargo deny passes, and its tests run in CI.
+
+### TRN-20 smoltcp on the TCP stack bench harness
+
+Phase 3 · size S · workstream TRN
+
+- **Depends on.** TRN-17
+- **Paths.** `engine/fps-tcp/`
+- **Owner action.** The owner allows 0BSD in deny.toml, or allows smoltcp and managed by exception. The coordinator does not dispatch this package before then.
+
+The smoltcp adapter of the TRN-17 harness. The first draft in PR #586 reached 1,000,584 sockets at 1.59 KB per socket, with an idle poll cost that grows from 15 ns to 52 ns per socket.
+
+Deliverables.
+
+- The smoltcp adapter behind the TcpStack seam, with results committed for the CI runner and for fat-nuc through a host test.
+
+Acceptance.
+
+- [ ] The harness reports the three measures for smoltcp on the same hosts as the reference stack.
 
 ### TRN-18 A minimal own TCP stack on the bench harness
 
@@ -296,7 +346,7 @@ Acceptance.
 
 Phase 3 · size S · workstream HST
 
-- **Depends on.** HST-03
+- **Depends on.** HST-03, CON-34
 - **Paths.** `engine/fps-hosts/`
 - **Owner action.** Waits for a contract package that adds DHCP configuration to the host pool schema, which no schema field configures today. The coordinator does not dispatch it before then.
 
@@ -353,7 +403,7 @@ Acceptance.
 Phase 3 · size S · workstream CTL
 
 - **Depends on.** CTL-16
-- **Paths.** `controller/internal/agents/`, `controller/internal/fakeagent/`
+- **Paths.** `controller/internal/agents/`, `controller/internal/fakeagent/`, `controller/internal/multiagent/`
 
 CTL-16 refuses a multi agent run when an agent's clock is more than 10 ms off, but the controller has no production source of the offsets: agents.Manager ignores Heartbeat.agent_time, and fakeagent always sends the current time. The contract already carries Heartbeat.agent_time and HeartbeatAck.controller_time, so no contract change is needed.
 
@@ -364,6 +414,40 @@ Deliverables.
 Acceptance.
 
 - [ ] A fake agent with a skew of 15 ms makes a three agent run refuse to start through the real heartbeat path, and one with 2 ms starts.
+
+### CTL-52 Multi agent runs through the run orchestrator
+
+Phase 3 · size M · workstream CTL
+
+- **Depends on.** CTL-51
+- **Paths.** `controller/internal/runs/`, `controller/internal/wiring/`
+
+No production code calls controller/internal/multiagent, and runs.Orchestrator starts a run on several agents without the clock check of CTL-16. Gate 3 needs multi agent runs through the REST API.
+
+Deliverables.
+
+- The orchestrator starts a run on several agents through multiagent.Coordinator with the clock source of CTL-51, and aggregates its results.
+
+Acceptance.
+
+- [ ] An end to end test over REST runs one configuration on three fake agents, refuses it with one agent 15 ms off, and reports exact totals.
+
+### CTL-53 The controller reports kernel release, selected backend, and XDP mode
+
+Phase 3 · size S · workstream CTL
+
+- **Depends on.** CON-32, AGT-22
+- **Paths.** `controller/internal/agents/`
+
+The REST mirror of CON-32 in controller/internal/agents/rest.go, after AGT-22 fills the fields and the generated code is regenerated. Agent.backend reports the selected backend instead of the first entry of backends.
+
+Deliverables.
+
+- The REST agent view carries kernel_release, selected_backend, and ports[].xdp_driver_mode from the capabilities.
+
+Acceptance.
+
+- [ ] The agent contract test and a REST test with a fake agent that selects a non kernel backend pass.
 
 ## UI Web UI
 
