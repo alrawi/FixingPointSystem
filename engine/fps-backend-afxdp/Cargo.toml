@@ -1,0 +1,12 @@
+[package]
+name = "fps-backend-afxdp"
+description = "AF_XDP packet input and output of the FixingPointSystem engine: UMEM, rings, batching per queue, and a frame trait for user space transports"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+libc = "0.2"
+thiserror = "2"
