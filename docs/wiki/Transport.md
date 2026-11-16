@@ -9,6 +9,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | Crate | Contents | Next package |
 |---|---|---|
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `Connector`, `KernelListener`, and `KernelStream`, which implement `SessionIo` over kernel TCP sockets, the operating system profiles of TRN-03, and `KernelDatagram`, `KernelDatagramListener`, and the two datagram openers of TRN-02, see [Kernel UDP backend](#kernel-udp-backend) | TRN-04 added TLS, see below |
+| [`fps-tcp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-tcp) | `TcpStack`, the bench workloads `session_rate`, `throughput`, and `socket_scaling`, `SmolStack` and `SmolSession`, which implement `SessionIo` over smoltcp, and the command `tcp_bench`, see [TCP stack bench harness](#tcp-stack-bench-harness) | TRN-18 adds an own stack on the same harness |
 | [`fps-module-tls`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/tls) | `TlsConnector`, `TlsAcceptor`, and `TlsSession`, which wrap any `SessionIo` in TLS 1.2 or 1.3, the client and server profiles, `RunAuthority`, and `NssKeyLog`, see [TLS module](#tls-module) | TRN-05 added the browser profiles, see [Browser profiles and JA4](#browser-profiles-and-ja4), and TRN-15 the mail and h2 profiles, see [Mail and h2 profiles](#mail-and-h2-profiles) |
 
 The `test-eng` target and the `rust` job of `ci.yml` run the tests of every crate under `engine/`, so the backend needs no make file or workflow of its own.
@@ -381,3 +382,69 @@ The async wrapper costs more than the profile code. `handshake_bench --mode sess
 | A transport that ends without `close_notify` reads as a clean end | Truncation is not an error, which suits servers that close this way |
 | `alert_sent` is known only for plaintext alerts and for errors that imply one | Rustls sends the other alerts encrypted and does not report them |
 | Certificate and key generation use the system random source | No run seed controls them |
+
+## TCP stack bench harness
+
+TRN-17 added the crate `engine/fps-tcp`, which measures a user space TCP stack behind `SessionIo` for decision record 0014 of TRN-10. The harness has no dependency on a backend. A stack implements `TcpStack`, which models a client host and a server host joined by a link, and every session leaves the stack as a `SessionIo`, so a measurement includes the cost of the adapter. TRN-18 plugs its own stack into the same trait, and TRN-13 can reuse the workloads for the DPDK path.
+
+### Workloads
+
+The three workloads read the wall clock because they measure it, and they run on a current thread runtime with a driver task that polls the stack, like a poll mode worker.
+
+| Workload | What it does | What it reports |
+|---|---|---|
+| `session_rate` | `concurrency` tasks open a session, send a request, read a response, close the write side, and wait for the end of the server, until the duration passes | Completed sessions per second, failed sessions, and the p50 and p99 time of a session |
+| `throughput` | `sessions` concurrent sessions move `bytes_per_session` each, as upload or download, in chunks of 64 KiB, and the workload checks that every byte arrived | Delivered application Gbit per second |
+| `socket_scaling` | Opens sessions in batches until a step reaches its socket count, in steps such as 1,000 up to 1,000,000, spread over shards | Per step the setup rate, the resident memory per socket, the time of one full poll with idle sockets, and the session rate and p99 that a probe sees while all sockets are held |
+
+A socket count includes both hosts of a pair, so 1,000,000 sockets are 500,000 sessions, and it includes the few listening sockets. A step that exceeds its time budget ends the run and marks itself `over budget`, so a stack that slows down with the socket count stops the run in place of hanging it. A shard is an independent pair, with its own interfaces and socket sets, which is how an engine worker owns its sessions. The scaling workload runs all shards on one thread, so the memory and poll numbers do not depend on thread count. The rate and throughput workloads run one stack per thread with `--threads`.
+
+### The smoltcp adapter
+
+`SmolStack` holds two smoltcp interfaces, 10.0.0.1 and 10.0.0.2, each with its own socket set, joined by an in memory link with no delay and no loss. The IP medium has no Ethernet header and no ARP. The adapter follows four rules, which `engine/fps-tcp/src/smol.rs` documents in full.
+
+1. A session never drives the stack. One driver task polls both interfaces, and smoltcp wakes the waiting tasks through the wakers of its `async` feature.
+2. The driver polls after a session acted, and otherwise every 100 ms, because smoltcp visits every socket on every poll and the link never loses a frame.
+3. Each listened port keeps `backlog` listening sockets, because smoltcp has no accept queue, and replaces every one that a SYN used between two packets of a poll, so a burst larger than the backlog still connects.
+4. Dropping a session closes it and hands the socket to a reap list, and `abort` sends a reset. TIME-WAIT is skipped by default and kept with `--time-wait keep`, since smoltcp holds such a socket for ten seconds.
+
+The sessions share the stack through one mutex that only one thread takes, so a session operation costs one uncontended lock. The link recycles its buffers, so a run allocates only while the pool fills.
+
+### Running it
+
+The command takes plain arguments and runs on any host without root.
+
+```bash
+cargo run --release -p fps-tcp --example tcp_bench -- --profile small
+cargo run --release -p fps-tcp --example tcp_bench -- --profile full --label fat-nuc --out -
+cargo run --release -p fps-tcp --example tcp_bench -- --workload scale --scale-steps 1000,100000 --shards 32
+cargo run --release -p fps-tcp --example tcp_bench -- --help
+```
+
+The profile `small` finishes within a minute and fits a hosted runner. The profile `full` measures up to 1,000,000 sockets over 64 shards and needs about 2 GiB of memory for them and finishes the scaling in under a minute on 2 vCPUs. Every flag after the profile overrides it, and the stack flags `--mtu`, `--checksums`, `--buffer-kib`, `--time-wait`, and `--idle-poll-ms` change the link and the sockets. The command prints a report and, with `--out`, writes an `fps-bench/v1` document of the suite `tcp-stack` that `bench/compare.py` reads. The metric names start with the stack key, such as `smoltcp.rate.sessions_per_s` and `smoltcp.scale.100000.bytes_per_socket`. The fat-nuc run goes through the relay as a host test, see the handoff `docs/handoff/TRN-17.md`.
+
+### First results of smoltcp
+
+The committed results in `engine/fps-tcp/results/sandbox-2vcpu/` come from the 2 vCPU agent sandbox with the default settings, which are MTU 1500, software checksums, and 64 KiB buffers for rate and throughput and 512 byte buffers for scaling. The sandbox is not the GitHub hosted runner and not fat-nuc, so TRN-10 compares only runs of one host.
+
+| Measure | Result |
+|---|---|
+| Sessions per second, 32 concurrent, 64 byte request and response | about 72,000, with a p50 of 0.43 ms and a p99 of 0.65 ms, and no failures |
+| Throughput, 4 concurrent uploads | about 27 Gbit/s on one core |
+| Memory per socket | 1.55 to 1.9 KB, and 1.59 KB at 1,000,584 sockets, which is about 1.6 GB |
+| Sockets reached | 1,000,584 in 64 shards, in 11.1 s for the last step and 35 s for the whole run |
+| Idle poll, 1,544 sockets in 64 shards | 16 microseconds |
+| Idle poll, 1,000,584 sockets in 64 shards | 52 milliseconds, about 52 nanoseconds per socket |
+| Probe session rate with 1,000,584 sockets held | about 90 per second, against 24,000 per second with 1,544 sockets |
+| Setup rate | 340,000 sockets per second at 1,544 sockets, and 22,500 at 1,000,584 |
+
+The poll cost grows with the sockets of a shard, because smoltcp walks every socket to demultiplex a packet, to find work to send, and to add a socket. One shard of 16,016 sockets costs 0.24 ms per poll, which is 15 nanoseconds per socket, and it limits a session probe to 176 per second. The cost per socket rises to 52 nanoseconds at 1,000,584 sockets in 64 shards, probably because the 1.6 GB of socket state no longer fits in the cache. A stack that scales to 1,000,000 sockets with smoltcp therefore needs many small shards, or a flow table of its own in front of smoltcp. The setup rate falls for the same reason.
+
+### Limits
+
+| Limit | Consequence |
+|---|---|
+| The link has no delay, loss, or reordering | The numbers show stack and adapter cost only, and retransmission and congestion control stay unmeasured |
+| Both hosts of a pair share a process and a core | A rate counts the work of the client and of the server, so it is not the rate of one agent talking to a remote peer |
+| Scaling runs on one thread | The poll cost per socket is a per core cost, and the multi core rate comes from `--threads` on the rate workload |
+| `cargo deny` rejects the license `0BSD` of smoltcp and managed | The owner must allow it in `deny.toml`, see the handoff of TRN-17 |

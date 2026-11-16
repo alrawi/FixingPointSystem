@@ -83,6 +83,10 @@ pub struct SmolConfig {
     /// request and response exchange, so `None` is the default.
     pub ack_delay_micros: Option<u64>,
     /// The longest time in microseconds between two polls of an idle pair.
+    ///
+    /// smoltcp visits every socket of a host on every poll, so a short
+    /// interval costs more as the socket count grows. The link of a pair never
+    /// loses a frame, so no retransmission timer needs a fine interval.
     pub idle_poll_micros: i64,
     /// The seed of the initial sequence numbers.
     pub seed: u64,
@@ -98,7 +102,7 @@ impl Default for SmolConfig {
             time_wait: TimeWait::Skip,
             nagle: false,
             ack_delay_micros: None,
-            idle_poll_micros: 10_000,
+            idle_poll_micros: 100_000,
             seed: 1,
         }
     }

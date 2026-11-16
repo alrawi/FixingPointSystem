@@ -32,6 +32,7 @@ usage: tcp_bench [--stack smoltcp] [--workload rate|throughput|scale|all] [--pro
   scale:       [--scale-steps N,N,...] [--shards N] [--scale-buffer-bytes N]
                [--step-seconds N] [--probe-sessions N] [--batch N]
   stack:       [--mtu N] [--checksums on|off] [--buffer-kib N] [--time-wait skip|keep]
+               [--idle-poll-ms N]
 The profile small finishes within a minute and fits a hosted CI runner. The profile
 full measures up to 1,000,000 sockets and is meant for a host with 16 GiB of memory.
 Every flag after the profile overrides the profile. Sockets count both hosts of a pair.
@@ -243,6 +244,10 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
                 o.smol.rx_buffer = kib.saturating_mul(1024);
                 o.smol.tx_buffer = kib.saturating_mul(1024);
             }
+            "--idle-poll-ms" => {
+                let millis: i64 = number(f, v)?;
+                o.smol.idle_poll_micros = millis.saturating_mul(1000);
+            }
             "--time-wait" => {
                 o.smol.time_wait = match v {
                     "skip" => TimeWait::Skip,
@@ -303,6 +308,10 @@ fn describe(o: &Options) -> Vec<(String, String)> {
         ("checksums".into(), o.smol.link.checksums.to_string()),
         ("time_wait".into(), format!("{:?}", o.smol.time_wait)),
         ("nagle".into(), o.smol.nagle.to_string()),
+        (
+            "idle_poll_ms".into(),
+            (o.smol.idle_poll_micros / 1000).to_string(),
+        ),
     ];
     if o.selection.rate() {
         config.push((
@@ -532,8 +541,11 @@ mod tests {
             "128",
             "--time-wait",
             "keep",
+            "--idle-poll-ms",
+            "5",
         ]))
         .expect("parse");
+        assert_eq!(o.smol.idle_poll_micros, 5000);
         assert_eq!(o.smol.link.mtu, 9000);
         assert!(!o.smol.link.checksums);
         assert_eq!(o.smol.rx_buffer, 128 * 1024);
