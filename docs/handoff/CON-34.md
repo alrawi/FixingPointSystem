@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #598 |
 | Branch | `wp/CON-34` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #603 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-b16e88, lease until 2026-11-17T03:39:51Z |
-| Last verified commit | none |
+| Last verified commit | 8cb7802 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ HST-04 obtains host addresses through DHCP when a host pool configures it. Add t
 - [x] 2. Example `dhcp_clients.yaml`, plan checker, validator gateway fix
 - [x] 3. Tests (negative cases, dual stack regression)
 - [x] 4. `contracts/changes/CON-34.md` with the consumers and the failing tests, log entry, Contracts page
-- [ ] 5. Pull request, CI, review
+- [x] 5. Pull request, CI, review
 
 ## Done and verified
 
@@ -38,7 +38,7 @@ The consumer commit (coordinator): schema copy, `regen-agentpb`, compiler, store
 
 ## Next action
 
-Open the pull request against `main`, then poll CI. Expected red jobs: the controller store example tests, `engine/fps-agent` build and tests, two UI tests, and the schema copy test, all until the consumer commit.
+The coordinator lands the consumer commit on `wp/CON-34` (steps in `contracts/changes/CON-34.md`), then CI should go green. CI of 8cb7802 is red only in jobs that the consumers explain: store example and schema copy tests, `agentpb/gen` currency, `lint-ui` (`schema.d.ts`), the Rust jobs that build the agent, and the `contracts` schema copy test.
 
 ## Blockers and open questions
 
@@ -68,3 +68,5 @@ python3 -m pytest -q tools/contracts         # 1 expected failure: the embedded 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-17T03:09Z | claude-b16e88 | claim | none | Card 6935757529, steps 1 to 4 |
+| 2026-11-17T03:25Z | claude-b16e88 | checkpoint | 8cb7802 | Contracts, example, checker, validator fix, tests, change entry pushed, PR #603 |
+| 2026-11-17T03:45Z | claude-b16e88 | review | see PR | CI red as predicted, only in consumer jobs; consumer commit is the coordinator's |

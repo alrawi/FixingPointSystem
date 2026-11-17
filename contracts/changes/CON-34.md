@@ -81,6 +81,8 @@ Found by reading the tests, since neither Go nor the UI nor Cargo can run in the
 | `ui/src/pages/ConfigEditor.test.tsx`, "lists the stored examples, newest first, and opens one" | Expects 8 rows (header and 7 examples), and the directory now has 8 examples | Step 5, expect 9 rows. `seedless_smoke` stays first, because the mock sorts by file name and `dhcp_clients` sorts before `dns_zone` |
 | `ui/src/config/roundtrip.test.ts` (per example) | No failure expected: the schema comes from the contract file, and `dhcp_clients.yaml` passes it. CI confirms | |
 
+CI of the first commit (8cb7802) confirmed the list and added four more, all consumers: `controller/internal/agents/agentpb/gen` `TestGeneratedCodeIsCurrent` (step 2, regenerate), `controller/internal/store` `TestEmbeddedSchemaMatchesContract` (step 2, copy the schema), the `lint-ui` step of the `ui` workflow (`src/api/schema.d.ts is out of date`, so `npm run gen:api`, which runs before the UI tests, so the two UI tests above are unconfirmed), and the Rust jobs that build the agent (`cargo clippy --workspace`, the `cap` replay job, `controller-e2e`, `standalone-netns`, `qa-gate1`), which fail on the missing field in `convert.rs`. The `contracts` job fails only on the schema copy test (1 failed, 509 passed). Every other workflow, including all `mod-*`, passed.
+
 The jobs that read `ENGINE_API` and the proto version are the same ones that CON-32 named.
 
 ## Verification
