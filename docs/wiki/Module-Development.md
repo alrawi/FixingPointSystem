@@ -604,6 +604,8 @@ These are problems that the project has already met while it built modules, with
 
 **rustfmt follows the stable toolchain.** CI installs `stable`, and a new rustfmt changed how it formats macro arguments, which stopped the `rust` job at its format step on every pull request, so clippy and the tests did not run until it was fixed (PR #533). Run `cargo fmt --all -- --check` with the current stable before you push.
 
+**clippy follows the stable toolchain too.** You see the `rust` job fail at clippy on code that passed clippy on your machine, at a loop such as `for word in data.chunks_exact(4)`. The clippy of the current stable (0.1.97 in November 2026) rejects `chunks_exact` with a constant chunk size and asks for `as_chunks`, which gives arrays and the remainder in one call: `let (words, tail) = data.as_chunks::<4>();`, then use `*word` as a `[u8; 4]` and handle `tail` on its own. Run `cargo clippy --all-targets -- -D warnings` with the current stable before you push. CI met this twice in one batch (TRN-18).
+
 **Local tests skip without the tools.** Tests that need tshark, Zeek, or nDPI 4.14 skip themselves when the tool is missing. Set `FPS_REQUIRE_CAPTURE_TOOLS=1` in the module workflow, so that they cannot skip in CI (MOD-12).
 
 ## Before you publish
