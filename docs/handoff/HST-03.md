@@ -49,6 +49,8 @@ none
 - A pool that starts at the router address: the router's request becomes an announcement with no answer. Name the router as `gateway`.
 - The worktree guard refuses heredocs that share a command with cargo or git; write files with the editor tools.
 
+- `tests/kernel_port.rs` (HST-02) snapshot compared `valid_lft` and `preferred_lft` of the runner's DHCP address, which tick down, so `routed_port_binds_and_connects_from_20000_pool_addresses` failed on CI when a second passed between snapshots. The snapshot now drops those two fields. The flake is not caused by HST-03.
+
 ## Verify the current state
 
 ```bash

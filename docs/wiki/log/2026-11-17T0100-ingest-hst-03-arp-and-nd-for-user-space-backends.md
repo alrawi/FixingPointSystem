@@ -7,6 +7,7 @@ Evidence: 20,000 hosts on one port pass the realism host identity check over the
 What the package found:
 - `fps-hosts` now depends on `fps-backend-afxdp` for `FrameIo`, so `Cargo.lock` changes by one line.
 - A pool whose first host address equals the router address makes the router's own request an announcement that gets no answer. A pool that shares a link with its router must name the router as `gateway`.
+- The HST-02 test `kernel_port.rs` compared the DHCP lease lifetimes (`valid_lft`) of the runner interface in its before and after snapshots, so it failed whenever a second passed between them. The snapshot now ignores the lifetimes.
 - The AF_XDP backend crate was not touched (bug #588 is fixed there by another worker).
 
 ### Shared page notes

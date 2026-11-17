@@ -124,7 +124,12 @@ fn snapshot(ns: Option<&str>) -> String {
         }
         full.extend_from_slice(args);
         let text = Command::new("ip").args(&full).output().unwrap();
-        out.push_str(&String::from_utf8_lossy(&text.stdout));
+        for line in String::from_utf8_lossy(&text.stdout).lines() {
+            // A DHCP lease counts its lifetime down, so two snapshots a second
+            // apart differ in `valid_lft` and `preferred_lft` alone.
+            out.push_str(line.split("valid_lft").next().unwrap_or(line));
+            out.push('\n');
+        }
     }
     out
 }
