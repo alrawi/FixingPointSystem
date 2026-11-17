@@ -16,7 +16,9 @@
 // so a calibration loop closes against a real Manager.
 //
 // The fake agent reads the wall clock only for its agent_time fields and for
-// automatic heartbeats, which Options.AutoHeartbeat turns on.
+// automatic heartbeats, which Options.AutoHeartbeat turns on. Options.ClockSkew
+// moves the agent clock, so the controller measures a clock offset from the
+// heartbeats (CTL-51).
 package fakeagent
 
 import (
@@ -89,6 +91,15 @@ type Options struct {
 	// agent runs and follows UpdateRates. Without it, the agent reports no
 	// counters of its own.
 	Traffic *Traffic
+	// ClockSkew is added to every time that the agent reports, so the agent
+	// clock runs ahead of the clock that Clock names by that amount. A
+	// negative value runs behind. It defaults to zero, which cli/e2e and the
+	// browser tests rely on.
+	ClockSkew time.Duration
+	// Clock tells the agent time before the skew. It defaults to the wall
+	// clock. A test that gives the agent manager the same fixed clock gets an
+	// exact clock offset, free of the heartbeat delay.
+	Clock interface{ Now() time.Time }
 }
 
 // Errors of the fake agent.
@@ -236,6 +247,15 @@ func (a *Agent) beat(ctx context.Context, every time.Duration) {
 	}
 }
 
+// now returns the agent time: the clock plus the skew.
+func (a *Agent) now() *timestamppb.Timestamp {
+	t := time.Now()
+	if a.opts.Clock != nil {
+		t = a.opts.Clock.Now()
+	}
+	return timestamppb.New(t.Add(a.opts.ClockSkew))
+}
+
 // heartbeatMsg returns the next heartbeat, or nil while heartbeats are missed.
 func (a *Agent) heartbeatMsg() (*agentpb.SessionRequest, uint64) {
 	a.mu.Lock()
@@ -249,7 +269,7 @@ func (a *Agent) heartbeatMsg() (*agentpb.SessionRequest, uint64) {
 		State:     a.state,
 		PlanId:    a.planID,
 		Phase:     a.phase,
-		AgentTime: timestamppb.Now(),
+		AgentTime: a.now(),
 		Message:   a.message,
 	}}}, a.hbSeq
 }
@@ -401,7 +421,7 @@ func (a *Agent) nextSnapshot(final bool, counters []*agentpb.CounterValue) *agen
 	return &agentpb.CounterSnapshot{
 		PlanId:    a.planID,
 		Sequence:  a.snapSeq,
-		Time:      timestamppb.Now(),
+		Time:      a.now(),
 		Phase:     a.phase,
 		Aggregate: true,
 		IsFinal:   final,
@@ -532,7 +552,7 @@ func (a *Agent) apply(cmd *agentpb.SessionResponse) *agentpb.CommandResult {
 		a.setState(agentpb.AgentState_AGENT_STATE_RUNNING, "steady", "")
 		a.startTraffic()
 		_ = a.notify()
-		res.Result = &agentpb.CommandResult_Start{Start: &agentpb.StartResult{StartedAt: timestamppb.Now()}}
+		res.Result = &agentpb.CommandResult_Start{Start: &agentpb.StartResult{StartedAt: a.now()}}
 	case *agentpb.SessionResponse_Stop:
 		if body.Stop.GetPlanId() != plan {
 			return fail(agentpb.ErrorCode_ERROR_CODE_NOT_FOUND, "plan %s is not loaded", body.Stop.GetPlanId())
@@ -566,7 +586,7 @@ func (a *Agent) apply(cmd *agentpb.SessionResponse) *agentpb.CommandResult {
 		if err := a.sim.update(body.UpdateRates); err != nil {
 			return fail(agentpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "update rates: %v", err)
 		}
-		res.Result = &agentpb.CommandResult_UpdateRates{UpdateRates: &agentpb.UpdateRatesResult{AppliedAt: timestamppb.Now()}}
+		res.Result = &agentpb.CommandResult_UpdateRates{UpdateRates: &agentpb.UpdateRatesResult{AppliedAt: a.now()}}
 	case *agentpb.SessionResponse_StartCapture, *agentpb.SessionResponse_StopCapture, *agentpb.SessionResponse_FetchCapture:
 		return a.applyCapture(cmd, res, state, plan) // see capture.go
 	default:

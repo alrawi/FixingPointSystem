@@ -297,6 +297,7 @@ func (m *Manager) open(ctx context.Context, stream grpc.BidiStreamingServer[agen
 	r.sess = s
 	r.address = addr
 	r.lastBeat = m.cfg.Clock.Now()
+	r.clockOffset, r.hasOffset = 0, false
 	ev := Event{Kind: EventOnline, AgentID: id, Time: r.lastBeat, AgentState: r.agentState, PlanID: r.planID}
 	m.mu.Unlock()
 	if old != nil {
@@ -337,6 +338,9 @@ func (m *Manager) heartbeat(s *session, hb *agentpb.Heartbeat) error {
 	}
 	changed := r.agentState != hb.GetState() || r.planID != hb.GetPlanId()
 	r.lastBeat = now
+	if at := hb.GetAgentTime(); at != nil && at.IsValid() {
+		r.clockOffset, r.hasOffset = at.AsTime().Sub(now), true
+	}
 	r.agentState = hb.GetState()
 	r.planID = hb.GetPlanId()
 	r.phase = hb.GetPhase()

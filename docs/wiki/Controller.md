@@ -1264,6 +1264,10 @@ The `Collector` takes snapshots through `Run.Observe`, which the caller wires in
 
 ### Clock offset source
 
-The wire contract has what the check needs: `Heartbeat.agent_time` and `HeartbeatAck.controller_time`. The agent manager does not keep `agent_time` yet, and `fakeagent` always sends its own wall clock, so the controller has no `ClockSource` of its own. Until a package that owns `internal/agents` adds one, a caller passes its own source, and the tests use a table. A source that computes `agent_time` minus the controller receive time includes the one way delay of the heartbeat, because the acknowledgement does not echo `agent_time` back.
+CTL-51 added the production `ClockSource`. The agent manager records `Heartbeat.agent_time` minus the controller time at which the heartbeat arrived, per open session, and `Agent.ClockOffset` and `Agent.HasClockOffset` expose it. `multiagent.HeartbeatClocks{Agents: mgr}` adapts the manager to `ClockSource`, and it lives in `multiagent` because that package imports `agents`. An offline or unknown agent, and an agent that has sent no `agent_time` in its open session, have no measurement, so the run is refused with `ErrNoClockOffset`. The offset resets when a session opens, so a stale value never survives a reconnection.
+
+The estimate includes the one way delay of the heartbeat. It is the true offset minus that delay, so an agent with a true offset of zero reports about minus the delay. On a lab network the delay is far below the limit, and a caller that needs a tighter bound lowers `Config.MaxClockOffset`.
+
+`fakeagent.Options.ClockSkew` is added to every time that a fake agent reports, and `Options.Clock` replaces its wall clock. Both default to the old behavior (no skew, wall clock), which cli/e2e and the browser tests rely on. A test that gives the manager and the agent one fixed clock measures the skew exactly. CTL-52 wires `HeartbeatClocks` into the run orchestrator.
 
 The limit applies to each agent against the controller. Two agents at +10 ms and -10 ms both pass and differ by 20 ms from each other.

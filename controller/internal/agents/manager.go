@@ -77,6 +77,15 @@ type Agent struct {
 	ReservedBy string
 	// LastHeartbeat is the controller time of the latest heartbeat or session open.
 	LastHeartbeat time.Time
+	// ClockOffset is the agent_time of the latest heartbeat of the open
+	// session minus the controller time at which the heartbeat arrived, so a
+	// positive value means that the agent clock runs ahead. It includes the
+	// one way delay of the heartbeat, which the estimate subtracts from the
+	// true offset: an agent with a true offset of zero reports about minus
+	// the delay. HasClockOffset is false while the open session has sent no
+	// heartbeat with an agent_time, and for an offline agent.
+	ClockOffset    time.Duration
+	HasClockOffset bool
 }
 
 // EventKind classifies an Event.
@@ -156,6 +165,10 @@ type record struct {
 	sess       *session
 	address    string
 	lastBeat   time.Time
+	// clockOffset is agent_time minus the receive time of the latest
+	// heartbeat of the open session, valid when hasOffset holds.
+	clockOffset time.Duration
+	hasOffset   bool
 	// snapPlan and snapSeq hold the newest snapshot, so duplicates after a
 	// reconnection are dropped.
 	snapPlan string
@@ -202,6 +215,9 @@ func (r *record) snapshot() Agent {
 		Address:       r.address,
 		ReservedBy:    r.reservedBy,
 		LastHeartbeat: r.lastBeat,
+	}
+	if r.sess != nil && r.hasOffset {
+		a.ClockOffset, a.HasClockOffset = r.clockOffset, true
 	}
 	if r.caps != nil {
 		a.Capabilities, _ = proto.Clone(r.caps).(*agentpb.Capabilities)
