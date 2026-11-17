@@ -1,0 +1,25 @@
+# A pool of DHCP clients against a static server pool (test configuration v0.4, CON-34). The clients pool names no ipv4, ipv6, or gateway: its hosts take their addresses and their router from DHCP, and keep the MAC address mac_base plus their index. The servers pool keeps static addresses, and the clients compute the addresses of the servers from its prefix. Pairs with the example modules of contracts/examples/modules/, like http_smoke.yaml.
+apiVersion: fixingpoint.dev/v1alpha1
+kind: Test
+metadata:
+  name: dhcp_clients
+  description: Two hundred DHCP clients request pages from a static server pool.
+topology: app_sim
+network:
+  ports:
+    - { name: client0, location: local/lo }
+    - { name: server0, location: local/lo }
+  host_pools:
+    - { name: clients, port: client0, role: client, count: 200, dhcp4: {} }
+    - { name: servers, port: server0, role: server, ipv4: 48.0.0.0/24, count: 1 }
+profile:
+  basis: sessions
+  mix:
+    - { scenario: http1/web_get, weight: 1 }
+load:
+  objective: { type: sessions_per_second, value: 500 }
+  phases:
+    - { name: steady, duration_s: 30, shape: hold }
+timeline: { seed: 7 }
+criteria:
+  - { metric: sessions.failed_ratio, op: "==", value: 0 }

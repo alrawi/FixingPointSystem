@@ -7,8 +7,8 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 | File | Contract |
 |---|---|
 | `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.13.0 |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.5, unreleased |
-| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.5 |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.6, unreleased |
+| `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.4, module manifest v0.5 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.8.0 |
 | `examples/` | Example modules, tests, and plans that every validator run checks |
@@ -363,3 +363,15 @@ CON-32 moves the controller API from 0.12.0 to 0.13.0 and the agent protocol fro
 | `Agent.kernel_release`, `ports[].xdp_driver_mode` | The REST mirror. Absent when the agent did not report them. `Agent.backend` now shows the selected backend |
 
 The NUMA fields of issue #74 stay open, because v1 has no consumer of them.
+
+## DHCP for a host pool
+
+CON-34 moves the test configuration from v0.3 to v0.4 and the agent protocol from 0.2.5 to 0.2.6. The vetting agent specified and approved it under decision D13 on 2026-11-17, as an additive change (issue #598). HST-04 needs it, because no schema field configured DHCP before.
+
+| Change | Rule |
+|---|---|
+| `host_pool.dhcp4` | An optional object with no property yet. Present means that the hosts get their IPv4 addresses and their router from DHCP, and absent means static addresses, as before. Only a client pool may carry it, and then it names none of `ipv4`, `ipv6`, and `gateway`. Clients compute the addresses of servers from the prefix of the server pool |
+| `HostPoolSlice.dhcp4` (13), message `Dhcp4` | Presence means DHCP, and both prefixes and `gateway` are then empty. Plan rule 5: host i keeps the MAC address `mac_base` plus i and takes its address from its lease. An agent that cannot lease fails Prepare with an error that names `dhcp4` |
+| `examples/tests/dhcp_clients.yaml` | A pool of 200 DHCP clients and a static server pool |
+
+The same package fixes the validator, which checked the `gateway` of a pool against both address families, so every dual stack pool with a gateway failed. It now checks the gateway against the prefix of its own family, as `fps-hosts` matches it. `contracts/changes/CON-34.md` lists the consumers.

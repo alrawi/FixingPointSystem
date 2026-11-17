@@ -191,6 +191,7 @@ pub fn plan_from_pb(p: &pb::Plan) -> Result<Plan, PlanError> {
             vlan: h.vlan,
             mac_base: h.mac_base.clone(),
             os_profile: h.os_profile.clone(),
+            dhcp4: h.dhcp4.as_ref().map(|_| plan::Dhcp4 {}),
         });
     }
     let workers = p
@@ -541,6 +542,7 @@ pub fn plan_to_pb(p: &Plan) -> pb::Plan {
                 vlan: h.vlan,
                 mac_base: h.mac_base.clone(),
                 os_profile: h.os_profile.clone(),
+                dhcp4: h.dhcp4.map(|_| pb::Dhcp4 {}),
             })
             .collect(),
         external_servers: p

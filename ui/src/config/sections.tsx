@@ -7,7 +7,7 @@
 // untouched, and the forms point to the YAML view for them.
 
 import type { ReactNode } from "react";
-import { Field, ItemList, SelectField, YamlOnly } from "./fields";
+import { CheckboxField, Field, ItemList, SelectField, YamlOnly } from "./fields";
 import { useConfigModel } from "./model";
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
@@ -87,25 +87,51 @@ export function NetworkSection() {
           count: 1,
         })}
       >
-        {(_, path) => (
-          <>
-            <Field path={[...path, "name"]} label="Name" />
-            <Field path={[...path, "port"]} label="Port" suggestions={portNames} />
-            <SelectField path={[...path, "role"]} label="Role" options={["client", "server"]} />
-            <Field
-              path={[...path, "ipv4"]}
-              label="IPv4 range"
-              optional
-              hint="For example 10.0.0.0/24."
-            />
-            <Field path={[...path, "ipv6"]} label="IPv6 range" optional />
-            <Field path={[...path, "count"]} label="Host count" kind="integer" />
-            <Field path={[...path, "gateway"]} label="Gateway" optional />
-            <Field path={[...path, "vlan"]} label="VLAN" kind="integer" optional />
-            <Field path={[...path, "mac_base"]} label="MAC base" optional />
-            <Field path={[...path, "os_profile"]} label="OS profile" optional />
-          </>
-        )}
+        {(_, path) => {
+          const dhcp4 = model.get([...path, "dhcp4"]) !== undefined;
+          // A DHCP pool names no address. The fields stay visible while the
+          // text still holds one, so the problem has a field to point at.
+          const addressed = ["ipv4", "ipv6", "gateway"].some(
+            (key) => model.get([...path, key]) !== undefined,
+          );
+          const showAddresses = !dhcp4 || addressed;
+          return (
+            <>
+              <Field path={[...path, "name"]} label="Name" />
+              <Field path={[...path, "port"]} label="Port" suggestions={portNames} />
+              <SelectField path={[...path, "role"]} label="Role" options={["client", "server"]} />
+              <CheckboxField
+                path={[...path, "dhcp4"]}
+                label="Addresses from DHCP"
+                checked={dhcp4}
+                hint="Only for a client pool. The hosts lease their IPv4 addresses and routers, so the pool has no range and no gateway."
+                onChange={(on) => {
+                  if (on) {
+                    model.set([...path, "dhcp4"], {});
+                    for (const key of ["ipv4", "ipv6", "gateway"])
+                      model.set([...path, key], undefined);
+                  } else {
+                    model.set([...path, "dhcp4"], undefined);
+                  }
+                }}
+              />
+              {showAddresses && (
+                <Field
+                  path={[...path, "ipv4"]}
+                  label="IPv4 range"
+                  optional
+                  hint="For example 10.0.0.0/24."
+                />
+              )}
+              {showAddresses && <Field path={[...path, "ipv6"]} label="IPv6 range" optional />}
+              <Field path={[...path, "count"]} label="Host count" kind="integer" />
+              {showAddresses && <Field path={[...path, "gateway"]} label="Gateway" optional />}
+              <Field path={[...path, "vlan"]} label="VLAN" kind="integer" optional />
+              <Field path={[...path, "mac_base"]} label="MAC base" optional />
+              <Field path={[...path, "os_profile"]} label="OS profile" optional />
+            </>
+          );
+        }}
       </ItemList>
       <h3>External servers</h3>
       <ItemList

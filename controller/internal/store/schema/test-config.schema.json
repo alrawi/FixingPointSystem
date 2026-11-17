@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/alrawi/FixingPointSystem/contracts/schemas/test-config.schema.json",
   "title": "FixingPointSystem test configuration",
-  "description": "Contract v0.3. Composes network, profile, load, timeline, criteria, and module settings. Names for ports and devices follow Open Traffic Generator vocabulary.",
+  "description": "Contract v0.4. Composes network, profile, load, timeline, criteria, and module settings. Names for ports and devices follow Open Traffic Generator vocabulary.",
   "type": "object",
   "additionalProperties": false,
   "required": ["apiVersion", "kind", "metadata", "topology", "network", "profile", "load"],
@@ -323,11 +323,26 @@
         "ipv6": { "type": "string", "pattern": "^[0-9A-Fa-f:]+/(12[0-8]|1[01]\\d|[1-9]?\\d)$" },
         "count": { "type": "integer", "minimum": 1 },
         "gateway": { "type": "string" },
+        "dhcp4": {
+          "description": "Optional (v0.4). Present means that the hosts of the pool obtain their IPv4 addresses and their router through DHCP (RFC 2131) and take no address from the configuration. Absent means static addresses, as before. Only a client pool may carry it, and then the pool names none of ipv4, ipv6, and gateway. The object has no property yet, and later options will be added to it as optional properties. Clients compute the addresses of servers from the prefix of the server pool.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
         "vlan": { "type": "integer", "minimum": 1, "maximum": 4094 },
         "mac_base": { "type": "string", "pattern": "^([0-9a-f]{2}:){5}[0-9a-f]{2}$" },
         "os_profile": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
       },
-      "anyOf": [ { "required": ["ipv4"] }, { "required": ["ipv6"] } ]
+      "anyOf": [ { "required": ["ipv4"] }, { "required": ["ipv6"] }, { "required": ["dhcp4"] } ],
+      "if": { "required": ["dhcp4"] },
+      "then": {
+        "properties": {
+          "role": { "const": "client", "description": "A pool with dhcp4 is a client pool." },
+          "ipv4": false,
+          "ipv6": false,
+          "gateway": false
+        }
+      }
     }
   }
 }

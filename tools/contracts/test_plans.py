@@ -157,6 +157,53 @@ def test_app_sim_needs_both_roles(plan: dict, tmp_path: Path) -> None:
     assert any("app_sim needs" in m for m in errors_for(doc, tmp_path))
 
 
+# DHCP slices (agent protocol 0.2.6, CON-34). Presence of dhcp4 means DHCP, and the
+# prefixes and the gateway are then empty.
+
+def dhcp_plan(plan: dict) -> dict:
+    doc = copy.deepcopy(plan)
+    pool = doc["hostPools"][0]
+    del pool["ipv4Prefix"]
+    pool["dhcp4"] = {}
+    return doc
+
+
+def test_dhcp_slice_without_a_prefix_passes(plan: dict, tmp_path: Path) -> None:
+    doc = dhcp_plan(plan)
+    assert errors_for(doc, tmp_path) == []
+    assert cp.canonical(cp.parse_plan(json.dumps(doc)))["hostPools"][0]["dhcp4"] == {}
+
+
+def test_slice_without_prefix_or_dhcp_fails(plan: dict, tmp_path: Path) -> None:
+    doc = dhcp_plan(plan)
+    del doc["hostPools"][0]["dhcp4"]
+    assert any("or dhcp4" in m for m in errors_for(doc, tmp_path))
+
+
+@pytest.mark.parametrize("key,value", [
+    ("ipv4Prefix", "16.0.0.0/24"),
+    ("ipv6Prefix", "2001:db8:10::/64"),
+    ("gateway", "16.0.0.1"),
+])
+def test_dhcp_slice_with_a_prefix_or_gateway_fails(plan: dict, tmp_path: Path, key: str, value: str) -> None:
+    doc = dhcp_plan(plan)
+    doc["hostPools"][0][key] = value
+    assert any(f"must not set {key}" in m for m in errors_for(doc, tmp_path))
+
+
+def test_dhcp_slice_on_a_server_fails(plan: dict, tmp_path: Path) -> None:
+    doc = dhcp_plan(plan)
+    del doc["hostPools"][1]["ipv4Prefix"]
+    doc["hostPools"][1]["dhcp4"] = {}
+    assert any("only on a client slice" in m for m in errors_for(doc, tmp_path))
+
+
+def test_dhcp4_is_field_13_of_host_pool_slice() -> None:
+    field = _file().message_types_by_name["HostPoolSlice"].fields_by_name["dhcp4"]
+    assert field.number == 13 and field.message_type.name == "Dhcp4"
+    assert not _file().message_types_by_name["Dhcp4"].fields
+
+
 # Agent control protocol 0.2.2 on the CON-06 shape. Agents dial the controller, so the
 # controller serves the only service and the agent serves none.
 

@@ -843,10 +843,12 @@ export interface components {
             ipv6?: string;
             count: number;
             gateway?: string;
+            /** @description Optional (v0.4). Present means that the hosts of the pool obtain their IPv4 addresses and their router through DHCP (RFC 2131) and take no address from the configuration. Absent means static addresses, as before. Only a client pool may carry it, and then the pool names none of ipv4, ipv6, and gateway. The object has no property yet, and later options will be added to it as optional properties. Clients compute the addresses of servers from the prefix of the server pool. */
+            dhcp4?: Record<string, never>;
             vlan?: number;
             mac_base?: string;
             os_profile?: string;
-        } | unknown | unknown;
+        } | unknown | unknown | unknown;
         /** @description A distribution of inter arrival times, written with the parameter names of the scenario delay (milliseconds unless the unit says otherwise). Constant, exponential, uniform, lognormal, and Pareto are the names that the realism check accepts for a target. */
         arrival: {
             /** @constant */
@@ -886,7 +888,7 @@ export interface components {
         };
         /**
          * FixingPointSystem test configuration
-         * @description Contract v0.3. Composes network, profile, load, timeline, criteria, and module settings. Names for ports and devices follow Open Traffic Generator vocabulary.
+         * @description Contract v0.4. Composes network, profile, load, timeline, criteria, and module settings. Names for ports and devices follow Open Traffic Generator vocabulary.
          */
         "test-config.schema": {
             /** @constant */
@@ -1051,10 +1053,12 @@ export interface components {
                     ipv6?: string;
                     count: number;
                     gateway?: string;
+                    /** @description Optional (v0.4). Present means that the hosts of the pool obtain their IPv4 addresses and their router through DHCP (RFC 2131) and take no address from the configuration. Absent means static addresses, as before. Only a client pool may carry it, and then the pool names none of ipv4, ipv6, and gateway. The object has no property yet, and later options will be added to it as optional properties. Clients compute the addresses of servers from the prefix of the server pool. */
+                    dhcp4?: Record<string, never>;
                     vlan?: number;
                     mac_base?: string;
                     os_profile?: string;
-                } | unknown | unknown;
+                } | unknown | unknown | unknown;
             };
         };
         /** @description One metric value. The name is a metric of contracts/metrics/catalog.yaml, and labels are labels that the catalog declares for it. */

@@ -166,7 +166,7 @@ fn round_trip<M: prost::Message + Default + PartialEq + std::fmt::Debug>(m: &M) 
 #[test]
 fn capture_download_messages_match_the_proto_numbers() {
     let text = proto_text();
-    let rows: [(&str, &[(&str, u32)]); 8] = [
+    let rows: [(&str, &[(&str, u32)]); 9] = [
         (
             "FetchCaptureCommand",
             &[
@@ -207,6 +207,7 @@ fn capture_download_messages_match_the_proto_numbers() {
             &[("received_offset", 1), ("verified", 2)],
         ),
         ("SessionResponse", &[("fetch_capture", 9)]),
+        ("HostPoolSlice", &[("dhcp4", 13)]),
     ];
     for (name, expected) in rows {
         let fields = message_fields(&text, name);

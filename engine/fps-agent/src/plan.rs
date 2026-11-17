@@ -209,7 +209,15 @@ pub struct HostPoolSlice {
     pub mac_base: String,
     /// The host OS profile.
     pub os_profile: String,
+    /// Present when the hosts lease their IPv4 addresses and routers through
+    /// DHCP. The slice then has no prefix and no gateway.
+    pub dhcp4: Option<Dhcp4>,
 }
+
+/// Mirrors `fps.agent.v1.Dhcp4`. It has no field yet.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Dhcp4 {}
 
 /// Mirrors `fps.agent.v1.ExternalServer`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -675,6 +683,24 @@ mod tests {
             "load":{"phases":[{"name":"a","duration":"1s"}]}}"#;
         let err = Plan::parse(text).unwrap_err();
         assert!(err.to_string().contains("exactly one target"), "{err}");
+    }
+
+    #[test]
+    fn a_dhcp_pool_reads_and_dhcp4_takes_no_property_yet() {
+        let base =
+            r#""planId":"p","workers":[{}],"load":{"phases":[{"name":"a","duration":"1s"}]}"#;
+        let pool = |dhcp4: &str| {
+            format!(
+                r#"{{{base},"hostPools":[{{"name":"c","role":"HOST_ROLE_CLIENT","dhcp4":{dhcp4}}}]}}"#
+            )
+        };
+        let p = Plan::parse(&pool("{}")).unwrap();
+        assert_eq!(p.host_pools[0].dhcp4, Some(Dhcp4 {}));
+        assert!(p.host_pools[0].ipv4_prefix.is_empty());
+        let none = Plan::parse(&format!(r#"{{{base},"hostPools":[{{"name":"c"}}]}}"#)).unwrap();
+        assert_eq!(none.host_pools[0].dhcp4, None);
+        let err = Plan::parse(&pool(r#"{"lease":1}"#)).unwrap_err();
+        assert!(err.to_string().contains("lease"), "{err}");
     }
 
     #[test]

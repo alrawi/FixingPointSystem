@@ -26,6 +26,10 @@ fn every_example_test_config_pool_parses_and_maps_unique_addresses() {
         let doc: Yaml = serde_yaml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         let pools = doc["network"]["host_pools"].as_sequence().unwrap();
         for p in pools {
+            // A DHCP pool has no prefix; its addresses come from leases (HST-04).
+            if p.get("dhcp4").is_some() {
+                continue;
+            }
             let count = u32::try_from(p["count"].as_u64().unwrap()).unwrap();
             let gateway = p.get("gateway").and_then(Yaml::as_str);
             let pool = HostPool::parse(&PoolSpec {
