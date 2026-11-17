@@ -5,10 +5,10 @@
 | Issue | #571 |
 | Branch | `wp/TRN-17` |
 | Pull request | #586 |
-| Status | in progress |
-| Progress | 90% (code, docs, and results done, CI pending) |
+| Status | ready for review |
+| Progress | 100% |
 | Current holder | claude-7a1c3e |
-| Last verified commit | none |
+| Last verified commit | 5a73c66 (CI green: `rust`, `licenses`, and all 61 checks), then merged with main at b60f335 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -44,11 +44,11 @@ The fat-nuc run of the reference stack (a host test, which the coordinator runs)
 
 ## Next action
 
-Wait for CI on the pull request, then set the handoff to ready for review and run `fps_swarm.py review 571 --pr 586`.
+The coordinator reviews and merges PR #586, then runs the host test.
 
 ## Blockers and open questions
 
-None for TRN-17. TRN-20 waits for the owner to allow 0BSD in `deny.toml`, or to allow `smoltcp` and `managed` by exception.
+None for TRN-17. The host test needs `cargo` on the `PATH` of the relay account. TRN-20 waits for the owner to allow 0BSD in `deny.toml`, or to allow `smoltcp` and `managed` by exception.
 
 ## Decisions taken in this package
 
@@ -111,3 +111,4 @@ The fat-nuc result is the host that TRN-10 compares the stacks on, so argv 1 sho
 | 2026-11-17 | claude-7e8c87 | block | ed0d90a | PR #586 open. Blocked on the owner allowing 0BSD in deny.toml |
 | 2026-11-16 | claude-7a1c3e | takeover | 58ab16c | Re-scoped under D13. The smoltcp work is preserved on `wp/TRN-20` |
 | 2026-11-16 | claude-7a1c3e | checkpoint | none | Kernel reference stack, smoltcp removed from the lock file, cargo deny passes |
+| 2026-11-16 | claude-7a1c3e | review | b60f335 | CI green on 5a73c66, main merged, ready for review |
