@@ -7,13 +7,15 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Barrier;
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::clock::MonotonicClock;
 use crate::kernel::{KernelConfig, KernelStack};
 use crate::own::{OwnConfig, OwnStack};
 use crate::report::BenchReport;
+use crate::smol::{SmolConfig, SmolStack, TimeWait};
 use crate::stack::TcpStack;
 use crate::sysinfo::{self, HostInfo};
 use crate::workload::{
@@ -23,7 +25,7 @@ use crate::workload::{
 
 /// The text that `--help` prints.
 pub const USAGE: &str = "\
-usage: tcp_bench [--stack kernel|own] [--workload rate|throughput|scale|all] [--profile small|full]
+usage: tcp_bench [--stack kernel|own|smoltcp] [--workload rate|throughput|scale|all] [--profile small|full]
                  [--label TEXT] [--out PATH|-]
   rate:        [--duration-secs N] [--concurrency N] [--threads N]
                [--request-bytes N] [--response-bytes N]
@@ -33,9 +35,13 @@ usage: tcp_bench [--stack kernel|own] [--workload rate|throughput|scale|all] [--
                [--step-seconds N] [--probe-sessions N] [--batch N]
   kernel:      [--nodelay on|off] [--buffer-kib N] [--backlog N]
   own:         [--own-mtu N] [--own-window-kib N] [--own-time-wait-ms N] [--own-rto-ms N]
+  smoltcp:     [--smol-mtu N] [--smol-checksums on|off] [--smol-buffer-kib N]
+               [--smol-time-wait skip|keep] [--smol-idle-poll-ms N]
 The stack kernel is the TCP of the operating system on the loopback interface, and it
 is the reference that other stacks are compared with. The stack own is the minimal TCP
-stack of TRN-18 over an in memory frame link, see the module fps_tcp::own. Without --buffer-kib the kernel
+stack of TRN-18 over an in memory frame link, see the module fps_tcp::own. The stack
+smoltcp is the smoltcp crate behind the same seam (TRN-20), over an in memory IP link,
+see the module fps_tcp::smol. Without --buffer-kib the kernel
 sizes the socket buffers itself.
 The profile small finishes within a minute and fits a hosted CI runner. The profile
 full measures up to 1,000,000 sockets and is meant for a host with 16 GiB of memory.
@@ -81,6 +87,7 @@ struct Options {
     scale_buffer: Option<usize>,
     kernel: KernelConfig,
     own: OwnConfig,
+    smol: SmolConfig,
 }
 
 /// A mistake in the command line.
@@ -92,7 +99,7 @@ enum UsageError {
     MissingValue(String),
     #[error("flag {flag} has the invalid value {value}")]
     BadValue { flag: String, value: String },
-    #[error("unknown stack {0}, the stacks are: kernel, own")]
+    #[error("unknown stack {0}, the stacks are: kernel, own, smoltcp")]
     UnknownStack(String),
 }
 
@@ -113,6 +120,7 @@ fn profile_defaults(profile: &str) -> Option<Options> {
         scale_buffer: None,
         kernel,
         own: OwnConfig::default(),
+        smol: SmolConfig::default(),
     };
     match profile {
         "small" => {
@@ -265,10 +273,34 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
                 let ms: i64 = number(f, v)?;
                 o.own.rto_us = ms.saturating_mul(1000).max(1000);
             }
+            "--smol-mtu" => o.smol.link.mtu = number(f, v)?,
+            "--smol-checksums" => {
+                o.smol.link.checksums = match v {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err(bad(f, v)),
+                }
+            }
+            "--smol-buffer-kib" => {
+                let kib: usize = number(f, v)?;
+                o.smol.rx_buffer = kib.saturating_mul(1024);
+                o.smol.tx_buffer = kib.saturating_mul(1024);
+            }
+            "--smol-time-wait" => {
+                o.smol.time_wait = match v {
+                    "skip" => TimeWait::Skip,
+                    "keep" => TimeWait::Keep,
+                    _ => return Err(bad(f, v)),
+                }
+            }
+            "--smol-idle-poll-ms" => {
+                let millis: i64 = number(f, v)?;
+                o.smol.idle_poll_micros = millis.saturating_mul(1000);
+            }
             _ => return Err(UsageError::UnknownFlag(flag.clone())),
         }
     }
-    if o.stack != "kernel" && o.stack != "own" {
+    if !["kernel", "own", "smoltcp"].contains(&o.stack.as_str()) {
         return Err(UsageError::UnknownStack(o.stack));
     }
     Ok(o)
@@ -326,6 +358,16 @@ fn describe(o: &Options) -> Vec<(String, String)> {
         config.push(("own.time_wait_us".into(), o.own.time_wait_us.to_string()));
         config.push(("own.backlog".into(), o.own.backlog.to_string()));
         config.push(("own.link_depth".into(), o.own.link_depth.to_string()));
+    } else if o.stack == "smoltcp" {
+        config.push(("smol.mtu".into(), o.smol.link.mtu.to_string()));
+        config.push(("smol.checksums".into(), o.smol.link.checksums.to_string()));
+        config.push(("smol.time_wait".into(), format!("{:?}", o.smol.time_wait)));
+        config.push(("smol.nagle".into(), o.smol.nagle.to_string()));
+        config.push((
+            "smol.idle_poll_ms".into(),
+            (o.smol.idle_poll_micros / 1000).to_string(),
+        ));
+        config.push(("smol.backlog".into(), o.smol.backlog.to_string()));
     } else {
         config.push(("nodelay".into(), o.kernel.nodelay.to_string()));
         config.push(("backlog".into(), o.kernel.backlog.to_string()));
@@ -345,7 +387,9 @@ fn describe(o: &Options) -> Vec<(String, String)> {
             "rate.response_bytes".into(),
             o.rate.response_bytes.to_string(),
         ));
-        if o.stack != "own" {
+        if o.stack == "smoltcp" {
+            config.push(("rate.buffer_bytes".into(), o.smol.rx_buffer.to_string()));
+        } else if o.stack != "own" {
             config.push((
                 "rate.buffer_bytes".into(),
                 buffer_text(o.kernel.buffer_bytes),
@@ -367,7 +411,12 @@ fn describe(o: &Options) -> Vec<(String, String)> {
             format!("{:?}", o.transfer.direction),
         ));
         config.push(("throughput.threads".into(), o.transfer_threads.to_string()));
-        if o.stack != "own" {
+        if o.stack == "smoltcp" {
+            config.push((
+                "throughput.buffer_bytes".into(),
+                o.smol.rx_buffer.to_string(),
+            ));
+        } else if o.stack != "own" {
             config.push((
                 "throughput.buffer_bytes".into(),
                 buffer_text(o.kernel.buffer_bytes),
@@ -382,7 +431,12 @@ fn describe(o: &Options) -> Vec<(String, String)> {
             "open_files_soft_limit".into(),
             sysinfo::open_files_limit().map_or_else(|| "unlimited".to_string(), |n| n.to_string()),
         ));
-        if o.stack != "own" {
+        if o.stack == "smoltcp" {
+            config.push((
+                "scale.buffer_bytes".into(),
+                o.scale_buffer.unwrap_or(SMOL_SCALE_BUFFER).to_string(),
+            ));
+        } else if o.stack != "own" {
             config.push((
                 "scale.buffer_bytes".into(),
                 buffer_text(o.scale_buffer.or(o.kernel.buffer_bytes)),
@@ -403,6 +457,22 @@ fn describe(o: &Options) -> Vec<(String, String)> {
 /// Builds shard `index` of a stack, for the scaling workload when `scale` is
 /// true.
 type MakeStack<'a, S> = &'a (dyn Fn(usize, bool) -> S + Sync);
+
+/// The socket buffer in bytes that a smoltcp socket gets in the scaling
+/// workload, unless `--scale-buffer-bytes` says otherwise. The held sockets
+/// are idle, so a small buffer shows the cost of the socket itself.
+const SMOL_SCALE_BUFFER: usize = 512;
+
+fn make_smol(options: &Options, index: usize, scale: bool) -> SmolStack {
+    let mut config = options.smol.clone();
+    config.seed = config.seed.wrapping_add(index as u64 * 2);
+    if scale {
+        let buffer = options.scale_buffer.unwrap_or(SMOL_SCALE_BUFFER);
+        config.rx_buffer = buffer;
+        config.tx_buffer = buffer;
+    }
+    SmolStack::new(config, Arc::new(MonotonicClock::new()))
+}
 
 fn make_kernel(options: &Options, scale: bool) -> KernelStack {
     let mut kernel = options.kernel.clone();
@@ -471,6 +541,10 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     };
     let measured = if options.stack == "own" {
         measure(&options, "own", &|_, _| OwnStack::new(options.own.clone()))
+    } else if options.stack == "smoltcp" {
+        measure(&options, "smoltcp", &|index, scale| {
+            make_smol(&options, index, scale)
+        })
     } else {
         measure(&options, "kernel", &|_, scale| make_kernel(&options, scale))
     };
@@ -586,6 +660,61 @@ mod tests {
         assert_eq!(o.kernel.backlog, 512);
         assert_eq!(o.scale_buffer, Some(2048));
         assert_eq!(parse(&args(&[])).expect("parse").kernel.buffer_bytes, None);
+    }
+
+    #[test]
+    fn smoltcp_flags_reach_its_config() {
+        let o = parse(&args(&[
+            "--stack",
+            "smoltcp",
+            "--smol-mtu",
+            "9000",
+            "--smol-checksums=off",
+            "--smol-buffer-kib",
+            "128",
+            "--smol-time-wait",
+            "keep",
+            "--smol-idle-poll-ms",
+            "5",
+        ]))
+        .expect("parse");
+        assert_eq!(o.stack, "smoltcp");
+        assert_eq!(o.smol.idle_poll_micros, 5000);
+        assert_eq!(o.smol.link.mtu, 9000);
+        assert!(!o.smol.link.checksums);
+        assert_eq!(o.smol.rx_buffer, 128 * 1024);
+        assert_eq!(o.smol.time_wait, TimeWait::Keep);
+    }
+
+    #[test]
+    fn a_tiny_smoltcp_run_reports_all_measures() {
+        let argv = args(&[
+            "--stack",
+            "smoltcp",
+            "--duration-secs",
+            "0.3",
+            "--concurrency",
+            "4",
+            "--transfer-sessions",
+            "2",
+            "--transfer-mib",
+            "2",
+            "--scale-steps",
+            "200,400",
+            "--probe-sessions",
+            "10",
+            "--out",
+            "-",
+        ]);
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = run(&argv, &mut out, &mut err);
+        let text = String::from_utf8_lossy(&out).to_string();
+        assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&err));
+        assert!(text.contains("smoltcp"), "{text}");
+        assert!(text.contains("sessions per second"), "{text}");
+        assert!(text.contains("socket scaling"), "{text}");
+        assert!(text.contains("smoltcp.scale.400.idle_poll_us"), "{text}");
+        assert!(text.contains("smoltcp.rate.sessions_per_s"), "{text}");
     }
 
     #[test]
