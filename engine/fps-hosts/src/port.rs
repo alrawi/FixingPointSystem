@@ -234,6 +234,15 @@ impl PortSpec {
             port: port.clone(),
             source,
         };
+        if pool.is_dhcp() {
+            return Err(PortError::InvalidSpec {
+                port,
+                reason: format!(
+                    "host pool {} leases its addresses (dhcp4), and a kernel port needs them at setup",
+                    pool.name()
+                ),
+            });
+        }
         if slice.is_empty() {
             return Err(PortError::InvalidSpec {
                 port,
