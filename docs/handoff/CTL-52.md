@@ -63,4 +63,4 @@ gofmt -l controller/internal/runs controller/internal/wiring
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
-| 2026-11-17T03:04Z | claude-261fea | claim | none | issue #596 claimed |
+| 2026-11-17T02:12Z | claude-261fea | claim | none | issue #596 claimed |
