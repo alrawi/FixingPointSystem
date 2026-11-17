@@ -2151,6 +2151,7 @@ work_packages:
       decision record 0014 is accepted.
     deliverables:
       - Child packages for connection setup, data transfer, timers and retransmission, and OS profile options.
+      - The change that sets fps_backend_afxdp::TRANSPORT_AVAILABLE also makes fps_agent::assemble start the selected backend instead of plan.backend, and reports the bound mode in PortInfo.xdp_driver_mode (AGT-22 finding).
     acceptance:
       - The http1 module passes realism CI on the AF_XDP backend.
 
@@ -2348,6 +2349,23 @@ work_packages:
       - The agent maps HostCapabilities to the selection input, starts the selected backend, and reports kernel_release, selected_backend, and xdp_driver_mode.
     acceptance:
       - The agent contract test passes against CON-32, and a test covers a forced backend and an unsupported one.
+
+  - id: AGT-23
+    title: The agent leases the addresses of a DHCP pool
+    phase: 3
+    workstream: AGT
+    size: M
+    depends_on: [HST-04, TRN-12]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Build a DHCP host pool at Prepare from the leases of HST-04, and filter a DHCP port by the leased addresses.
+      The steps are in the Shared page notes of the HST-04 log entry (2026-11-17T0400).
+    deliverables:
+      - assemble builds a DHCP pool with HostPool::dhcp, runs the DHCP clients of each worker queue at Prepare until every lease is bound or a timeout, and fails with an error that names dhcp4 on a timeout or on the kernel backend.
+      - Pools::addresses reads the lease table, and the capture filter of a DHCP port keeps a session only when an address of the session is leased.
+      - The agent rebuilds the neighbor table when the lease generation moves.
+    acceptance:
+      - In the namespace harness, a run with a DHCP client pool on the user space backend leases every address before traffic starts, and the capture filter drops a session whose addresses are not leased.
 
   - id: CON-32
     title: Kernel release, selected backend, and XDP mode in the agent capabilities
