@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::kernel::{KernelConfig, KernelStack};
+use crate::own::{OwnConfig, OwnStack};
 use crate::report::BenchReport;
 use crate::stack::TcpStack;
 use crate::sysinfo::{self, HostInfo};
@@ -22,7 +23,7 @@ use crate::workload::{
 
 /// The text that `--help` prints.
 pub const USAGE: &str = "\
-usage: tcp_bench [--stack kernel] [--workload rate|throughput|scale|all] [--profile small|full]
+usage: tcp_bench [--stack kernel|own] [--workload rate|throughput|scale|all] [--profile small|full]
                  [--label TEXT] [--out PATH|-]
   rate:        [--duration-secs N] [--concurrency N] [--threads N]
                [--request-bytes N] [--response-bytes N]
@@ -30,9 +31,11 @@ usage: tcp_bench [--stack kernel] [--workload rate|throughput|scale|all] [--prof
                [--direction upload|download] [--threads N]
   scale:       [--scale-steps N,N,...] [--shards N] [--scale-buffer-bytes N]
                [--step-seconds N] [--probe-sessions N] [--batch N]
-  stack:       [--nodelay on|off] [--buffer-kib N] [--backlog N]
+  kernel:      [--nodelay on|off] [--buffer-kib N] [--backlog N]
+  own:         [--own-mtu N] [--own-window-kib N] [--own-time-wait-ms N] [--own-rto-ms N]
 The stack kernel is the TCP of the operating system on the loopback interface, and it
-is the reference that other stacks are compared with. Without --buffer-kib the kernel
+is the reference that other stacks are compared with. The stack own is the minimal TCP
+stack of TRN-18 over an in memory frame link, see the module fps_tcp::own. Without --buffer-kib the kernel
 sizes the socket buffers itself.
 The profile small finishes within a minute and fits a hosted CI runner. The profile
 full measures up to 1,000,000 sockets and is meant for a host with 16 GiB of memory.
@@ -77,6 +80,7 @@ struct Options {
     shards: usize,
     scale_buffer: Option<usize>,
     kernel: KernelConfig,
+    own: OwnConfig,
 }
 
 /// A mistake in the command line.
@@ -88,7 +92,7 @@ enum UsageError {
     MissingValue(String),
     #[error("flag {flag} has the invalid value {value}")]
     BadValue { flag: String, value: String },
-    #[error("unknown stack {0}, the stacks are: kernel")]
+    #[error("unknown stack {0}, the stacks are: kernel, own")]
     UnknownStack(String),
 }
 
@@ -108,6 +112,7 @@ fn profile_defaults(profile: &str) -> Option<Options> {
         shards: 1,
         scale_buffer: None,
         kernel,
+        own: OwnConfig::default(),
     };
     match profile {
         "small" => {
@@ -243,11 +248,27 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
                 let kib: usize = number(f, v)?;
                 o.kernel.buffer_bytes = Some(kib.saturating_mul(1024));
             }
-            "--backlog" => o.kernel.backlog = number(f, v)?,
+            "--backlog" => {
+                o.kernel.backlog = number(f, v)?;
+                o.own.backlog = o.kernel.backlog as usize;
+            }
+            "--own-mtu" => o.own.mtu = number::<usize>(f, v)?.clamp(128, 65_535),
+            "--own-window-kib" => {
+                let kib: usize = number(f, v)?;
+                o.own.rcv_buffer = kib.saturating_mul(1024).clamp(1, 65_535);
+            }
+            "--own-time-wait-ms" => {
+                let ms: i64 = number(f, v)?;
+                o.own.time_wait_us = ms.saturating_mul(1000);
+            }
+            "--own-rto-ms" => {
+                let ms: i64 = number(f, v)?;
+                o.own.rto_us = ms.saturating_mul(1000).max(1000);
+            }
             _ => return Err(UsageError::UnknownFlag(flag.clone())),
         }
     }
-    if o.stack != "kernel" {
+    if o.stack != "kernel" && o.stack != "own" {
         return Err(UsageError::UnknownStack(o.stack));
     }
     Ok(o)
@@ -296,11 +317,19 @@ fn buffer_text(bytes: Option<usize>) -> String {
 }
 
 fn describe(o: &Options) -> Vec<(String, String)> {
-    let mut config = vec![
-        ("profile".to_string(), o.profile.clone()),
-        ("nodelay".into(), o.kernel.nodelay.to_string()),
-        ("backlog".into(), o.kernel.backlog.to_string()),
-    ];
+    let mut config = vec![("profile".to_string(), o.profile.clone())];
+    if o.stack == "own" {
+        config.push(("own.mtu".into(), o.own.mtu.to_string()));
+        config.push(("own.rcv_buffer".into(), o.own.rcv_buffer.to_string()));
+        config.push(("own.snd_buffer".into(), o.own.snd_buffer.to_string()));
+        config.push(("own.rto_us".into(), o.own.rto_us.to_string()));
+        config.push(("own.time_wait_us".into(), o.own.time_wait_us.to_string()));
+        config.push(("own.backlog".into(), o.own.backlog.to_string()));
+        config.push(("own.link_depth".into(), o.own.link_depth.to_string()));
+    } else {
+        config.push(("nodelay".into(), o.kernel.nodelay.to_string()));
+        config.push(("backlog".into(), o.kernel.backlog.to_string()));
+    }
     if o.selection.rate() {
         config.push((
             "rate.duration_secs".into(),
@@ -316,10 +345,12 @@ fn describe(o: &Options) -> Vec<(String, String)> {
             "rate.response_bytes".into(),
             o.rate.response_bytes.to_string(),
         ));
-        config.push((
-            "rate.buffer_bytes".into(),
-            buffer_text(o.kernel.buffer_bytes),
-        ));
+        if o.stack != "own" {
+            config.push((
+                "rate.buffer_bytes".into(),
+                buffer_text(o.kernel.buffer_bytes),
+            ));
+        }
     }
     if o.selection.throughput() {
         config.push((
@@ -336,10 +367,12 @@ fn describe(o: &Options) -> Vec<(String, String)> {
             format!("{:?}", o.transfer.direction),
         ));
         config.push(("throughput.threads".into(), o.transfer_threads.to_string()));
-        config.push((
-            "throughput.buffer_bytes".into(),
-            buffer_text(o.kernel.buffer_bytes),
-        ));
+        if o.stack != "own" {
+            config.push((
+                "throughput.buffer_bytes".into(),
+                buffer_text(o.kernel.buffer_bytes),
+            ));
+        }
     }
     if o.selection.scale() {
         let steps: Vec<String> = o.scale.steps.iter().map(usize::to_string).collect();
@@ -349,10 +382,12 @@ fn describe(o: &Options) -> Vec<(String, String)> {
             "open_files_soft_limit".into(),
             sysinfo::open_files_limit().map_or_else(|| "unlimited".to_string(), |n| n.to_string()),
         ));
-        config.push((
-            "scale.buffer_bytes".into(),
-            buffer_text(o.scale_buffer.or(o.kernel.buffer_bytes)),
-        ));
+        if o.stack != "own" {
+            config.push((
+                "scale.buffer_bytes".into(),
+                buffer_text(o.scale_buffer.or(o.kernel.buffer_bytes)),
+            ));
+        }
         config.push((
             "scale.step_budget_secs".into(),
             o.scale.step_budget.as_secs().to_string(),
@@ -365,19 +400,27 @@ fn describe(o: &Options) -> Vec<(String, String)> {
     config
 }
 
-fn make_kernel(config: &KernelConfig, _index: usize) -> KernelStack {
-    KernelStack::new(config.clone())
+/// Builds shard `index` of a stack, for the scaling workload when `scale` is
+/// true.
+type MakeStack<'a, S> = &'a (dyn Fn(usize, bool) -> S + Sync);
+
+fn make_kernel(options: &Options, scale: bool) -> KernelStack {
+    let mut kernel = options.kernel.clone();
+    if scale && options.scale_buffer.is_some() {
+        kernel.buffer_bytes = options.scale_buffer;
+    }
+    KernelStack::new(kernel)
 }
 
 fn measure<S: TcpStack>(
     options: &Options,
     key: &str,
-    make: &(dyn Fn(usize, &KernelConfig) -> S + Sync),
+    make: MakeStack<'_, S>,
 ) -> Result<BenchReport, BenchError> {
     let mut report = BenchReport {
         stack_key: key.into(),
-        stack_name: make(0, &options.kernel).name(),
-        stack_notes: make(0, &options.kernel).notes(),
+        stack_name: make(0, false).name(),
+        stack_notes: make(0, false).notes(),
         label: options.label.clone(),
         host: HostInfo::detect(),
         config: describe(options),
@@ -388,7 +431,7 @@ fn measure<S: TcpStack>(
     };
     if options.selection.rate() {
         let runs: Vec<RateRun> = on_threads(options.rate_threads, |index, barrier| {
-            let stack = make(index, &options.kernel);
+            let stack = make(index, false);
             barrier.wait();
             on_runtime(session_rate(&stack, &options.rate))?
         })?;
@@ -396,18 +439,14 @@ fn measure<S: TcpStack>(
     }
     if options.selection.throughput() {
         let runs: Vec<ThroughputRun> = on_threads(options.transfer_threads, |index, barrier| {
-            let stack = make(index, &options.kernel);
+            let stack = make(index, false);
             barrier.wait();
             on_runtime(throughput(&stack, &options.transfer))?
         })?;
         report.throughput = Some(ThroughputReport::from_runs(&runs));
     }
     if options.selection.scale() {
-        let mut kernel = options.kernel.clone();
-        if options.scale_buffer.is_some() {
-            kernel.buffer_bytes = options.scale_buffer;
-        }
-        let stacks: Vec<S> = (0..options.shards).map(|i| make(i, &kernel)).collect();
+        let stacks: Vec<S> = (0..options.shards).map(|i| make(i, true)).collect();
         report.scale = Some(on_runtime(socket_scaling(&stacks, &options.scale))??);
     }
     report.finished_unix_secs = SystemTime::now()
@@ -430,9 +469,12 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             return 2;
         }
     };
-    let report = match measure(&options, "kernel", &|index, config| {
-        make_kernel(config, index)
-    }) {
+    let measured = if options.stack == "own" {
+        measure(&options, "own", &|_, _| OwnStack::new(options.own.clone()))
+    } else {
+        measure(&options, "kernel", &|_, scale| make_kernel(&options, scale))
+    };
+    let report = match measured {
         Ok(report) => report,
         Err(error) => {
             let _ = writeln!(err, "tcp_bench: {error}");
@@ -591,6 +633,55 @@ mod tests {
         assert!(json.contains("kernel.rate.sessions_per_s"));
         assert!(json.contains("loopback interface"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn own_stack_flags_reach_its_config_and_a_tiny_run_reports_all_measures() {
+        let o = parse(&args(&[
+            "--stack",
+            "own",
+            "--own-mtu",
+            "9000",
+            "--own-window-kib",
+            "32",
+            "--own-time-wait-ms",
+            "250",
+            "--own-rto-ms",
+            "50",
+        ]))
+        .expect("parse");
+        assert_eq!(o.stack, "own");
+        assert_eq!(o.own.mtu, 9000);
+        assert_eq!(o.own.rcv_buffer, 32 * 1024);
+        assert_eq!(o.own.time_wait_us, 250_000);
+        assert_eq!(o.own.rto_us, 50_000);
+        let argv = args(&[
+            "--stack",
+            "own",
+            "--duration-secs",
+            "0.3",
+            "--concurrency",
+            "4",
+            "--transfer-sessions",
+            "2",
+            "--transfer-mib",
+            "2",
+            "--scale-steps",
+            "200,400",
+            "--probe-sessions",
+            "10",
+            "--out",
+            "-",
+        ]);
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = run(&argv, &mut out, &mut err);
+        let text = String::from_utf8_lossy(&out).to_string();
+        assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&err));
+        assert!(text.contains("own minimal TCP"), "{text}");
+        assert!(text.contains("sessions per second"), "{text}");
+        assert!(text.contains("socket scaling"), "{text}");
+        assert!(text.contains("own.scale.400.idle_poll_us"), "{text}");
+        assert!(text.contains("own.rate.sessions_per_s"), "{text}");
     }
 
     #[test]

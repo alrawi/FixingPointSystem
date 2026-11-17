@@ -8,9 +8,10 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+fps-backend-afxdp = { path = "../fps-backend-afxdp" }
 fps-io = { path = "../fps-io" }
 thiserror = "2"
-tokio = { version = "1.54", features = ["io-util", "net", "rt", "time"] }
+tokio = { version = "1.54", features = ["io-util", "net", "rt", "sync", "time"] }
 
 [dev-dependencies]
 tokio = { version = "1.54", features = ["io-util", "macros", "net", "rt", "time"] }
