@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #596 |
 | Branch | `wp/CTL-52` |
-| Pull request | not yet opened |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #602 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-261fea, lease until 2026-11-17T03:34:27Z |
-| Last verified commit | none (no local Go build; CI is the build) |
+| Last verified commit | f003537 (CI green, 22 checks) |
 
 ## Goal
 
@@ -20,7 +20,7 @@ The run orchestrator starts a run on two or more agents through `multiagent.Coor
 - [x] 2. Start through the coordinator in `drive`, snapshot feed, stop through `Run.Stop`.
 - [x] 3. Aggregate from the collector with the crash accounting of failed agents, wiring.
 - [x] 4. Tests over REST, wiki page, log entry.
-- [ ] 5. CI green, review.
+- [x] 5. CI green, review.
 
 ## Done and verified
 
@@ -29,11 +29,11 @@ The run orchestrator starts a run on two or more agents through `multiagent.Coor
 
 ## Remaining
 
-CI results (`test`, `controller-e2e`) and fixes inside the package paths.
+Nothing.
 
 ## Next action
 
-Open the pull request and wait for CI.
+Coordinator review and merge.
 
 ## Blockers and open questions
 
