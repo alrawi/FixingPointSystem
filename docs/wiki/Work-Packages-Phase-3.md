@@ -218,7 +218,7 @@ Run the chosen TCP stack over AF_XDP and expose SessionIo. Split this epic after
 Deliverables.
 
 - Child packages for connection setup, data transfer, timers and retransmission, and OS profile options.
-- The change that sets fps_backend_afxdp::TRANSPORT_AVAILABLE also makes fps_agent::assemble start the selected backend instead of plan.backend, and reports the bound mode in PortInfo.xdp_driver_mode (AGT-22 finding).
+- A child package with paths engine/fps-agent/ and controller/internal/wiring/ that lands with the change that sets fps_backend_afxdp::TRANSPORT_AVAILABLE. It makes fps_agent::assemble start the selected backend instead of plan.backend and report the bound mode in PortInfo.xdp_driver_mode (AGT-22 finding), and makes the orchestrator inventory use the selected backend of each agent instead of its first backend (CTL-53 finding).
 
 Acceptance.
 
