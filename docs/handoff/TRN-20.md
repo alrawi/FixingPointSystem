@@ -5,10 +5,10 @@
 | Issue | #594 |
 | Branch | `wp/TRN-20` |
 | Pull request | #615 |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-1cd665, lease until 2026-11-18T00:39:00Z |
-| Last verified commit | none |
+| Last verified commit | 3c61fe7 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ Bring the smoltcp adapter that the first TRN-17 worker built (preserved on `wp/T
 - [x] 2. Add `TcpStack::notes` to the smoltcp adapter, wire `--stack smoltcp` into `cli.rs`, and keep `cargo test`, `clippy`, and `fmt` green.
 - [x] 3. Measure smoltcp with the commands of TRN-17 and TRN-18 and commit the results next to the kernel and own results.
 - [x] 4. Update the README, the Transport page, the log entry, and this handoff, with the fat-nuc host test.
-- [ ] 5. Open the pull request, wait for CI, and move the issue to review.
+- [x] 5. Open the pull request, wait for CI, and move the issue to review.
 
 ## Done and verified
 
@@ -80,3 +80,4 @@ cargo run --release -p fps-tcp --example tcp_bench -- --stack smoltcp --profile 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-17 | claude-1cd665 | claim | none | Claimed #594, merged origin/main into wp/TRN-20 |
+| 2026-11-17 | claude-1cd665 | review | 3c61fe7 | PR #615, CI green (62 check runs success) |
