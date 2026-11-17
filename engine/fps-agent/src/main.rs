@@ -16,6 +16,10 @@
 //!   [`EXIT_ERROR`] on a failure that redialing cannot fix, such as an
 //!   `UNAUTHENTICATED` answer or a failed TLS handshake. An `https://`
 //!   controller needs `--cert-dir` and a CA, see [`fps_agent::identity`].
+//!   `--backend kernel|af_xdp` forces the transport backend. A forced backend
+//!   that the host cannot run ends the process with [`EXIT_ERROR`] before the
+//!   agent dials, and the agent never falls back to the other backend
+//!   (AGT-22, see [`fps_agent::select`]).
 //!
 //! `run` and `connect` refuse to start on a kernel older than Linux 6.3,
 //! which lacks the `IP_LOCAL_PORT_RANGE` socket option.
@@ -34,10 +38,11 @@ use fps_agent::session::Config;
 use fps_agent::session::SessionError;
 use fps_agent::trust::{ModulePolicy, TrustStore};
 use fps_agent::{detect, require_kernel, Outcome, RunOptions, SystemRoot};
+use fps_backend_afxdp::BackendKind;
 
 const USAGE: &str = "usage: fps-agent capabilities [--root DIR]
        fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS] [--module-trust-store FILE] [--dev-modules]
-       fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--label KEY=VALUE]... [--redial-limit SECONDS] [--capture-dir DIR] [--capture-retention SECONDS]
+       fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--backend kernel|af_xdp] [--label KEY=VALUE]... [--redial-limit SECONDS] [--capture-dir DIR] [--capture-retention SECONDS]
                           [--module-trust-store FILE] [--dev-modules]
                           [--cert-dir DIR [--tls-ca FILE] [--tls-ca-sha256 HEX] [--enroll-address HOST:PORT]
                            [--enroll-token-file FILE | --enroll-token-env NAME]]   (https:// controllers)";
@@ -106,7 +111,7 @@ fn run(args: &[String]) -> ExitCode {
 }
 
 fn connect(args: &[String]) -> ExitCode {
-    let (cfg, root) = match parse_connect_args(args) {
+    let (cfg, root, forced) = match parse_connect_args(args) {
         Ok(c) => c,
         Err(message) => {
             eprintln!("{message}\n{USAGE}");
@@ -128,7 +133,22 @@ fn connect(args: &[String]) -> ExitCode {
     cfg.jitter_seed = clock_seed();
     match detect(&root) {
         Ok(host) => {
-            let mut caps = host.to_capabilities();
+            // The selection comes before the first dial, so a forced backend
+            // that this host cannot run never registers with the controller.
+            let selection = match fps_agent::select::select(&host, forced) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("fps-agent: error: backend selection failed: {}", chain(&e));
+                    return ExitCode::from(EXIT_ERROR);
+                }
+            };
+            tracing::info!(
+                backend = selection.backend.name(),
+                reason = %fps_agent::select::reason_text(selection.reason),
+                kernel = %host.kernel.release,
+                "selected the transport backend"
+            );
+            let mut caps = host.capabilities_for(&selection);
             caps.modules = fps_agent::modules::installed(&cfg.modules)
                 .into_iter()
                 .map(|m| fps_agent::proto::ModuleRef {
@@ -200,8 +220,11 @@ async fn shutdown() {
     }
 }
 
-fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
+fn parse_connect_args(
+    args: &[String],
+) -> Result<(Config, SystemRoot, Option<BackendKind>), String> {
     let (mut controller, mut id, mut modules) = (None, None, None);
+    let mut forced = None;
     let (mut root, mut sides) = (SystemRoot::host(), Sides::Both);
     let mut labels = std::collections::HashMap::new();
     let mut redial_limit = Some(fps_agent::session::DEFAULT_REDIAL_LIMIT);
@@ -249,6 +272,11 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
             "--side" => {
                 sides = Sides::parse(value).ok_or_else(|| format!("unknown side {value:?}"))?;
             }
+            "--backend" => {
+                forced = Some(fps_agent::select::parse_backend(value).ok_or_else(|| {
+                    format!("unknown backend {value:?}, expected kernel or af_xdp")
+                })?);
+            }
             "--redial-limit" => {
                 let secs: f64 = value
                     .parse()
@@ -283,7 +311,7 @@ fn parse_connect_args(args: &[String]) -> Result<(Config, SystemRoot), String> {
     if let Some(dir) = capture_dir {
         cfg.captures.dir = dir;
     }
-    Ok((cfg, root))
+    Ok((cfg, root, forced))
 }
 
 /// The module signature flags of `run` and `connect` (AGT-04).
@@ -448,6 +476,24 @@ fn render(host: &HostCapabilities) -> String {
     let _ = writeln!(out, "agent_version {}", caps.agent_version);
     let _ = writeln!(out, "engine_api {}", caps.engine_api);
     let _ = writeln!(out, "backends {}", backends.join(","));
+    let _ = writeln!(out, "kernel_release {}", caps.kernel_release);
+    let _ = writeln!(
+        out,
+        "selected_backend {}",
+        caps.selected_backend.proto_name()
+    );
+    match fps_agent::select::select(host, None) {
+        Ok(s) => {
+            let _ = writeln!(
+                out,
+                "selection_reason {}",
+                fps_agent::select::reason_text(s.reason)
+            );
+        }
+        Err(e) => {
+            let _ = writeln!(out, "selection_error {e}");
+        }
+    }
     let _ = writeln!(out, "cores {}", caps.cores);
     let _ = writeln!(out, "memory_bytes {}", caps.memory_bytes);
     let _ = writeln!(out, "memory_total_bytes {}", host.memory_total_bytes);
