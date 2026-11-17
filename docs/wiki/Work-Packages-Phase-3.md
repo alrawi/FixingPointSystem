@@ -4,7 +4,7 @@
 
 Gate 3 (v1 release). One 16 vCPU agent meets the tier T1 targets on KVM, multi agent runs aggregate correctly, every image format boots, and the web UI passes its end to end suite.
 
-This page lists 21 work packages. Packages marked critical path gate the phase.
+This page lists 22 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -27,6 +27,7 @@ flowchart LR
   TRN_19["TRN-19<br/>AF_XDP rate between two KVM guests"]
   HST_04["HST-04<br/>DHCP for user space backends"]
   AGT_22["AGT-22<br/>The agent selects and reports its backend"]
+  AGT_23["AGT-23<br/>The agent leases the addresses of a DHCP pool"]
   CON_32["CON-32<br/>Kernel release, selected backend, and XDP mode in the agent capabilities"]
   CTL_51["CTL-51<br/>Clock offsets of agents from heartbeats"]
   CTL_52["CTL-52<br/>Multi agent runs through the run orchestrator"]
@@ -55,6 +56,8 @@ flowchart LR
   CON_34 --> HST_04
   TRN_14 --> AGT_22
   CON_32 --> AGT_22
+  HST_04 --> AGT_23
+  TRN_12 --> AGT_23
   CTL_16 --> CTL_51
   CTL_51 --> CTL_52
   CON_32 --> CTL_53
@@ -83,6 +86,7 @@ flowchart LR
 | [TRN-19](#trn-19-af_xdp-rate-between-two-kvm-guests) | AF_XDP rate between two KVM guests | S | TRN-11 |  |
 | [HST-04](#hst-04-dhcp-for-user-space-backends) | DHCP for user space backends | S | HST-03, CON-34 |  |
 | [AGT-22](#agt-22-the-agent-selects-and-reports-its-backend) | The agent selects and reports its backend | S | TRN-14, CON-32 |  |
+| [AGT-23](#agt-23-the-agent-leases-the-addresses-of-a-dhcp-pool) | The agent leases the addresses of a DHCP pool | M | HST-04, TRN-12 |  |
 | [CON-32](#con-32-kernel-release-selected-backend-and-xdp-mode-in-the-agent-capabilities) | Kernel release, selected backend, and XDP mode in the agent capabilities | S | none |  |
 | [CTL-51](#ctl-51-clock-offsets-of-agents-from-heartbeats) | Clock offsets of agents from heartbeats | S | CTL-16 |  |
 | [CTL-52](#ctl-52-multi-agent-runs-through-the-run-orchestrator) | Multi agent runs through the run orchestrator | M | CTL-51 |  |
@@ -214,6 +218,7 @@ Run the chosen TCP stack over AF_XDP and expose SessionIo. Split this epic after
 Deliverables.
 
 - Child packages for connection setup, data transfer, timers and retransmission, and OS profile options.
+- The change that sets fps_backend_afxdp::TRANSPORT_AVAILABLE also makes fps_agent::assemble start the selected backend instead of plan.backend, and reports the bound mode in PortInfo.xdp_driver_mode (AGT-22 finding).
 
 Acceptance.
 
@@ -378,6 +383,25 @@ Deliverables.
 Acceptance.
 
 - [ ] The agent contract test passes against CON-32, and a test covers a forced backend and an unsupported one.
+
+### AGT-23 The agent leases the addresses of a DHCP pool
+
+Phase 3 · size M · workstream AGT
+
+- **Depends on.** HST-04, TRN-12
+- **Paths.** `engine/fps-agent/`
+
+Build a DHCP host pool at Prepare from the leases of HST-04, and filter a DHCP port by the leased addresses. The steps are in the Shared page notes of the HST-04 log entry (2026-11-17T0400).
+
+Deliverables.
+
+- assemble builds a DHCP pool with HostPool::dhcp, runs the DHCP clients of each worker queue at Prepare until every lease is bound or a timeout, and fails with an error that names dhcp4 on a timeout or on the kernel backend.
+- Pools::addresses reads the lease table, and the capture filter of a DHCP port keeps a session only when an address of the session is leased.
+- The agent rebuilds the neighbor table when the lease generation moves.
+
+Acceptance.
+
+- [ ] In the namespace harness, a run with a DHCP client pool on the user space backend leases every address before traffic starts, and the capture filter drops a session whose addresses are not leased.
 
 ## CTL Controller
 
