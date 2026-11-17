@@ -87,11 +87,10 @@ pub enum WireError {
 
 /// Adds `data` to a one's complement sum, as 32 bit big endian words.
 fn sum_words(mut sum: u64, data: &[u8]) -> u64 {
-    let mut chunks = data.chunks_exact(4);
-    for chunk in &mut chunks {
-        sum += u64::from(u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    let (words, tail) = data.as_chunks::<4>();
+    for word in words {
+        sum += u64::from(u32::from_be_bytes(*word));
     }
-    let tail = chunks.remainder();
     if !tail.is_empty() {
         let mut word = [0u8; 4];
         word[..tail.len()].copy_from_slice(tail);
