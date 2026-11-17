@@ -70,7 +70,11 @@ func TestRESTAgentCapabilitiesReport(t *testing.T) {
 	}
 	byID := map[string]map[string]any{}
 	for _, a := range list {
-		byID[a["id"].(string)] = a
+		id, ok := a["id"].(string)
+		if !ok {
+			t.Fatalf("agent without an id in %s", rec.Body)
+		}
+		byID[id] = a
 	}
 
 	// check wants the key missing when want is "", and the value want
@@ -101,7 +105,11 @@ func TestRESTAgentCapabilitiesReport(t *testing.T) {
 				t.Fatalf("ports %v, want %d", ports, len(c.portMode))
 			}
 			for i, want := range c.portMode {
-				check(t, ports[i].(map[string]any), "xdp_driver_mode", want)
+				port, ok := ports[i].(map[string]any)
+				if !ok {
+					t.Fatalf("port %d is %T", i, ports[i])
+				}
+				check(t, port, "xdp_driver_mode", want)
 			}
 		})
 	}
