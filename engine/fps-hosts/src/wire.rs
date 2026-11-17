@@ -78,12 +78,10 @@ pub fn solicited_node(ip: Ipv6Addr) -> Ipv6Addr {
 pub fn icmp6_checksum(src: Ipv6Addr, dst: Ipv6Addr, message: &[u8]) -> u16 {
     let mut sum: u32 = 0;
     let mut add = |bytes: &[u8]| {
-        let mut chunks = bytes.chunks_exact(2);
-        for c in &mut chunks {
-            sum += u32::from(u16::from_be_bytes([c[0], c[1]]));
-        }
-        if let [last] = chunks.remainder() {
-            sum += u32::from(u16::from_be_bytes([*last, 0]));
+        let mut words = bytes.iter();
+        while let Some(hi) = words.next() {
+            let lo = words.next().copied().unwrap_or(0);
+            sum += u32::from(u16::from_be_bytes([*hi, lo]));
         }
     };
     add(&src.octets());
