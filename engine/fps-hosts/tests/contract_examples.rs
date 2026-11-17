@@ -21,13 +21,25 @@ fn yaml_str<'a>(v: &'a Yaml, key: &str) -> Option<&'a str> {
 #[test]
 fn every_example_test_config_pool_parses_and_maps_unique_addresses() {
     let mut seen = 0;
+    let mut dhcp_seen = 0;
     for entry in fs::read_dir(examples().join("tests")).unwrap() {
         let path = entry.unwrap().path();
         let doc: Yaml = serde_yaml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         let pools = doc["network"]["host_pools"].as_sequence().unwrap();
         for p in pools {
-            // A DHCP pool has no prefix; its addresses come from leases (HST-04).
+            // A DHCP pool has no prefix and no static address. It builds
+            // through its own constructor and maps no address (HST-04).
             if p.get("dhcp4").is_some() {
+                let count = u32::try_from(p["count"].as_u64().unwrap()).unwrap();
+                let pool =
+                    HostPool::dhcp(yaml_str(p, "name").unwrap(), count, yaml_str(p, "mac_base"))
+                        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                assert!(pool.is_dhcp());
+                assert_eq!(pool.count(), count);
+                for i in pool.range().indexes() {
+                    assert_eq!(pool.ipv4_addr(i).unwrap(), None);
+                }
+                dhcp_seen += 1;
                 continue;
             }
             let count = u32::try_from(p["count"].as_u64().unwrap()).unwrap();
@@ -52,6 +64,7 @@ fn every_example_test_config_pool_parses_and_maps_unique_addresses() {
         }
     }
     assert!(seen >= 4, "found only {seen} pools");
+    assert!(dhcp_seen >= 1, "no example has a dhcp4 pool");
 }
 
 #[test]

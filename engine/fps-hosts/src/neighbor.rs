@@ -28,8 +28,10 @@
 //! The reply is written into a buffer of the caller, so the hot path
 //! allocates nothing. [`Responder`] has no mutable state, so workers share one.
 
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use crate::dhcp::LeaseTable;
 use crate::mac::MacBlock;
 use crate::pool::{HostPool, MacAddr};
 use crate::slice::HostRange;
@@ -88,6 +90,33 @@ pub enum NeighborError {
         /// The host index.
         index: u32,
     },
+    /// [`NeighborTable::add`] got a pool whose hosts lease their addresses.
+    /// [`NeighborTable::add_leased`] takes such a pool.
+    #[error("host pool {pool} leases its addresses (dhcp4), add it with its leases")]
+    LeasedPool {
+        /// The pool name.
+        pool: String,
+    },
+    /// [`NeighborTable::add_leased`] got a pool with static addresses.
+    #[error("host pool {pool} has static addresses, it has no leases")]
+    StaticPool {
+        /// The pool name.
+        pool: String,
+    },
+    /// The lease table covers other hosts than the MAC block.
+    #[error("host pool {pool}: the lease table is for slice {lease_offset}+{lease_count}, not slice {offset}+{count}")]
+    LeaseMismatch {
+        /// The pool name.
+        pool: String,
+        /// The first host index of the lease table.
+        lease_offset: u32,
+        /// The number of hosts of the lease table.
+        lease_count: u32,
+        /// The first host index of the block.
+        offset: u32,
+        /// The number of hosts of the block.
+        count: u32,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +132,9 @@ struct Entry {
 #[derive(Debug, Clone, Default)]
 pub struct NeighborTable {
     entries: Vec<Entry>,
+    /// The leased IPv4 addresses of DHCP pools, with the MAC address of the
+    /// host that holds each.
+    leased: HashMap<Ipv4Addr, MacAddr>,
     hosts: u64,
 }
 
@@ -118,6 +150,11 @@ impl NeighborTable {
     /// The addresses of the slice must not overlap those of a slice in the
     /// table, because one address then has two answers.
     pub fn add(&mut self, pool: &HostPool, macs: &MacBlock) -> Result<(), NeighborError> {
+        if pool.is_dhcp() {
+            return Err(NeighborError::LeasedPool {
+                pool: pool.name().to_owned(),
+            });
+        }
         let range: HostRange = macs.range();
         if macs.pool() != pool.name() {
             return Err(NeighborError::BlockMismatch {
@@ -191,6 +228,19 @@ impl NeighborTable {
                 }
             }
         }
+        if let Some((lo, hi)) = v4 {
+            if self
+                .leased
+                .keys()
+                .any(|a| (lo..=hi).contains(&u32::from(*a)))
+            {
+                return Err(NeighborError::AddressOverlap {
+                    first: "a leased pool".to_owned(),
+                    second: pool.name().to_owned(),
+                    family: "ipv4",
+                });
+            }
+        }
         self.hosts += u64::from(range.count);
         self.entries.push(Entry {
             pool: pool.clone(),
@@ -198,6 +248,78 @@ impl NeighborTable {
             v4,
             v6,
         });
+        Ok(())
+    }
+
+    /// Adds the hosts of `macs.range()` in a DHCP `pool` that hold a lease in
+    /// `leases`, which must cover the same range. A host without a lease has
+    /// no address yet and gets no answer.
+    ///
+    /// The table is a snapshot. When [`LeaseTable::generation`] has moved on,
+    /// the caller makes a new table and a new [`Responder`] from the new
+    /// leases. An address that a static slice of the table or another leased
+    /// host already answers for is an error, because one address then has two
+    /// answers.
+    pub fn add_leased(
+        &mut self,
+        pool: &HostPool,
+        macs: &MacBlock,
+        leases: &LeaseTable,
+    ) -> Result<(), NeighborError> {
+        let name = || pool.name().to_owned();
+        if !pool.is_dhcp() {
+            return Err(NeighborError::StaticPool { pool: name() });
+        }
+        let range: HostRange = macs.range();
+        if macs.pool() != pool.name() {
+            return Err(NeighborError::BlockMismatch {
+                pool: name(),
+                block_pool: macs.pool().to_owned(),
+                block_offset: range.offset,
+                block_count: range.count,
+                offset: range.offset,
+                count: range.count,
+            });
+        }
+        if range.is_empty() || range.end() > u64::from(pool.count()) {
+            return Err(NeighborError::BadSlice {
+                pool: name(),
+                offset: range.offset,
+                count: range.count,
+                pool_count: pool.count(),
+            });
+        }
+        if leases.range() != range {
+            return Err(NeighborError::LeaseMismatch {
+                pool: name(),
+                lease_offset: leases.range().offset,
+                lease_count: leases.range().count,
+                offset: range.offset,
+                count: range.count,
+            });
+        }
+        let mut found = Vec::new();
+        for (index, lease) in leases.iter() {
+            let mac = macs.mac_of(index).ok_or_else(|| NeighborError::NoAddress {
+                pool: name(),
+                index,
+            })?;
+            let n = u32::from(lease.addr);
+            let in_static = self
+                .entries
+                .iter()
+                .any(|e| e.v4.is_some_and(|(lo, hi)| (lo..=hi).contains(&n)));
+            if in_static || self.leased.contains_key(&lease.addr) {
+                return Err(NeighborError::AddressOverlap {
+                    first: "the table".to_owned(),
+                    second: pool.name().to_owned(),
+                    family: "ipv4",
+                });
+            }
+            found.push((lease.addr, mac));
+        }
+        self.hosts += found.len() as u64;
+        self.leased.extend(found);
         Ok(())
     }
 
@@ -209,13 +331,16 @@ impl NeighborTable {
     /// The MAC address of the host that owns the IPv4 address `ip`.
     pub fn lookup_v4(&self, ip: Ipv4Addr) -> Option<MacAddr> {
         let n = u32::from(ip);
-        self.entries.iter().find_map(|e| {
-            let (lo, hi) = e.v4?;
-            if n < lo || n > hi {
-                return None;
-            }
-            e.macs.mac_of(e.pool.index_of_ipv4(ip)?)
-        })
+        self.entries
+            .iter()
+            .find_map(|e| {
+                let (lo, hi) = e.v4?;
+                if n < lo || n > hi {
+                    return None;
+                }
+                e.macs.mac_of(e.pool.index_of_ipv4(ip)?)
+            })
+            .or_else(|| self.leased.get(&ip).copied())
     }
 
     /// The MAC address of the host that owns the IPv6 address `ip`.

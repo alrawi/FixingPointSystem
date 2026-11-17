@@ -6,7 +6,7 @@
 | Branch | `wp/HST-04` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 50% (3 of 6 plan steps) |
 | Current holder | claude-5f0493, lease until 2026-11-17T04:58:41Z |
 | Last verified commit | none |
 
@@ -16,24 +16,24 @@ Hosts of a pool whose slice has `dhcp4` (CON-34) obtain and renew IPv4 addresses
 
 ## Plan
 
-- [ ] 1. DHCPv4 message codec (`dhcp/msg.rs`) with unit tests.
-- [ ] 2. Lease state machine (`dhcp/lease.rs`, renew at T1, rebind at T2, expiry) with unit tests.
-- [ ] 3. DHCP pool constructor and lease table (`DhcpPool`, `LeaseTable`) and the address source seen by `neighbor.rs` and `slice.rs`.
-- [ ] 4. Client driver over `FrameIo` plus the in test server.
+- [x] 1. DHCPv4 message codec (`dhcp/msg.rs`) with unit tests.
+- [x] 2. Lease state machine (`dhcp/lease.rs`, renew at T1, rebind at T2, expiry) with unit tests.
+- [x] 3. DHCP pool constructor and lease table (`DhcpPool`, `LeaseTable`) and the address source seen by `neighbor.rs` and `slice.rs`.
+- [x] 4. Client driver over `FrameIo` plus the in test server.
 - [ ] 5. Namespace harness test (root) and contract example test.
 - [ ] 6. Wiki page, log entry, checks, PR, CI.
 
 ## Done and verified
 
-Nothing yet.
+- Steps 1 to 4: `cargo test -p fps-hosts` passes (112 unit tests, `tests/dhcp_port.rs` 13 tests over the in memory frame pair, no root), `cargo clippy -p fps-hosts --all-targets -- -D warnings` is clean.
 
 ## Remaining
 
-Everything.
+Step 5 (namespace harness test with a server helper process and AF_XDP on the client arm), step 6 (wiki page, log entry, PR, CI).
 
 ## Next action
 
-Read `engine/fps-hosts/src/{pool,slice,neighbor,wire}.rs` and start step 1.
+Write `tests/dhcp_harness.rs`: re-exec through `sudo -n`, QA-01 harness, server helper in the router namespace, client helper in the client namespace.
 
 ## Blockers and open questions
 
