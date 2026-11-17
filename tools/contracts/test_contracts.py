@@ -73,6 +73,43 @@ def test_examples_are_valid():
     assert v.main(["--quiet"]) == 0
 
 
+# --- example tests pair with modules (CON-33, issue #482) -------------------
+
+def first_party_report(tmp_path: Path, scenario: str) -> v.Report:
+    """Validate http1_first_party.yaml with its scenario replaced, against the first party http1 module."""
+    doc = v.load_yaml(EXAMPLES / "tests/http1_first_party.yaml")
+    doc["profile"]["mix"][0]["scenario"] = scenario
+    path = tmp_path / "http1_first_party.yaml"
+    path.write_text(yaml.safe_dump(doc))
+    return v.run_first_party([path], v.CATALOG)
+
+
+def test_first_party_tests_are_registered():
+    assert v.FIRST_PARTY_TESTS["dns_zone.yaml"] == "dns"
+    assert v.FIRST_PARTY_TESTS["http1_first_party.yaml"] == "http1"
+    for name in v.FIRST_PARTY_TESTS:
+        assert (EXAMPLES / "tests" / name).is_file()
+
+
+def test_http1_first_party_test_passes_against_the_first_party_module(tmp_path):
+    assert not first_party_report(tmp_path, "http1/single_fetch").errors
+
+
+def test_a_scenario_no_first_party_manifest_defines_fails(tmp_path):
+    # http1/web_get belongs to the example module, so the first party http1 module does not define it.
+    msgs = messages(first_party_report(tmp_path, "http1/web_get"))
+    assert any("unknown scenario" in m and "web_get" in m for m in msgs), msgs
+
+
+def test_http_smoke_pairs_with_the_example_modules():
+    # The example test keeps http1/web_get, and the default run validates it against the example modules.
+    smoke = v.load_yaml(EXAMPLES / "tests/http_smoke.yaml")
+    assert smoke["profile"]["mix"][0]["scenario"] == "http1/web_get"
+    assert "http_smoke.yaml" not in v.FIRST_PARTY_TESTS
+    assert (EXAMPLES / "modules/http1/scenarios/web_get.yaml").is_file()
+    assert not (v.REPO / "modules/http1/scenarios/web_get.yaml").exists()
+
+
 def test_schemas_are_valid_json_schema():
     for name in ("module-manifest.schema.json", "scenario.schema.json", "test-config.schema.json"):
         v.Draft202012Validator.check_schema(v.load_schema(name))
@@ -538,6 +575,31 @@ def test_gateway_outside_cidr(smoke, index):
     assert any("outside" in m for m in messages(check_test(smoke, index)))
 
 
+def test_dual_stack_pool_with_gateway_passes(smoke, index):
+    # The gateway belongs to one family and is checked against that family only
+    # (CON-34 bug fix). Both families used to be checked, so this pool failed.
+    pool = smoke["network"]["host_pools"][0]
+    pool["count"] = 100
+    pool["ipv6"] = "2001:db8:10::/64"
+    pool["gateway"] = "16.0.0.1"
+    assert not check_test(smoke, index).errors
+    pool["gateway"] = "2001:db8:10::1"
+    assert not check_test(smoke, index).errors
+
+
+def test_dual_stack_gateway_outside_its_own_family(smoke, index):
+    pool = smoke["network"]["host_pools"][0]
+    pool["ipv6"] = "2001:db8:10::/64"
+    pool["gateway"] = "2001:db8:99::1"
+    msgs = messages(check_test(smoke, index))
+    assert len(msgs) == 1 and "outside 2001:db8:10::/64" in msgs[0]
+
+
+def test_gateway_without_a_prefix_of_its_family(smoke, index):
+    smoke["network"]["host_pools"][0]["gateway"] = "2001:db8:10::1"
+    assert any("no ipv6 prefix" in m for m in messages(check_test(smoke, index)))
+
+
 def test_unknown_port_and_scenario(smoke, index):
     smoke["network"]["host_pools"][0]["port"] = "nope"
     smoke["profile"]["mix"][0]["scenario"] = "http1/missing"
@@ -923,8 +985,8 @@ SIZES = [
 ]
 
 
-def test_test_config_schema_is_v0_3():
-    assert "v0.3" in v.load_schema("test-config.schema.json")["description"]
+def test_test_config_schema_is_v0_4():
+    assert "v0.4" in v.load_schema("test-config.schema.json")["description"]
 
 
 @pytest.mark.parametrize("arrival", ARRIVALS)
@@ -1251,3 +1313,56 @@ def test_extension_file_must_exist_in_the_module(tmp_path):
 def test_manifest_schema_matches_the_controller_copy():
     assert (v.SCHEMAS / "module-manifest.schema.json").read_bytes() == (
         REGISTRY / "schema/module-manifest.schema.json").read_bytes()
+
+
+# --- DHCP clients (test configuration v0.4, CON-34) ---------------------------
+
+def dhcp_schema_errors(doc: dict) -> list[str]:
+    report = v.Report()
+    v.schema_errors(v.load_schema("test-config.schema.json"), doc, report, Path("t.yaml"))
+    return messages(report)
+
+
+@pytest.fixture()
+def dhcp() -> dict:
+    return v.load_yaml(EXAMPLES / "tests/dhcp_clients.yaml")
+
+
+def test_dhcp_example_validates(dhcp, index):
+    assert dhcp["network"]["host_pools"][0] == {
+        "name": "clients", "port": "client0", "role": "client", "count": 200, "dhcp4": {}}
+    assert not check_test(dhcp, index).errors
+
+
+def test_pool_without_address_source_is_rejected(dhcp):
+    del dhcp["network"]["host_pools"][0]["dhcp4"]
+    assert dhcp_schema_errors(dhcp)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("ipv4", "16.0.0.0/24"),
+    ("ipv6", "2001:db8:10::/64"),
+    ("gateway", "16.0.0.1"),
+])
+def test_dhcp4_pool_names_no_static_address(dhcp, key, value):
+    dhcp["network"]["host_pools"][0][key] = value
+    msgs = dhcp_schema_errors(dhcp)
+    assert any("False schema does not allow" in m for m in msgs), msgs
+
+
+def test_dhcp4_is_allowed_only_on_a_client_pool(dhcp):
+    pool = dhcp["network"]["host_pools"][1]
+    del pool["ipv4"]
+    pool["dhcp4"] = {}
+    msgs = dhcp_schema_errors(dhcp)
+    assert any("'client' was expected" in m for m in msgs), msgs
+
+
+def test_dhcp4_takes_no_property_yet(dhcp):
+    dhcp["network"]["host_pools"][0]["dhcp4"] = {"lease_s": 60}
+    assert any("lease_s" in m for m in dhcp_schema_errors(dhcp))
+
+
+def test_static_pools_keep_their_meaning(smoke, index):
+    assert "dhcp4" not in smoke["network"]["host_pools"][0]
+    assert not check_test(smoke, index).errors

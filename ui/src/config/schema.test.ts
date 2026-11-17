@@ -80,7 +80,48 @@ describe("checkConfig", () => {
         delete at(config, "network", "host_pools", 0)["ipv4"];
       }),
     );
-    expect(issues).toEqual({ "/network/host_pools/0": ["needs at least one of ipv4, ipv6"] });
+    expect(issues).toEqual({
+      "/network/host_pools/0": ["needs at least one of ipv4, ipv6, dhcp4"],
+    });
+  });
+
+  it("accepts a DHCP client pool with no address", () => {
+    const config = mutate((config) => {
+      const pool = at(config, "network", "host_pools", 0);
+      delete pool["ipv4"];
+      delete pool["ipv6"];
+      delete pool["gateway"];
+      pool["dhcp4"] = {};
+    });
+    expect(checkConfig(config)).toEqual([]);
+  });
+
+  it("names the pool and the address when dhcp4 meets a static address", () => {
+    const issues = messages(
+      mutate((config) => {
+        const pool = at(config, "network", "host_pools", 0);
+        pool["dhcp4"] = {};
+        pool["ipv4"] = "10.0.0.0/24";
+      }),
+    );
+    expect(issues["/network/host_pools/0"]).toEqual([
+      "with dhcp4 the pool must be a client pool with no ipv4, ipv6, and gateway",
+    ]);
+    expect(issues["/network/host_pools/0/ipv4"]).toEqual(["is not allowed here"]);
+  });
+
+  it("asks for a client pool when dhcp4 sits on a server pool", () => {
+    const issues = messages(
+      mutate((config) => {
+        const pool = at(config, "network", "host_pools", 1);
+        pool["role"] = "server";
+        delete pool["ipv4"];
+        delete pool["ipv6"];
+        delete pool["gateway"];
+        pool["dhcp4"] = {};
+      }),
+    );
+    expect(issues["/network/host_pools/1/role"]).toEqual(["must be client"]);
   });
 
   it("reports a value that is not an object at the root", () => {

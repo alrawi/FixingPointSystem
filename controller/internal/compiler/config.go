@@ -69,6 +69,10 @@ type HostPool struct {
 	VLAN      int64  `yaml:"vlan" json:"vlan"`
 	MACBase   string `yaml:"mac_base" json:"mac_base"`
 	OSProfile string `yaml:"os_profile" json:"os_profile"`
+	// DHCP4 says that the hosts take their IPv4 addresses and routers from
+	// DHCP (test configuration v0.4). A non nil pointer means DHCP, and the
+	// schema forbids null, so `dhcp4: {}` is the only spelling.
+	DHCP4 *struct{} `yaml:"dhcp4" json:"dhcp4"`
 }
 
 // ExternalConfig is a real server for the client_sim topology.

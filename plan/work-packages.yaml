@@ -2113,7 +2113,7 @@ work_packages:
     workstream: TRN
     size: S
     owner_action: The vetting agent accepts or rejects decision record 0014 under decision D13, unless the record alters decision D1 or a tier target, which only the owner decides.
-    depends_on: [TRN-01, TRN-17, TRN-18]
+    depends_on: [TRN-01, TRN-17, TRN-18, TRN-20]
     paths: [docs/decisions/, engine/fps-tcp/]
     summary: >-
       Compare smoltcp, an own TCP stack, and F-Stack for the AF_XDP and DPDK backends and propose decision record 0014.
@@ -2151,6 +2151,7 @@ work_packages:
       decision record 0014 is accepted.
     deliverables:
       - Child packages for connection setup, data transfer, timers and retransmission, and OS profile options.
+      - A child package with paths engine/fps-agent/ and controller/internal/wiring/ that lands with the change that sets fps_backend_afxdp::TRANSPORT_AVAILABLE. It makes fps_agent::assemble start the selected backend instead of plan.backend and report the bound mode in PortInfo.xdp_driver_mode (AGT-22 finding), and makes the orchestrator inventory use the selected backend of each agent instead of its first backend (CTL-53 finding).
     acceptance:
       - The http1 module passes realism CI on the AF_XDP backend.
 
@@ -2259,19 +2260,36 @@ work_packages:
       - The suite passes on the reference KVM host and records every measured value, and its small profile on fat-nuc prints NOT A GATE RESULT.
 
   - id: TRN-17
-    title: TCP stack bench harness and smoltcp behind SessionIo
+    title: TCP stack bench harness with a kernel reference stack
     phase: 3
     workstream: TRN
     size: M
     depends_on: [TRN-01]
     paths: [engine/fps-tcp/]
     summary: >-
-      The first measured candidate of TRN-10. A harness that drives a TCP stack behind SessionIo and measures sessions
-      per second, throughput, and scaling to 1,000,000 sockets, with smoltcp as the first stack.
+      The harness that TRN-10 measures its candidates on. It drives a TCP stack behind a TcpStack seam and SessionIo and
+      measures sessions per second, throughput, and scaling to 1,000,000 sockets. The kernel loopback stack is the reference.
+      The smoltcp adapter is TRN-20, because smoltcp and managed are licensed 0BSD, which deny.toml does not allow yet.
     deliverables:
-      - The harness and a smoltcp adapter behind SessionIo, with results committed for the CI runner and for fat-nuc through a host test.
+      - The harness with the TcpStack seam and a kernel loopback reference stack, with no dependency on smoltcp, and results committed for the CI runner.
     acceptance:
-      - The harness reports the three measures for smoltcp, and its tests run in CI.
+      - The harness reports the three measures for the kernel reference stack, cargo deny passes, and its tests run in CI.
+
+  - id: TRN-20
+    title: smoltcp on the TCP stack bench harness
+    phase: 3
+    workstream: TRN
+    size: S
+    owner_action: The owner allows 0BSD in deny.toml, or allows smoltcp and managed by exception. The coordinator does not dispatch this package before then.
+    depends_on: [TRN-17]
+    paths: [engine/fps-tcp/]
+    summary: >-
+      The smoltcp adapter of the TRN-17 harness. The first draft in PR #586 reached 1,000,584 sockets at 1.59 KB per socket,
+      with an idle poll cost that grows from 15 ns to 52 ns per socket.
+    deliverables:
+      - The smoltcp adapter behind the TcpStack seam, with results committed for the CI runner and for fat-nuc through a host test.
+    acceptance:
+      - The harness reports the three measures for smoltcp on the same hosts as the reference stack.
 
   - id: TRN-18
     title: A minimal own TCP stack on the bench harness
@@ -2308,8 +2326,7 @@ work_packages:
     phase: 3
     workstream: HST
     size: S
-    owner_action: Waits for a contract package that adds DHCP configuration to the host pool schema, which no schema field configures today. The coordinator does not dispatch it before then.
-    depends_on: [HST-03]
+    depends_on: [HST-03, CON-34]
     paths: [engine/fps-hosts/]
     summary: >-
       Obtain host addresses through DHCP when the host pool configures it.
@@ -2317,6 +2334,7 @@ work_packages:
       - A DHCP client per host for user space backends.
     acceptance:
       - Hosts of a pool configured for DHCP obtain and renew addresses in the namespace harness.
+      - The fps-hosts API gives the agent the leased addresses of a DHCP pool, so that a later agent change can build the pool at Prepare and filter a DHCP port by those addresses instead of keeping every session.
 
   - id: AGT-22
     title: The agent selects and reports its backend
@@ -2332,6 +2350,23 @@ work_packages:
     acceptance:
       - The agent contract test passes against CON-32, and a test covers a forced backend and an unsupported one.
 
+  - id: AGT-23
+    title: The agent leases the addresses of a DHCP pool
+    phase: 3
+    workstream: AGT
+    size: M
+    depends_on: [HST-04, TRN-12]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Build a DHCP host pool at Prepare from the leases of HST-04, and filter a DHCP port by the leased addresses.
+      The steps are in the Shared page notes of the HST-04 log entry (2026-11-17T0400).
+    deliverables:
+      - assemble builds a DHCP pool with HostPool::dhcp, runs the DHCP clients of each worker queue at Prepare until every lease is bound or a timeout, and fails with an error that names dhcp4 on a timeout or on the kernel backend.
+      - Pools::addresses reads the lease table, and the capture filter of a DHCP port keeps a session only when an address of the session is leased.
+      - The agent rebuilds the neighbor table when the lease generation moves.
+    acceptance:
+      - In the namespace harness, a run with a DHCP client pool on the user space backend leases every address before traffic starts, and the capture filter drops a session whose addresses are not leased.
+
   - id: CON-32
     title: Kernel release, selected backend, and XDP mode in the agent capabilities
     phase: 3
@@ -2339,7 +2374,7 @@ work_packages:
     size: S
     depends_on: []
     paths: [contracts/]
-    owner_action: An additive contract change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #74 in part).
+    owner_action: "An additive contract change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #74 in part)."
     summary: >-
       Issue #74 in part. Agent protocol 0.2.4 to 0.2.5 and an OpenAPI minor version. REST Agent.backend takes the first
       entry of backends, which is always kernel, so the agent reports the backend it selected. NUMA fields stay open in #74,
@@ -3928,7 +3963,7 @@ work_packages:
     size: S
     depends_on: []
     paths: [contracts/, tools/contracts/]
-    owner_action: A fix inside the examples, with no schema or version change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #482).
+    owner_action: "A fix inside the examples, with no schema or version change, approved by the vetting agent under decision D13 on 2026-11-16 (issue #482)."
     summary: >-
       Issue #482. contracts/examples/tests/http_smoke.yaml names http1/web_get, which belongs to the example module under
       contracts/examples/modules/http1 and not to the first party http1 module. The validator, the plan example, the UI
@@ -3958,6 +3993,69 @@ work_packages:
     acceptance:
       - A capture with two connections on one reused client port scores as two sessions in the raw capture and in the decrypted view, a retransmitted SYN stays one session, and every committed fixture still passes.
 
+  - id: CTL-51
+    title: Clock offsets of agents from heartbeats
+    phase: 3
+    workstream: CTL
+    size: S
+    depends_on: [CTL-16]
+    paths: [controller/internal/agents/, controller/internal/fakeagent/, controller/internal/multiagent/]
+    summary: >-
+      CTL-16 refuses a multi agent run when an agent's clock is more than 10 ms off, but the controller has no production
+      source of the offsets: agents.Manager ignores Heartbeat.agent_time, and fakeagent always sends the current time.
+      The contract already carries Heartbeat.agent_time and HeartbeatAck.controller_time, so no contract change is needed.
+    deliverables:
+      - The agent manager records agent_time minus the receive time per agent and exposes it as a multiagent ClockSource, fakeagent gains a clock skew option, and a test runs the CTL-16 check over real heartbeats.
+    acceptance:
+      - A fake agent with a skew of 15 ms makes a three agent run refuse to start through the real heartbeat path, and one with 2 ms starts.
+
+  - id: CTL-52
+    title: Multi agent runs through the run orchestrator
+    phase: 3
+    workstream: CTL
+    size: M
+    depends_on: [CTL-51]
+    paths: [controller/internal/runs/, controller/internal/wiring/]
+    summary: >-
+      No production code calls controller/internal/multiagent, and runs.Orchestrator starts a run on several agents without
+      the clock check of CTL-16. Gate 3 needs multi agent runs through the REST API.
+    deliverables:
+      - The orchestrator starts a run on several agents through multiagent.Coordinator with the clock source of CTL-51, and aggregates its results.
+    acceptance:
+      - An end to end test over REST runs one configuration on three fake agents, refuses it with one agent 15 ms off, and reports exact totals.
+
+  - id: CTL-53
+    title: The controller reports kernel release, selected backend, and XDP mode
+    phase: 3
+    workstream: CTL
+    size: S
+    depends_on: [CON-32, AGT-22]
+    paths: [controller/internal/agents/]
+    summary: >-
+      The REST mirror of CON-32 in controller/internal/agents/rest.go, after AGT-22 fills the fields and the generated code is
+      regenerated. Agent.backend reports the selected backend instead of the first entry of backends.
+    deliverables:
+      - The REST agent view carries kernel_release, selected_backend, and ports[].xdp_driver_mode from the capabilities.
+    acceptance:
+      - The agent contract test and a REST test with a fake agent that selects a non kernel backend pass.
+
+  - id: CON-34
+    title: DHCP configuration of a host pool
+    phase: 3
+    workstream: CON
+    size: S
+    depends_on: []
+    paths: [contracts/, tools/contracts/]
+    owner_action: "An additive contract change, specified and approved by the vetting agent under decision D13 on 2026-11-17."
+    summary: >-
+      HST-04 obtains host addresses through DHCP when a host pool configures it, and no schema field configures DHCP today.
+      The configuration schema gains an optional dhcp4 object on a client host pool, and the plan gains a Dhcp4 message
+      on HostPoolSlice. The package also fixes the validator, which checks a gateway against both address families, so
+      every dual stack pool with a gateway fails today.
+    deliverables:
+      - test-config schema v0.3 to v0.4 with an optional dhcp4 object (additionalProperties false, no properties yet) on $defs.host_pool, allowed only on a client pool without ipv4, ipv6, and gateway; agent protocol 0.2.5 to 0.2.6 with message Dhcp4 and HostPoolSlice field 13, plan rule 5 for DHCP hosts; the example contracts/examples/tests/dhcp_clients.yaml and negative checker cases; the plan checker accepts a DHCP slice without a prefix; the validator checks a gateway against its own family; contracts/changes/CON-34.md with the consumers, HST-04 first.
+    acceptance:
+      - The contracts validate, the new example passes, the negative cases fail with clear errors, and a dual stack pool with a gateway passes.
   - id: OPS-08
     title: CI check that keeps self hosted runners off untrusted triggers
     phase: 2

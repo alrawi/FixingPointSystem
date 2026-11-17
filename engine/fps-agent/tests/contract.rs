@@ -70,6 +70,8 @@ fn capabilities_mirrors_the_proto_message() {
         ports: _,
         modules: _,
         labels: _,
+        kernel_release: _,
+        selected_backend: _,
     } = Capabilities::default();
     let rust = table(&[
         ("agent_version", 1),
@@ -80,6 +82,8 @@ fn capabilities_mirrors_the_proto_message() {
         ("ports", 6),
         ("modules", 7),
         ("labels", 8),
+        ("kernel_release", 9),
+        ("selected_backend", 10),
     ]);
     assert_eq!(message_fields(&proto_text(), "Capabilities"), rust);
 }
@@ -92,6 +96,7 @@ fn port_info_mirrors_the_proto_message() {
         speed_mbps: _,
         mac: _,
         mtu: _,
+        xdp_driver_mode: _,
     } = PortInfo::default();
     let rust = table(&[
         ("name", 1),
@@ -99,6 +104,7 @@ fn port_info_mirrors_the_proto_message() {
         ("speed_mbps", 3),
         ("mac", 4),
         ("mtu", 5),
+        ("xdp_driver_mode", 6),
     ]);
     assert_eq!(message_fields(&proto_text(), "PortInfo"), rust);
 }
@@ -160,7 +166,7 @@ fn round_trip<M: prost::Message + Default + PartialEq + std::fmt::Debug>(m: &M) 
 #[test]
 fn capture_download_messages_match_the_proto_numbers() {
     let text = proto_text();
-    let rows: [(&str, &[(&str, u32)]); 8] = [
+    let rows: [(&str, &[(&str, u32)]); 9] = [
         (
             "FetchCaptureCommand",
             &[
@@ -201,6 +207,7 @@ fn capture_download_messages_match_the_proto_numbers() {
             &[("received_offset", 1), ("verified", 2)],
         ),
         ("SessionResponse", &[("fetch_capture", 9)]),
+        ("HostPoolSlice", &[("dhcp4", 13)]),
     ];
     for (name, expected) in rows {
         let fields = message_fields(&text, name);

@@ -1,6 +1,6 @@
 # Contracts v0.2
 
-The heading names the engine API generation, which is the minor part of `engine_api` that modules declare (`>=0.2, <0.3`) and of `EngineAPIVersion` of the controller (`controller/internal/api/capabilities.go`, and `TestCapabilitiesVersions` compares the two). It is not the version of any single contract. Each contract carries its own version, and the table below names it: the REST API 0.12.0, the agent protocol 0.2.4, the module manifest v0.5, the scenario contract v0.6, the test configuration v0.3, the extension interface 0.1.0, and the metric catalog 0.8.0.
+The heading names the engine API generation, which is the minor part of `engine_api` that modules declare (`>=0.2, <0.3`) and of `EngineAPIVersion` of the controller (`controller/internal/api/capabilities.go`, and `TestCapabilitiesVersions` compares the two). It is not the version of any single contract. Each contract carries its own version, and the table below names it: the REST API 0.13.0, the agent protocol 0.2.6, the module manifest v0.5, the scenario contract v0.6, the test configuration v0.4, the extension interface 0.1.0, and the metric catalog 0.8.0.
 
 These files define the interfaces between FixingPointSystem workstreams. Implementation work must conform to them, and changes follow the process in `CONTRIBUTING.md`.
 
@@ -9,13 +9,17 @@ These files define the interfaces between FixingPointSystem workstreams. Impleme
 | `openapi/fps-api-v1.yaml` | Controller REST API (OpenAPI 3.1, version 0.12.0) |
 | `schemas/module-manifest.schema.json` | Module manifest (v0.5), including the template function catalog |
 | `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.6) |
-| `schemas/test-config.schema.json` | Test configuration (v0.3) |
+| `schemas/test-config.schema.json` | Test configuration (v0.4) |
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
 | `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels (catalog 0.8.0) |
 | `metrics/catalog.schema.json` | Format of the metric catalog |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.4 between the controller and agents (gRPC, proto3). Agents dial the controller. |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.6 between the controller and agents (gRPC, proto3). Agents dial the controller. |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |
-| `examples/` | Example modules, tests, and agent plans that every validator run checks |
+| `examples/` | Example modules, tests, and agent plans that every validator run checks. An example test pairs with the example modules of `examples/modules/`, so `examples/tests/http_smoke.yaml` names the scenario `http1/web_get` of the example http1 module. A test that names a scenario of a first party module under `modules/` pairs with that module instead, as `dns_zone.yaml` and `http1_first_party.yaml` do, and `tools/contracts/validate.py` lists it in `FIRST_PARTY_TESTS`. |
+
+## DHCP for a host pool
+
+A client host pool may declare `dhcp4` (test configuration v0.4), an object that has no property yet. Its presence means that the hosts of the pool obtain their IPv4 addresses and their router through DHCP, and its absence means static addresses, as before. A pool with `dhcp4` has `role: client` and names none of `ipv4`, `ipv6`, and `gateway`, which the schema and the validator check. Clients compute the addresses of servers from the prefix of the server pool. The compiler copies the declaration into the `dhcp4` field of the `HostPoolSlice` of each agent (agent protocol 0.2.6) and leaves both prefixes and `gateway` empty. The example `examples/tests/dhcp_clients.yaml` shows a pool of 200 DHCP clients and a static server pool, and `changes/CON-34.md` lists the consumers.
 
 ## Flow program semantics
 
@@ -350,7 +354,7 @@ A plan carries everything that an agent needs except the module packages, which 
 2. Each scenario source is the scenario file in YAML, and its digest is the SHA-256 of the UTF-8 bytes of the source. The source validates against `schemas/scenario.schema.json`.
 3. Mix weights are session shares between 0 and 1 and sum to 1. The compiler converts the byte weights of the bytes basis into session shares. Each worker rate names a mix entry. Rate objectives (`SESSIONS_PER_SECOND`, `THROUGHPUT_BPS`) compile to `sessions_per_second`, and concurrency objectives (`CONCURRENT_SESSIONS`, `SIMULATED_USERS`) compile to `concurrent_sessions`.
 4. Worker rates are steady state targets. Each load phase scales every target from `start_fraction` to `end_fraction` with its shape. A hold phase keeps one fraction, and a step phase moves in `steps` equal steps.
-5. Host index i of a pool maps to the i-th address of the pool prefix, counting from the first address after the network address, skipping the gateway, and for IPv4 skipping the broadcast address. Host i uses the MAC address `mac_base` plus i. A host pool slice covers the pool indices from `offset` to `offset + count - 1`, and the host ranges of the workers lie inside the slice and never overlap.
+5. Host index i of a pool maps to the i-th address of the pool prefix, counting from the first address after the network address, skipping the gateway, and for IPv4 skipping the broadcast address. Host i uses the MAC address `mac_base` plus i. A slice with `dhcp4` (agent protocol 0.2.6) has no prefix and no `gateway`, and only a client slice may carry it: host i keeps the MAC address `mac_base` plus i and takes its address and its router from its lease. An agent that cannot lease fails Prepare with an error that names `dhcp4`. A host pool slice covers the pool indices from `offset` to `offset + count - 1`, and the host ranges of the workers lie inside the slice and never overlap.
 6. Each worker derives its generators from the plan seed, its worker id, and the session id, so a replay reproduces every session.
 7. Counter, histogram, and criterion metric names come from the counter catalog in `metrics/catalog.yaml`, which CON-02 defines.
 

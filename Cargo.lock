@@ -933,6 +933,7 @@ dependencies = [
  "base64",
  "bytes",
  "core_affinity",
+ "fps-backend-afxdp",
  "fps-backend-kernel",
  "fps-capture",
  "fps-flow",
@@ -992,6 +993,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fps-backend-afxdp"
+version = "0.0.1"
+dependencies = [
+ "libc",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "fps-backend-kernel"
 version = "0.0.1"
 dependencies = [
@@ -1036,6 +1045,7 @@ version = "0.0.1"
 name = "fps-hosts"
 version = "0.0.1"
 dependencies = [
+ "fps-backend-afxdp",
  "proptest",
  "rand 0.8.8",
  "rand_pcg",
@@ -1434,6 +1444,7 @@ dependencies = [
 name = "fps-tcp"
 version = "0.0.1"
 dependencies = [
+ "fps-backend-afxdp",
  "fps-io",
  "smoltcp",
  "thiserror 2.0.21",

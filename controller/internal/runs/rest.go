@@ -16,6 +16,7 @@ import (
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents"
 	"github.com/alrawi/FixingPointSystem/controller/internal/api"
+	"github.com/alrawi/FixingPointSystem/controller/internal/multiagent"
 	"github.com/alrawi/FixingPointSystem/controller/internal/store"
 )
 
@@ -188,7 +189,10 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, store.ErrConfigNotFound), errors.Is(err, ErrInvalidRequest):
 		status = http.StatusUnprocessableEntity
 	case errors.Is(err, ErrRunFinished), errors.Is(err, ErrNoAgents),
-		errors.Is(err, agents.ErrAgentOffline), errors.Is(err, agents.ErrAgentReserved), errors.Is(err, agents.ErrAgentBusy):
+		errors.Is(err, agents.ErrAgentOffline), errors.Is(err, agents.ErrAgentReserved), errors.Is(err, agents.ErrAgentBusy),
+		// The clock of an agent is part of its state, like its reservation,
+		// so a clock that the run cannot accept conflicts with that state.
+		errors.Is(err, multiagent.ErrClockOffset), errors.Is(err, multiagent.ErrNoClockOffset):
 		status = http.StatusConflict
 	case errors.Is(err, ErrClosed):
 		status = http.StatusServiceUnavailable

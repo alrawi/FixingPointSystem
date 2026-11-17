@@ -10,3 +10,5 @@ __pycache__/
 !modules/*/fixtures/*.pcapng
 spikes/*/results/raw/
 .DS_Store
+# Per worker build directories, such as target-TRN-14/ in a worker worktree.
+/target-*/

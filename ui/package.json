@@ -23,7 +23,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:controller": "playwright test --config playwright.controller.config.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "5.105.3",

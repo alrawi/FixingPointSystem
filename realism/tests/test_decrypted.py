@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 from realism import decrypted
-from realism.capture import summarize
+from realism.capture import decode_segment, read_frames, summarize
 from realism.classifier import NdpiClassifier
 from realism.cli import EXIT_ERROR, EXIT_FAIL, EXIT_PASS, main
 from realism.decrypted import (
@@ -28,6 +28,7 @@ from realism.decrypted import (
     TlsSession,
     Tshark,
     drop_starttls,
+    initial_sequence_numbers,
     labelled_tls_ports,
     parse_before,
     parse_follow,
@@ -176,6 +177,52 @@ def test_the_view_is_a_plain_tcp_capture_with_the_addresses_of_the_sessions(
         (client[0], 40001, server[0], 587),
     ]
     assert [s.payload_bytes for s in summary.sessions] == [3001, 2]
+
+
+def _reused_port_sessions() -> list[TlsSession]:
+    client, server = ("10.0.0.10", 40000), ("10.0.1.43", 443)
+    return [
+        TlsSession(0, 1, client, server, inside=[(True, b"a" * 3000), (False, b"b")]),
+        TlsSession(1, 2, client, server, inside=[(True, b"c"), (False, b"d")]),
+    ]
+
+
+def test_sessions_of_a_view_get_distinct_initial_sequence_numbers() -> None:
+    numbers = [initial_sequence_numbers(i) for i in range(400)]
+    assert len({c for c, _ in numbers}) == len({s for _, s in numbers}) == 400
+    assert initial_sequence_numbers(0) == (1000, 5000)
+
+
+def test_a_view_of_sessions_that_reuse_a_client_port_has_two_sessions(tmp_path: Path) -> None:
+    view = tmp_path / "view.pcap"
+    write_view(view, _reused_port_sessions())
+    summary = summarize(view)
+    assert [(s.client_port, s.connection, s.payload_bytes) for s in summary.sessions] == [
+        (40000, 0, 3001),
+        (40000, 1, 2),
+    ]
+    _, frames = read_frames(view)
+    syns = []
+    for frame in frames:
+        segment = decode_segment(frame)
+        assert segment is not None
+        if segment.packet.tcp_flags == 0x02:
+            syns.append(segment.seq)
+    assert len(syns) == 2
+    assert syns[0] != syns[1]
+
+
+@pytest.mark.skipif(not HAS_TSHARK, reason="no tshark")
+def test_tshark_numbers_the_connections_of_a_reused_port_in_the_view(tmp_path: Path) -> None:
+    view = tmp_path / "view.pcap"
+    write_view(view, _reused_port_sessions())
+    out = subprocess.run(
+        [TSHARK.program, "-r", str(view), "-T", "fields", "-e", "tcp.stream"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert sorted(set(out.split())) == ["0", "1"]
 
 
 def test_the_view_keeps_the_server_port_by_default(tmp_path: Path) -> None:

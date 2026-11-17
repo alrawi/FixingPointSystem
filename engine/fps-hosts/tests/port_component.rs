@@ -312,3 +312,14 @@ fn cleanup_is_a_no_op_without_the_namespace_and_removes_remains_otherwise() {
     assert!(calls.contains(&"netns del fps-port-t1".to_owned()));
     assert!(!calls.iter().any(|c| c.contains("mtu 1500")));
 }
+
+#[test]
+fn a_kernel_port_refuses_a_dhcp_pool_and_names_dhcp4() {
+    let pool = HostPool::dhcp("clients", 100, None).unwrap();
+    let err = PortSpec::new("t1", "eth1", &pool, pool.range()).unwrap_err();
+    assert!(matches!(err, PortError::InvalidSpec { .. }), "{err}");
+    let text = err.to_string();
+    assert!(text.contains("dhcp4"), "{text}");
+    assert!(text.contains("clients"), "{text}");
+    assert!(text.contains("port t1"), "{text}");
+}

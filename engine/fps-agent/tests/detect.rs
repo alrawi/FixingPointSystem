@@ -13,7 +13,7 @@
 use std::path::PathBuf;
 
 use fps_agent::capabilities::{AfXdpSupport, DriverXdp, XdpEvidence};
-use fps_agent::proto::{Backend, PortInfo};
+use fps_agent::proto::{Backend, PortInfo, XdpMode};
 use fps_agent::{detect, DetectError, HostCapabilities, SystemRoot};
 
 fn root(name: &str) -> SystemRoot {
@@ -41,7 +41,7 @@ fn virtio_guest_reports_virtio_net_ports_and_af_xdp() {
     assert_eq!(caps.cores, 4);
     assert_eq!(caps.memory_bytes, 7 * GIB);
     assert_eq!(caps.backends, vec![Backend::Kernel, Backend::AfXdp]);
-    assert_eq!(caps.engine_api, "0.2.4");
+    assert_eq!(caps.engine_api, "0.2.6");
     assert_eq!(caps.agent_version, env!("CARGO_PKG_VERSION"));
     assert!(caps.modules.is_empty() && caps.labels.is_empty());
 
@@ -54,6 +54,7 @@ fn virtio_guest_reports_virtio_net_ports_and_af_xdp() {
                 speed_mbps: 0,
                 mac: "52:54:00:12:34:56".into(),
                 mtu: 1500,
+                xdp_driver_mode: XdpMode::Unspecified,
             },
             PortInfo {
                 name: "eth1".into(),
@@ -61,6 +62,7 @@ fn virtio_guest_reports_virtio_net_ports_and_af_xdp() {
                 speed_mbps: 0,
                 mac: "52:54:00:12:34:57".into(),
                 mtu: 1500,
+                xdp_driver_mode: XdpMode::Unspecified,
             },
         ]
     );

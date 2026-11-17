@@ -50,3 +50,9 @@ test-ui:
 .PHONY: e2e-ui
 e2e-ui: ui-deps
 	cd $(UI_DIR) && $(NPM) run --silent build && $(NPM) run --silent e2e
+
+# Browser suite against a real controller with fake agents (UI-07). It needs a
+# Playwright browser and Go modules, so ui.yml runs it.
+.PHONY: e2e-ui-controller
+e2e-ui-controller: ui-deps
+	cd $(UI_DIR) && $(NPM) run --silent build && $(NPM) run --silent e2e:controller

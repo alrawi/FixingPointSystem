@@ -443,12 +443,25 @@ export interface components {
             reserved_by?: string;
             version?: string;
             cores?: number;
-            /** @enum {string} */
+            /**
+             * @description Kernel release of the agent host, as `uname -r` prints it. Absent for an agent of agent protocol 0.2.4 or earlier and when the agent cannot read it. A controller older than 0.13.0 does not send it.
+             * @example 6.8.0-45-generic
+             */
+            kernel_release?: string;
+            /**
+             * @description The backend that the agent selected and started. A controller of 0.13.0 or later takes it from `selected_backend` of the agent, and for an agent of agent protocol 0.2.4 or earlier, which does not send it, from the first entry of `backends`, which is `kernel`. An older controller always took the first entry.
+             * @enum {string}
+             */
             backend?: "kernel" | "af_xdp" | "dpdk";
             ports?: {
                 name: string;
                 driver?: string;
                 speed_mbps?: number;
+                /**
+                 * @description XDP mode of the port, a driver table hint: `generic` is the generic (skb) hook, `native` is the driver hook with copy mode sockets, and `zero_copy` is the driver hook with zero copy sockets. It says what rate a driver may reach and changes no run or verdict. Absent unless the selected backend is `af_xdp` and the agent bound a queue of the port, and absent for an agent of agent protocol 0.2.4 or earlier. A controller older than 0.13.0 does not send it.
+                 * @enum {string}
+                 */
+                xdp_driver_mode?: "generic" | "native" | "zero_copy";
             }[];
             labels?: {
                 [key: string]: string;
@@ -830,10 +843,12 @@ export interface components {
             ipv6?: string;
             count: number;
             gateway?: string;
+            /** @description Optional (v0.4). Present means that the hosts of the pool obtain their IPv4 addresses and their router through DHCP (RFC 2131) and take no address from the configuration. Absent means static addresses, as before. Only a client pool may carry it, and then the pool names none of ipv4, ipv6, and gateway. The object has no property yet, and later options will be added to it as optional properties. Clients compute the addresses of servers from the prefix of the server pool. */
+            dhcp4?: Record<string, never>;
             vlan?: number;
             mac_base?: string;
             os_profile?: string;
-        } | unknown | unknown;
+        } | unknown | unknown | unknown;
         /** @description A distribution of inter arrival times, written with the parameter names of the scenario delay (milliseconds unless the unit says otherwise). Constant, exponential, uniform, lognormal, and Pareto are the names that the realism check accepts for a target. */
         arrival: {
             /** @constant */
@@ -873,7 +888,7 @@ export interface components {
         };
         /**
          * FixingPointSystem test configuration
-         * @description Contract v0.3. Composes network, profile, load, timeline, criteria, and module settings. Names for ports and devices follow Open Traffic Generator vocabulary.
+         * @description Contract v0.4. Composes network, profile, load, timeline, criteria, and module settings. Names for ports and devices follow Open Traffic Generator vocabulary.
          */
         "test-config.schema": {
             /** @constant */
@@ -1038,10 +1053,12 @@ export interface components {
                     ipv6?: string;
                     count: number;
                     gateway?: string;
+                    /** @description Optional (v0.4). Present means that the hosts of the pool obtain their IPv4 addresses and their router through DHCP (RFC 2131) and take no address from the configuration. Absent means static addresses, as before. Only a client pool may carry it, and then the pool names none of ipv4, ipv6, and gateway. The object has no property yet, and later options will be added to it as optional properties. Clients compute the addresses of servers from the prefix of the server pool. */
+                    dhcp4?: Record<string, never>;
                     vlan?: number;
                     mac_base?: string;
                     os_profile?: string;
-                } | unknown | unknown;
+                } | unknown | unknown | unknown;
             };
         };
         /** @description One metric value. The name is a metric of contracts/metrics/catalog.yaml, and labels are labels that the catalog declares for it. */

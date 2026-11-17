@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import ipaddress
 import struct
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,7 +41,9 @@ _ETH_VLAN = (0x8100, 0x88A8, 0x9100)
 _IP_TCP = 6
 _IP_UDP = 17
 _IPV6_EXTENSION_HEADERS = (0, 43, 60)
+_TCP_FIN = 0x01
 _TCP_SYN = 0x02
+_TCP_RST = 0x04
 _TCP_ACK = 0x10
 
 
@@ -70,6 +72,11 @@ class Packet:
     dst_port: int
     payload_len: int
     tcp_flags: int = 0
+
+    @property
+    def key(self) -> SessionKey:
+        """The direction independent key of the session this packet belongs to."""
+        return SessionKey.of(self.transport, self.src_ip, self.src_port, self.dst_ip, self.dst_port)
 
 
 @dataclass(frozen=True, order=True)
@@ -101,7 +108,9 @@ class Session:
     """A bidirectional TCP or UDP session observed in a capture.
 
     The client is the sender of the first SYN without ACK for TCP, and the sender
-    of the first packet otherwise.
+    of the first packet otherwise. A TCP connection that reuses the 5-tuple of an
+    earlier one, which starts with a SYN without ACK after a FIN or RST, is a session
+    of its own; ``connection`` counts the sessions of one key from 0 in capture order.
     """
 
     id: int
@@ -115,6 +124,7 @@ class Session:
     packets: int = 0
     payload_bytes: int = 0
     client_known: bool = False
+    connection: int = 0
 
     @property
     def key(self) -> SessionKey:
@@ -386,11 +396,29 @@ def _ipv6(data: bytes) -> tuple[int, str, str, bytes] | None:
     return next_header, src, dst, payload
 
 
+def _closes(packet: Packet) -> bool:
+    """True for a TCP packet that ends a connection, a FIN or an RST."""
+    return packet.transport == "tcp" and bool(packet.tcp_flags & (_TCP_FIN | _TCP_RST))
+
+
+def _reopens(closed: bool, packet: Packet) -> bool:
+    """True when a packet starts a new connection on a key whose connection has closed.
+
+    A SYN without ACK on a key that has seen a FIN or an RST is a new connection, the way
+    tshark numbers tcp.stream. The same SYN on a key that has not closed is a
+    retransmission and stays in its session.
+    """
+    flags = packet.tcp_flags
+    return closed and packet.transport == "tcp" and bool(flags & _TCP_SYN) and not flags & _TCP_ACK
+
+
 def summarize(path: Path) -> CaptureSummary:
     """Read a capture and build its session table in order of first packet."""
     fmt, frames = read_frames(path)
     summary = CaptureSummary(format=fmt, link_types=[])
-    by_key: dict[SessionKey, Session] = {}
+    current: dict[SessionKey, Session] = {}
+    count: dict[SessionKey, int] = {}
+    closed: set[SessionKey] = set()
     for frame in frames:
         summary.frames += 1
         if frame.link_type not in summary.link_types:
@@ -399,17 +427,14 @@ def summarize(path: Path) -> CaptureSummary:
         if packet is None:
             summary.skipped_frames += 1
             continue
-        key = SessionKey.of(
-            packet.transport,
-            packet.src_ip,
-            packet.src_port,
-            packet.dst_ip,
-            packet.dst_port,
-        )
-        session = by_key.get(key)
+        key = packet.key
+        session = current.get(key)
+        if session is not None and _reopens(key in closed, packet):
+            session = None
+            closed.discard(key)
         if session is None:
             session = Session(
-                id=len(by_key) + 1,
+                id=len(summary.sessions) + 1,
                 transport=packet.transport,
                 client_ip=packet.src_ip,
                 client_port=packet.src_port,
@@ -417,15 +442,48 @@ def summarize(path: Path) -> CaptureSummary:
                 server_port=packet.dst_port,
                 first_seen=packet.timestamp,
                 last_seen=packet.timestamp,
+                connection=count.get(key, 0),
             )
-            by_key[key] = session
+            count[key] = session.connection + 1
+            current[key] = session
             summary.sessions.append(session)
         _orient(session, packet)
         session.packets += 1
         session.payload_bytes += packet.payload_len
         session.first_seen = min(session.first_seen, packet.timestamp)
         session.last_seen = max(session.last_seen, packet.timestamp)
+        if _closes(packet):
+            closed.add(key)
     return summary
+
+
+class SessionResolver:
+    """Attributes the packets of a capture, read again in order, to the sessions of its table.
+
+    The key of a session is not unique once a client port is reused, so a reader that walks
+    the frames of a capture asks the resolver for the session of each packet instead of
+    looking its key up. The resolver applies the rule of :func:`summarize` and returns None
+    for a packet of a connection that is not among the sessions it was given.
+    """
+
+    def __init__(self, sessions: Iterable[Session]) -> None:
+        self._sessions: dict[tuple[SessionKey, int], Session] = {
+            (s.key, s.connection): s for s in sessions
+        }
+        self._connection: dict[SessionKey, int] = {}
+        self._closed: set[SessionKey] = set()
+
+    def session_of(self, packet: Packet) -> Session | None:
+        """Return the session that the next packet of the capture belongs to, if it is known."""
+        key = packet.key
+        if key not in self._connection:
+            self._connection[key] = 0
+        elif _reopens(key in self._closed, packet):
+            self._connection[key] += 1
+            self._closed.discard(key)
+        if _closes(packet):
+            self._closed.add(key)
+        return self._sessions.get((key, self._connection[key]))
 
 
 def _orient(session: Session, packet: Packet) -> None:

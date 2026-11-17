@@ -437,6 +437,35 @@ impl Net {
 struct Shared {
     net: Mutex<Net>,
     backlog: usize,
+    notes: Vec<String>,
+}
+
+/// Lists the facts about a smoltcp pair that a reader needs for its numbers.
+fn describe(config: &SmolConfig) -> Vec<String> {
+    let time_wait = match config.time_wait {
+        TimeWait::Skip => "a socket in TIME-WAIT is removed at once, which models a stack that reuses a 4-tuple at once",
+        TimeWait::Keep => "a socket in TIME-WAIT stays for the ten seconds that smoltcp waits",
+    };
+    vec![
+        format!(
+            "the client host and the server host are two smoltcp interfaces in one process, joined by an in memory IP link without delay or loss (mtu {}, software checksums {}), so there is no kernel socket and no descriptor",
+            config.link.mtu,
+            if config.link.checksums { "on" } else { "off" },
+        ),
+        "smoltcp walks every socket of a host on every poll, so the poll with idle sockets grows with the socket count, and a run with many sockets splits them over shards, each shard with its own pair of socket sets".to_string(),
+        format!(
+            "the driver polls only after a session did something, and otherwise once per {} ms, so timers run while all sessions idle",
+            config.idle_poll_micros / 1000
+        ),
+        time_wait.to_string(),
+        format!(
+            "every socket owns a receive buffer of {} bytes and a transmit buffer of {} bytes, which smoltcp allocates at once, so bytes_per_socket is mostly buffer; Nagle is {}",
+            config.rx_buffer,
+            config.tx_buffer,
+            if config.nagle { "on" } else { "off" },
+        ),
+        "bytes_per_socket is the growth of the resident set of the process and includes the socket sets, the buffers, and the link".to_string(),
+    ]
 }
 
 impl Shared {
@@ -458,6 +487,7 @@ impl SmolStack {
             shared: Arc::new(Shared {
                 net: Mutex::new(Net::new(&config, clock)),
                 backlog: config.backlog,
+                notes: describe(&config),
             }),
         }
     }
@@ -468,6 +498,10 @@ impl TcpStack for SmolStack {
 
     fn name(&self) -> String {
         format!("smoltcp {SMOLTCP_VERSION}")
+    }
+
+    fn notes(&self) -> Vec<String> {
+        self.shared.notes.clone()
     }
 
     fn listen(&self, port: u16) -> io::Result<()> {

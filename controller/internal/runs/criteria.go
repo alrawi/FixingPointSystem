@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/compiler"
+	"github.com/alrawi/FixingPointSystem/controller/internal/multiagent"
 )
 
 // Metric names from contracts/metrics/catalog.yaml that the orchestrator
@@ -275,6 +276,14 @@ func totals(counters map[string]map[string]float64, series []Series, failed map[
 			out[k] += v
 		}
 	}
+	return finishTotals(out, series)
+}
+
+// finishTotals completes the run totals out, which hold the sum of every
+// counter and gauge without labels over the agents. It adds the labeled
+// counters of series that are not of the server side, and derives
+// sessions.failed_ratio.
+func finishTotals(out map[string]float64, series []Series) map[string]float64 {
 	// A counter that an agent also reports without labels is a run total
 	// that repeats its labeled series, so the labeled series add up only for
 	// the counters that no agent reports as a run total.
@@ -292,4 +301,51 @@ func totals(counters map[string]map[string]float64, series []Series, failed map[
 		out[MetricSessionsFailedRatio] = 0
 	}
 	return out
+}
+
+// fromResult returns the series and the totals of a run that the multiagent
+// coordinator stopped, for Outcome. The collector of the coordinator summed
+// every counter exactly in unsigned 64 bit integers, over every agent of the
+// run, and this function converts each sum to a float once. It then counts the
+// sessions that a failed agent attempted and never finished as failed, as
+// sumSeries and totals do, from the snapshots that the orchestrator kept for
+// that agent. The caller holds the lock.
+func fromResult(r *run, res multiagent.Result) ([]Series, map[string]float64) {
+	sum := map[string]Series{}
+	tot := map[string]float64{}
+	for m, n := range res.Totals {
+		tot[m] = float64(n)
+	}
+	for _, s := range res.Series {
+		var labels map[string]string
+		if len(s.Labels) > 0 {
+			labels = maps.Clone(s.Labels)
+		}
+		if s.Gauge {
+			if labels == nil {
+				tot[s.Metric] += s.Value
+			}
+			continue
+		}
+		sum[seriesKey(s.Metric, labels)] = Series{Metric: s.Metric, Labels: labels, Value: float64(s.Count)}
+	}
+	for _, a := range r.agents {
+		if a.status != agentFailed {
+			continue
+		}
+		for key, s := range closeOpen(a.series) {
+			if d := s.Value - a.series[key].Value; d != 0 {
+				sum[key] = Series{Metric: s.Metric, Labels: s.Labels, Value: sum[key].Value + d}
+			}
+		}
+		open := a.counters[MetricSessionsAttempted] - a.counters[MetricSessionsSucceeded] - a.counters[MetricSessionsFailed]
+		if open > 0 {
+			tot[MetricSessionsFailed] += open
+		}
+	}
+	out := make([]Series, 0, len(sum))
+	for _, key := range slices.Sorted(maps.Keys(sum)) {
+		out = append(out, sum[key])
+	}
+	return out, finishTotals(tot, out)
 }

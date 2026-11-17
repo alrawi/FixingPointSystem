@@ -89,7 +89,7 @@ The runner applies four rules.
 
 ## Sessions
 
-The runner groups TCP and UDP packets into bidirectional sessions by their 5-tuple. The sender of the first SYN without ACK is the TCP client, and the sender of the first packet is the UDP client. Frames without an IPv4 or IPv6 TCP or UDP packet, and IP fragments after the first, count as skipped frames. A session that nDPI does not report counts as `Unknown`.
+The runner groups TCP and UDP packets into bidirectional sessions by their 5-tuple. The sender of the first SYN without ACK is the TCP client, and the sender of the first packet is the UDP client. A SYN without ACK on a 5-tuple whose connection has seen a FIN or an RST starts a new session, the way tshark numbers `tcp.stream` (RLM-24), so two connections that reuse a client port are two sessions with the same endpoints, and a SYN that repeats on a connection that has not closed stays in its session. The readers of the payload, the exchanges, the connection times, and the send times follow the same rule. The decrypted view gives each session its own initial sequence numbers for the same reason. Frames without an IPv4 or IPv6 TCP or UDP packet, and IP fragments after the first, count as skipped frames. A session that nDPI does not report counts as `Unknown`.
 
 We run ndpiReader with `-d`, which turns off its guess from port numbers, so only payload based detections count toward conformance.
 

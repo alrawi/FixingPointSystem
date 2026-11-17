@@ -79,7 +79,7 @@ describe("configuration list", () => {
     const { user } = await renderAt("/configs");
     const table = await screen.findByRole("table", { name: "Stored configurations" });
     const rows = within(table).getAllByRole("row");
-    expect(rows).toHaveLength(7);
+    expect(rows).toHaveLength(9);
     expect(within(rows[1] as HTMLElement).getByRole("link").textContent).toBe("seedless_smoke");
     expect(screen.getByRole("link", { name: "New configuration" }).getAttribute("href")).toBe(
       "/configs/new",
@@ -242,6 +242,31 @@ describe("editor forms and YAML view", () => {
     });
   });
 
+  it("takes the addresses of a client pool from DHCP with a checkbox", async () => {
+    const { user } = await openEditor("/configs/new");
+    const network = section("Network");
+    const rangesBefore = within(network).getAllByLabelText("IPv4 range").length;
+    const [dhcp] = within(network).getAllByRole("checkbox", { name: "Addresses from DHCP" });
+    await user.click(dhcp as HTMLElement);
+    const pool = (parse(yamlBox().value) as { network: { host_pools: Record<string, unknown>[] } })
+      .network.host_pools[0];
+    expect(pool).toMatchObject({ dhcp4: {} });
+    expect(pool).not.toHaveProperty("ipv4");
+    expect(pool).not.toHaveProperty("gateway");
+    expect(yamlBox().value).toContain("dhcp4: {}");
+    expect(within(network).getAllByLabelText("IPv4 range")).toHaveLength(rangesBefore - 1);
+    expect(checkStatus()).toContain("passes the schema check");
+
+    await user.click(
+      within(network).getAllByRole("checkbox", { name: "Addresses from DHCP" })[0] as HTMLElement,
+    );
+    expect(yamlBox().value).not.toContain("dhcp4");
+    expect(within(network).getAllByLabelText("IPv4 range")).toHaveLength(rangesBefore);
+    // Without an address source the schema asks for one again.
+    expect(checkStatus()).not.toContain("passes the schema check");
+    await expectNoAxeViolations();
+  });
+
   it("suggests the scenarios of the installed modules", async () => {
     await openEditor("/configs/new");
     await waitFor(() => {
@@ -295,7 +320,7 @@ describe("saving and validating on the controller", () => {
     const list = await fetch(`${mock.baseUrl}/configs`, {
       headers: { Authorization: `Bearer ${MOCK_TOKEN}` },
     });
-    expect(((await list.json()) as { items: unknown[] }).items).toHaveLength(6);
+    expect(((await list.json()) as { items: unknown[] }).items).toHaveLength(8);
   });
 
   it("stores changed text before it validates, and validates the stored copy", async () => {

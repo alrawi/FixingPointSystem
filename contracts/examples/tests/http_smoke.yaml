@@ -1,3 +1,4 @@
+# Pairs with the example modules of contracts/examples/modules/. The scenario http1/web_get belongs to the example http1 module there, not to the first party http1 module in modules/http1, which has http1/single_fetch (see http1_first_party.yaml).
 apiVersion: fixingpoint.dev/v1alpha1
 kind: Test
 metadata:

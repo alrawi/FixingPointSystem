@@ -1226,6 +1226,13 @@ def check_test_config(doc: dict, file: Path, report: Report, index: ModuleIndex,
         pools[pool["name"]] = pool
         if pool["port"] not in port_names:
             report.error(file, where + "/port", f"unknown port '{pool['port']}'")
+        gateway = None
+        if pool.get("gateway"):
+            try:
+                gateway = ipaddress.ip_address(pool["gateway"])
+            except ValueError as exc:
+                report.error(file, where + "/gateway", str(exc))
+        gateway_seen = False
         for family in ("ipv4", "ipv6"):
             if family not in pool:
                 continue
@@ -1237,18 +1244,20 @@ def check_test_config(doc: dict, file: Path, report: Report, index: ModuleIndex,
             size = net_obj.num_addresses
             usable = size - 2 if family == "ipv4" and net_obj.prefixlen < 31 else size
             reserved = 0
-            if pool.get("gateway"):
-                try:
-                    gw = ipaddress.ip_address(pool["gateway"])
-                    if gw not in net_obj:
-                        report.error(file, where + "/gateway", f"gateway {gw} is outside {net_obj}")
-                    else:
-                        reserved = 1
-                except ValueError as exc:
-                    report.error(file, where + "/gateway", str(exc))
+            # The gateway belongs to one address family, so it is checked against
+            # the prefix of its own family only (fps-hosts matches by family).
+            if gateway is not None and gateway.version == net_obj.version:
+                gateway_seen = True
+                if gateway not in net_obj:
+                    report.error(file, where + "/gateway", f"gateway {gateway} is outside {net_obj}")
+                else:
+                    reserved = 1
             if pool["count"] > usable - reserved:
                 report.error(file, where + "/count",
                              f"count {pool['count']} exceeds {usable - reserved} usable addresses in {net_obj}")
+        if gateway is not None and not gateway_seen:
+            report.error(file, where + "/gateway",
+                         f"gateway {gateway} is IPv{gateway.version}, and the pool has no ipv{gateway.version} prefix")
 
     roles = {p["role"] for p in pools.values()}
     topology = doc["topology"]
@@ -1418,7 +1427,7 @@ def run(modules_dirs: list[Path], tests: list[Path], openapi: Path | None,
 # Example tests that name a scenario of a first party module under modules/. The
 # example modules of contracts/examples/modules/ have their own scenarios, so
 # these tests are validated against the first party module they name (CON-15).
-FIRST_PARTY_TESTS = {"dns_zone.yaml": "dns"}
+FIRST_PARTY_TESTS = {"dns_zone.yaml": "dns", "http1_first_party.yaml": "http1"}
 
 
 def run_first_party(tests: list[Path], catalog_path: Path) -> Report:

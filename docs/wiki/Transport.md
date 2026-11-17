@@ -1,6 +1,6 @@
 # Transport
 
-This page describes the transport backends of the TRN workstream, which implement the `SessionIo` and `DatagramIo` seams of [Engine](Engine.md) over real networks. TRN-01 created the first backend, the kernel TCP backend in `engine/fps-backend-kernel`. Later TRN packages add kernel UDP, operating system profiles, TLS, and the AF_XDP and DPDK backends that the [Implementation Plan](Implementation-Plan.md#target-repository-layout) lists. TRN-04 added the TLS wrapper, see [TLS module](#tls-module).
+This page describes the transport backends of the TRN workstream, which implement the `SessionIo` and `DatagramIo` seams of [Engine](Engine.md) over real networks. TRN-01 created the first backend, the kernel TCP backend in `engine/fps-backend-kernel`. Later TRN packages add kernel UDP, operating system profiles, TLS, and the AF_XDP and DPDK backends that the [Implementation Plan](Implementation-Plan.md#target-repository-layout) lists. TRN-04 added the TLS wrapper, see [TLS module](#tls-module), and TRN-11 added the AF_XDP frame input and output, see [AF_XDP backend](#af_xdp-backend).
 
 ## Crates
 
@@ -9,8 +9,9 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | Crate | Contents | Next package |
 |---|---|---|
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `Connector`, `KernelListener`, and `KernelStream`, which implement `SessionIo` over kernel TCP sockets, the operating system profiles of TRN-03, and `KernelDatagram`, `KernelDatagramListener`, and the two datagram openers of TRN-02, see [Kernel UDP backend](#kernel-udp-backend) | TRN-04 added TLS, see below |
-| [`fps-tcp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-tcp) | `TcpStack`, the bench workloads `session_rate`, `throughput`, and `socket_scaling`, `SmolStack` and `SmolSession`, which implement `SessionIo` over smoltcp, and the command `tcp_bench`, see [TCP stack bench harness](#tcp-stack-bench-harness) | TRN-18 adds an own stack on the same harness |
+| [`fps-tcp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-tcp) | `TcpStack`, the bench workloads `session_rate`, `throughput`, and `socket_scaling`, `KernelStack` and `KernelSession`, the kernel loopback reference stack that implements `SessionIo`, and the command `tcp_bench`, see [TCP stack bench harness](#tcp-stack-bench-harness) | TRN-18 added the own stack `OwnStack`, see [The own TCP stack](#the-own-tcp-stack), and TRN-20 adds the smoltcp adapter on the same harness |
 | [`fps-module-tls`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/tls) | `TlsConnector`, `TlsAcceptor`, and `TlsSession`, which wrap any `SessionIo` in TLS 1.2 or 1.3, the client and server profiles, `RunAuthority`, and `NssKeyLog`, see [TLS module](#tls-module) | TRN-05 added the browser profiles, see [Browser profiles and JA4](#browser-profiles-and-ja4), and TRN-15 the mail and h2 profiles, see [Mail and h2 profiles](#mail-and-h2-profiles) |
+| [`fps-backend-afxdp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-afxdp) | `FrameIo`, the frame trait with batched receive and send per queue, `open_port` with `AfXdpQueue`, `Workers`, the in memory `memory::frame_pair`, and `select_backend` of TRN-14, see [AF_XDP backend](#af_xdp-backend) and [Backend selection](#backend-selection) | TRN-12 runs a user space TCP stack over it, and TRN-19 measures its rate on KVM |
 
 The `test-eng` target and the `rust` job of `ci.yml` run the tests of every crate under `engine/`, so the backend needs no make file or workflow of its own.
 
@@ -383,13 +384,125 @@ The async wrapper costs more than the profile code. `handshake_bench --mode sess
 | `alert_sent` is known only for plaintext alerts and for errors that imply one | Rustls sends the other alerts encrypted and does not report them |
 | Certificate and key generation use the system random source | No run seed controls them |
 
+## AF_XDP backend
+
+TRN-11 added the crate `fps-backend-afxdp`. It gives a user space transport whole Ethernet frames in batches on one queue of a network device, and it does not parse a frame. TRN-12 builds the user space TCP stack on top of it, and HST-03 answers ARP and neighbor discovery over it. The crate depends only on `libc` and `thiserror`, needs Linux 5.9 or newer for the BPF link that attaches its program, and needs root or the capabilities `CAP_NET_ADMIN`, `CAP_NET_RAW`, and `CAP_BPF`. The tests ran only as root, so the capability list is untested.
+
+### The frame trait
+
+`FrameIo` is the seam between a transport and a device. A queue belongs to one thread, so no method takes a lock, and no method blocks except `wait_readable`.
+
+| Method | Behavior |
+|---|---|
+| `recv_batch(max, frame)` | Calls `frame` once for each of at most `max` received frames and returns the count. The slice lives only inside the call, and the queue recycles the memory after the batch, so a batch costs no allocation |
+| `send_batch_with(count, fill)` | Lends up to `count` transmit buffers of `max_frame_len` bytes, calls `fill(index, buffer)` for each, and queues the frame of the length that `fill` returns. A return value of 0 ends the batch. The call returns the number queued, which is lower than `count` when the queue has no free frame or slot |
+| `send_batch(frames)` | Copies each frame into queue memory and rejects an empty or oversized frame before it queues any |
+| `flush()` | Wakes the kernel to send and takes back the memory of sent frames. A worker with nothing to receive calls it |
+| `wait_readable(timeout)` | Sleeps until a frame arrives or the timeout passes |
+| `stats()` | The counters of the queue, such as frames, bytes, full sends, and kicks |
+
+The crate keeps the trait here and not in `fps-io`, because the catalog paths of TRN-11 exclude `engine/fps-io`. A DPDK backend can implement the same trait, and `memory::frame_pair` gives tests of the code above it a fake with a bounded depth, so a full link makes a send return short as a full transmit ring does.
+
+### Opening a port
+
+`open_port(&PortConfig)` opens one socket per queue, attaches the XDP program, and returns an `OpenedPort` with a `PortInfo` and one `AfXdpQueue` per queue in the order of `PortConfig::queues`. It runs five steps.
+
+1. Look up the interface index and create an XSK map with one slot per queue number.
+2. For each queue, map a UMEM, register it, size and map the four rings, fill the fill ring with the whole receive pool, and bind with the requested mode.
+3. Read the bind mode back from the socket with `getsockopt(XDP_OPTIONS)` and store the socket in the map.
+4. Load the program, which has six BPF instructions. It sends a frame of queue `n` to the socket at slot `n` and passes the frame to the kernel stack when the map has no socket for that queue, so queues that the port does not open keep working.
+5. Attach the program through a BPF link, in the driver when the device supports it and in the generic hook after an `EOPNOTSUPP`. `PortInfo::xdp_mode` says which.
+
+The link detaches when the last queue of the port drops, so no program outlives the process. A second port on an interface that already has an XDP program fails with `EBUSY`, at the `bind` step when a queue is taken and at the step `attach XDP program` otherwise. Every failure is an `AfXdpError` that names the step, the interface, and the queue, and keeps the operating system error as its source.
+
+### Bind modes and the copy fallback
+
+`BindMode::Auto` binds without a mode flag, so the kernel tries zero copy and falls back to copy mode when the driver cannot do it. `BindMode::ZeroCopy` fails at the step `bind` on such a driver, and `AfXdpError::is_zero_copy_unsupported` recognizes that failure. `BindMode::Copy` forces copy mode. The request never says what runs, so `PortInfo::queues` and `AfXdpQueue::bind_mode` return the `BoundMode` that the socket reports through `XDP_OPTIONS`. A veth pair has no zero copy driver, so `Auto` reports `Copy` there and `ZeroCopy` fails with `EOPNOTSUPP` (errno 95).
+
+### Queue memory
+
+Each queue owns its UMEM, so queues share no memory. The UMEM holds `2 * ring_size` frames of `frame_size` bytes in aligned chunk mode. The first half is the receive pool. It starts in the fill ring, comes back through the receive ring, and returns to the fill ring after `recv_batch` called the callback. The second half is the transmit pool. A frame leaves a free list for the transmit ring and returns from the completion ring. The rings are single producer and single consumer queues of indices that only grow and wrap, with release stores to publish and acquire loads to read, and a unit test moves one million entries between two threads. A frame that the kernel returns with an address outside the pool is counted in `rx_invalid` and dropped, and the crate never panics on kernel data.
+
+The kernel asks for wake ups through a ring flag (`XDP_USE_NEED_WAKEUP`). In zero copy mode the queue calls `sendto` or `recvfrom` only when the flag is set. In copy mode the kernel sends inside `sendto`, at most 32 frames per call, and answers `EAGAIN` while more wait, so `send_batch_with` repeats the call until the transmit ring is empty. A frame must fit in `frame_size - 256` bytes, because the kernel keeps `XDP_PACKET_HEADROOM` in front of a received frame, and `max_frame_len` is that number for both directions.
+
+### Workers
+
+`Workers::spawn(queues, &WorkerOptions, make)` starts one thread per queue and calls `make(queue_id)` for the `QueueLoop` of each. A closure `FnMut(&mut dyn FrameIo) -> io::Result<bool>` is a loop, and it returns whether it moved a frame. `WorkerOptions` pins worker `i` to `cpus[i % cpus.len()]` and picks what an idle worker does with `Idle`, which is `Spin`, `Yield`, or `Wait(duration)` in `wait_readable`. The default is a 1 ms wait without pinning, and a rate test uses `Spin`. `Workers::stop` returns one `WorkerReport` per queue with the turn counts, the final counters, and the error that ended the worker early. A loop that returns an error ends only its own worker. Every worker takes at least one turn, even when `stop` comes before its thread starts, so the error of a broken queue is always reported (bug #588). Workers are generic over `FrameIo`, so the same code runs over `memory::frame_pair` in unit tests.
+
+### Defaults from spike S3
+
+`QueueConfig::default` takes its values from `spikes/s3-afxdp/RESULTS.md` and from the logs of that run.
+
+| Setting | Default | Reason |
+|---|---|---|
+| `batch` | 32 | The `testpmd` runs of S3 forwarded 32 packets per burst, as their logs show |
+| Queues per worker | one | S3 reached 10 Gbps of 1,500 byte frames with one or two queues of a three vCPU guest, one core each |
+| `mode` | `Auto` | Default mode did not beat forced copy mode beyond the noise of the host, so zero copy is a gain where a driver offers it and costs nothing where it does not |
+| `frame_size` | 2048 | The chunk leaves 1792 bytes after the kernel headroom, which holds a 1500 byte MTU |
+| `ring_size` | 2048 | A choice. S3 did not vary the ring size, and TRN-19 tunes it |
+
+S3 ran on a small host, so its results are indicative. Its `zero_copy_log_lines` column counts a DPDK buffer message and not the bind mode of the kernel, which is why this crate reads the mode from the socket.
+
+### Backend selection
+
+`select_backend(&SelectionInput)` in `fps-backend-afxdp` (TRN-14) picks the transport backend at boot and says why. `HostCapabilities` lives in `fps-agent`, which depends on the backends, so the function takes an input type of its own and AGT-22 builds it from the detection and reports the result in `Capabilities.selected_backend`. The module has no dependency and builds on every platform.
+
+| Input | Meaning |
+|---|---|
+| `forced` | `Some(Kernel)` or `Some(AfXdp)` forces a backend, and `None` lets the rules choose |
+| `kernel.transport_available` | The kernel backend carries sessions, which `fps_backend_kernel::TRANSPORT_AVAILABLE` says is true everywhere |
+| `af_xdp.kernel_support` | The running kernel offers AF_XDP sockets |
+| `af_xdp.transport_available` | A transport carries TCP over AF_XDP. `fps_backend_afxdp::TRANSPORT_AVAILABLE` is false until TRN-12 sets it |
+| `af_xdp.driver` | The best XDP mode that every port offers: `None`, `Generic`, `Native` (copy mode, as a virtio-net guest without zero copy), or `ZeroCopy`. The values match the contract `XdpMode` |
+
+The rules, in order:
+
+- The kernel backend is the default, and the result then carries the reason AF_XDP lost (`Unavailable`).
+- AF_XDP wins when the kernel offers it, a transport exists, and the driver offers `Native` or `ZeroCopy`. The result carries the expected mode.
+- `Generic` never wins by itself, but an operator can force it. This is a policy, not a measurement: spike S3 measured only native copy and zero copy, so TRN-12 revisits the rule with its own numbers.
+- A forced backend that cannot run returns `SelectError::ForcedUnsupported` with the cause and never falls back, so a benchmark does not measure the wrong backend. With nothing forced and no working backend the error is `SelectError::NoBackend`.
+
+Nothing carries TCP over AF_XDP before TRN-12, so every host selects the kernel backend today and a forced AF_XDP run is refused with `NoTransport`. The tests in `tests/select.rs` cover a virtio-net guest with and without zero copy (with the transport present, as it will be after TRN-12, and absent), an old kernel, a generic only driver, a driver without XDP, and forced backends. The expected bind mode is a plan, not a measurement: the agent reports the mode that the socket really runs in, as `PortInfo.xdp_driver_mode`.
+
+### Tests
+
+The unit tests need no privilege. They cover the settings, the rings (order, wrap, full, index overflow, the wake up flag, and two threads), the system call layer (structure sizes, the BPF instructions, mappings, and the CPU pin), the in memory pair, and the workers over it.
+
+`engine/fps-backend-afxdp/tests/veth.rs` is the acceptance test of TRN-11. It brings up the [QA-01 harness](Testing.md#namespace-harness) and runs helper processes, which are the test binary again, in the client and router namespaces with `ip netns exec`. It has three parts.
+
+| Part | Result |
+|---|---|
+| Modes on `eth0` | `ZeroCopy` fails with `EOPNOTSUPP`, a ring size of 100 is refused before any system call, `Copy` and `Auto` bind in copy mode and the socket confirms it, and a second port on the interface fails with `EBUSY` |
+| One queue | The client sends 4,000 frames of 60 to 1,514 bytes from `eth0`, the router echoes them from `cli0` with the MAC addresses swapped, and all 4,000 return with their payloads intact |
+| Two queues | The same over a veth pair with two queues, `xq0` and `xq1`, with one `Workers` thread per queue on both ends. Each frame returns on the queue that sent it, and the router echoes exactly 4,000 frames on each queue. One queue sends with `send_batch` and the other with `send_batch_with` |
+
+The test needs root. As a normal user it runs itself again with `sudo -n env FPS_AFXDP_UNDER_SUDO=1`, and it skips with a message when neither works. `CI=true` or `FPS_REQUIRE_AFXDP=1` turn a skip into a failure, so a runner that cannot run it does not pass silently. `FPS_AFXDP_FRAMES` sets the frames per queue, and a run with 100,000 frames per queue in the sandbox of the package passed. The test runs inside `cargo test -p fps-backend-afxdp`, and so inside the `cargo test --workspace` step of the `rust` job of `ci.yml`.
+
+```bash
+cargo test -p fps-backend-afxdp                          # unit tests and the veth test, which uses sudo
+FPS_AFXDP_FRAMES=100000 cargo test -p fps-backend-afxdp --test veth -- --nocapture
+```
+
+### Limits
+
+| Limit | Reason |
+|---|---|
+| The zero copy bind has no test | The sandbox and CI have only veth pairs, which have no zero copy driver. TRN-19 binds in zero copy mode on virtio-net guests |
+| One XDP program per interface | The kernel allows one program on a device. A port that meets another program fails with `EBUSY` and does not replace it |
+| A closed queue stays busy for a moment | The kernel releases the queue of a closed socket in a work queue, so a bind right after a close can fail with `EBUSY` for a few milliseconds, and the test retries for up to five seconds |
+| No shared UMEM and no unaligned chunks | One UMEM per queue keeps workers independent, and the aligned mode needs a power of two frame size from 2048 bytes up to the page size |
+| No busy polling | S3 ran DPDK with a busy poll budget of 64, and TRN-19 decides whether this crate needs `SO_PREFER_BUSY_POLL` |
+| Linux on 64 bit only | The ring offsets and the `bpf` call use the 64 bit layout, and other targets get only the trait, the settings, the workers, and the in memory pair |
+
 ## TCP stack bench harness
 
-TRN-17 added the crate `engine/fps-tcp`, which measures a user space TCP stack behind `SessionIo` for decision record 0014 of TRN-10. The harness has no dependency on a backend. A stack implements `TcpStack`, which models a client host and a server host joined by a link, and every session leaves the stack as a `SessionIo`, so a measurement includes the cost of the adapter. TRN-18 plugs its own stack into the same trait, and TRN-13 can reuse the workloads for the DPDK path.
+TRN-17 added the crate `engine/fps-tcp`, which measures a TCP stack behind `SessionIo` for decision record 0014 of TRN-10. The harness has no dependency on a user space stack. A stack implements `TcpStack`, which models a client host and a server host, and every session leaves the stack as a `SessionIo`, so a measurement includes the cost of the adapter. The kernel loopback TCP is the reference stack of TRN-17. TRN-18 plugged an own stack into the same trait, TRN-20 plugs smoltcp in, and TRN-13 can reuse the workloads for the DPDK path.
+
+The smoltcp adapter is a separate package, because `smoltcp 0.14.0` and `managed 0.8.0` are licensed 0BSD, which `deny.toml` does not allow, and `deny.toml` uses `all-features = true`, so a feature flag would not hide them from `cargo deny`. The draft is complete and lives on the branch `wp/TRN-20`. TRN-20 resumes it when the owner allows 0BSD or the two crates by exception.
 
 ### Workloads
 
-The three workloads read the wall clock because they measure it, and they run on a current thread runtime with a driver task that polls the stack, like a poll mode worker.
+The three workloads read the wall clock because they measure it, and they run on a current thread runtime with a driver task that polls a user space stack, like a poll mode worker. A stack that the operating system drives has a driver that only waits.
 
 | Workload | What it does | What it reports |
 |---|---|---|
@@ -397,18 +510,35 @@ The three workloads read the wall clock because they measure it, and they run on
 | `throughput` | `sessions` concurrent sessions move `bytes_per_session` each, as upload or download, in chunks of 64 KiB, and the workload checks that every byte arrived | Delivered application Gbit per second |
 | `socket_scaling` | Opens sessions in batches until a step reaches its socket count, in steps such as 1,000 up to 1,000,000, spread over shards | Per step the setup rate, the resident memory per socket, the time of one full poll with idle sockets, and the session rate and p99 that a probe sees while all sockets are held |
 
-A socket count includes both hosts of a pair, so 1,000,000 sockets are 500,000 sessions, and it includes the few listening sockets. A step that exceeds its time budget ends the run and marks itself `over budget`, so a stack that slows down with the socket count stops the run in place of hanging it. A shard is an independent pair, with its own interfaces and socket sets, which is how an engine worker owns its sessions. The scaling workload runs all shards on one thread, so the memory and poll numbers do not depend on thread count. The rate and throughput workloads run one stack per thread with `--threads`.
+A socket count includes both hosts of a pair, so 1,000,000 sockets are 500,000 sessions, and it includes the few listening sockets. A step that exceeds its time budget, or that the stack refuses a socket for, such as at the open files limit, ends the run and is marked `not reached` with the reason on a `stopped` line, so a stack that slows down with the socket count stops the run in place of hanging it. A shard is an independent pair, with its own interfaces and socket sets, which is how an engine worker owns its sessions. At most 20,000 sessions share one server port, which keeps every 4-tuple unique within the 28,000 source ports of a Linux client. The scaling workload runs all shards on one thread, so the memory and poll numbers do not depend on thread count. The rate and throughput workloads run one stack per thread with `--threads`.
 
-### The smoltcp adapter
+### The kernel reference stack
 
-`SmolStack` holds two smoltcp interfaces, 10.0.0.1 and 10.0.0.2, each with its own socket set, joined by an in memory link with no delay and no loss. The IP medium has no Ethernet header and no ARP. The adapter follows four rules, which `engine/fps-tcp/src/smol.rs` documents in full.
+`KernelStack` is the TCP of the operating system on the loopback interface. The client host and the server host are sockets of one kernel that talk over `127.0.0.1`, driven by the reactor of the tokio runtime that the workload runs on, so the stack is the baseline that a user space stack must match or beat. It follows three rules, which `engine/fps-tcp/src/kernel.rs` documents in full.
 
-1. A session never drives the stack. One driver task polls both interfaces, and smoltcp wakes the waiting tasks through the wakers of its `async` feature.
-2. The driver polls after a session acted, and otherwise every 100 ms, because smoltcp visits every socket on every poll and the link never loses a frame.
-3. Each listened port keeps `backlog` listening sockets, because smoltcp has no accept queue, and replaces every one that a SYN used between two packets of a poll, so a burst larger than the backlog still connects.
-4. Dropping a session closes it and hands the socket to a reap list, and `abort` sends a reset. TIME-WAIT is skipped by default and kept with `--time-wait keep`, since smoltcp holds such a socket for ten seconds.
+1. The stack needs no driver. The kernel moves the segments and runs the timers, so `drive` only waits and `poll_once` does nothing, and the idle poll cost of a kernel run is zero by construction.
+2. A listened port is a logical number of the harness. Each stack binds an ephemeral loopback port for it and keeps the mapping, so the shards of a scaling run, which all listen on the same logical ports, never collide.
+3. `abort` sets `SO_LINGER` to zero and closes the socket, as the kernel backend does, and dropping a session closes it with a FIN. `TCP_NODELAY` is on by default and `--nodelay off` turns it off. The kernel sizes the socket buffers unless `--buffer-kib` sets them.
 
-The sessions share the stack through one mutex that only one thread takes, so a session operation costs one uncontended lock. The link recycles its buffers, so a run allocates only while the pool fills.
+What the numbers cannot show: kernel socket memory is not part of the resident set of the process, so `bytes_per_socket` is the user space cost of a socket only, and the stack has no frame counters. Every socket is a file descriptor, so a scaling run ends at the open files limit of the process, which the report lists as `open_files_soft_limit`. Reaching 1,000,000 sockets takes a limit above 1,000,100 and a high `fs.nr_open`.
+
+### The own TCP stack
+
+TRN-18 added `OwnStack` in `engine/fps-tcp/src/own/`, the second measured candidate of decision record 0014. It is two TCP hosts, a client at 10.0.0.1 and a server at 10.0.0.2, that exchange IPv4 frames over a pair of `FrameIo` queues of `fps-backend-afxdp`. The default link is the in memory pair of that crate, so the stack needs no root, and TRN-12 can hand it AF_XDP queues through `OwnStack::with_links`. The only new dependency is the path crate `fps-backend-afxdp`, so `cargo deny check` passes with no new license. Sessions leave the stack as `SessionIo`, like those of the kernel stack.
+
+| Part | What the stack does |
+|---|---|
+| Setup | SYN, SYN-ACK, and ACK with an MSS option. The initial sequence number is a counter that ticks every 4 microseconds plus a hash of the tuple and a secret (the idea of RFC 6528, with a mixing function and not a keyed cryptographic one). A SYN for a port without a listener gets a reset, which the client sees as `ConnectionRefused`. A new SYN may replace a TIME-WAIT tuple when its sequence number is higher |
+| Data | Sequence and acknowledgment numbers, segments of at most MSS bytes, a receive window that follows the free space of the receive buffer, and a window update when a read opens the window by a worthwhile amount |
+| Teardown | FIN in both directions with the states FIN-WAIT-1, FIN-WAIT-2, CLOSE-WAIT, CLOSING, LAST-ACK, and TIME-WAIT. Half close works: data that arrives after the own FIN is delivered. `abort` sends a reset, and the peer reads `ConnectionReset` after its data was discarded. Dropping a session closes it with a FIN, or with a reset when unread data is left |
+| Retransmission, minimal | One timer per connection with a fixed initial timeout of 200 ms that doubles up to 2 s, go back N from the first unacknowledged byte, a one segment probe into a zero window, and a reset with `TimedOut` after 8 timeouts without any segment from the peer |
+| Checksums | The IPv4 header checksum and the TCP checksum are computed on send and verified on receive, so the numbers include them. A frame that fails a check is counted and dropped |
+
+What it leaves out is the list that a production stack must still do, and decision record 0014 has to price it: no round trip estimate, no fast retransmit, no selective acknowledgment, no congestion control, no window scaling (the window is at most 65,535 bytes), no timestamps, no delayed acknowledgment, no out of order queue (a gap makes the receiver drop the segment and repeat its ACK), no simultaneous open, no urgent data, no IP fragmentation, no keepalive, no IPv6, and one peer address per host. TIME-WAIT lasts one second and not minutes, so a rate run does not run out of the 55,000 client ports.
+
+Timers sit in a heap with at most one entry per connection, and a connection with no outstanding data has none. A poll with idle sockets therefore does not walk the sockets, which makes `idle_poll_us` flat in the socket count. A stack that walks its socket set, like the draft smoltcp adapter on `wp/TRN-20`, grows with it. A connection is a slab entry of about 200 bytes with empty buffers, and the buffers exist only while data waits.
+
+The tests in `engine/fps-tcp/tests/own.rs` run the stack through `SessionIo` over a link that records, drops, corrupts, and delays frames. They cover the handshake numbers, one initial sequence number per connection, bulk data in both directions, a small and a full window, half close, abort and refusal, a lost SYN, SYN-ACK, data segment, and FIN, a frame that arrives late, corrupted frames, a silent peer that times out, TIME-WAIT and its reuse after the port range wraps, a smaller MTU, and the three workloads.
 
 ### Running it
 
@@ -416,35 +546,53 @@ The command takes plain arguments and runs on any host without root.
 
 ```bash
 cargo run --release -p fps-tcp --example tcp_bench -- --profile small
-cargo run --release -p fps-tcp --example tcp_bench -- --profile full --label fat-nuc --out -
+cargo run --release -p fps-tcp --example tcp_bench -- --stack own --profile small
+cargo run --release -p fps-tcp --example tcp_bench -- --stack own --profile full --label fat-nuc --out -
 cargo run --release -p fps-tcp --example tcp_bench -- --workload scale --scale-steps 1000,100000 --shards 32
 cargo run --release -p fps-tcp --example tcp_bench -- --help
 ```
 
-The profile `small` finishes within a minute and fits a hosted runner. The profile `full` measures up to 1,000,000 sockets over 64 shards and needs about 2 GiB of memory for them and finishes the scaling in under a minute on 2 vCPUs. Every flag after the profile overrides it, and the stack flags `--mtu`, `--checksums`, `--buffer-kib`, `--time-wait`, and `--idle-poll-ms` change the link and the sockets. The command prints a report and, with `--out`, writes an `fps-bench/v1` document of the suite `tcp-stack` that `bench/compare.py` reads. The metric names start with the stack key, such as `smoltcp.rate.sessions_per_s` and `smoltcp.scale.100000.bytes_per_socket`. The fat-nuc run goes through the relay as a host test, see the handoff `docs/handoff/TRN-17.md`.
+The profile `small` finishes within a minute and fits a hosted runner. The profile `full` aims at 1,000,000 sockets over 64 shards. Every flag after the profile overrides it, and the stack flags `--nodelay`, `--buffer-kib`, and `--backlog` change the sockets. The command prints a report and, with `--out`, writes an `fps-bench/v1` document of the suite `tcp-stack` that `bench/compare.py` reads. The metric names start with the stack key, such as `kernel.rate.sessions_per_s`, `own.rate.sessions_per_s`, and `kernel.scale.10000.bytes_per_socket`. The flags `--own-mtu`, `--own-window-kib`, `--own-time-wait-ms`, and `--own-rto-ms` change the own stack. The fat-nuc run goes through the relay as a host test, see the handoff `docs/handoff/TRN-17.md`.
 
-### First results of smoltcp
+### First results of the kernel reference stack
 
-The committed results in `engine/fps-tcp/results/sandbox-2vcpu/` come from the 2 vCPU agent sandbox with the default settings, which are MTU 1500, software checksums, and 64 KiB buffers for rate and throughput and 512 byte buffers for scaling. The sandbox is not the GitHub hosted runner and not fat-nuc, so TRN-10 compares only runs of one host.
+The committed results in `engine/fps-tcp/results/sandbox-2vcpu/` come from the 2 vCPU agent sandbox with the default settings, which are `TCP_NODELAY` on and kernel sized buffers. The sandbox is not the GitHub hosted runner and not fat-nuc, it was shared with other workers, and its open files limit is 20,000, so TRN-10 compares only runs of one host and reads the scaling rows as a floor.
 
 | Measure | Result |
 |---|---|
-| Sessions per second, 32 concurrent, 64 byte request and response | about 72,000, with a p50 of 0.43 ms and a p99 of 0.65 ms, and no failures |
-| Throughput, 4 concurrent uploads | about 27 Gbit/s on one core |
-| Memory per socket | 1.55 to 1.9 KB, and 1.59 KB at 1,000,584 sockets, which is about 1.6 GB |
-| Sockets reached | 1,000,584 in 64 shards, in 11.1 s for the last step and 35 s for the whole run |
-| Idle poll, 1,544 sockets in 64 shards | 16 microseconds |
-| Idle poll, 1,000,584 sockets in 64 shards | 52 milliseconds, about 52 nanoseconds per socket |
-| Probe session rate with 1,000,584 sockets held | about 90 per second, against 24,000 per second with 1,544 sockets |
-| Setup rate | 340,000 sockets per second at 1,544 sockets, and 22,500 at 1,000,584 |
+| Sessions per second, 32 concurrent, 64 byte request and response | 14,000 to 35,000 between runs on the shared host, with a p50 of 0.8 ms, and no failures |
+| Throughput, 4 concurrent uploads | about 20 Gbit/s on one core |
+| Memory per socket (user space only) | 0.35 to 0.5 KB |
+| Sockets reached | 10,177 and then 19,815, where the open files limit of 20,000 refused the next socket |
+| Idle poll | zero, because the kernel has no user space poll |
+| Probe session rate with 10,177 sockets held | about 28,000 per second |
 
-The poll cost grows with the sockets of a shard, because smoltcp walks every socket to demultiplex a packet, to find work to send, and to add a socket. One shard of 16,016 sockets costs 0.24 ms per poll, which is 15 nanoseconds per socket, and it limits a session probe to 176 per second. The cost per socket rises to 52 nanoseconds at 1,000,584 sockets in 64 shards, probably because the 1.6 GB of socket state no longer fits in the cache. A stack that scales to 1,000,000 sockets with smoltcp therefore needs many small shards, or a flow table of its own in front of smoltcp. The setup rate falls for the same reason.
+The reference run says what the host gives a plain kernel session. It does not show the cost of one million sockets, which needs a host with a higher open files limit. The first draft of smoltcp on the same harness reached 1,000,584 sockets at 1.59 KB per socket, with an idle poll of 15 to 52 ns per socket, and it lives on `wp/TRN-20`.
+
+### Results of the own stack next to the kernel reference
+
+The committed results in `engine/fps-tcp/results/sandbox-2vcpu-trn18/` come from the same 2 vCPU agent sandbox, run in one session, with the kernel reference run again next to the own stack, because the earlier kernel results of TRN-17 ran on an earlier boot with another clock. They are sandbox results, not results of the GitHub runner and not of fat-nuc, and the host was shared with other workers, so a rate varies by up to a factor of three between runs and differences below a factor of two are noise. The own stack runs over the in memory link and the kernel over loopback, and both hosts of a pair share one process and core.
+
+| Measure | Own stack | Kernel reference |
+|---|---|---|
+| Sessions per second, 32 concurrent, 64 byte request and response | 32,000 to 36,000 in six runs, p50 0.8 to 0.9 ms | 14,000 to 49,000 in six runs, p50 0.63 to 0.69 ms |
+| Sessions per second, 256 concurrent | 33,700 to 34,900, p50 6.3 to 7.1 ms | 29,200 to 32,800, p50 7.3 to 7.6 ms |
+| Throughput, 4 concurrent 64 MiB uploads | 14.8 Gbit/s at MTU 1500, 15.9 Gbit/s at MTU 9000 | 19.0 Gbit/s in one run of this session, about 20 in TRN-17 |
+| Sockets reached | 1,000,629 in 64 shards, in 0.76 s for the last step | 19,815 where the open files limit of 20,000 refused the next socket |
+| Memory per socket (growth of the resident set) | 228 B at 1,000,629 sockets, 330 to 400 B below 10,000 | 0.31 to 0.50 KB, user space only, and kernel socket memory is not in it |
+| Idle poll | flat at 0.4 us for one shard from 1,000 to 16,000 sockets, and 23 to 38 us for a pass over 64 shards up to 1,000,629 sockets | zero by construction |
+| Probe session rate with the sockets held | 49,000 to 66,000 per second from 1,000 to 1,000,629 sockets | 14,000 to 43,000 per second from 1,000 to 16,000 sockets |
+
+The own stack never retransmitted in these runs, because the in memory link loses nothing, so the numbers show the cost of the state machine, the checksums, the frame copies, and the adapter, and not the cost of loss recovery. The own stack counts the memory of its connection table, so its 228 to 400 B per socket is the whole cost of a socket, where the kernel's figure leaves out the kernel memory of a socket. It also holds 1,000,629 sockets with no descriptor per socket, which at 228 B per socket is about 230 MB of resident growth. A connection that waits for an accept or holds unread data costs more, by the size of its buffers. The rate of the own stack is limited by the latency of one driver pass and one task switch per step, so it hardly changes between 32 and 256 concurrent sessions, and the kernel is at the same level there.
 
 ### Limits
 
 | Limit | Consequence |
 |---|---|
-| The link has no delay, loss, or reordering | The numbers show stack and adapter cost only, and retransmission and congestion control stay unmeasured |
+| The kernel stack runs on the loopback interface, and a user space stack on an in memory link, and neither has delay, loss, or reordering | The numbers show stack and adapter cost only, and retransmission and congestion control stay unmeasured |
 | Both hosts of a pair share a process and a core | A rate counts the work of the client and of the server, so it is not the rate of one agent talking to a remote peer |
 | Scaling runs on one thread | The poll cost per socket is a per core cost, and the multi core rate comes from `--threads` on the rate workload |
-| `cargo deny` rejects the license `0BSD` of smoltcp and managed | The owner must allow it in `deny.toml`, see the handoff of TRN-17 |
+| The open files limit caps a kernel run | The sandbox ends near 20,000 sockets. A host test needs a limit above 1,000,100 for 1,000,000 sockets |
+| `cargo deny` rejects the license `0BSD` of smoltcp and managed | The smoltcp adapter is TRN-20 and waits for the owner to allow 0BSD in `deny.toml` |
+| The own stack has minimal retransmission and no congestion control, and its link is lossless | The measurements show no loss recovery. A fair comparison on a lossy path needs the work that the own stack leaves out, which is the main cost of choosing it |
+| The own stack measures its rate on one thread with a driver pass per wake up | The rate of one shard is latency bound. `--threads` runs one stack per thread, and the real multi core rate of an engine belongs to TRN-12 |

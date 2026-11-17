@@ -9,6 +9,8 @@
 //!    [`capabilities::HostCapabilities::to_capabilities`] fills
 //!    [`proto::Capabilities`], the Rust mirror of the proto `Capabilities`
 //!    message.
+//!    [`select`] picks the transport backend from that detection and fills
+//!    `selected_backend` and `xdp_driver_mode` (AGT-22).
 //! 2. The standalone mode. [`run::run`] executes a [`plan::Plan`] in its
 //!    canonical JSON mapping without a controller. [`modules`] loads the
 //!    plan modules with digest checks and registers their native template
@@ -38,6 +40,7 @@ pub mod plan;
 pub mod portfilter;
 pub mod proto;
 pub mod run;
+pub mod select;
 pub mod session;
 pub mod sysroot;
 pub mod tls;

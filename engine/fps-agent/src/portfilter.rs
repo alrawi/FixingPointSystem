@@ -70,15 +70,20 @@ impl Net {
 pub struct PortNets {
     port: String,
     nets: Vec<Net>,
+    /// A pool on the port leases its addresses through DHCP (CON-34), so the
+    /// prefixes do not name every host of the port.
+    leased: bool,
 }
 
 /// Returns the prefixes of the host pools of `plan`, by the port that they sit
 /// on. A prefix that does not parse is left out, because the run path refused
-/// such a plan before.
+/// such a plan before. A pool with `dhcp4` has no prefix, so it adds no net and
+/// marks its port as leased.
 pub fn port_nets(plan: &Plan) -> Vec<PortNets> {
     let mut out: Vec<PortNets> = Vec::new();
     for pool in &plan.host_pools {
         let mut nets = Vec::new();
+        let leased = pool.dhcp4.is_some();
         if let Ok(p) = pool.ipv4_prefix.parse::<Ipv4Prefix>() {
             nets.push(Net::V4(p));
         }
@@ -86,10 +91,14 @@ pub fn port_nets(plan: &Plan) -> Vec<PortNets> {
             nets.push(Net::V6(p));
         }
         match out.iter_mut().find(|n| n.port == pool.port) {
-            Some(n) => n.nets.extend(nets),
+            Some(n) => {
+                n.nets.extend(nets);
+                n.leased |= leased;
+            }
             None => out.push(PortNets {
                 port: pool.port.clone(),
                 nets,
+                leased,
             }),
         }
     }
@@ -135,6 +144,12 @@ impl PortFilter {
             return Ok(Self::all());
         }
         if plan_ports.iter().any(|p| p == spec) {
+            // The leased addresses of a DHCP pool lie in no prefix of the plan,
+            // so a filter by prefix would drop their sessions. A port with such
+            // a pool keeps every session.
+            if pools.iter().any(|p| p.port == spec && p.leased) {
+                return Ok(Self::all());
+            }
             let nets = pools
                 .iter()
                 .filter(|p| p.port == spec)
@@ -340,6 +355,7 @@ mod tests {
                 .iter()
                 .map(|p| Net::V4(p.parse().expect("prefix")))
                 .collect(),
+            leased: false,
         }
     }
 
@@ -380,6 +396,38 @@ mod tests {
 
     const SYN: u8 = 0x02;
     const ACK: u8 = 0x10;
+
+    #[test]
+    fn a_dhcp_pool_adds_no_prefix_and_a_port_with_one_keeps_every_session() {
+        use crate::plan::{Dhcp4, HostPoolSlice};
+        let plan = Plan {
+            host_pools: vec![
+                HostPoolSlice {
+                    name: "clients".into(),
+                    port: "client0".into(),
+                    dhcp4: Some(Dhcp4 {}),
+                    ..HostPoolSlice::default()
+                },
+                HostPoolSlice {
+                    name: "servers".into(),
+                    port: "server0".into(),
+                    ipv4_prefix: "10.2.0.0/24".into(),
+                    ..HostPoolSlice::default()
+                },
+            ],
+            ..Plan::default()
+        };
+        let pools = port_nets(&plan);
+        assert_eq!(pools.len(), 2);
+        assert!(pools[0].nets.is_empty() && pools[0].leased);
+        assert_eq!(pools[1].nets.len(), 1);
+        assert!(!pools[1].leased);
+        let ports = plan_ports();
+        let client = PortFilter::parse("client0", &ports, &pools).unwrap();
+        assert!(client.is_all(), "leased addresses lie in no prefix");
+        let server = PortFilter::parse("server0", &ports, &pools).unwrap();
+        assert!(!server.is_all());
+    }
 
     #[test]
     fn an_empty_port_keeps_everything() {

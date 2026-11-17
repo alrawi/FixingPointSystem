@@ -13,9 +13,14 @@ from realism.capture import (
     CaptureError,
     Frame,
     SessionKey,
+    SessionResolver,
     decode,
+    decode_segment,
+    read_frames,
     summarize,
 )
+from realism.exchanges import read_exchanges
+from realism.structure import connections
 from realism.tests import pcapgen
 
 
@@ -125,3 +130,108 @@ def test_session_key_ignores_direction() -> None:
     b = SessionKey.of("tcp", "10.0.0.1", 40000, "10.0.0.2", 80)
     assert a == b
     assert a.a_ip == "10.0.0.1"
+
+
+CLIENT = ("10.0.0.10", 40000)
+SERVER = ("10.0.1.80", 80)
+RST = 0x04
+
+
+def _syn(cap: pcapgen.Capture, seq: int = 1000) -> None:
+    cap.add(pcapgen.tcp(*CLIENT, *SERVER, pcapgen.SYN, seq, 0))
+
+
+def test_a_syn_after_a_fin_on_the_same_key_starts_a_new_session(tmp_path: Path) -> None:
+    cap = pcapgen.Capture()
+    cap.http_get(CLIENT, SERVER, "/first")
+    cap.http_get(CLIENT, SERVER, "/second")
+    summary = summarize(cap.write_pcap(tmp_path / "reuse.pcap"))
+    assert [s.id for s in summary.sessions] == [1, 2]
+    assert [s.connection for s in summary.sessions] == [0, 1]
+    assert [s.packets for s in summary.sessions] == [10, 10]
+    assert summary.sessions[0].key == summary.sessions[1].key
+    assert summary.sessions[0].last_seen < summary.sessions[1].first_seen
+    assert all((s.client_ip, s.client_port) == CLIENT for s in summary.sessions)
+
+
+def test_a_syn_after_an_rst_starts_a_new_session(tmp_path: Path) -> None:
+    cap = pcapgen.Capture()
+    _syn(cap)
+    cap.add(pcapgen.tcp(*SERVER, *CLIENT, RST | pcapgen.ACK, 0, 1001))
+    _syn(cap, 7000)
+    cap.add(pcapgen.tcp(*SERVER, *CLIENT, pcapgen.SYN | pcapgen.ACK, 9000, 7001))
+    summary = summarize(cap.write_pcap(tmp_path / "rst.pcap"))
+    assert [s.packets for s in summary.sessions] == [2, 2]
+    assert [(s.client_ip, s.client_port) for s in summary.sessions] == [CLIENT, CLIENT]
+
+
+def test_a_retransmitted_syn_stays_in_its_session(tmp_path: Path) -> None:
+    cap = pcapgen.Capture()
+    _syn(cap)
+    _syn(cap)
+    cap.add(pcapgen.tcp(*SERVER, *CLIENT, pcapgen.SYN | pcapgen.ACK, 5000, 1001))
+    cap.add(pcapgen.tcp(*SERVER, *CLIENT, pcapgen.SYN | pcapgen.ACK, 5000, 1001))
+    cap.add(pcapgen.tcp(*CLIENT, *SERVER, pcapgen.ACK, 1001, 5001))
+    summary = summarize(cap.write_pcap(tmp_path / "retransmit.pcap"))
+    (session,) = summary.sessions
+    assert session.packets == 5
+    assert session.connection == 0
+
+
+def test_traffic_after_a_fin_without_a_new_syn_stays_in_the_session(tmp_path: Path) -> None:
+    cap = pcapgen.Capture()
+    _syn(cap)
+    cap.add(pcapgen.tcp(*SERVER, *CLIENT, pcapgen.SYN | pcapgen.ACK, 5000, 1001))
+    cap.add(pcapgen.tcp(*CLIENT, *SERVER, pcapgen.ACK, 1001, 5001))
+    cap.add(pcapgen.tcp(*CLIENT, *SERVER, pcapgen.FIN | pcapgen.ACK, 1001, 5001))
+    cap.add(pcapgen.tcp(*SERVER, *CLIENT, pcapgen.PSH | pcapgen.ACK, 5001, 1002, b"late"))
+    cap.add(pcapgen.tcp(*CLIENT, *SERVER, pcapgen.ACK, 1002, 5005))
+    summary = summarize(cap.write_pcap(tmp_path / "half.pcap"))
+    assert [s.packets for s in summary.sessions] == [6]
+
+
+def test_udp_on_a_reused_port_stays_one_session(tmp_path: Path) -> None:
+    cap = pcapgen.Capture()
+    cap.add(pcapgen.udp("10.0.0.10", 50000, "10.0.1.53", 53, b"a"))
+    cap.add(pcapgen.udp("10.0.1.53", 53, "10.0.0.10", 50000, b"b"))
+    cap.add(pcapgen.udp("10.0.0.10", 50000, "10.0.1.53", 53, b"c"))
+    assert len(summarize(cap.write_pcap(tmp_path / "udp.pcap")).sessions) == 1
+
+
+def test_the_resolver_follows_the_session_table(tmp_path: Path) -> None:
+    cap = pcapgen.Capture()
+    cap.http_get(CLIENT, SERVER, "/first")
+    cap.http_get(CLIENT, SERVER, "/second")
+    path = cap.write_pcap(tmp_path / "reuse.pcap")
+    sessions = summarize(path).sessions
+    expected = {
+        "both sessions": (sessions, [1] * 10 + [2] * 10),
+        "only the second": (sessions[1:], [None] * 10 + [2] * 10),
+    }
+    for wanted, want in expected.values():
+        resolver = SessionResolver(wanted)
+        seen: list[int | None] = []
+        _, frames = read_frames(path)
+        for frame in frames:
+            segment = decode_segment(frame)
+            assert segment is not None
+            session = resolver.session_of(segment.packet)
+            seen.append(session.id if session else None)
+        assert seen == want
+
+
+def test_readers_attribute_the_packets_of_each_connection_to_its_own_session(
+    tmp_path: Path,
+) -> None:
+    cap = pcapgen.Capture()
+    cap.http_get(CLIENT, SERVER, "/first")
+    cap.http_get(CLIENT, SERVER, "/second")
+    path = cap.write_pcap(tmp_path / "reuse.pcap")
+    sessions = summarize(path).sessions
+    exchanges = read_exchanges(path, sessions)
+    targets = {i: [e.target for e in exchanges[i].exchanges] for i in (1, 2)}
+    assert targets == {1: ["/first"], 2: ["/second"]}
+    ends = connections(path, sessions)
+    assert ends[1].end < ends[2].start
+    assert ends[1].start == sessions[0].first_seen
+    assert ends[2].start == sessions[1].first_seen

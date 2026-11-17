@@ -75,6 +75,23 @@ The owner's Linux server fat-nuc runs two kinds of work.
 - The coordinator sends only commits that passed CI and the Jev gate, never sends a job between 00:50 and 03:30 UTC, and never sends a secret.
 - Logs that come back are redacted, and a host test result in a pull request quotes only the outcome and the measured values, never an address of the host.
 
+### Self hosted runner check
+
+`tools/swarm/check_self_hosted.py` reads every file of `.github/workflows/` and enforces rules 1 and 2 above, so a workflow that names a self hosted runner cannot reach `main` with a trigger that an outsider or an unreviewed branch can pull. A job is self hosted unless every `runs-on` label is `ubuntu-*`, `windows-*`, or `macos-*`. The label `self-hosted`, the label `fps-bench`, any other name, a runner group, and an expression that the check cannot resolve all count as self hosted, so a typo fails closed. The check fails a self hosted job unless all of these hold.
+
+| Rule | What the check reads |
+|---|---|
+| Triggers | The workflow starts only on `workflow_dispatch` and `schedule`. Any other event fails, among them `push`, `pull_request`, `pull_request_target`, `issue_comment`, `workflow_run`, and `workflow_call`, in the mapping, list, or single name form of `on:` |
+| Permissions | The job, or else the workflow, has `permissions` with `contents: read` and no `write` value |
+| Checkout | The job has an `actions/checkout` step, and every such step sets `persist-credentials: false` |
+| Timeout | The job sets `timeout-minutes` to a positive whole number |
+
+The check does not accept a job level `if:` in place of the trigger rule. A guard such as `github.event_name == 'schedule'` sits in the same file as the triggers, and one wrong clause sends code of a fork to the owner host, while the trigger list is a plain set that the check reads exactly. A workflow that has a self hosted job and a `push` or `pull_request` trigger therefore fails whatever its `if:` says, and the job moves to a workflow of its own. Keep the `if:` as a second layer: `workflow_dispatch` starts the file on any branch, and only `github.ref == 'refs/heads/main'` keeps that run off the host. The check cannot prove an expression, so it only warns on stderr when a self hosted job has no `if:` that names that condition, and the warning does not change the exit code.
+
+The command exits with 0 when every workflow passes, with 1 when a rule fails, and with 2 when a workflow file cannot be parsed. It does not check the parts of the rules that need a reading of the steps, which are the ban on a secret in rule 2 and rules 3 to 5 on inputs, sudo, and host changes, so a reviewer still reads those. Run it with `python3 -I tools/swarm/check_self_hosted.py`. Its tests in `tools/swarm/test_check_self_hosted.py` build workflows in a temporary directory, and they also load the real workflows, so a new workflow with a self hosted label and a wrong trigger fails the tests as well as the step.
+
+On `main` the check reports one workflow today: `qa-bench.yml` holds the self hosted `nightly` job and also starts on `push` and `pull_request`. Its job guard keeps that job to `schedule` and to `workflow_dispatch` on `main`, but the rule wants the nightly job in a workflow of its own. The owner asked on 2026-11-10 that `qa-bench.yml` stay untouched, so the split waits for the owner, and until then CI runs the check's tests but does not run the check on `main`.
+
 ## Release workflow
 
 The workflow `.github/workflows/release.yml` builds the versioned artifacts of a release, writes `SHA256SUMS` and the release notes, and creates the GitHub release. Only the coordinator edits this file, as with every workflow.

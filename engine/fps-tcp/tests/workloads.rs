@@ -1,21 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! Component tests of the three workloads against the smoltcp stack.
+//! Component tests of the three workloads against the kernel reference stack.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use fps_tcp::workload::{
     session_rate, socket_scaling, throughput, Direction, RateConfig, RateReport, ScaleConfig,
     ThroughputConfig, ThroughputReport,
 };
-use fps_tcp::{MonotonicClock, SmolConfig, SmolStack, TcpStack};
+use fps_tcp::{KernelStack, TcpStack};
 
-fn stack(seed: u64) -> SmolStack {
-    let config = SmolConfig {
-        seed,
-        ..SmolConfig::default()
-    };
-    SmolStack::new(config, Arc::new(MonotonicClock::new()))
+fn stack(_index: u64) -> KernelStack {
+    KernelStack::default()
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -35,8 +30,8 @@ async fn session_rate_completes_sessions_without_failures() {
     assert!(report.sessions_per_s > 0.0);
     assert!(report.latency.p50_us <= report.latency.p99_us);
     assert!(report.latency.p99_us <= report.latency.max_us);
-    // A session needs at least three frames to open, two for the data, and four to close.
-    assert!(run.stats.frames > report.sessions * 6);
+    // Both ends of every finished session are closed again.
+    assert_eq!(run.stats.sockets_open, 1, "only the listening socket stays");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -74,18 +69,21 @@ async fn scaling_holds_the_requested_sockets_and_reports_memory() {
         // Two sockets per session, plus the listening sockets of both shards.
         assert!(step.sockets >= step.target_sockets as u64);
         assert!(step.sockets < step.target_sockets as u64 + 100);
-        assert!(step.idle_poll_us > 0.0);
+        // The kernel has no user space poll, so its cost is close to zero.
+        assert!(step.idle_poll_us >= 0.0);
         assert!(step.probe_sessions_per_s > 0.0);
     }
     assert!(report.max_sockets() >= 1200);
     if let Some(bytes) = report.steps[1].bytes_per_socket {
+        // Kernel socket memory is not in the resident set of the process.
         assert!(
-            bytes > 100.0 && bytes < 100_000.0,
+            (0.0..100_000.0).contains(&bytes),
             "{bytes} bytes per socket"
         );
     }
-    let held: u64 = shards.iter().map(|s| s.stats().sockets_open).sum();
-    assert!(held >= 1200);
+    // The workload dropped its sessions, so only listening sockets remain.
+    let left: u64 = shards.iter().map(|s| s.stats().sockets_open).sum();
+    assert!(left < 10, "{left} sockets remain");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -105,8 +103,8 @@ async fn scaling_stops_at_the_first_step_over_budget() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn one_server_port_serves_more_sessions_than_the_backlog_at_scale() {
-    // 3000 sessions share one server port that keeps a backlog of eight.
+async fn one_server_port_serves_thousands_of_sessions_at_scale() {
+    // 3000 sessions share one server port.
     let shards = [stack(40)];
     let config = ScaleConfig {
         steps: vec![6000],

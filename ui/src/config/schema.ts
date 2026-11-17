@@ -53,6 +53,14 @@ function describe(error: ErrorObject): { pointer: string; message: string } {
         pointer: error.instancePath,
         message: `needs at least ${String(params["limit"])} item${params["limit"] === 1 ? "" : "s"}`,
       };
+    case "if":
+      // The then branch of a host pool with dhcp4. Its own failures name the field.
+      return {
+        pointer: error.instancePath,
+        message: "with dhcp4 the pool must be a client pool with no ipv4, ipv6, and gateway",
+      };
+    case "false schema":
+      return { pointer: error.instancePath, message: "is not allowed here" };
     case "anyOf": {
       const branches = Array.isArray(error.schema)
         ? (error.schema as { required?: string[] }[])

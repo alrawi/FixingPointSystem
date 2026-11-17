@@ -23,6 +23,7 @@ The module has two packages after CTL-01.
 | `internal/report/html/` | The self contained HTML run report with inline SVG charts (CTL-13) |
 | `internal/wiring/` | Builds the controller from its packages, the registry and agent adapters, and the combined REST server (CTL-17) |
 | `internal/pki/` | The controller CA, enrollment tokens, agent certificates, rotation, revocation, and the mutual TLS configuration (CTL-15) |
+| `internal/multiagent/` | Multi agent runs: the clock offset check, the plan split check, the common start instant, and exact counter aggregation (CTL-16) |
 
 Later packages add their own directories under `internal/`, as the [Implementation Plan](Implementation-Plan.md) assigns them. The `app.App` type owns every dependency, and the module has no package level mutable state. A later package mounts its handlers with `App.Handle` before `App.Run` starts, for example CTL-02 for the `/v1` API.
 
@@ -677,6 +678,10 @@ An `AgentCapability` carries the `Agent` schema and every backend that the agent
 
 Every array is present and empty when its source is empty or nil. A failing source gives a 500 problem whose detail names the source. `TestContractCapabilities` serves two fake agents and two modules and validates the response against the OpenAPI document with the contract loader. `TestCapabilitiesVersions` compares the two version constants with the OpenAPI document and the heading of `contracts/README.md`, so a contract release that forgets them fails the build.
 
+### Agent view of the host (CTL-53)
+
+`agents.ToAPI` reports three facts of the latest registration that CON-32 added. `Agent.backend` is the backend that the agent selected (`selected_backend`). An agent that sends `BACKEND_UNSPECIFIED` gets the first known entry of `backends`, because an agent of protocol 0.2.4 or earlier always ran the kernel backend and a new agent also reports engine_api 0.2.x, so the controller cannot tell the two apart by version. `Agent.kernel_release` is the kernel release of the host, and `Agent.ports[].xdp_driver_mode` is `generic`, `native`, or `zero_copy`. Both are absent, not empty, when the agent sent nothing. The XDP mode is a driver table hint: the controller reports it and never selects a backend or refuses a run from it. `TestRESTAgentCapabilitiesReport` covers a new agent, an AF_XDP agent with a mode per port, an old agent, and an agent without a backend, and validates the responses against the OpenAPI contract.
+
 ## Metrics aggregation
 
 The package `internal/metrics` merges the counter snapshots of the agents of a run into run metrics and serves them. It implements `GET /v1/runs/{id}/metrics` and `GET /v1/runs/{id}/metrics:stream` as the type `metrics.API`, which embeds `api.Unimplemented`, and `GET /metrics` in the Prometheus text format as the handler `metrics.Prometheus`. The binary creates one `Aggregator` with `metrics.New`, calls `Aggregator.Observe` from `agents.Config.Observer` next to `Orchestrator.Observe`, mounts `metrics.NewAPI(agg, orchestrator)` with the other operation sets, and mounts `metrics.NewPrometheus(agg)` at `/metrics`.
@@ -1246,3 +1251,39 @@ The tests open real TLS connections on the loopback interface. `TestMutualTLSAdm
 - `TestExpiredCertificateEndsAnIdleAgentSession` moves the clock past the lifetime of a certificate, and the sweep ends the session of the idle agent. The agent manager tests in `internal/agents` show that a busy agent keeps its session, and that `EndSession` and the expiry give their reasons.
 - `TestAdminSocket`, `TestAdminSocketReplacesAStaleFile`, and `TestAdminHandlerValidatesRequests` cover the admin socket: mode 0600, the refusal of a live socket, the replacement of a stale one, and the validation of every request.
 - `TestEndToEndMutualTLS` in `cmd/fps-controller` builds the binary in its default mode and runs the path with a Go fake agent. It mints a token with the `token` subcommand, enrolls over HTTPS with the CA file from the PKI directory, registers over mutual TLS, shows that no certificate, a plain client, a certificate of another CA, and another identity cannot register, revokes with the `revoke` subcommand, and enrolls again with a new token. It checks that the token never reaches the logs. `TestEndToEnd` keeps its Go fake agent over the plain mode.
+
+## Multi agent runs
+
+CTL-16 added the package `internal/multiagent/`. A `Coordinator` starts one test on several agents at once, and a `Collector` sums their counters. The package reaches the agent manager, the compiler, and the clock measurements through interfaces, and `*agents.Manager` satisfies `AgentManager`.
+
+`Coordinator.Start` works in a fixed order, so that a refusal leaves no trace on any agent.
+
+1. It reads the clock offset of every agent from a `ClockSource` and refuses with `ErrClockOffset` when the absolute offset of any agent is above 10 ms (`MaxClockOffset`). An offset of exactly 10 ms passes. The error is a `*ClockError` that lists every offender. An agent without a measurement is refused with `ErrNoClockOffset`, because the run does not start on a guess.
+2. It reads the capabilities of the agents and splits the test with the compiler. `Split` checks that every agent has exactly one plan, that no plan names a stranger, and that all plans share the run id and one nonzero seed, and fails with `ErrSplit` otherwise.
+3. It reserves the agents for the run id, prepares all of them in parallel, and sends every agent the same start instant, which is the controller time after the last prepare plus `StartLead` (two seconds by default). Each `StartCommand.start_at` is that instant plus the measured offset of the agent, so it names the same moment on the clock of each agent.
+
+When a step from 3 on fails, `Start` aborts every agent, releases the reservations, and returns the error with the agent ids.
+
+The `Collector` takes snapshots through `Run.Observe`, which the caller wires into `agents.Config.Observer`, and through the final snapshot of each stop result. Counters are cumulative, so the newest snapshot of an agent replaces the older ones, and a repeated or older sequence and a snapshot of another plan are dropped. The sum is exact: counters add in unsigned 64 bit integers, never through a float, and a sum above 2^64-1 fails with `ErrCounterOverflow`. Gauges add as floats. `Totals` returns the counters without labels, and `Series` returns every series with its labels. `Run.Stop` stops all agents, adds their final snapshots, releases the reservations, and returns the aggregate together with any stop error.
+
+### Clock offset source
+
+CTL-51 added the production `ClockSource`. The agent manager records `Heartbeat.agent_time` minus the controller time at which the heartbeat arrived, per open session, and `Agent.ClockOffset` and `Agent.HasClockOffset` expose it. `multiagent.HeartbeatClocks{Agents: mgr}` adapts the manager to `ClockSource`, and it lives in `multiagent` because that package imports `agents`. An offline or unknown agent, and an agent that has sent no `agent_time` in its open session, have no measurement, so the run is refused with `ErrNoClockOffset`. The offset resets when a session opens, so a stale value never survives a reconnection.
+
+The estimate includes the one way delay of the heartbeat. It is the true offset minus that delay, so an agent with a true offset of zero reports about minus the delay. On a lab network the delay is far below the limit, and a caller that needs a tighter bound lowers `Config.MaxClockOffset`.
+
+`fakeagent.Options.ClockSkew` is added to every time that a fake agent reports, and `Options.Clock` replaces its wall clock. Both default to the old behavior (no skew, wall clock), which cli/e2e and the browser tests rely on. A test that gives the manager and the agent one fixed clock measures the skew exactly. CTL-52 wires `HeartbeatClocks` into the run orchestrator.
+
+The limit applies to each agent against the controller. Two agents at +10 ms and -10 ms both pass and differ by 20 ms from each other.
+
+### Multi agent runs in the run orchestrator
+
+CTL-52 sends every run on two or more agents through `multiagent.Coordinator`. The controller wiring sets `runs.Config.Clocks` to `multiagent.HeartbeatClocks{Agents: mgr}`. A run on one agent stays on the old path, which prepares and starts the agent without a start instant and without a clock check, and so does an orchestrator whose `Config.Clocks` is nil. `Config.MaxClockOffset` and `Config.StartLead` pass to the coordinator, with its defaults of 10 ms and two seconds.
+
+`POST /v1/runs` checks the clocks in `Create`, after it has reserved the agents and compiled the plans and before it creates the run. A refusal releases the reservations, restores the reservation of an operator, creates no run, and sends no command. The problem has status 409, the status that the same endpoint already gives for an agent that is offline, reserved, or busy: the clock of an agent is part of its state, and a request for an agent in the wrong state conflicts with it. Its detail names every offender with its offset, for example `agent-b 15ms`, and an agent without a measurement gives 409 as well. The contract needs no change, because `startRun` answers every problem through its `default` response.
+
+The coordinator checks the clocks again when the run starts, because time passes between the request and the start. The run then goes through `preparing` while the coordinator prepares every agent and sends every agent the same start instant, and becomes `running` when all start commands were accepted. The orchestrator passes the plans that `Create` compiled to the coordinator, so the plan ids that the orchestrator watches are the ones that the agents hold, and nothing compiles twice.
+
+The orchestrator feeds every snapshot event of the run to the collector of the coordinator, and a ramp down goes through `Run.Stop`, which sends the stop command to every agent, adds the final snapshots, and releases the reservations. The series and totals of the run come from that collector, so the sum of every counter is exact in unsigned 64 bit integers and converts to a float once, and a sum that overflows fails the run. The orchestrator keeps its own per agent snapshots for the calibration, for the phase, and for one thing that the collector cannot know: the sessions that a failed agent attempted and never finished count as failed, as in a run on one agent. The totals of the metrics aggregator (`internal/metrics`) are separate and the run summary never adds them.
+
+Tests: `TestRESTMultiAgentRunRefusedForAnAgentOffBy15ms` and `TestRESTMultiAgentRunReportsExactTotals` in `internal/runs` run the configuration over REST, against the contract, on three fake agents, and check the 409, the unchanged agents, the converted start instants, and exact sums above 2^32. `TestMultiAgentRunCountsTheOpenSessionsOfAFailedAgent`, `TestSingleAgentRunIgnoresTheClockCheck`, and `TestRESTMultiAgentRunRefusedWithoutAClockMeasurement` cover the failed agent, the unchanged single agent path, and a missing measurement.

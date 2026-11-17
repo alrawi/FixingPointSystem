@@ -41,6 +41,27 @@ func (e AgentBackend) Valid() bool {
 	}
 }
 
+// Defines values for AgentPortsXdpDriverMode.
+const (
+	AgentPortsXdpDriverModeGeneric  AgentPortsXdpDriverMode = "generic"
+	AgentPortsXdpDriverModeNative   AgentPortsXdpDriverMode = "native"
+	AgentPortsXdpDriverModeZeroCopy AgentPortsXdpDriverMode = "zero_copy"
+)
+
+// Valid indicates whether the value is a known member of the AgentPortsXdpDriverMode enum.
+func (e AgentPortsXdpDriverMode) Valid() bool {
+	switch e {
+	case AgentPortsXdpDriverModeGeneric:
+		return true
+	case AgentPortsXdpDriverModeNative:
+		return true
+	case AgentPortsXdpDriverModeZeroCopy:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentState.
 const (
 	AgentStateBusy     AgentState = "busy"
@@ -287,17 +308,25 @@ func (e GetRunReportParamsFormat) Valid() bool {
 // Agent defines model for Agent.
 type Agent struct {
 	// Address Peer address of the open control session and absent while the agent is offline.
-	Address *string       `json:"address,omitempty"`
+	Address *string `json:"address,omitempty"`
+
+	// Backend The backend that the agent selected and started. A controller of 0.13.0 or later takes it from `selected_backend` of the agent, and for an agent of agent protocol 0.2.4 or earlier, which does not send it, from the first entry of `backends`, which is `kernel`. An older controller always took the first entry.
 	Backend *AgentBackend `json:"backend,omitempty"`
 	Cores   *int          `json:"cores,omitempty"`
 
 	// Id Agent identity from its client certificate.
-	Id     string             `json:"id"`
-	Labels *map[string]string `json:"labels,omitempty"`
-	Ports  *[]struct {
+	Id string `json:"id"`
+
+	// KernelRelease Kernel release of the agent host, as `uname -r` prints it. Absent for an agent of agent protocol 0.2.4 or earlier and when the agent cannot read it. A controller older than 0.13.0 does not send it.
+	KernelRelease *string            `json:"kernel_release,omitempty"`
+	Labels        *map[string]string `json:"labels,omitempty"`
+	Ports         *[]struct {
 		Driver    *string `json:"driver,omitempty"`
 		Name      string  `json:"name"`
 		SpeedMbps *int    `json:"speed_mbps,omitempty"`
+
+		// XdpDriverMode XDP mode of the port, a driver table hint: `generic` is the generic (skb) hook, `native` is the driver hook with copy mode sockets, and `zero_copy` is the driver hook with zero copy sockets. It says what rate a driver may reach and changes no run or verdict. Absent unless the selected backend is `af_xdp` and the agent bound a queue of the port, and absent for an agent of agent protocol 0.2.4 or earlier. A controller older than 0.13.0 does not send it.
+		XdpDriverMode *AgentPortsXdpDriverMode `json:"xdp_driver_mode,omitempty"`
 	} `json:"ports,omitempty"`
 
 	// ReservedBy Holder of the reservation of the agent: `operator` for a reservation through reserveAgent, and the identifier of the run for an agent that a run uses. Present while any reservation exists, so it can also be present when `state` is `offline` or `busy`, which take precedence over `reserved`. A controller older than 0.10.0 does not send it.
@@ -306,8 +335,11 @@ type Agent struct {
 	Version    *string    `json:"version,omitempty"`
 }
 
-// AgentBackend defines model for Agent.Backend.
+// AgentBackend The backend that the agent selected and started. A controller of 0.13.0 or later takes it from `selected_backend` of the agent, and for an agent of agent protocol 0.2.4 or earlier, which does not send it, from the first entry of `backends`, which is `kernel`. An older controller always took the first entry.
 type AgentBackend string
+
+// AgentPortsXdpDriverMode XDP mode of the port, a driver table hint: `generic` is the generic (skb) hook, `native` is the driver hook with copy mode sockets, and `zero_copy` is the driver hook with zero copy sockets. It says what rate a driver may reach and changes no run or verdict. Absent unless the selected backend is `af_xdp` and the agent bound a queue of the port, and absent for an agent of agent protocol 0.2.4 or earlier. A controller older than 0.13.0 does not send it.
+type AgentPortsXdpDriverMode string
 
 // AgentState defines model for Agent.State.
 type AgentState string

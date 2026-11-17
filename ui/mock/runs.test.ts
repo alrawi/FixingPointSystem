@@ -259,6 +259,53 @@ describe("mock runs", () => {
   });
 });
 
+describe("mock stream ticks", () => {
+  it("sends every tick, in order, even when the timer of the stream fires late", async () => {
+    let ms = 0;
+    const mock = await startMockServer(0, "127.0.0.1", {
+      runs: { now: () => ms, stepMs: 20, runTicks: 100 },
+    });
+    try {
+      const { id } = (await (
+        await fetch(`${mock.baseUrl}/runs`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ config_id: "cfg_http_smoke" }),
+        })
+      ).json()) as { id: string };
+      // The run has traffic from its second period on, so tick 1 is at period 2 and tick 2 at period 3.
+      ms = 3 * 20;
+      const response = await fetch(`${mock.baseUrl}/runs/${id}/metrics:stream?view=application`, {
+        headers,
+      });
+      const reader = response.body?.pipeThrough(new TextDecoderStream()).getReader();
+      expect(reader).toBeDefined();
+      const parser = new EventStreamParser();
+      const ticks: string[] = [];
+      let jumped = false;
+      while (ticks.length < 5 && reader) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        for (const event of parser.push(value)) {
+          if (event.type !== "message") continue;
+          ticks.push((JSON.parse(event.data) as { ts: string }).ts);
+          if (!jumped) {
+            // Four periods pass at once, as when a loaded process runs its timer late.
+            jumped = true;
+            ms += 4 * 20;
+          }
+        }
+      }
+      await reader?.cancel();
+      expect(ticks).toEqual(
+        [2, 3, 4, 5, 6].map((tick) => new Date(MOCK_RUN_EPOCH_MS + tick * 1000).toISOString()),
+      );
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
 describe("mock stream drops", () => {
   it("cuts the first connections without an end event, then serves the end", async () => {
     const mock = await startMockServer(0, "127.0.0.1", {

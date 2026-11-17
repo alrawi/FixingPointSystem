@@ -2,7 +2,9 @@
 #
 # TRN transport backends. The capture job runs the OS profile capture test on
 # the QA-01 namespace harness as root, which GitHub hosted runners allow
-# through passwordless sudo. The Rust tests of the backend run in ci.yml.
+# through passwordless sudo. The Rust tests of the backend run in ci.yml. The
+# afxdp job runs the AF_XDP veth test of TRN-11 with FPS_REQUIRE_AFXDP=1, so it
+# fails instead of skipping where AF_XDP cannot run.
 name: trn
 
 on:
@@ -10,6 +12,7 @@ on:
     branches: [main]
     paths:
       - engine/fps-backend-kernel/**
+      - engine/fps-backend-afxdp/**
       - tests/harness/**
       - realism/**
       - mk/trn.mk
@@ -19,6 +22,7 @@ on:
   pull_request:
     paths:
       - engine/fps-backend-kernel/**
+      - engine/fps-backend-afxdp/**
       - tests/harness/**
       - realism/**
       - mk/trn.mk
@@ -61,3 +65,15 @@ jobs:
           name: trn-profile-captures
           path: ${{ runner.temp }}/captures
           if-no-files-found: ignore
+
+  afxdp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: AF_XDP veth test
+        run: cargo test -p fps-backend-afxdp -- --nocapture
+        env:
+          FPS_REQUIRE_AFXDP: "1"

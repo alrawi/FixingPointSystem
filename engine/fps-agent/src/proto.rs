@@ -19,6 +19,7 @@
 //! | `google.protobuf.Struct` | `serde_json::Map<String, serde_json::Value>` |
 //! | `map<string, string>` | `BTreeMap<String, String>`, so output order is stable |
 //! | `enum Backend` | [`Backend`], with the proto numbers as discriminants |
+//! | `enum XdpMode` | [`XdpMode`], with the proto numbers as discriminants |
 
 use std::collections::BTreeMap;
 
@@ -54,6 +55,38 @@ impl Backend {
     }
 }
 
+/// Mirrors `fps.agent.v1.XdpMode`, a hint from the driver table (CON-32).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(i32)]
+pub enum XdpMode {
+    /// `XDP_MODE_UNSPECIFIED`, the agent does not know the mode.
+    #[default]
+    Unspecified = 0,
+    /// `XDP_MODE_GENERIC`, the generic XDP hook.
+    Generic = 1,
+    /// `XDP_MODE_NATIVE`, the driver hook in copy mode.
+    Native = 2,
+    /// `XDP_MODE_ZERO_COPY`, the driver hook in zero copy mode.
+    ZeroCopy = 3,
+}
+
+impl XdpMode {
+    /// Returns the proto enum value name, for example `XDP_MODE_NATIVE`.
+    pub fn proto_name(self) -> &'static str {
+        match self {
+            Self::Unspecified => "XDP_MODE_UNSPECIFIED",
+            Self::Generic => "XDP_MODE_GENERIC",
+            Self::Native => "XDP_MODE_NATIVE",
+            Self::ZeroCopy => "XDP_MODE_ZERO_COPY",
+        }
+    }
+
+    /// Returns the proto enum number.
+    pub fn number(self) -> i32 {
+        self as i32
+    }
+}
+
 /// Mirrors `fps.agent.v1.Capabilities`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Capabilities {
@@ -73,6 +106,10 @@ pub struct Capabilities {
     pub modules: Vec<ModuleRef>,
     /// Field 8, operator assigned key and value pairs.
     pub labels: BTreeMap<String, String>,
+    /// Field 9, the kernel release, such as `6.8.0-48-generic` (CON-32).
+    pub kernel_release: String,
+    /// Field 10, the backend that the agent selected (CON-32). AGT-22 fills it.
+    pub selected_backend: Backend,
 }
 
 /// Mirrors `fps.agent.v1.PortInfo`.
@@ -88,6 +125,8 @@ pub struct PortInfo {
     pub mac: String,
     /// Field 5, the configured MTU.
     pub mtu: u32,
+    /// Field 6, the XDP mode that the driver table gives (CON-32). AGT-22 fills it.
+    pub xdp_driver_mode: XdpMode,
 }
 
 /// Mirrors `fps.agent.v1.ModuleRef`.

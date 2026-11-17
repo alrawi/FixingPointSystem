@@ -248,13 +248,13 @@ impl fmt::Display for Ipv6Prefix {
 pub struct MacAddr(pub [u8; 6]);
 
 impl MacAddr {
-    fn to_u64(self) -> u64 {
+    pub(crate) fn to_u64(self) -> u64 {
         self.0
             .iter()
             .fold(0u64, |acc, b| (acc << 8) | u64::from(*b))
     }
 
-    fn from_u64(v: u64) -> Self {
+    pub(crate) fn from_u64(v: u64) -> Self {
         let b = v.to_be_bytes();
         Self([b[2], b[3], b[4], b[5], b[6], b[7]])
     }
@@ -320,6 +320,7 @@ pub struct HostPool {
     count: u32,
     gateway: Option<IpAddr>,
     mac_base: Option<MacAddr>,
+    dhcp: bool,
 }
 
 impl HostPool {
@@ -374,13 +375,50 @@ impl HostPool {
             count: spec.count,
             gateway,
             mac_base,
+            dhcp: false,
         };
         out.check()?;
         Ok(out)
     }
 
+    /// Returns a pool whose hosts lease their IPv4 addresses through DHCP, as
+    /// a `HostPoolSlice` with `dhcp4` and no prefix describes it.
+    ///
+    /// The pool has no prefix, so [`HostPool::ipv4`], [`HostPool::ipv4_addr`],
+    /// and the other address calls report no address, and host `i` keeps the
+    /// MAC address `mac_base + i`. The addresses come from the leases of a
+    /// [`crate::dhcp::DhcpHosts`], which [`crate::dhcp::LeaseTable`] hands out.
+    pub fn dhcp(name: &str, count: u32, mac_base: Option<&str>) -> Result<Self, PoolError> {
+        let mac_base = mac_base
+            .filter(|m| !m.is_empty())
+            .map(|m| {
+                m.parse::<MacAddr>().map_err(|_| PoolError::InvalidMac {
+                    pool: name.to_owned(),
+                    value: m.to_owned(),
+                })
+            })
+            .transpose()?;
+        let out = Self {
+            name: name.to_owned(),
+            ipv4: None,
+            ipv6: None,
+            count,
+            gateway: None,
+            mac_base,
+            dhcp: true,
+        };
+        out.check()?;
+        Ok(out)
+    }
+
+    /// Reports whether the hosts of the pool lease their addresses through
+    /// DHCP.
+    pub fn is_dhcp(&self) -> bool {
+        self.dhcp
+    }
+
     fn check(&self) -> Result<(), PoolError> {
-        if self.ipv4.is_none() && self.ipv6.is_none() {
+        if self.ipv4.is_none() && self.ipv6.is_none() && !self.dhcp {
             return Err(PoolError::NoPrefix {
                 pool: self.name.clone(),
             });
@@ -525,6 +563,58 @@ impl HostPool {
         Ok(Some(Ipv6Addr::from(cand)))
     }
 
+    /// The host index of an IPv4 address, the inverse of [`HostPool::ipv4_addr`].
+    ///
+    /// It returns `None` for an address outside the usable part of the prefix,
+    /// for the gateway, and for an index at or above the pool count. The call
+    /// does arithmetic only, so it fits the hot path.
+    pub fn index_of_ipv4(&self, addr: Ipv4Addr) -> Option<u32> {
+        let p = self.ipv4?;
+        let net = u32::from(p.network());
+        let a = u32::from(addr);
+        if !p.contains(addr) || a <= net || addr == p.broadcast() {
+            return None;
+        }
+        let mut index = a - net - 1;
+        if let Some(g) = self.gateway_v4() {
+            if g > net && g <= a {
+                if g == a {
+                    return None;
+                }
+                index -= 1;
+            }
+        }
+        (index < self.count).then_some(index)
+    }
+
+    /// The host index of an IPv6 address, the inverse of [`HostPool::ipv6_addr`].
+    ///
+    /// It returns `None` for an address outside the prefix, for the network
+    /// address, for the gateway, and for an index at or above the pool count.
+    pub fn index_of_ipv6(&self, addr: Ipv6Addr) -> Option<u32> {
+        let p = self.ipv6?;
+        let net = u128::from(p.network());
+        let a = u128::from(addr);
+        if !p.contains(addr) || a <= net {
+            return None;
+        }
+        let mut offset = a - net - 1;
+        if let Some(g) = self.gateway_v6() {
+            if g > net && g <= a {
+                if g == a {
+                    return None;
+                }
+                offset -= 1;
+            }
+        }
+        u32::try_from(offset).ok().filter(|i| *i < self.count)
+    }
+
+    /// The configured MAC address of host index 0, if the pool names one.
+    pub fn mac_base(&self) -> Option<MacAddr> {
+        self.mac_base
+    }
+
     /// The MAC address of host `index`, or `None` when the pool has no MAC base.
     pub fn mac(&self, index: u32) -> Result<Option<MacAddr>, PoolError> {
         self.check_index(index)?;
@@ -536,6 +626,59 @@ impl HostPool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_dhcp_pool_has_no_prefix_and_no_address_but_keeps_its_mac_range() {
+        let p = HostPool::dhcp("clients", 50, Some("02:00:00:00:00:10")).unwrap();
+        assert!(p.is_dhcp());
+        assert_eq!(p.name(), "clients");
+        assert_eq!(p.count(), 50);
+        assert_eq!(p.ipv4(), None);
+        assert_eq!(p.ipv6(), None);
+        assert_eq!(p.gateway(), None);
+        assert_eq!(p.ipv4_addr(0), Ok(None));
+        assert_eq!(p.ipv6_addr(49), Ok(None));
+        assert_eq!(p.index_of_ipv4(Ipv4Addr::new(10, 0, 0, 2)), None);
+        assert_eq!(p.ipv4_capacity(), None);
+        assert_eq!(
+            p.mac(3).unwrap().unwrap().to_string(),
+            "02:00:00:00:00:13",
+            "host i has mac_base plus i"
+        );
+        assert!(matches!(
+            p.ipv4_addr(50),
+            Err(PoolError::IndexOutOfRange { .. })
+        ));
+        assert!(!pool(Some("10.0.0.0/24"), None, 5, None).is_dhcp());
+    }
+
+    #[test]
+    fn a_dhcp_pool_needs_hosts_and_a_valid_mac_base() {
+        assert!(matches!(
+            HostPool::dhcp("c", 0, None),
+            Err(PoolError::Empty { .. })
+        ));
+        assert!(matches!(
+            HostPool::dhcp("c", 1, Some("nonsense")),
+            Err(PoolError::InvalidMac { .. })
+        ));
+        assert!(matches!(
+            HostPool::dhcp("c", 2, Some("ff:ff:ff:ff:ff:ff")),
+            Err(PoolError::MacOverflow { .. })
+        ));
+        // An empty `mac_base` is none, as it is for a static pool.
+        assert_eq!(HostPool::dhcp("c", 1, Some("")).unwrap().mac_base(), None);
+    }
+
+    #[test]
+    fn a_static_pool_still_needs_a_prefix() {
+        let e = HostPool::parse(&PoolSpec {
+            name: "p",
+            count: 5,
+            ..PoolSpec::default()
+        });
+        assert!(matches!(e, Err(PoolError::NoPrefix { .. })));
+    }
+
     use super::*;
 
     fn pool(ipv4: Option<&str>, ipv6: Option<&str>, count: u32, gw: Option<&str>) -> HostPool {

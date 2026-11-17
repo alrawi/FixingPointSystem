@@ -191,6 +191,7 @@ pub fn plan_from_pb(p: &pb::Plan) -> Result<Plan, PlanError> {
             vlan: h.vlan,
             mac_base: h.mac_base.clone(),
             os_profile: h.os_profile.clone(),
+            dhcp4: h.dhcp4.as_ref().map(|_| plan::Dhcp4 {}),
         });
     }
     let workers = p
@@ -541,6 +542,7 @@ pub fn plan_to_pb(p: &Plan) -> pb::Plan {
                 vlan: h.vlan,
                 mac_base: h.mac_base.clone(),
                 os_profile: h.os_profile.clone(),
+                dhcp4: h.dhcp4.map(|_| pb::Dhcp4 {}),
             })
             .collect(),
         external_servers: p
@@ -750,6 +752,7 @@ pub fn capabilities_to_pb(c: &proto::Capabilities) -> pb::Capabilities {
                 speed_mbps: p.speed_mbps,
                 mac: p.mac.clone(),
                 mtu: p.mtu,
+                xdp_driver_mode: p.xdp_driver_mode.number(),
             })
             .collect(),
         modules: c
@@ -769,6 +772,8 @@ pub fn capabilities_to_pb(c: &proto::Capabilities) -> pb::Capabilities {
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        kernel_release: c.kernel_release.clone(),
+        selected_backend: c.selected_backend.number(),
     }
 }
 

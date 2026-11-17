@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! TCP stack bench harness of the engine.
 //!
-//! The harness drives a user space TCP stack behind [`fps_io::SessionIo`], the
-//! seam that the interpreter uses, and measures three things for the decision
-//! record of TRN-10.
+//! The harness drives a TCP stack behind [`fps_io::SessionIo`], the seam that
+//! the interpreter uses, and measures three things for the decision record of
+//! TRN-10.
 //!
 //! 1. Sessions per second, with a small request and response per session.
 //! 2. Throughput of bulk transfers over concurrent sessions.
@@ -11,8 +11,10 @@
 //!    socket, the cost of one poll with idle sockets, and the session rate
 //!    that remains while the sockets are held.
 //!
-//! A stack plugs in through [`TcpStack`], so the own stack of TRN-18 runs the
-//! same workloads. [`smol::SmolStack`] is the first stack. The binary
+//! A stack plugs in through [`TcpStack`], so the own stack of TRN-18 and the
+//! smoltcp adapter of TRN-20 run the same workloads. [`kernel::KernelStack`],
+//! the TCP of the operating system on the loopback interface, is the reference
+//! that they are compared with. The binary
 //! `examples/tcp_bench.rs` runs the workloads with plain command line
 //! arguments and writes an `fps-bench/v1` document.
 #![forbid(unsafe_code)]
@@ -20,7 +22,9 @@
 
 pub mod cli;
 pub mod clock;
+pub mod kernel;
 pub mod link;
+pub mod own;
 pub mod report;
 pub mod smol;
 pub mod stack;
@@ -28,7 +32,9 @@ pub mod sysinfo;
 pub mod workload;
 
 pub use clock::{Clock, ManualClock, MonotonicClock};
+pub use kernel::{KernelConfig, KernelSession, KernelStack};
 pub use link::LinkConfig;
+pub use own::{OwnConfig, OwnCounters, OwnSession, OwnStack};
 pub use report::BenchReport;
 pub use smol::{SmolConfig, SmolSession, SmolStack, TimeWait};
 pub use stack::{StackStats, TcpStack};

@@ -27,9 +27,11 @@ use crate::sysinfo;
 
 /// The most sessions that share one server port in the scale workload.
 ///
-/// The client side allocates 55,536 source ports, so a pair of ports must
-/// stay below that to keep every 4-tuple unique.
-const SESSIONS_PER_PORT: usize = 50_000;
+/// A client host has about 28,000 source ports for one server address and
+/// port, which is the default range of Linux, and a user space stack has up to
+/// 55,000. Staying below the smaller range keeps every 4-tuple unique on every
+/// stack.
+const SESSIONS_PER_PORT: usize = 20_000;
 
 /// Errors that end a workload.
 #[derive(Debug, thiserror::Error)]
@@ -694,9 +696,10 @@ pub async fn socket_scaling<S: TcpStack>(
         let deadline = started + config.step_budget;
         let before: u64 = stacks.iter().map(|s| s.stats().sockets_open).sum();
         let mut reached = true;
+        let mut refused = None;
         for (index, stack) in stacks.iter().enumerate() {
             let need = pairs_per_shard.saturating_sub(opened[index]);
-            if !grow_shard(
+            let grown = grow_shard(
                 stack,
                 &mut held[index],
                 &mut opened[index],
@@ -705,10 +708,22 @@ pub async fn socket_scaling<S: TcpStack>(
                 config,
                 deadline,
             )
-            .await?
-            {
-                reached = false;
-                break;
+            .await;
+            match grown {
+                Ok(true) => {}
+                Ok(false) => {
+                    reached = false;
+                    break;
+                }
+                // A stack that refuses a socket has reached its limit, such as
+                // the descriptor limit of a process, and that ends the run
+                // with the steps measured so far.
+                Err(BenchError::Io { what, source }) => {
+                    reached = false;
+                    refused = Some(format!("{what}: {source}"));
+                    break;
+                }
+                Err(other) => return Err(other),
             }
         }
         let setup_secs = started.elapsed().as_secs_f64();
@@ -721,7 +736,19 @@ pub async fn socket_scaling<S: TcpStack>(
             _ => None,
         };
         let idle_poll = idle_poll_us(stacks);
-        let probe = probe_rate(first, config).await?;
+        let probe = if refused.is_some() {
+            // No descriptor is left for the probe sessions.
+            RateReport::from_runs(Vec::new())
+        } else {
+            match probe_rate(first, config).await {
+                Ok(probe) => probe,
+                Err(BenchError::Io { what, source }) => {
+                    refused = Some(format!("{what}: {source}"));
+                    RateReport::from_runs(Vec::new())
+                }
+                Err(other) => return Err(other),
+            }
+        };
         steps.push(ScaleStep {
             target_sockets: target,
             sockets,
@@ -738,11 +765,16 @@ pub async fn socket_scaling<S: TcpStack>(
             probe_sessions_per_s: probe.sessions_per_s,
             probe_latency: probe.latency,
         });
-        if !reached {
-            stopped = Some(format!(
-                "step {target} stopped after {setup_secs:.1} s with {sockets} sockets, over the budget of {:?}",
-                config.step_budget
-            ));
+        if !reached || refused.is_some() {
+            stopped = Some(match refused {
+                Some(reason) => format!(
+                    "step {target} stopped after {setup_secs:.1} s with {sockets} sockets, the stack refused a socket ({reason})"
+                ),
+                None => format!(
+                    "step {target} stopped after {setup_secs:.1} s with {sockets} sockets, over the budget of {:?}",
+                    config.step_budget
+                ),
+            });
             break;
         }
     }
