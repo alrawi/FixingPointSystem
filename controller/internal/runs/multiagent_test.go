@@ -29,6 +29,8 @@ func multiHarness(t *testing.T) *harness {
 	return newHarness(t, func(c *runs.Config) {
 		c.Clocks = multiagent.HeartbeatClocks{Agents: c.Agents}
 		c.StartLead = startLead
+		// Three agents with two cores each need at least six server hosts.
+		c.Store = memStore{"cfg-1": strings.Replace(testConfig, "count: 4 }", "count: 12 }", 1)}
 	})
 }
 
