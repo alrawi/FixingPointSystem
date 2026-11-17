@@ -392,7 +392,8 @@ describe("live run view", () => {
 describe("feed resilience", () => {
   it("reconnects with Last-Event-ID after a dropped stream and fills the gap", async () => {
     const mock = await startMockServer(0, "127.0.0.1", {
-      runs: { stepMs: 60, runTicks: 40 },
+      // The run must outlast a loaded machine: a run that ends first answers "Ended", not "Live".
+      runs: { stepMs: 60, runTicks: 600 },
       streamDrops: 1,
     });
     running.push(mock);
@@ -402,9 +403,24 @@ describe("feed resilience", () => {
 
     const original = globalThis.fetch.bind(globalThis);
     const streams: Headers[] = [];
+    // The seconds of the samples that each history read after the reconnect returns. The view
+    // draws the first event of the new connection at once and the gap when this read answers.
+    const gapReads: Promise<number[]>[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
       const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
-      if (url.includes("/metrics:stream")) streams.push(new Headers(init?.headers));
+      if (url.includes("/metrics:stream")) {
+        streams.push(new Headers(init?.headers));
+      } else if (url.includes("/metrics?") && streams.length >= 2) {
+        const response = original(input, init);
+        gapReads.push(
+          response
+            .then((answer) => answer.clone().json() as Promise<{ samples: { ts: string }[] }>)
+            .then(({ samples }) =>
+              samples.map((sample) => Math.floor(Date.parse(sample.ts) / 1000) % 86400),
+            ),
+        );
+        return response;
+      }
       return original(input, init);
     });
     window.sessionStorage.setItem("fps.token", MOCK_TOKEN);
@@ -421,7 +437,7 @@ describe("feed resilience", () => {
       () => {
         expect(streams.length).toBeGreaterThanOrEqual(2);
       },
-      { timeout: 4000 },
+      { timeout: 15000 },
     );
     expect(streams[0]?.get("Last-Event-ID")).toBeNull();
     expect(streams[1]?.get("Last-Event-ID")).toMatch(/^\d+$/);
@@ -430,9 +446,70 @@ describe("feed resilience", () => {
         expect(feedStatus()).toContain("Live");
         expect(lineValues("rate").length).toBeGreaterThanOrEqual(8);
       },
-      { timeout: 4000 },
+      { timeout: 15000 },
+    );
+    // The gap read of the new connection has answered and its ticks are on the screen. Until then
+    // the table may lack the ticks between the cut and the first event of the new connection.
+    await waitFor(
+      () => {
+        expect(gapReads.length).toBeGreaterThanOrEqual(1);
+      },
+      { timeout: 15000 },
+    );
+    const gap = (await Promise.all(gapReads)).flat();
+    await waitFor(
+      () => {
+        const shown = tableSeconds("Sessions per second");
+        // A slow machine can push the oldest ticks of the read out of the newest rows.
+        const oldest = Math.min(...shown);
+        for (const second of gap.filter((candidate) => candidate >= oldest)) {
+          expect(shown).toContain(second);
+        }
+      },
+      { timeout: 15000 },
     );
     // No tick is missing: the newest rows of the table follow one another by one second.
+    const seconds = tableSeconds("Sessions per second");
+    for (let i = 1; i < seconds.length; i += 1) {
+      expect((seconds[i - 1] ?? 0) - (seconds[i] ?? 0)).toBe(1);
+    }
+  }, 30000);
+
+  it("fills the tick that passes between the history read and the first event of the stream", async () => {
+    const clock = new Clock();
+    const mock = await startMockServer(0, "127.0.0.1", {
+      runs: { now: clock.now, runTicks: 600 },
+    });
+    running.push(mock);
+    const id = await startRunDirect(mock);
+    clock.advance(5);
+    const original = globalThis.fetch.bind(globalThis);
+    let history = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
+      const response = await original(input, init);
+      if (url.includes("/metrics?")) {
+        history += 1;
+        // Two ticks pass after the first history read answered and before the stream connects, and
+        // the stream starts at the newest tick, so tick 5 would be in neither.
+        if (history === 1) clock.advance(2);
+      }
+      return response;
+    });
+    window.sessionStorage.setItem("fps.token", MOCK_TOKEN);
+    window.history.replaceState(null, "", `/runs/${id}`);
+    render(
+      <App
+        baseUrl={mock.baseUrl}
+        queryClient={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        runSettings={FAST}
+      />,
+    );
+    // Ticks 1 to 4 come from the first read and tick 6 from the stream. Tick 5 comes from the
+    // read that the first event of the stream starts, or it never comes.
+    await waitFor(() => {
+      expect(lineValues("rate")).toHaveLength(6);
+    });
     const seconds = tableSeconds("Sessions per second");
     for (let i = 1; i < seconds.length; i += 1) {
       expect((seconds[i - 1] ?? 0) - (seconds[i] ?? 0)).toBe(1);
