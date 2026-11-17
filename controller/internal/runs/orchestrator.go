@@ -34,6 +34,7 @@ import (
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents"
 	"github.com/alrawi/FixingPointSystem/controller/internal/agents/agentpb"
 	"github.com/alrawi/FixingPointSystem/controller/internal/compiler"
+	"github.com/alrawi/FixingPointSystem/controller/internal/multiagent"
 	"github.com/alrawi/FixingPointSystem/controller/internal/store"
 )
 
@@ -124,6 +125,19 @@ type Config struct {
 	// Calibration configures the correction of throughput_bps objectives
 	// during a run. It needs an Agents value that implements RateUpdater.
 	Calibration CalibrationConfig
+	// Clocks measures the clock offsets of the agents. With it, a run on two
+	// or more agents checks the clocks before it reserves anything, refuses
+	// to start when an agent is more than MaxClockOffset off, and then
+	// starts, stops, and sums its counters through a multiagent.Coordinator,
+	// so every agent starts at one instant. A run on one agent never uses it.
+	// Nil leaves a run on several agents to start each agent in turn without a
+	// clock check, which only tests that do not model clocks rely on. The
+	// controller sets multiagent.HeartbeatClocks.
+	Clocks multiagent.ClockSource
+	// MaxClockOffset and StartLead tune the coordinator. They default to
+	// multiagent.MaxClockOffset and multiagent.DefaultStartLead.
+	MaxClockOffset time.Duration
+	StartLead      time.Duration
 	// Logger receives structured logs. The default discards them.
 	Logger *slog.Logger
 }
@@ -260,6 +274,12 @@ type run struct {
 	stop     stopRequest
 	// cal is the throughput calibration, or nil for another objective.
 	cal *calibrator
+	// cfg and scenarios are what the plans were compiled from, and multi is
+	// the run that the multiagent coordinator started. A run on one agent,
+	// or without Config.Clocks, has no multi.
+	cfg       compiler.Config
+	scenarios []compiler.Scenario
+	multi     *multiagent.Run
 
 	// force ends when a forced stop arrives or the orchestrator closes, and
 	// cancels the commands that a forced stop skips.
@@ -379,7 +399,20 @@ func (o *Orchestrator) Create(ctx context.Context, req StartRequest) (Run, error
 		o.release(id, reserved)
 		return Run{}, fmt.Errorf("start run %s: %w", id, err)
 	}
+	if o.coordinated(len(reserved)) {
+		// Nothing is prepared yet, so a refusal leaves no trace on an agent.
+		names := make([]string, len(reserved))
+		for i, x := range reserved {
+			names[i] = x.agent.ID
+		}
+		if _, err := multiagent.CheckClocks(ctx, o.cfg.Clocks, names, o.cfg.MaxClockOffset); err != nil {
+			o.release(id, reserved)
+			o.log.Warn("run refused", "run_id", id, "error", err)
+			return Run{}, fmt.Errorf("start run %s: %w", id, err)
+		}
+	}
 	r := o.newRun(id, req, cfg, reserved, plans)
+	r.cfg, r.scenarios = cfg, scenarios
 	cal, err := newCalibrator(o.cfg.Calibration, plans, scenarios)
 	if err != nil {
 		// The run still meets its objective with the compiled rates.
@@ -407,6 +440,10 @@ func (o *Orchestrator) Create(ctx context.Context, req StartRequest) (Run, error
 	go o.drive(r)
 	return out, nil
 }
+
+// coordinated reports whether a run on n agents starts through a
+// multiagent.Coordinator: it needs a clock source and at least two agents.
+func (o *Orchestrator) coordinated(n int) bool { return o.cfg.Clocks != nil && n >= 2 }
 
 // pickAgents returns the requested agent ids, sorted and without
 // duplicates, or every agent that the operator reserved.
@@ -731,6 +768,11 @@ func (o *Orchestrator) Observe(ev agents.Event) {
 	switch ev.Kind {
 	case agents.EventSnapshot:
 		snap := ev.Snapshot
+		if r.multi != nil {
+			// The collector of the coordinator drops snapshots of other plans
+			// and old sequences by itself.
+			r.multi.Observe(ev)
+		}
 		if snap.GetPlanId() == a.plan.PlanID && a.absorb(snap) {
 			if p := snap.GetPhase(); p != "" {
 				r.Phase = p
@@ -818,24 +860,13 @@ func (o *Orchestrator) drive(r *run) {
 	if o.transition(r, Preparing) != nil {
 		return
 	}
-	err := o.forEach(r, everyAgent, o.prepareAgent)
-	if o.stopState(r) != stopNone {
-		o.abort(r, o.abortReason("stopped while preparing"))
-		return
+	var started bool
+	if o.coordinated(len(r.Agents)) {
+		started = o.startCoordinated(r)
+	} else {
+		started = o.startEach(r)
 	}
-	if err != nil {
-		o.fail(r, "prepare: "+err.Error())
-		return
-	}
-	if o.transition(r, Running) != nil {
-		return
-	}
-	if err := o.forEach(r, everyAgent, o.startAgent); err != nil {
-		if o.stopState(r) == stopForce {
-			o.abort(r, o.abortReason("stopped while starting"))
-			return
-		}
-		o.fail(r, "start: "+err.Error())
+	if !started {
 		return
 	}
 	// From here on, a forced stop ends the run with the reason "stopped by
@@ -865,6 +896,97 @@ func (o *Orchestrator) drive(r *run) {
 		case <-r.force.Done():
 		}
 	}
+}
+
+// startEach prepares every agent of r, moves r to running, and starts every
+// agent, each in parallel and without a common start instant. It reports
+// whether the run is running, and otherwise it has ended the run.
+func (o *Orchestrator) startEach(r *run) bool {
+	err := o.forEach(r, everyAgent, o.prepareAgent)
+	if o.stopState(r) != stopNone {
+		o.abort(r, o.abortReason("stopped while preparing"))
+		return false
+	}
+	if err != nil {
+		o.fail(r, "prepare: "+err.Error())
+		return false
+	}
+	if o.transition(r, Running) != nil {
+		return false
+	}
+	if err := o.forEach(r, everyAgent, o.startAgent); err != nil {
+		if o.stopState(r) == stopForce {
+			o.abort(r, o.abortReason("stopped while starting"))
+			return false
+		}
+		o.fail(r, "start: "+err.Error())
+		return false
+	}
+	return true
+}
+
+// coordinator returns a multiagent.Coordinator for r. Create compiled the
+// plans of r already, and the orchestrator watches the agents by their plan
+// ids, so the coordinator splits the test into exactly those plans instead of
+// compiling again.
+func (o *Orchestrator) coordinator(r *run) (*multiagent.Coordinator, error) {
+	plans := make([]compiler.Plan, 0, len(r.Agents))
+	for _, id := range r.Agents {
+		plans = append(plans, r.agents[id].plan)
+	}
+	return multiagent.New(multiagent.Config{
+		Agents:         o.cfg.Agents,
+		Clocks:         o.cfg.Clocks,
+		Compiler:       multiagent.CompilerFunc(func(compiler.Request) ([]compiler.Plan, error) { return slices.Clone(plans), nil }),
+		Clock:          o.cfg.Clock,
+		MaxClockOffset: o.cfg.MaxClockOffset,
+		StartLead:      o.cfg.StartLead,
+		CommandTimeout: o.cfg.CommandTimeout,
+		DrainTimeout:   o.cfg.DrainTimeout,
+		Logger:         o.log,
+	})
+}
+
+// startCoordinated checks the clocks again, prepares every agent of r, and
+// starts all of them at one instant through the multiagent coordinator, and
+// then moves r to running. It reports whether the run is running, and
+// otherwise it has ended the run. A failed start has aborted every agent and
+// released the reservations, so the run only has to end.
+func (o *Orchestrator) startCoordinated(r *run) bool {
+	c, err := o.coordinator(r)
+	if err != nil {
+		o.finish(r, Failed, "start: "+err.Error())
+		return false
+	}
+	o.mu.Lock()
+	for _, a := range r.agents {
+		// An agent that does not answer may hold its plan, so the observer
+		// treats every agent as prepared and started from here on.
+		a.prepared, a.started = true, true
+	}
+	o.mu.Unlock()
+	mr, err := c.Start(r.force, multiagent.Request{
+		RunID: r.ID, Config: r.cfg, Agents: r.Agents, Scenarios: r.scenarios, Seed: r.Seed,
+	})
+	if err != nil {
+		o.mu.Lock()
+		for _, a := range r.agents {
+			a.prepared, a.started = false, false
+		}
+		o.mu.Unlock()
+		if o.stopState(r) != stopNone {
+			o.finish(r, Aborted, o.abortReason("stopped while starting"))
+			return false
+		}
+		o.finish(r, Failed, "start: "+err.Error())
+		return false
+	}
+	// The run keeps the multi agent run before the state becomes running, so
+	// a snapshot that follows the state reaches its collector.
+	o.mu.Lock()
+	r.multi = mr
+	o.mu.Unlock()
+	return o.transition(r, Running) == nil
 }
 
 // everyAgent selects every agent of a run for forEach.
@@ -906,11 +1028,31 @@ func (o *Orchestrator) stopping(r *run) {
 	if o.transition(r, Stopping) != nil {
 		return
 	}
-	active := func(a *runAgent) bool { return a.status == agentActive && a.started }
-	rampDown := func(ctx context.Context, a *runAgent) error {
-		return o.stopAgent(ctx, a, r, agentpb.StopMode_STOP_MODE_RAMP_DOWN)
+	o.mu.Lock()
+	mr := r.multi
+	o.mu.Unlock()
+	var res *multiagent.Result
+	if mr != nil {
+		// The coordinator stops every agent, takes the final snapshots into
+		// its collector, and releases the reservations. An agent that cannot
+		// answer, such as one that failed, only costs its final snapshot.
+		out, err := mr.Stop(r.force, agentpb.StopMode_STOP_MODE_RAMP_DOWN)
+		if err != nil {
+			o.log.Warn("multi agent stop", "run_id", r.ID, "error", err)
+		}
+		if out.Totals == nil {
+			// The sum failed, and criteria on a missing sum would pass.
+			o.finish(r, Failed, fmt.Sprintf("counter totals: %v", err))
+			return
+		}
+		res = &out
+	} else {
+		active := func(a *runAgent) bool { return a.status == agentActive && a.started }
+		rampDown := func(ctx context.Context, a *runAgent) error {
+			return o.stopAgent(ctx, a, r, agentpb.StopMode_STOP_MODE_RAMP_DOWN)
+		}
+		_ = o.forEach(r, active, rampDown)
 	}
-	_ = o.forEach(r, active, rampDown)
 	if o.stopState(r) == stopForce {
 		o.abort(r, o.abortReason("stopped by request"))
 		return
@@ -928,9 +1070,16 @@ func (o *Orchestrator) stopping(r *run) {
 			nFailed++
 		}
 	}
-	series := sumSeries(perAgent, failed)
+	var series []Series
+	var sums map[string]float64
+	if res != nil {
+		series, sums = fromResult(r, *res)
+	} else {
+		series = sumSeries(perAgent, failed)
+		sums = totals(counters, series, failed)
+	}
 	out := Outcome{
-		RunID: r.ID, Criteria: slices.Clone(r.criteria), Series: series, Totals: totals(counters, series, failed),
+		RunID: r.ID, Criteria: slices.Clone(r.criteria), Series: series, Totals: sums,
 		Agents: len(r.agents), FailedAgents: nFailed,
 	}
 	o.mu.Unlock()
