@@ -141,7 +141,7 @@ pub enum Unavailable {
     NoDriverSupport,
     /// The driver offers only the generic XDP hook, which is too slow to
     /// select without an operator's request.
-    #[error("the driver offers only generic XDP, which is slower than kernel sockets")]
+    #[error("the driver offers only generic XDP, which the selection policy does not choose on its own (S3 measured only native copy and zero copy; TRN-12 revisits it)")]
     GenericOnly,
 }
 

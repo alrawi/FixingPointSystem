@@ -458,7 +458,7 @@ The rules, in order:
 
 - The kernel backend is the default, and the result then carries the reason AF_XDP lost (`Unavailable`).
 - AF_XDP wins when the kernel offers it, a transport exists, and the driver offers `Native` or `ZeroCopy`. The result carries the expected mode.
-- `Generic` never wins by itself, because the generic hook is the slowest mode, but an operator can force it.
+- `Generic` never wins by itself, but an operator can force it. This is a policy, not a measurement: spike S3 measured only native copy and zero copy, so TRN-12 revisits the rule with its own numbers.
 - A forced backend that cannot run returns `SelectError::ForcedUnsupported` with the cause and never falls back, so a benchmark does not measure the wrong backend. With nothing forced and no working backend the error is `SelectError::NoBackend`.
 
 Nothing carries TCP over AF_XDP before TRN-12, so every host selects the kernel backend today and a forced AF_XDP run is refused with `NoTransport`. The tests in `tests/select.rs` cover a virtio-net guest with and without zero copy (with the transport present, as it will be after TRN-12, and absent), an old kernel, a generic only driver, a driver without XDP, and forced backends. The expected bind mode is a plan, not a measurement: the agent reports the mode that the socket really runs in, as `PortInfo.xdp_driver_mode`.
