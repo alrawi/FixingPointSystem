@@ -152,10 +152,12 @@ func ToAPI(ag Agent) api.Agent {
 		}
 	}
 	if len(c.GetPorts()) > 0 {
+		// CTL-53 fills XdpDriverMode from the capabilities of CON-32.
 		ports := make([]struct {
-			Driver    *string `json:"driver,omitempty"`
-			Name      string  `json:"name"`
-			SpeedMbps *int    `json:"speed_mbps,omitempty"`
+			Driver        *string                      `json:"driver,omitempty"`
+			Name          string                       `json:"name"`
+			SpeedMbps     *int                         `json:"speed_mbps,omitempty"`
+			XdpDriverMode *api.AgentPortsXdpDriverMode `json:"xdp_driver_mode,omitempty"`
 		}, len(c.GetPorts()))
 		for i, p := range c.GetPorts() {
 			ports[i].Name = p.GetName()

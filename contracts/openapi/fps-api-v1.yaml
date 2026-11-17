@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FixingPointSystem Controller API
-  version: 0.12.0
+  version: 0.13.0
   summary: Contract v0.2 for the controller REST API.
   description: >
     The controller stores test configurations, installs modules, starts runs on
@@ -820,7 +820,22 @@ components:
           examples: ["operator"]
         version: { type: string }
         cores: { type: integer, minimum: 1 }
-        backend: { type: string, enum: [kernel, af_xdp, dpdk] }
+        kernel_release:
+          type: string
+          description: >
+            Kernel release of the agent host, as `uname -r` prints it. Absent
+            for an agent of agent protocol 0.2.4 or earlier and when the agent
+            cannot read it. A controller older than 0.13.0 does not send it.
+          examples: ["6.8.0-45-generic"]
+        backend:
+          type: string
+          enum: [kernel, af_xdp, dpdk]
+          description: >
+            The backend that the agent selected and started. A controller of
+            0.13.0 or later takes it from `selected_backend` of the agent, and
+            for an agent of agent protocol 0.2.4 or earlier, which does not
+            send it, from the first entry of `backends`, which is `kernel`.
+            An older controller always took the first entry.
         ports:
           type: array
           items:
@@ -830,6 +845,18 @@ components:
               name: { type: string }
               driver: { type: string }
               speed_mbps: { type: integer }
+              xdp_driver_mode:
+                type: string
+                enum: [generic, native, zero_copy]
+                description: >
+                  XDP mode of the port, a driver table hint: `generic` is the
+                  generic (skb) hook, `native` is the driver hook with copy
+                  mode sockets, and `zero_copy` is the driver hook with zero
+                  copy sockets. It says what rate a driver may reach and changes
+                  no run or verdict. Absent unless the selected backend is
+                  `af_xdp` and the agent bound a queue of the port, and absent
+                  for an agent of agent protocol 0.2.4 or earlier. A controller
+                  older than 0.13.0 does not send it.
         labels: { type: object, additionalProperties: { type: string } }
     RunState:
       type: string

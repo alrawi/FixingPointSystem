@@ -24,11 +24,11 @@
 //! | Port NUMA node | `sys/class/net/<name>/device/numa_node` | none |
 
 use crate::error::{DetectError, KernelError};
-use crate::proto::{Backend, Capabilities, PortInfo};
+use crate::proto::{Backend, Capabilities, PortInfo, XdpMode};
 use crate::sysroot::SystemRoot;
 
 /// The contract version of `agent.proto` that this crate implements.
-pub const ENGINE_API: &str = "0.2.4";
+pub const ENGINE_API: &str = "0.2.5";
 
 /// The agent build version.
 pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -253,6 +253,9 @@ impl HostCapabilities {
             ports: self.ports.iter().map(|p| p.info.clone()).collect(),
             modules: Vec::new(),
             labels: Default::default(),
+            // AGT-22 reports the kernel release and the selected backend (CON-32).
+            kernel_release: String::new(),
+            selected_backend: Backend::Unspecified,
         }
     }
 }
@@ -433,6 +436,8 @@ fn detect_ports(
                 speed_mbps,
                 mac,
                 mtu,
+                // AGT-22 maps the driver table to the XDP mode (CON-32).
+                xdp_driver_mode: XdpMode::Unspecified,
             },
             numa_node,
             xdp,
