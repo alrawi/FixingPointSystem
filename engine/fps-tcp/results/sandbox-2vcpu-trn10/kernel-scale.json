@@ -1,0 +1,22 @@
+{
+  "format": "fps-bench/v1",
+  "suite": "tcp-stack",
+  "recorded": "2026-11-17T23:49:29Z",
+  "source": "kernel loopback TCP on sandbox 2 vcpu, kernel, scale to 1,000,000 sockets in 64 shards, TRN-10 session",
+  "host": {"cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz", "vcpus": 2, "kernel": "6.18.44-fc-v553", "mem_total_bytes": 8413855744},
+  "config": {"profile": "full", "nodelay": "true", "backlog": "4096", "scale.steps": "1000,10000,100000,250000,500000,750000,1000000", "scale.shards": "64", "open_files_soft_limit": "20000", "scale.buffer_bytes": "kernel default", "scale.step_budget_secs": "300", "scale.probe_sessions": "500"},
+  "notes": ["the client and the server host are sockets of one kernel that talk over the loopback interface of the host, in one process", "the kernel runs the TCP timers and moves the segments, so there is no user space poll and idle_poll_us is zero by construction", "bytes_per_socket is the growth of the resident set of the process, and kernel socket memory is not part of it", "the stack has no frame counters, so frames and pump passes stay zero", "every socket is a file descriptor, so the open files limit of the process caps the scaling run, and the report lists it as open_files_soft_limit", "sockets counts both hosts of a pair and includes the listening sockets", "step 100000 stopped after 0.1 s with 19815 sockets, the stack refused a socket (accept: Too many open files (os error 24))"],
+  "metrics": {
+    "kernel.scale.max_sockets": {"value": 10177, "better": "higher", "unit": "sockets"},
+    "kernel.scale.1000.setup_sockets_per_s": {"value": 163967.43317422867, "better": "higher", "unit": "sockets/s"},
+    "kernel.scale.1000.bytes_per_socket": {"value": 488.9623507805326, "better": "lower", "unit": "bytes"},
+    "kernel.scale.1000.idle_poll_us": {"value": 0.010666666666666666, "better": "lower", "unit": "us"},
+    "kernel.scale.1000.probe_sessions_per_s": {"value": 45177.39446063703, "better": "higher", "unit": "sessions/s"},
+    "kernel.scale.1000.probe_latency_p99_us": {"value": 43, "better": "lower", "unit": "us"},
+    "kernel.scale.10000.setup_sockets_per_s": {"value": 162441.7250589079, "better": "higher", "unit": "sockets/s"},
+    "kernel.scale.10000.bytes_per_socket": {"value": 464.45750221086763, "better": "lower", "unit": "bytes"},
+    "kernel.scale.10000.idle_poll_us": {"value": 0.012666666666666668, "better": "lower", "unit": "us"},
+    "kernel.scale.10000.probe_sessions_per_s": {"value": 44466.36141991764, "better": "higher", "unit": "sessions/s"},
+    "kernel.scale.10000.probe_latency_p99_us": {"value": 44, "better": "lower", "unit": "us"}
+  }
+}

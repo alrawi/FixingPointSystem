@@ -1,0 +1,32 @@
+{
+  "format": "fps-bench/v1",
+  "suite": "tcp-stack",
+  "recorded": "2026-11-17T23:48:43Z",
+  "source": "smoltcp 0.14 on sandbox 2 vcpu, smoltcp, profile small, TRN-10 session",
+  "host": {"cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz", "vcpus": 2, "kernel": "6.18.44-fc-v553", "mem_total_bytes": 8413855744},
+  "config": {"profile": "small", "smol.mtu": "1500", "smol.checksums": "true", "smol.time_wait": "Skip", "smol.nagle": "false", "smol.idle_poll_ms": "100", "smol.backlog": "8", "rate.duration_secs": "2", "rate.concurrency": "32", "rate.threads": "1", "rate.request_bytes": "64", "rate.response_bytes": "64", "rate.buffer_bytes": "65536", "throughput.sessions": "4", "throughput.bytes_per_session": "67108864", "throughput.chunk": "65536", "throughput.direction": "Upload", "throughput.threads": "1", "throughput.buffer_bytes": "65536", "scale.steps": "1000,4000,16000", "scale.shards": "1", "open_files_soft_limit": "20000", "scale.buffer_bytes": "512", "scale.step_budget_secs": "30", "scale.probe_sessions": "100"},
+  "notes": ["the client host and the server host are two smoltcp interfaces in one process, joined by an in memory IP link without delay or loss (mtu 1500, software checksums on), so there is no kernel socket and no descriptor", "smoltcp walks every socket of a host on every poll, so the poll with idle sockets grows with the socket count, and a run with many sockets splits them over shards, each shard with its own pair of socket sets", "the driver polls only after a session did something, and otherwise once per 100 ms, so timers run while all sessions idle", "a socket in TIME-WAIT is removed at once, which models a stack that reuses a 4-tuple at once", "every socket owns a receive buffer of 65536 bytes and a transmit buffer of 65536 bytes, which smoltcp allocates at once, so bytes_per_socket is mostly buffer; Nagle is off", "bytes_per_socket is the growth of the resident set of the process and includes the socket sets, the buffers, and the link", "sockets counts both hosts of a pair and includes the listening sockets"],
+  "metrics": {
+    "smoltcp.rate.sessions_per_s": {"value": 57833.14148100206, "better": "higher", "unit": "sessions/s"},
+    "smoltcp.rate.latency_p50_us": {"value": 524, "better": "lower", "unit": "us"},
+    "smoltcp.rate.latency_p99_us": {"value": 1289, "better": "lower", "unit": "us"},
+    "smoltcp.rate.sessions_failed": {"value": 0, "better": "lower", "unit": "sessions"},
+    "smoltcp.throughput.gbit_per_s": {"value": 26.17660943735695, "better": "higher", "unit": "Gbit/s"},
+    "smoltcp.scale.max_sockets": {"value": 16016, "better": "higher", "unit": "sockets"},
+    "smoltcp.scale.1000.setup_sockets_per_s": {"value": 349587.8989871315, "better": "higher", "unit": "sockets/s"},
+    "smoltcp.scale.1000.bytes_per_socket": {"value": 1709.3543307086613, "better": "lower", "unit": "bytes"},
+    "smoltcp.scale.1000.idle_poll_us": {"value": 10.120333333333333, "better": "lower", "unit": "us"},
+    "smoltcp.scale.1000.probe_sessions_per_s": {"value": 4616.067367256443, "better": "higher", "unit": "sessions/s"},
+    "smoltcp.scale.1000.probe_latency_p99_us": {"value": 321, "better": "lower", "unit": "us"},
+    "smoltcp.scale.4000.setup_sockets_per_s": {"value": 93863.88115975069, "better": "higher", "unit": "sockets/s"},
+    "smoltcp.scale.4000.bytes_per_socket": {"value": 1579.8565737051792, "better": "lower", "unit": "bytes"},
+    "smoltcp.scale.4000.idle_poll_us": {"value": 85.11833333333334, "better": "lower", "unit": "us"},
+    "smoltcp.scale.4000.probe_sessions_per_s": {"value": 863.6901640744431, "better": "higher", "unit": "sessions/s"},
+    "smoltcp.scale.4000.probe_latency_p99_us": {"value": 1425, "better": "lower", "unit": "us"},
+    "smoltcp.scale.16000.setup_sockets_per_s": {"value": 46482.43198439449, "better": "higher", "unit": "sockets/s"},
+    "smoltcp.scale.16000.bytes_per_socket": {"value": 1582.033966033966, "better": "lower", "unit": "bytes"},
+    "smoltcp.scale.16000.idle_poll_us": {"value": 359.43966666666665, "better": "lower", "unit": "us"},
+    "smoltcp.scale.16000.probe_sessions_per_s": {"value": 118.72954006557893, "better": "higher", "unit": "sessions/s"},
+    "smoltcp.scale.16000.probe_latency_p99_us": {"value": 10035, "better": "lower", "unit": "us"}
+  }
+}

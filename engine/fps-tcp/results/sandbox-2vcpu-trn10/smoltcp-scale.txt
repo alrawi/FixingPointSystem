@@ -1,0 +1,25 @@
+smoltcp 0.14 on sandbox 2 vcpu, smoltcp, scale to 1,000,000 sockets in 64 shards, TRN-10 session
+host: Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vcpus, kernel 6.18.44-fc-v553
+  profile = full
+  smol.mtu = 1500
+  smol.checksums = true
+  smol.time_wait = Skip
+  smol.nagle = false
+  smol.idle_poll_ms = 100
+  smol.backlog = 8
+  scale.steps = 1000,10000,100000,250000,500000,750000,1000000
+  scale.shards = 64
+  open_files_soft_limit = 20000
+  scale.buffer_bytes = 512
+  scale.step_budget_secs = 300
+  scale.probe_sessions = 500
+socket scaling over 64 shards:
+      target    sockets   setup s    sockets/s  B/socket idle poll us     probe /s probe p99
+        1000       1544      0.00       439679      1724           16        26003        63
+       10000      10632      0.02       485128      1905          393        14284        97
+      100000     100616      0.29       306118      1688         4425         2706       440
+      250000     250632      1.13       133037      1645        13402          777      9546
+      500000     500616      3.79        65993      1626        27666          196     24255
+      750000     750600      7.56        33069      1615        56150          111     30068
+     1000000    1000584     13.10        19082      1591        53884           55     52943
+wrote engine/fps-tcp/results/sandbox-2vcpu-trn10/smoltcp-scale.json

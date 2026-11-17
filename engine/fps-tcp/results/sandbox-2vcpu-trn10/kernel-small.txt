@@ -1,0 +1,31 @@
+kernel loopback TCP on sandbox 2 vcpu, kernel, profile small, TRN-10 session
+host: Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vcpus, kernel 6.18.44-fc-v553
+  profile = small
+  nodelay = true
+  backlog = 4096
+  rate.duration_secs = 2
+  rate.concurrency = 32
+  rate.threads = 1
+  rate.request_bytes = 64
+  rate.response_bytes = 64
+  rate.buffer_bytes = kernel default
+  throughput.sessions = 4
+  throughput.bytes_per_session = 67108864
+  throughput.chunk = 65536
+  throughput.direction = Upload
+  throughput.threads = 1
+  throughput.buffer_bytes = kernel default
+  scale.steps = 1000,4000,16000
+  scale.shards = 1
+  open_files_soft_limit = 20000
+  scale.buffer_bytes = kernel default
+  scale.step_budget_secs = 30
+  scale.probe_sessions = 100
+sessions per second: 14416 (28853 sessions in 2.00 s, 0 failed, p50 735 us, p99 61456 us)
+throughput: 20.119 Gbit/s (268435456 bytes in 0.11 s)
+socket scaling over 1 shards:
+      target    sockets   setup s    sockets/s  B/socket idle poll us     probe /s probe p99
+        1000       1002      0.01       147318       491            0        42606        55
+        4000       4002      0.02       142254       453            0        40764        58
+       16000      16002      0.09       128804       444            0        39908        71
+wrote engine/fps-tcp/results/sandbox-2vcpu-trn10/kernel-small.json

@@ -1,0 +1,13 @@
+kernel loopback TCP on sandbox 2 vcpu, kernel, default mtu, throughput, TRN-10 session
+host: Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vcpus, kernel 6.18.44-fc-v553
+  profile = small
+  nodelay = true
+  backlog = 4096
+  throughput.sessions = 4
+  throughput.bytes_per_session = 67108864
+  throughput.chunk = 65536
+  throughput.direction = Upload
+  throughput.threads = 1
+  throughput.buffer_bytes = kernel default
+throughput: 19.816 Gbit/s (268435456 bytes in 0.11 s)
+wrote engine/fps-tcp/results/sandbox-2vcpu-trn10/kernel-throughput.json

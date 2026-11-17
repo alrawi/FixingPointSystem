@@ -1,0 +1,20 @@
+Host of the results in this directory (recorded 2026-11-17 by TRN-10)
+
+what      the agent sandbox of the swarm, a Firecracker microVM, not the GitHub hosted runner and not fat-nuc
+stacks    kernel loopback reference (TRN-17), own minimal stack (TRN-18), smoltcp 0.14 (TRN-20), all measured in ONE session, one after the other, with the same binary
+cpu       Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vCPUs
+memory    8 GiB
+kernel    6.18.44-fc-v553
+rustc     1.97.0 (2d8144b78 2026-07-07), release profile of the workspace, built with CARGO_BUILD_JOBS=1
+load      load average 0.5 when the session started and 0.06 after it, so the host was nearly idle
+limits    open files 20000 soft and hard (the hard limit cannot be raised in this sandbox), so the kernel scaling run ends at 19,815 sockets;
+          the kernel row at 1,000,000 sockets is therefore NOT measured here, and the kernel ceiling stays the TRN-17 and TRN-18 figure, which has the same limit
+note      the throughput runs move 256 MiB in about 0.1 s each, so one run is a noisy single sample; the rate sweep has three runs per cell
+
+files     argv (all with the binary target/release/examples/tcp_bench of the fps-tcp crate)
+{kernel,own,smoltcp}-small.json/.txt        --stack S --profile small --label "sandbox 2 vcpu, S, profile small, TRN-10 session" --out ...-small.json
+{own,smoltcp,kernel}-scale.json/.txt        --stack S --profile full --workload scale --label "... scale to 1,000,000 sockets in 64 shards, TRN-10 session" --out ...-scale.json
+{kernel,own,smoltcp}-throughput.json/.txt   --stack S --workload throughput --profile small --label "... default mtu, throughput, TRN-10 session" --out ...-throughput.json
+rate-sweep.txt                              three alternating runs per stack of --workload rate --profile small --concurrency 32 and 256 (first line of each report)
+
+order of the session: the three small profiles, the three scale runs (own, smoltcp, kernel), the three throughput runs, then the rate sweep
