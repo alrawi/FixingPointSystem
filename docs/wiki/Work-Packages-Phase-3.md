@@ -348,7 +348,6 @@ Phase 3 · size S · workstream HST
 
 - **Depends on.** HST-03, CON-34
 - **Paths.** `engine/fps-hosts/`
-- **Owner action.** Waits for a contract package that adds DHCP configuration to the host pool schema, which no schema field configures today. The coordinator does not dispatch it before then.
 
 Obtain host addresses through DHCP when the host pool configures it.
 
@@ -359,6 +358,7 @@ Deliverables.
 Acceptance.
 
 - [ ] Hosts of a pool configured for DHCP obtain and renew addresses in the namespace harness.
+- [ ] The fps-hosts API gives the agent the leased addresses of a DHCP pool, so that a later agent change can build the pool at Prepare and filter a DHCP port by those addresses instead of keeping every session.
 
 ## AGT Agent service
 
