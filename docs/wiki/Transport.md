@@ -9,6 +9,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | Crate | Contents | Next package |
 |---|---|---|
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `Connector`, `KernelListener`, and `KernelStream`, which implement `SessionIo` over kernel TCP sockets, the operating system profiles of TRN-03, and `KernelDatagram`, `KernelDatagramListener`, and the two datagram openers of TRN-02, see [Kernel UDP backend](#kernel-udp-backend) | TRN-04 added TLS, see below |
+| [`fps-tcp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-tcp) | `TcpStack`, the bench workloads `session_rate`, `throughput`, and `socket_scaling`, `KernelStack` and `KernelSession`, the kernel loopback reference stack that implements `SessionIo`, and the command `tcp_bench`, see [TCP stack bench harness](#tcp-stack-bench-harness) | TRN-20 adds the smoltcp adapter and TRN-18 an own stack on the same harness |
 | [`fps-module-tls`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/tls) | `TlsConnector`, `TlsAcceptor`, and `TlsSession`, which wrap any `SessionIo` in TLS 1.2 or 1.3, the client and server profiles, `RunAuthority`, and `NssKeyLog`, see [TLS module](#tls-module) | TRN-05 added the browser profiles, see [Browser profiles and JA4](#browser-profiles-and-ja4), and TRN-15 the mail and h2 profiles, see [Mail and h2 profiles](#mail-and-h2-profiles) |
 | [`fps-backend-afxdp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-afxdp) | `FrameIo`, the frame trait with batched receive and send per queue, `open_port` with `AfXdpQueue`, `Workers`, and the in memory `memory::frame_pair`, see [AF_XDP backend](#af_xdp-backend) | TRN-12 runs a user space TCP stack over it, and TRN-19 measures its rate on KVM |
 
@@ -471,3 +472,69 @@ FPS_AFXDP_FRAMES=100000 cargo test -p fps-backend-afxdp --test veth -- --nocaptu
 | No shared UMEM and no unaligned chunks | One UMEM per queue keeps workers independent, and the aligned mode needs a power of two frame size from 2048 bytes up to the page size |
 | No busy polling | S3 ran DPDK with a busy poll budget of 64, and TRN-19 decides whether this crate needs `SO_PREFER_BUSY_POLL` |
 | Linux on 64 bit only | The ring offsets and the `bpf` call use the 64 bit layout, and other targets get only the trait, the settings, the workers, and the in memory pair |
+
+## TCP stack bench harness
+
+TRN-17 added the crate `engine/fps-tcp`, which measures a TCP stack behind `SessionIo` for decision record 0014 of TRN-10. The harness has no dependency on a user space stack. A stack implements `TcpStack`, which models a client host and a server host, and every session leaves the stack as a `SessionIo`, so a measurement includes the cost of the adapter. The kernel loopback TCP is the reference stack of TRN-17. TRN-20 plugs smoltcp into the same trait, TRN-18 plugs its own stack in, and TRN-13 can reuse the workloads for the DPDK path.
+
+The smoltcp adapter is a separate package, because `smoltcp 0.14.0` and `managed 0.8.0` are licensed 0BSD, which `deny.toml` does not allow, and `deny.toml` uses `all-features = true`, so a feature flag would not hide them from `cargo deny`. The draft is complete and lives on the branch `wp/TRN-20`. TRN-20 resumes it when the owner allows 0BSD or the two crates by exception.
+
+### Workloads
+
+The three workloads read the wall clock because they measure it, and they run on a current thread runtime with a driver task that polls a user space stack, like a poll mode worker. A stack that the operating system drives has a driver that only waits.
+
+| Workload | What it does | What it reports |
+|---|---|---|
+| `session_rate` | `concurrency` tasks open a session, send a request, read a response, close the write side, and wait for the end of the server, until the duration passes | Completed sessions per second, failed sessions, and the p50 and p99 time of a session |
+| `throughput` | `sessions` concurrent sessions move `bytes_per_session` each, as upload or download, in chunks of 64 KiB, and the workload checks that every byte arrived | Delivered application Gbit per second |
+| `socket_scaling` | Opens sessions in batches until a step reaches its socket count, in steps such as 1,000 up to 1,000,000, spread over shards | Per step the setup rate, the resident memory per socket, the time of one full poll with idle sockets, and the session rate and p99 that a probe sees while all sockets are held |
+
+A socket count includes both hosts of a pair, so 1,000,000 sockets are 500,000 sessions, and it includes the few listening sockets. A step that exceeds its time budget, or that the stack refuses a socket for, such as at the open files limit, ends the run and is marked `not reached` with the reason on a `stopped` line, so a stack that slows down with the socket count stops the run in place of hanging it. A shard is an independent pair, with its own interfaces and socket sets, which is how an engine worker owns its sessions. At most 20,000 sessions share one server port, which keeps every 4-tuple unique within the 28,000 source ports of a Linux client. The scaling workload runs all shards on one thread, so the memory and poll numbers do not depend on thread count. The rate and throughput workloads run one stack per thread with `--threads`.
+
+### The kernel reference stack
+
+`KernelStack` is the TCP of the operating system on the loopback interface. The client host and the server host are sockets of one kernel that talk over `127.0.0.1`, driven by the reactor of the tokio runtime that the workload runs on, so the stack is the baseline that a user space stack must match or beat. It follows three rules, which `engine/fps-tcp/src/kernel.rs` documents in full.
+
+1. The stack needs no driver. The kernel moves the segments and runs the timers, so `drive` only waits and `poll_once` does nothing, and the idle poll cost of a kernel run is zero by construction.
+2. A listened port is a logical number of the harness. Each stack binds an ephemeral loopback port for it and keeps the mapping, so the shards of a scaling run, which all listen on the same logical ports, never collide.
+3. `abort` sets `SO_LINGER` to zero and closes the socket, as the kernel backend does, and dropping a session closes it with a FIN. `TCP_NODELAY` is on by default and `--nodelay off` turns it off. The kernel sizes the socket buffers unless `--buffer-kib` sets them.
+
+What the numbers cannot show: kernel socket memory is not part of the resident set of the process, so `bytes_per_socket` is the user space cost of a socket only, and the stack has no frame counters. Every socket is a file descriptor, so a scaling run ends at the open files limit of the process, which the report lists as `open_files_soft_limit`. Reaching 1,000,000 sockets takes a limit above 1,000,100 and a high `fs.nr_open`.
+
+### Running it
+
+The command takes plain arguments and runs on any host without root.
+
+```bash
+cargo run --release -p fps-tcp --example tcp_bench -- --profile small
+cargo run --release -p fps-tcp --example tcp_bench -- --profile full --label fat-nuc --out -
+cargo run --release -p fps-tcp --example tcp_bench -- --workload scale --scale-steps 1000,100000 --shards 32
+cargo run --release -p fps-tcp --example tcp_bench -- --help
+```
+
+The profile `small` finishes within a minute and fits a hosted runner. The profile `full` aims at 1,000,000 sockets over 64 shards. Every flag after the profile overrides it, and the stack flags `--nodelay`, `--buffer-kib`, and `--backlog` change the sockets. The command prints a report and, with `--out`, writes an `fps-bench/v1` document of the suite `tcp-stack` that `bench/compare.py` reads. The metric names start with the stack key, such as `kernel.rate.sessions_per_s` and `kernel.scale.10000.bytes_per_socket`. The fat-nuc run goes through the relay as a host test, see the handoff `docs/handoff/TRN-17.md`.
+
+### First results of the kernel reference stack
+
+The committed results in `engine/fps-tcp/results/sandbox-2vcpu/` come from the 2 vCPU agent sandbox with the default settings, which are `TCP_NODELAY` on and kernel sized buffers. The sandbox is not the GitHub hosted runner and not fat-nuc, it was shared with other workers, and its open files limit is 20,000, so TRN-10 compares only runs of one host and reads the scaling rows as a floor.
+
+| Measure | Result |
+|---|---|
+| Sessions per second, 32 concurrent, 64 byte request and response | 14,000 to 35,000 between runs on the shared host, with a p50 of 0.8 ms, and no failures |
+| Throughput, 4 concurrent uploads | about 20 Gbit/s on one core |
+| Memory per socket (user space only) | 0.35 to 0.5 KB |
+| Sockets reached | 10,177 and then 19,815, where the open files limit of 20,000 refused the next socket |
+| Idle poll | zero, because the kernel has no user space poll |
+| Probe session rate with 10,177 sockets held | about 28,000 per second |
+
+The reference run says what the host gives a plain kernel session. It does not show the cost of one million sockets, which needs a host with a higher open files limit. The first draft of smoltcp on the same harness reached 1,000,584 sockets at 1.59 KB per socket, with an idle poll of 15 to 52 ns per socket, and it lives on `wp/TRN-20`.
+
+### Limits
+
+| Limit | Consequence |
+|---|---|
+| The kernel stack runs on the loopback interface, and a user space stack on an in memory link, and neither has delay, loss, or reordering | The numbers show stack and adapter cost only, and retransmission and congestion control stay unmeasured |
+| Both hosts of a pair share a process and a core | A rate counts the work of the client and of the server, so it is not the rate of one agent talking to a remote peer |
+| Scaling runs on one thread | The poll cost per socket is a per core cost, and the multi core rate comes from `--threads` on the rate workload |
+| The open files limit caps a kernel run | The sandbox ends near 20,000 sockets. A host test needs a limit above 1,000,100 for 1,000,000 sockets |
+| `cargo deny` rejects the license `0BSD` of smoltcp and managed | The smoltcp adapter is TRN-20 and waits for the owner to allow 0BSD in `deny.toml` |
