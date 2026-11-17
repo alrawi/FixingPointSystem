@@ -896,6 +896,7 @@ dependencies = [
  "base64",
  "bytes",
  "core_affinity",
+ "fps-backend-afxdp",
  "fps-backend-kernel",
  "fps-capture",
  "fps-flow",

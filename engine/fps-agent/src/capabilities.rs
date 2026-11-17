@@ -4,11 +4,12 @@
 //! [`detect`] reads `/proc` and `/sys` under a [`SystemRoot`] and returns
 //! [`HostCapabilities`], which holds every fact that detection found.
 //! [`HostCapabilities::to_capabilities`] then fills the proto mirror
-//! [`Capabilities`]. Some facts, namely the NUMA nodes, the kernel version,
-//! and the AF_XDP evidence, have no field in the `Capabilities` message of
-//! contract version 0.2.0, so they stay on [`HostCapabilities`] until the
-//! contract adds them. AF_XDP support reaches the message as
-//! [`Backend::AfXdp`] in `backends`.
+//! [`Capabilities`]. Some facts, namely the NUMA nodes and the AF_XDP
+//! evidence, have no field in the message, so they stay on
+//! [`HostCapabilities`]. AF_XDP support reaches the message as
+//! [`Backend::AfXdp`] in `backends`. The kernel release, the selected backend,
+//! and the XDP mode of the ports are filled from the selection of
+//! [`crate::select`] (AGT-22, contract fields of CON-32).
 //!
 //! Detection reads these files, each relative to the root.
 //!
@@ -25,7 +26,9 @@
 
 use crate::error::{DetectError, KernelError};
 use crate::proto::{Backend, Capabilities, PortInfo, XdpMode};
+use crate::select::{backend_of, port_support, xdp_mode_of};
 use crate::sysroot::SystemRoot;
+use fps_backend_afxdp::Selection;
 
 /// The contract version of `agent.proto` that this crate implements.
 pub const ENGINE_API: &str = "0.2.6";
@@ -235,27 +238,64 @@ pub fn driver_xdp(driver: &str, kernel: &KernelVersion) -> DriverXdp {
 }
 
 impl HostCapabilities {
-    /// Fills the proto `Capabilities` message.
+    /// Fills the proto `Capabilities` message with the backend that the
+    /// default selection chooses (AGT-22).
     ///
     /// `modules` and `labels` stay empty, because the module store and the
-    /// agent configuration own them.
+    /// agent configuration own them. The default selection never fails on a
+    /// host that can run the kernel backend. On a host where it does,
+    /// `selected_backend` stays `BACKEND_UNSPECIFIED`, which a reader treats as
+    /// "not reported". An operator who forces a backend uses
+    /// [`HostCapabilities::capabilities_for`] with the result of
+    /// [`crate::select::select`].
     pub fn to_capabilities(&self) -> Capabilities {
+        match crate::select::select(self, None) {
+            Ok(selection) => self.capabilities_for(&selection),
+            Err(_) => self.fill(None),
+        }
+    }
+
+    /// Fills the proto `Capabilities` message for a backend that was selected,
+    /// so the message reports `kernel_release`, `selected_backend`, and, when
+    /// AF_XDP is the selected backend, the `xdp_driver_mode` of every port.
+    ///
+    /// A port reports its own driver table mode. The contract (CON-32) leaves
+    /// the mode unspecified for a backend other than AF_XDP, so a kernel
+    /// backend run reports none.
+    pub fn capabilities_for(&self, selection: &Selection) -> Capabilities {
+        self.fill(Some(selection))
+    }
+
+    pub(crate) fn fill(&self, selection: Option<&Selection>) -> Capabilities {
         let mut backends = vec![Backend::Kernel];
         if self.af_xdp.is_supported() {
             backends.push(Backend::AfXdp);
         }
+        let selected_backend = selection.map_or(Backend::Unspecified, |s| backend_of(s.backend));
+        let af_xdp_selected = selected_backend == Backend::AfXdp;
         Capabilities {
             agent_version: AGENT_VERSION.to_owned(),
             engine_api: ENGINE_API.to_owned(),
             backends,
             cores: u32::try_from(self.online_cpus.len()).unwrap_or(u32::MAX),
             memory_bytes: self.memory_available_bytes,
-            ports: self.ports.iter().map(|p| p.info.clone()).collect(),
+            ports: self
+                .ports
+                .iter()
+                .map(|p| {
+                    let mut info = p.info.clone();
+                    info.xdp_driver_mode = if af_xdp_selected {
+                        xdp_mode_of(port_support(p))
+                    } else {
+                        XdpMode::Unspecified
+                    };
+                    info
+                })
+                .collect(),
             modules: Vec::new(),
             labels: Default::default(),
-            // AGT-22 reports the kernel release and the selected backend (CON-32).
-            kernel_release: String::new(),
-            selected_backend: Backend::Unspecified,
+            kernel_release: self.kernel.release.clone(),
+            selected_backend,
         }
     }
 }
@@ -436,7 +476,8 @@ fn detect_ports(
                 speed_mbps,
                 mac,
                 mtu,
-                // AGT-22 maps the driver table to the XDP mode (CON-32).
+                // Detection leaves the mode open. `capabilities_for` maps the
+                // driver table to it once the selection chose AF_XDP (CON-32).
                 xdp_driver_mode: XdpMode::Unspecified,
             },
             numa_node,
