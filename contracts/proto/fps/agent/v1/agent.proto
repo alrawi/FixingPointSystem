@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Agent control protocol, contract version 0.2.4.
+// Agent control protocol, contract version 0.2.5.
 //
 // The controller compiles a test configuration into one Plan per agent. Each
 // agent dials the controller, so an agent behind NAT or in a cloud needs no
@@ -42,6 +42,13 @@
 // fields. An agent of an earlier version leaves them out, so a reader tells
 // "no split" from "zero" by their presence. dropped keeps its field number and
 // its meaning as the sum of the three.
+//
+// Version 0.2.5 adds Capabilities.kernel_release, Capabilities.selected_backend,
+// PortInfo.xdp_driver_mode, and the enum XdpMode. It only adds fields. An agent
+// of an earlier version leaves them out: kernel_release is empty,
+// selected_backend is BACKEND_UNSPECIFIED, and xdp_driver_mode is
+// XDP_MODE_UNSPECIFIED, and a reader treats each as "not reported". The
+// controller keeps admitting agents by the major and minor part of engine_api.
 
 syntax = "proto3";
 
@@ -115,6 +122,27 @@ enum Backend {
   BACKEND_AF_XDP = 2;
   // BACKEND_DPDK uses DPDK poll mode drivers.
   BACKEND_DPDK = 3;
+}
+
+// XdpMode is the XDP attach and bind mode of a port, as the agent measured it.
+// It is a hint for a driver table in an operator view and in a report: it says
+// how much of the rate that a driver can reach the agent may expect, and it
+// changes no command, no plan, and no verdict. A reader must not select a
+// backend or refuse a run from it.
+enum XdpMode {
+  // XDP_MODE_UNSPECIFIED means that the agent did not report a mode. It is the
+  // value for a port that no AF_XDP queue uses, for a backend other than
+  // BACKEND_AF_XDP, and for an agent of 0.2.4 or earlier.
+  XDP_MODE_UNSPECIFIED = 0;
+  // XDP_MODE_GENERIC is the program in the generic (skb) hook after the kernel
+  // allocated a buffer. Every device supports it, and it is the slowest mode.
+  XDP_MODE_GENERIC = 1;
+  // XDP_MODE_NATIVE is the program in the driver with copy mode sockets: the
+  // kernel copies each frame between its own buffers and the UMEM.
+  XDP_MODE_NATIVE = 2;
+  // XDP_MODE_ZERO_COPY is the program in the driver with zero copy sockets: the
+  // driver writes and reads frames in the UMEM directly.
+  XDP_MODE_ZERO_COPY = 3;
 }
 
 // Topology matches the topology field of the test configuration.
@@ -253,6 +281,14 @@ message Capabilities {
   repeated ModuleRef modules = 7;
   // labels are operator assigned key and value pairs.
   map<string, string> labels = 8;
+  // kernel_release is the kernel release string of the host, as uname -r
+  // prints it, such as 6.8.0-45-generic. It is empty for an agent of 0.2.4 or
+  // earlier and when the agent cannot read it. Added in 0.2.5.
+  string kernel_release = 9;
+  // selected_backend is the backend that the agent selected and started, one
+  // entry of backends. It is BACKEND_UNSPECIFIED for an agent of 0.2.4 or
+  // earlier, which always used BACKEND_KERNEL. Added in 0.2.5.
+  Backend selected_backend = 10;
 }
 
 // PortInfo describes one traffic interface of the agent.
@@ -267,6 +303,10 @@ message PortInfo {
   string mac = 4;
   // mtu is the configured MTU.
   uint32 mtu = 5;
+  // xdp_driver_mode is the XDP mode of the port, a driver table hint (see
+  // XdpMode). It is XDP_MODE_UNSPECIFIED unless the selected backend is
+  // BACKEND_AF_XDP and the agent bound a queue of this port. Added in 0.2.5.
+  XdpMode xdp_driver_mode = 6;
 }
 
 // SessionRequest is one message from the agent to the controller on the

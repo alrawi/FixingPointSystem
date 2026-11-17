@@ -443,12 +443,25 @@ export interface components {
             reserved_by?: string;
             version?: string;
             cores?: number;
-            /** @enum {string} */
+            /**
+             * @description Kernel release of the agent host, as `uname -r` prints it. Absent for an agent of agent protocol 0.2.4 or earlier and when the agent cannot read it. A controller older than 0.13.0 does not send it.
+             * @example 6.8.0-45-generic
+             */
+            kernel_release?: string;
+            /**
+             * @description The backend that the agent selected and started. A controller of 0.13.0 or later takes it from `selected_backend` of the agent, and for an agent of agent protocol 0.2.4 or earlier, which does not send it, from the first entry of `backends`, which is `kernel`. An older controller always took the first entry.
+             * @enum {string}
+             */
             backend?: "kernel" | "af_xdp" | "dpdk";
             ports?: {
                 name: string;
                 driver?: string;
                 speed_mbps?: number;
+                /**
+                 * @description XDP mode of the port, a driver table hint: `generic` is the generic (skb) hook, `native` is the driver hook with copy mode sockets, and `zero_copy` is the driver hook with zero copy sockets. It says what rate a driver may reach and changes no run or verdict. Absent unless the selected backend is `af_xdp` and the agent bound a queue of the port, and absent for an agent of agent protocol 0.2.4 or earlier. A controller older than 0.13.0 does not send it.
+                 * @enum {string}
+                 */
+                xdp_driver_mode?: "generic" | "native" | "zero_copy";
             }[];
             labels?: {
                 [key: string]: string;

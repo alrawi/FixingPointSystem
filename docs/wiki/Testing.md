@@ -88,7 +88,7 @@ The targets that exist today are listed below.
 | `e2e-mod-dns` | the dns fixture capture and score in the namespace harness, as root |
 | `e2e-rlm-modules` | a fresh capture and score of every native module in the namespace harness, as root; the `realism` workflow runs it for the modules a change touches |
 | `lint-ui`, `test-ui` | the web UI linters, unit tests, bundle budget, license check, and client currency check |
-| `e2e-ui` | the Playwright browser tests of the web UI, outside `make e2e` because they need a browser |
+| `e2e-ui` | the Playwright browser tests of the web UI, outside `make e2e` because they need a browser; `e2e-ui-controller` runs the same browser tests against a real controller with fake agents (UI-07), in the job `controller-browser` of the workflow `ui` |
 | `lint-qa-bench`, `test-qa-bench` | ruff and mypy over `bench/`, and the tests of `bench/compare.py` and `bench/s1_adapter.py` |
 | `bench-s1` | a real spike S1 run compared with the S1 baseline, outside `make test` |
 | `lint-trn`, `test-trn` | the kernel backend profile tooling |
