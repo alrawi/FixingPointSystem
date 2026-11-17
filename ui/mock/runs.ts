@@ -373,6 +373,25 @@ export class MockRuns {
     return lastTick > 0 ? this.samplesAt(run, views, lastTick) : [];
   }
 
+  /** The samples of every tick after `after` up to the newest, oldest first, as a stream owes them. */
+  ticksSince(
+    run: MockRun,
+    views: readonly MetricView[],
+    after: number,
+  ): { tick: number; samples: MetricSample[] }[] {
+    const { lastTick } = this.status(run);
+    const ticks: { tick: number; samples: MetricSample[] }[] = [];
+    for (let tick = after + 1; tick <= lastTick; tick += 1) {
+      ticks.push({ tick, samples: this.samplesAt(run, views, tick) });
+    }
+    return ticks;
+  }
+
+  /** The number of the newest tick that has samples, 0 before the first. */
+  newestTick(run: MockRun): number {
+    return this.status(run).lastTick;
+  }
+
   /** The samples from a time on, one per tick, as getRunMetrics answers. */
   series(run: MockRun, view: MetricView, from: string | null): MetricSample[] {
     const { lastTick } = this.status(run);

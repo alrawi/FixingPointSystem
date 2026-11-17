@@ -508,7 +508,12 @@ function streamMetrics(
     "Cache-Control": "no-store",
   });
   res.write(`retry: ${String(runs.stepMs)}\n\n`);
+  // `tick` counts the periods of this connection and numbers the events. `sent` is the newest run
+  // tick that went out. The timer of a loaded process fires late, and the clock of the run does not
+  // wait for it, so every period sends all run ticks since the last one. Sending only the newest
+  // would skip ticks, but the controller sends one event per tick (contract, streamRunMetrics).
   let tick = 0;
+  let sent = 0;
   const timer = setInterval(() => {
     emit();
   }, runs.stepMs);
@@ -516,10 +521,17 @@ function streamMetrics(
     clearInterval(timer);
   };
   function emit(): void {
+    const first = tick === 0;
     tick += 1;
-    for (const sample of runs.latest(run, views)) {
-      res.write(`id: ${String(tick)}\ndata: ${JSON.stringify(sample)}\n\n`);
+    // A new connection starts with the newest samples, and the gap before it is the client's to read.
+    const newest = runs.newestTick(run);
+    const after = first ? Math.max(newest - 1, 0) : sent;
+    for (const { samples } of runs.ticksSince(run, views, after)) {
+      for (const sample of samples) {
+        res.write(`id: ${String(tick)}\ndata: ${JSON.stringify(sample)}\n\n`);
+      }
     }
+    sent = Math.max(sent, newest);
     const { state, final } = runs.stateOf(run);
     if (final) {
       res.write(`event: end\ndata: ${JSON.stringify({ state })}\n\n`);

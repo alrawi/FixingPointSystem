@@ -157,7 +157,10 @@ export function useRunMetrics(runId: string, run: Run | undefined): RunMetrics {
     };
 
     const streamUrl = `${baseUrl.replace(/\/$/, "")}/runs/${encodeURIComponent(runId)}/metrics:stream?view=${RUN_VIEW}&side=client`;
-    let needBackfill = false;
+    // A connection starts at the newest tick (contract, streamRunMetrics), and a tick can pass
+    // between the history request above and the first event, so the first event of every
+    // connection, the first one included, reads the gap from the history.
+    let needBackfill = true;
     const stream = async () => {
       try {
         await backfill();
