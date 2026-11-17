@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Agent control protocol, contract version 0.2.5.
+// Agent control protocol, contract version 0.2.6.
 //
 // The controller compiles a test configuration into one Plan per agent. Each
 // agent dials the controller, so an agent behind NAT or in a cloud needs no
@@ -49,6 +49,10 @@
 // selected_backend is BACKEND_UNSPECIFIED, and xdp_driver_mode is
 // XDP_MODE_UNSPECIFIED, and a reader treats each as "not reported". The
 // controller keeps admitting agents by the major and minor part of engine_api.
+//
+// Version 0.2.6 adds HostPoolSlice.dhcp4 and the message Dhcp4. It only adds a
+// field, and an agent of an earlier version does not read it. The controller
+// keeps admitting agents by the major and minor part of engine_api.
 
 syntax = "proto3";
 
@@ -887,7 +891,8 @@ message PortBinding {
 // HostPoolSlice is the part of one host pool that this agent emulates. Host
 // index i of a pool maps to the i-th address of its prefix, counting from the
 // first address after the network address and skipping the gateway, and for
-// IPv4 also skipping the broadcast address.
+// IPv4 also skipping the broadcast address. A slice with dhcp4 has no prefix,
+// and its hosts take their addresses from their leases.
 message HostPoolSlice {
   // name is the host pool name from the test configuration.
   string name = 1;
@@ -914,7 +919,18 @@ message HostPoolSlice {
   string mac_base = 11;
   // os_profile names the host OS profile.
   string os_profile = 12;
+  // dhcp4 is set when the hosts of this slice obtain their IPv4 addresses
+  // and their router through DHCP. Presence means DHCP, and ipv4_prefix,
+  // ipv6_prefix, and gateway are then all empty. Host index i keeps the MAC
+  // address mac_base plus i and takes its address from its lease. Only a
+  // client slice may set it. An agent that cannot lease fails Prepare with
+  // an error that names dhcp4. Added in 0.2.6.
+  Dhcp4 dhcp4 = 13;
 }
+
+// Dhcp4 marks a host pool slice that uses DHCP for IPv4. It has no field yet,
+// and later options will be added as optional fields. Added in 0.2.6.
+message Dhcp4 {}
 
 // ExternalServer is a real server for TOPOLOGY_CLIENT_SIM.
 message ExternalServer {

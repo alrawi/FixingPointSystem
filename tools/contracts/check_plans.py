@@ -285,8 +285,16 @@ def check_plan(
                 file, where, f"slice {offset}+{count} exceeds poolCount {total}"
             )
         prefixes = [k for k in ("ipv4Prefix", "ipv6Prefix") if k in pool]
-        if not prefixes:
-            report.error(file, where, "a host pool needs ipv4Prefix or ipv6Prefix")
+        if "dhcp4" in pool:
+            # Rule 5 of the plan (agent protocol 0.2.6): presence means DHCP, and
+            # the hosts take their addresses and their router from their leases.
+            if pool.get("role") != "HOST_ROLE_CLIENT":
+                report.error(file, where + "/dhcp4", "dhcp4 is allowed only on a client slice")
+            for key in prefixes + [k for k in ("gateway",) if k in pool]:
+                report.error(file, where + "/" + key, f"a slice with dhcp4 must not set {key}")
+            prefixes = []
+        elif not prefixes:
+            report.error(file, where, "a host pool needs ipv4Prefix or ipv6Prefix, or dhcp4")
         for key in prefixes:
             usable = _usable_hosts(
                 pool[key], pool.get("gateway", ""), report, file, where + "/" + key
