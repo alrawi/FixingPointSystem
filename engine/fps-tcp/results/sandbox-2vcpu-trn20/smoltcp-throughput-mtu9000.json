@@ -1,0 +1,12 @@
+{
+  "format": "fps-bench/v1",
+  "suite": "tcp-stack",
+  "recorded": "2026-11-17T23:14:17Z",
+  "source": "smoltcp 0.14 on sandbox 2 vcpu, smoltcp, mtu 9000, throughput",
+  "host": {"cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz", "vcpus": 2, "kernel": "6.18.44-fc-v553", "mem_total_bytes": 8413855744},
+  "config": {"profile": "small", "smol.mtu": "9000", "smol.checksums": "true", "smol.time_wait": "Skip", "smol.nagle": "false", "smol.idle_poll_ms": "100", "smol.backlog": "8", "throughput.sessions": "4", "throughput.bytes_per_session": "67108864", "throughput.chunk": "65536", "throughput.direction": "Upload", "throughput.threads": "1", "throughput.buffer_bytes": "65536"},
+  "notes": ["the client host and the server host are two smoltcp interfaces in one process, joined by an in memory IP link without delay or loss (mtu 9000, software checksums on), so there is no kernel socket and no descriptor", "smoltcp walks every socket of a host on every poll, so the poll with idle sockets grows with the socket count, and a run with many sockets splits them over shards, each shard with its own pair of socket sets", "the driver polls only after a session did something, and otherwise once per 100 ms, so timers run while all sessions idle", "a socket in TIME-WAIT is removed at once, which models a stack that reuses a 4-tuple at once", "every socket owns a receive buffer of 65536 bytes and a transmit buffer of 65536 bytes, which smoltcp allocates at once, so bytes_per_socket is mostly buffer; Nagle is off", "bytes_per_socket is the growth of the resident set of the process and includes the socket sets, the buffers, and the link", "sockets counts both hosts of a pair and includes the listening sockets"],
+  "metrics": {
+    "smoltcp.throughput.gbit_per_s": {"value": 30.383526901100435, "better": "higher", "unit": "Gbit/s"}
+  }
+}

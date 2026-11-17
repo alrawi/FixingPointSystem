@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-20` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 40% (2 of 5 plan steps) |
+| Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-1cd665, lease until 2026-11-18T00:39:00Z |
 | Last verified commit | none |
 
@@ -20,22 +20,25 @@ Bring the smoltcp adapter that the first TRN-17 worker built (preserved on `wp/T
 
 - [x] 1. Merge `origin/main` into `wp/TRN-20` with an additive merge commit (no force push), restore `src/smol.rs`, `src/link.rs`, `tests/smol.rs`, the dependency, and the `tcp_bench` flags.
 - [x] 2. Add `TcpStack::notes` to the smoltcp adapter, wire `--stack smoltcp` into `cli.rs`, and keep `cargo test`, `clippy`, and `fmt` green.
-- [ ] 3. Measure smoltcp with the commands of TRN-17 and TRN-18 and commit the results next to the kernel and own results.
-- [ ] 4. Update the README, the Transport page, the log entry, and this handoff, with the fat-nuc host test.
+- [x] 3. Measure smoltcp with the commands of TRN-17 and TRN-18 and commit the results next to the kernel and own results.
+- [x] 4. Update the README, the Transport page, the log entry, and this handoff, with the fat-nuc host test.
 - [ ] 5. Open the pull request, wait for CI, and move the issue to review.
 
 ## Done and verified
 
 - Step 1 and 2: `cargo test -p fps-tcp`, `cargo clippy -p fps-tcp --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and `cargo deny check licenses` pass.
 
+- Step 3: results in `engine/fps-tcp/results/sandbox-2vcpu-trn20/` (see `host.txt` for the commands). smoltcp, 32 concurrent: 59,000 to 66,000 sessions per second; 4 uploads 28.1 Gbit/s; 1,000,584 sockets in 64 shards at 1.59 KB per socket; idle poll 24 ns per socket in one set of 16,016 and 54 ns per socket over 1,000,584; probe rate 4,800 per second at 1,016 sockets, 60 at 1,000,584.
+- Step 4: README, Transport page (new sections), log entry. `plan.py check`, `render --check`, and `lint` pass.
+
 ## Remaining
 
-- Steps 3 to 5.
+- Step 5: open the pull request, wait for CI, move the issue to review.
 - The fat-nuc run waits for an owner action, see Host test.
 
 ## Next action
 
-Run the three measures for smoltcp in the sandbox and commit them under `engine/fps-tcp/results/sandbox-2vcpu-trn20/`.
+Open the pull request, wait for CI, fix failures inside `engine/fps-tcp/`, then run `fps_swarm.py review 594 --pr N`.
 
 ## Blockers and open questions
 
