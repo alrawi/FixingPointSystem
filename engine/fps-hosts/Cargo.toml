@@ -16,6 +16,8 @@ thiserror = "2"
 
 [dev-dependencies]
 proptest = "1"
-socket2 = "0.6"
+# The DHCP harness test binds its server socket to one interface, which needs
+# the `all` feature.
+socket2 = { version = "0.6", features = ["all"] }
 # serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
 serde_yaml = { package = "serde_norway", version = "0.9" }

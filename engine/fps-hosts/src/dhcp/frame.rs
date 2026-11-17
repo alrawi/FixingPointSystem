@@ -3,8 +3,12 @@
 //!
 //! A user space client owns the frames of its port, so it writes the headers
 //! itself. [`udp4_frame`] builds a whole frame with both checksums, and
-//! [`parse_udp4`] reads one back, checks the IPv4 header checksum and a
-//! non zero UDP checksum, and refuses fragments. Neither is on the hot path.
+//! [`parse_udp4`] reads one back, checks the IPv4 header checksum, and refuses
+//! fragments. It does not check the UDP checksum, because a frame that a host
+//! with checksum offload sent, such as one that crossed a veth pair, carries
+//! only the partial checksum of the pseudo header, and a receiver that dropped
+//! it would lose every reply of such a server. Neither call is on the hot
+//! path.
 
 use std::net::Ipv4Addr;
 
@@ -140,8 +144,8 @@ fn be16(b: &[u8], at: usize) -> Option<u16> {
 }
 
 /// Parses an Ethernet frame that carries an unfragmented UDP datagram over
-/// IPv4, or returns `None` for anything else, for a bad IPv4 header checksum,
-/// and for a bad UDP checksum. A UDP checksum of zero means none.
+/// IPv4, or returns `None` for anything else and for a bad IPv4 header
+/// checksum. The UDP checksum is not checked, see the module documentation.
 #[must_use]
 pub fn parse_udp4(frame: &[u8]) -> Option<Udp4<'_>> {
     let (pos, ethertype, _, _) = ethernet_payload(frame)?;
@@ -176,9 +180,6 @@ pub fn parse_udp4(frame: &[u8]) -> Option<Udp4<'_>> {
     let segment = udp.get(..udp_len)?;
     let ip_src = ip_at(ip, 12)?;
     let ip_dst = ip_at(ip, 16)?;
-    if be16(segment, 6)? != 0 && udp4_checksum(ip_src, ip_dst, segment) != 0 {
-        return None;
-    }
     Some(Udp4 {
         eth_dst: mac_at(frame, 0)?,
         eth_src: mac_at(frame, 6)?,
@@ -269,18 +270,20 @@ mod tests {
     #[test]
     fn a_damaged_frame_is_refused() {
         let good = frame(b"payload!");
-        // A flipped bit in the IPv4 header, in the UDP payload, and in the
-        // protocol field.
-        for at in [22usize, 44, 23] {
+        // A flipped bit in the IPv4 header, which the header checksum
+        // catches, and in the protocol field.
+        for at in [22usize, 23] {
             let mut f = good.clone();
             f[at] ^= 0x01;
             assert!(parse_udp4(&f).is_none(), "byte {at}");
         }
-        // A UDP checksum of zero means none, so a payload change then passes.
-        let mut f = good.clone();
-        f[40..42].copy_from_slice(&[0, 0]);
-        f[44] ^= 1;
-        assert!(parse_udp4(&f).is_some());
+        // The UDP checksum is not checked, so a frame with the partial
+        // checksum of an offloading sender, or with none, still parses.
+        for csum in [[0, 0], [0x12, 0x34]] {
+            let mut f = good.clone();
+            f[40..42].copy_from_slice(&csum);
+            assert_eq!(parse_udp4(&f).unwrap().payload, b"payload!");
+        }
         // Not IPv4, truncated, fragmented, and a UDP length that is too long.
         let mut f = good.clone();
         f[12..14].copy_from_slice(&[0x08, 0x06]);

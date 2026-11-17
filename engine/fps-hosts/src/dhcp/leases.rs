@@ -141,6 +141,25 @@ impl LeaseTable {
         self.bound - self.by_addr.len().min(self.bound)
     }
 
+    /// Copies the state of the hosts of `other` into this table: a host that
+    /// holds an address there gets it here, and a host that holds none loses
+    /// its address here. Hosts of `other` outside the range of this table are
+    /// skipped. It returns whether the address set changed.
+    ///
+    /// The agent runs one [`crate::dhcp::DhcpHosts`] per worker queue, each
+    /// with the range of its worker, and merges their tables into one table of
+    /// the whole slice for the neighbor responder and the capture filter.
+    pub fn merge(&mut self, other: &LeaseTable) -> bool {
+        let mut changed = false;
+        for index in other.range.indexes() {
+            changed |= match other.get(index) {
+                Some(l) => self.set(index, *l),
+                None => self.clear(index),
+            };
+        }
+        changed
+    }
+
     /// Stores the lease of host `index`. It returns whether the address set
     /// changed, which a renewal for the same address does not do. An index
     /// outside the slice is ignored.
@@ -309,6 +328,34 @@ mod tests {
         assert_eq!(hosts, ["10.0.0.10/32", "10.0.0.30/32", "10.0.1.5/32"]);
         let nets: Vec<String> = t.subnets().iter().map(ToString::to_string).collect();
         assert_eq!(nets, ["10.0.0.0/24"]);
+    }
+
+    #[test]
+    fn merging_worker_tables_gives_the_table_of_the_slice() {
+        let mut a = LeaseTable::new(HostRange::new(10, 2));
+        let mut b = LeaseTable::new(HostRange::new(12, 2));
+        a.set(10, lease(10));
+        a.set(11, lease(11));
+        b.set(12, lease(12));
+        let mut whole = LeaseTable::new(HostRange::new(10, 4));
+        assert!(whole.merge(&a));
+        assert!(whole.merge(&b));
+        assert_eq!(whole.bound(), 3);
+        assert_eq!(whole.addr_of(12), Some(Ipv4Addr::new(10, 0, 0, 12)));
+        assert_eq!(whole.addr_of(13), None);
+        let g = whole.generation();
+        assert!(!whole.merge(&a), "the same leases change nothing");
+        assert_eq!(whole.generation(), g);
+        // A host that lost its lease in a worker table loses it in the whole.
+        a.clear(11);
+        assert!(whole.merge(&a));
+        assert_eq!(whole.addr_of(11), None);
+        assert_eq!(whole.bound(), 2);
+        // Hosts outside the range are skipped.
+        let mut far = LeaseTable::new(HostRange::new(100, 1));
+        far.set(100, lease(99));
+        assert!(!whole.merge(&far));
+        assert_eq!(whole.bound(), 2);
     }
 
     #[test]
