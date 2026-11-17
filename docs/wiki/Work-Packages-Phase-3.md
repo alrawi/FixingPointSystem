@@ -114,18 +114,18 @@ Acceptance.
 Phase 3 · size S · workstream CON
 
 - **Depends on.** none
-- **Paths.** `contracts/`
-- **Owner action.** An additive contract change, to be vetted by the vetting agent under decision D13 before a worker starts.
+- **Paths.** `contracts/`, `tools/contracts/`
+- **Owner action.** An additive contract change, specified and approved by the vetting agent under decision D13 on 2026-11-17.
 
-HST-04 obtains host addresses through DHCP when a host pool configures it, and no schema field configures DHCP today.
+HST-04 obtains host addresses through DHCP when a host pool configures it, and no schema field configures DHCP today. The configuration schema gains an optional dhcp4 object on a client host pool, and the plan gains a Dhcp4 message on HostPoolSlice. The package also fixes the validator, which checks a gateway against both address families, so every dual stack pool with a gateway fails today.
 
 Deliverables.
 
-- An optional DHCP setting of a host pool in the configuration schema and the plan, with a version bump and contracts/changes/CON-34.md naming HST-04.
+- test-config schema v0.3 to v0.4 with an optional dhcp4 object (additionalProperties false, no properties yet) on $defs.host_pool, allowed only on a client pool without ipv4, ipv6, and gateway; agent protocol 0.2.5 to 0.2.6 with message Dhcp4 and HostPoolSlice field 13, plan rule 5 for DHCP hosts; the example contracts/examples/tests/dhcp_clients.yaml and negative checker cases; the plan checker accepts a DHCP slice without a prefix; the validator checks a gateway against its own family; contracts/changes/CON-34.md with the consumers, HST-04 first.
 
 Acceptance.
 
-- [ ] The contracts validate, and an example host pool with DHCP passes the validator.
+- [ ] The contracts validate, the new example passes, the negative cases fail with clear errors, and a dual stack pool with a gateway passes.
 
 ## QA Test infrastructure and gate suites
 
