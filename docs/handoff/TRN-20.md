@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #594 |
 | Branch | `wp/TRN-20` |
-| Pull request | #0 |
+| Pull request | #615 |
 | Status | in progress |
 | Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-1cd665, lease until 2026-11-18T00:39:00Z |
