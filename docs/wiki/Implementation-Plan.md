@@ -76,6 +76,7 @@ Each seam has one owner and one definition. A package that needs a seam to chang
 | Counter catalog | `contracts/metrics/catalog.yaml` (CON-02) | ENG | CTL, UI, RLM |
 | Extension interface | `contracts/extension/fps-extension.wit` and the Rust traits in `contracts/extension/README.md` (CON-03) | ENG | MOD |
 | Byte stream and datagram I/O | `SessionIo`, `DatagramIo` in `engine/fps-io` | TRN | ENG |
+| Ethernet frame I/O in batches | `FrameIo` in `engine/fps-backend-afxdp` (TRN-11) | TRN | TRN-12, HST-03, TRN-19 |
 | Host capabilities | `HostCapabilities` and `SystemRoot` in `engine/fps-agent` (AGT-03) | AGT | TRN backend selection, CTL through `Capabilities` |
 | Realism report | [`realism/schema/realism-report.schema.json`](https://github.com/alrawi/FixingPointSystem/blob/main/realism/schema/realism-report.schema.json) (RLM-01) | RLM | CTL, QA |
 
