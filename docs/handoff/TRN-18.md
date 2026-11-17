@@ -8,7 +8,7 @@
 |---|---|
 | Issue | #572 |
 | Branch | `wp/TRN-18` |
-| Pull request | #0 |
+| Pull request | #601 |
 | Status | in progress |
 | Progress | 80% (4 of 5 plan steps) |
 | Current holder | claude-d57e44, lease until 2026-11-17T03:18:09Z |
