@@ -9,10 +9,9 @@
 //
 // The package reaches the agent manager, the compiler, and the clock
 // measurements through interfaces. *agents.Manager satisfies AgentManager.
-// ClockSource has no implementation in the controller yet: the agent manager
-// does not keep Heartbeat.agent_time, which the contract provides for exactly
-// this estimate, so the controller wiring that adds one belongs to a package
-// that owns internal/agents.
+// HeartbeatClocks implements ClockSource from the Heartbeat.agent_time of
+// each agent (CTL-51), and the run orchestrator in internal/runs uses it for
+// every run on two or more agents (CTL-52).
 //
 //	c, _ := multiagent.New(multiagent.Config{Agents: mgr, Clocks: clocks})
 //	run, err := c.Start(ctx, multiagent.Request{RunID: id, Config: cfg, Agents: ids})

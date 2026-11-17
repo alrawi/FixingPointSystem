@@ -43,6 +43,7 @@ import (
 	"github.com/alrawi/FixingPointSystem/controller/internal/api"
 	"github.com/alrawi/FixingPointSystem/controller/internal/app"
 	"github.com/alrawi/FixingPointSystem/controller/internal/captures"
+	"github.com/alrawi/FixingPointSystem/controller/internal/multiagent"
 	"github.com/alrawi/FixingPointSystem/controller/internal/pki"
 	"github.com/alrawi/FixingPointSystem/controller/internal/registry"
 	"github.com/alrawi/FixingPointSystem/controller/internal/report"
@@ -194,7 +195,10 @@ func New(ctx context.Context, opts Options) (_ *Controller, err error) {
 		Agents:    c.Agents,
 		Catalog:   catalog,
 		Evaluator: c.Evaluator.RunEvaluator(),
-		Logger:    logger,
+		// A run on two or more agents refuses a clock that differs from the
+		// controller clock by more than 10 ms, as measured from heartbeats.
+		Clocks: multiagent.HeartbeatClocks{Agents: c.Agents},
+		Logger: logger,
 	}); err != nil {
 		return nil, fmt.Errorf("create run orchestrator: %w", err)
 	}
