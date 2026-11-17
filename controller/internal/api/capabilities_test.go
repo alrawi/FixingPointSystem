@@ -48,9 +48,10 @@ func ptrTo[T any](v T) *T { return &v }
 func twoAgents() []api.AgentCapability {
 	backend := api.AgentBackendKernel
 	ports := []struct {
-		Driver    *string `json:"driver,omitempty"`
-		Name      string  `json:"name"`
-		SpeedMbps *int    `json:"speed_mbps,omitempty"`
+		Driver        *string                      `json:"driver,omitempty"`
+		Name          string                       `json:"name"`
+		SpeedMbps     *int                         `json:"speed_mbps,omitempty"`
+		XdpDriverMode *api.AgentPortsXdpDriverMode `json:"xdp_driver_mode,omitempty"`
 	}{{Name: "eth1", Driver: ptrTo("ixgbe"), SpeedMbps: ptrTo(10000)}}
 	return []api.AgentCapability{
 		{

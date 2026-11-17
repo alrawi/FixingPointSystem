@@ -6,8 +6,8 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 
 | File | Contract |
 |---|---|
-| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.12.0 |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.4, unreleased |
+| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.13.0 |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.5, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.3, module manifest v0.5 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.8.0 |
@@ -350,3 +350,16 @@ A capture that stops at rest reports `cut_at_stop` 0, so an operator reads a non
 ### CON-26: a read-scoped capture download
 
 CON-26 moves the controller API from 0.11.0 to 0.12.0. The owner approved it on 2026-11-11. `downloadCapture` needs only scope read, but it used to end a capture that still ran, which `stopCapture` guards with scope run (issue #452, fixed in CTL-44). The operation now documents the rule and a 409 response. A caller with scope run still ends the capture and gets the file. A caller with scope read gets 409 while the capture runs and its run has not ended, and no agent receives a command. A capture of an ended run is served to any caller. The entry `contracts/changes/CON-26.md` records the reasons, the compatibility, and the consumers.
+
+## Kernel release, selected backend, and XDP mode
+
+CON-32 moves the controller API from 0.12.0 to 0.13.0 and the agent protocol from 0.2.4 to 0.2.5. The vetting agent approved it under decision D13 on 2026-11-16, as an additive change (issue #74 in part). The REST `Agent.backend` took the first entry of `backends`, which is always `kernel`, so it never showed the backend that an agent selected. The entry `contracts/changes/CON-32.md` records the reasons, the compatibility, and the consumers, AGT-22 first.
+
+| Change | Rule |
+|---|---|
+| `Capabilities.kernel_release` (9) | The kernel release of the host, as `uname -r` prints it. Empty for an agent of 0.2.4 or earlier |
+| `Capabilities.selected_backend` (10) | The backend that the agent selected and started, one entry of `backends`. `BACKEND_UNSPECIFIED` for an agent of 0.2.4 or earlier |
+| `PortInfo.xdp_driver_mode` (6), enum `XdpMode` | `GENERIC`, `NATIVE` (driver hook, copy mode sockets), or `ZERO_COPY` (driver hook, zero copy sockets). A driver table hint that changes no command and no verdict. `XDP_MODE_UNSPECIFIED` unless the backend is AF_XDP |
+| `Agent.kernel_release`, `ports[].xdp_driver_mode` | The REST mirror. Absent when the agent did not report them. `Agent.backend` now shows the selected backend |
+
+The NUMA fields of issue #74 stay open, because v1 has no consumer of them.

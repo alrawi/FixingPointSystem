@@ -145,7 +145,9 @@ impl Workers {
     }
 
     /// Tells every worker to stop, waits for them, and returns one report per
-    /// worker in queue order.
+    /// worker in queue order. A worker that has not yet started its first turn
+    /// takes that one turn before it stops, so an error of a broken queue is
+    /// reported however early the stop comes.
     #[must_use]
     pub fn stop(mut self) -> Vec<WorkerReport> {
         self.stop.store(true, Ordering::Release);
@@ -197,7 +199,12 @@ fn run<Q: FrameIo, L: QueueLoop>(
     }
     #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
     let _ = cpu;
-    while !stop.load(Ordering::Acquire) {
+    // Every loop takes at least one turn, even when the stop request came
+    // before this thread was first scheduled. Otherwise a queue that is broken
+    // from the start would end as "stopped" with no error, and which workers
+    // ran would depend on thread scheduling.
+    let mut first = true;
+    while std::mem::take(&mut first) || !stop.load(Ordering::Acquire) {
         match body.turn(&mut queue) {
             Ok(true) => report.busy_turns += 1,
             Ok(false) => {
@@ -313,6 +320,24 @@ mod tests {
         assert!(reports[1].error.is_none());
     }
 
+    /// Regression test of #588: the stop request is already there when the
+    /// worker starts, which is what a slow thread start looks like.
+    #[test]
+    fn a_loop_takes_one_turn_even_when_the_stop_came_first() {
+        let stop = AtomicBool::new(true);
+
+        let (_c, s) = frame_pair(2, 8);
+        let broken = |_: &mut dyn FrameIo| -> io::Result<bool> { Err(io::Error::other("broken")) };
+        let r = run(s.with_queue_id(3), broken, None, Idle::Yield, &stop);
+        assert_eq!(r.queue_id, 3);
+        assert_eq!(r.error.as_ref().unwrap().to_string(), "broken");
+
+        let (_c, s) = frame_pair(2, 8);
+        let r = run(s, echo, None, Idle::Spin, &stop);
+        assert!(r.error.is_none());
+        assert_eq!((r.busy_turns, r.idle_turns), (0, 1));
+    }
+
     #[test]
     fn spinning_workers_stop_promptly_and_count_idle_turns() {
         let (_c, s) = frame_pair(2, 8);
@@ -325,7 +350,8 @@ mod tests {
             |_| echo,
         )
         .unwrap();
-        std::thread::sleep(Duration::from_millis(20));
+        // No sleep: every worker takes one turn before it stops, and the queue
+        // is empty, so that turn is an idle one.
         let r = workers.stop();
         assert!(r[0].idle_turns > 0);
         assert_eq!(r[0].busy_turns, 0);

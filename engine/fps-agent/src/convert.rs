@@ -750,6 +750,7 @@ pub fn capabilities_to_pb(c: &proto::Capabilities) -> pb::Capabilities {
                 speed_mbps: p.speed_mbps,
                 mac: p.mac.clone(),
                 mtu: p.mtu,
+                xdp_driver_mode: p.xdp_driver_mode.number(),
             })
             .collect(),
         modules: c
@@ -769,6 +770,8 @@ pub fn capabilities_to_pb(c: &proto::Capabilities) -> pb::Capabilities {
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
+        kernel_release: c.kernel_release.clone(),
+        selected_backend: c.selected_backend.number(),
     }
 }
 
