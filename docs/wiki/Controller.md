@@ -678,6 +678,10 @@ An `AgentCapability` carries the `Agent` schema and every backend that the agent
 
 Every array is present and empty when its source is empty or nil. A failing source gives a 500 problem whose detail names the source. `TestContractCapabilities` serves two fake agents and two modules and validates the response against the OpenAPI document with the contract loader. `TestCapabilitiesVersions` compares the two version constants with the OpenAPI document and the heading of `contracts/README.md`, so a contract release that forgets them fails the build.
 
+### Agent view of the host (CTL-53)
+
+`agents.ToAPI` reports three facts of the latest registration that CON-32 added. `Agent.backend` is the backend that the agent selected (`selected_backend`). An agent that sends `BACKEND_UNSPECIFIED` gets the first known entry of `backends`, because an agent of protocol 0.2.4 or earlier always ran the kernel backend and a new agent also reports engine_api 0.2.x, so the controller cannot tell the two apart by version. `Agent.kernel_release` is the kernel release of the host, and `Agent.ports[].xdp_driver_mode` is `generic`, `native`, or `zero_copy`. Both are absent, not empty, when the agent sent nothing. The XDP mode is a driver table hint: the controller reports it and never selects a backend or refuses a run from it. `TestRESTAgentCapabilitiesReport` covers a new agent, an AF_XDP agent with a mode per port, an old agent, and an agent without a backend, and validates the responses against the OpenAPI contract.
+
 ## Metrics aggregation
 
 The package `internal/metrics` merges the counter snapshots of the agents of a run into run metrics and serves them. It implements `GET /v1/runs/{id}/metrics` and `GET /v1/runs/{id}/metrics:stream` as the type `metrics.API`, which embeds `api.Unimplemented`, and `GET /metrics` in the Prometheus text format as the handler `metrics.Prometheus`. The binary creates one `Aggregator` with `metrics.New`, calls `Aggregator.Observe` from `agents.Config.Observer` next to `Orchestrator.Observe`, mounts `metrics.NewAPI(agg, orchestrator)` with the other operation sets, and mounts `metrics.NewPrometheus(agg)` at `/metrics`.

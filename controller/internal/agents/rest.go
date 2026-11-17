@@ -122,8 +122,20 @@ var backends = map[agentpb.Backend]api.AgentBackend{
 	agentpb.Backend_BACKEND_DPDK:   api.AgentBackendDpdk,
 }
 
+// xdpModes maps the proto XDP modes to the REST names. XDP_MODE_UNSPECIFIED
+// has no entry, so the property stays absent.
+var xdpModes = map[agentpb.XdpMode]api.AgentPortsXdpDriverMode{
+	agentpb.XdpMode_XDP_MODE_GENERIC:   api.AgentPortsXdpDriverModeGeneric,
+	agentpb.XdpMode_XDP_MODE_NATIVE:    api.AgentPortsXdpDriverModeNative,
+	agentpb.XdpMode_XDP_MODE_ZERO_COPY: api.AgentPortsXdpDriverModeZeroCopy,
+}
+
 // ToAPI returns the Agent schema of the REST contract for ag. The backend is
-// the first backend that the agent reports.
+// the backend that the agent selected. An agent that reports none (agent
+// protocol 0.2.4 or earlier, or no backend that can run) gets the first
+// backend that it lists. The kernel release and the XDP mode of a port are
+// absent when the agent sent none. The XDP mode is a hint for a driver
+// table, and nothing here selects or refuses on it.
 func ToAPI(ag Agent) api.Agent {
 	out := api.Agent{Id: ag.ID, State: ag.State}
 	if ag.Address != "" {
@@ -145,14 +157,20 @@ func ToAPI(ag Agent) api.Agent {
 	if n := c.GetCores(); n > 0 {
 		out.Cores = ptr(int(n))
 	}
-	for _, b := range c.GetBackends() {
-		if name, ok := backends[b]; ok {
-			out.Backend = ptr(name)
-			break
+	if name, ok := backends[c.GetSelectedBackend()]; ok {
+		out.Backend = ptr(name)
+	} else {
+		for _, b := range c.GetBackends() {
+			if name, ok := backends[b]; ok {
+				out.Backend = ptr(name)
+				break
+			}
 		}
 	}
+	if k := c.GetKernelRelease(); k != "" {
+		out.KernelRelease = ptr(k)
+	}
 	if len(c.GetPorts()) > 0 {
-		// CTL-53 fills XdpDriverMode from the capabilities of CON-32.
 		ports := make([]struct {
 			Driver        *string                      `json:"driver,omitempty"`
 			Name          string                       `json:"name"`
@@ -166,6 +184,9 @@ func ToAPI(ag Agent) api.Agent {
 			}
 			if s := p.GetSpeedMbps(); s > 0 {
 				ports[i].SpeedMbps = ptr(int(s))
+			}
+			if m, ok := xdpModes[p.GetXdpDriverMode()]; ok {
+				ports[i].XdpDriverMode = ptr(m)
 			}
 		}
 		out.Ports = &ports
