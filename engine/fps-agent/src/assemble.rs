@@ -137,6 +137,14 @@ pub fn load_profile(plan: &Plan) -> Result<LoadProfile, RunError> {
 }
 
 fn pool_of(slice: &HostPoolSlice) -> Result<HostPool, RunError> {
+    // HST-04 adds the DHCP client. Until then no backend can lease an address,
+    // so a DHCP slice fails here, before the plan allocates anything.
+    if slice.dhcp4.is_some() {
+        return Err(RunError::rule(format!(
+            "host pool {} asks for dhcp4, which this agent cannot lease yet (HST-04)",
+            slice.name
+        )));
+    }
     let opt = |s: &str| (!s.is_empty()).then(|| s.to_owned());
     let (v4, v6, gw, mac) = (
         opt(&slice.ipv4_prefix),
@@ -464,6 +472,45 @@ mod tests {
         assert_eq!(engine_worker_id(255, 127, true), Some(65_535));
         assert_eq!(engine_worker_id(256, 0, false), None);
         assert_eq!(engine_worker_id(0, 128, false), None);
+    }
+
+    fn slice(name: &str, prefix: &str, dhcp4: bool) -> HostPoolSlice {
+        HostPoolSlice {
+            name: name.into(),
+            ipv4_prefix: prefix.into(),
+            pool_count: 4,
+            count: 4,
+            dhcp4: dhcp4.then_some(crate::plan::Dhcp4 {}),
+            ..HostPoolSlice::default()
+        }
+    }
+
+    #[test]
+    fn a_dhcp_pool_fails_with_an_error_that_names_dhcp4() {
+        let e = pool_of(&slice("clients", "", true))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("dhcp4"), "{e}");
+        assert!(e.contains("host pool clients"), "{e}");
+        assert!(e.contains("HST-04"), "{e}");
+    }
+
+    #[test]
+    fn a_static_pool_still_parses() {
+        pool_of(&slice("servers", "10.2.0.0/24", false)).unwrap();
+    }
+
+    #[test]
+    fn a_plan_with_a_dhcp_pool_fails_before_any_pool_is_used() {
+        let plan = Plan {
+            host_pools: vec![
+                slice("servers", "10.2.0.0/24", false),
+                slice("clients", "", true),
+            ],
+            ..Plan::default()
+        };
+        let e = Pools::new(&plan).err().expect("a refusal").to_string();
+        assert!(e.contains("host pool clients asks for dhcp4"), "{e}");
     }
 
     fn parse(text: &str) -> Scenario {

@@ -113,6 +113,48 @@ export function Field({
   );
 }
 
+interface CheckboxFieldProps {
+  path: Path;
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  hint?: string;
+}
+
+/** A checkbox for a choice that the configuration spells as a key, such as `dhcp4: {}`. */
+export function CheckboxField({ path, label, checked, onChange, hint }: CheckboxFieldProps) {
+  const model = useConfigModel();
+  const id = useId();
+  const hasIssues = model.issuesAt(path).length > 0;
+  const describedBy = [hint === undefined ? "" : `${id}-hint`, hasIssues ? `${id}-err` : ""]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <div className="field">
+      <label htmlFor={id}>
+        <input
+          id={id}
+          type="checkbox"
+          checked={checked}
+          disabled={!model.editable}
+          aria-invalid={hasIssues || undefined}
+          aria-describedby={describedBy === "" ? undefined : describedBy}
+          onChange={(event) => {
+            onChange(event.target.checked);
+          }}
+        />{" "}
+        {label}
+      </label>
+      {hint !== undefined && (
+        <p id={`${id}-hint`} className="hint">
+          {hint}
+        </p>
+      )}
+      <Issues path={path} id={`${id}-err`} />
+    </div>
+  );
+}
+
 interface SelectFieldProps {
   path: Path;
   label: string;

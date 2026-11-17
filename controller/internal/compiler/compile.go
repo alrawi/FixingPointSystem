@@ -567,8 +567,12 @@ func poolSlice(path string, index int, hp HostPool, ports map[string]bool) (Host
 		return HostPoolSlice{}, invalid(path, "unknown port %q", hp.Port)
 	case hp.Role != "client" && hp.Role != "server":
 		return HostPoolSlice{}, invalid(path, "unknown role %q", hp.Role)
-	case hp.IPv4 == "" && hp.IPv6 == "":
-		return HostPoolSlice{}, invalid(path, "a host pool needs ipv4 or ipv6")
+	case hp.DHCP4 != nil && hp.Role != "client":
+		return HostPoolSlice{}, invalid(path, "dhcp4 needs role client, not %s", hp.Role)
+	case hp.DHCP4 != nil && (hp.IPv4 != "" || hp.IPv6 != "" || hp.Gateway != ""):
+		return HostPoolSlice{}, invalid(path, "dhcp4 excludes ipv4, ipv6, and gateway")
+	case hp.IPv4 == "" && hp.IPv6 == "" && hp.DHCP4 == nil:
+		return HostPoolSlice{}, invalid(path, "a host pool needs ipv4, ipv6, or dhcp4")
 	case hp.Count < 1 || hp.Count > math.MaxUint32:
 		return HostPoolSlice{}, invalid(path, "count %d is outside 1 to %d", hp.Count, uint32(math.MaxUint32))
 	case hp.VLAN < 0 || hp.VLAN > 4094:
@@ -621,6 +625,7 @@ func poolSlice(path string, index int, hp HostPool, ports map[string]bool) (Host
 		VLAN:       uint32(hp.VLAN), //nolint:gosec // G115: checked against 4094 above
 		MACBase:    mac,
 		OSProfile:  hp.OSProfile,
+		Dhcp4:      hp.DHCP4,
 	}, nil
 }
 

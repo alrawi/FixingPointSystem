@@ -179,6 +179,11 @@ func goldenCases() []goldenCase {
 			config: filepath.Join("testdata", "distributions.yaml"),
 			agents: []Agent{{ID: "local", Cores: 1, Interfaces: []string{"lo"}}},
 		},
+		{
+			name:   "dhcp_clients",
+			config: filepath.Join(contracts, "examples", "tests", "dhcp_clients.yaml"),
+			agents: []Agent{{ID: "local", Cores: 2, Interfaces: []string{"lo"}}},
+		},
 	}
 }
 
@@ -532,6 +537,17 @@ func TestCompileErrors(t *testing.T) {
 		}, ErrPoolTooSmall, "pool servers has 1 hosts"},
 		{"pool beyond prefix", func(r *Request) { r.Config.Network.HostPools[1].Count = 255 }, ErrInvalidConfig, "count 255 exceeds 254 usable addresses"},
 		{"gateway outside prefix", func(r *Request) { r.Config.Network.HostPools[0].Gateway = "10.9.0.1" }, ErrInvalidConfig, "outside"},
+		{"dhcp4 on a server pool", func(r *Request) { r.Config.Network.HostPools[1].DHCP4 = &struct{}{} }, ErrInvalidConfig, "dhcp4 needs role client"},
+		{"dhcp4 with ipv4", func(r *Request) { r.Config.Network.HostPools[0].DHCP4 = &struct{}{} }, ErrInvalidConfig, "dhcp4 excludes ipv4, ipv6, and gateway"},
+		{"dhcp4 with ipv6", func(r *Request) {
+			hp := &r.Config.Network.HostPools[0]
+			hp.DHCP4, hp.IPv4, hp.IPv6 = &struct{}{}, "", "2001:db8::/64"
+		}, ErrInvalidConfig, "dhcp4 excludes ipv4, ipv6, and gateway"},
+		{"dhcp4 with a gateway", func(r *Request) {
+			hp := &r.Config.Network.HostPools[0]
+			hp.DHCP4, hp.IPv4, hp.Gateway = &struct{}{}, "", "10.9.0.1"
+		}, ErrInvalidConfig, "dhcp4 excludes ipv4, ipv6, and gateway"},
+		{"pool without an address source", func(r *Request) { r.Config.Network.HostPools[0].IPv4 = "" }, ErrInvalidConfig, "needs ipv4, ipv6, or dhcp4"},
 		{"prefix with host bits", func(r *Request) { r.Config.Network.HostPools[0].IPv4 = "10.0.0.1/22" }, ErrInvalidConfig, "host bits"},
 		{"wrong pool role", func(r *Request) { r.Config.Profile.Mix[0].ClientPool = "servers" }, ErrInvalidConfig, "has role server"},
 		{"unknown pool", func(r *Request) { r.Config.Profile.Mix[0].ServerPool = "nope" }, ErrInvalidConfig, "unknown host pool"},

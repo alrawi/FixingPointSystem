@@ -108,6 +108,9 @@ type HostPoolSlice struct {
 	VLAN       uint32 `json:"vlan,omitempty"`
 	MACBase    string `json:"macBase,omitempty"`
 	OSProfile  string `json:"osProfile,omitempty"`
+	// Dhcp4 is set for a pool whose hosts lease their addresses. It writes
+	// "dhcp4":{}, and the slice then has no prefix and no gateway.
+	Dhcp4 *struct{} `json:"dhcp4,omitempty"`
 }
 
 // ExternalServer is a real server for the client_sim topology.
