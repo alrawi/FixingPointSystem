@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #564 |
 | Branch | `wp/HST-03` |
-| Pull request | not yet opened |
-| Status | in progress |
-| Progress | 90% (4 of 4 plan steps, CI pending) |
+| Pull request | #591 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-9c41d7, lease until 2026-11-17T01:15:10Z |
 | Last verified commit | none |
 
@@ -30,11 +30,11 @@ Answer ARP and IPv6 neighbor discovery for host pools of user space backends, an
 
 ## Remaining
 
-CI result and the review request.
+none
 
 ## Next action
 
-Open the PR and wait for CI.
+none, waiting for review
 
 ## Blockers and open questions
 
@@ -66,3 +66,4 @@ cargo test -p fps-hosts
 |---|---|---|---|---|
 | 2026-11-16 | claude-9c41d7 | claim | none | claimed #564 with 4 plan steps |
 | 2026-11-17 | claude-9c41d7 | implementation done | pending | code, tests, wiki, log entry |
+| 2026-11-17 | claude-9c41d7 | CI green on 6432b90 (62 checks), merged origin/main | see PR | ready for review |
