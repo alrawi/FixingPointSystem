@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #597 |
 | Branch | `wp/CTL-53` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 66% (2 of 3 plan steps) |
+| Pull request | #610 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-c53a7e, lease until 2026-11-17T17:22:10Z |
-| Last verified commit | none |
+| Last verified commit | 75ad1b7 (CI green) |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -20,7 +20,7 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 - [x] 1. Fill the three fields in `ToAPI` with the fallback.
 - [x] 2. Add `TestRESTAgentCapabilitiesReport` (new agent, AF_XDP with per-port modes, old agent, no backend), validated against the OpenAPI contract.
-- [ ] 3. Push, open the PR, wait for CI, then move to review.
+- [x] 3. Push, open the PR, wait for CI, then move to review.
 
 ## Done and verified
 
@@ -28,7 +28,7 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Remaining
 
-CI result for the Go build and tests.
+Nothing. CI of 75ad1b7 is green.
 
 ## Next action
 
@@ -61,3 +61,5 @@ gofmt -l controller/internal/agents   # expect no output
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-17 | claude-c53a7e | claim | none | claimed #597 |
+| 2026-11-17 | claude-c53a7e | checkpoint | 7ba6cd7 | PR #610 opened, lint failed on unchecked type assertions in the new test |
+| 2026-11-17 | claude-c53a7e | review | 75ad1b7 | fixed errcheck, all CI jobs green, set ready for review |
