@@ -156,7 +156,7 @@ Phase 3 · size M · workstream QA · critical path
 
 - **Depends on.** QA-06, CTL-16, UI-07, IMG-03, TRN-12, HST-03
 - **Paths.** `tests/gates/gate3/`
-- **Owner action.** The owner names the reference KVM host, which gives one guest 16 vCPUs without overcommit, and signs off Gate 3.
+- **Owner action.** The owner names the reference KVM host, which gives one guest 16 vCPUs without overcommit, and signs off Gate 3. On 2026-11-17 the owner kept the 16 vCPU tier and chose to find a larger host later, because fat-nuc has 8 vCPUs.
 
 Automate the v1 release criteria.
 
@@ -230,7 +230,7 @@ Phase 3 · size M · workstream TRN
 
 - **Depends on.** TRN-10
 - **Paths.** `engine/fps-backend-dpdk/`
-- **Owner action.** The owner provides an SR-IOV or bare metal host. The coordinator does not dispatch this package before then.
+- **Owner action.** Parked by the owner on 2026-11-17. It needs an SR-IOV network card or a spare network card that DPDK supports, which no host has, and AF_XDP stays the fast path. The coordinator does not dispatch it.
 
 Measure F-Stack behind SessionIo on SR-IOV or bare metal, as the Gate 0 update of decision D1 requires.
 
@@ -282,13 +282,12 @@ Phase 3 · size S · workstream TRN
 
 - **Depends on.** TRN-17
 - **Paths.** `engine/fps-tcp/`
-- **Owner action.** The owner allows 0BSD in deny.toml, or allows smoltcp and managed by exception. The coordinator does not dispatch this package before then.
 
 The smoltcp adapter of the TRN-17 harness. The first draft in PR #586 reached 1,000,584 sockets at 1.59 KB per socket, with an idle poll cost that grows from 15 ns to 52 ns per socket.
 
 Deliverables.
 
-- The smoltcp adapter behind the TcpStack seam, with results committed for the CI runner and for fat-nuc through a host test.
+- The smoltcp adapter behind the TcpStack seam, with results committed for the CI runner. The fat-nuc results follow through a host test once the relay account on fat-nuc has a Rust toolchain.
 
 Acceptance.
 
