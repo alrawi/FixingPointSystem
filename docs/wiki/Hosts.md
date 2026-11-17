@@ -1,6 +1,6 @@
 # Hosts
 
-This page describes the host pool allocator of the HST workstream. The crate [`fps-hosts`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-hosts) maps host indexes to addresses, slices pools by agent and by worker without overlap, and picks the host of every session from the run seed. HST-01 created the crate, and HST-02 adds the kernel port setup to the same directory.
+This page describes the host pool allocator of the HST workstream. The crate [`fps-hosts`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-hosts) maps host indexes to addresses, slices pools by agent and by worker without overlap, and picks the host of every session from the run seed. HST-01 created the crate, HST-02 adds the kernel port setup, and HST-03 adds the MAC allocator and the ARP and neighbor discovery responders for user space backends.
 
 ## Host indexes and addresses
 
@@ -111,3 +111,49 @@ On a development host the routed test opened its 20,000 sessions in about one se
 ### Limits
 
 The integration tests cover IPv4 only, because the QA-01 harness has no IPv6 arm. IPv6 setup issues the same steps and is covered by unit tests. The on-link test stays at 500 hosts, because the neighbor table limit `gc_thresh3` of 1,024 entries is global to the host, so a device under test that resolves 20,000 hosts on the link needs a larger limit on its side.
+
+## MAC allocation
+
+A kernel port needs no host MAC addresses of its own, because the kernel answers for the addresses it holds. A user space backend owns the frames, so every host needs a MAC address that is unique on the link. `MacAllocator` is the ledger of one port. The contract fixes the address as `mac_base + i`, so agents that serve slices of one pool agree without talking, and the allocator keeps that rule and adds the checks below.
+
+| Call | What it does |
+|---|---|
+| `reserve(label, mac)` | Takes an address that a station of the port owns already, such as the interface or the gateway |
+| `claim(pool, range)` | Takes the addresses of one slice and returns a `MacBlock` with `mac_of(index)` and `host_of(mac)` |
+
+A claim fails, and leaves the ledger as it was, when the block overlaps an earlier claim or reservation, contains a multicast address (first octet odd) or the all zero address, or runs past 48 bits. The error names the first address of the overlap and both owners.
+
+A pool without `mac_base` gets a base from the allocator: a locally administered unicast block (`02:xx:xx:xx:xx:xx`) that starts at a point derived from the pool name and moves up past every taken block, wrapping once. The same claims in the same order give the same base. Two agents on one link agree on it only when they make the same claims, so the controller should set `mac_base` for a pool that more than one agent serves.
+
+## ARP and neighbor discovery
+
+`NeighborTable` lists the slices of a port with their MAC blocks. `HostPool::index_of_ipv4` and `index_of_ipv6` invert the address mapping with arithmetic only, so a lookup costs no memory per host. The table refuses two slices that answer for overlapping IPv4 or IPv6 addresses. `Responder` reads one Ethernet frame and writes the reply into a caller buffer of `MAX_REPLY_LEN` bytes, and it keeps no state, so the workers of all queues share one.
+
+| Request | Reply |
+|---|---|
+| ARP request for a host address | ARP reply from the host MAC to the sender hardware address, padded to 60 bytes |
+| ARP probe (sender 0.0.0.0) for a host address | The same reply, which defends the address as RFC 5227 says |
+| ARP announcement (sender equals target) | No reply |
+| Neighbor solicitation for a host address | Neighbor advertisement with the solicited and override flags and the target link layer option, sent to the source link layer address of the request |
+| Solicitation from `::` (duplicate address detection) | Advertisement to `ff02::1` and `33:33:00:00:00:01` without the solicited flag |
+
+VLAN tags (up to two) are copied to the reply. A solicitation must have hop limit 255, a good ICMPv6 checksum, options of nonzero length that fit the packet, and the target or its solicited node address as destination, and a probe may carry no source link layer option, as RFC 4861 section 7.1.1 says. A frame that breaks a rule is counted as malformed and gets no answer. Requests for the gateway, for hosts of another slice, and for any other address get no answer. ARP replies, other ICMPv6 messages, and every other frame are handed back to the caller, so the transport stack sees them.
+
+`NeighborService` runs the responder on one `FrameIo` queue. `poll` receives a batch, collects the replies in slots that it allocated once, sends them in one batch, and calls a callback for each passed frame. A full transmit queue is retried after a flush eight times, and then the remaining replies count as `tx_dropped`. The `wire` module builds the same frames for the active side, such as a host that resolves its gateway, and parses them back.
+
+### Tests and the 20,000 host proof
+
+The unit tests in `mac.rs`, `neighbor.rs`, and `wire.rs` cover the allocator rules, the address inverse, every reply field, each RFC 4861 validation rule, and truncated and random frames, with property tests for the inverse, the allocator, and the responder. `tests/neighbor_port.rs` runs the service over `fps_backend_afxdp::memory::frame_pair`, the in memory queue pair of TRN-11, with no root and no host. A router end asks for every host, the service answers, and the test writes both directions to a pcap file under `target/tmp/hst-03/`. `tests/score_hosts.py` scores that file with `realism.hosts.check`, the host identity check.
+
+| Capture | Hosts | Result |
+|---|---|---|
+| 20,000 IPv4 hosts, one pool, ARP | 20,001 (with the router) | Passes, 20,001 MAC addresses, no conflict |
+| 20,000 IPv6 hosts, one pool, neighbor discovery | 20,001 | Passes, no conflict |
+| 20,000 IPv4 hosts in two pools, one with an allocated base | 20,001 | Passes, no conflict |
+| Two responders that answer for the same 50 addresses with different MAC bases | 51 | Fails with 50 address conflicts, as it must |
+
+The last row shows that the check can fail on a conflict, and a shared ledger refuses the second claim in a separate test. The tests need `python3`.
+
+### Limits
+
+HST-03 answers for hosts and does not resolve anything for them. A host that needs the MAC address of its gateway uses the `wire` builders and learns the reply from the passed frames, which the TRN backends do. DHCP is HST-04. The tests do not cover an AF_XDP queue, because the memory pair has the same trait, and the AF_XDP backend is another package.
