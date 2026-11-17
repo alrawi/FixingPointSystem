@@ -24,11 +24,20 @@
 //! [`DatagramAcceptOpener`] connect both to the interpreter as
 //! [`fps_interp::DatagramOpener`] implementations.
 //!
+//! [`TRANSPORT_AVAILABLE`] tells the backend selection at boot (the `select`
+//! module of `fps-backend-afxdp`) that this backend carries sessions on every
+//! host, which makes it the default.
+//!
 //! The crate denies `unsafe` code except in one private module that sets the
 //! three socket options that `socket2` does not expose and receives
 //! datagrams with `MSG_TRUNC`.
 #![deny(unsafe_code)]
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+/// Whether the kernel backend carries sessions on this host. It does on every
+/// Linux host, because the kernel provides the TCP and UDP stacks, so the
+/// backend selection always has this backend to fall back to.
+pub const TRANSPORT_AVAILABLE: bool = true;
 
 mod connect;
 mod datagram;
