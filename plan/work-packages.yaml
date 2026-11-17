@@ -2174,7 +2174,7 @@ work_packages:
     phase: 3
     workstream: TRN
     size: M
-    owner_action: The owner provides an SR-IOV or bare metal host. The coordinator does not dispatch this package before then.
+    owner_action: Parked by the owner on 2026-11-17. It needs an SR-IOV network card or a spare network card that DPDK supports, which no host has, and AF_XDP stays the fast path. The coordinator does not dispatch it.
     depends_on: [TRN-10]
     paths: [engine/fps-backend-dpdk/]
     summary: >-
@@ -2249,7 +2249,7 @@ work_packages:
     workstream: QA
     size: M
     critical: true
-    owner_action: The owner names the reference KVM host, which gives one guest 16 vCPUs without overcommit, and signs off Gate 3.
+    owner_action: The owner names the reference KVM host, which gives one guest 16 vCPUs without overcommit, and signs off Gate 3. On 2026-11-17 the owner kept the 16 vCPU tier and chose to find a larger host later, because fat-nuc has 8 vCPUs.
     depends_on: [QA-06, CTL-16, UI-07, IMG-03, TRN-12, HST-03]
     paths: [tests/gates/gate3/]
     summary: >-
@@ -2280,14 +2280,13 @@ work_packages:
     phase: 3
     workstream: TRN
     size: S
-    owner_action: The owner allows 0BSD in deny.toml, or allows smoltcp and managed by exception. The coordinator does not dispatch this package before then.
     depends_on: [TRN-17]
     paths: [engine/fps-tcp/]
     summary: >-
       The smoltcp adapter of the TRN-17 harness. The first draft in PR #586 reached 1,000,584 sockets at 1.59 KB per socket,
       with an idle poll cost that grows from 15 ns to 52 ns per socket.
     deliverables:
-      - The smoltcp adapter behind the TcpStack seam, with results committed for the CI runner and for fat-nuc through a host test.
+      - The smoltcp adapter behind the TcpStack seam, with results committed for the CI runner. The fat-nuc results follow through a host test once the relay account on fat-nuc has a Rust toolchain.
     acceptance:
       - The harness reports the three measures for smoltcp on the same hosts as the reference stack.
 
