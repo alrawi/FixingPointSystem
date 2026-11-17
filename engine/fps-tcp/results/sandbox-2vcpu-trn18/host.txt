@@ -1,0 +1,24 @@
+Host of the results in this directory (recorded 2026-11-17 by TRN-18)
+
+what      the agent sandbox of the swarm, a Firecracker microVM, not the GitHub hosted runner and not fat-nuc
+stacks    the own minimal TCP stack (own, TRN-18) and the kernel loopback reference stack (kernel, TRN-17), both run in this session
+cpu       Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vCPUs
+memory    8 GiB, shared with other workers while the runs executed (load average 2.7 to 3.7)
+kernel    6.18.44-fc-v553
+rustc     1.97.0 (2d8144b78 2026-07-07), release profile of the workspace
+limits    open files 20000 soft and hard, so the kernel scaling run ends near 20,000 sockets; the own stack uses no descriptor per socket
+
+The kernel results of TRN-17 in ../sandbox-2vcpu/ ran on an earlier boot of this sandbox (kernel 6.18.44-fc-v509, 2.30 GHz). TRN-10 compares
+only runs of one host, so the kernel reference was run again here, next to the own stack, in the same session.
+
+own-small.json                 tcp_bench --stack own --profile small --label "sandbox 2 vcpu, own stack, profile small" --out engine/fps-tcp/results/sandbox-2vcpu-trn18/own-small.json
+kernel-small.json              tcp_bench --stack kernel --profile small --label "sandbox 2 vcpu, kernel reference, profile small" --out engine/fps-tcp/results/sandbox-2vcpu-trn18/kernel-small.json
+own-scale.json                 tcp_bench --stack own --profile full --workload scale --label "sandbox 2 vcpu, own stack, scale to 1,000,000 sockets in 64 shards" --out engine/fps-tcp/results/sandbox-2vcpu-trn18/own-scale.json
+kernel-scale.json              tcp_bench --stack kernel --profile full --workload scale --label "sandbox 2 vcpu, kernel reference, scale until the open files limit" --out engine/fps-tcp/results/sandbox-2vcpu-trn18/kernel-scale.json
+own-throughput-mtu9000.json    tcp_bench --stack own --workload throughput --profile small --own-mtu 9000 --label "sandbox 2 vcpu, own stack, mtu 9000, throughput" --out engine/fps-tcp/results/sandbox-2vcpu-trn18/own-throughput-mtu9000.json
+rate-sweep.txt                 three alternating runs per stack of tcp_bench --workload rate --profile small --concurrency 32 and 256, so the spread of the shared host shows
+
+Every command is `cargo run --release -p fps-tcp --example tcp_bench -- ARGS` and was run as the built example. These are sandbox results, labelled as such. The host was shared
+with other workers, so the session rate of one stack varied by up to a factor of three between runs (the kernel from 14,000 to 49,000 per second at 32 concurrent
+sessions), and differences below a factor of two are noise. The text report prints the idle poll of the own stack as 0 in the small profile, because the value is
+0.37 to 0.40 microseconds and the table has no decimals. The JSON has the exact value.

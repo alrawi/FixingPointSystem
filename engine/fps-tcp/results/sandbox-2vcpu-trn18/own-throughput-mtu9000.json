@@ -1,0 +1,12 @@
+{
+  "format": "fps-bench/v1",
+  "suite": "tcp-stack",
+  "recorded": "2026-11-17T02:03:52Z",
+  "source": "own minimal TCP (fps-tcp) on sandbox 2 vcpu, own stack, mtu 9000, throughput",
+  "host": {"cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz", "vcpus": 2, "kernel": "6.18.44-fc-v553", "mem_total_bytes": 8413855744},
+  "config": {"profile": "small", "own.mtu": "9000", "own.rcv_buffer": "65535", "own.snd_buffer": "131072", "own.rto_us": "200000", "own.time_wait_us": "1000000", "own.backlog": "4096", "own.link_depth": "8192", "throughput.sessions": "4", "throughput.bytes_per_session": "67108864", "throughput.chunk": "65536", "throughput.direction": "Upload", "throughput.threads": "1"},
+  "notes": ["the client host and the server host are two instances of the own TCP state machine in one process, joined by an in memory pair of frame queues of fps-backend-afxdp, so there is no kernel socket and no descriptor", "frames are IPv4 with TCP, with an IP header checksum and a TCP checksum that are computed on send and verified on receive", "retransmission is minimal: one timer per connection, a fixed initial timeout that doubles, go back N, no round trip estimate and no fast retransmit, and the link loses nothing, so the measurements never retransmit", "there is no congestion control, no window scaling (the window is at most 65,535 bytes), no delayed acknowledgment, and no out of order queue", "timers live in a heap with one entry per connection, so a poll with idle sockets does not grow with the socket count, where a stack that walks its sockets does", "a closed tuple is held for one second in TIME-WAIT instead of minutes, so a rate run does not run out of ports", "bytes_per_socket is the growth of the resident set of the process and includes the connection table, the buffers that the held sockets own (none while idle), and the frame link", "sockets counts both hosts of a pair and includes the listening sockets"],
+  "metrics": {
+    "own.throughput.gbit_per_s": {"value": 15.867689578752897, "better": "higher", "unit": "Gbit/s"}
+  }
+}

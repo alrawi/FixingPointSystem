@@ -1,0 +1,32 @@
+{
+  "format": "fps-bench/v1",
+  "suite": "tcp-stack",
+  "recorded": "2026-11-17T02:03:19Z",
+  "source": "own minimal TCP (fps-tcp) on sandbox 2 vcpu, own stack, profile small",
+  "host": {"cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz", "vcpus": 2, "kernel": "6.18.44-fc-v553", "mem_total_bytes": 8413855744},
+  "config": {"profile": "small", "own.mtu": "1500", "own.rcv_buffer": "65535", "own.snd_buffer": "131072", "own.rto_us": "200000", "own.time_wait_us": "1000000", "own.backlog": "4096", "own.link_depth": "8192", "rate.duration_secs": "2", "rate.concurrency": "32", "rate.threads": "1", "rate.request_bytes": "64", "rate.response_bytes": "64", "throughput.sessions": "4", "throughput.bytes_per_session": "67108864", "throughput.chunk": "65536", "throughput.direction": "Upload", "throughput.threads": "1", "scale.steps": "1000,4000,16000", "scale.shards": "1", "open_files_soft_limit": "20000", "scale.step_budget_secs": "30", "scale.probe_sessions": "100"},
+  "notes": ["the client host and the server host are two instances of the own TCP state machine in one process, joined by an in memory pair of frame queues of fps-backend-afxdp, so there is no kernel socket and no descriptor", "frames are IPv4 with TCP, with an IP header checksum and a TCP checksum that are computed on send and verified on receive", "retransmission is minimal: one timer per connection, a fixed initial timeout that doubles, go back N, no round trip estimate and no fast retransmit, and the link loses nothing, so the measurements never retransmit", "there is no congestion control, no window scaling (the window is at most 65,535 bytes), no delayed acknowledgment, and no out of order queue", "timers live in a heap with one entry per connection, so a poll with idle sockets does not grow with the socket count, where a stack that walks its sockets does", "a closed tuple is held for one second in TIME-WAIT instead of minutes, so a rate run does not run out of ports", "bytes_per_socket is the growth of the resident set of the process and includes the connection table, the buffers that the held sockets own (none while idle), and the frame link", "sockets counts both hosts of a pair and includes the listening sockets"],
+  "metrics": {
+    "own.rate.sessions_per_s": {"value": 33323.01876590772, "better": "higher", "unit": "sessions/s"},
+    "own.rate.latency_p50_us": {"value": 830, "better": "lower", "unit": "us"},
+    "own.rate.latency_p99_us": {"value": 4947, "better": "lower", "unit": "us"},
+    "own.rate.sessions_failed": {"value": 0, "better": "lower", "unit": "sessions"},
+    "own.throughput.gbit_per_s": {"value": 14.84856685623493, "better": "higher", "unit": "Gbit/s"},
+    "own.scale.max_sockets": {"value": 16202, "better": "higher", "unit": "sockets"},
+    "own.scale.1000.setup_sockets_per_s": {"value": 839786.9407677549, "better": "higher", "unit": "sockets/s"},
+    "own.scale.1000.bytes_per_socket": {"value": 363.81636726546907, "better": "lower", "unit": "bytes"},
+    "own.scale.1000.idle_poll_us": {"value": 0.37033333333333335, "better": "lower", "unit": "us"},
+    "own.scale.1000.probe_sessions_per_s": {"value": 66930.32753694388, "better": "higher", "unit": "sessions/s"},
+    "own.scale.1000.probe_latency_p99_us": {"value": 28, "better": "lower", "unit": "us"},
+    "own.scale.4000.setup_sockets_per_s": {"value": 688328.5180929445, "better": "higher", "unit": "sockets/s"},
+    "own.scale.4000.bytes_per_socket": {"value": 410.39882983910286, "better": "lower", "unit": "bytes"},
+    "own.scale.4000.idle_poll_us": {"value": 0.4023333333333334, "better": "lower", "unit": "us"},
+    "own.scale.4000.probe_sessions_per_s": {"value": 62549.14016824468, "better": "higher", "unit": "sessions/s"},
+    "own.scale.4000.probe_latency_p99_us": {"value": 35, "better": "lower", "unit": "us"},
+    "own.scale.16000.setup_sockets_per_s": {"value": 424170.95786285703, "better": "higher", "unit": "sockets/s"},
+    "own.scale.16000.bytes_per_socket": {"value": 405.75731391186275, "better": "lower", "unit": "bytes"},
+    "own.scale.16000.idle_poll_us": {"value": 0.39766666666666667, "better": "lower", "unit": "us"},
+    "own.scale.16000.probe_sessions_per_s": {"value": 66429.07201907843, "better": "higher", "unit": "sessions/s"},
+    "own.scale.16000.probe_latency_p99_us": {"value": 22, "better": "lower", "unit": "us"}
+  }
+}

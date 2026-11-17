@@ -23,6 +23,7 @@
 pub mod cli;
 pub mod clock;
 pub mod kernel;
+pub mod own;
 pub mod report;
 pub mod stack;
 pub mod sysinfo;
@@ -30,6 +31,7 @@ pub mod workload;
 
 pub use clock::{Clock, ManualClock, MonotonicClock};
 pub use kernel::{KernelConfig, KernelSession, KernelStack};
+pub use own::{OwnConfig, OwnCounters, OwnSession, OwnStack};
 pub use report::BenchReport;
 pub use stack::{StackStats, TcpStack};
 pub use workload::{
