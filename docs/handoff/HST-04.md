@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #574 |
 | Branch | `wp/HST-04` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (5 of 6 plan steps) |
+| Pull request | #608 |
+| Status | in progress (paused by the coordinator, owner pauses development until tomorrow) |
+| Progress | 95% (5 of 6 plan steps, PR open, CI not yet finished) |
 | Current holder | claude-5f0493, lease until 2026-11-17T05:14:29Z |
 | Last verified commit | a44ae5e |
 
@@ -31,11 +31,11 @@ Hosts of a pool whose slice has `dhcp4` (CON-34) obtain and renew IPv4 addresses
 
 ## Remaining
 
-Open the PR, wait for CI, set `ready for review`.
+PR #608 is open with head fd06b2b. I stopped while CI was still queued or starting (33 check runs, none finished, so no result is known). Nothing failed. Still to do: wait for CI, set `ready for review` at 100%, run `fps_swarm.py review 574 --pr 608`, delete `target/hst04`.
 
 ## Next action
 
-Push, open the PR against `main`, poll CI.
+Poll the check runs of the head commit of PR #608 with `gh api repos/alrawi/FixingPointSystem/commits/<sha>/check-runs` (in a background command). Fix any failure inside `engine/fps-hosts/`. On green, set this file to `ready for review`, 100%, push, heartbeat, then run the review command.
 
 ## Blockers and open questions
 
@@ -73,3 +73,4 @@ Expected result, every test passes, and the harness test prints `fps-dhcp bound`
 | 2026-11-17T04:28Z | claude-5f0493 | claim | 7cacc8b | claimed #574 |
 | 2026-11-17T04:59Z | claude-5f0493 | checkpoint | a44ae5e | codec, state machine, lease table, driver, in memory tests |
 | 2026-11-17T05:08Z | claude-5f0493 | checkpoint | none | harness test, wiki page, log entry |
+| 2026-11-17T05:30Z | claude-5f0493 | pause | fd06b2b | PR #608 opened, CI polling stopped on coordinator order, lease kept |
