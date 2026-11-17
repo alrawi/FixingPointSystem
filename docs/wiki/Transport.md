@@ -11,7 +11,7 @@ The workspace glob in the root `Cargo.toml` picks up every directory under `engi
 | [`fps-backend-kernel`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-kernel) | `Connector`, `KernelListener`, and `KernelStream`, which implement `SessionIo` over kernel TCP sockets, the operating system profiles of TRN-03, and `KernelDatagram`, `KernelDatagramListener`, and the two datagram openers of TRN-02, see [Kernel UDP backend](#kernel-udp-backend) | TRN-04 added TLS, see below |
 | [`fps-tcp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-tcp) | `TcpStack`, the bench workloads `session_rate`, `throughput`, and `socket_scaling`, `KernelStack` and `KernelSession`, the kernel loopback reference stack that implements `SessionIo`, and the command `tcp_bench`, see [TCP stack bench harness](#tcp-stack-bench-harness) | TRN-20 adds the smoltcp adapter and TRN-18 an own stack on the same harness |
 | [`fps-module-tls`](https://github.com/alrawi/FixingPointSystem/tree/main/modules/tls) | `TlsConnector`, `TlsAcceptor`, and `TlsSession`, which wrap any `SessionIo` in TLS 1.2 or 1.3, the client and server profiles, `RunAuthority`, and `NssKeyLog`, see [TLS module](#tls-module) | TRN-05 added the browser profiles, see [Browser profiles and JA4](#browser-profiles-and-ja4), and TRN-15 the mail and h2 profiles, see [Mail and h2 profiles](#mail-and-h2-profiles) |
-| [`fps-backend-afxdp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-afxdp) | `FrameIo`, the frame trait with batched receive and send per queue, `open_port` with `AfXdpQueue`, `Workers`, and the in memory `memory::frame_pair`, see [AF_XDP backend](#af_xdp-backend) | TRN-12 runs a user space TCP stack over it, and TRN-19 measures its rate on KVM |
+| [`fps-backend-afxdp`](https://github.com/alrawi/FixingPointSystem/tree/main/engine/fps-backend-afxdp) | `FrameIo`, the frame trait with batched receive and send per queue, `open_port` with `AfXdpQueue`, `Workers`, the in memory `memory::frame_pair`, and `select_backend` of TRN-14, see [AF_XDP backend](#af_xdp-backend) and [Backend selection](#backend-selection) | TRN-12 runs a user space TCP stack over it, and TRN-19 measures its rate on KVM |
 
 The `test-eng` target and the `rust` job of `ci.yml` run the tests of every crate under `engine/`, so the backend needs no make file or workflow of its own.
 
@@ -442,6 +442,27 @@ The kernel asks for wake ups through a ring flag (`XDP_USE_NEED_WAKEUP`). In zer
 | `ring_size` | 2048 | A choice. S3 did not vary the ring size, and TRN-19 tunes it |
 
 S3 ran on a small host, so its results are indicative. Its `zero_copy_log_lines` column counts a DPDK buffer message and not the bind mode of the kernel, which is why this crate reads the mode from the socket.
+
+### Backend selection
+
+`select_backend(&SelectionInput)` in `fps-backend-afxdp` (TRN-14) picks the transport backend at boot and says why. `HostCapabilities` lives in `fps-agent`, which depends on the backends, so the function takes an input type of its own and AGT-22 builds it from the detection and reports the result in `Capabilities.selected_backend`. The module has no dependency and builds on every platform.
+
+| Input | Meaning |
+|---|---|
+| `forced` | `Some(Kernel)` or `Some(AfXdp)` forces a backend, and `None` lets the rules choose |
+| `kernel.transport_available` | The kernel backend carries sessions, which `fps_backend_kernel::TRANSPORT_AVAILABLE` says is true everywhere |
+| `af_xdp.kernel_support` | The running kernel offers AF_XDP sockets |
+| `af_xdp.transport_available` | A transport carries TCP over AF_XDP. `fps_backend_afxdp::TRANSPORT_AVAILABLE` is false until TRN-12 sets it |
+| `af_xdp.driver` | The best XDP mode that every port offers: `None`, `Generic`, `Native` (copy mode, as a virtio-net guest without zero copy), or `ZeroCopy`. The values match the contract `XdpMode` |
+
+The rules, in order:
+
+- The kernel backend is the default, and the result then carries the reason AF_XDP lost (`Unavailable`).
+- AF_XDP wins when the kernel offers it, a transport exists, and the driver offers `Native` or `ZeroCopy`. The result carries the expected mode.
+- `Generic` never wins by itself, but an operator can force it. This is a policy, not a measurement: spike S3 measured only native copy and zero copy, so TRN-12 revisits the rule with its own numbers.
+- A forced backend that cannot run returns `SelectError::ForcedUnsupported` with the cause and never falls back, so a benchmark does not measure the wrong backend. With nothing forced and no working backend the error is `SelectError::NoBackend`.
+
+Nothing carries TCP over AF_XDP before TRN-12, so every host selects the kernel backend today and a forced AF_XDP run is refused with `NoTransport`. The tests in `tests/select.rs` cover a virtio-net guest with and without zero copy (with the transport present, as it will be after TRN-12, and absent), an old kernel, a generic only driver, a driver without XDP, and forced backends. The expected bind mode is a plan, not a measurement: the agent reports the mode that the socket really runs in, as `PortInfo.xdp_driver_mode`.
 
 ### Tests
 

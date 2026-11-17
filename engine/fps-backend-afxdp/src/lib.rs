@@ -17,6 +17,10 @@
 //! to a CPU if asked. [`memory::frame_pair`] is an in memory fake with the
 //! same trait for tests above this crate.
 //!
+//! [`select_backend`] chooses between this backend and the kernel backend at
+//! boot from facts that the agent passes in, and refuses a forced backend that
+//! cannot run.
+//!
 //! The defaults of [`QueueConfig`] come from spike S3. The crate depends only
 //! on `libc`. It needs Linux 5.4 or newer for AF_XDP with wake up flags, 5.9 for the BPF link
 //! that attaches the program, and root or the capabilities that
@@ -31,6 +35,7 @@ mod config;
 mod error;
 mod frame;
 pub mod memory;
+mod select;
 mod worker;
 
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
@@ -47,6 +52,10 @@ mod sys;
 pub use config::{BindMode, BoundMode, ConfigError, PortConfig, QueueConfig, XDP_PACKET_HEADROOM};
 pub use error::AfXdpError;
 pub use frame::{FrameIo, QueueStats};
+pub use select::{
+    select_backend, AfXdpFacts, BackendKind, KernelFacts, SelectError, Selection, SelectionInput,
+    SelectionReason, Unavailable, XdpSupport, TRANSPORT_AVAILABLE,
+};
 pub use worker::{Idle, QueueLoop, WorkerOptions, WorkerReport, Workers};
 
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
