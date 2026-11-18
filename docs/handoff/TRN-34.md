@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #659 |
 | Branch | `wp/TRN-34` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 85% (5 of 6 plan steps) |
+| Pull request | #683 |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-50b39c, lease until 2026-11-18T21:08:28Z |
-| Last verified commit | none |
+| Last verified commit | 5c49be3 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -29,7 +29,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 3. Pacing in `host.rs`
 - [x] 4. RACK and tail loss probe in `recovery.rs`
 - [x] 5. Defaults, tests, bench comparison, Transport.md
-- [ ] 6. Checks, PR, CI
+- [x] 6. Checks, PR, CI
 
 ## Done and verified
 
@@ -38,11 +38,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Step 6: plan checks, `make lint test`, the pull request, CI. The hosted dispatches are listed in the log entry (Shared page notes).
+The hosted `tcp-bench` dispatches (log entry, Shared page notes), and the owner's choice of the HyStart default after the hosted fairness run.
 
 ## Next action
 
-Step 6.
+The coordinator reviews pull request 683 and dispatches the hosted `tcp-bench` runs that the log entry lists.
 
 ## Blockers and open questions
 
@@ -74,3 +74,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | 2026-11-18T18:08Z | claude-50b39c | claim | none | claimed #659 |
 | 2026-11-18T19:38Z | claude-50b39c | takeover | none | the lease of card 6987227256 ran out during the long measurements; took over my own item with card 6989460130 |
 | 2026-11-18T19:45Z | claude-50b39c | checkpoint | see PR | steps 1 to 5 done, step 6 next |
+| 2026-11-18T20:05Z | claude-50b39c | finish | 5c49be3 | pull request 683, CI green (30 checks) |
