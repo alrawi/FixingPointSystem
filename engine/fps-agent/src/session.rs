@@ -485,7 +485,7 @@ fn code_of(e: &RunError) -> ErrorCode {
             }
             BackendError::Unsupported(_) => ErrorCode::Unimplemented,
             BackendError::Plan(_) => ErrorCode::InvalidArgument,
-            BackendError::Datapath(_) => ErrorCode::Internal,
+            BackendError::Datapath(_) | BackendError::Transport(_) => ErrorCode::Internal,
         },
         RunError::Runtime(_) | RunError::Udp(_) | RunError::Stats(_) | RunError::Output(_) => {
             ErrorCode::Internal

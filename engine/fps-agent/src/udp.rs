@@ -12,6 +12,15 @@
 //! address, and every first datagram of a new peer opens a server session.
 //! The session ids, generators, and metric series equal those of the TCP
 //! workers.
+//!
+//! A worker whose `WorkerConfig::transport` is set opens its sessions through
+//! that [`Transport`] instead, which is how a run on the AF_XDP backend sends
+//! its UDP flows over the datapath (AGT-25, see [`crate::transport`]). A client
+//! picks its source host and its server host from the pools as before, and
+//! asks the transport to dial. A server asks the transport to listen on each
+//! address of its host range, one call each, and the transport sorts the
+//! sessions of a shared port to the worker of their host. Without a transport
+//! the worker opens kernel sockets, as it always did.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -19,6 +28,7 @@ use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
+use std::task::{Context, Poll};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -33,6 +43,8 @@ use fps_interp::{
     session_rng, DatagramOpener, Failure, OpenKind, OpenRequest, Reason, Session, SessionCtx, Side,
     SideStats,
 };
+use fps_io::DatagramIo;
+use fps_runtime::transport::{DatagramListener, DatagramSession, Transport};
 use fps_runtime::{
     global_session_id, ClientConfig, Collector, FlowRef, Role, ServerConfig, SessionKey,
     SourceHosts, TokioClock, WorkerConfig, WorkerSnapshot,
@@ -82,6 +94,15 @@ pub enum UdpError {
         /// The backend error.
         #[source]
         source: fps_backend_kernel::BackendError,
+    },
+    /// A server worker could not listen through its transport.
+    #[error("udp worker {worker}: listen through the transport")]
+    TransportListen {
+        /// The worker id.
+        worker: u32,
+        /// The error of the transport.
+        #[source]
+        source: io::Error,
     },
     /// The worker could not register its statistics series.
     #[error("udp worker {worker}: statistics")]
@@ -363,6 +384,72 @@ impl Metrics {
     }
 }
 
+/// The socket of one UDP session: a kernel socket, or a session that a
+/// [`Transport`] opened.
+enum UdpIo {
+    Kernel(KernelDatagram),
+    Net(DatagramSession),
+}
+
+impl UdpIo {
+    fn local_addr(&self) -> SocketAddr {
+        match self {
+            Self::Kernel(io) => io.local_addr(),
+            Self::Net(io) => io.local_addr(),
+        }
+    }
+
+    fn peer_addr(&self) -> SocketAddr {
+        match self {
+            Self::Kernel(io) => io.peer_addr(),
+            Self::Net(io) => io.peer_addr(),
+        }
+    }
+}
+
+impl DatagramIo for UdpIo {
+    fn poll_send(&mut self, cx: &mut Context<'_>, datagram: &[u8]) -> Poll<io::Result<()>> {
+        match self {
+            Self::Kernel(io) => io.poll_send(cx, datagram),
+            Self::Net(io) => io.poll_send(cx, datagram),
+        }
+    }
+
+    fn poll_recv(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        match self {
+            Self::Kernel(io) => io.poll_recv(cx, buf),
+            Self::Net(io) => io.poll_recv(cx, buf),
+        }
+    }
+
+    fn close(&mut self) {
+        match self {
+            Self::Kernel(io) => io.close(),
+            Self::Net(io) => io.close(),
+        }
+    }
+}
+
+/// The listener of one address of a server worker.
+enum UdpListener {
+    Kernel(KernelDatagramListener),
+    Net(Box<dyn DatagramListener>),
+}
+
+impl UdpListener {
+    /// Completes with the session of the next peer.
+    async fn accept(&mut self) -> io::Result<UdpIo> {
+        match self {
+            Self::Kernel(l) => l
+                .accept()
+                .await
+                .map(|(io, _peer)| UdpIo::Kernel(io))
+                .map_err(io::Error::other),
+            Self::Net(l) => l.accept().await.map(UdpIo::Net),
+        }
+    }
+}
+
 struct Worker {
     id: u32,
     seed: u64,
@@ -511,7 +598,7 @@ async fn run_worker(start: Start) -> Result<(), UdpError> {
             Ok((w, Vec::new(), Some(sched)))
         }),
         Role::Server(s) => Worker::new(&start, Side::Server, &s.flow).and_then(|w| {
-            let listeners = bind(id, s)?;
+            let listeners = bind(id, s, start.config.transport.as_deref())?;
             Ok((w, listeners, None))
         }),
     };
@@ -532,7 +619,15 @@ async fn run_worker(start: Start) -> Result<(), UdpError> {
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let stop = match (role, sched) {
         (Role::Client(c), Some(sched)) => {
-            client_loop(&worker, *c, sched, &mut control, &mut tick).await
+            client_loop(
+                &worker,
+                *c,
+                &start.config.transport,
+                sched,
+                &mut control,
+                &mut tick,
+            )
+            .await
         }
         _ => server_loop(&worker, listeners, &mut control, &mut tick).await,
     };
@@ -578,30 +673,47 @@ fn schedule(worker: u32, c: &ClientConfig, rates: &RateControl) -> Result<Schedu
     Ok(sched)
 }
 
-fn bind(worker: u32, s: &ServerConfig) -> Result<Vec<KernelDatagramListener>, UdpError> {
+/// Listens on every address of a server worker, through `transport` when the
+/// worker has one and on kernel sockets otherwise. A transport takes one call
+/// for each address, so the sessions of a port that several workers share are
+/// sorted to the worker of their host.
+fn bind(
+    worker: u32,
+    s: &ServerConfig,
+    transport: Option<&dyn Transport>,
+) -> Result<Vec<UdpListener>, UdpError> {
     s.listen
         .iter()
-        .map(|a| {
-            KernelDatagramListener::bind(*a, &s.config.socket)
-                .map_err(|source| UdpError::Listen { worker, source })
+        .map(|a| match transport {
+            Some(t) => t
+                .listen_datagram(&[*a])
+                .map(UdpListener::Net)
+                .map_err(|source| UdpError::TransportListen { worker, source }),
+            None => KernelDatagramListener::bind(*a, &s.config.socket)
+                .map(UdpListener::Kernel)
+                .map_err(|source| UdpError::Listen { worker, source }),
         })
         .collect()
 }
 
 struct ClientCtx {
     connector: Connector,
+    /// The transport that dials, or `None` for kernel sockets.
+    transport: Option<Arc<dyn Transport>>,
     config: ClientConfig,
 }
 
 async fn client_loop(
     worker: &Rc<Worker>,
     c: ClientConfig,
+    transport: &Option<Arc<dyn Transport>>,
     mut sched: Schedule,
     control: &mut watch::Receiver<Control>,
     tick: &mut tokio::time::Interval,
 ) -> Control {
     let ctx = Rc::new(ClientCtx {
         connector: Connector::new(c.connect.clone()),
+        transport: transport.clone(),
         config: c,
     });
     let clock = TokioClock::start_now();
@@ -619,6 +731,7 @@ async fn client_loop(
                 let ctx = &*ctx;
                 let opener = ClientOpener::new(
                     &ctx.connector,
+                    ctx.transport.as_deref(),
                     &ctx.config.sources,
                     &ctx.config.servers,
                     ctx.config.port,
@@ -652,7 +765,7 @@ async fn client_loop(
 
 async fn server_loop(
     worker: &Rc<Worker>,
-    listeners: Vec<KernelDatagramListener>,
+    listeners: Vec<UdpListener>,
     control: &mut watch::Receiver<Control>,
     tick: &mut tokio::time::Interval,
 ) -> Control {
@@ -662,7 +775,7 @@ async fn server_loop(
         let (w, next_id) = (Rc::clone(worker), Rc::clone(&next_id));
         accepts.push(tokio::task::spawn_local(async move {
             loop {
-                let Ok((io, _peer)) = listener.accept().await else {
+                let Ok(io) = listener.accept().await else {
                     tokio::task::yield_now().await;
                     continue;
                 };
@@ -704,6 +817,7 @@ async fn server_loop(
 /// worker's host range.
 struct ClientOpener<'a> {
     connector: &'a Connector,
+    transport: Option<&'a dyn Transport>,
     servers: &'a [IpAddr],
     port: Option<u16>,
     source: Result<IpAddr, String>,
@@ -729,7 +843,7 @@ impl Tap {
 
     /// Wraps the socket of the session. The capture is read here, when the
     /// session opens, so a capture that started a moment ago takes this one.
-    fn wrap(&self, io: KernelDatagram) -> TappedDatagram<KernelDatagram> {
+    fn wrap(&self, io: UdpIo) -> TappedDatagram<UdpIo> {
         let (local, peer) = (io.local_addr(), io.peer_addr());
         self.cell
             .tap_datagram(self.session_id, self.side, local, peer, io)
@@ -739,6 +853,7 @@ impl Tap {
 impl<'a> ClientOpener<'a> {
     fn new(
         connector: &'a Connector,
+        transport: Option<&'a dyn Transport>,
         sources: &SourceHosts,
         servers: &'a [IpAddr],
         port: Option<u16>,
@@ -747,6 +862,7 @@ impl<'a> ClientOpener<'a> {
     ) -> Self {
         Self {
             connector,
+            transport,
             servers,
             port,
             source: source_addr(sources, session),
@@ -806,22 +922,27 @@ pub(crate) fn source_addr(sources: &SourceHosts, session: u64) -> Result<IpAddr,
 }
 
 impl DatagramOpener for ClientOpener<'_> {
-    type Io = TappedDatagram<KernelDatagram>;
+    type Io = TappedDatagram<UdpIo>;
 
     fn open(
         &mut self,
         request: OpenRequest<'_>,
-    ) -> impl Future<Output = io::Result<TappedDatagram<KernelDatagram>>> {
+    ) -> impl Future<Output = io::Result<TappedDatagram<UdpIo>>> {
         let opened = (|| {
             if request.kind != OpenKind::Connect {
                 return Err(invalid("a client opener cannot accept".into()));
             }
             let source = self.source.clone().map_err(invalid)?;
             let destination = self.destination(&request)?;
-            self.connector
-                .connect_datagram(source, destination)
-                .map(|io| self.tap.wrap(io))
-                .map_err(|e| io::Error::new(e.io_kind().unwrap_or(io::ErrorKind::Other), e))
+            let io = match self.transport {
+                Some(t) => t.connect_datagram(source, destination).map(UdpIo::Net)?,
+                None => self
+                    .connector
+                    .connect_datagram(source, destination)
+                    .map(UdpIo::Kernel)
+                    .map_err(|e| io::Error::new(e.io_kind().unwrap_or(io::ErrorKind::Other), e))?,
+            };
+            Ok(self.tap.wrap(io))
         })();
         std::future::ready(opened)
     }
@@ -829,17 +950,17 @@ impl DatagramOpener for ClientOpener<'_> {
 
 /// Hands the interpreter one session that a listener already opened.
 struct Accepted {
-    io: Option<KernelDatagram>,
+    io: Option<UdpIo>,
     tap: Option<Tap>,
 }
 
 impl DatagramOpener for Accepted {
-    type Io = TappedDatagram<KernelDatagram>;
+    type Io = TappedDatagram<UdpIo>;
 
     fn open(
         &mut self,
         request: OpenRequest<'_>,
-    ) -> impl Future<Output = io::Result<TappedDatagram<KernelDatagram>>> {
+    ) -> impl Future<Output = io::Result<TappedDatagram<UdpIo>>> {
         let tap = self.tap.as_ref();
         let io = match request.kind {
             OpenKind::Accept => self

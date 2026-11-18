@@ -35,20 +35,22 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fps_backend_afxdp::{
-    open_port, AfXdpError, BackendKind, BoundMode, OpenedPort, PortConfig, QueueConfig,
+    open_port, AfXdpError, BackendKind, BoundMode, FrameIo, OpenedPort, PortConfig, QueueConfig,
     XdpMode as Attach,
 };
 use fps_datapath::{split_pools, Datapath, DatapathConfig, DatapathError, Lane, LaneReport};
 use fps_hosts::HostRange;
-use fps_tcp_own::{HostSlice, Pools};
+use fps_tcp_own::{HostSlice, OsProfile, OwnConfig, Pools};
 
 use crate::assemble::{pool_of, Sides};
 use crate::plan::{Backend, HostPoolSlice, HostRole, Plan, Topology};
 use crate::proto::{Capabilities, XdpMode};
 use crate::run::RunError;
+use crate::transport::DatapathTransport;
 
 /// How long a bind retries while the kernel still releases the queue of a
 /// socket that a previous run closed. The release runs in a work queue, so a
@@ -86,6 +88,9 @@ pub enum BackendError {
     /// The datapath did not start.
     #[error("backend af_xdp: start the datapath")]
     Datapath(#[from] DatapathError),
+    /// The thread that serves the listeners of the datapath did not start.
+    #[error("backend af_xdp: start the listener thread of the datapath transport")]
+    Transport(#[source] std::io::Error),
 }
 
 /// Returns the name of a plan backend for messages.
@@ -219,16 +224,27 @@ impl Default for AfXdpSettings {
 /// The AF_XDP backend: the datapath on the queues of the plan ports.
 #[derive(Debug)]
 pub struct AfXdpBackend {
-    datapath: Datapath,
+    datapath: Arc<Datapath>,
+    transport: DatapathTransport,
     ports: Vec<BoundPort>,
 }
 
 impl AfXdpBackend {
     /// The datapath, whose [`Datapath::connector`] and [`Datapath::listen`]
-    /// open the sessions of the plan hosts.
+    /// open the sessions of the plan hosts. A caller that listens through it
+    /// directly and also through [`AfXdpBackend::transport`] cannot use a port
+    /// twice, because the datapath serves a port once.
     #[must_use]
     pub fn datapath(&self) -> &Datapath {
         &self.datapath
+    }
+
+    /// The datapath as the [`fps_runtime::transport::Transport`] that the
+    /// workers of a run open their sessions with (AGT-25). Every call returns
+    /// a handle on the same transport.
+    #[must_use]
+    pub fn transport(&self) -> DatapathTransport {
+        self.transport.clone()
     }
 
     /// The ports with the modes that their sockets bound in.
@@ -237,11 +253,19 @@ impl AfXdpBackend {
         &self.ports
     }
 
-    /// Stops the lane threads, releases the queues, and returns what each
-    /// lane did.
+    /// Stops the listeners of the transport and the lane threads, releases the
+    /// queues, and returns what each lane did. The workers that opened
+    /// sessions through the transport must have ended, or their sessions stop
+    /// at once.
     #[must_use]
     pub fn stop(self) -> Vec<LaneReport> {
-        self.datapath.stop()
+        self.transport.shutdown();
+        match Arc::try_unwrap(self.datapath) {
+            Ok(datapath) => datapath.stop(),
+            // Nobody else holds the datapath after the shutdown. The drop of
+            // the last handle stops the lanes all the same.
+            Err(_) => Vec::new(),
+        }
     }
 }
 
@@ -270,6 +294,16 @@ impl StartedBackend {
         match self {
             Self::Kernel => &[],
             Self::AfXdp(a) => a.ports(),
+        }
+    }
+
+    /// Stops the backend and returns what each lane of the datapath did: no
+    /// lane for the kernel backend.
+    #[must_use]
+    pub fn stop(self) -> Vec<LaneReport> {
+        match self {
+            Self::Kernel => Vec::new(),
+            Self::AfXdp(a) => a.stop(),
         }
     }
 
@@ -411,6 +445,36 @@ fn slice_of(slice: &HostPoolSlice) -> Result<HostSlice, BackendError> {
     })
 }
 
+/// The operating system profile that a host pool names, for the own stack.
+///
+/// An empty name leaves the side without a profile, which keeps the defaults
+/// of the stack. A name that the stack does not know is a plan error, so a
+/// typo does not run with the wrong SYN options unseen.
+fn profile_of(slice: &HostPoolSlice) -> Result<Option<OsProfile>, BackendError> {
+    if slice.os_profile.is_empty() {
+        return Ok(None);
+    }
+    OsProfile::builtin(&slice.os_profile)
+        .map(Some)
+        .map_err(|e| {
+            plan_error(format!(
+                "host pool {}: os_profile '{}': {e}",
+                slice.name, slice.os_profile
+            ))
+        })
+}
+
+/// The settings of the own stack that the plan decides: one OS profile for
+/// the client side and one for the server side, from the host pool of each
+/// (TRN-28).
+fn own_config(l: &Layout<'_>) -> Result<OwnConfig, BackendError> {
+    Ok(OwnConfig {
+        client_os_profile: profile_of(l.client)?,
+        server_os_profile: profile_of(l.server)?,
+        ..OwnConfig::default()
+    })
+}
+
 /// Opens a port, and again for a short time while the kernel still holds the
 /// queue of an earlier socket.
 fn open_retrying(config: &PortConfig, port: &str) -> Result<OpenedPort, BackendError> {
@@ -457,12 +521,8 @@ pub fn start_af_xdp(
     settings: &AfXdpSettings,
 ) -> Result<AfXdpBackend, BackendError> {
     let l = layout(plan, sides)?;
-    let pools = Pools {
-        client: slice_of(l.client)?,
-        server: slice_of(l.server)?,
-        vlan: l.vlan,
-    };
-    let lanes = split_pools(&pools, settings.lanes)?;
+    // Refused here, before a queue binds, when a pool names an unknown profile.
+    own_config(&l)?;
     let port_config = |interface: &str| PortConfig {
         interface: interface.to_owned(),
         queues: (0..u32::try_from(settings.lanes).unwrap_or(u32::MAX)).collect(),
@@ -474,21 +534,85 @@ pub fn start_af_xdp(
         bound(&l.client.port, HostRole::Client, &client),
         bound(&l.server.port, HostRole::Server, &server),
     ];
-    let (mut client_queues, mut server_queues) =
-        (client.queues.into_iter(), server.queues.into_iter());
-    let mut built = Vec::with_capacity(lanes.len());
-    for pools in lanes {
-        let (Some(c), Some(s)) = (client_queues.next(), server_queues.next()) else {
-            return Err(plan_error("a port opened fewer queues than lanes"));
-        };
-        built.push(Lane {
-            client: Box::new(c),
-            server: Box::new(s),
-            pools,
-        });
+    let queues = client
+        .queues
+        .into_iter()
+        .zip(server.queues)
+        .map(|(c, s)| {
+            (
+                Box::new(c) as Box<dyn FrameIo>,
+                Box::new(s) as Box<dyn FrameIo>,
+            )
+        })
+        .collect();
+    launch(&l, settings.lanes, queues, ports)
+}
+
+/// Starts the datapath of a plan on queues that the caller opened, one pair
+/// of a client queue and a server queue for each lane.
+///
+/// [`start_af_xdp`] opens AF_XDP sockets and calls the same code. This
+/// function takes any [`FrameIo`], so the wiring of a run can be tested on
+/// in memory links (`fps_backend_afxdp::memory::frame_pair`) without root and
+/// without a device. The backend that comes back reports no bound port,
+/// because no socket was bound.
+///
+/// # Errors
+///
+/// As [`start_af_xdp`], except [`BackendError::Open`]. A list that holds no
+/// pair gives [`BackendError::Plan`].
+pub fn start_on_queues(
+    plan: &Plan,
+    sides: Sides,
+    queues: Vec<(Box<dyn FrameIo>, Box<dyn FrameIo>)>,
+) -> Result<AfXdpBackend, BackendError> {
+    let l = layout(plan, sides)?;
+    let lanes = queues.len();
+    launch(&l, lanes, queues, Vec::new())
+}
+
+/// Cuts the pools of `l` into `lanes` slices, pairs each with its queues, and
+/// starts the datapath and its transport.
+fn launch(
+    l: &Layout<'_>,
+    lanes: usize,
+    queues: Vec<(Box<dyn FrameIo>, Box<dyn FrameIo>)>,
+    ports: Vec<BoundPort>,
+) -> Result<AfXdpBackend, BackendError> {
+    let pools = Pools {
+        client: slice_of(l.client)?,
+        server: slice_of(l.server)?,
+        vlan: l.vlan,
+    };
+    let own = own_config(l)?;
+    if queues.is_empty() {
+        return Err(plan_error("a datapath needs at least one lane"));
     }
-    let datapath = Datapath::start(built, DatapathConfig::default())?;
-    Ok(AfXdpBackend { datapath, ports })
+    let slices = split_pools(&pools, lanes)?;
+    if slices.len() != queues.len() {
+        return Err(plan_error("a port opened fewer queues than lanes"));
+    }
+    let built: Vec<Lane> = slices
+        .into_iter()
+        .zip(queues)
+        .map(|(pools, (client, server))| Lane {
+            client,
+            server,
+            pools,
+        })
+        .collect();
+    let config = DatapathConfig {
+        own,
+        ..DatapathConfig::default()
+    };
+    let datapath = Arc::new(Datapath::start(built, config)?);
+    let transport =
+        DatapathTransport::new(Arc::clone(&datapath)).map_err(BackendError::Transport)?;
+    Ok(AfXdpBackend {
+        datapath,
+        transport,
+        ports,
+    })
 }
 
 /// Starts `kind` for `plan`.
@@ -523,6 +647,7 @@ pub fn check_af_xdp(plan: &Plan, sides: Sides) -> Result<(), BackendError> {
     let l = layout(plan, sides)?;
     slice_of(l.client)?;
     slice_of(l.server)?;
+    own_config(&l)?;
     Ok(())
 }
 

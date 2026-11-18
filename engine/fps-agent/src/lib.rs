@@ -45,6 +45,7 @@ pub mod select;
 pub mod session;
 pub mod sysroot;
 pub mod tls;
+pub mod transport;
 pub mod trust;
 pub mod udp;
 
