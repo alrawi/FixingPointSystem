@@ -33,11 +33,12 @@
 //!   share them),
 //! * the two pools sit on two different ports, and each port names an
 //!   interface in `PortBinding`,
-//! * both pools are IPv4, untagged or on the same VLAN, and use no DHCP.
+//! * both pools use the same address family, IPv4 or IPv6 (AGT-28), are
+//!   untagged or on the same VLAN, and use no DHCP.
 //!
 //! Anything else is [`BackendError::Unsupported`] with the package that adds
-//! it (IPv6 is TRN-30, DHCP is HST-04 on the datapath). TCP and UDP flows both
-//! run (TRN-29, AGT-25). The bound mode is available as soon
+//! it (DHCP is HST-04 on the datapath). TCP and UDP flows both run (TRN-29,
+//! AGT-25), over IPv4 and over IPv6 (TRN-30, AGT-28). The bound mode is available as soon
 //! as [`start`] returns, and [`StartedBackend::report`] writes it into the
 //! `xdp_driver_mode` of the matching [`PortInfo`] of a [`Capabilities`].
 
@@ -392,6 +393,39 @@ fn interface_of<'p>(plan: &'p Plan, slice: &HostPoolSlice) -> Result<&'p str, Ba
         })
 }
 
+/// The address family of a host pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Family {
+    V4,
+    V6,
+}
+
+impl fmt::Display for Family {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::V4 => "IPv4",
+            Self::V6 => "IPv6",
+        })
+    }
+}
+
+/// The family that the workers of a run use for the hosts of `slice`: IPv4
+/// when the pool has an IPv4 prefix, as `assemble` picks the addresses, and
+/// otherwise IPv6. The datapath finds the lane of a session by the family of
+/// its hosts (TRN-30), so the two pools of a lane have to agree.
+fn family_of(slice: &HostPoolSlice) -> Result<Family, BackendError> {
+    if !slice.ipv4_prefix.is_empty() {
+        Ok(Family::V4)
+    } else if !slice.ipv6_prefix.is_empty() {
+        Ok(Family::V6)
+    } else {
+        Err(plan_error(format!(
+            "host pool {} has neither an IPv4 nor an IPv6 prefix",
+            slice.name
+        )))
+    }
+}
+
 fn layout(plan: &Plan, sides: Sides) -> Result<Layout<'_>, BackendError> {
     if plan.topology != Topology::AppSim {
         return Err(unsupported(format!(
@@ -421,12 +455,14 @@ fn layout(plan: &Plan, sides: Sides) -> Result<Layout<'_>, BackendError> {
                 s.name
             )));
         }
-        if s.ipv4_prefix.is_empty() {
-            return Err(unsupported(format!(
-                "host pool {} has no IPv4 prefix; IPv6 is TRN-30",
-                s.name
-            )));
-        }
+    }
+    let (client_family, server_family) = (family_of(client)?, family_of(server)?);
+    if client_family != server_family {
+        return Err(plan_error(format!(
+            "host pool {} runs over {client_family} and host pool {} over {server_family}, \
+             and a lane carries one family",
+            client.name, server.name
+        )));
     }
     if client.vlan != server.vlan {
         return Err(plan_error(format!(
@@ -687,6 +723,7 @@ pub fn check_af_xdp(plan: &Plan, sides: Sides) -> Result<(), BackendError> {
 mod tests {
     use super::*;
     use crate::plan::{MixEntry, PortBinding};
+    use std::net::SocketAddr;
 
     fn slice(name: &str, port: &str, role: HostRole, prefix: &str) -> HostPoolSlice {
         HostPoolSlice {
@@ -796,7 +833,11 @@ mod tests {
 
         let mut p = plan();
         p.host_pools[1].ipv4_prefix.clear();
-        assert!(err(&p, Sides::Both).contains("TRN-30"));
+        let text = err(&p, Sides::Both);
+        assert!(
+            text.contains("neither an IPv4 nor an IPv6 prefix") && text.contains("servers"),
+            "{text}"
+        );
 
         let mut p = plan();
         p.host_pools[1].port = "c".into();
@@ -820,6 +861,171 @@ mod tests {
             ..MixEntry::default()
         });
         assert!(err(&p, Sides::Both).contains("2 Client host pools"));
+    }
+
+    /// The plan of [`plan`] with IPv6 pools and no IPv4 prefix (AGT-28).
+    fn plan_v6() -> Plan {
+        let mut p = plan();
+        for (pool, prefix) in p.host_pools.iter_mut().zip(["fd00:1::/64", "fd00:2::/64"]) {
+            pool.ipv4_prefix.clear();
+            pool.ipv6_prefix = prefix.into();
+        }
+        p
+    }
+
+    #[test]
+    fn host_pools_with_an_ipv6_prefix_and_no_ipv4_prefix_pass_the_check() {
+        let p = plan_v6();
+        check_af_xdp(&p, Sides::Both).unwrap();
+        let l = layout(&p, Sides::Both).unwrap();
+        assert_eq!(family_of(l.client).unwrap(), Family::V6);
+        assert_eq!(family_of(l.server).unwrap(), Family::V6);
+        // The pools reach the stack as they are: host `i` of an IPv6 pool has
+        // the `i`-th usable address of its prefix, and no IPv4 address.
+        let (client, server) = (slice_of(l.client).unwrap(), slice_of(l.server).unwrap());
+        assert_eq!(client.ip(0), Some("fd00:1::1".parse().unwrap()));
+        assert_eq!(server.ip(1), Some("fd00:2::2".parse().unwrap()));
+        assert_eq!(client.address(0), None);
+        // A pool with both prefixes keeps the IPv4 hosts, as `assemble` does.
+        let mut p = plan_v6();
+        p.host_pools[0].ipv4_prefix = "10.1.0.0/24".into();
+        p.host_pools[1].ipv4_prefix = "10.2.0.0/24".into();
+        let l = layout(&p, Sides::Both).unwrap();
+        assert_eq!(family_of(l.client).unwrap(), Family::V4);
+        check_af_xdp(&p, Sides::Both).unwrap();
+    }
+
+    #[test]
+    fn the_two_pools_of_a_lane_have_to_use_the_same_family() {
+        let mut p = plan_v6();
+        p.host_pools[1].ipv6_prefix.clear();
+        p.host_pools[1].ipv4_prefix = "10.2.0.0/24".into();
+        let e = check_af_xdp(&p, Sides::Both).unwrap_err();
+        assert!(matches!(e, BackendError::Plan(_)), "{e:?}");
+        let text = e.to_string();
+        assert!(
+            text.contains("clients runs over IPv6") && text.contains("servers over IPv4"),
+            "{text}"
+        );
+        // A client pool with both prefixes sends over IPv4, so a server pool
+        // with IPv6 alone cannot answer.
+        let mut p = plan_v6();
+        p.host_pools[0].ipv4_prefix = "10.1.0.0/24".into();
+        assert!(check_af_xdp(&p, Sides::Both).is_err());
+    }
+
+    #[test]
+    fn a_gateway_of_an_ipv6_pool_turns_the_next_hop_resolution_on() {
+        let mut p = plan_v6();
+        let off = {
+            let l = layout(&p, Sides::Both).unwrap();
+            let pools = Pools {
+                client: slice_of(l.client).unwrap(),
+                server: slice_of(l.server).unwrap(),
+                vlan: l.vlan,
+            };
+            datapath_config(&pools, own_config(&l).unwrap())
+        };
+        assert!(off.neighbors.is_none() && !off.own.resolve_next_hop);
+        p.host_pools[0].gateway = "fd00:1::ffff".into();
+        let l = layout(&p, Sides::Both).unwrap();
+        let pools = Pools {
+            client: slice_of(l.client).unwrap(),
+            server: slice_of(l.server).unwrap(),
+            vlan: l.vlan,
+        };
+        assert_eq!(
+            pools.client.pool.gateway(),
+            Some("fd00:1::ffff".parse().unwrap())
+        );
+        let on = datapath_config(&pools, own_config(&l).unwrap());
+        assert_eq!(on.neighbors, Some(NeighborConfig::default()));
+        assert!(on.own.resolve_next_hop);
+    }
+
+    #[test]
+    fn a_session_between_ipv6_hosts_runs_on_the_datapath_of_a_plan() {
+        use fps_backend_afxdp::memory::frame_pair;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let p = plan_v6();
+        let l = layout(&p, Sides::Both).unwrap();
+        let (cpool, spool) = (slice_of(l.client).unwrap(), slice_of(l.server).unwrap());
+        let src = cpool.ip(0).unwrap();
+        let dst = SocketAddr::new(spool.ip(0).unwrap(), 8080);
+        assert!(src.is_ipv6() && dst.is_ipv6());
+        let (c, s) = frame_pair(64, 1600);
+        let backend = start_on_queues(&p, Sides::Both, vec![(Box::new(c), Box::new(s))]).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let echoed = {
+            let _guard = runtime.enter();
+            let mut listener = backend.datapath().listen(8080).unwrap();
+            let connector = backend.datapath().connector();
+            runtime.block_on(async move {
+                let server = tokio::spawn(async move {
+                    let (mut session, peer) = listener.accept().await.expect("accept");
+                    let mut buf = [0u8; 1000];
+                    session.read_exact(&mut buf).await.expect("read");
+                    session.write_all(&buf).await.expect("write");
+                    let mut rest = Vec::new();
+                    let _ = session.read_to_end(&mut rest).await;
+                    peer
+                });
+                let mut session =
+                    tokio::time::timeout(Duration::from_secs(5), connector.connect(src, dst))
+                        .await
+                        .expect("no timeout")
+                        .expect("connect");
+                let sent = [7u8; 1000];
+                session.write_all(&sent).await.expect("write");
+                let mut got = [0u8; 1000];
+                session.read_exact(&mut got).await.expect("read");
+                drop(session);
+                let peer = tokio::time::timeout(Duration::from_secs(5), server)
+                    .await
+                    .expect("the server ends")
+                    .expect("the server task");
+                (got == sent, peer)
+            })
+        };
+        assert!(echoed.0, "the echo came back wrong");
+        assert_eq!(echoed.1.ip(), src, "the server sees the client host");
+        let reports = backend.stop();
+        assert!(reports.iter().all(|r| !r.panicked), "{reports:?}");
+    }
+
+    #[test]
+    fn an_ipv6_pool_with_a_gateway_makes_the_datapath_ask_for_its_next_hop() {
+        use fps_backend_afxdp::memory::frame_pair;
+        let mut p = plan_v6();
+        p.host_pools[0].gateway = "fd00:1::ffff".into();
+        let l = layout(&p, Sides::Both).unwrap();
+        let src = slice_of(l.client).unwrap().ip(0).unwrap();
+        // The peer is on no pool prefix: it is behind the gateway.
+        let dst = SocketAddr::new("fd00:9::9".parse().unwrap(), 80);
+        let (c, s) = frame_pair(64, 1600);
+        let backend = start_on_queues(&p, Sides::Both, vec![(Box::new(c), Box::new(s))]).unwrap();
+        let connector = backend.datapath().connector();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let first = runtime.block_on(async {
+            tokio::time::timeout(Duration::from_millis(300), connector.connect(src, dst)).await
+        });
+        assert!(first.is_err(), "no gateway answered, so no session opens");
+        let stats = backend.datapath().stats().remove(0);
+        assert!(
+            stats.client.neighbor_requests >= 1,
+            "the client arm sent no neighbor solicitation: {:?}",
+            stats.client
+        );
+        assert_eq!(stats.client.neighbor_resolved, 0);
+        assert_eq!(stats.server.neighbor_requests, 0);
+        drop(connector);
+        let _ = backend.stop();
     }
 
     #[test]
@@ -901,7 +1107,6 @@ mod tests {
     #[test]
     fn a_pool_with_a_gateway_makes_the_datapath_ask_for_its_next_hop() {
         use fps_backend_afxdp::memory::frame_pair;
-        use std::net::SocketAddr;
         let mut p = plan();
         p.host_pools[0].gateway = "10.1.0.1".into();
         let l = layout(&p, Sides::Both).unwrap();
