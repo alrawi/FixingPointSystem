@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #675 |
 | Branch | `wp/AGT-28` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 80% (3 of 4 plan steps) |
-| Current holder | claude-a28c5e, lease until 2026-11-18T19:08:36Z |
-| Last verified commit | none |
+| Pull request | #677 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
+| Current holder | claude-a28c5e, lease until 2026-11-18T19:20:54Z |
+| Last verified commit | 0e88faf |
 
 ## Goal
 
@@ -19,7 +19,7 @@ The agent refuses a host pool without an IPv4 prefix on AF_XDP (`engine/fps-agen
 - [x] 1. Read the pool code in `backend.rs` and the AF_XDP tests; claim commit.
 - [x] 2. Allow IPv6 pools in `backend.rs` with unit tests on fake hosts.
 - [x] 3. Extend `tests/afxdp_veth.rs` with an IPv6 run of http1 and dns.
-- [ ] 4. Checks, log entry, Agent page, PR, CI.
+- [x] 4. Checks, log entry, Agent page, PR, CI.
 
 ## Done and verified
 
@@ -27,13 +27,15 @@ The agent refuses a host pool without an IPv4 prefix on AF_XDP (`engine/fps-agen
 - `FPS_REQUIRE_AFXDP=1 cargo test -p fps-agent --test afxdp_veth` passes as root in the sandbox, both families: http1 63 and dns 24 sessions over IPv6, none failed. The sandbox kernel has no IPv6, which this test does not need (AF_XDP takes the frames before the IP layer).
 - `cargo fmt --check` and `cargo clippy -p fps-agent --all-targets -D warnings` are clean; `plan.py check`, `render --check`, `lint` pass.
 
+- CI of PR #677 at 0e88faf: every check run succeeded. The `rust` job and the `afxdp` job logs show `pools family=ipv6` and `run outcome=pass sessions http1=63 dns=24` from `tests/afxdp_veth.rs`.
+
 ## Remaining
 
-CI result of the PR (the `rust` job and the `afxdp` job of `trn.yml`).
+Nothing.
 
 ## Next action
 
-Open the PR and poll its check runs.
+The coordinator reviews and merges PR #677.
 
 ## Blockers and open questions
 
@@ -61,4 +63,5 @@ cargo test -p fps-agent --test afxdp_veth   # root, or sudo -n
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-18T18:38Z | claude-a28c5e | claim | none | lease taken on #675 |
-| 2026-11-18T19:05Z | claude-a28c5e | checkpoint | none | IPv6 pools and tests done, opening the PR |
+| 2026-11-18T19:05Z | claude-a28c5e | checkpoint | 0e88faf | IPv6 pools and tests done, PR #677 opened |
+| 2026-11-18T19:15Z | claude-a28c5e | finish | 0e88faf | CI green, ready for review |
