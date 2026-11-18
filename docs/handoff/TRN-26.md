@@ -5,8 +5,8 @@
 | Issue | #627 |
 | Branch | `wp/TRN-26` |
 | Pull request | #651 |
-| Status | in progress |
-| Progress | 95% (5 of 6 plan steps) |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-7c2e91, lease until 2026-11-18T09:58:49Z |
 | Last verified commit | none |
 
@@ -23,7 +23,7 @@ Conformance and interop tests in the harness (`engine/fps-tcp/`): the own stack 
 - [x] 3. The in memory pairings (own and smoltcp, both directions) and `tests/interop_smol.rs`.
 - [x] 4. The kernel pairing: three namespaces, AF_XDP queue on the own arm, peer roles, and `tests/interop_kernel.rs`.
 - [x] 5. The matrix in `Transport.md`, the log entry, and the checks.
-- [ ] 6. Pull request, CI, review.
+- [x] 6. Pull request, CI, review.
 
 ## Done and verified
 
@@ -35,7 +35,7 @@ Conformance and interop tests in the harness (`engine/fps-tcp/`): the own stack 
 
 ## Remaining
 
-Step 6: all CI jobs green, then `fps_swarm.py review 627 --pr 651`.
+Nothing. All CI jobs on 188dccd are green; review requested.
 
 ## Next action
 
