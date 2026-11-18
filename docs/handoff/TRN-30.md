@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #631 |
 | Branch | `wp/TRN-30` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (5 of 6 plan steps) |
+| Pull request | #665 |
+| Status | ready for review |
+| Progress | 100% |
 | Current holder | claude-1d4805, lease until 2026-11-18T13:31:09Z |
-| Last verified commit | none |
+| Last verified commit | bedbadd |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 

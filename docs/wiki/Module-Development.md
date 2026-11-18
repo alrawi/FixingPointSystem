@@ -610,7 +610,7 @@ These are problems that the project has already met while it built modules, with
 
 ### The user space backend (AF_XDP)
 
-**A datagram above 1,472 bytes of payload is not heard on the AF_XDP backend.** You see a UDP scenario pass on the kernel backend and time out on the AF_XDP backend, when one message is larger than the MTU allows. The user space UDP layer (TRN-29) splits a large datagram into IP fragments when it sends, but it does not reassemble fragments it receives. It drops and counts them. Keep each datagram of a scenario at or below 1,472 bytes of payload on a 1,500 byte MTU, or test on the kernel backend.
+**A datagram above 1,472 bytes (IPv4) or 1,452 bytes (IPv6) of payload is not heard on the AF_XDP backend.** You see a UDP scenario pass on the kernel backend and time out on the AF_XDP backend, when one message is larger than the MTU allows. The user space UDP layer (TRN-29, TRN-30) splits a large datagram into IP fragments when it sends, but it does not reassemble fragments it receives. It drops and counts them (`rx_fragments`). Keep each datagram of a scenario at or below the MTU minus the IP and UDP headers (1,472 bytes over IPv4 and 1,452 over IPv6 on a 1,500 byte MTU), or test on the kernel backend.
 
 **Ports 67 and 68 never reach a module on the AF_XDP backend.** The datapath sends UDP traffic on those ports to the DHCP clients of the hosts, so a module that listens on them sees nothing. Use other ports.
 
