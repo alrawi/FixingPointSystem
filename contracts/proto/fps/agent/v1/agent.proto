@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// Agent control protocol, contract version 0.2.6.
+// Agent control protocol, contract version 0.2.7.
 //
 // The controller compiles a test configuration into one Plan per agent. Each
 // agent dials the controller, so an agent behind NAT or in a cloud needs no
@@ -53,6 +53,12 @@
 // Version 0.2.6 adds HostPoolSlice.dhcp4 and the message Dhcp4. It only adds a
 // field, and an agent of an earlier version does not read it. The controller
 // keeps admitting agents by the major and minor part of engine_api.
+//
+// Version 0.2.7 adds Heartbeat.run_backend, Heartbeat.run_ports, and the
+// message RunPort. It only adds fields and a message. An agent of an earlier
+// version leaves them out: run_backend is BACKEND_UNSPECIFIED and run_ports is
+// empty, and a reader treats both as "not reported". The controller keeps
+// admitting agents by the major and minor part of engine_api.
 
 syntax = "proto3";
 
@@ -310,6 +316,7 @@ message PortInfo {
   // xdp_driver_mode is the XDP mode of the port, a driver table hint (see
   // XdpMode). It is XDP_MODE_UNSPECIFIED unless the selected backend is
   // BACKEND_AF_XDP and the agent bound a queue of this port. Added in 0.2.5.
+  // The mode that a run really bound is in Heartbeat.run_ports.
   XdpMode xdp_driver_mode = 6;
 }
 
@@ -381,6 +388,37 @@ message Heartbeat {
   google.protobuf.Timestamp agent_time = 5;
   // message explains AGENT_STATE_FAILED in one sentence.
   string message = 6;
+  // run_backend is the backend that started the loaded plan, which can differ
+  // from Capabilities.selected_backend: an agent that nobody forced to a
+  // backend may run a plan that its AF_XDP datapath refuses on the kernel
+  // backend. It is BACKEND_UNSPECIFIED until the agent has started the plan
+  // (while plan_id is empty, and in AGENT_STATE_PREPARED), and for an agent of
+  // 0.2.6 or earlier. Once the plan has started, every heartbeat carries it
+  // until the plan is released, also in AGENT_STATE_STOPPED and
+  // AGENT_STATE_FAILED, so a controller that missed one heartbeat or
+  // reconnected learns it again. Added in 0.2.7.
+  Backend run_backend = 7;
+  // run_ports lists the ports that the started plan bound, one entry for each
+  // PortBinding of the plan in plan order, with the XDP mode that the sockets
+  // really bound in. It is empty on the same terms as run_backend. Added in
+  // 0.2.7.
+  repeated RunPort run_ports = 8;
+}
+
+// RunPort reports one port of a plan that has started.
+message RunPort {
+  // name is the port name of the plan, PortBinding.name.
+  string name = 1;
+  // interface_name is the local interface, PortBinding.interface_name, which is
+  // PortInfo.name in the capabilities of the agent.
+  string interface_name = 2;
+  // xdp_mode is the XDP mode that the port runs in, as the agent read it from
+  // the bound sockets, and it is XDP_MODE_UNSPECIFIED when Heartbeat.run_backend
+  // is not BACKEND_AF_XDP. A port with queues in more than one mode reports the
+  // slowest of them, in the order XDP_MODE_GENERIC, XDP_MODE_NATIVE,
+  // XDP_MODE_ZERO_COPY. Unlike PortInfo.xdp_driver_mode, it is what the run
+  // measured and not a hint of the driver table.
+  XdpMode xdp_mode = 3;
 }
 
 // HeartbeatAck answers one heartbeat, so the agent detects a silent controller.
