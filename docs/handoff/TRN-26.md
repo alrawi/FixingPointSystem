@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-26` |
 | Pull request | not opened yet |
 | Status | in progress |
-| Progress | 50% (3 of 6 plan steps) |
+| Progress | 70% (4 of 6 plan steps) |
 | Current holder | claude-7c2e91, lease until 2026-11-18T09:58:49Z |
 | Last verified commit | none |
 
@@ -21,7 +21,7 @@ Conformance and interop tests in the harness (`engine/fps-tcp/`): the own stack 
 - [x] 1. Claim, handoff, and a pattern checked loss transfer in `workload.rs`.
 - [x] 2. A wire tap that reads TCP options with the smoltcp parser, and the smoltcp adapter with one external side.
 - [x] 3. The in memory pairings (own and smoltcp, both directions) and `tests/interop_smol.rs`.
-- [ ] 4. The kernel pairing: three namespaces, AF_XDP queue on the own arm, peer roles, and `tests/interop_kernel.rs`.
+- [x] 4. The kernel pairing: three namespaces, AF_XDP queue on the own arm, peer roles, and `tests/interop_kernel.rs`.
 - [ ] 5. The matrix in `Transport.md`, the log entry, and the checks.
 - [ ] 6. Pull request, CI, review.
 
@@ -29,13 +29,15 @@ Conformance and interop tests in the harness (`engine/fps-tcp/`): the own stack 
 
 - Steps 1 to 3: `workload.rs` has `LossConfig::verify` (position dependent pattern, checked by the receiver), `wiretap.rs` reads options with the smoltcp parser, `smol.rs` has `SmolStack::bridged` (one smoltcp host behind an `IpBridge`), `interop.rs` has `InteropStack` (own and smoltcp over the impaired link with Ethernet framing). `cargo test -p fps-tcp --test interop_smol` passes 8 tests, five runs in a row (about 8 s each run).
 
+- Step 4: `src/interop_kernel.rs` (own stack in a helper process in the namespace over an AF_XDP queue, kernel as a socket peer, router interface MAC set to the next hop MAC of the own stack) and `tests/interop_kernel.rs` (harness = false, sudo -n, 10 scenarios). In the sandbox (root, no netem) the 8 scenarios without netem pass: clean link and a 20 Mbit/s tbf bottleneck with 32 KiB queue in both directions, with the kernel options off and with the own options off. The 2 scenarios at 1 percent loss with 20 ms need `sch_netem` and skip here; CI must run them.
+
 ## Remaining
 
-Steps 4 to 6: the kernel pairing, the matrix in Transport.md, the log entry, the checks, the pull request.
+Step 5: matrix in `Transport.md`, log entry. Step 6: PR and CI; then read the netem rows from the CI log into the matrix.
 
 ## Next action
 
-Step 4: write `src/interop_kernel.rs` (namespaces, AF_XDP queue, peer roles) and `tests/interop_kernel.rs`.
+Open the PR and read the CI log of the `rust` job for the `interop_kernel` lines.
 
 ## Blockers and open questions
 
@@ -61,3 +63,4 @@ cargo test -p fps-tcp
 |---|---|---|---|---|
 | 2026-11-18T08:29Z | claude-7c2e91 | claim | none | lease 30 minutes |
 | 2026-11-18T08:58Z | claude-7c2e91 | checkpoint | see git | steps 1 to 3 done |
+| 2026-11-18T09:15Z | claude-7c2e91 | checkpoint | see git | step 4 done |
