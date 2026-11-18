@@ -1456,6 +1456,7 @@ name = "fps-tcp-own"
 version = "0.0.1"
 dependencies = [
  "fps-backend-afxdp",
+ "fps-hosts",
  "fps-io",
  "thiserror 2.0.21",
  "tokio",

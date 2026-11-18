@@ -14,6 +14,9 @@ use std::hash::{BuildHasherDefault, Hasher};
 use std::io;
 use std::task::Waker;
 
+use super::net::{
+    NetError, Received, Station, ETH_LEN, MAX_REPLY_LEN, MIN_FRAME_LEN, VLAN_TAG_LEN,
+};
 use super::wire::{self, flags, Header};
 use super::OwnConfig;
 
@@ -54,7 +57,9 @@ pub struct IntHasher(u64);
 
 impl Hasher for IntHasher {
     fn finish(&self) -> u64 {
-        self.0
+        // Fold the high half into the low half, because the table takes its
+        // bucket from the low bits and the multiplication fills the high ones.
+        self.0 ^ (self.0 >> 32)
     }
     fn write(&mut self, bytes: &[u8]) {
         for &b in bytes {
@@ -62,10 +67,10 @@ impl Hasher for IntHasher {
         }
     }
     fn write_u32(&mut self, value: u32) {
-        self.0 = u64::from(value).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.0 = (self.0.rotate_left(23) ^ u64::from(value)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     }
     fn write_u16(&mut self, value: u16) {
-        self.0 = u64::from(value).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.0 = (self.0.rotate_left(23) ^ u64::from(value)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     }
 }
 
@@ -79,13 +84,26 @@ fn seq_le(a: u32, b: u32) -> bool {
     (a.wrapping_sub(b) as i32) <= 0
 }
 
-fn tuple_key(local_port: u16, remote_port: u16) -> u32 {
-    (u32::from(local_port) << 16) | u32::from(remote_port)
+/// The key of the connection table: the four values that name a connection
+/// from this host. It is 12 bytes, so an entry of the table with its `u32`
+/// handle takes 16 bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Tuple {
+    /// The local address.
+    pub local_ip: u32,
+    /// The remote address.
+    pub remote_ip: u32,
+    /// The local port.
+    pub local_port: u16,
+    /// The remote port.
+    pub remote_port: u16,
 }
 
 /// One connection.
 struct Conn {
     state: State,
+    local_ip: u32,
+    remote_ip: u32,
     local_port: u16,
     remote_port: u16,
     iss: u32,
@@ -118,11 +136,13 @@ struct Conn {
 }
 
 impl Conn {
-    fn new(state: State, local_port: u16, remote_port: u16, iss: u32, rto_us: i64) -> Self {
+    fn new(state: State, tuple: Tuple, iss: u32, rto_us: i64) -> Self {
         Self {
             state,
-            local_port,
-            remote_port,
+            local_ip: tuple.local_ip,
+            remote_ip: tuple.remote_ip,
+            local_port: tuple.local_port,
+            remote_port: tuple.remote_port,
             iss,
             snd_una: iss,
             snd_nxt: iss.wrapping_add(1),
@@ -192,14 +212,22 @@ pub struct HostCounters {
     pub resets_sent: u64,
     /// Connections that a timeout or a reset ended abnormally.
     pub aborted: u64,
+    /// Frames that the host did not send, because the local or the remote
+    /// address has no MAC address in its neighbor tables.
+    pub unresolved: u64,
+    /// Frames that the host dropped for their Ethernet header: another VLAN,
+    /// a tag where the port has none, or a tag type that the stack does not
+    /// take.
+    pub link_dropped: u64,
+    /// ARP replies that the host built for hosts it serves.
+    pub arp_replies: u64,
 }
 
 /// The frames that wait for the link.
 pub struct Out {
     /// The built frames, oldest first.
     pub queue: VecDeque<Vec<u8>>,
-    ip: u32,
-    peer: u32,
+    station: Station,
 }
 
 impl Out {
@@ -207,6 +235,7 @@ impl Out {
     fn send(
         &mut self,
         counters: &mut HostCounters,
+        ips: (u32, u32),
         local_port: u16,
         remote_port: u16,
         seq: u32,
@@ -217,8 +246,8 @@ impl Out {
         payload: (&[u8], &[u8]),
     ) {
         let header = Header {
-            src_ip: self.ip,
-            dst_ip: self.peer,
+            src_ip: ips.0,
+            dst_ip: ips.1,
             src_port: local_port,
             dst_port: remote_port,
             seq,
@@ -227,8 +256,17 @@ impl Out {
             window,
             mss,
         };
-        let mut frame = Vec::new();
+        let mut frame = Vec::with_capacity(
+            ETH_LEN + VLAN_TAG_LEN + wire::IP_LEN + wire::TCP_LEN + wire::MSS_OPTION_LEN,
+        );
+        if !self.station.head(&mut frame, ips.0, ips.1) {
+            counters.unresolved += 1;
+            return;
+        }
         wire::encode(&mut frame, &header, payload);
+        if frame.len() < MIN_FRAME_LEN {
+            frame.resize(MIN_FRAME_LEN, 0);
+        }
         self.queue.push_back(frame);
         counters.frames_out += 1;
     }
@@ -236,15 +274,13 @@ impl Out {
 
 /// One host: its address, connections, listeners, timers, and output queue.
 pub struct Host {
-    ip: u32,
-    peer: u32,
     cfg: OwnConfig,
     mss_own: u16,
     conns: Vec<Option<Conn>>,
     gens: Vec<u32>,
     free: Vec<u32>,
     live: u64,
-    table: IntMap<u32, u32>,
+    table: IntMap<Tuple, u32>,
     listeners: IntMap<u16, Listener>,
     dirty: Vec<u32>,
     timers: BinaryHeap<Reverse<(i64, u32, u32)>>,
@@ -264,14 +300,13 @@ fn mix(mut x: u64) -> u64 {
 }
 
 impl Host {
-    /// Creates a host with the address `ip` that talks to the host `peer`.
-    pub fn new(ip: u32, peer: u32, cfg: OwnConfig, mtu: usize) -> Self {
+    /// Creates the hosts of `station`, which share one connection table,
+    /// with an IP MTU of `mtu` bytes.
+    pub fn new(station: Station, cfg: OwnConfig, mtu: usize) -> Self {
         let mss_own = u16::try_from(mtu.saturating_sub(wire::IP_LEN + wire::TCP_LEN))
             .unwrap_or(u16::MAX)
             .max(64);
         Self {
-            ip,
-            peer,
             mss_own,
             cfg,
             conns: Vec::new(),
@@ -285,8 +320,7 @@ impl Host {
             next_port: EPHEMERAL_FIRST,
             out: Out {
                 queue: VecDeque::new(),
-                ip,
-                peer,
+                station,
             },
             counters: HostCounters::default(),
         }
@@ -312,10 +346,11 @@ impl Host {
     /// The initial sequence number of a connection, after RFC 6528: a
     /// counter that ticks every 4 microseconds plus a hash of the tuple and a
     /// secret. The hash is a mixing function and not a keyed cryptographic one.
-    fn isn(&self, local_port: u16, remote_port: u16, now: i64) -> u32 {
-        let tuple =
-            (u64::from(self.ip) << 32) ^ (u64::from(local_port) << 16) ^ u64::from(remote_port);
-        let hash = mix(self.cfg.isn_secret ^ mix(tuple ^ (u64::from(self.peer) << 17)));
+    fn isn(&self, t: Tuple, now: i64) -> u32 {
+        let tuple = (u64::from(t.local_ip) << 32)
+            ^ (u64::from(t.local_port) << 16)
+            ^ u64::from(t.remote_port);
+        let hash = mix(self.cfg.isn_secret ^ mix(tuple ^ (u64::from(t.remote_ip) << 17)));
         ((now / 4) as u32).wrapping_add(hash as u32)
     }
 
@@ -383,6 +418,7 @@ impl Host {
         };
         self.out.send(
             &mut self.counters,
+            (h.dst_ip, h.src_ip),
             h.dst_port,
             h.src_port,
             seq,
@@ -409,9 +445,30 @@ impl Host {
         Ok(())
     }
 
-    /// Starts an active open to `remote_port` of the peer and returns the
-    /// connection handle.
-    pub fn open(&mut self, remote_port: u16, now: i64) -> io::Result<(u32, u32)> {
+    /// Starts an active open from the local host `local_ip` to `remote_port`
+    /// of the neighbor `remote_ip` and returns the connection handle.
+    ///
+    /// The local port is the next free one of the ephemeral range for this
+    /// tuple, so two local hosts, or two neighbors, can use the same port.
+    pub fn open(
+        &mut self,
+        local_ip: u32,
+        remote_ip: u32,
+        remote_port: u16,
+        now: i64,
+    ) -> io::Result<(u32, u32)> {
+        if !self.out.station.owns(local_ip) {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                "the local address is not a host of this stack",
+            ));
+        }
+        if self.out.station.resolve(remote_ip).is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::HostUnreachable,
+                "the remote address has no neighbor entry",
+            ));
+        }
         let range = u32::from(u16::MAX - EPHEMERAL_FIRST) + 1;
         let mut local_port = None;
         for _ in 0..range {
@@ -421,7 +478,13 @@ impl Host {
             } else {
                 candidate + 1
             };
-            if !self.table.contains_key(&tuple_key(candidate, remote_port)) {
+            let tuple = Tuple {
+                local_ip,
+                remote_ip,
+                local_port: candidate,
+                remote_port,
+            };
+            if !self.table.contains_key(&tuple) {
                 local_port = Some(candidate);
                 break;
             }
@@ -432,17 +495,17 @@ impl Host {
                 "every local port is in use for this destination",
             ));
         };
-        let iss = self.isn(local_port, remote_port, now);
-        let mut conn = Conn::new(
-            State::SynSent,
+        let tuple = Tuple {
+            local_ip,
+            remote_ip,
             local_port,
             remote_port,
-            iss,
-            self.cfg.rto_us,
-        );
+        };
+        let iss = self.isn(tuple, now);
+        let mut conn = Conn::new(State::SynSent, tuple, iss, self.cfg.rto_us);
         conn.mss = self.mss_own;
         let (id, gen) = self.alloc(conn);
-        self.table.insert(tuple_key(local_port, remote_port), id);
+        self.table.insert(tuple, id);
         self.mark_dirty(id);
         Ok((id, gen))
     }
@@ -664,7 +727,8 @@ impl Host {
         let Some(conn) = self.conns.get(id as usize).and_then(Option::as_ref) else {
             return;
         };
-        let (lp, rp, seq, ack) = (
+        let (ips, lp, rp, seq, ack) = (
+            (conn.local_ip, conn.remote_ip),
             conn.local_port,
             conn.remote_port,
             conn.snd_nxt,
@@ -673,6 +737,7 @@ impl Host {
         self.counters.resets_sent += 1;
         self.out.send(
             &mut self.counters,
+            ips,
             lp,
             rp,
             seq,
@@ -709,7 +774,12 @@ impl Host {
             self.counters.aborted += 1;
         }
         conn.sndbuf = VecDeque::new();
-        let key = tuple_key(conn.local_port, conn.remote_port);
+        let key = Tuple {
+            local_ip: conn.local_ip,
+            remote_ip: conn.remote_ip,
+            local_port: conn.local_port,
+            remote_port: conn.remote_port,
+        };
         let listener = conn.listener;
         let was_pending = previous == State::SynReceived && conn.in_backlog;
         if was_pending {
@@ -738,7 +808,26 @@ impl Host {
     /// Processes one frame from the link.
     pub fn input(&mut self, frame: &[u8], now: i64) {
         self.counters.frames_in += 1;
-        let parsed = match wire::parse(frame) {
+        let mut reply = [0u8; MAX_REPLY_LEN];
+        let packet = match self.out.station.receive(frame, &mut reply) {
+            Ok(Received::Ip(packet)) => packet,
+            Ok(Received::Reply(len)) => {
+                self.counters.arp_replies += 1;
+                self.counters.frames_out += 1;
+                self.out.queue.push_back(reply[..len].to_vec());
+                return;
+            }
+            Ok(Received::Ignored) => return,
+            Err(NetError::Short) => {
+                self.counters.bad_frames += 1;
+                return;
+            }
+            Err(_) => {
+                self.counters.link_dropped += 1;
+                return;
+            }
+        };
+        let parsed = match wire::parse(packet) {
             Ok(parsed) => parsed,
             Err(_) => {
                 self.counters.bad_frames += 1;
@@ -746,14 +835,19 @@ impl Host {
             }
         };
         let h = parsed.header;
-        if h.dst_ip != self.ip {
+        if !self.out.station.owns(h.dst_ip) {
             return;
         }
         let payload = parsed.payload;
         let seg_len = payload.len() as u32
             + u32::from(h.flags & flags::SYN != 0)
             + u32::from(h.flags & flags::FIN != 0);
-        let key = tuple_key(h.dst_port, h.src_port);
+        let key = Tuple {
+            local_ip: h.dst_ip,
+            remote_ip: h.src_ip,
+            local_port: h.dst_port,
+            remote_port: h.src_port,
+        };
         if let Some(&id) = self.table.get(&key) {
             let syn_only = h.flags & (flags::SYN | flags::ACK | flags::RST) == flags::SYN;
             let reusable = self
@@ -794,6 +888,11 @@ impl Host {
 
     fn passive_open(&mut self, h: &Header, now: i64) {
         let backlog = self.cfg.backlog;
+        if self.out.station.resolve(h.src_ip).is_none() {
+            // No SYN-ACK could reach a host that has no neighbor entry.
+            self.counters.unresolved += 1;
+            return;
+        }
         match self.listeners.get(&h.dst_port) {
             None => {
                 self.reply_reset(h, 1);
@@ -802,21 +901,21 @@ impl Host {
             Some(listener) if listener.pending >= backlog => return,
             Some(_) => {}
         }
-        let iss = self.isn(h.dst_port, h.src_port, now);
-        let mut conn = Conn::new(
-            State::SynReceived,
-            h.dst_port,
-            h.src_port,
-            iss,
-            self.cfg.rto_us,
-        );
+        let tuple = Tuple {
+            local_ip: h.dst_ip,
+            remote_ip: h.src_ip,
+            local_port: h.dst_port,
+            remote_port: h.src_port,
+        };
+        let iss = self.isn(tuple, now);
+        let mut conn = Conn::new(State::SynReceived, tuple, iss, self.cfg.rto_us);
         conn.rcv_nxt = h.seq.wrapping_add(1);
         conn.snd_wnd = u32::from(h.window);
         conn.mss = self.mss_own.min(h.mss.unwrap_or(DEFAULT_PEER_MSS));
         conn.listener = h.dst_port;
         conn.in_backlog = true;
         let (id, _gen) = self.alloc(conn);
-        self.table.insert(tuple_key(h.dst_port, h.src_port), id);
+        self.table.insert(tuple, id);
         if let Some(listener) = self.listeners.get_mut(&h.dst_port) {
             listener.pending += 1;
         }
@@ -1207,6 +1306,7 @@ impl Host {
         conn.dirty = false;
         let rcv_wnd = u16::try_from(window_size.saturating_sub(conn.rcvbuf.len()).min(65_535))
             .unwrap_or(65_535);
+        let ips = (conn.local_ip, conn.remote_ip);
         let (lp, rp) = (conn.local_port, conn.remote_port);
         let mut sent_anything = false;
 
@@ -1225,6 +1325,7 @@ impl Host {
             let mss = Some(conn.mss);
             self.out.send(
                 &mut self.counters,
+                ips,
                 lp,
                 rp,
                 conn.iss,
@@ -1283,6 +1384,7 @@ impl Host {
                 let bits = flags::ACK | if n == avail { flags::PSH } else { 0 };
                 self.out.send(
                     &mut self.counters,
+                    ips,
                     lp,
                     rp,
                     conn.snd_nxt,
@@ -1301,6 +1403,7 @@ impl Host {
             if conn.fin_wanted && !conn.sent_fin && all_sent {
                 self.out.send(
                     &mut self.counters,
+                    ips,
                     lp,
                     rp,
                     conn.snd_nxt,
@@ -1326,6 +1429,7 @@ impl Host {
             conn.ack_pending = false;
             self.out.send(
                 &mut self.counters,
+                ips,
                 lp,
                 rp,
                 conn.snd_nxt,
@@ -1385,23 +1489,243 @@ mod tests {
         assert!(seq_le(5, 5));
     }
 
+    use crate::pools::Pools;
+
+    /// The stations of a test and the addresses of their hosts.
+    struct Built {
+        client: Station,
+        server: Station,
+        client_ips: Vec<u32>,
+        server_ips: Vec<u32>,
+    }
+    use fps_hosts::MacAddr;
+    use std::net::Ipv4Addr;
+
+    fn stations(clients: u32, servers: u32) -> Built {
+        let pools =
+            Pools::sized("10.1.0.0/16", clients, "10.2.0.0/16", servers, None).expect("pools");
+        let built = pools.stations().expect("stations");
+        Built {
+            client: built.client,
+            server: built.server,
+            client_ips: pools.client.addresses().expect("addresses"),
+            server_ips: pools.server.addresses().expect("addresses"),
+        }
+    }
+
+    fn tuple(local_ip: u32, remote_ip: u32, local_port: u16, remote_port: u16) -> Tuple {
+        Tuple {
+            local_ip,
+            remote_ip,
+            local_port,
+            remote_port,
+        }
+    }
+
     #[test]
     fn the_isn_depends_on_the_tuple_the_secret_and_the_time() {
         let cfg = OwnConfig::default();
-        let host = Host::new(1, 2, cfg.clone(), 1500);
-        let a = host.isn(40000, 80, 0);
-        assert_ne!(a, host.isn(40001, 80, 0));
-        assert_ne!(a, host.isn(40000, 81, 0));
-        assert_eq!(host.isn(40000, 80, 4_000_000).wrapping_sub(a), 1_000_000);
+        let built = stations(2, 2);
+        let host = Host::new(built.client.clone(), cfg.clone(), 1500);
+        let t = tuple(1, 2, 40000, 80);
+        let a = host.isn(t, 0);
+        assert_ne!(a, host.isn(tuple(1, 2, 40001, 80), 0));
+        assert_ne!(a, host.isn(tuple(1, 2, 40000, 81), 0));
+        assert_ne!(a, host.isn(tuple(3, 2, 40000, 80), 0));
+        assert_ne!(a, host.isn(tuple(1, 3, 40000, 80), 0));
+        assert_eq!(host.isn(t, 4_000_000).wrapping_sub(a), 1_000_000);
         let other = Host::new(
-            1,
-            2,
+            built.client,
             OwnConfig {
                 isn_secret: 7,
                 ..cfg
             },
             1500,
         );
-        assert_ne!(a, other.isn(40000, 80, 0));
+        assert_ne!(a, other.isn(t, 0));
+    }
+
+    #[test]
+    fn an_entry_of_the_table_takes_16_bytes() {
+        assert_eq!(std::mem::size_of::<Tuple>(), 12);
+        assert_eq!(std::mem::size_of::<(Tuple, u32)>(), 16);
+    }
+
+    #[test]
+    fn the_hasher_spreads_tuples_that_differ_in_one_field() {
+        use std::hash::{BuildHasher, BuildHasherDefault};
+        let build = BuildHasherDefault::<IntHasher>::default();
+        let mut seen = std::collections::HashSet::new();
+        // 64 buckets of a table: the low 6 bits of the hash.
+        for i in 0..64u32 {
+            seen.insert(build.hash_one(tuple(i, 7, 5000, 80)) & 63);
+            seen.insert(build.hash_one(tuple(7, i, 5000, 80)) & 63);
+        }
+        assert!(seen.len() > 40, "only {} buckets used", seen.len());
+    }
+
+    /// A SYN from client host `src` to server host `dst`, as a frame.
+    fn syn(built: &Built, src: u32, dst: u32, sp: u16, dp: u16) -> Vec<u8> {
+        let mut frame = Vec::new();
+        assert!(built.client.head(&mut frame, src, dst));
+        let header = Header {
+            src_ip: src,
+            dst_ip: dst,
+            src_port: sp,
+            dst_port: dp,
+            seq: 1000,
+            ack: 0,
+            flags: flags::SYN,
+            window: 1000,
+            mss: Some(1460),
+        };
+        wire::encode(&mut frame, &header, (&[], &[]));
+        frame
+    }
+
+    fn server_with(built: &Built) -> Host {
+        let mut server = Host::new(built.server.clone(), OwnConfig::default(), 1500);
+        server.listen(80).expect("listen");
+        server
+    }
+
+    #[test]
+    fn the_table_keeps_connections_that_differ_only_by_address() {
+        let built = stations(2, 2);
+        let (c, s) = (&built.client_ips, &built.server_ips);
+        let mut server = server_with(&built);
+        // The same ports and three different address pairs.
+        for (src, dst) in [(c[0], s[0]), (c[1], s[0]), (c[0], s[1])] {
+            server.input(&syn(&built, src, dst, 5000, 80), 0);
+        }
+        assert_eq!(server.sockets(), 4, "the listener and three connections");
+        server.flush_dirty(0);
+        let replies: Vec<(u32, u32)> = server
+            .out
+            .queue
+            .iter()
+            .map(|f| {
+                let h = wire::parse_frame(f).expect("frame").header;
+                assert_eq!(h.flags, flags::SYN | flags::ACK);
+                (h.src_ip, h.dst_ip)
+            })
+            .collect();
+        assert_eq!(replies, vec![(s[0], c[0]), (s[0], c[1]), (s[1], c[0])]);
+    }
+
+    #[test]
+    fn a_repeated_syn_finds_its_connection_in_the_table() {
+        let built = stations(2, 1);
+        let (c, s) = (&built.client_ips, &built.server_ips);
+        let mut server = server_with(&built);
+        let frame = syn(&built, c[1], s[0], 5000, 80);
+        server.input(&frame, 0);
+        server.input(&frame, 1);
+        assert_eq!(server.sockets(), 2);
+    }
+
+    #[test]
+    fn a_syn_to_an_address_of_no_host_is_ignored() {
+        let built = stations(1, 1);
+        let mut server = server_with(&built);
+        let mut frame = Vec::new();
+        assert!(built
+            .client
+            .head(&mut frame, built.client_ips[0], built.server_ips[0]));
+        let header = Header {
+            src_ip: built.client_ips[0],
+            dst_ip: 0x0A02_0063,
+            src_port: 5000,
+            dst_port: 80,
+            seq: 1,
+            ack: 0,
+            flags: flags::SYN,
+            window: 1,
+            mss: None,
+        };
+        wire::encode(&mut frame, &header, (&[], &[]));
+        server.input(&frame, 0);
+        assert_eq!(server.sockets(), 1);
+        assert!(server.out.queue.is_empty());
+    }
+
+    #[test]
+    fn a_syn_from_an_unknown_neighbor_gets_no_answer() {
+        let built = stations(1, 1);
+        let mut server = server_with(&built);
+        let mut frame = Vec::new();
+        // The MAC addresses are right, the source address is in no pool.
+        assert!(built
+            .client
+            .head(&mut frame, built.client_ips[0], built.server_ips[0]));
+        let header = Header {
+            src_ip: 0x0A09_0001,
+            dst_ip: built.server_ips[0],
+            src_port: 5000,
+            dst_port: 80,
+            seq: 1,
+            ack: 0,
+            flags: flags::SYN,
+            window: 1,
+            mss: None,
+        };
+        wire::encode(&mut frame, &header, (&[], &[]));
+        server.input(&frame, 0);
+        assert_eq!(server.sockets(), 1);
+        assert_eq!(server.counters.unresolved, 1);
+    }
+
+    #[test]
+    fn open_checks_both_addresses_and_picks_ports_per_tuple() {
+        let built = stations(2, 2);
+        let (c, s) = (built.client_ips.clone(), built.server_ips.clone());
+        let mut client = Host::new(built.client, OwnConfig::default(), 1500);
+        let err = client.open(0x0A01_00FF, s[0], 80, 0).expect_err("local");
+        assert_eq!(err.kind(), io::ErrorKind::AddrNotAvailable);
+        let err = client.open(c[0], 0x0A02_00FF, 80, 0).expect_err("remote");
+        assert_eq!(err.kind(), io::ErrorKind::HostUnreachable);
+        for pair in [(c[0], s[0]), (c[1], s[0]), (c[0], s[1]), (c[0], s[0])] {
+            client.open(pair.0, pair.1, 80, 0).expect("open");
+        }
+        assert_eq!(client.sockets(), 4);
+        // Four distinct tuples in the table.
+        assert_eq!(client.table.len(), 4);
+        client.flush_dirty(0);
+        let sources: Vec<MacAddr> = client
+            .out
+            .queue
+            .iter()
+            .map(|f| crate::net::decode_header(f).expect("eth").src)
+            .collect();
+        assert_eq!(sources.len(), 4);
+        assert_ne!(sources[0], sources[1]);
+        assert_eq!(sources[0], sources[3]);
+    }
+
+    #[test]
+    fn a_host_answers_arp_for_a_host_of_its_station() {
+        let built = stations(1, 2);
+        let mut server = server_with(&built);
+        let asker = MacAddr([0x02, 0xcc, 0, 0, 0, 1]);
+        let target = Ipv4Addr::from(built.server_ips[1]);
+        let request = fps_hosts::wire::arp_request(asker, Ipv4Addr::new(10, 1, 0, 99), target, &[]);
+        server.input(&request, 0);
+        assert_eq!(server.counters.arp_replies, 1);
+        let reply = server.out.queue.pop_front().expect("reply");
+        let arp = fps_hosts::wire::parse_arp(&reply).expect("arp");
+        assert_eq!(
+            Some(arp.sender_mac),
+            built.server.local_mac(built.server_ips[1])
+        );
+        assert_eq!(arp.target_mac, asker);
+        // A request for an address of the client pool is not ours.
+        let other = fps_hosts::wire::arp_request(
+            asker,
+            Ipv4Addr::new(10, 1, 0, 99),
+            Ipv4Addr::from(built.client_ips[0]),
+            &[],
+        );
+        server.input(&other, 0);
+        assert_eq!(server.counters.arp_replies, 1);
     }
 }

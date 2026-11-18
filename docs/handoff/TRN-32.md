@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-32` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 70% (3 of 4 plan steps) |
 | Current holder | claude-7c41e9, lease until 2026-11-18T02:56:32Z |
 | Last verified commit | none |
 
@@ -16,19 +16,19 @@ Give the own stack (engine/fps-tcp-own) a connection table keyed by the full 4-t
 
 ## Plan
 
-- [ ] 1. 4-tuple table and address pool in the stack, with unit tests
-- [ ] 2. Ethernet and VLAN framing, neighbor lookup, with unit tests
-- [ ] 3. fps-tcp adapter and tcp_bench pool option
+- [x] 1. 4-tuple table and address pool in the stack, with unit tests
+- [x] 2. Ethernet and VLAN framing, neighbor lookup, with unit tests
+- [x] 3. fps-tcp adapter and tcp_bench pool option
 - [ ] 4. Benchmark run committed, log entry, checks, PR
 
 ## Done and verified
 
-Nothing yet.
+Steps 1 to 3: Tuple-keyed table (host.rs), net.rs (Ethernet, VLAN, Station with fps-hosts NeighborTable and ARP responder), pools.rs, OwnStack::with_pools / connect_hosts, tcp_bench flags --own-pool, --own-server-hosts, --own-vlan. `cargo test -p fps-tcp-own -p fps-tcp` passes.
 
 ## Remaining
 
-Everything.
+Step 4: run tcp_bench scale at 1,000,000 sockets with --own-pool 20000 and commit results under engine/fps-tcp/results/sandbox-2vcpu-trn32/ with host.txt; clippy, fmt, deny, plan checks; log entry; PR.
 
 ## Next action
 
-Read engine/fps-tcp-own/src/host.rs and lib.rs, then change the table key.
+Build the release example and run the scale workload with the pool.

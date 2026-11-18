@@ -164,7 +164,17 @@ fn be32(data: &[u8], at: usize) -> u32 {
     u32::from_be_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]])
 }
 
-/// Parses and verifies one frame.
+/// Parses and verifies one Ethernet frame that carries IPv4 and TCP, with or
+/// without an 802.1Q tag. The checks of [`parse`] apply to the packet.
+pub fn parse_frame(frame: &[u8]) -> Result<Parsed<'_>, WireError> {
+    let head = crate::net::decode_header(frame).map_err(|_| WireError::Short)?;
+    if head.ethertype != crate::net::ETHERTYPE_IPV4 {
+        return Err(WireError::NotIpv4);
+    }
+    parse(&frame[head.payload_at..])
+}
+
+/// Parses and verifies one IPv4 packet with a TCP segment.
 pub fn parse(frame: &[u8]) -> Result<Parsed<'_>, WireError> {
     if frame.len() < IP_LEN + TCP_LEN {
         return Err(WireError::Short);

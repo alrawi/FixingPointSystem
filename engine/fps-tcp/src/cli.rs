@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::clock::MonotonicClock;
 use crate::kernel::{KernelConfig, KernelStack};
-use crate::own::{OwnConfig, OwnStack};
+use crate::own::{OwnConfig, OwnStack, Pools};
 use crate::report::BenchReport;
 use crate::smol::{SmolConfig, SmolStack, TimeWait};
 use crate::stack::TcpStack;
@@ -35,11 +35,14 @@ usage: tcp_bench [--stack kernel|own|smoltcp] [--workload rate|throughput|scale|
                [--step-seconds N] [--probe-sessions N] [--batch N]
   kernel:      [--nodelay on|off] [--buffer-kib N] [--backlog N]
   own:         [--own-mtu N] [--own-window-kib N] [--own-time-wait-ms N] [--own-rto-ms N]
+               [--own-pool N] [--own-server-hosts N] [--own-vlan ID]
   smoltcp:     [--smol-mtu N] [--smol-checksums on|off] [--smol-buffer-kib N]
                [--smol-time-wait skip|keep] [--smol-idle-poll-ms N]
 The stack kernel is the TCP of the operating system on the loopback interface, and it
 is the reference that other stacks are compared with. The stack own is the minimal TCP
-stack of TRN-18 over an in memory frame link, see the module fps_tcp::own. The stack
+stack of TRN-18 over an in memory Ethernet link, see the module fps_tcp::own. With
+--own-pool N its client side is a pool of N hosts (N addresses, N MAC addresses), with
+--own-server-hosts the server side is a pool too, and --own-vlan tags the link. The stack
 smoltcp is the smoltcp crate behind the same seam (TRN-20), over an in memory IP link,
 see the module fps_tcp::smol. Without --buffer-kib the kernel
 sizes the socket buffers itself.
@@ -87,6 +90,8 @@ struct Options {
     scale_buffer: Option<usize>,
     kernel: KernelConfig,
     own: OwnConfig,
+    /// The client hosts, the server hosts, and the VLAN of the own stack.
+    own_pools: (u32, u32, Option<u16>),
     smol: SmolConfig,
 }
 
@@ -120,6 +125,7 @@ fn profile_defaults(profile: &str) -> Option<Options> {
         scale_buffer: None,
         kernel,
         own: OwnConfig::default(),
+        own_pools: (1, 1, None),
         smol: SmolConfig::default(),
     };
     match profile {
@@ -273,6 +279,9 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
                 let ms: i64 = number(f, v)?;
                 o.own.rto_us = ms.saturating_mul(1000).max(1000);
             }
+            "--own-pool" => o.own_pools.0 = number::<u32>(f, v)?.max(1),
+            "--own-server-hosts" => o.own_pools.1 = number::<u32>(f, v)?.max(1),
+            "--own-vlan" => o.own_pools.2 = Some(number(f, v)?),
             "--smol-mtu" => o.smol.link.mtu = number(f, v)?,
             "--smol-checksums" => {
                 o.smol.link.checksums = match v {
@@ -358,6 +367,12 @@ fn describe(o: &Options) -> Vec<(String, String)> {
         config.push(("own.time_wait_us".into(), o.own.time_wait_us.to_string()));
         config.push(("own.backlog".into(), o.own.backlog.to_string()));
         config.push(("own.link_depth".into(), o.own.link_depth.to_string()));
+        config.push(("own.client_hosts".into(), o.own_pools.0.to_string()));
+        config.push(("own.server_hosts".into(), o.own_pools.1.to_string()));
+        config.push((
+            "own.vlan".into(),
+            o.own_pools.2.map_or("none".to_string(), |v| v.to_string()),
+        ));
     } else if o.stack == "smoltcp" {
         config.push(("smol.mtu".into(), o.smol.link.mtu.to_string()));
         config.push(("smol.checksums".into(), o.smol.link.checksums.to_string()));
@@ -540,7 +555,27 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         }
     };
     let measured = if options.stack == "own" {
-        measure(&options, "own", &|_, _| OwnStack::new(options.own.clone()))
+        let (clients, servers, vlan) = options.own_pools;
+        let pools = match Pools::counts(clients, servers, vlan) {
+            Ok(pools) => pools,
+            Err(error) => {
+                let _ = writeln!(err, "tcp_bench: the own host pools are invalid: {error}");
+                return 2;
+            }
+        };
+        if let Err(error) = pools.stations() {
+            let _ = writeln!(err, "tcp_bench: the own host pools are invalid: {error}");
+            return 2;
+        }
+        measure(&options, "own", &|_, _| {
+            // The pools were built above, so this does not fail.
+            OwnStack::with_pools(
+                options.own.clone(),
+                pools.clone(),
+                Arc::new(MonotonicClock::new()),
+            )
+            .unwrap_or_else(|_| OwnStack::new(options.own.clone()))
+        })
     } else if options.stack == "smoltcp" {
         measure(&options, "smoltcp", &|index, scale| {
             make_smol(&options, index, scale)
@@ -762,6 +797,30 @@ mod tests {
         assert!(json.contains("kernel.rate.sessions_per_s"));
         assert!(json.contains("loopback interface"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn own_pool_flags_reach_the_options_and_the_report() {
+        let o = parse(&args(&[
+            "--stack",
+            "own",
+            "--own-pool",
+            "20000",
+            "--own-server-hosts",
+            "3",
+            "--own-vlan",
+            "100",
+        ]))
+        .expect("parse");
+        assert_eq!(o.own_pools, (20_000, 3, Some(100)));
+        let text = format!("{:?}", describe(&o));
+        assert!(text.contains("own.client_hosts"), "{text}");
+        assert!(Pools::counts(20_000, 3, Some(100))
+            .and_then(|p| p.stations())
+            .is_ok());
+        assert!(Pools::counts(1, 1, Some(0))
+            .and_then(|p| p.stations())
+            .is_err());
     }
 
     #[test]
