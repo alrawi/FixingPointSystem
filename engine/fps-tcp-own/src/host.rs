@@ -412,6 +412,9 @@ pub struct HostCounters {
     /// Segments that the scoreboard picked to send again, which are also in
     /// `retransmits`.
     pub sack_retransmits: u64,
+    /// Retransmissions that the scoreboard found lost, because data sent
+    /// after them was selectively acknowledged. The range is sent again.
+    pub sack_lost_rexmits: u64,
 }
 
 /// The frames that wait for the link.
@@ -1406,6 +1409,14 @@ impl Host {
                 .rec
                 .as_deref_mut()
                 .is_some_and(|r| r.sb.update(una_now, snd_max, h.opts.blocks()));
+        if sack_new {
+            let mss = u32::from(conn.mss);
+            if let Some(rec) = conn.rec.as_deref_mut() {
+                if rec.cc.sack_recovery() {
+                    self.counters.sack_lost_rexmits += u64::from(rec.sb.detect_lost_rexmit(mss));
+                }
+            }
+        }
         let dup = recovery::is_dupack(&AckView {
             ack: h.ack,
             snd_una: conn.snd_una,
@@ -1898,11 +1909,12 @@ impl Host {
                 sent_anything = true;
                 restart_rto = true;
                 let una = conn.snd_una;
+                let high_sent = conn.snd_max();
                 if let Some(rec) = conn.rec.as_deref_mut() {
                     rec.rtx = false;
                     rec.retransmitted();
                     if rec.cc.sack_recovery() {
-                        rec.sb.mark_rexmit(una, una, n as u32);
+                        rec.sb.mark_rexmit_at(una, una, n as u32, high_sent);
                     }
                 }
             }
@@ -1950,7 +1962,7 @@ impl Host {
                     sent_anything = true;
                     restart_rto |= start == una;
                     if let Some(rec) = conn.rec.as_deref_mut() {
-                        rec.sb.mark_rexmit(una, start, n as u32);
+                        rec.sb.mark_rexmit_at(una, start, n as u32, high);
                         rec.retransmitted();
                     }
                 }
