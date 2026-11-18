@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-35` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 75% (4 of 5 plan steps) |
 | Current holder | claude-648711, lease until 2026-11-18T16:34:00Z (renewed at each heartbeat) |
 | Last verified commit | none |
 
@@ -20,23 +20,25 @@ Acceptance: on a veth pair in CI the own stack reaches a kernel peer behind a na
 
 ## Plan
 
-- [ ] 1. Claim, read the code (split.rs, net.rs, host.rs, fps-hosts wire builders)
-- [ ] 2. `Station` defers the peer MAC (`OwnConfig::resolve_next_hop`), the datapath neighbor cache with ARP and ND requests, hold, retry, aging, counters, unit tests
-- [ ] 3. Splitter wiring and an in memory test of the datapath (no root)
-- [ ] 4. Router test on veth pairs and namespaces over IPv4 and IPv6, both directions
+- [x] 1. Claim, read the code (split.rs, net.rs, host.rs, fps-hosts wire builders)
+- [x] 2. `Station` defers the peer MAC (`OwnConfig::resolve_next_hop`), the datapath neighbor cache with ARP and ND requests, hold, retry, aging, counters, unit tests
+- [x] 3. Splitter wiring and an in memory test of the datapath (no root)
+- [x] 4. Router test on veth pairs and namespaces over IPv4 and IPv6, both directions
 - [ ] 5. Checks, log entry, component page, PR, CI
 
 ## Done and verified
 
-nothing yet
+- `cargo test -p fps-datapath` passes in the sandbox as root: 15 unit tests (11 of the neighbor cache), `next_hop.rs` (9 tests in memory, a router thread between the arms, IPv4, IPv6, VLAN, unanswered gateway), and the existing suites.
+- `cargo test -p fps-datapath --test router` runs on veth pairs in three namespaces: the own stack as client and as server through a kernel router, IPv4, 256 KiB echo, requests=1 resolved=1 failed=0. The sandbox kernel has no IPv6 (RTNETLINK operation not supported), so the two IPv6 scenarios skip here and run in CI.
+- clippy `-D warnings` and fmt clean for fps-datapath, fps-tcp-own, fps-udp-own.
 
 ## Remaining
 
-everything above
+- Component page, log entry, plan checks, PR, CI (IPv6 router scenarios run only there).
 
 ## Next action
 
-Implement step 2.
+Write the Transport.md section and the log entry, then run `plan.py check`, `render --check`, `lint`.
 
 ## Blockers and open questions
 
