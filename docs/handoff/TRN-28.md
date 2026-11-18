@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #629 |
 | Branch | `wp/TRN-28` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (4 of 4 plan steps, CI pending) |
+| Pull request | #657 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-7a7cf0, lease until 2026-11-18T12:59:34Z |
-| Last verified commit | none |
+| Last verified commit | 6274825 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -38,11 +38,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-CI result of the pull request; then `ready for review`, 100%, and `fps_swarm.py review 629 --pr N`.
+none. CI on 6274825 is green (all check runs succeeded).
 
 ## Next action
 
-Wait for CI on the pull request and fix failures inside engine/fps-tcp-own/, the log entry, the handoff, and docs/wiki/Transport.md.
+The coordinator reviews and merges PR #657, then applies the Shared page notes of the log entry.
 
 ## Blockers and open questions
 
@@ -75,3 +75,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | 2026-11-18T11:30Z | claude-7a7cf0 | claim | | Claimed #629 with 4 steps |
 | 2026-11-18T11:55Z | claude-7a7cf0 | checkpoint | | Profile type, wire style, host mapping, tests (steps 1 to 3) |
 | 2026-11-18T12:15Z | claude-7a7cf0 | checkpoint | | Capture example, log entry, Transport page, checks (step 4) |
+| 2026-11-18T12:50Z | claude-7a7cf0 | finish | | PR #657, CI green at 6274825, set to review |
