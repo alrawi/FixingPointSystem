@@ -86,6 +86,69 @@ func (e AgentState) Valid() bool {
 	}
 }
 
+// Defines values for AgentRunBackend.
+const (
+	AgentRunBackendAfXdp  AgentRunBackend = "af_xdp"
+	AgentRunBackendDpdk   AgentRunBackend = "dpdk"
+	AgentRunBackendKernel AgentRunBackend = "kernel"
+)
+
+// Valid indicates whether the value is a known member of the AgentRunBackend enum.
+func (e AgentRunBackend) Valid() bool {
+	switch e {
+	case AgentRunBackendAfXdp:
+		return true
+	case AgentRunBackendDpdk:
+		return true
+	case AgentRunBackendKernel:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AgentRunPortsXdpMode.
+const (
+	AgentRunPortsXdpModeGeneric  AgentRunPortsXdpMode = "generic"
+	AgentRunPortsXdpModeNative   AgentRunPortsXdpMode = "native"
+	AgentRunPortsXdpModeZeroCopy AgentRunPortsXdpMode = "zero_copy"
+)
+
+// Valid indicates whether the value is a known member of the AgentRunPortsXdpMode enum.
+func (e AgentRunPortsXdpMode) Valid() bool {
+	switch e {
+	case AgentRunPortsXdpModeGeneric:
+		return true
+	case AgentRunPortsXdpModeNative:
+		return true
+	case AgentRunPortsXdpModeZeroCopy:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AgentRunSelectedBackend.
+const (
+	AgentRunSelectedBackendAfXdp  AgentRunSelectedBackend = "af_xdp"
+	AgentRunSelectedBackendDpdk   AgentRunSelectedBackend = "dpdk"
+	AgentRunSelectedBackendKernel AgentRunSelectedBackend = "kernel"
+)
+
+// Valid indicates whether the value is a known member of the AgentRunSelectedBackend enum.
+func (e AgentRunSelectedBackend) Valid() bool {
+	switch e {
+	case AgentRunSelectedBackendAfXdp:
+		return true
+	case AgentRunSelectedBackendDpdk:
+		return true
+	case AgentRunSelectedBackendKernel:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CapabilitiesBackends.
 const (
 	CapabilitiesBackendsAfXdp  CapabilitiesBackends = "af_xdp"
@@ -344,6 +407,39 @@ type AgentPortsXdpDriverMode string
 // AgentState defines model for Agent.State.
 type AgentState string
 
+// AgentRun What one agent ran for a run. A benchmark reads it to know which backend and which XDP mode produced its numbers.
+type AgentRun struct {
+	// Agent Identity of the agent.
+	Agent string `json:"agent"`
+
+	// Backend The backend that ran the plan of the agent. It can differ from `selected_backend`: an agent that nobody forced to a backend may run a plan that its AF_XDP datapath refuses on the kernel backend.
+	Backend AgentRunBackend `json:"backend"`
+
+	// Ports One entry for each port of the plan, in plan order.
+	Ports *[]struct {
+		// InterfaceName Interface of the agent that the port is bound to, which is the name of an entry of `Agent.ports`.
+		InterfaceName *string `json:"interface_name,omitempty"`
+
+		// Name Port name of the test configuration.
+		Name string `json:"name"`
+
+		// XdpMode The XDP mode that the sockets of the port really bound in, with the meaning of `Agent.ports[].xdp_driver_mode`, and the slowest of its queues when they differ. Unlike that property, it is what the run measured and not a hint of the driver table. Absent unless `backend` is `af_xdp`.
+		XdpMode *AgentRunPortsXdpMode `json:"xdp_mode,omitempty"`
+	} `json:"ports,omitempty"`
+
+	// SelectedBackend The backend that the agent inventory listed (`Agent.backend`) when the run started. A `backend` that differs from it is a run that did not measure the backend that the inventory promised. Absent when the controller did not hold the selection.
+	SelectedBackend *AgentRunSelectedBackend `json:"selected_backend,omitempty"`
+}
+
+// AgentRunBackend The backend that ran the plan of the agent. It can differ from `selected_backend`: an agent that nobody forced to a backend may run a plan that its AF_XDP datapath refuses on the kernel backend.
+type AgentRunBackend string
+
+// AgentRunPortsXdpMode The XDP mode that the sockets of the port really bound in, with the meaning of `Agent.ports[].xdp_driver_mode`, and the slowest of its queues when they differ. Unlike that property, it is what the run measured and not a hint of the driver table. Absent unless `backend` is `af_xdp`.
+type AgentRunPortsXdpMode string
+
+// AgentRunSelectedBackend The backend that the agent inventory listed (`Agent.backend`) when the run started. A `backend` that differs from it is a run that did not measure the backend that the inventory promised. Absent when the controller did not hold the selection.
+type AgentRunSelectedBackend string
+
 // CalibrationEntry The calibration estimate of one mix entry.
 type CalibrationEntry struct {
 	// BytesPerSession The estimate of application bytes per session that the next rates rest on.
@@ -556,6 +652,9 @@ type RealismResult struct {
 
 // Run defines model for Run.
 type Run struct {
+	// Agents The backend that ran the plan of each agent of the run and the XDP mode that each port of the plan bound in, ordered by agent id. The controller takes them from `run_backend` and `run_ports` of the heartbeats of the agent (agent protocol 0.2.7), so an agent appears once it has started its plan, and an agent of agent protocol 0.2.6 or earlier, which does not report them, never appears. Absent while no agent has reported. A controller older than 0.14.0 does not send it.
+	Agents *[]AgentRun `json:"agents,omitempty"`
+
 	// Calibration The changes of the calibration factor of a run with a throughput_bps objective, oldest first. Absent for any other objective and while the factor stays at one. The controller keeps the newest 256 steps of a run.
 	Calibration *[]CalibrationStep `json:"calibration,omitempty"`
 	ConfigId    string             `json:"config_id"`
