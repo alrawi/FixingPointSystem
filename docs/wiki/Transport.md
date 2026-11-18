@@ -744,7 +744,8 @@ A `Lane` is the unit of one thread: the queue of the client arm, the queue of th
 ```text
 wire -> queue -> Splitter -+-> IPv4 TCP -------> OwnStack (hosts, sessions, timers)
                            +-> ARP ------------> fps-hosts Responder (reply sent by the splitter)
-                           +-> ND, DHCP, UDP --> FrameHook (answers Unsupported for now)
+                           +-> IPv4 UDP ------> UdpArm of fps-udp-own (TRN-29, see below)
+                           +-> ND, DHCP -------> FrameHook (answers Unsupported for now)
 wire <- queue <------------------ frames of the stack and the replies of the splitter
 ```
 
@@ -759,7 +760,8 @@ The calls mirror `fps-backend-kernel`:
 | `Connector::connect(source, destination)` | `Datapath::connector()` gives a `Connector` that is `Clone`; `connect(source, destination)` opens a session from a client host address to a server host address of the same lane and fails with `UnknownSource`, `UnknownDestination`, `ConnectTimeout`, or `Stack` |
 | `KernelListener::bind(address, config)` and `accept` | `Datapath::listen(port)` listens at every server host of every lane, and `Listener::accept` returns the next session from any lane |
 | `KernelStream` | `DatapathSession`, the `OwnSession`, which is `SessionIo`, `AsyncRead`, and `AsyncWrite` |
-| IPv6 address, `bind_datagram_pool` | `DatapathError::Unsupported(Feature::Ipv6)` and `Feature::Udp` (`connect_udp`, `listen_udp`), with the package that adds it in the message |
+| IPv6 address | `DatapathError::Unsupported(Feature::Ipv6)`, with the package that adds it in the message |
+| `Connector::connect_datagram` and `KernelDatagramListener` | `Connector::connect_udp` and `Datapath::listen_udp` since TRN-29, see the section below |
 
 `Monitor` (`Datapath::monitor()`) reads `sockets_open` and the counters of every lane (`LaneStats`: the stack, the `FrameCounters` of both splitters, and the loop passes) from any task, and `Datapath::stop()` joins the threads and returns a `LaneReport` per lane.
 
@@ -794,7 +796,54 @@ Every run completed all its sessions with no failure and no wrong byte, and both
 | `accept` returns the session only | `OwnSession` has no `local_addr` and `peer_addr`, so the caller does not learn the client host of an accepted session |
 | Polling threads | A lane thread polls and sleeps 30 microseconds when idle, which adds up to that much to a round trip on an idle lane. Busy polling or `wait_readable` on both queues is a TRN-19 question |
 | No CPU pinning | `WorkerOptions::cpus` of the AF_XDP crate pins workers with `sched_setaffinity`, which this crate (no `unsafe`) does not call yet |
-| IPv6, UDP, DHCP, ND | Counted and answered with `Unsupported`, see the hooks above |
+| IPv6, DHCP, ND | Counted and answered with `Unsupported`, see the hooks above. UDP is served since TRN-29 |
+
+### UDP over FrameIo (TRN-29)
+
+`engine/fps-udp-own` is a user space UDP layer behind `fps_io::DatagramIo` over Ethernet and IPv4 frames, so the UDP modules (dns, ntp, sip_rtp) run on the AF_XDP datapath the way they run on the kernel backend. It has no thread and no kernel socket, and it depends on `fps-io` and `fps-tcp-own` (for `Station`, `Pools`, and the Ethernet framing) only. `fps-datapath` puts one `UdpArm` behind the UDP hook of each arm of each lane.
+
+```text
+task --poll_send--> UdpSession --frames--> outbox --drain_tx (FrameHook::poll_tx)--> splitter --> queue
+task <--poll_recv-- UdpSession <-datagram- UdpArm::receive (UDP hook) <-- splitter <-- queue
+```
+
+What a caller sees:
+
+| Kernel backend | Datapath |
+|---|---|
+| `Connector::connect_datagram(source, destination)` | `Connector::connect_udp(source, destination)`: a synchronous call that returns a `DatapathDatagram` (`UdpSession`, `DatagramIo`) with an ephemeral port of the client host (32768 to 60999 as Linux, one cursor per host, a 4 tuple table). It fails with `UnknownSource`, `UnknownDestination`, `Unsupported(Ipv6)`, and `Stack` for port 0 or an exhausted host |
+| `KernelDatagramListener::bind(address)` and `accept` | `Datapath::listen_udp(port)` returns a `UdpListener` for every server host of every lane. `accept` gives `(session, peer)` with the first datagram queued, and a closed session lets the next datagram of the peer open a new one |
+| `KernelDatagram` | `UdpSession`: connected, receive queue of 64 datagrams, cut to the buffer with the full length returned, `NotConnected` after `close` or drop, `InvalidInput` above `MAX_DATAGRAM` |
+
+The layer computes the IPv4 header checksum and the UDP checksum on send and verifies both on receive (a UDP checksum of zero means none, a computed zero goes out as `0xFFFF`). It pads frames to 60 bytes, keeps the VLAN tag of the port, and takes the MAC addresses from the neighbor tables of the pools, which are the tables of the stack and the ARP responder. A datagram above the MTU leaves as IPv4 fragments (the MTU is 1,500 and the datapath lowers it to what the queue carries). Received fragments are **not reassembled**: they are dropped and counted. There is no ICMP either way, so a send never fails with `ConnectionRefused`. The counters (`UdpStats` in `LaneStats::udp_client` and `udp_server`) say what was delivered, accepted, dropped by cause (bad checksums, malformed, fragments, no listener, full queues, not for the arm), and how often a sender waited for room in the send queue (1,024 frames).
+
+`FrameHook` has a new method `poll_tx`, which the splitter calls on every pass of its queue, so a hook can send frames that no received frame caused. The count that the splitter's `recv_batch` returns includes them. `DatapathConfig::udp` sets the layer; `None` turns it off.
+
+#### Tests
+
+- `engine/fps-udp-own/src/wire.rs` and `tests/layer.rs`: the checksum, fragments, and the layer between two arms in memory (25 tests).
+- `engine/fps-datapath/tests/udp_memory.rs`: two lanes with 40 echo sessions, UDP and TCP on one port, fragments, the MTU of a small queue, ports freed, settings.
+- `engine/fps-datapath/tests/dns_scenarios.rs` is the acceptance. It runs both sides of every flow of the seven dns scenarios through the datapath (UDP over the UDP layer, the TCP flow of `tcp_fallback` over the own stack), checks the messages against the table of `modules/dns/tests/scenarios.rs`, and compares the bytes of both sides. Three tests: in memory (no root); over an AF_XDP queue on each end of a veth pair; and with the client side over AF_XDP and the server side over kernel sockets on the other end, which makes the kernel verify the checksums and the framing and resolve the client hosts with ARP. The veth tests need root (`sudo -n`), skip without it, and fail with `CI=true` or `FPS_REQUIRE_AFXDP=1`. The kernel's transmit checksum offload is turned off with the ethtool ioctl (TRN-26 finding).
+
+```bash
+cargo test -p fps-udp-own                                       # no root
+cargo test -p fps-datapath --test udp_memory                    # no root
+FPS_DNS_RESULTS=/tmp/dns FPS_REQUIRE_AFXDP=1 cargo test -p fps-datapath --test dns_scenarios -- --nocapture
+```
+
+#### Results
+
+2 vCPU sandbox, debug build, 20 rounds (`engine/fps-datapath/results/sandbox-2vcpu-trn29/`): 140 UDP flows and 20 TCP flows, 0 failures, 0 bad checksums, 0 malformed frames, 0 drops, in 0.52 s over two AF_XDP queues and in 0.54 s against the kernel server. Both queues bound in copy mode. The numbers are the cost of the scenarios (each flow waits for its round trip), not a rate.
+
+#### Limits
+
+| Limit | Consequence |
+|---|---|
+| No reassembly | A peer that fragments its datagrams is not heard. Needs a timer and a memory budget per host |
+| No ICMP | A module that waits for `ConnectionRefused` on UDP times out on this backend |
+| IPv4 only | IPv6 is TRN-30 |
+| Ports 67 and 68 | DHCP goes to its own hook and never reaches the layer |
+| Neighbors from the pools | A client connect to an address that no pool holds fails with `HostUnreachable`. A server session answers a peer that the pools lack at the source MAC of its first frame |
 
 ### Interop of the own stack with smoltcp and the kernel (TRN-26)
 
