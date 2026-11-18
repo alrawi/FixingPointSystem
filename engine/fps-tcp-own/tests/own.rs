@@ -11,8 +11,9 @@ use std::time::Duration;
 use fps_backend_afxdp::memory::{frame_pair, MemoryFrames};
 use fps_backend_afxdp::{FrameIo, QueueStats};
 use fps_io::SessionIo;
-use fps_tcp::own::wire::{self, flags};
-use fps_tcp::{ManualClock, OwnConfig, OwnStack, TcpStack};
+use fps_tcp_own::clock::ManualClock;
+use fps_tcp_own::wire::{self, flags};
+use fps_tcp_own::{OwnConfig, OwnSession, OwnStack};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinHandle;
 
@@ -185,7 +186,7 @@ fn pattern(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i % 251) as u8).collect()
 }
 
-async fn pair(stack: &OwnStack) -> (fps_tcp::OwnSession, fps_tcp::OwnSession) {
+async fn pair(stack: &OwnStack) -> (OwnSession, OwnSession) {
     let (client, server) = tokio::join!(stack.connect(PORT), stack.accept(PORT));
     (client.expect("connect"), server.expect("accept"))
 }
@@ -809,71 +810,4 @@ async fn a_smaller_mtu_lowers_the_mss_and_still_moves_data() {
     })
     .await;
     driver.abort();
-}
-
-mod workloads {
-    use super::*;
-    use fps_tcp::workload::{
-        session_rate, socket_scaling, throughput, Direction, RateConfig, ScaleConfig,
-        ThroughputConfig,
-    };
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn the_three_workloads_run_on_the_own_stack() {
-        let stack = OwnStack::default();
-        let rate = session_rate(
-            &stack,
-            &RateConfig {
-                duration: Duration::from_millis(300),
-                concurrency: 8,
-                request_bytes: 100,
-                response_bytes: 3000,
-                ..RateConfig::default()
-            },
-        )
-        .await
-        .expect("rate");
-        assert_eq!(rate.errors, 0);
-        assert!(rate.sessions >= 8, "only {} sessions", rate.sessions);
-        // The listener stays, and the closing side of every session holds its
-        // tuple in TIME-WAIT for the hold of one second.
-        assert!(rate.stats.sockets_open >= 1);
-        assert!(rate.stats.sockets_open <= 1 + rate.sessions + 8);
-        assert!(rate.stats.frames > rate.sessions * 6);
-
-        for (port, direction) in [(7200, Direction::Upload), (7201, Direction::Download)] {
-            let stack = OwnStack::default();
-            let run = throughput(
-                &stack,
-                &ThroughputConfig {
-                    sessions: 3,
-                    bytes_per_session: 1_000_003,
-                    chunk: 4096,
-                    direction,
-                    port,
-                },
-            )
-            .await
-            .expect("throughput");
-            assert_eq!(run.bytes, 3_000_009, "{direction:?}");
-            assert_eq!(stack.counters().client.retransmits, 0);
-            assert_eq!(stack.counters().server.retransmits, 0);
-        }
-
-        let shards = [OwnStack::default(), OwnStack::default()];
-        let report = socket_scaling(
-            &shards,
-            &ScaleConfig {
-                steps: vec![400, 1600],
-                probe_sessions: 20,
-                ..ScaleConfig::default()
-            },
-        )
-        .await
-        .expect("scale");
-        assert!(report.stopped.is_none(), "{:?}", report.stopped);
-        assert!(report.steps.iter().all(|s| s.reached));
-        assert!(report.max_sockets() >= 1600);
-        assert!(report.steps[1].probe_sessions_per_s > 0.0);
-    }
 }

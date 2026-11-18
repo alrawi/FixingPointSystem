@@ -1,0 +1,25 @@
+Host of the results in this directory (recorded 2026-11-18 by TRN-21)
+
+what      the agent sandbox of the swarm, a Firecracker microVM, not the GitHub hosted runner and not fat-nuc
+stacks    the own minimal TCP stack (own) after TRN-21 moved it into the crate fps-tcp-own, and, for the A/B rows, the same stack built from origin/main before the move (c1043ae)
+cpu       Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vCPUs
+memory    8 GiB
+kernel    6.18.44-fc-v553
+rustc     1.97.0 (2d8144b78 2026-07-07), release profile of the workspace
+load      load average 0.6 to 0.8 when the runs started; other workers may have run during a run
+limits    open files 20000 soft and hard; the own stack uses no descriptor per socket
+
+The point of this run is that the move changed nothing. The binary before the move and the binary after it ran alternately in one session.
+
+own-small.json              tcp_bench --stack own --profile small --label "sandbox 2 vcpu, own stack in fps-tcp-own, profile small" --out engine/fps-tcp/results/sandbox-2vcpu-trn21/own-small.json
+own-scale.json              tcp_bench --stack own --profile full --workload scale --label "sandbox 2 vcpu, own stack in fps-tcp-own, scale to 1,000,000 sockets in 64 shards" --out engine/fps-tcp/results/sandbox-2vcpu-trn21/own-scale.json
+own-scale.txt               the text report of that scale run
+own-scale-before-move.txt   the text report of the same scale command with the binary built from origin/main before the move
+rate-sweep.txt              three alternating runs per binary (base = before the move, new = after) of tcp_bench --stack own --workload rate --profile small --concurrency 32 and 256 (the first line of each text report)
+
+Every command is `cargo run --release -p fps-tcp --example tcp_bench -- ARGS` and was run as the built example. These are sandbox results, labelled as such.
+
+Rate: 33,476 to 35,488 sessions per second after the move and 34,519 to 35,463 before it, at both concurrencies. Earlier results of the own stack were 34,000 to 35,000
+(TRN-18 and TRN-20), so the difference is noise.
+Scale: the last step holds 1,000,629 sockets at 228 B each in both binaries, with 56,142 probe sessions per second after the move and 55,724 before it, and an idle poll of
+25 us and 24 us. The TRN-18 run of decision record 0014 gave 56,000.

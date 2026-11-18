@@ -1444,9 +1444,19 @@ dependencies = [
 name = "fps-tcp"
 version = "0.0.1"
 dependencies = [
+ "fps-io",
+ "fps-tcp-own",
+ "smoltcp",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "fps-tcp-own"
+version = "0.0.1"
+dependencies = [
  "fps-backend-afxdp",
  "fps-io",
- "smoltcp",
  "thiserror 2.0.21",
  "tokio",
 ]
