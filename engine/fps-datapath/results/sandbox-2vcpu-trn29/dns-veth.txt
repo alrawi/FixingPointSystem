@@ -1,0 +1,3 @@
+result reps=20 udp_flows=140 tcp_flows=20 failed=0 elapsed_ms=515 client=copy server=copy
+udp client_tx=140 server_tx=140 client_rx=140 server_rx=140 accepted=140 bad_checksum=0 malformed=0 fragments=0 no_listener=0 queue_full=0 not_ours=0 client_tx_blocked=0
+frames stack_tx=193 client_tcp=93 server_tcp=100 client_udp=140 server_udp=140 udp_unsupported=0 client_arp_replied=0 loop_passes=93821 panicked=0

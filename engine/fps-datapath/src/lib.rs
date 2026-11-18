@@ -20,8 +20,9 @@
 //! ```text
 //!   wire --> queue --> Splitter --+--> IPv4 TCP --> OwnStack (hosts, sessions)
 //!                                 +--> ARP ------> fps-hosts Responder
-//!                                 +--> ND, DHCP, UDP --> FrameHook (unsupported)
-//!   wire <-- queue <---------------- frames of the stack and replies
+//!                                 +--> IPv4 UDP --> UdpArm (fps-udp-own, TRN-29)
+//!                                 +--> ND, DHCP --> FrameHook (unsupported)
+//!   wire <-- queue <---------------- frames of the stack, replies, datagrams
 //! ```
 //!
 //! One thread per lane polls the stack ([`OwnStack::pump`]), which takes
@@ -38,18 +39,37 @@
 //! [`Datapath::listen`] returns a [`Listener`] whose `accept` gives sessions
 //! that arrived at any server host of the datapath.
 //!
+//! # UDP
+//!
+//! Every arm of a lane has a [`UdpArm`] of `fps-udp-own`, which sits behind
+//! the UDP hook of the arm's splitter, so the UDP modules run on the datapath
+//! the way they run on the kernel backend. [`Connector::connect_udp`] opens a
+//! [`DatapathDatagram`] (a `fps_io::DatagramIo`) from a client host to a
+//! server host with an ephemeral port of the client host, and
+//! [`Datapath::listen_udp`] returns a [`UdpListener`] whose `accept` gives a
+//! session and the peer address for every peer that sends to the port at a
+//! server host. The addresses are the host pools, as for TCP, and the MAC
+//! addresses come from the same neighbor tables. The layer checks and
+//! computes both checksums, fragments datagrams larger than the MTU on send,
+//! and does not reassemble received fragments (it drops and counts them, see
+//! the crate documentation of `fps-udp-own`). UDP ports 67 and 68 are DHCP and
+//! never reach the layer. [`DatapathConfig::udp`] sets the layer or, with
+//! `None`, turns it off and leaves the UDP hook of
+//! [`DatapathConfig::hooks`] in place.
+//!
 //! # What is not served yet
 //!
-//! IPv6, UDP, DHCP, and neighbor discovery answer
+//! IPv6, DHCP, and neighbor discovery answer
 //! [`DatapathError::Unsupported`] (the calls) or [`HookOutcome::Unsupported`]
-//! (the frames) and are counted in [`FrameCounters`]. TRN-29 wires UDP and
-//! TRN-30 IPv6 into the loop, and a [`FrameHook`] is the place for them.
+//! (the frames) and are counted in [`FrameCounters`]. TRN-30 wires IPv6 into
+//! the loop, and a [`FrameHook`] is the place for it.
 //!
 //! The datapath does not set `TRANSPORT_AVAILABLE` and does not change the
 //! backend selection. TRN-31 flips the flag.
 
 mod classify;
 mod split;
+mod udp;
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -62,6 +82,8 @@ use fps_backend_afxdp::FrameIo;
 use fps_hosts::{MacAllocator, NeighborTable, Responder, SliceError};
 use fps_tcp_own::clock::MonotonicClock;
 use fps_tcp_own::{HostSlice, OwnConfig, OwnSession, OwnStack, OwnStats, PoolError, Pools};
+use fps_udp_own::UdpArm;
+pub use fps_udp_own::{UdpConfig, UdpListener, UdpSession, UdpStats};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle as TaskHandle;
 
@@ -74,12 +96,17 @@ pub use split::{
 /// `fps_io::SessionIo` and `AsyncRead` and `AsyncWrite`.
 pub type DatapathSession = OwnSession;
 
+/// A UDP session of the datapath: the session of the UDP layer, which
+/// implements `fps_io::DatagramIo`.
+pub type DatapathDatagram = UdpSession;
+
 /// A feature that the datapath does not serve yet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Feature {
     /// IPv6 sessions (TRN-30).
     Ipv6,
-    /// UDP sessions (TRN-29).
+    /// UDP sessions, when the layer is turned off with
+    /// [`DatapathConfig::udp`] set to `None`.
     Udp,
     /// DHCP for hosts (the `DhcpHosts` of HST-04 plugs in as a hook).
     Dhcp,
@@ -224,13 +251,20 @@ pub struct DatapathConfig {
     /// The prefix of the thread names, with the lane number appended.
     pub name: String,
     /// Creates the hooks of each side, or `None` for hooks that answer
-    /// unsupported.
+    /// unsupported. The `udp` hook of the factory is used only when
+    /// [`DatapathConfig::udp`] is `None`.
     pub hooks: Option<HookFactory>,
+    /// The settings of the UDP layer of each arm, or `None` to run no UDP
+    /// layer, which makes UDP frames go to the UDP hook of `hooks` and the
+    /// UDP calls answer [`Feature::Udp`]. The datapath lowers the MTU of an
+    /// arm to what its queue carries.
+    pub udp: Option<UdpConfig>,
 }
 
 impl Default for DatapathConfig {
     /// The default stack, a connect timeout of 10 seconds, 256 spin passes,
-    /// a sleep of 30 microseconds, the name `fps-dp`, and no hooks.
+    /// a sleep of 30 microseconds, the name `fps-dp`, no hooks, and the
+    /// default UDP layer.
     fn default() -> Self {
         Self {
             own: OwnConfig::default(),
@@ -239,6 +273,7 @@ impl Default for DatapathConfig {
             idle_sleep: Duration::from_micros(30),
             name: "fps-dp".to_owned(),
             hooks: None,
+            udp: Some(UdpConfig::default()),
         }
     }
 }
@@ -251,6 +286,7 @@ impl std::fmt::Debug for DatapathConfig {
             .field("idle_sleep", &self.idle_sleep)
             .field("name", &self.name)
             .field("hooks", &self.hooks.is_some())
+            .field("udp", &self.udp)
             .finish_non_exhaustive()
     }
 }
@@ -264,6 +300,10 @@ pub struct LaneStats {
     pub client: FrameCounters,
     /// What the splitter of the server arm did.
     pub server: FrameCounters,
+    /// What the UDP layer of the client arm did (all zero when it is off).
+    pub udp_client: UdpStats,
+    /// What the UDP layer of the server arm did (all zero when it is off).
+    pub udp_server: UdpStats,
     /// Passes of the lane thread, empty ones included.
     pub loop_passes: u64,
 }
@@ -284,6 +324,8 @@ struct Running {
     server_hosts: HostSlice,
     client_counters: Arc<SharedCounters>,
     server_counters: Arc<SharedCounters>,
+    udp_client: Option<UdpArm>,
+    udp_server: Option<UdpArm>,
     passes: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
 }
@@ -294,6 +336,16 @@ impl Running {
             stack: self.stack.stats(),
             client: self.client_counters.snapshot(),
             server: self.server_counters.snapshot(),
+            udp_client: self
+                .udp_client
+                .as_ref()
+                .map(UdpArm::stats)
+                .unwrap_or_default(),
+            udp_server: self
+                .udp_server
+                .as_ref()
+                .map(UdpArm::stats)
+                .unwrap_or_default(),
             loop_passes: self.passes.load(Ordering::Relaxed),
         }
     }
@@ -352,6 +404,16 @@ fn responders(pools: &Pools) -> Result<(Responder, Responder), PoolError> {
     Ok((Responder::new(client), Responder::new(server)))
 }
 
+/// The settings of the UDP layer of one arm: the MTU that the queue carries
+/// (the frame length without the Ethernet header and the VLAN tag) bounds the
+/// MTU of the layer.
+fn udp_settings(settings: &UdpConfig, queue: &dyn FrameIo, vlan: Option<u16>) -> UdpConfig {
+    let link = 14 + if vlan.is_some() { 4 } else { 0 };
+    let mut settings = settings.clone();
+    settings.mtu = settings.mtu.min(queue.max_frame_len().saturating_sub(link));
+    settings
+}
+
 /// The loop of one lane: poll the stack until told to stop.
 fn run_lane(stack: &OwnStack, stop: &AtomicBool, passes: &AtomicU64, spin: u32, sleep: Duration) {
     let mut empty = 0u32;
@@ -400,23 +462,40 @@ impl Datapath {
         let mut running = Vec::with_capacity(lanes.len());
         for (n, lane) in lanes.into_iter().enumerate() {
             let (client_responder, server_responder) = responders(&lane.pools)?;
-            let hooks = |side| {
-                config
+            let (udp_client, udp_server) = match &config.udp {
+                Some(settings) => {
+                    let built = lane.pools.stations()?;
+                    let arm = |station, queue: &dyn FrameIo| {
+                        UdpArm::new(station, udp_settings(settings, queue, lane.pools.vlan))
+                    };
+                    (
+                        Some(arm(built.client, &*lane.client)),
+                        Some(arm(built.server, &*lane.server)),
+                    )
+                }
+                None => (None, None),
+            };
+            let hooks = |side, arm: &Option<UdpArm>| {
+                let mut hooks = config
                     .hooks
                     .as_ref()
-                    .map_or_else(Hooks::default, |f| f(n, side))
+                    .map_or_else(Hooks::default, |f| f(n, side));
+                if let Some(arm) = arm {
+                    hooks.udp = Box::new(udp::UdpHook(arm.clone()));
+                }
+                hooks
             };
             let (client, client_counters) = Splitter::new(
                 lane.client,
                 client_responder,
                 lane.pools.vlan,
-                hooks(Side::Client),
+                hooks(Side::Client, &udp_client),
             );
             let (server, server_counters) = Splitter::new(
                 lane.server,
                 server_responder,
                 lane.pools.vlan,
-                hooks(Side::Server),
+                hooks(Side::Server, &udp_server),
             );
             let stack = OwnStack::with_links_and_pools(
                 Box::new(client),
@@ -431,6 +510,8 @@ impl Datapath {
                 server_hosts: lane.pools.server,
                 client_counters,
                 server_counters,
+                udp_client,
+                udp_server,
                 passes: Arc::new(AtomicU64::new(0)),
                 stop: Arc::new(AtomicBool::new(false)),
             });
@@ -511,13 +592,39 @@ impl Datapath {
         Ok(Listener { port, rx, tasks })
     }
 
-    /// UDP listening is not served yet.
+    /// Starts listening for UDP on `port` at every server host of every
+    /// lane. The listener gives a session for each peer that sends to the
+    /// port, whatever the lane and the host, as [`Datapath::listen`] does
+    /// for TCP. It needs no Tokio runtime. Dropping the listener frees the
+    /// port.
     ///
     /// # Errors
     ///
-    /// Always returns [`DatapathError::Unsupported`] with [`Feature::Udp`].
-    pub fn listen_udp(&self, _port: u16) -> Result<(), DatapathError> {
-        Err(DatapathError::Unsupported(Feature::Udp))
+    /// Returns [`DatapathError::Unsupported`] with [`Feature::Udp`] when the
+    /// UDP layer is off, and [`DatapathError::Stack`] when the port is 0 or
+    /// a lane already listens on it.
+    pub fn listen_udp(&self, port: u16) -> Result<UdpListener, DatapathError> {
+        let mut listener = UdpListener::new(
+            port,
+            self.config
+                .udp
+                .as_ref()
+                .ok_or(DatapathError::Unsupported(Feature::Udp))?
+                .accept_queue,
+        );
+        for lane in self.lanes.iter() {
+            let arm = lane
+                .udp_server
+                .as_ref()
+                .ok_or(DatapathError::Unsupported(Feature::Udp))?;
+            listener
+                .attach(arm)
+                .map_err(|source| DatapathError::Stack {
+                    op: "listen_udp",
+                    source,
+                })?;
+        }
+        Ok(listener)
     }
 
     /// A handle that reads the counters from any thread or task.
@@ -659,17 +766,49 @@ impl Connector {
         }
     }
 
-    /// UDP sessions are not served yet.
+    /// Opens a UDP session from the client host `source` to `destination`,
+    /// with the shape of `fps_backend_kernel::Connector::connect_datagram`.
+    ///
+    /// `source` must be a client host of a lane and the address of
+    /// `destination` a server host of the same lane (see [`split_pools`]).
+    /// The layer picks an ephemeral port of the source host. Nothing is sent
+    /// and the call does not wait, because UDP has no handshake, and it
+    /// needs no Tokio runtime.
     ///
     /// # Errors
     ///
-    /// Always returns [`DatapathError::Unsupported`] with [`Feature::Udp`].
-    pub async fn connect_udp(
+    /// Returns [`DatapathError::Unsupported`] for IPv6 and when the UDP layer
+    /// is off, [`DatapathError::UnknownSource`] and
+    /// [`DatapathError::UnknownDestination`] for addresses that no lane
+    /// serves, and [`DatapathError::Stack`] when the layer refuses: a
+    /// destination port of 0, or no free ephemeral port of the host.
+    pub fn connect_udp(
         &self,
-        _source: IpAddr,
-        _destination: SocketAddr,
-    ) -> Result<(), DatapathError> {
-        Err(DatapathError::Unsupported(Feature::Udp))
+        source: IpAddr,
+        destination: SocketAddr,
+    ) -> Result<DatapathDatagram, DatapathError> {
+        let (IpAddr::V4(src), IpAddr::V4(dst)) = (source, destination.ip()) else {
+            if source.is_ipv6() || destination.is_ipv6() {
+                return Err(DatapathError::Unsupported(Feature::Ipv6));
+            }
+            return Err(DatapathError::UnknownSource(source));
+        };
+        let (lane, _client) = self
+            .lanes
+            .iter()
+            .find_map(|l| index_in(&l.client_hosts, src).map(|i| (l, i)))
+            .ok_or(DatapathError::UnknownSource(source))?;
+        index_in(&lane.server_hosts, dst)
+            .ok_or(DatapathError::UnknownDestination(destination.ip()))?;
+        let arm = lane
+            .udp_client
+            .as_ref()
+            .ok_or(DatapathError::Unsupported(Feature::Udp))?;
+        arm.connect(src, destination)
+            .map_err(|source| DatapathError::Stack {
+                op: "connect_udp",
+                source,
+            })
     }
 }
 

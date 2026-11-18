@@ -304,7 +304,13 @@ fn arp_replies_carry_the_mac_that_the_stack_uses() {
 fn nd_dhcp_udp_and_other_frames_are_counted_as_unsupported() {
     let pools = Pools::counts(2, 2, None).unwrap();
     let (lane, mut tap) = tapped_lane(pools);
-    let dp = Datapath::start(vec![lane], DatapathConfig::default()).unwrap();
+    // With the UDP layer off, UDP frames reach the UDP hook, which answers
+    // unsupported.
+    let config = DatapathConfig {
+        udp: None,
+        ..DatapathConfig::default()
+    };
+    let dp = Datapath::start(vec![lane], config).unwrap();
     send(&mut tap, &ipv4_frame(17, &udp(5000, 53)));
     send(&mut tap, &ipv4_frame(17, &udp(5001, 53)));
     send(&mut tap, &ipv4_frame(17, &udp(68, 67)));
@@ -324,6 +330,36 @@ fn nd_dhcp_udp_and_other_frames_are_counted_as_unsupported() {
     assert_eq!(c.udp_handled + c.dhcp_handled + c.nd_handled, 0);
 }
 
+#[test]
+fn udp_frames_reach_the_udp_layer_and_dhcp_and_nd_stay_unsupported() {
+    let pools = Pools::counts(2, 2, None).unwrap();
+    let (lane, mut tap) = tapped_lane(pools);
+    let dp = Datapath::start(vec![lane], DatapathConfig::default()).unwrap();
+    // The test frames carry no valid checksums, so the layer counts them.
+    send(&mut tap, &ipv4_frame(17, &udp(5000, 53)));
+    send(&mut tap, &ipv4_frame(17, &udp(5001, 53)));
+    send(&mut tap, &ipv4_frame(17, &udp(68, 67)));
+    send(&mut tap, &nd_frame());
+    assert!(wait_until(|| dp.stats()[0].client.rx_frames == 4));
+    let lane = &dp.stats()[0];
+    let c = lane.client;
+    assert_eq!(
+        (
+            c.udp_handled,
+            c.udp_unsupported,
+            c.dhcp_unsupported,
+            c.nd_unsupported
+        ),
+        (2, 0, 1, 1)
+    );
+    assert_eq!(
+        lane.udp_client.rx_frames, 2,
+        "the layer saw the two UDP frames"
+    );
+    assert_eq!(lane.udp_client.rx_malformed, 2, "their length field is 0");
+    assert_eq!(lane.udp_server.rx_frames, 0);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn unsupported_calls_say_what_is_missing() {
     let pools = Pools::pair();
@@ -338,11 +374,24 @@ async fn unsupported_calls_say_what_is_missing() {
         Err(DatapathError::Unsupported(Feature::Ipv6))
     ));
     assert!(matches!(
-        connector.connect_udp(known, v4dst).await,
+        connector.connect_udp("2001:db8::2".parse().unwrap(), v6),
+        Err(DatapathError::Unsupported(Feature::Ipv6))
+    ));
+    // With the UDP layer off, the UDP calls say so.
+    let off = Datapath::start(
+        vec![looped_lane(pools.clone())],
+        DatapathConfig {
+            udp: None,
+            ..DatapathConfig::default()
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        off.connector().connect_udp(known, v4dst),
         Err(DatapathError::Unsupported(Feature::Udp))
     ));
     assert!(matches!(
-        dp.listen_udp(53),
+        off.listen_udp(53),
         Err(DatapathError::Unsupported(Feature::Udp))
     ));
     let message = DatapathError::Unsupported(Feature::Udp).to_string();
@@ -350,6 +399,39 @@ async fn unsupported_calls_say_what_is_missing() {
         message.contains("UDP") && message.contains("TRN-29"),
         "{message}"
     );
+    // With the layer on, the calls check their addresses and ports.
+    let nobody = v4(u32::from(Ipv4Addr::new(10, 9, 9, 9)));
+    assert!(matches!(
+        connector.connect_udp(nobody, v4dst),
+        Err(DatapathError::UnknownSource(_))
+    ));
+    assert!(matches!(
+        connector.connect_udp(known, SocketAddr::new(nobody, 53)),
+        Err(DatapathError::UnknownDestination(_))
+    ));
+    assert!(matches!(
+        connector.connect_udp(known, SocketAddr::new(v4dst.ip(), 0)),
+        Err(DatapathError::Stack {
+            op: "connect_udp",
+            ..
+        })
+    ));
+    assert!(connector.connect_udp(known, v4dst).is_ok());
+    let _udp_first = dp.listen_udp(53).unwrap();
+    assert!(matches!(
+        dp.listen_udp(53),
+        Err(DatapathError::Stack {
+            op: "listen_udp",
+            ..
+        })
+    ));
+    assert!(matches!(
+        dp.listen_udp(0),
+        Err(DatapathError::Stack {
+            op: "listen_udp",
+            ..
+        })
+    ));
     let unknown_source = v4(u32::from(Ipv4Addr::new(10, 9, 9, 9)));
     assert!(matches!(
         connector.connect(unknown_source, v4dst).await,
@@ -388,6 +470,8 @@ fn a_hook_takes_frames_and_its_replies_leave_on_the_same_queue() {
     let seen = Arc::new(AtomicU64::new(0));
     let hook_seen = Arc::clone(&seen);
     let config = DatapathConfig {
+        // The hook below replaces the UDP layer.
+        udp: None,
         hooks: Some(Arc::new(move |_lane, side| {
             let mut hooks = Hooks::default();
             if side == Side::Client {

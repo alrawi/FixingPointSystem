@@ -1,0 +1,15 @@
+[package]
+name = "fps-udp-own"
+description = "The user space UDP layer of the FixingPointSystem engine: UDP over Ethernet and IPv4 frames behind the DatagramIo seam, with ephemeral ports per host, checksums, and IPv4 fragmentation on send, and no dependency on a kernel socket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+fps-io = { path = "../fps-io" }
+fps-tcp-own = { path = "../fps-tcp-own" }
+
+[dev-dependencies]
+tokio = { version = "1.54", features = ["macros", "rt", "time"] }
