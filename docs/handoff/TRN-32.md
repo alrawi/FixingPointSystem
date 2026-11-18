@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #622 |
 | Branch | `wp/TRN-32` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 95% (4 of 4 plan steps) |
+| Pull request | #640 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-7c41e9, lease until 2026-11-18T02:56:32Z |
-| Last verified commit | none |
+| Last verified commit | 9a9684c (CI green) |
 
 ## Goal
 
