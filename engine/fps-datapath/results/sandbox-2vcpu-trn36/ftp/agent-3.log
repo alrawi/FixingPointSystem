@@ -1,0 +1,11 @@
+fps-agent: warning: no --module-trust-store: the signatures of 1 module(s) are not required and not checked
+fps-agent: module content, which ftp requires, runs the native functions of this agent
+fps-agent: plan run-ftp-afxdp-3/agent-a with 1 tcp and 0 udp client workers and 1 tcp and 0 udp server workers, native functions [content, ftp], load 2s
+fps-agent: backend af_xdp bound port client0 interface dpc attach native queues copy xdp_driver_mode XDP_MODE_NATIVE
+fps-agent: backend af_xdp bound port server0 interface dps attach native queues copy xdp_driver_mode XDP_MODE_NATIVE
+fps-agent: wrote 0 bytes of TLS secrets to /tmp/tmp.jxnuWuw9E5/keys-3.log
+fps-agent: client sessions attempted 5 succeeded 5 failed 0
+fps-agent: server sessions attempted 5 succeeded 5 failed 0
+fps-agent: criterion sessions.failed_ratio < 0.001 measured 0 holds
+fps-agent: datapath lane 0 tcp frames 413 udp datagrams sent 0 delivered 0 accepted 0
+fps-agent: verdict pass

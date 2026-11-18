@@ -1,0 +1,157 @@
+{
+  "report": "fps-realism-report",
+  "version": "0.21.0",
+  "generator": "fps-realism 0.1.0",
+  "passed": true,
+  "capture": {
+    "file": "dns-afxdp.pcapng",
+    "sha256": "7e6b9160bbb62f01743b021158a63f4c8500f75448dd3bf63ca01263733fe990",
+    "format": "pcapng",
+    "link_types": [
+      1
+    ],
+    "frames": 518,
+    "skipped_frames": 0,
+    "sessions": 164
+  },
+  "labels": {
+    "file": "labels.yaml",
+    "sha256": "249f48defe62818de04e09b883b32df5bc3623bd391950facf073ea897d19a77"
+  },
+  "checks": [
+    {
+      "check": "conformance",
+      "passed": true,
+      "classifier": "ndpi",
+      "classifier_version": "4.14.0-1-90090b9",
+      "threshold": 0.99,
+      "metrics": [
+        {
+          "name": "realism.conformance_ratio",
+          "labels": {
+            "application": "dns",
+            "classifier": "ndpi"
+          },
+          "value": 1.0
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "conformance"
+          },
+          "value": 0
+        }
+      ],
+      "applications": [
+        {
+          "application": "dns",
+          "accepted": [
+            "DNS"
+          ],
+          "sessions": 164,
+          "conforming": 164,
+          "ratio": 1.0,
+          "passed": true,
+          "observed": {
+            "DNS": 164
+          }
+        }
+      ],
+      "unlabelled_sessions": 0,
+      "mismatches": [],
+      "mismatches_total": 0
+    },
+    {
+      "check": "parser_errors",
+      "passed": true,
+      "metrics": [
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "dns",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "all",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "dns",
+            "parser": "zeek"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "all",
+            "parser": "zeek"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "parser_errors"
+          },
+          "value": 0
+        }
+      ],
+      "parsers": [
+        {
+          "parser": "tshark",
+          "version": "4.2.2"
+        },
+        {
+          "parser": "zeek",
+          "version": "9.0.1"
+        }
+      ],
+      "missing_parsers": [],
+      "skipped_parsers": [],
+      "applications": [
+        {
+          "application": "dns",
+          "sessions": 164,
+          "parser_errors": 0,
+          "malformed_packets": 0,
+          "by_parser": {
+            "tshark": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            },
+            "zeek": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            }
+          }
+        }
+      ],
+      "unlabelled_errors": {
+        "tshark": 0,
+        "zeek": 0
+      },
+      "unattributed_errors": {
+        "tshark": 0,
+        "zeek": 0
+      },
+      "errors": [],
+      "errors_total": 0,
+      "not_counted": [],
+      "not_counted_total": 0,
+      "port_collision_ports": 922,
+      "expected_findings": [],
+      "expected_total": 0,
+      "missing_findings": [],
+      "unchecked_expectations": []
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "busy": 2,
+  "call_g729": 5,
+  "call_opus": 2,
+  "call_pcma": 6,
+  "call_pcmu": 3
+}

@@ -1,0 +1,11 @@
+fps-agent: warning: no --module-trust-store: the signatures of 1 module(s) are not required and not checked
+fps-agent: module content, which pop3 requires, runs the native functions of this agent
+fps-agent: plan run-pop3-afxdp-2/agent-a with 1 tcp and 0 udp client workers and 1 tcp and 0 udp server workers, native functions [content, pop3], load 2s
+fps-agent: backend af_xdp bound port client0 interface dpc attach native queues copy xdp_driver_mode XDP_MODE_NATIVE
+fps-agent: backend af_xdp bound port server0 interface dps attach native queues copy xdp_driver_mode XDP_MODE_NATIVE
+fps-agent: wrote 0 bytes of TLS secrets to /tmp/tmp.DX79QECGnV/keys-2.log
+fps-agent: client sessions attempted 11 succeeded 11 failed 0
+fps-agent: server sessions attempted 11 succeeded 11 failed 0
+fps-agent: criterion sessions.failed_ratio < 0.001 measured 0 holds
+fps-agent: datapath lane 0 tcp frames 440 udp datagrams sent 0 delivered 0 accepted 0
+fps-agent: verdict pass

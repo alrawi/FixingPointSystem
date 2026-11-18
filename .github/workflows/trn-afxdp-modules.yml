@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# The AF_XDP realism run of every first party module (TRN-36). The agent job builds
+# fps-agent once. The modules job runs one job per module on a GitHub hosted runner,
+# as root through passwordless sudo: it runs the scenarios of the module through the
+# agent forced onto AF_XDP between two veth pairs and scores the capture like the
+# kernel run of the module (engine/fps-datapath/realism/module-afxdp.sh). The
+# scenarios on the exclusion list of TRN-36 are not run (profiles.yaml, key
+# `excluded`). The jobs use no secret, and no event text reaches a script.
+name: trn-afxdp-modules
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - engine/**
+      - modules/**
+      - realism/**
+      - tests/harness/pcapng.py
+      - tools/ci/apt-install.sh
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/trn-afxdp-modules.yml
+  pull_request:
+    paths:
+      - engine/**
+      - modules/**
+      - realism/**
+      - tests/harness/pcapng.py
+      - tools/ci/apt-install.sh
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/trn-afxdp-modules.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trn-afxdp-modules-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p fps-agent
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fps-agent
+          path: target/debug/fps-agent
+          retention-days: 1
+          if-no-files-found: error
+
+  modules:
+    needs: agent
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - dns
+          - ftp
+          - hls
+          - http1
+          - http2
+          - imap
+          - ldap
+          - mqtt
+          - ntp
+          - pop3
+          - sip_rtp
+          - smb2
+          - smtp
+          - ssh
+          - strike
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install the harness and realism tools
+        run: realism/ci/install-tools.sh
+      - uses: actions/download-artifact@v4
+        with:
+          name: fps-agent
+          path: agent
+      - run: chmod +x agent/fps-agent
+      - name: Record the module on the AF_XDP backend and score it
+        env:
+          MODULE: ${{ matrix.module }}
+        run: |
+          sudo env "PATH=/opt/zeek/bin:$PATH" FPS_AFXDP_PARSERS=tshark,zeek \
+            engine/fps-datapath/realism/module-afxdp.sh "$MODULE" "$PWD/agent/fps-agent" "$RUNNER_TEMP/afxdp-$MODULE"
+      - name: Keep the result files
+        if: always()
+        env:
+          MODULE: ${{ matrix.module }}
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/afxdp-$MODULE" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/afxdp-$MODULE/modules"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: afxdp-${{ matrix.module }}
+          path: ${{ runner.temp }}/afxdp-${{ matrix.module }}
+          if-no-files-found: ignore
+          retention-days: 7

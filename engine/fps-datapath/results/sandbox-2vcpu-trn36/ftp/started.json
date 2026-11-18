@@ -1,0 +1,7 @@
+{
+  "batch_download": 3,
+  "list_pasv": 8,
+  "mixed_session": 5,
+  "retr_epsv": 9,
+  "stor_pasv": 11
+}

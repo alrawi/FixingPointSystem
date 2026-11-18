@@ -1,0 +1,7 @@
+{
+  "iburst": 8,
+  "kod_rate": 5,
+  "poll_cycle": 9,
+  "sntp_query": 5,
+  "symmetric_peer": 3
+}

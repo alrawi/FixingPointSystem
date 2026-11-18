@@ -17,6 +17,7 @@ on:
       - engine/fps-backend-afxdp/**
       - engine/fps-agent/**
       - engine/fps-datapath/**
+      - modules/**
       - engine/fps-tcp/**
       - engine/fps-tcp-own/**
       - engine/fps-udp-own/**
@@ -34,6 +35,7 @@ on:
       - engine/fps-backend-afxdp/**
       - engine/fps-agent/**
       - engine/fps-datapath/**
+      - modules/**
       - engine/fps-tcp/**
       - engine/fps-tcp-own/**
       - engine/fps-udp-own/**

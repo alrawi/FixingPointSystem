@@ -1,0 +1,7 @@
+{
+  "keepalive": 2,
+  "publish_qos0": 4,
+  "publish_qos1": 6,
+  "publish_qos2": 7,
+  "subscribe": 2
+}

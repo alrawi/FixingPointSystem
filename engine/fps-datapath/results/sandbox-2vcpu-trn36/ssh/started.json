@@ -1,0 +1,6 @@
+{
+  "interactive_shell": 4,
+  "remote_command": 6,
+  "scp_download": 2,
+  "scp_upload": 7
+}

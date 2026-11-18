@@ -1,0 +1,385 @@
+{
+  "capture": "smtp-afxdp.pcapng",
+  "plaintext": "upgrade",
+  "passed": true,
+  "failures": [],
+  "tls_sessions": 4,
+  "expected_sessions": 4,
+  "decrypted_sessions": 4,
+  "server_ports": {
+    "5587": 4
+  },
+  "view": "/tmp/claude-0/-home-claude/aaf3499a-4351-5300-9ccb-84f55279a5c5/scratchpad/sweep-TRN-36-A/smtp/smtp-afxdp.decrypted.pcap",
+  "classifier": "ndpi 4.14.0-1-90090b9",
+  "report": {
+    "report": "fps-realism-report",
+    "version": "0.21.0",
+    "generator": "fps-realism 0.1.0",
+    "passed": true,
+    "capture": {
+      "file": "smtp-afxdp.decrypted.pcap",
+      "sha256": "7242121e320003b2ecc16a4cc70b7e50c1f95f49e327410902ef1589a59f4769",
+      "format": "pcap",
+      "link_types": [
+        1
+      ],
+      "frames": 127,
+      "skipped_frames": 0,
+      "sessions": 4
+    },
+    "labels": {
+      "file": "smtp.labels.yaml",
+      "sha256": "4aaedcde37af952edb8bc3e609f92b726dc633c9ba65bb46c07fefa2ea454c55"
+    },
+    "checks": [
+      {
+        "check": "conformance",
+        "passed": true,
+        "classifier": "ndpi",
+        "classifier_version": "4.14.0-1-90090b9",
+        "threshold": 0.99,
+        "metrics": [
+          {
+            "name": "realism.conformance_ratio",
+            "labels": {
+              "application": "starttls_decrypted",
+              "classifier": "ndpi"
+            },
+            "value": 1.0
+          },
+          {
+            "name": "realism.check_failures",
+            "labels": {
+              "check": "conformance"
+            },
+            "value": 0
+          }
+        ],
+        "applications": [
+          {
+            "application": "starttls_decrypted",
+            "accepted": [
+              "SMTP"
+            ],
+            "sessions": 4,
+            "conforming": 4,
+            "ratio": 1.0,
+            "passed": true,
+            "observed": {
+              "SMTP": 4
+            }
+          }
+        ],
+        "unlabelled_sessions": 0,
+        "mismatches": [],
+        "mismatches_total": 0
+      },
+      {
+        "check": "parser_errors",
+        "passed": true,
+        "metrics": [
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "starttls_decrypted",
+              "parser": "tshark"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "all",
+              "parser": "tshark"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "starttls_decrypted",
+              "parser": "zeek"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "all",
+              "parser": "zeek"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.check_failures",
+            "labels": {
+              "check": "parser_errors"
+            },
+            "value": 0
+          }
+        ],
+        "parsers": [
+          {
+            "parser": "tshark",
+            "version": "4.2.2"
+          },
+          {
+            "parser": "zeek",
+            "version": "9.0.1"
+          }
+        ],
+        "missing_parsers": [],
+        "skipped_parsers": [],
+        "applications": [
+          {
+            "application": "starttls_decrypted",
+            "sessions": 4,
+            "parser_errors": 0,
+            "malformed_packets": 0,
+            "by_parser": {
+              "tshark": {
+                "parser_errors": 0,
+                "malformed_packets": 0
+              },
+              "zeek": {
+                "parser_errors": 0,
+                "malformed_packets": 0
+              }
+            }
+          }
+        ],
+        "unlabelled_errors": {
+          "tshark": 0,
+          "zeek": 0
+        },
+        "unattributed_errors": {
+          "tshark": 0,
+          "zeek": 0
+        },
+        "errors": [],
+        "errors_total": 0,
+        "not_counted": [],
+        "not_counted_total": 0,
+        "port_collision_ports": 922,
+        "expected_findings": [],
+        "expected_total": 0,
+        "missing_findings": [],
+        "unchecked_expectations": []
+      },
+      {
+        "check": "messages",
+        "metrics": [
+          {
+            "name": "realism.check_failures",
+            "labels": {
+              "check": "messages"
+            },
+            "value": 0
+          }
+        ],
+        "passed": true,
+        "tool": {
+          "tool": "tshark",
+          "version": "4.2.2"
+        },
+        "sessions_checked": 4,
+        "sessions_failed": 0,
+        "rules": [
+          {
+            "rule": 1,
+            "protocol": "smtp",
+            "match": {
+              "server_port": 587
+            },
+            "expected": {
+              "commands.EHLO": {
+                "min": 2,
+                "max": 2
+              },
+              "commands.AUTH": {
+                "min": 1,
+                "max": 1
+              },
+              "commands.MAIL": {
+                "min": 1,
+                "max": 1
+              },
+              "commands.RCPT": {
+                "min": 2,
+                "max": 2
+              },
+              "commands.DATA": {
+                "min": 1,
+                "max": 1
+              },
+              "commands.QUIT": {
+                "min": 1,
+                "max": 1
+              },
+              "replies.220": {
+                "min": 1,
+                "max": 1
+              },
+              "replies.235": {
+                "min": 1,
+                "max": 1
+              },
+              "replies.250": {
+                "min": 6,
+                "max": 6
+              },
+              "replies.354": {
+                "min": 1,
+                "max": 1
+              },
+              "replies.221": {
+                "min": 1,
+                "max": 1
+              },
+              "messages": {
+                "min": 1,
+                "max": 1
+              }
+            },
+            "sessions": 4,
+            "failed_sessions": 0,
+            "observed_total": {
+              "commands.EHLO": 8,
+              "commands.AUTH": 4,
+              "commands.MAIL": 4,
+              "commands.RCPT": 8,
+              "commands.DATA": 4,
+              "commands.QUIT": 4,
+              "replies.220": 4,
+              "replies.235": 4,
+              "replies.250": 24,
+              "replies.354": 4,
+              "replies.221": 4,
+              "messages": 4
+            }
+          }
+        ],
+        "failures_total": 0,
+        "failures": [],
+        "sessions": [
+          {
+            "session": 1,
+            "rule": 1,
+            "protocol": "smtp",
+            "client": {
+              "ip": "10.1.0.1",
+              "port": 10000
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 587
+            },
+            "observed": {
+              "commands.EHLO": 2,
+              "commands.AUTH": 1,
+              "commands.MAIL": 1,
+              "commands.RCPT": 2,
+              "commands.DATA": 1,
+              "commands.QUIT": 1,
+              "replies.220": 1,
+              "replies.235": 1,
+              "replies.250": 6,
+              "replies.354": 1,
+              "replies.221": 1,
+              "messages": 1
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 2,
+            "rule": 1,
+            "protocol": "smtp",
+            "client": {
+              "ip": "10.1.0.2",
+              "port": 10003
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 587
+            },
+            "observed": {
+              "commands.EHLO": 2,
+              "commands.AUTH": 1,
+              "commands.MAIL": 1,
+              "commands.RCPT": 2,
+              "commands.DATA": 1,
+              "commands.QUIT": 1,
+              "replies.220": 1,
+              "replies.235": 1,
+              "replies.250": 6,
+              "replies.354": 1,
+              "replies.221": 1,
+              "messages": 1
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 3,
+            "rule": 1,
+            "protocol": "smtp",
+            "client": {
+              "ip": "10.1.0.3",
+              "port": 10009
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 587
+            },
+            "observed": {
+              "commands.EHLO": 2,
+              "commands.AUTH": 1,
+              "commands.MAIL": 1,
+              "commands.RCPT": 2,
+              "commands.DATA": 1,
+              "commands.QUIT": 1,
+              "replies.220": 1,
+              "replies.235": 1,
+              "replies.250": 6,
+              "replies.354": 1,
+              "replies.221": 1,
+              "messages": 1
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 4,
+            "rule": 1,
+            "protocol": "smtp",
+            "client": {
+              "ip": "10.1.0.4",
+              "port": 10021
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 587
+            },
+            "observed": {
+              "commands.EHLO": 2,
+              "commands.AUTH": 1,
+              "commands.MAIL": 1,
+              "commands.RCPT": 2,
+              "commands.DATA": 1,
+              "commands.QUIT": 1,
+              "replies.220": 1,
+              "replies.235": 1,
+              "replies.250": 6,
+              "replies.354": 1,
+              "replies.221": 1,
+              "messages": 1
+            },
+            "passed": true,
+            "reasons": []
+          }
+        ]
+      }
+    ]
+  }
+}

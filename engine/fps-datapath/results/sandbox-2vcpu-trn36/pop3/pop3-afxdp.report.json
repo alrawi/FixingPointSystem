@@ -1,0 +1,157 @@
+{
+  "report": "fps-realism-report",
+  "version": "0.21.0",
+  "generator": "fps-realism 0.1.0",
+  "passed": true,
+  "capture": {
+    "file": "pop3-afxdp.pcapng",
+    "sha256": "5753aa363c494f46bca61470aa61b31928dabd3242a00ab8d0f628c3f1323a9c",
+    "format": "pcapng",
+    "link_types": [
+      1
+    ],
+    "frames": 1536,
+    "skipped_frames": 0,
+    "sessions": 36
+  },
+  "labels": {
+    "file": "labels.yaml",
+    "sha256": "c3b88c1527ef5e640464dc4b22b93ac381f3af587436671d1267830ef3417151"
+  },
+  "checks": [
+    {
+      "check": "conformance",
+      "passed": true,
+      "classifier": "ndpi",
+      "classifier_version": "4.14.0-1-90090b9",
+      "threshold": 0.99,
+      "metrics": [
+        {
+          "name": "realism.conformance_ratio",
+          "labels": {
+            "application": "pop3",
+            "classifier": "ndpi"
+          },
+          "value": 1.0
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "conformance"
+          },
+          "value": 0
+        }
+      ],
+      "applications": [
+        {
+          "application": "pop3",
+          "accepted": [
+            "POP3"
+          ],
+          "sessions": 36,
+          "conforming": 36,
+          "ratio": 1.0,
+          "passed": true,
+          "observed": {
+            "POP3": 36
+          }
+        }
+      ],
+      "unlabelled_sessions": 0,
+      "mismatches": [],
+      "mismatches_total": 0
+    },
+    {
+      "check": "parser_errors",
+      "passed": true,
+      "metrics": [
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "pop3",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "all",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "pop3",
+            "parser": "zeek"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "all",
+            "parser": "zeek"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "parser_errors"
+          },
+          "value": 0
+        }
+      ],
+      "parsers": [
+        {
+          "parser": "tshark",
+          "version": "4.2.2"
+        },
+        {
+          "parser": "zeek",
+          "version": "9.0.1"
+        }
+      ],
+      "missing_parsers": [],
+      "skipped_parsers": [],
+      "applications": [
+        {
+          "application": "pop3",
+          "sessions": 36,
+          "parser_errors": 0,
+          "malformed_packets": 0,
+          "by_parser": {
+            "tshark": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            },
+            "zeek": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            }
+          }
+        }
+      ],
+      "unlabelled_errors": {
+        "tshark": 0,
+        "zeek": 0
+      },
+      "unattributed_errors": {
+        "tshark": 0,
+        "zeek": 0
+      },
+      "errors": [],
+      "errors_total": 0,
+      "not_counted": [],
+      "not_counted_total": 0,
+      "port_collision_ports": 922,
+      "expected_findings": [],
+      "expected_total": 0,
+      "missing_findings": [],
+      "unchecked_expectations": []
+    }
+  ]
+}

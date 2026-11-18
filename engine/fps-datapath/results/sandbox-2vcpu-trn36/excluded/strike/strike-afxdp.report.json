@@ -1,0 +1,1817 @@
+{
+  "report": "fps-realism-report",
+  "version": "0.21.0",
+  "generator": "fps-realism 0.1.0",
+  "passed": false,
+  "capture": {
+    "file": "strike-afxdp.pcapng",
+    "sha256": "b287f8231bf0531ec7bd5d0a517714831d17ba0638f01322c3382c0dff1bf558",
+    "format": "pcapng",
+    "link_types": [
+      1
+    ],
+    "frames": 2457,
+    "skipped_frames": 1,
+    "sessions": 301
+  },
+  "labels": {
+    "file": "labels.yaml",
+    "sha256": "a863b7ed85bdf0158482d53ef4e9c72e9d051b5118e3582725c4edf50b2e37a2"
+  },
+  "checks": [
+    {
+      "check": "conformance",
+      "passed": true,
+      "classifier": "ndpi",
+      "classifier_version": "4.14.0-1-90090b9",
+      "threshold": 0.99,
+      "metrics": [
+        {
+          "name": "realism.conformance_ratio",
+          "labels": {
+            "application": "strike",
+            "classifier": "ndpi"
+          },
+          "value": 1.0
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "conformance"
+          },
+          "value": 0
+        }
+      ],
+      "applications": [
+        {
+          "application": "strike",
+          "accepted": [
+            "HTTP"
+          ],
+          "sessions": 47,
+          "conforming": 47,
+          "ratio": 1.0,
+          "passed": true,
+          "observed": {
+            "HTTP": 47
+          }
+        }
+      ],
+      "unlabelled_sessions": 254,
+      "mismatches": [],
+      "mismatches_total": 0
+    },
+    {
+      "check": "parser_errors",
+      "passed": true,
+      "metrics": [
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "strike",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "all",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "strike",
+            "parser": "zeek"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "all",
+            "parser": "zeek"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "parser_errors"
+          },
+          "value": 0
+        }
+      ],
+      "parsers": [
+        {
+          "parser": "tshark",
+          "version": "4.2.2"
+        },
+        {
+          "parser": "zeek",
+          "version": "9.0.1"
+        }
+      ],
+      "missing_parsers": [],
+      "skipped_parsers": [],
+      "applications": [
+        {
+          "application": "strike",
+          "sessions": 47,
+          "parser_errors": 0,
+          "malformed_packets": 0,
+          "by_parser": {
+            "tshark": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            },
+            "zeek": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            }
+          }
+        }
+      ],
+      "unlabelled_errors": {
+        "tshark": 0,
+        "zeek": 0
+      },
+      "unattributed_errors": {
+        "tshark": 0,
+        "zeek": 0
+      },
+      "errors": [],
+      "errors_total": 0,
+      "not_counted": [],
+      "not_counted_total": 0,
+      "port_collision_ports": 922,
+      "expected_findings": [],
+      "expected_total": 0,
+      "missing_findings": [],
+      "unchecked_expectations": []
+    },
+    {
+      "check": "session_structure",
+      "metrics": [
+        {
+          "name": "realism.structure_failures",
+          "labels": {
+            "scenario": "slowloris"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.structure_failures",
+          "labels": {
+            "scenario": "conn_churn"
+          },
+          "value": 22
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "session_structure"
+          },
+          "value": 22
+        }
+      ],
+      "passed": false,
+      "max_gap_s": null,
+      "tolerance_s": 0.5,
+      "sessions_total": 301,
+      "sessions_assigned": 301,
+      "sessions_unassigned": 0,
+      "instances": 47,
+      "failed_instances": 22,
+      "scenarios": [
+        {
+          "scenario": "slowloris",
+          "source": "/home/claude/fixingpointsystem/.claude/worktrees/agent-afc4cdccaaab337f9/modules/strike/scenarios/slowloris.yaml",
+          "expected_instances": 23,
+          "instances": 23,
+          "failed_instances": 0,
+          "sessions": 23,
+          "flows": [
+            {
+              "id": "trickle",
+              "module": "strike",
+              "transport": "tcp",
+              "server_port": 8080,
+              "spawned": false,
+              "after": [],
+              "min_connections": 1,
+              "max_connections": 1,
+              "connections": 23
+            }
+          ],
+          "edges": []
+        },
+        {
+          "scenario": "conn_churn",
+          "source": "/home/claude/fixingpointsystem/.claude/worktrees/agent-afc4cdccaaab337f9/modules/strike/scenarios/conn_churn.yaml",
+          "expected_instances": 24,
+          "instances": 24,
+          "failed_instances": 22,
+          "sessions": 278,
+          "flows": [
+            {
+              "id": "keeper",
+              "module": "strike",
+              "transport": "tcp",
+              "server_port": 8081,
+              "spawned": false,
+              "after": [],
+              "min_connections": 1,
+              "max_connections": 1,
+              "connections": 24
+            },
+            {
+              "id": "churn",
+              "module": "strike",
+              "transport": "tcp",
+              "server_port": 8082,
+              "spawned": true,
+              "after": [],
+              "min_connections": 32,
+              "max_connections": 32,
+              "connections": 254
+            }
+          ],
+          "edges": [
+            {
+              "kind": "spawn",
+              "from": "keeper",
+              "to": "churn"
+            }
+          ]
+        }
+      ],
+      "failed_instance_details": [
+        {
+          "scenario": "conn_churn",
+          "instance": 1,
+          "client_ip": "10.1.0.1",
+          "start": 1795034606.474392,
+          "opened_by": null,
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 1,
+              "start": 0.0,
+              "end": 0.049175
+            },
+            {
+              "flow": "churn",
+              "session": 2,
+              "start": 0.000879,
+              "end": 0.000897
+            },
+            {
+              "flow": "churn",
+              "session": 3,
+              "start": 0.004195,
+              "end": 0.004348
+            },
+            {
+              "flow": "churn",
+              "session": 4,
+              "start": 0.007825,
+              "end": 0.008004
+            },
+            {
+              "flow": "churn",
+              "session": 5,
+              "start": 0.013391,
+              "end": 0.01353
+            },
+            {
+              "flow": "churn",
+              "session": 6,
+              "start": 0.01796,
+              "end": 0.018232
+            },
+            {
+              "flow": "churn",
+              "session": 7,
+              "start": 0.021644,
+              "end": 0.021955
+            },
+            {
+              "flow": "churn",
+              "session": 8,
+              "start": 0.025259,
+              "end": 0.025495
+            },
+            {
+              "flow": "churn",
+              "session": 9,
+              "start": 0.031894,
+              "end": 0.032179
+            },
+            {
+              "flow": "churn",
+              "session": 10,
+              "start": 0.034486,
+              "end": 0.03463
+            },
+            {
+              "flow": "churn",
+              "session": 11,
+              "start": 0.041922,
+              "end": 0.042325
+            },
+            {
+              "flow": "churn",
+              "session": 12,
+              "start": 0.04868,
+              "end": 0.048988
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 1 (client 10.1.0.1, first packet 1795034606.474392): flow churn has 11 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 2,
+          "client_ip": "10.1.0.1",
+          "start": 1795034607.730508,
+          "opened_by": "instance 1 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 142,
+              "start": 0.0,
+              "end": 0.00219
+            },
+            {
+              "flow": "churn",
+              "session": 143,
+              "start": 0.000775,
+              "end": 0.001986
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 2 (client 10.1.0.1, first packet 1795034607.730508): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 1 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 3,
+          "client_ip": "10.1.0.1",
+          "start": 1795034608.971737,
+          "opened_by": "instance 2 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 232,
+              "start": 0.0,
+              "end": 0.098159
+            },
+            {
+              "flow": "churn",
+              "session": 233,
+              "start": 0.001806,
+              "end": 0.00203
+            },
+            {
+              "flow": "churn",
+              "session": 234,
+              "start": 0.004334,
+              "end": 0.004637
+            },
+            {
+              "flow": "churn",
+              "session": 235,
+              "start": 0.010049,
+              "end": 0.010351
+            },
+            {
+              "flow": "churn",
+              "session": 236,
+              "start": 0.016824,
+              "end": 0.017133
+            },
+            {
+              "flow": "churn",
+              "session": 237,
+              "start": 0.021735,
+              "end": 0.021937
+            },
+            {
+              "flow": "churn",
+              "session": 238,
+              "start": 0.026777,
+              "end": 0.027003
+            },
+            {
+              "flow": "churn",
+              "session": 239,
+              "start": 0.033039,
+              "end": 0.033202
+            },
+            {
+              "flow": "churn",
+              "session": 240,
+              "start": 0.037739,
+              "end": 0.037896
+            },
+            {
+              "flow": "churn",
+              "session": 241,
+              "start": 0.043244,
+              "end": 0.043432
+            },
+            {
+              "flow": "churn",
+              "session": 242,
+              "start": 0.045837,
+              "end": 0.046513
+            },
+            {
+              "flow": "churn",
+              "session": 243,
+              "start": 0.052811,
+              "end": 0.052989
+            },
+            {
+              "flow": "churn",
+              "session": 244,
+              "start": 0.055507,
+              "end": 0.055699
+            },
+            {
+              "flow": "churn",
+              "session": 245,
+              "start": 0.058071,
+              "end": 0.058298
+            },
+            {
+              "flow": "churn",
+              "session": 246,
+              "start": 0.061566,
+              "end": 0.061925
+            },
+            {
+              "flow": "churn",
+              "session": 247,
+              "start": 0.065391,
+              "end": 0.065538
+            },
+            {
+              "flow": "churn",
+              "session": 248,
+              "start": 0.071929,
+              "end": 0.072102
+            },
+            {
+              "flow": "churn",
+              "session": 249,
+              "start": 0.075441,
+              "end": 0.075648
+            },
+            {
+              "flow": "churn",
+              "session": 250,
+              "start": 0.076859,
+              "end": 0.077053
+            },
+            {
+              "flow": "churn",
+              "session": 251,
+              "start": 0.08334,
+              "end": 0.083556
+            },
+            {
+              "flow": "churn",
+              "session": 252,
+              "start": 0.089276,
+              "end": 0.089424
+            },
+            {
+              "flow": "churn",
+              "session": 254,
+              "start": 0.093469,
+              "end": 0.094237
+            },
+            {
+              "flow": "churn",
+              "session": 256,
+              "start": 0.097522,
+              "end": 0.097904
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 3 (client 10.1.0.1, first packet 1795034608.971737): flow churn has 22 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 2 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 4,
+          "client_ip": "10.1.0.2",
+          "start": 1795034606.926769,
+          "opened_by": null,
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 16,
+              "start": 0.0,
+              "end": 0.10013
+            },
+            {
+              "flow": "churn",
+              "session": 17,
+              "start": 0.000568,
+              "end": 0.001049
+            },
+            {
+              "flow": "churn",
+              "session": 18,
+              "start": 0.005193,
+              "end": 0.005335
+            },
+            {
+              "flow": "churn",
+              "session": 19,
+              "start": 0.0126,
+              "end": 0.012749
+            },
+            {
+              "flow": "churn",
+              "session": 20,
+              "start": 0.017157,
+              "end": 0.017398
+            },
+            {
+              "flow": "churn",
+              "session": 21,
+              "start": 0.022982,
+              "end": 0.023174
+            },
+            {
+              "flow": "churn",
+              "session": 22,
+              "start": 0.025546,
+              "end": 0.026335
+            },
+            {
+              "flow": "churn",
+              "session": 23,
+              "start": 0.030566,
+              "end": 0.030824
+            },
+            {
+              "flow": "churn",
+              "session": 26,
+              "start": 0.035782,
+              "end": 0.035989
+            },
+            {
+              "flow": "churn",
+              "session": 27,
+              "start": 0.038172,
+              "end": 0.038457
+            },
+            {
+              "flow": "churn",
+              "session": 28,
+              "start": 0.039844,
+              "end": 0.040103
+            },
+            {
+              "flow": "churn",
+              "session": 30,
+              "start": 0.046175,
+              "end": 0.046306
+            },
+            {
+              "flow": "churn",
+              "session": 32,
+              "start": 0.052205,
+              "end": 0.053019
+            },
+            {
+              "flow": "churn",
+              "session": 34,
+              "start": 0.057031,
+              "end": 0.057406
+            },
+            {
+              "flow": "churn",
+              "session": 36,
+              "start": 0.061996,
+              "end": 0.062316
+            },
+            {
+              "flow": "churn",
+              "session": 38,
+              "start": 0.068887,
+              "end": 0.06905
+            },
+            {
+              "flow": "churn",
+              "session": 40,
+              "start": 0.072778,
+              "end": 0.072953
+            },
+            {
+              "flow": "churn",
+              "session": 42,
+              "start": 0.078639,
+              "end": 0.079412
+            },
+            {
+              "flow": "churn",
+              "session": 44,
+              "start": 0.086489,
+              "end": 0.086954
+            },
+            {
+              "flow": "churn",
+              "session": 46,
+              "start": 0.088912,
+              "end": 0.089115
+            },
+            {
+              "flow": "churn",
+              "session": 48,
+              "start": 0.093672,
+              "end": 0.094146
+            },
+            {
+              "flow": "churn",
+              "session": 50,
+              "start": 0.099559,
+              "end": 0.09974
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 4 (client 10.1.0.2, first packet 1795034606.926769): flow churn has 21 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 5,
+          "client_ip": "10.1.0.2",
+          "start": 1795034607.886135,
+          "opened_by": "instance 4 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 144,
+              "start": 0.0,
+              "end": 0.004153
+            },
+            {
+              "flow": "churn",
+              "session": 145,
+              "start": 0.002816,
+              "end": 0.003993
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 5 (client 10.1.0.2, first packet 1795034607.886135): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 4 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 6,
+          "client_ip": "10.1.0.2",
+          "start": 1795034609.064881,
+          "opened_by": "instance 5 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 253,
+              "start": 0.0,
+              "end": 0.008227
+            },
+            {
+              "flow": "churn",
+              "session": 255,
+              "start": 0.000848,
+              "end": 0.001087
+            },
+            {
+              "flow": "churn",
+              "session": 259,
+              "start": 0.007275,
+              "end": 0.00776
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 6 (client 10.1.0.2, first packet 1795034609.064881): flow churn has 2 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 5 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 9,
+          "client_ip": "10.1.0.3",
+          "start": 1795034609.06951,
+          "opened_by": "instance 8 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 257,
+              "start": 0.0,
+              "end": 0.003692
+            },
+            {
+              "flow": "churn",
+              "session": 258,
+              "start": 0.000588,
+              "end": 0.001144
+            },
+            {
+              "flow": "churn",
+              "session": 260,
+              "start": 0.003035,
+              "end": 0.003446
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 9 (client 10.1.0.3, first packet 1795034609.069510): flow churn has 2 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 8 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 10,
+          "client_ip": "10.1.0.4",
+          "start": 1795034607.24795,
+          "opened_by": null,
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 72,
+              "start": 0.0,
+              "end": 0.024315
+            },
+            {
+              "flow": "churn",
+              "session": 73,
+              "start": 0.002509,
+              "end": 0.002833
+            },
+            {
+              "flow": "churn",
+              "session": 74,
+              "start": 0.006124,
+              "end": 0.006391
+            },
+            {
+              "flow": "churn",
+              "session": 75,
+              "start": 0.009846,
+              "end": 0.010014
+            },
+            {
+              "flow": "churn",
+              "session": 77,
+              "start": 0.013319,
+              "end": 0.013543
+            },
+            {
+              "flow": "churn",
+              "session": 79,
+              "start": 0.016165,
+              "end": 0.016275
+            },
+            {
+              "flow": "churn",
+              "session": 80,
+              "start": 0.018606,
+              "end": 0.018725
+            },
+            {
+              "flow": "churn",
+              "session": 81,
+              "start": 0.022229,
+              "end": 0.022347
+            },
+            {
+              "flow": "churn",
+              "session": 82,
+              "start": 0.023566,
+              "end": 0.024218
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 10 (client 10.1.0.4, first packet 1795034607.247950): flow churn has 8 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 11,
+          "client_ip": "10.1.0.4",
+          "start": 1795034608.414137,
+          "opened_by": "instance 10 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 167,
+              "start": 0.0,
+              "end": 0.00138
+            },
+            {
+              "flow": "churn",
+              "session": 168,
+              "start": 0.000236,
+              "end": 0.001219
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 11 (client 10.1.0.4, first packet 1795034608.414137): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 10 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 12,
+          "client_ip": "10.1.0.4",
+          "start": 1795034609.630187,
+          "opened_by": "instance 11 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 263,
+              "start": 0.0,
+              "end": 0.079287
+            },
+            {
+              "flow": "churn",
+              "session": 264,
+              "start": 0.000647,
+              "end": 0.000963
+            },
+            {
+              "flow": "churn",
+              "session": 265,
+              "start": 0.00529,
+              "end": 0.005561
+            },
+            {
+              "flow": "churn",
+              "session": 266,
+              "start": 0.007779,
+              "end": 0.007977
+            },
+            {
+              "flow": "churn",
+              "session": 267,
+              "start": 0.012394,
+              "end": 0.012635
+            },
+            {
+              "flow": "churn",
+              "session": 268,
+              "start": 0.019038,
+              "end": 0.019239
+            },
+            {
+              "flow": "churn",
+              "session": 269,
+              "start": 0.021539,
+              "end": 0.02177
+            },
+            {
+              "flow": "churn",
+              "session": 270,
+              "start": 0.028061,
+              "end": 0.028247
+            },
+            {
+              "flow": "churn",
+              "session": 271,
+              "start": 0.030529,
+              "end": 0.030867
+            },
+            {
+              "flow": "churn",
+              "session": 272,
+              "start": 0.032218,
+              "end": 0.03244
+            },
+            {
+              "flow": "churn",
+              "session": 273,
+              "start": 0.037869,
+              "end": 0.038225
+            },
+            {
+              "flow": "churn",
+              "session": 274,
+              "start": 0.041678,
+              "end": 0.041989
+            },
+            {
+              "flow": "churn",
+              "session": 275,
+              "start": 0.048421,
+              "end": 0.048719
+            },
+            {
+              "flow": "churn",
+              "session": 276,
+              "start": 0.052171,
+              "end": 0.052505
+            },
+            {
+              "flow": "churn",
+              "session": 277,
+              "start": 0.058897,
+              "end": 0.0592
+            },
+            {
+              "flow": "churn",
+              "session": 278,
+              "start": 0.065517,
+              "end": 0.065681
+            },
+            {
+              "flow": "churn",
+              "session": 279,
+              "start": 0.070076,
+              "end": 0.0703
+            },
+            {
+              "flow": "churn",
+              "session": 280,
+              "start": 0.075535,
+              "end": 0.075778
+            },
+            {
+              "flow": "churn",
+              "session": 283,
+              "start": 0.078824,
+              "end": 0.079174
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 12 (client 10.1.0.4, first packet 1795034609.630187): flow churn has 18 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 11 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 13,
+          "client_ip": "10.1.0.5",
+          "start": 1795034607.261259,
+          "opened_by": null,
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 76,
+              "start": 0.0,
+              "end": 0.001586
+            },
+            {
+              "flow": "churn",
+              "session": 78,
+              "start": 0.000367,
+              "end": 0.001252
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 13 (client 10.1.0.5, first packet 1795034607.261259): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 14,
+          "client_ip": "10.1.0.5",
+          "start": 1795034608.44304,
+          "opened_by": "instance 13 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 175,
+              "start": 0.0,
+              "end": 0.02691
+            },
+            {
+              "flow": "churn",
+              "session": 176,
+              "start": 0.001389,
+              "end": 0.001565
+            },
+            {
+              "flow": "churn",
+              "session": 178,
+              "start": 0.004982,
+              "end": 0.00518
+            },
+            {
+              "flow": "churn",
+              "session": 179,
+              "start": 0.008321,
+              "end": 0.009185
+            },
+            {
+              "flow": "churn",
+              "session": 181,
+              "start": 0.012048,
+              "end": 0.012234
+            },
+            {
+              "flow": "churn",
+              "session": 184,
+              "start": 0.018837,
+              "end": 0.019052
+            },
+            {
+              "flow": "churn",
+              "session": 186,
+              "start": 0.025718,
+              "end": 0.026288
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 14 (client 10.1.0.5, first packet 1795034608.443040): flow churn has 6 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 13 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 15,
+          "client_ip": "10.1.0.5",
+          "start": 1795034609.707203,
+          "opened_by": "instance 14 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 281,
+              "start": 0.0,
+              "end": 0.031502
+            },
+            {
+              "flow": "churn",
+              "session": 282,
+              "start": 0.001685,
+              "end": 0.00195
+            },
+            {
+              "flow": "churn",
+              "session": 284,
+              "start": 0.00666,
+              "end": 0.006865
+            },
+            {
+              "flow": "churn",
+              "session": 285,
+              "start": 0.011114,
+              "end": 0.011294
+            },
+            {
+              "flow": "churn",
+              "session": 286,
+              "start": 0.016653,
+              "end": 0.01689
+            },
+            {
+              "flow": "churn",
+              "session": 287,
+              "start": 0.022114,
+              "end": 0.022364
+            },
+            {
+              "flow": "churn",
+              "session": 288,
+              "start": 0.028559,
+              "end": 0.028779
+            },
+            {
+              "flow": "churn",
+              "session": 289,
+              "start": 0.031031,
+              "end": 0.031349
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 15 (client 10.1.0.5, first packet 1795034609.707203): flow churn has 7 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 14 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 16,
+          "client_ip": "10.1.0.6",
+          "start": 1795034607.509264,
+          "opened_by": null,
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 83,
+              "start": 0.0,
+              "end": 0.095353
+            },
+            {
+              "flow": "churn",
+              "session": 84,
+              "start": 0.001013,
+              "end": 0.001145
+            },
+            {
+              "flow": "churn",
+              "session": 85,
+              "start": 0.007513,
+              "end": 0.007674
+            },
+            {
+              "flow": "churn",
+              "session": 86,
+              "start": 0.011089,
+              "end": 0.011425
+            },
+            {
+              "flow": "churn",
+              "session": 87,
+              "start": 0.017048,
+              "end": 0.017805
+            },
+            {
+              "flow": "churn",
+              "session": 88,
+              "start": 0.023975,
+              "end": 0.024188
+            },
+            {
+              "flow": "churn",
+              "session": 89,
+              "start": 0.02848,
+              "end": 0.028606
+            },
+            {
+              "flow": "churn",
+              "session": 90,
+              "start": 0.032994,
+              "end": 0.033151
+            },
+            {
+              "flow": "churn",
+              "session": 91,
+              "start": 0.035501,
+              "end": 0.0361
+            },
+            {
+              "flow": "churn",
+              "session": 92,
+              "start": 0.040136,
+              "end": 0.04031
+            },
+            {
+              "flow": "churn",
+              "session": 93,
+              "start": 0.044659,
+              "end": 0.044832
+            },
+            {
+              "flow": "churn",
+              "session": 94,
+              "start": 0.051242,
+              "end": 0.051452
+            },
+            {
+              "flow": "churn",
+              "session": 95,
+              "start": 0.05699,
+              "end": 0.0572
+            },
+            {
+              "flow": "churn",
+              "session": 96,
+              "start": 0.063519,
+              "end": 0.063814
+            },
+            {
+              "flow": "churn",
+              "session": 97,
+              "start": 0.068254,
+              "end": 0.068505
+            },
+            {
+              "flow": "churn",
+              "session": 99,
+              "start": 0.073876,
+              "end": 0.074043
+            },
+            {
+              "flow": "churn",
+              "session": 100,
+              "start": 0.079417,
+              "end": 0.079869
+            },
+            {
+              "flow": "churn",
+              "session": 101,
+              "start": 0.084067,
+              "end": 0.084339
+            },
+            {
+              "flow": "churn",
+              "session": 102,
+              "start": 0.089665,
+              "end": 0.089884
+            },
+            {
+              "flow": "churn",
+              "session": 105,
+              "start": 0.095001,
+              "end": 0.095228
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 16 (client 10.1.0.6, first packet 1795034607.509264): flow churn has 19 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 17,
+          "client_ip": "10.1.0.6",
+          "start": 1795034608.633085,
+          "opened_by": "instance 16 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 194,
+              "start": 0.0,
+              "end": 0.007742
+            },
+            {
+              "flow": "churn",
+              "session": 195,
+              "start": 0.000559,
+              "end": 0.000935
+            },
+            {
+              "flow": "churn",
+              "session": 196,
+              "start": 0.007238,
+              "end": 0.007606
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 17 (client 10.1.0.6, first packet 1795034608.633085): flow churn has 2 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 16 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 18,
+          "client_ip": "10.1.0.6",
+          "start": 1795034609.80442,
+          "opened_by": "instance 17 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 291,
+              "start": 0.0,
+              "end": 0.002209
+            },
+            {
+              "flow": "churn",
+              "session": 292,
+              "start": 0.000485,
+              "end": 0.002054
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 18 (client 10.1.0.6, first packet 1795034609.804420): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 17 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 19,
+          "client_ip": "10.1.0.7",
+          "start": 1795034607.602555,
+          "opened_by": null,
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 103,
+              "start": 0.0,
+              "end": 0.128572
+            },
+            {
+              "flow": "churn",
+              "session": 104,
+              "start": 0.001441,
+              "end": 0.001636
+            },
+            {
+              "flow": "churn",
+              "session": 106,
+              "start": 0.007526,
+              "end": 0.007903
+            },
+            {
+              "flow": "churn",
+              "session": 109,
+              "start": 0.011743,
+              "end": 0.01206
+            },
+            {
+              "flow": "churn",
+              "session": 111,
+              "start": 0.016772,
+              "end": 0.016888
+            },
+            {
+              "flow": "churn",
+              "session": 112,
+              "start": 0.019142,
+              "end": 0.019409
+            },
+            {
+              "flow": "churn",
+              "session": 113,
+              "start": 0.0228,
+              "end": 0.023013
+            },
+            {
+              "flow": "churn",
+              "session": 115,
+              "start": 0.025343,
+              "end": 0.026113
+            },
+            {
+              "flow": "churn",
+              "session": 117,
+              "start": 0.029093,
+              "end": 0.029675
+            },
+            {
+              "flow": "churn",
+              "session": 120,
+              "start": 0.035115,
+              "end": 0.035251
+            },
+            {
+              "flow": "churn",
+              "session": 121,
+              "start": 0.038559,
+              "end": 0.039044
+            },
+            {
+              "flow": "churn",
+              "session": 122,
+              "start": 0.042278,
+              "end": 0.042462
+            },
+            {
+              "flow": "churn",
+              "session": 123,
+              "start": 0.046778,
+              "end": 0.046905
+            },
+            {
+              "flow": "churn",
+              "session": 124,
+              "start": 0.04922,
+              "end": 0.049405
+            },
+            {
+              "flow": "churn",
+              "session": 125,
+              "start": 0.053801,
+              "end": 0.054082
+            },
+            {
+              "flow": "churn",
+              "session": 126,
+              "start": 0.062278,
+              "end": 0.062532
+            },
+            {
+              "flow": "churn",
+              "session": 127,
+              "start": 0.068858,
+              "end": 0.06925
+            },
+            {
+              "flow": "churn",
+              "session": 128,
+              "start": 0.072734,
+              "end": 0.073042
+            },
+            {
+              "flow": "churn",
+              "session": 129,
+              "start": 0.079357,
+              "end": 0.079676
+            },
+            {
+              "flow": "churn",
+              "session": 130,
+              "start": 0.08599,
+              "end": 0.086268
+            },
+            {
+              "flow": "churn",
+              "session": 131,
+              "start": 0.090595,
+              "end": 0.090942
+            },
+            {
+              "flow": "churn",
+              "session": 133,
+              "start": 0.096371,
+              "end": 0.096691
+            },
+            {
+              "flow": "churn",
+              "session": 134,
+              "start": 0.100024,
+              "end": 0.100278
+            },
+            {
+              "flow": "churn",
+              "session": 135,
+              "start": 0.106523,
+              "end": 0.106825
+            },
+            {
+              "flow": "churn",
+              "session": 136,
+              "start": 0.109146,
+              "end": 0.109428
+            },
+            {
+              "flow": "churn",
+              "session": 137,
+              "start": 0.113866,
+              "end": 0.114433
+            },
+            {
+              "flow": "churn",
+              "session": 138,
+              "start": 0.118723,
+              "end": 0.11898
+            },
+            {
+              "flow": "churn",
+              "session": 139,
+              "start": 0.123296,
+              "end": 0.123547
+            },
+            {
+              "flow": "churn",
+              "session": 141,
+              "start": 0.127877,
+              "end": 0.128374
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 19 (client 10.1.0.7, first packet 1795034607.602555): flow churn has 28 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 20,
+          "client_ip": "10.1.0.7",
+          "start": 1795034608.672965,
+          "opened_by": "instance 19 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 197,
+              "start": 0.0,
+              "end": 0.100496
+            },
+            {
+              "flow": "churn",
+              "session": 198,
+              "start": 0.000439,
+              "end": 0.001712
+            },
+            {
+              "flow": "churn",
+              "session": 199,
+              "start": 0.004482,
+              "end": 0.004748
+            },
+            {
+              "flow": "churn",
+              "session": 200,
+              "start": 0.010014,
+              "end": 0.010192
+            },
+            {
+              "flow": "churn",
+              "session": 201,
+              "start": 0.014598,
+              "end": 0.014774
+            },
+            {
+              "flow": "churn",
+              "session": 202,
+              "start": 0.020114,
+              "end": 0.02032
+            },
+            {
+              "flow": "churn",
+              "session": 203,
+              "start": 0.026693,
+              "end": 0.026844
+            },
+            {
+              "flow": "churn",
+              "session": 204,
+              "start": 0.032195,
+              "end": 0.032505
+            },
+            {
+              "flow": "churn",
+              "session": 206,
+              "start": 0.0381,
+              "end": 0.03823
+            },
+            {
+              "flow": "churn",
+              "session": 207,
+              "start": 0.043474,
+              "end": 0.043721
+            },
+            {
+              "flow": "churn",
+              "session": 208,
+              "start": 0.050087,
+              "end": 0.050219
+            },
+            {
+              "flow": "churn",
+              "session": 209,
+              "start": 0.053596,
+              "end": 0.053776
+            },
+            {
+              "flow": "churn",
+              "session": 210,
+              "start": 0.057115,
+              "end": 0.057263
+            },
+            {
+              "flow": "churn",
+              "session": 211,
+              "start": 0.063711,
+              "end": 0.063878
+            },
+            {
+              "flow": "churn",
+              "session": 212,
+              "start": 0.069363,
+              "end": 0.069605
+            },
+            {
+              "flow": "churn",
+              "session": 213,
+              "start": 0.073901,
+              "end": 0.074093
+            },
+            {
+              "flow": "churn",
+              "session": 214,
+              "start": 0.077578,
+              "end": 0.0777
+            },
+            {
+              "flow": "churn",
+              "session": 215,
+              "start": 0.083056,
+              "end": 0.083232
+            },
+            {
+              "flow": "churn",
+              "session": 216,
+              "start": 0.08966,
+              "end": 0.09029
+            },
+            {
+              "flow": "churn",
+              "session": 217,
+              "start": 0.093444,
+              "end": 0.093685
+            },
+            {
+              "flow": "churn",
+              "session": 218,
+              "start": 0.100098,
+              "end": 0.100372
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 20 (client 10.1.0.7, first packet 1795034608.672965): flow churn has 20 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 19 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 21,
+          "client_ip": "10.1.0.7",
+          "start": 1795034610.025049,
+          "opened_by": "instance 20 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 296,
+              "start": 0.0,
+              "end": 0.00658
+            },
+            {
+              "flow": "churn",
+              "session": 297,
+              "start": 0.000609,
+              "end": 0.001716
+            },
+            {
+              "flow": "churn",
+              "session": 298,
+              "start": 0.006116,
+              "end": 0.006386
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 21 (client 10.1.0.7, first packet 1795034610.025049): flow churn has 2 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 20 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 22,
+          "client_ip": "10.1.0.8",
+          "start": 1795034607.612856,
+          "opened_by": null,
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 107,
+              "start": 0.0,
+              "end": 0.01949
+            },
+            {
+              "flow": "churn",
+              "session": 108,
+              "start": 0.001261,
+              "end": 0.001585
+            },
+            {
+              "flow": "churn",
+              "session": 110,
+              "start": 0.006149,
+              "end": 0.006467
+            },
+            {
+              "flow": "churn",
+              "session": 114,
+              "start": 0.01251,
+              "end": 0.012761
+            },
+            {
+              "flow": "churn",
+              "session": 116,
+              "start": 0.015058,
+              "end": 0.015825
+            },
+            {
+              "flow": "churn",
+              "session": 118,
+              "start": 0.019049,
+              "end": 0.019385
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 22 (client 10.1.0.8, first packet 1795034607.612856): flow churn has 5 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 23,
+          "client_ip": "10.1.0.8",
+          "start": 1795034608.906627,
+          "opened_by": "instance 22 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 220,
+              "start": 0.0,
+              "end": 0.051381
+            },
+            {
+              "flow": "churn",
+              "session": 221,
+              "start": 0.000803,
+              "end": 0.004648
+            },
+            {
+              "flow": "churn",
+              "session": 222,
+              "start": 0.006357,
+              "end": 0.006669
+            },
+            {
+              "flow": "churn",
+              "session": 223,
+              "start": 0.008135,
+              "end": 0.008505
+            },
+            {
+              "flow": "churn",
+              "session": 224,
+              "start": 0.011132,
+              "end": 0.011302
+            },
+            {
+              "flow": "churn",
+              "session": 225,
+              "start": 0.017667,
+              "end": 0.01787
+            },
+            {
+              "flow": "churn",
+              "session": 226,
+              "start": 0.024253,
+              "end": 0.024623
+            },
+            {
+              "flow": "churn",
+              "session": 227,
+              "start": 0.027028,
+              "end": 0.027189
+            },
+            {
+              "flow": "churn",
+              "session": 228,
+              "start": 0.031629,
+              "end": 0.035204
+            },
+            {
+              "flow": "churn",
+              "session": 229,
+              "start": 0.038612,
+              "end": 0.038872
+            },
+            {
+              "flow": "churn",
+              "session": 230,
+              "start": 0.045294,
+              "end": 0.045591
+            },
+            {
+              "flow": "churn",
+              "session": 231,
+              "start": 0.05093,
+              "end": 0.051223
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 23 (client 10.1.0.8, first packet 1795034608.906627): flow churn has 11 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 22 has no room for it (keeper already has 1 of 1)"
+          ]
+        },
+        {
+          "scenario": "conn_churn",
+          "instance": 24,
+          "client_ip": "10.1.0.8",
+          "start": 1795034610.162803,
+          "opened_by": "instance 23 has no room for it (keeper already has 1 of 1)",
+          "connections": [
+            {
+              "flow": "keeper",
+              "session": 299,
+              "start": 0.0,
+              "end": 0.001789
+            },
+            {
+              "flow": "churn",
+              "session": 300,
+              "start": 0.00044,
+              "end": 0.001601
+            }
+          ],
+          "failures": [
+            "scenario conn_churn instance 24 (client 10.1.0.8, first packet 1795034610.162803): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 23 has no room for it (keeper already has 1 of 1)"
+          ]
+        }
+      ],
+      "failures_total": 22,
+      "failures": [
+        "scenario conn_churn instance 1 (client 10.1.0.1, first packet 1795034606.474392): flow churn has 11 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)",
+        "scenario conn_churn instance 2 (client 10.1.0.1, first packet 1795034607.730508): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 1 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 3 (client 10.1.0.1, first packet 1795034608.971737): flow churn has 22 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 2 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 4 (client 10.1.0.2, first packet 1795034606.926769): flow churn has 21 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)",
+        "scenario conn_churn instance 5 (client 10.1.0.2, first packet 1795034607.886135): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 4 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 6 (client 10.1.0.2, first packet 1795034609.064881): flow churn has 2 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 5 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 9 (client 10.1.0.3, first packet 1795034609.069510): flow churn has 2 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 8 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 10 (client 10.1.0.4, first packet 1795034607.247950): flow churn has 8 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)",
+        "scenario conn_churn instance 11 (client 10.1.0.4, first packet 1795034608.414137): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 10 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 12 (client 10.1.0.4, first packet 1795034609.630187): flow churn has 18 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 11 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 13 (client 10.1.0.5, first packet 1795034607.261259): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)",
+        "scenario conn_churn instance 14 (client 10.1.0.5, first packet 1795034608.443040): flow churn has 6 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 13 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 15 (client 10.1.0.5, first packet 1795034609.707203): flow churn has 7 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 14 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 16 (client 10.1.0.6, first packet 1795034607.509264): flow churn has 19 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)",
+        "scenario conn_churn instance 17 (client 10.1.0.6, first packet 1795034608.633085): flow churn has 2 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 16 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 18 (client 10.1.0.6, first packet 1795034609.804420): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 17 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 19 (client 10.1.0.7, first packet 1795034607.602555): flow churn has 28 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)",
+        "scenario conn_churn instance 20 (client 10.1.0.7, first packet 1795034608.672965): flow churn has 20 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 19 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 21 (client 10.1.0.7, first packet 1795034610.025049): flow churn has 2 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 20 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 22 (client 10.1.0.8, first packet 1795034607.612856): flow churn has 5 connections, the scenario allows 32 (missing for edge spawn keeper -> churn)",
+        "scenario conn_churn instance 23 (client 10.1.0.8, first packet 1795034608.906627): flow churn has 11 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 22 has no room for it (keeper already has 1 of 1)",
+        "scenario conn_churn instance 24 (client 10.1.0.8, first packet 1795034610.162803): flow churn has 1 connections, the scenario allows 32 (missing for edge spawn keeper -> churn); this instance opened because instance 23 has no room for it (keeper already has 1 of 1)"
+      ]
+    }
+  ]
+}

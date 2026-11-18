@@ -1,0 +1,10 @@
+fps-agent: warning: no --module-trust-store: the signatures of 1 module(s) are not required and not checked
+fps-agent: plan run-http2-afxdp-0/agent-a with 4 tcp and 0 udp client workers and 4 tcp and 0 udp server workers, native functions [http2], load 4s
+fps-agent: backend af_xdp bound port client0 interface dpc attach native queues copy xdp_driver_mode XDP_MODE_NATIVE
+fps-agent: backend af_xdp bound port server0 interface dps attach native queues copy xdp_driver_mode XDP_MODE_NATIVE
+fps-agent: wrote 62240 bytes of TLS secrets to /tmp/tmp.fb8KtVDr4i/keys-0.log
+fps-agent: client sessions attempted 87 succeeded 87 failed 0
+fps-agent: server sessions attempted 87 succeeded 87 failed 0
+fps-agent: criterion sessions.failed_ratio < 0.001 measured 0 holds
+fps-agent: datapath lane 0 tcp frames 4163 udp datagrams sent 0 delivered 0 accepted 0
+fps-agent: verdict pass
