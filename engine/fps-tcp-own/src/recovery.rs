@@ -18,6 +18,7 @@
 //! that the smoothed round trip time and the slow start threshold are
 //! forgotten. The retransmission timeout itself stays in the connection.
 
+use super::cubic::{AckContext, Cubic};
 use super::host::{seq_le, seq_lt};
 use super::sack::Scoreboard;
 
@@ -122,7 +123,7 @@ pub enum Action {
 /// NewReno: slow start and congestion avoidance (RFC 5681 section 3.1), and
 /// fast retransmit and fast recovery with partial acknowledgments (RFC 5681
 /// section 3.2 and RFC 6582). The window is counted in bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NewReno {
     cwnd: u32,
     ssthresh: u32,
@@ -134,6 +135,39 @@ pub struct NewReno {
     /// The recovery runs on the SACK scoreboard (RFC 6675): the window does
     /// not inflate and a partial acknowledgment sends nothing by itself.
     sack: bool,
+    /// CUBIC (RFC 9438) in place of the additive increase and the halving,
+    /// when the stack is configured for it. The loss recovery around it is
+    /// the same.
+    cubic: Option<Cubic>,
+}
+
+/// The choice of congestion control in the stack configuration.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CongestionControl {
+    /// NewReno (RFC 5681, RFC 6582).
+    NewReno,
+    /// CUBIC (RFC 9438), the default of the Linux kernel.
+    #[default]
+    Cubic,
+}
+
+impl CongestionControl {
+    /// The name of the choice, as `tcp_bench --own-cc` spells it.
+    pub fn name(self) -> &'static str {
+        match self {
+            CongestionControl::NewReno => "newreno",
+            CongestionControl::Cubic => "cubic",
+        }
+    }
+
+    /// Reads the name of a choice.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "newreno" => Some(CongestionControl::NewReno),
+            "cubic" => Some(CongestionControl::Cubic),
+            _ => None,
+        }
+    }
 }
 
 /// The largest congestion window, which no real flight of this stack reaches.
@@ -153,6 +187,31 @@ impl NewReno {
             recover: 0,
             has_recover: false,
             sack: false,
+            cubic: None,
+        }
+    }
+
+    /// A new state like [`NewReno::new`] whose window rules are those of
+    /// `cc`.
+    pub fn with_control(cc: CongestionControl, mss: u16, iw_segments: u32) -> Self {
+        let mut state = Self::new(mss, iw_segments);
+        if cc == CongestionControl::Cubic {
+            state.cubic = Some(Cubic::new(state.mss));
+        }
+        state
+    }
+
+    /// The CUBIC state, when CUBIC is the control.
+    pub fn cubic(&self) -> Option<&Cubic> {
+        self.cubic.as_ref()
+    }
+
+    /// The congestion control that this state runs.
+    pub fn control(&self) -> CongestionControl {
+        if self.cubic.is_some() {
+            CongestionControl::Cubic
+        } else {
+            CongestionControl::NewReno
         }
     }
 
@@ -181,6 +240,17 @@ impl NewReno {
         (flight / 2).max(2 * self.mss)
     }
 
+    /// The new slow start threshold at a congestion event of fast retransmit:
+    /// half the flight for NewReno, 0.7 of it for CUBIC (which also notes
+    /// `W_max`).
+    fn event_ssthresh(&mut self, flight: u32) -> u32 {
+        let cwnd = self.cwnd;
+        match self.cubic.as_mut() {
+            Some(cubic) => cubic.on_loss(cwnd, flight),
+            None => self.reduced(flight),
+        }
+    }
+
     /// A duplicate acknowledgment with acknowledgment number `ack` arrived.
     /// `flight` is the data outstanding and `snd_max` the highest sequence
     /// number sent. The third one starts a fast retransmit, unless the
@@ -203,7 +273,7 @@ impl NewReno {
         if self.has_recover && seq_lt(ack, self.recover) {
             return Action::None;
         }
-        self.ssthresh = self.reduced(flight);
+        self.ssthresh = self.event_ssthresh(flight);
         self.recover = snd_max;
         self.has_recover = true;
         self.in_recovery = true;
@@ -225,7 +295,7 @@ impl NewReno {
         if self.has_recover && seq_lt(ack, self.recover) {
             return Action::None;
         }
-        self.ssthresh = self.reduced(flight);
+        self.ssthresh = self.event_ssthresh(flight);
         self.cwnd = self.ssthresh;
         self.recover = snd_max;
         self.has_recover = true;
@@ -256,6 +326,12 @@ impl NewReno {
     /// acknowledgment (below `recover`) asks for a retransmission of the next
     /// hole and deflates the window, and a full one ends the recovery.
     pub fn on_new_ack(&mut self, ack: u32, acked: u32) -> Action {
+        self.on_new_ack_at(ack, acked, &AckContext::default())
+    }
+
+    /// Like [`NewReno::on_new_ack`], with the time, the round trip time, and
+    /// the flight that CUBIC needs.
+    pub fn on_new_ack_at(&mut self, ack: u32, acked: u32, ctx: &AckContext) -> Action {
         self.dupacks = 0;
         if self.in_recovery {
             if self.sack && seq_lt(ack, self.recover) {
@@ -270,6 +346,9 @@ impl NewReno {
                 self.cwnd = self.ssthresh;
                 self.in_recovery = false;
                 self.sack = false;
+                if let Some(cubic) = self.cubic.as_mut() {
+                    cubic.on_recovery_exit(self.cwnd);
+                }
                 return Action::None;
             }
             // A partial acknowledgment.
@@ -293,6 +372,12 @@ impl NewReno {
             acked -= grow;
         }
         if acked > 0 && self.cwnd >= self.ssthresh {
+            if let Some(cubic) = self.cubic.as_mut() {
+                // CUBIC (RFC 9438 section 4): the window follows the cubic
+                // function of the time since the last event.
+                self.cwnd = cubic.on_ack(self.cwnd, acked, ctx).min(CWND_MAX);
+                return Action::None;
+            }
             // Congestion avoidance: about one segment per round trip, as
             // RFC 5681 equation 3 gives for one segment per ACK and
             // proportionally more for an ACK of several.
@@ -310,7 +395,11 @@ impl NewReno {
     /// highest sequence number so that duplicate acknowledgments of the old
     /// flight do not start another recovery.
     pub fn on_timeout(&mut self, flight: u32, snd_max: u32) {
-        self.ssthresh = self.reduced(flight);
+        let (cwnd, was_recovery) = (self.cwnd, self.in_recovery);
+        self.ssthresh = match self.cubic.as_mut() {
+            Some(cubic) => cubic.on_rto(cwnd, flight, was_recovery),
+            None => self.reduced(flight),
+        };
         self.cwnd = self.mss;
         self.in_recovery = false;
         self.sack = false;
@@ -516,9 +605,9 @@ pub struct Recovery {
 impl Recovery {
     /// A state for a connection that sends segments of `mss` bytes, whose
     /// next sequence number is `snd_nxt`.
-    pub fn new(mss: u16, iw_segments: u32, snd_nxt: u32) -> Self {
+    pub fn new(control: CongestionControl, mss: u16, iw_segments: u32, snd_nxt: u32) -> Self {
         Self {
-            cc: NewReno::new(mss, iw_segments),
+            cc: NewReno::with_control(control, mss, iw_segments),
             rtt: RttEstimator::default(),
             snd_max: snd_nxt,
             fin_sent: false,
@@ -623,7 +712,7 @@ mod tests {
 
     #[test]
     fn one_segment_is_timed_at_a_time_and_its_ack_gives_the_sample() {
-        let mut r = Recovery::new(MSS, 10, 1000);
+        let mut r = Recovery::new(CongestionControl::NewReno, MSS, 10, 1000);
         r.time_segment(2000, 100);
         // A second segment is not timed while the first one is.
         r.time_segment(3000, 150);
@@ -635,7 +724,7 @@ mod tests {
 
     #[test]
     fn a_segment_that_was_sent_again_gives_no_sample() {
-        let mut r = Recovery::new(MSS, 10, 1000);
+        let mut r = Recovery::new(CongestionControl::NewReno, MSS, 10, 1000);
         r.time_segment(2000, 100);
         r.retransmitted();
         assert_eq!(r.take_sample(2000, 340), None);
@@ -646,7 +735,7 @@ mod tests {
 
     #[test]
     fn the_sample_works_across_the_sequence_wrap() {
-        let mut r = Recovery::new(MSS, 10, u32::MAX - 500);
+        let mut r = Recovery::new(CongestionControl::NewReno, MSS, 10, u32::MAX - 500);
         r.time_segment(499, 0);
         assert_eq!(r.take_sample(u32::MAX - 10, 10), None);
         assert_eq!(r.take_sample(600, 77), Some(77));
@@ -1017,7 +1106,7 @@ mod tests {
 
     #[test]
     fn a_recovery_box_has_the_initial_window_and_no_sample() {
-        let r = Recovery::new(1460, 10, 77);
+        let r = Recovery::new(CongestionControl::NewReno, 1460, 10, 77);
         assert_eq!(r.cc.cwnd(), 14_600);
         assert_eq!(r.snd_max, 77);
         assert!(r.probe.is_none() && r.ooo.is_empty() && !r.rtx && !r.fin_sent);
@@ -1140,5 +1229,166 @@ mod tests {
         for _ in 0..4 {
             assert_eq!(cc.on_dupack_sack(9000, 8 * M, 13_000, true), Action::None);
         }
+    }
+
+    // ---- CUBIC (TRN-25) ----
+
+    fn cubic(iw: u32) -> NewReno {
+        NewReno::with_control(CongestionControl::Cubic, MSS, iw)
+    }
+
+    fn ctx(now_us: i64, flight: u32) -> AckContext {
+        AckContext {
+            now_us,
+            srtt_us: Some(100_000),
+            flight,
+        }
+    }
+
+    #[test]
+    fn the_control_is_cubic_by_default_and_newreno_when_asked() {
+        assert_eq!(CongestionControl::default(), CongestionControl::Cubic);
+        assert_eq!(cubic(10).control(), CongestionControl::Cubic);
+        assert_eq!(NewReno::new(MSS, 10).control(), CongestionControl::NewReno);
+        assert_eq!(
+            CongestionControl::from_name("cubic"),
+            Some(CongestionControl::Cubic)
+        );
+        assert_eq!(
+            CongestionControl::from_name("newreno"),
+            Some(CongestionControl::NewReno)
+        );
+        assert_eq!(CongestionControl::from_name("reno"), None);
+        assert_eq!(CongestionControl::Cubic.name(), "cubic");
+    }
+
+    #[test]
+    fn slow_start_is_the_same_under_cubic() {
+        let (mut a, mut b) = (cubic(10), NewReno::new(MSS, 10));
+        for i in 1..20 {
+            a.on_new_ack_at(1000 * i, 1000, &ctx(i64::from(i) * 1000, 10_000));
+            b.on_new_ack(1000 * i, 1000);
+        }
+        assert_eq!(a.cwnd(), b.cwnd());
+    }
+
+    #[test]
+    fn the_third_duplicate_reduces_by_beta_under_cubic() {
+        let mut cc = cubic(20);
+        assert_eq!(cc.on_dupack(1000, 20 * M, 21_000), Action::None);
+        assert_eq!(cc.on_dupack(1000, 20 * M, 21_000), Action::None);
+        assert_eq!(cc.on_dupack(1000, 20 * M, 21_000), Action::Retransmit);
+        // 0.7 of the flight of 20 segments, and 3 segments of inflation.
+        assert_eq!(cc.ssthresh(), 14 * M);
+        assert_eq!(cc.cwnd(), 17 * M);
+        assert_eq!(cc.cubic().expect("cubic").w_max(), f64::from(20 * M));
+    }
+
+    #[test]
+    fn a_sack_recovery_under_cubic_leaves_the_window_at_the_threshold() {
+        let mut cc = cubic(20);
+        assert_eq!(
+            cc.on_dupack_sack(1000, 20 * M, 21_000, true),
+            Action::Retransmit
+        );
+        assert_eq!(cc.ssthresh(), 14 * M);
+        assert_eq!(cc.cwnd(), 14 * M);
+        assert!(cc.sack_recovery());
+        // A partial acknowledgment changes nothing, a full one ends the
+        // recovery at the threshold and the next acknowledgment grows it on
+        // the cubic curve.
+        assert_eq!(
+            cc.on_new_ack_at(5000, 4000, &ctx(1000, 15 * M)),
+            Action::None
+        );
+        assert_eq!(cc.cwnd(), 14 * M);
+        assert_eq!(
+            cc.on_new_ack_at(21_000, 16_000, &ctx(2000, 0)),
+            Action::None
+        );
+        assert!(!cc.in_recovery());
+        assert_eq!(cc.cwnd(), 14 * M);
+        cc.on_new_ack_at(22_000, 1000, &ctx(3000, 5000));
+        assert!(cc.cwnd() >= 14 * M);
+    }
+
+    #[test]
+    fn the_recover_guard_holds_under_cubic() {
+        let mut cc = cubic(20);
+        cc.on_dupack_sack(1000, 20 * M, 21_000, true);
+        cc.on_new_ack_at(21_000, 20_000, &ctx(0, 0));
+        // Duplicates of an acknowledgment below `recover` do not start a
+        // second recovery and so do not reduce again.
+        let after = (cc.ssthresh(), cc.cwnd());
+        assert_eq!(cc.on_dupack_sack(5000, 10 * M, 31_000, true), Action::None);
+        assert_eq!((cc.ssthresh(), cc.cwnd()), after);
+    }
+
+    #[test]
+    fn a_timeout_under_cubic_falls_to_one_segment_and_keeps_beta_of_the_flight() {
+        let mut cc = cubic(20);
+        cc.on_timeout(20 * M, 21_000);
+        assert_eq!(cc.cwnd(), M);
+        assert_eq!(cc.ssthresh(), 14 * M);
+        assert!(!cc.in_recovery());
+        // Slow start climbs back to the threshold, then the cubic curve
+        // takes over from there.
+        let mut acked = 0;
+        while cc.cwnd() < cc.ssthresh() {
+            acked += M;
+            cc.on_new_ack_at(1000 + acked, M, &ctx(i64::from(acked), 10 * M));
+        }
+        assert_eq!(cc.cwnd(), cc.ssthresh());
+    }
+
+    #[test]
+    fn a_timeout_in_a_recovery_is_not_a_second_event_for_wmax() {
+        let mut cc = cubic(20);
+        cc.on_dupack_sack(1000, 20 * M, 21_000, true);
+        let w_max = cc.cubic().expect("cubic").w_max();
+        cc.on_timeout(18 * M, 21_000);
+        assert_eq!(cc.cubic().expect("cubic").w_max(), w_max);
+        assert_eq!(cc.cwnd(), M);
+        assert_eq!(cc.ssthresh(), (f64::from(18 * M) * 0.7) as u32);
+    }
+
+    #[test]
+    fn a_second_loss_below_wmax_applies_fast_convergence_under_cubic() {
+        let mut cc = cubic(20);
+        cc.on_dupack_sack(1000, 20 * M, 21_000, true);
+        cc.on_new_ack_at(21_000, 20_000, &ctx(0, 0));
+        // The window is 14 segments, below W_max of 20: the next event
+        // lowers W_max to 14 * 0.85.
+        cc.on_dupack_sack(21_000, 14 * M, 40_000, true);
+        let w_max = cc.cubic().expect("cubic").w_max();
+        assert!((w_max - f64::from(14 * M) * 0.85).abs() < 1.0, "{w_max}");
+    }
+
+    #[test]
+    fn under_cubic_the_window_grows_faster_than_newreno_at_a_large_window() {
+        // A window of 2,000 segments after a loss, 100 ms round trip, 30 s
+        // of acknowledgments: the cubic curve recovers W_max in K seconds
+        // where NewReno needs hundreds of rounds.
+        let mut reno = NewReno::new(MSS, 10);
+        let mut cub = cubic(10);
+        for cc in [&mut reno, &mut cub] {
+            cc.on_dupack_sack(1000, 2000 * M, 3_000_000, true);
+            cc.on_new_ack_at(3_000_000, 2000 * M, &ctx(0, 0));
+        }
+        let (mut ack, mut now) = (3_000_000u32, 0i64);
+        for _ in 0..300 {
+            now += 100_000;
+            for cc in [&mut reno, &mut cub] {
+                let w = cc.cwnd();
+                cc.on_new_ack_at(ack.wrapping_add(w), w, &ctx(now, w));
+            }
+            ack = ack.wrapping_add(reno.cwnd());
+        }
+        assert!(
+            cub.cwnd() > reno.cwnd() + 100 * M,
+            "{} {}",
+            cub.cwnd(),
+            reno.cwnd()
+        );
     }
 }

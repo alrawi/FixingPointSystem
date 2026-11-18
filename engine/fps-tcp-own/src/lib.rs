@@ -80,6 +80,7 @@
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 pub mod clock;
+pub mod cubic;
 pub mod host;
 pub mod net;
 pub mod pools;
@@ -106,6 +107,7 @@ use crate::clock::{Clock, MonotonicClock};
 use host::{Host, HostCounters};
 use net::{ETH_LEN, VLAN_TAG_LEN};
 pub use pools::{HostSlice, PoolError, Pools};
+pub use recovery::CongestionControl;
 
 /// The frames that one call of the link moves at most.
 const BATCH: usize = 64;
@@ -134,6 +136,10 @@ pub struct OwnConfig {
     pub max_rto_us: i64,
     /// The initial congestion window in segments (RFC 6928 allows ten).
     pub initial_cwnd_segments: u32,
+    /// The congestion control: CUBIC (RFC 9438, the default of the Linux
+    /// kernel) or NewReno (RFC 5681, RFC 6582). Both run on the same loss
+    /// recovery; only the window rules differ.
+    pub congestion_control: CongestionControl,
     /// The timeouts in a row after which a connection is reset.
     pub max_retries: u8,
     /// How long a closed tuple is held, in microseconds. RFC 9293 says twice
@@ -177,6 +183,7 @@ impl Default for OwnConfig {
             min_rto_us: 200_000,
             max_rto_us: 2_000_000,
             initial_cwnd_segments: 10,
+            congestion_control: CongestionControl::Cubic,
             max_retries: 8,
             time_wait_us: 1_000_000,
             fin_wait2_us: 10_000_000,

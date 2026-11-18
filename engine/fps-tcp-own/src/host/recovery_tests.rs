@@ -21,6 +21,7 @@ fn plain() -> OwnConfig {
         timestamps: false,
         sack: false,
         delayed_ack: false,
+        congestion_control: CongestionControl::NewReno,
         ..OwnConfig::default()
     }
 }
@@ -1103,4 +1104,93 @@ fn a_retransmission_of_the_oldest_segment_starts_the_timeout_again() {
         assert_eq!(p.received, pattern(10 * 1400));
         assert_eq!(p.client.counters.timeouts, 0, "{:?}", p.client.counters);
     }
+}
+
+// ---- CUBIC (TRN-25) ----
+
+fn cubic_plain() -> OwnConfig {
+    OwnConfig {
+        congestion_control: CongestionControl::Cubic,
+        ..plain()
+    }
+}
+
+#[test]
+fn cubic_is_the_default_and_the_state_lives_in_the_box() {
+    assert_eq!(
+        OwnConfig::default().congestion_control,
+        CongestionControl::Cubic
+    );
+    let mut p = Pair::new(cubic_plain());
+    p.write(&pattern(5 * MSS));
+    p.client.flush_dirty(p.now);
+    let rec = p.conn().rec.as_ref().expect("state");
+    assert_eq!(rec.cc.control(), CongestionControl::Cubic);
+    // The idle connection holds no CUBIC state: the whole state is in the box.
+    p.pump(&mut |_| false);
+    assert!(p.client.conn(p.c.0).is_none() || p.conn().rec.is_none());
+}
+
+#[test]
+fn a_fast_retransmit_under_cubic_reduces_the_window_by_seven_tenths() {
+    let mut p = Pair::new(cubic_plain());
+    p.write(&pattern(30 * MSS));
+    p.client.flush_dirty(p.now);
+    let flight: Vec<Vec<u8>> = p.client.out.queue.drain(..).collect();
+    for frame in flight.iter().skip(1).take(4) {
+        p.server.input(frame, p.now);
+    }
+    p.server.flush_dirty(p.now);
+    let acks: Vec<Vec<u8>> = p.server.out.queue.drain(..).collect();
+    for ack in acks.iter().take(3) {
+        p.client.input(ack, p.now);
+    }
+    let rec = p.conn().rec.as_ref().expect("state");
+    assert!(rec.cc.in_recovery());
+    // ssthresh = 0.7 * 10 MSS; cwnd = ssthresh + 3 MSS (no SACK here).
+    assert_eq!(rec.cc.ssthresh(), 7 * MSS as u32);
+    assert_eq!(rec.cc.cwnd(), 10 * MSS as u32);
+}
+
+#[test]
+fn a_timeout_under_cubic_keeps_seven_tenths_of_the_flight() {
+    let mut p = Pair::new(cubic_plain());
+    p.write(&pattern(20 * MSS));
+    p.pump(&mut |i| i < 10);
+    p.now += 250_000;
+    p.client.expire(p.now);
+    let rec = p.conn().rec.as_ref().expect("state");
+    assert_eq!(rec.cc.cwnd(), MSS as u32);
+    assert_eq!(rec.cc.ssthresh(), 7 * MSS as u32);
+    assert!(!rec.cc.in_recovery());
+}
+
+#[test]
+fn a_sack_recovery_under_cubic_repairs_the_holes_and_completes_the_transfer() {
+    let cfg = OwnConfig {
+        congestion_control: CongestionControl::Cubic,
+        ..sack_only()
+    };
+    let (p, elapsed) = flight_with_losses(cfg, 10 * 1400, &[0, 2, 4, 6]);
+    assert_eq!(p.client.counters.timeouts, 0);
+    assert_eq!(p.client.counters.sack_recoveries, 1);
+    assert_eq!(p.client.counters.retransmits, 4);
+    assert!(elapsed <= 3 * 20_000, "{elapsed}");
+}
+
+#[test]
+fn a_lost_retransmission_under_cubic_falls_back_to_the_timeout_and_completes() {
+    let mut p = Pair::new(OwnConfig {
+        congestion_control: CongestionControl::Cubic,
+        ..sack_only()
+    });
+    p.hop = 10_000;
+    p.write(&pattern(10 * 1400));
+    p.pump(&mut |i| i == 0 || i == 10);
+    assert_ne!(p.received, pattern(10 * 1400));
+    p.now += 250_000;
+    assert_eq!(p.client.expire(p.now), 1);
+    p.pump(&mut |_| false);
+    assert_eq!(p.received, pattern(10 * 1400));
+    assert_eq!(p.client.counters.timeouts, 1);
 }
