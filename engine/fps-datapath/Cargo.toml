@@ -16,4 +16,10 @@ thiserror = "2"
 tokio = { version = "1.54", features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
+fps-backend-kernel = { path = "../fps-backend-kernel" }
+fps-flow = { path = "../fps-flow" }
+fps-interp = { path = "../fps-interp" }
+fps-io = { path = "../fps-io" }
+fps-module-dns = { path = "../../modules/dns/native" }
+libc = "0.2"
 tokio = { version = "1.54", features = ["io-util", "macros", "rt", "sync", "time"] }
