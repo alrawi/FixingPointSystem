@@ -256,9 +256,18 @@ impl Out {
             window,
             mss,
         };
-        let mut frame = Vec::with_capacity(
-            ETH_LEN + VLAN_TAG_LEN + wire::IP_LEN + wire::TCP_LEN + wire::MSS_OPTION_LEN,
-        );
+        let body = wire::IP_LEN
+            + wire::TCP_LEN
+            + if mss.is_some() {
+                wire::MSS_OPTION_LEN
+            } else {
+                0
+            }
+            + payload.0.len()
+            + payload.1.len();
+        // One allocation for the whole frame, with room for a VLAN tag and
+        // for the padding of a short frame.
+        let mut frame = Vec::with_capacity((ETH_LEN + VLAN_TAG_LEN + body).max(MIN_FRAME_LEN));
         if !self.station.head(&mut frame, ips.0, ips.1) {
             counters.unresolved += 1;
             return;

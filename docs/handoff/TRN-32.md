@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-32` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 70% (3 of 4 plan steps) |
+| Progress | 95% (4 of 4 plan steps) |
 | Current holder | claude-7c41e9, lease until 2026-11-18T02:56:32Z |
 | Last verified commit | none |
 
@@ -19,7 +19,7 @@ Give the own stack (engine/fps-tcp-own) a connection table keyed by the full 4-t
 - [x] 1. 4-tuple table and address pool in the stack, with unit tests
 - [x] 2. Ethernet and VLAN framing, neighbor lookup, with unit tests
 - [x] 3. fps-tcp adapter and tcp_bench pool option
-- [ ] 4. Benchmark run committed, log entry, checks, PR
+- [x] 4. Benchmark run committed, log entry, checks, PR
 
 ## Done and verified
 
@@ -27,8 +27,10 @@ Steps 1 to 3: Tuple-keyed table (host.rs), net.rs (Ethernet, VLAN, Station with 
 
 ## Remaining
 
-Step 4: run tcp_bench scale at 1,000,000 sockets with --own-pool 20000 and commit results under engine/fps-tcp/results/sandbox-2vcpu-trn32/ with host.txt; clippy, fmt, deny, plan checks; log entry; PR.
+CI on the PR. The 50,000 probe sessions per second acceptance reads 46,500 to 48,600 in this sandbox session, equal to the unchanged base (47,200 to 49,100); rerun on a quiet host (see results host.txt).
+
+(older text) Step 4: run tcp_bench scale at 1,000,000 sockets with --own-pool 20000 and commit results under engine/fps-tcp/results/sandbox-2vcpu-trn32/ with host.txt; clippy, fmt, deny, plan checks; log entry; PR.
 
 ## Next action
 
-Build the release example and run the scale workload with the pool.
+Wait for CI, then set ready for review. (older) Build the release example and run the scale workload with the pool.

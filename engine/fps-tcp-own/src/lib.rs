@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! The own TCP stack of the engine, the second measured candidate of TRN-10.
 //!
-//! The stack is two [`host::Host`]s, a client at `10.0.0.1` and a server at
-//! `10.0.0.2`, that exchange IPv4 frames over a pair of
+//! The stack is two [`host::Host`]s, a client side and a server side, each
+//! serving a pool of hosts ([`Pools`]; by default one host at `10.0.0.1` and
+//! one at `10.0.1.1`), that exchange Ethernet frames (IPv4, optionally with an
+//! 802.1Q tag, see [`net`]) over a pair of
 //! [`fps_backend_afxdp::FrameIo`] queues. The default link is the in memory
 //! pair of the AF_XDP crate, so the stack needs no root, and the same code
 //! runs over an AF_XDP queue in TRN-12. Sessions leave the stack as
@@ -38,7 +40,9 @@
 //! * Out of order segments are dropped, and the receiver repeats its ACK.
 //! * No simultaneous open, no urgent data, no IP fragmentation or options, no
 //!   keepalive, and no IPv6.
-//! * One peer per host, so the table is keyed by the two ports.
+//! * No ARP requests of its own: the neighbors are read from the tables of
+//!   `fps-hosts` (HST-03), and the stack answers ARP for its own hosts. The
+//!   connection table is keyed by both addresses and both ports (TRN-32).
 //!
 //! The timers sit in a heap with at most one entry per connection, so a poll
 //! with idle sockets costs the same for ten sockets and for a million, which

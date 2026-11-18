@@ -16,6 +16,7 @@
 //! [`Responder`] of `fps-hosts`, so a switch or a real peer can resolve them.
 //! The stack speaks IPv4 only, so IPv6 neighbor discovery has no user here.
 
+use std::cell::Cell;
 use std::net::Ipv4Addr;
 
 pub use fps_hosts::wire::{ETHERTYPE_ARP, ETHERTYPE_IPV4, MAX_REPLY_LEN};
@@ -149,6 +150,12 @@ pub struct Station {
     vlan: Option<u16>,
     local: Responder,
     peers: NeighborTable,
+    /// The last local host and the last neighbor that were found. The frames
+    /// of one connection repeat the same two addresses, so the table, which
+    /// walks its slices, is read about once per connection and not once per
+    /// frame.
+    last_local: Cell<Option<(u32, MacAddr)>>,
+    last_peer: Cell<Option<(u32, MacAddr)>>,
 }
 
 impl Station {
@@ -168,6 +175,8 @@ impl Station {
             vlan,
             local: Responder::new(local),
             peers,
+            last_local: Cell::new(None),
+            last_peer: Cell::new(None),
         })
     }
 
@@ -183,17 +192,31 @@ impl Station {
 
     /// Reports whether `ip` belongs to a host of the station.
     pub fn owns(&self, ip: u32) -> bool {
-        self.local.table().lookup_v4(Ipv4Addr::from(ip)).is_some()
+        self.local_mac(ip).is_some()
     }
 
     /// The MAC address of the local host `ip`.
     pub fn local_mac(&self, ip: u32) -> Option<MacAddr> {
-        self.local.table().lookup_v4(Ipv4Addr::from(ip))
+        if let Some((cached, mac)) = self.last_local.get() {
+            if cached == ip {
+                return Some(mac);
+            }
+        }
+        let mac = self.local.table().lookup_v4(Ipv4Addr::from(ip))?;
+        self.last_local.set(Some((ip, mac)));
+        Some(mac)
     }
 
     /// The MAC address of the neighbor `ip`.
     pub fn resolve(&self, ip: u32) -> Option<MacAddr> {
-        self.peers.lookup_v4(Ipv4Addr::from(ip))
+        if let Some((cached, mac)) = self.last_peer.get() {
+            if cached == ip {
+                return Some(mac);
+            }
+        }
+        let mac = self.peers.lookup_v4(Ipv4Addr::from(ip))?;
+        self.last_peer.set(Some((ip, mac)));
+        Some(mac)
     }
 
     /// Writes the Ethernet header for a packet from the local host `src_ip`
