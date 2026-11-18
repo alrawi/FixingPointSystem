@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #661 |
 | Branch | `wp/ENG-31` |
-| Pull request | to be opened |
-| Status | in progress |
-| Progress | 90% (3 of 4 plan steps) |
-| Current holder | claude-e31a7c, lease until 2026-11-18T14:33:14Z |
-| Last verified commit | 43bbc88 |
+| Pull request | #666 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
+| Current holder | claude-e31a7c, lease until 2026-11-18T14:44:34Z |
+| Last verified commit | edc532b |
 
 ## Goal
 
@@ -19,7 +19,7 @@ The workers of `fps-runtime` open sessions only through `fps_backend_kernel` (`C
 - [x] 1. Claim commit and handoff file
 - [x] 2. The trait, the session types, and the kernel implementation (`transport.rs`, `kernel.rs`)
 - [x] 3. Move the TCP workers, the data ports, the instances, and the UDP ports onto the trait; keep the existing tests passing
-- [ ] 4. Fake transport test (written), Engine page, log entry, full checks, pull request, CI
+- [x] 4. Fake transport test, Engine page, log entry, full checks, pull request, CI
 
 ## Done and verified
 
@@ -28,13 +28,15 @@ The workers of `fps-runtime` open sessions only through `fps_backend_kernel` (`C
 - `cargo clippy -p fps-runtime -p fps-agent --all-targets -- -D warnings` and `cargo fmt --check` are clean.
 - `plan.py check`, `render --check`, and `lint` pass.
 
+- PR #666: all 30 check runs of edc532b succeeded, among them `rust`.
+
 ## Remaining
 
-The pull request and its CI.
+Nothing.
 
 ## Next action
 
-Open the pull request and wait for CI.
+The coordinator reviews PR #666.
 
 ## Blockers and open questions
 
@@ -66,4 +68,5 @@ CARGO_TARGET_DIR=$PWD/target-ENG-31 cargo test -p fps-agent
 |---|---|---|---|---|
 | 2026-11-18T12:55Z | claude-e31a7c | claim | 33ea43e | claimed #661 with card 6979070048 |
 | 2026-11-18T13:25Z | claude-e31a7c | checkpoint | 43bbc88 | the seam, the kernel transport, the workers moved, the fake transport test |
-| 2026-11-18T13:50Z | claude-e31a7c | checkpoint | see PR | clippy fixes, handoff, pull request |
+| 2026-11-18T13:50Z | claude-e31a7c | checkpoint | edc532b | clippy fixes, handoff, PR #666 opened |
+| 2026-11-18T14:15Z | claude-e31a7c | review | see PR | CI green at edc532b, moved to review |
