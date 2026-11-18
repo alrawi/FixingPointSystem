@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #658 |
 | Branch | `wp/TRN-33` |
-| Pull request | #0 |
+| Pull request | #667 |
 | Status | in progress |
 | Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-7c2e91, lease renewed at each heartbeat |
