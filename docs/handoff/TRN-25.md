@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #626 |
 | Branch | `wp/TRN-25` |
-| Pull request | opened, see the status card on the issue |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Pull request | #649 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-9a5394, see the status card on the issue |
 | Last verified commit | see the session log |
 
@@ -20,7 +20,7 @@ CUBIC (RFC 9438) next to the NewReno of TRN-23 in the own stack, selectable in t
 - [x] 2. `tcp_bench --own-cc`, the multi flow workload (`--loss-flows`, `--loss-profile bottleneck`), kernel peers for N flows, report rows.
 - [x] 3. Sandbox measurements (own newreno and cubic, smoltcp), bytes per socket on the 1M scale row (263), results folder `engine/fps-tcp/results/sandbox-2vcpu-trn25/`.
 - [x] 4. Wiki: Transport page, log entry; checks (test, clippy, fmt, deny, plan.py).
-- [ ] 5. Pull request, CI, review.
+- [x] 5. Pull request #649, CI green.
 
 ## Done and verified
 
@@ -33,11 +33,11 @@ The kernel rows need netem and run in the tcp-bench workflow (job=loss, hosted r
 
 ## Remaining
 
-CI result and review. The kernel rows of both acceptance items (hosted runner).
+Review. The kernel rows of both acceptance items (hosted runner).
 
 ## Next action
 
-Poll the check runs of the pull request.
+Review the pull request.
 
 ## Blockers and open questions
 
@@ -68,3 +68,4 @@ CARGO_TARGET_DIR=$PWD/target-TRN-25 CARGO_BUILD_JOBS=1 cargo test -p fps-tcp-own
 | 2026-11-18 | claude-9a5394 | claim | none | claimed #626 |
 | 2026-11-18 | claude-9a5394 | checkpoint | 39d22b2 | CUBIC, config, tests |
 | 2026-11-18 | claude-9a5394 | checkpoint | next commit | bench flags, fairness workload, results, wiki |
+| 2026-11-18 | claude-9a5394 | ready for review | c98225c | PR #649, CI green |
