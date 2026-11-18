@@ -346,6 +346,168 @@ impl SharedTap {
     }
 }
 
+/// What the own stack was set to do in a run, for [`violations`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OwnSide {
+    /// Whether the own stack opened the connection.
+    pub opener: bool,
+    /// Its MTU, so its MSS is this minus 40.
+    pub mtu: usize,
+    /// Whether it offers window scaling.
+    pub window_scale: bool,
+    /// Whether it offers SACK.
+    pub sack: bool,
+    /// Whether it offers timestamps.
+    pub timestamps: bool,
+    /// Its receive buffer in bytes, the most that it advertises.
+    pub rcv_buffer: usize,
+}
+
+/// Compares a summary with what the RFCs ask of two stacks, one of them the
+/// own stack described by `own`, and returns what differs. `loss` says the
+/// run lost frames, so SACK blocks are due; `peer_rcv_buffer` is the receive
+/// buffer of the peer when it is known and bounds its advertised window.
+///
+/// The checks hold for any peer: an acceptor answers an option only when the
+/// SYN had it (RFC 7323, RFC 2018); the own stack offers what it is set to
+/// offer and, as an acceptor, answers what it offers and the opener offered;
+/// no segment is larger than the MSS or the MTU; timestamps appear on every
+/// data segment when both SYNs had them and on none when they did not; a
+/// window above 65,535 bytes needs the scale on both SYNs; and after a loss
+/// the receiver of the bulk reports holes with SACK blocks when both SYNs
+/// had SACK, and never when they did not.
+pub fn violations(
+    wire: &WireSummary,
+    own: &OwnSide,
+    loss: bool,
+    peer_rcv_buffer: Option<u64>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut check = |ok: bool, what: &str| {
+        if !ok {
+            out.push(what.to_string());
+        }
+    };
+    check(wire.bad_checksums == 0, "a segment had a wrong checksum");
+    check(
+        wire.malformed == 0,
+        "a segment had options that smoltcp cannot parse",
+    );
+    let (Some(syn), Some(syn_ack)) = (wire.syn, wire.syn_ack) else {
+        out.push("the tap saw no handshake".to_string());
+        return out;
+    };
+    check(
+        !syn_ack.timestamps || syn.timestamps,
+        "the SYN-ACK has timestamps that the SYN did not offer",
+    );
+    check(
+        syn_ack.window_scale.is_none() || syn.window_scale.is_some(),
+        "the SYN-ACK has a window scale that the SYN did not offer",
+    );
+    check(
+        !syn_ack.sack_permitted || syn.sack_permitted,
+        "the SYN-ACK has SACK permitted that the SYN did not offer",
+    );
+    let (own_syn, peer_syn) = if own.opener {
+        (syn, syn_ack)
+    } else {
+        (syn_ack, syn)
+    };
+    let mss = u16::try_from(own.mtu.saturating_sub(40)).ok();
+    check(
+        own_syn.mss == mss,
+        "the MSS of the own stack is not its MTU minus 40",
+    );
+    let offered = |configured: bool, peer: bool| configured && (own.opener || peer);
+    check(
+        own_syn.window_scale.is_some()
+            == offered(own.window_scale, peer_syn.window_scale.is_some()),
+        "the window scale of the own stack differs from its setting",
+    );
+    check(
+        own_syn.sack_permitted == offered(own.sack, peer_syn.sack_permitted),
+        "SACK permitted of the own stack differs from its setting",
+    );
+    check(
+        own_syn.timestamps == offered(own.timestamps, peer_syn.timestamps),
+        "the timestamps of the own stack differ from its setting",
+    );
+    let effective = u64::from(wire.effective_mss().unwrap_or(536));
+    for (name, dir) in [("opener", wire.opener), ("acceptor", wire.acceptor)] {
+        check(dir.segments > 1, &format!("the {name} sent nothing"));
+        check(
+            dir.max_payload <= effective,
+            &format!("the {name} sent a segment above the MSS"),
+        );
+        check(
+            dir.max_ip_len <= own.mtu as u64,
+            &format!("the {name} sent a packet above the MTU"),
+        );
+    }
+    if wire.timestamps_agreed() {
+        for (name, dir) in [("opener", wire.opener), ("acceptor", wire.acceptor)] {
+            check(
+                dir.data_with_timestamps == dir.data_segments,
+                &format!("a data segment of the {name} has no timestamps"),
+            );
+            check(
+                dir.with_timestamps > 0,
+                &format!("the {name} never sent timestamps"),
+            );
+        }
+    } else {
+        check(
+            wire.opener.with_timestamps == 0 && wire.acceptor.with_timestamps == 0,
+            "timestamps on the wire without agreement",
+        );
+    }
+    let (own_dir, peer_dir) = if own.opener {
+        (wire.opener, wire.acceptor)
+    } else {
+        (wire.acceptor, wire.opener)
+    };
+    if wire.window_scale_agreed() {
+        check(
+            own_dir.max_window > 65_535,
+            "the scale is agreed but never used",
+        );
+        check(
+            own_dir.max_window <= own.rcv_buffer as u64,
+            "the own stack advertises more than its buffer",
+        );
+        if let Some(cap) = peer_rcv_buffer {
+            check(
+                peer_dir.max_window <= cap,
+                "the peer advertises more than its buffer",
+            );
+        }
+    } else {
+        check(
+            own_dir.max_window <= 65_535 && peer_dir.max_window <= 65_535,
+            "a window above 65,535 bytes without a scale",
+        );
+    }
+    // The opener sends the bulk, so the acceptor reports holes.
+    if wire.sack_agreed() && loss {
+        check(
+            wire.acceptor.sack_segments > 0,
+            "no SACK blocks after a loss although both offered SACK",
+        );
+    }
+    if !wire.sack_agreed() {
+        check(
+            wire.acceptor.sack_segments == 0 && wire.opener.sack_segments == 0,
+            "SACK blocks without agreement",
+        );
+    }
+    check(
+        wire.opener.sack_segments == 0,
+        "the opener has no holes to report",
+    );
+    out
+}
+
 /// A [`FrameIo`] that shows every frame that it moves to a tap, and passes
 /// the frames on unchanged.
 pub struct TappedFrames {

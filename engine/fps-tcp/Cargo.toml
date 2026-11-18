@@ -22,3 +22,7 @@ tokio = { version = "1.54", features = ["io-util", "macros", "net", "rt", "time"
 [[test]]
 name = "netns"
 harness = false
+
+[[test]]
+name = "interop_kernel"
+harness = false

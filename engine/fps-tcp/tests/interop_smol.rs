@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fps_tcp::interop::{InteropConfig, InteropStack, Pairing};
-use fps_tcp::wiretap::WireSummary;
+use fps_tcp::wiretap::{violations, OwnSide, WireSummary};
 use fps_tcp::workload::{loss_transfer, LossConfig, LossRun};
 use fps_tcp::{ImpairConfig, MonotonicClock, OwnConfig, SmolConfig};
 
@@ -73,56 +73,32 @@ fn assert_completed(label: &str, outcome: &Outcome, kib: u64) {
     );
 }
 
-/// The checks that hold for every pairing, from the frames alone.
+/// The checks of [`violations`] for the own stack, and what smoltcp 0.14 is
+/// known to put on the wire.
 fn assert_conformant(label: &str, pairing: Pairing, loss: bool, outcome: &Outcome) {
     let (wire, own) = (&outcome.wire, &outcome.own);
-    let (Some(syn), Some(syn_ack)) = (wire.syn, wire.syn_ack) else {
-        panic!("{label}: the tap saw no handshake: {}", wire.to_line());
+    let side = OwnSide {
+        opener: pairing == Pairing::OwnClient,
+        mtu: own.mtu,
+        window_scale: own.window_scale,
+        sack: own.sack,
+        timestamps: own.timestamps,
+        rcv_buffer: own.rcv_buffer,
     };
-    assert_eq!(wire.bad_checksums, 0, "{label}: checksums");
-    assert_eq!(
-        wire.malformed, 0,
-        "{label}: options that smoltcp cannot parse"
+    let found = violations(wire, &side, loss, Some(outcome.smol_rx as u64));
+    assert!(
+        found.is_empty(),
+        "{label}: {found:?}\nwire: {}",
+        wire.to_line()
     );
 
-    // An acceptor answers an option only when the SYN had it.
-    assert!(!syn_ack.timestamps || syn.timestamps, "{label}: timestamps");
-    assert!(
-        syn_ack.window_scale.is_none() || syn.window_scale.is_some(),
-        "{label}: window scale"
-    );
-    assert!(
-        !syn_ack.sack_permitted || syn.sack_permitted,
-        "{label}: SACK"
-    );
-
-    // The own stack offers what its configuration says, and as an acceptor
-    // answers what it offers and the opener offered.
+    let (Some(syn), Some(syn_ack)) = (wire.syn, wire.syn_ack) else {
+        unreachable!("violations() reports a missing handshake");
+    };
     let (own_syn, peer_syn) = match pairing {
         Pairing::OwnClient => (syn, syn_ack),
         Pairing::OwnServer => (syn_ack, syn),
     };
-    let mss = u16::try_from(own.mtu - 40).expect("mss");
-    assert_eq!(own_syn.mss, Some(mss), "{label}: MSS of the own stack");
-    let offered = |configured: bool, peer: bool| match pairing {
-        Pairing::OwnClient => configured,
-        Pairing::OwnServer => configured && peer,
-    };
-    assert_eq!(
-        own_syn.window_scale.is_some(),
-        offered(own.window_scale, peer_syn.window_scale.is_some()),
-        "{label}: window scale of the own stack"
-    );
-    assert_eq!(
-        own_syn.sack_permitted,
-        offered(own.sack, peer_syn.sack_permitted),
-        "{label}: SACK of the own stack"
-    );
-    assert_eq!(
-        own_syn.timestamps,
-        offered(own.timestamps, peer_syn.timestamps),
-        "{label}: timestamps of the own stack"
-    );
     assert_eq!(peer_syn.mss, Some(1460), "{label}: MSS of smoltcp");
     assert!(
         !peer_syn.timestamps,
@@ -147,74 +123,6 @@ fn assert_conformant(label: &str, pairing: Pairing, loss: bool, outcome: &Outcom
             );
         }
     }
-
-    // Segments stay inside the MSS and the MTU.
-    let effective = u64::from(wire.effective_mss().expect("an MSS"));
-    for (name, dir) in [("opener", wire.opener), ("acceptor", wire.acceptor)] {
-        assert!(dir.max_payload <= effective, "{label}: {name} payload");
-        assert!(
-            dir.max_ip_len <= own.mtu as u64,
-            "{label}: {name} IP length"
-        );
-        assert!(dir.segments > 1, "{label}: {name} sent nothing");
-    }
-    assert!(wire.opener.data_segments > 0 && wire.opener.max_payload > 0);
-
-    // Timestamps appear after the handshake only when both SYNs had them.
-    if wire.timestamps_agreed() {
-        for dir in [wire.opener, wire.acceptor] {
-            assert_eq!(dir.data_with_timestamps, dir.data_segments, "{label}");
-            assert!(dir.with_timestamps > 0, "{label}");
-        }
-    } else {
-        assert_eq!(wire.opener.with_timestamps, 0, "{label}: opener timestamps");
-        assert_eq!(
-            wire.acceptor.with_timestamps, 0,
-            "{label}: acceptor timestamps"
-        );
-    }
-
-    // A window above 65,535 bytes needs the scale on both ends.
-    let own_dir = match pairing {
-        Pairing::OwnClient => wire.opener,
-        Pairing::OwnServer => wire.acceptor,
-    };
-    let smol_dir = match pairing {
-        Pairing::OwnClient => wire.acceptor,
-        Pairing::OwnServer => wire.opener,
-    };
-    if wire.window_scale_agreed() {
-        assert!(own_dir.max_window > 65_535, "{label}: the scale is unused");
-        assert!(
-            own_dir.max_window <= own.rcv_buffer as u64,
-            "{label}: window"
-        );
-        assert!(
-            smol_dir.max_window <= outcome.smol_rx as u64,
-            "{label}: smoltcp window"
-        );
-    } else {
-        assert!(own_dir.max_window <= 65_535, "{label}: an unscaled window");
-        assert!(smol_dir.max_window <= 65_535, "{label}: an unscaled window");
-    }
-
-    // The client sends the bulk, so the acceptor is the one that reports
-    // holes with SACK blocks, and only after a loss.
-    if wire.sack_agreed() && loss {
-        assert!(
-            wire.acceptor.sack_segments > 0,
-            "{label}: no SACK blocks after loss"
-        );
-    } else if !wire.sack_agreed() {
-        assert_eq!(
-            wire.acceptor.sack_segments, 0,
-            "{label}: SACK without agreement"
-        );
-    }
-    assert_eq!(
-        wire.opener.sack_segments, 0,
-        "{label}: the opener has no holes"
-    );
 }
 
 async fn pairing_at(pairing: Pairing, loss_ppm: u32, kib: u64) {

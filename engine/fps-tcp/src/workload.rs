@@ -401,7 +401,11 @@ impl ThroughputReport {
 }
 
 /// Writes `total` bytes in chunks of `chunk` and closes the write side.
-async fn send_bulk<T: SessionIo>(session: &mut T, total: u64, chunk: usize) -> io::Result<()> {
+pub(crate) async fn send_bulk<T: SessionIo>(
+    session: &mut T,
+    total: u64,
+    chunk: usize,
+) -> io::Result<()> {
     let buffer = vec![0xA5u8; chunk.max(1)];
     let mut left = total;
     while left > 0 {
@@ -415,7 +419,7 @@ async fn send_bulk<T: SessionIo>(session: &mut T, total: u64, chunk: usize) -> i
 }
 
 /// Reads to the end of the stream and returns the byte count.
-async fn drain<T: SessionIo>(session: &mut T, chunk: usize) -> io::Result<u64> {
+pub(crate) async fn drain<T: SessionIo>(session: &mut T, chunk: usize) -> io::Result<u64> {
     let mut buffer = vec![0u8; chunk.max(1)];
     let mut total = 0u64;
     loop {
@@ -451,7 +455,11 @@ pub fn first_mismatch(offset: u64, buf: &[u8]) -> Option<usize> {
 }
 
 /// Writes `total` bytes of the pattern and closes the write side.
-async fn send_pattern<T: SessionIo>(session: &mut T, total: u64, chunk: usize) -> io::Result<()> {
+pub(crate) async fn send_pattern<T: SessionIo>(
+    session: &mut T,
+    total: u64,
+    chunk: usize,
+) -> io::Result<()> {
     let mut buffer = vec![0u8; chunk.max(1)];
     let mut sent = 0u64;
     while sent < total {
@@ -468,7 +476,7 @@ async fn send_pattern<T: SessionIo>(session: &mut T, total: u64, chunk: usize) -
 /// Reads to the end of the stream and returns the byte count, or `u64::MAX`
 /// when a byte was not the pattern (the rest is still read, so the peer can
 /// finish).
-async fn drain_checked<T: SessionIo>(session: &mut T, chunk: usize) -> io::Result<u64> {
+pub(crate) async fn drain_checked<T: SessionIo>(session: &mut T, chunk: usize) -> io::Result<u64> {
     let mut buffer = vec![0u8; chunk.max(1)];
     let mut total = 0u64;
     let mut wrong = false;
@@ -1218,5 +1226,23 @@ mod fairness_tests {
         assert_eq!(jain(&[7]), None);
         assert_eq!(jain(&[]), None);
         assert_eq!(jain(&[0, 0]), None);
+    }
+    #[test]
+    fn the_pattern_shows_a_lost_repeated_or_shifted_segment() {
+        let mut stream = vec![0u8; 4096];
+        fill_pattern(0, &mut stream);
+        assert_eq!(first_mismatch(0, &stream), None);
+        // The same bytes read from another offset are wrong almost everywhere.
+        assert!(first_mismatch(1, &stream).is_some());
+        // A segment that arrives twice shifts everything behind it.
+        let mut repeated = stream[..1000].to_vec();
+        repeated.extend_from_slice(&stream[500..]);
+        assert_eq!(first_mismatch(0, &repeated), Some(1000));
+        // One flipped byte is found at its place.
+        let mut flipped = stream.clone();
+        flipped[3000] ^= 1;
+        assert_eq!(first_mismatch(0, &flipped), Some(3000));
+        // A chunk checks against its own offset.
+        assert_eq!(first_mismatch(2000, &stream[2000..]), None);
     }
 }

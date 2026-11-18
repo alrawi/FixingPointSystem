@@ -24,6 +24,7 @@ pub mod cli;
 pub use fps_tcp_own::clock;
 pub mod impair;
 pub mod interop;
+pub mod interop_kernel;
 pub mod kernel;
 pub mod link;
 pub mod lossy;

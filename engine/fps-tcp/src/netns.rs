@@ -30,7 +30,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpSocket;
 
 use crate::impair::{netem_commands, ImpairConfig};
-use crate::workload::{LossConfig, LossRun};
+use crate::workload::{fill_pattern, first_mismatch, LossConfig, LossRun};
 
 /// The address of the client host.
 pub const CLIENT_ADDR: Ipv4Addr = Ipv4Addr::new(10, 77, 1, 1);
@@ -58,7 +58,7 @@ pub enum NetnsError {
     Peer(String),
 }
 
-fn run_command(cmd: &mut Command) -> Result<String, NetnsError> {
+pub(crate) fn run_command(cmd: &mut Command) -> Result<String, NetnsError> {
     let what = format!("{cmd:?}").replace('"', "");
     let out = cmd.output().map_err(|e| NetnsError::Command {
         what: what.clone(),
@@ -74,7 +74,7 @@ fn run_command(cmd: &mut Command) -> Result<String, NetnsError> {
     }
 }
 
-fn ip(args: &[&str]) -> Result<String, NetnsError> {
+pub(crate) fn ip(args: &[&str]) -> Result<String, NetnsError> {
     run_command(Command::new("ip").args(args))
 }
 
@@ -182,6 +182,11 @@ impl NetnsLink {
         Ok(link)
     }
 
+    /// Returns the name of the router namespace.
+    pub fn router_ns(&self) -> &str {
+        &self.router
+    }
+
     /// Returns the name of the client namespace.
     pub fn client_ns(&self) -> &str {
         &self.client
@@ -190,6 +195,45 @@ impl NetnsLink {
     /// Returns the name of the server namespace.
     pub fn server_ns(&self) -> &str {
         &self.server
+    }
+}
+
+impl NetnsLink {
+    /// Turns the transmit checksum offload off on every interface of the
+    /// three namespaces, so every frame that leaves a host carries a complete
+    /// TCP checksum. A frame that reaches an AF_XDP socket (TRN-26) has no
+    /// later hop that would complete a partial checksum, and the own stack
+    /// verifies it. Needs `ethtool`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `ethtool` is missing or refuses.
+    pub fn complete_checksums(&self) -> Result<(), NetnsError> {
+        for (ns, dev) in [
+            (&self.client, "vc"),
+            (&self.router, "rc"),
+            (&self.router, "rs"),
+            (&self.server, "vs"),
+        ] {
+            run_command(
+                Command::new("ip").args(["netns", "exec", ns, "ethtool", "-K", dev, "tx", "off"]),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Gives the router interface `dev` (`rc` or `rs`) the MAC address `mac`,
+    /// which the own stack uses as the next hop of its frames: it has no ARP
+    /// requests of its own and takes the MAC address of a neighbor from its
+    /// tables.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `ip` refuses.
+    pub fn set_router_mac(&self, dev: &str, mac: [u8; 6]) -> Result<(), NetnsError> {
+        let text = mac.map(|b| format!("{b:02x}")).join(":");
+        ip(&["-n", &self.router, "link", "set", dev, "address", &text])?;
+        Ok(())
     }
 }
 
@@ -203,7 +247,7 @@ impl Drop for NetnsLink {
 
 /// Reads a process line by line on a thread, so the caller can wait with a
 /// timeout.
-fn lines_of(child: &mut Child) -> Result<mpsc::Receiver<String>, NetnsError> {
+pub(crate) fn lines_of(child: &mut Child) -> Result<mpsc::Receiver<String>, NetnsError> {
     let stdout = child
         .stdout
         .take()
@@ -219,7 +263,7 @@ fn lines_of(child: &mut Child) -> Result<mpsc::Receiver<String>, NetnsError> {
     Ok(rx)
 }
 
-fn spawn_peer(exe: &Path, ns: &str, args: &[String]) -> Result<Child, NetnsError> {
+pub(crate) fn spawn_peer(exe: &Path, ns: &str, args: &[String]) -> Result<Child, NetnsError> {
     Command::new("ip")
         .args(["netns", "exec", ns])
         .arg(exe)
@@ -401,7 +445,7 @@ fn parse_flows(line: &str, retransmits: u64) -> Result<LossRun, NetnsError> {
 }
 
 /// Reads the result line of a client peer.
-fn parse_result(line: &str, wall: Duration) -> Result<LossRun, NetnsError> {
+pub(crate) fn parse_result(line: &str, wall: Duration) -> Result<LossRun, NetnsError> {
     let field = |key: &str| -> Option<u64> {
         line.split_whitespace()
             .find_map(|w| w.strip_prefix(key)?.strip_prefix('=')?.parse().ok())
@@ -448,7 +492,7 @@ fn retrans_segs() -> u64 {
         .unwrap_or(0)
 }
 
-fn flag(args: &[String], name: &str) -> Option<String> {
+pub(crate) fn flag(args: &[String], name: &str) -> Option<String> {
     let at = args.iter().position(|a| a == name)?;
     args.get(at + 1).cloned()
 }
@@ -499,7 +543,13 @@ pub fn peer_main(args: &[String]) -> i32 {
             flows,
             warmup + window + FLOWS_CONNECT_LIMIT.min(Duration::from_secs(5)),
         )),
-        "server" => runtime.block_on(serve(port, chunk, buffer, congestion.as_deref())),
+        "server" => runtime.block_on(serve(
+            port,
+            chunk,
+            buffer,
+            congestion.as_deref(),
+            number("--verify", 0) == 1,
+        )),
         "client" => runtime.block_on(send(
             port,
             chunk,
@@ -507,7 +557,11 @@ pub fn peer_main(args: &[String]) -> i32 {
             congestion.as_deref(),
             number("--bytes", 0),
             Duration::from_millis(number("--timeout-ms", 60_000)),
+            number("--verify", 0) == 1,
         )),
+        role if role.starts_with("own-") => {
+            return crate::interop_kernel::own_peer_main(role, args)
+        }
         _ => Err(std::io::Error::other("the role is server or client")),
     };
     match outcome {
@@ -519,7 +573,7 @@ pub fn peer_main(args: &[String]) -> i32 {
     }
 }
 
-fn say(line: &str) {
+pub(crate) fn say(line: &str) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{line}");
     let _ = out.flush();
@@ -542,6 +596,7 @@ async fn serve(
     chunk: usize,
     buffer: Option<u32>,
     congestion: Option<&str>,
+    verify: bool,
 ) -> std::io::Result<()> {
     let socket = socket(buffer, congestion)?;
     socket.set_reuseaddr(true)?;
@@ -552,14 +607,19 @@ async fn serve(
     stream.set_nodelay(true)?;
     let mut buf = vec![0u8; chunk.max(1)];
     let mut total = 0u64;
+    let mut wrong = false;
     loop {
         let n = stream.read(&mut buf).await?;
         if n == 0 {
             break;
         }
+        if verify && !wrong && first_mismatch(total, &buf[..n]).is_some() {
+            wrong = true;
+        }
         total += n as u64;
     }
-    stream.write_all(&total.to_be_bytes()).await?;
+    let answer = if wrong { u64::MAX } else { total };
+    stream.write_all(&answer.to_be_bytes()).await?;
     stream.shutdown().await
 }
 
@@ -672,6 +732,7 @@ async fn send(
     congestion: Option<&str>,
     bytes: u64,
     timeout: Duration,
+    verify: bool,
 ) -> std::io::Result<()> {
     let before = retrans_segs();
     let started = Instant::now();
@@ -682,10 +743,13 @@ async fn send(
             .await?;
         stream.set_nodelay(true)?;
         let first_write = Instant::now();
-        let data = vec![0xA5u8; chunk.max(1)];
+        let mut data = vec![0xA5u8; chunk.max(1)];
         let mut left = bytes;
         while left > 0 {
             let take = usize::try_from(left).unwrap_or(usize::MAX).min(data.len());
+            if verify {
+                fill_pattern(bytes - left, &mut data[..take]);
+            }
             stream.write_all(&data[..take]).await?;
             left -= take as u64;
         }
