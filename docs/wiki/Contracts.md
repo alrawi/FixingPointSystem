@@ -6,8 +6,8 @@ The contracts in [`contracts/`](https://github.com/alrawi/FixingPointSystem/tree
 
 | File | Contract |
 |---|---|
-| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.13.0 |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.6, unreleased |
+| `openapi/fps-api-v1.yaml` | Controller REST API, OpenAPI 0.14.0 |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.7, unreleased |
 | `schemas/` | Module manifest, scenario, and test configuration schemas, scenario contract v0.6, test configuration v0.4, module manifest v0.5 |
 | `extension/fps-extension.wit` | Extension interface `fps:extension@0.1.0` |
 | `metrics/catalog.yaml` | Metric catalog 0.8.0 |
@@ -375,3 +375,15 @@ CON-34 moves the test configuration from v0.3 to v0.4 and the agent protocol fro
 | `examples/tests/dhcp_clients.yaml` | A pool of 200 DHCP clients and a static server pool |
 
 The same package fixes the validator, which checked the `gateway` of a pool against both address families, so every dual stack pool with a gateway failed. It now checks the gateway against the prefix of its own family, as `fps-hosts` matches it. `contracts/changes/CON-34.md` lists the consumers.
+
+## The backend that ran and the bound XDP mode
+
+CON-35 moves the controller API from 0.13.0 to 0.14.0 and the agent protocol from 0.2.6 to 0.2.7. The vetting agent decides it under decision D13, as an additive change (issue #663). `Register` comes before any plan, so `PortInfo.xdp_driver_mode` is only a driver table hint, and after the flip of TRN-31 an unforced agent may run a plan on the kernel backend that its AF_XDP datapath refuses (AGT-29), so `Capabilities.selected_backend` no longer says which backend measured a run. `contracts/changes/CON-35.md` records the rationale and the consumers.
+
+| Change | Rule |
+|---|---|
+| `Heartbeat.run_backend` (7) | The backend that started the loaded plan, of type `Backend`. `BACKEND_UNSPECIFIED` until the plan has started and for an agent of 0.2.6 or earlier. Every heartbeat after the start carries it until the plan is released, also in `STOPPED` and `FAILED` |
+| `Heartbeat.run_ports` (8), message `RunPort` | One entry for each port of the plan, in plan order: `name` (the `PortBinding.name`), `interface_name`, and `xdp_mode` (an `XdpMode`, the mode that the sockets really bound in, the slowest of the queues of a port, and `XDP_MODE_UNSPECIFIED` unless the run backend is AF_XDP). Unlike `PortInfo.xdp_driver_mode`, it is what the run measured |
+| `Run.agents`, schema `AgentRun` | The REST mirror. Per agent of the run: `backend`, the `selected_backend` that the inventory listed at the start, and `ports` with `xdp_mode`. A `backend` that differs from `selected_backend` is a run that did not measure the backend that the inventory promised. Absent for an agent of 0.2.6 or earlier |
+
+The values sit on the heartbeat and not on the start result, because the start result is sent once and a controller that lost the stream during the run would never learn them, while the heartbeat repeats on every session. AGT-29 fills the fields and CTL-55 stores and shows them.

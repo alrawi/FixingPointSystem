@@ -31,7 +31,7 @@ use crate::sysroot::SystemRoot;
 use fps_backend_afxdp::Selection;
 
 /// The contract version of `agent.proto` that this crate implements.
-pub const ENGINE_API: &str = "0.2.6";
+pub const ENGINE_API: &str = "0.2.7";
 
 /// The agent build version.
 pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");

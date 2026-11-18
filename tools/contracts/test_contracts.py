@@ -121,6 +121,23 @@ def test_openapi_covers_required_operations():
     assert not report.errors, messages(report)
 
 
+def test_run_reports_the_backend_that_ran_and_the_bound_mode_of_each_port():
+    """CON-35: the REST mirror of Heartbeat.run_backend and Heartbeat.run_ports."""
+    schemas = yaml.safe_load(v.OPENAPI.read_text(encoding="utf-8"))["components"]["schemas"]
+    assert schemas["Run"]["properties"]["agents"]["items"] == {"$ref": "#/components/schemas/AgentRun"}
+    run = schemas["AgentRun"]
+    assert run["required"] == ["agent", "backend"]
+    backends = ["kernel", "af_xdp", "dpdk"]
+    assert run["properties"]["backend"]["enum"] == backends
+    assert run["properties"]["selected_backend"]["enum"] == backends
+    port = run["properties"]["ports"]["items"]
+    assert port["required"] == ["name"]
+    # The values are those of the inventory hint, so one table maps both to XdpMode.
+    inventory = schemas["Agent"]["properties"]["ports"]["items"]["properties"]["xdp_driver_mode"]
+    assert port["properties"]["xdp_mode"]["enum"] == inventory["enum"] == ["generic", "native", "zero_copy"]
+    assert schemas["Capabilities"]["properties"]["agents"]["items"] == {"$ref": "#/components/schemas/Agent"}
+
+
 # --- template grammar -------------------------------------------------------
 
 @pytest.mark.parametrize("text", [

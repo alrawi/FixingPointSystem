@@ -644,6 +644,9 @@ impl Shared {
                 phase: core.phase.clone(),
                 agent_time: Some(convert::timestamp(SystemTime::now())),
                 message: core.message.clone(),
+                // The backend that ran and the bound mode of each port
+                // (CON-35) are filled by AGT-29.
+                ..Default::default()
             })),
         }
     }

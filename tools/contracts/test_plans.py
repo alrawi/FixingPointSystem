@@ -334,3 +334,78 @@ def test_readme_lists_every_error_code() -> None:
     readme = (cp.v.CONTRACTS / "README.md").read_text(encoding="utf-8")
     for name in GRPC_CODES:
         assert f"`ERROR_CODE_{name}`" in readme
+
+
+# The backend that ran and the bound XDP mode of each port (agent protocol 0.2.7, CON-35).
+# They ride on the Heartbeat, which the agent resends after every state change and which a
+# reconnected agent keeps sending, so a controller learns them again after a lost session.
+
+
+def _message_class(name: str) -> type:
+    from google.protobuf import message_factory
+
+    return message_factory.GetMessageClass(cp.proto_pool().FindMessageTypeByName(f"fps.agent.v1.{name}"))
+
+
+def test_heartbeat_carries_the_backend_that_ran_and_the_bound_mode_of_each_port() -> None:
+    desc = cp.proto_pool().FindMessageTypeByName("fps.agent.v1.Heartbeat")
+    assert _numbers("Heartbeat") == {
+        "sequence": 1,
+        "state": 2,
+        "plan_id": 3,
+        "phase": 4,
+        "agent_time": 5,
+        "message": 6,
+        "run_backend": 7,
+        "run_ports": 8,
+    }
+    assert desc.fields_by_name["run_backend"].enum_type.full_name == "fps.agent.v1.Backend"
+    ports = desc.fields_by_name["run_ports"]
+    assert ports.is_repeated and ports.message_type.name == "RunPort"
+    assert _numbers("RunPort") == {"name": 1, "interface_name": 2, "xdp_mode": 3}
+    run_port = cp.proto_pool().FindMessageTypeByName("fps.agent.v1.RunPort")
+    assert run_port.fields_by_name["xdp_mode"].enum_type.full_name == "fps.agent.v1.XdpMode"
+
+
+def test_heartbeat_reports_a_kernel_fallback_and_an_af_xdp_run() -> None:
+    heartbeat, run_port = _message_class("Heartbeat"), _message_class("RunPort")
+    pool = cp.proto_pool()
+    backend = {v.name: v.number for v in pool.FindEnumTypeByName("fps.agent.v1.Backend").values}
+    mode = {v.name: v.number for v in pool.FindEnumTypeByName("fps.agent.v1.XdpMode").values}
+
+    fell_back = heartbeat(sequence=7, plan_id="r1/a1", run_backend=backend["BACKEND_KERNEL"])
+    fell_back.run_ports.extend(
+        run_port(name=n, interface_name=i) for n, i in (("client0", "eth1"), ("server0", "eth2"))
+    )
+    back = heartbeat.FromString(fell_back.SerializeToString())
+    assert back.run_backend == backend["BACKEND_KERNEL"]
+    assert [p.xdp_mode for p in back.run_ports] == [mode["XDP_MODE_UNSPECIFIED"]] * 2
+
+    af_xdp = heartbeat(run_backend=backend["BACKEND_AF_XDP"])
+    af_xdp.run_ports.extend(
+        [
+            run_port(name="client0", interface_name="eth1", xdp_mode=mode["XDP_MODE_ZERO_COPY"]),
+            run_port(name="server0", interface_name="eth2", xdp_mode=mode["XDP_MODE_NATIVE"]),
+        ]
+    )
+    back = heartbeat.FromString(af_xdp.SerializeToString())
+    assert back.run_backend == backend["BACKEND_AF_XDP"]
+    assert [(p.name, p.interface_name, p.xdp_mode) for p in back.run_ports] == [
+        ("client0", "eth1", mode["XDP_MODE_ZERO_COPY"]),
+        ("server0", "eth2", mode["XDP_MODE_NATIVE"]),
+    ]
+
+
+def test_heartbeat_of_an_agent_before_0_2_7_reads_as_not_reported() -> None:
+    heartbeat = _message_class("Heartbeat")
+    old = heartbeat(sequence=3, plan_id="r1/a1", phase="ramp")
+    back = heartbeat.FromString(old.SerializeToString())
+    assert back.run_backend == 0 and len(back.run_ports) == 0
+
+
+def test_the_agent_protocol_version_is_the_same_in_the_proto_header_buf_yaml_and_readme() -> None:
+    proto = (cp.v.CONTRACTS / "proto" / "fps" / "agent" / "v1" / "agent.proto").read_text(encoding="utf-8")
+    buf = (cp.v.CONTRACTS / "proto" / "buf.yaml").read_text(encoding="utf-8")
+    readme = (cp.v.CONTRACTS / "README.md").read_text(encoding="utf-8")
+    assert "contract version 0.2.7." in proto and "contract version 0.2.7." in buf
+    assert "Agent control protocol 0.2.7 " in readme and "the agent protocol 0.2.7," in readme

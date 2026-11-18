@@ -496,6 +496,35 @@ export interface components {
             verdict?: components["schemas"]["RunVerdict"];
             /** @description The changes of the calibration factor of a run with a throughput_bps objective, oldest first. Absent for any other objective and while the factor stays at one. The controller keeps the newest 256 steps of a run. */
             calibration?: components["schemas"]["CalibrationStep"][];
+            /** @description The backend that ran the plan of each agent of the run and the XDP mode that each port of the plan bound in, ordered by agent id. The controller takes them from `run_backend` and `run_ports` of the heartbeats of the agent (agent protocol 0.2.7), so an agent appears once it has started its plan, and an agent of agent protocol 0.2.6 or earlier, which does not report them, never appears. Absent while no agent has reported. A controller older than 0.14.0 does not send it. */
+            agents?: components["schemas"]["AgentRun"][];
+        };
+        /** @description What one agent ran for a run. A benchmark reads it to know which backend and which XDP mode produced its numbers. */
+        AgentRun: {
+            /** @description Identity of the agent. */
+            agent: string;
+            /**
+             * @description The backend that ran the plan of the agent. It can differ from `selected_backend`: an agent that nobody forced to a backend may run a plan that its AF_XDP datapath refuses on the kernel backend.
+             * @enum {string}
+             */
+            backend: "kernel" | "af_xdp" | "dpdk";
+            /**
+             * @description The backend that the agent inventory listed (`Agent.backend`) when the run started. A `backend` that differs from it is a run that did not measure the backend that the inventory promised. Absent when the controller did not hold the selection.
+             * @enum {string}
+             */
+            selected_backend?: "kernel" | "af_xdp" | "dpdk";
+            /** @description One entry for each port of the plan, in plan order. */
+            ports?: {
+                /** @description Port name of the test configuration. */
+                name: string;
+                /** @description Interface of the agent that the port is bound to, which is the name of an entry of `Agent.ports`. */
+                interface_name?: string;
+                /**
+                 * @description The XDP mode that the sockets of the port really bound in, with the meaning of `Agent.ports[].xdp_driver_mode`, and the slowest of its queues when they differ. Unlike that property, it is what the run measured and not a hint of the driver table. Absent unless `backend` is `af_xdp`.
+                 * @enum {string}
+                 */
+                xdp_mode?: "generic" | "native" | "zero_copy";
+            }[];
         };
         /** @description One change of the calibration factor of a run. */
         CalibrationStep: {

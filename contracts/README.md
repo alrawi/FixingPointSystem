@@ -1,19 +1,19 @@
 # Contracts v0.2
 
-The heading names the engine API generation, which is the minor part of `engine_api` that modules declare (`>=0.2, <0.3`) and of `EngineAPIVersion` of the controller (`controller/internal/api/capabilities.go`, and `TestCapabilitiesVersions` compares the two). It is not the version of any single contract. Each contract carries its own version, and the table below names it: the REST API 0.13.0, the agent protocol 0.2.6, the module manifest v0.5, the scenario contract v0.6, the test configuration v0.4, the extension interface 0.1.0, and the metric catalog 0.8.0.
+The heading names the engine API generation, which is the minor part of `engine_api` that modules declare (`>=0.2, <0.3`) and of `EngineAPIVersion` of the controller (`controller/internal/api/capabilities.go`, and `TestCapabilitiesVersions` compares the two). It is not the version of any single contract. Each contract carries its own version, and the table below names it: the REST API 0.14.0, the agent protocol 0.2.7, the module manifest v0.5, the scenario contract v0.6, the test configuration v0.4, the extension interface 0.1.0, and the metric catalog 0.8.0.
 
 These files define the interfaces between FixingPointSystem workstreams. Implementation work must conform to them, and changes follow the process in `CONTRIBUTING.md`.
 
 | File | Defines |
 |---|---|
-| `openapi/fps-api-v1.yaml` | Controller REST API (OpenAPI 3.1, version 0.12.0) |
+| `openapi/fps-api-v1.yaml` | Controller REST API (OpenAPI 3.1, version 0.14.0) |
 | `schemas/module-manifest.schema.json` | Module manifest (v0.5), including the template function catalog |
 | `schemas/scenario.schema.json` | Scenarios and flow program actions (scenario contract v0.6) |
 | `schemas/test-config.schema.json` | Test configuration (v0.4) |
 | `extension/fps-extension.wit` | Extension world `fps:extension@0.1.0` with the five hooks, the template function catalog, and the engine calls. `extension/README.md` describes the semantics and the mapping to the Rust trait. |
 | `metrics/catalog.yaml` | Every counter, gauge, and histogram with its type, unit, level, and labels (catalog 0.8.0) |
 | `metrics/catalog.schema.json` | Format of the metric catalog |
-| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.6 between the controller and agents (gRPC, proto3). Agents dial the controller. |
+| `proto/fps/agent/v1/agent.proto` | Agent control protocol 0.2.7 between the controller and agents (gRPC, proto3). Agents dial the controller. |
 | `proto/buf.yaml` | buf module, lint rules, and breaking change rules for `proto/` |
 | `examples/` | Example modules, tests, and agent plans that every validator run checks. An example test pairs with the example modules of `examples/modules/`, so `examples/tests/http_smoke.yaml` names the scenario `http1/web_get` of the example http1 module. A test that names a scenario of a first party module under `modules/` pairs with that module instead, as `dns_zone.yaml` and `http1_first_party.yaml` do, and `tools/contracts/validate.py` lists it in `FIRST_PARTY_TESTS`. |
 
@@ -297,7 +297,7 @@ The agent opens `Session` right after `Register`. The agent sends `SessionReques
 | Direction | Message | When |
 |---|---|---|
 | agent to controller | `open` | First message, with the agent identity and the session token. Any other first message, a repeated `open`, or a revoked token ends the stream with `UNAUTHENTICATED`. |
-| agent to controller | `heartbeat` | Once per heartbeat interval, and at once after every state change. It carries the state, plan, phase, and agent clock. |
+| agent to controller | `heartbeat` | Once per heartbeat interval, and at once after every state change. It carries the state, plan, phase, and agent clock, and once the plan has started, the backend that ran it (`run_backend`) and the XDP mode that each port bound in (`run_ports`), until the plan is released. |
 | controller to agent | `heartbeat_ack` | Once per heartbeat, with `command_id` zero, the echoed sequence, and the controller clock |
 | controller to agent | `prepare` | Carries the plan, the counter interval, and the per worker option |
 | controller to agent | `start` | Starts the prepared plan at once or at `start_at` |
