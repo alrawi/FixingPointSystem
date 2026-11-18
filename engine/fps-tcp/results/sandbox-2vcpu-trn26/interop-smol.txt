@@ -1,0 +1,8 @@
+own client to smoltcp server at 10000 ppm: 2.32 Mbit/s in 7.241014693s, 21 retransmissions, 22 frames lost
+own client to smoltcp server, smoltcp buffer 256 KiB: 21.55 Mbit/s in 389.226527ms, 0 retransmissions, 0 frames lost
+own client to smoltcp server at 0 ppm: 10.71 Mbit/s in 782.937749ms, 0 retransmissions, 0 frames lost
+own client to smoltcp server, own options off: 3.28 Mbit/s in 1.277933744s, 5 retransmissions, 4 frames lost
+smoltcp client to own server, own options off: 2.97 Mbit/s in 1.412548725s, 47 retransmissions, 6 frames lost
+smoltcp client to own server at 10000 ppm: 6.34 Mbit/s in 2.646922225s, 58 retransmissions, 19 frames lost
+smoltcp client to own server, smoltcp buffer 256 KiB: 36.50 Mbit/s in 229.822099ms, 0 retransmissions, 0 frames lost
+smoltcp client to own server at 0 ppm: 11.63 Mbit/s in 721.04313ms, 0 retransmissions, 0 frames lost

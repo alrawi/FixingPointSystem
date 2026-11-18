@@ -796,6 +796,60 @@ Every run completed all its sessions with no failure and no wrong byte, and both
 | No CPU pinning | `WorkerOptions::cpus` of the AF_XDP crate pins workers with `sched_setaffinity`, which this crate (no `unsafe`) does not call yet |
 | IPv6, UDP, DHCP, ND | Counted and answered with `Unsupported`, see the hooks above |
 
+### Interop of the own stack with smoltcp and the kernel (TRN-26)
+
+TRN-26 runs the own stack against the two other stacks of the harness, in both directions, with a loss workload whose bytes are checked and with checks of the TCP options on the wire. The code is in `engine/fps-tcp`: `wiretap.rs` (the tap), `interop.rs` and `SmolStack::bridged` (smoltcp), `interop_kernel.rs` (the kernel), and the tests `tests/interop_smol.rs` and `tests/interop_kernel.rs`.
+
+- **Own and smoltcp, in memory (no root).** `InteropStack` joins one own endpoint and one smoltcp host with the impairment model of TRN-22. The own stack speaks Ethernet frames and smoltcp speaks IP packets (its medium is `ip`), so the link holds Ethernet frames and the smoltcp side adds the header on send and strips it on receive. The MAC addresses come from the station tables of the own stack, so no ARP runs. The smoltcp interface has a /8 prefix, so both addresses are on link.
+- **Own and the kernel, over AF_XDP and a veth pair (root).** The namespace link of TRN-22 (client, router with the `tc` qdiscs, server) carries the traffic. The own stack runs in a helper process in the client namespace over an AF_XDP queue on `vc` (it opens) or in the server namespace on `vs` (it accepts), and the kernel is a socket peer at the other end. The own stack has no ARP requests, so the router interface that faces it gets the MAC address that the own stack uses for the next hop, and the own stack answers the ARP requests of the router. The transmit checksum offload is off on every interface (see the findings).
+- **The workload** is the loss workload with `LossConfig::verify`: the stream is a position dependent pattern, and the receiver checks every byte and answers `u64::MAX` after a wrong one, so a lost, repeated, or shifted segment fails the run (the plain workload counts bytes only). Every row below is a verified transfer, 20 ms in each direction where a delay is named.
+- **The tap** reads every frame with the smoltcp parser, which neither the own stack nor the kernel shares. `violations()` checks that: an acceptor answers an option only when the SYN had it; the own stack offers what it is set to offer and answers what it offers and the opener offered; the MSS of the own stack is its MTU minus 40; no segment is above the MSS or the MTU; when both SYNs carry timestamps every data segment does, and when not no segment does; a window above 65,535 bytes needs the scale on both SYNs, and the own stack never advertises more than its buffer; after a loss the receiver reports holes with SACK blocks when both SYNs offered SACK, and sends none when not; no checksum is wrong and no option is malformed.
+
+**Loss workload, in both directions.** The own stack has CUBIC and 1 MiB buffers, smoltcp 64 KiB buffers, the kernel its defaults. Rows with a delay need `sch_netem`; the hosted runner of the `rust` job of CI has it, the sandbox does not.
+
+| Pairing | Link | Transfer | Goodput | Sender retransmissions | Result |
+|---|---|---|---|---|---|
+| own client, smoltcp server | clean, 20 ms | 1 MiB | 10.7 Mbit/s | 0 | complete |
+| own client, smoltcp server | 1 % loss, 20 ms | 2 MiB | 2.3 Mbit/s | 21 (22 frames lost) | complete |
+| smoltcp client, own server | clean, 20 ms | 1 MiB | 11.6 Mbit/s | 0 | complete |
+| smoltcp client, own server | 1 % loss, 20 ms | 2 MiB | 6.3 Mbit/s | 58 (19 frames lost) | complete |
+| own client, kernel server | clean, no delay | 1 MiB | 93.6 Mbit/s (hosted runner), 115 (sandbox) | 0 | complete |
+| own client, kernel server | 1 % loss, 20 ms | 2 MiB | 5.15 Mbit/s (hosted runner) | 20 | complete |
+| own client, kernel server | 20 Mbit/s, 32 KiB queue | 2 MiB | 3.61 Mbit/s (hosted runner), 11.7 (sandbox) | 517 (hosted runner), 41 (sandbox) | complete |
+| kernel client, own server | clean, no delay | 1 MiB | 89.7 Mbit/s (hosted runner), 122 (sandbox) | 0 | complete |
+| kernel client, own server | 1 % loss, 20 ms | 2 MiB | 4.50 Mbit/s (hosted runner) | 11 | complete |
+| kernel client, own server | 20 Mbit/s, 32 KiB queue | 2 MiB | 19.2 Mbit/s (hosted runner), 18.7 (sandbox) | 9 (hosted runner), 105 (sandbox) | complete |
+
+The in memory rows are one run each from the sandbox (the tests ran five times in a row without a failure); the kernel rows are one run each on the hosted runner (debug build) with the sandbox value where it ran. They are tests, not a benchmark: read a goodput as "completes", not as a rate.
+
+**Options on the wire**, with every option on in the own stack (MTU 1500, so MSS 1460 where the peer is not smaller):
+
+| Pairing | SYN of the opener | SYN-ACK of the acceptor | Agreed |
+|---|---|---|---|
+| own client, smoltcp server | MSS 1460, scale 5, SACK, timestamps | MSS 1460, scale 1, SACK | MSS, scale, SACK; no timestamps (smoltcp 0.14 has none) |
+| smoltcp client, own server | MSS 1460, scale 1, SACK | MSS 1460, scale 5, SACK | MSS, scale, SACK; no timestamps |
+| own client, kernel server | MSS 1460, scale 5, SACK, timestamps | MSS 1460, scale 10, SACK, timestamps | all four |
+| kernel client, own server | MSS 1460, scale 10, SACK, timestamps | MSS 1460, scale 5, SACK, timestamps | all four |
+
+Fallback rows (own stack options off, or timestamps, SACK, and scaling off in the namespace of the kernel with `sysctl`):
+
+| Pairing | SYN of the opener | SYN-ACK of the acceptor | Agreed |
+|---|---|---|---|
+| own client (options off), smoltcp server | MSS only | MSS only | none, window 65,535 |
+| smoltcp client, own server (options off) | MSS 1460, scale 1, SACK | MSS only | none, window 65,535 |
+| own client, kernel server (kernel options off) | all four | MSS only | none, window 65,535 |
+| kernel client (options off), own server | MSS only | MSS only | none |
+| own client (options off), kernel server | MSS only | MSS only | none |
+| kernel client, own server (options off) | all four | MSS only | none |
+
+After the handshake: with timestamps agreed (both kernel pairings) every data segment carries them, with a payload of at most 1,448 bytes (1,460 minus the 12 bytes of the option); without agreement no segment carries them. The own stack advertises up to 1 MiB with scale 5 (smoltcp: up to its buffer, and 256 KiB with scale 3 in the large buffer tests), the receiver of the bulk sends SACK blocks only after a loss (249 segments with blocks at 1 % loss against the kernel, 187 in the other direction), and no segment of any run had a wrong checksum or an option that smoltcp could not parse.
+
+Findings:
+
+- A frame from a kernel socket reaches an AF_XDP queue with a partial TCP checksum (the veth keeps `CHECKSUM_PARTIAL`), the own stack drops it, and the handshake never completes. The harness turns the transmit offload off on every interface, with `ethtool` or, because the hosted runner has none, with the ethtool ioctl in the test binary. Any run of a kernel peer against an AF_XDP veth end needs it.
+- The own stack against smoltcp and against the kernel agrees on every option it offers, and falls back to none cleanly.
+- On a 20 Mbit/s bottleneck with a 32 KiB queue and no delay, the own client sent 517 segments again on the hosted runner (41 in the sandbox) and reached 3.6 Mbit/s against 19.4 with its options off. The own stack's recovery under tail drop at a very short round trip is slower than the kernel's, which TRN-12 may look at; the 1 percent loss rows are not affected.
+
 ### Decision record 0014 and the one session run
 
 TRN-10 proposes decision record 0014 (`docs/decisions/0014-user-space-tcp-stack.md`), which chooses the own stack with loss recovery added for the AF_XDP backend, keeps smoltcp as a reference and a fallback, and leaves F-Stack to the parked TRN-13. Its numbers come from `engine/fps-tcp/results/sandbox-2vcpu-trn10/`, where the three stacks ran in one session on one sandbox, including the million socket rows of the own stack and smoltcp. The kernel row at a million sockets is not measured, because the open files limit of the sandbox is 20,000 and cannot be raised, so the kernel stops at 19,815 sockets. The fat-nuc numbers are still pending, and the record says when to revisit it.

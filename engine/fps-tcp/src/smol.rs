@@ -40,7 +40,7 @@ use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr, IpEndpoint};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::clock::Clock;
-use crate::impair::{Framing, ImpairConfig, ImpairedLink};
+use crate::impair::{Framing, ImpairConfig, ImpairedLink, LinkStats};
 use crate::link::{LinkConfig, QueueDevice};
 use crate::stack::{StackStats, TcpStack};
 
@@ -49,6 +49,10 @@ pub const SMOLTCP_VERSION: &str = "0.14";
 
 const CLIENT_ADDR: IpAddress = IpAddress::v4(10, 0, 0, 1);
 const SERVER_ADDR: IpAddress = IpAddress::v4(10, 0, 0, 2);
+/// The prefix length of the interface of a smoltcp host that plays one end of
+/// an interop pair (TRN-26), wide enough that both addresses of a pair are on
+/// link, because the medium has no gateway and no ARP.
+const BRIDGED_PREFIX: u8 = 8;
 const CLIENT_HOST: usize = 0;
 const SERVER_HOST: usize = 1;
 const FIRST_CLIENT_PORT: u16 = 10_000;
@@ -115,6 +119,45 @@ impl Default for SmolConfig {
     }
 }
 
+/// Which end of a connection a smoltcp host plays when the other end is
+/// another stack behind an [`IpBridge`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// The host opens connections.
+    Client,
+    /// The host listens.
+    Server,
+}
+
+impl Role {
+    fn index(self) -> usize {
+        match self {
+            Self::Client => CLIENT_HOST,
+            Self::Server => SERVER_HOST,
+        }
+    }
+}
+
+/// The link between a smoltcp host and a peer that is not smoltcp (TRN-26).
+/// The packets are IPv4 packets, as the medium of the smoltcp interface wants
+/// them; a bridge that joins them to a link with Ethernet frames adds and
+/// strips the header.
+pub trait IpBridge: Send {
+    /// Takes a packet that the smoltcp host sent.
+    fn send(&mut self, now_micros: i64, packet: Vec<u8>);
+    /// Gives the next packet for the smoltcp host that is due at `now_micros`.
+    fn recv(&mut self, now_micros: i64) -> Option<Vec<u8>>;
+    /// The time at which a held packet falls due, if any.
+    fn next_release(&self) -> Option<i64>;
+    /// The counters of the link.
+    fn stats(&self) -> LinkStats;
+}
+
+struct External {
+    role: Role,
+    bridge: Box<dyn IpBridge>,
+}
+
 /// The socket settings that a host applies to every socket it creates.
 #[derive(Clone, Copy, Debug)]
 struct SocketParams {
@@ -163,13 +206,13 @@ struct Host {
 }
 
 impl Host {
-    fn new(address: IpAddress, config: &SmolConfig, seed: u64) -> Self {
+    fn new(address: IpAddress, prefix: u8, config: &SmolConfig, seed: u64) -> Self {
         let mut dev = QueueDevice::new(config.link);
         let mut iface_config = Config::new(HardwareAddress::Ip);
         iface_config.random_seed = seed;
         let mut iface = Interface::new(iface_config, &mut dev, Instant::from_micros(0));
         iface.update_ip_addrs(|addrs| {
-            addrs.push(IpCidr::new(address, 24)).ok();
+            addrs.push(IpCidr::new(address, prefix)).ok();
         });
         Self {
             iface,
@@ -346,12 +389,23 @@ struct Net {
     passes: u64,
     /// The impaired link, which replaces the direct move of frames.
     link: Option<ImpairedLink>,
+    client_addr: IpAddress,
+    server_addr: IpAddress,
+    /// The peer, when it is another stack (TRN-26).
+    external: Option<External>,
 }
 
 impl Net {
-    fn new(config: &SmolConfig, clock: Arc<dyn Clock>) -> Self {
-        let client = Host::new(CLIENT_ADDR, config, config.seed);
-        let server = Host::new(SERVER_ADDR, config, config.seed.wrapping_add(1));
+    fn new(
+        config: &SmolConfig,
+        clock: Arc<dyn Clock>,
+        addresses: (IpAddress, IpAddress),
+        prefix: u8,
+        external: Option<External>,
+    ) -> Self {
+        let (client_addr, server_addr) = addresses;
+        let client = Host::new(client_addr, prefix, config, config.seed);
+        let server = Host::new(server_addr, prefix, config, config.seed.wrapping_add(1));
         Self {
             hosts: [client, server],
             params: SocketParams {
@@ -370,6 +424,9 @@ impl Net {
             link: config
                 .impair
                 .map(|impair| ImpairedLink::new(impair, Framing::Ip)),
+            client_addr,
+            server_addr,
+            external,
         }
     }
 
@@ -381,6 +438,29 @@ impl Net {
         self.dirty = false;
         self.last_pass_micros = now_micros;
         let mut any = false;
+        if let Some(external) = &mut self.external {
+            let host = &mut self.hosts[external.role.index()];
+            loop {
+                host.step(now, &self.params, self.time_wait);
+                let mut moved = 0;
+                while let Some(packet) = host.dev.take_tx() {
+                    external.bridge.send(now_micros, packet);
+                    moved += 1;
+                }
+                while let Some(packet) = external.bridge.recv(now_micros) {
+                    host.dev.push_rx(packet);
+                    moved += 1;
+                }
+                if moved == 0 {
+                    break;
+                }
+                any = true;
+            }
+            if any {
+                self.passes += 1;
+            }
+            return any;
+        }
         loop {
             let [client, server] = &mut self.hosts;
             client.step(now, &self.params, self.time_wait);
@@ -411,6 +491,11 @@ impl Net {
                 .and_then(ImpairedLink::next_release)
                 .is_some_and(|at| at <= now)
             || self
+                .external
+                .as_ref()
+                .and_then(|e| e.bridge.next_release())
+                .is_some_and(|at| at <= now)
+            || self
                 .clock
                 .now_micros()
                 .saturating_sub(self.last_pass_micros)
@@ -434,8 +519,8 @@ impl Net {
         socket
             .connect(
                 host.iface.context(),
-                IpEndpoint::new(SERVER_ADDR, port),
-                (CLIENT_ADDR, local_port),
+                IpEndpoint::new(self.server_addr, port),
+                (self.client_addr, local_port),
             )
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("connect: {e}")))?;
         let handle = host.add(socket);
@@ -540,9 +625,56 @@ impl SmolStack {
     pub fn new(config: SmolConfig, clock: Arc<dyn Clock>) -> Self {
         Self {
             shared: Arc::new(Shared {
-                net: Mutex::new(Net::new(&config, clock)),
+                net: Mutex::new(Net::new(
+                    &config,
+                    clock,
+                    (CLIENT_ADDR, SERVER_ADDR),
+                    24,
+                    None,
+                )),
                 backlog: config.backlog,
                 notes: describe(&config),
+            }),
+        }
+    }
+
+    /// One smoltcp host that plays `role` at its address in `addresses` (the
+    /// client address and the server address of the pair), joined by `bridge`
+    /// to a peer that another stack plays (TRN-26). Only the host of `role` is
+    /// polled, and `config.impair` does not apply: the bridge owns the link.
+    pub fn bridged(
+        config: SmolConfig,
+        clock: Arc<dyn Clock>,
+        role: Role,
+        addresses: (std::net::Ipv4Addr, std::net::Ipv4Addr),
+        bridge: Box<dyn IpBridge>,
+    ) -> Self {
+        let address = |a: std::net::Ipv4Addr| {
+            let [a, b, c, d] = a.octets();
+            IpAddress::v4(a, b, c, d)
+        };
+        let addresses = (address(addresses.0), address(addresses.1));
+        let mut notes = describe(&config);
+        notes.push(format!(
+            "this host plays the {} of a connection with a peer that is not smoltcp, joined by an IP bridge (TRN-26)",
+            if role == Role::Client {
+                "client"
+            } else {
+                "server"
+            }
+        ));
+        let external = External { role, bridge };
+        Self {
+            shared: Arc::new(Shared {
+                net: Mutex::new(Net::new(
+                    &config,
+                    clock,
+                    addresses,
+                    BRIDGED_PREFIX,
+                    Some(external),
+                )),
+                backlog: config.backlog,
+                notes,
             }),
         }
     }
@@ -609,7 +741,12 @@ impl TcpStack for SmolStack {
             .link
             .as_ref()
             .map(ImpairedLink::stats)
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                net.external
+                    .as_ref()
+                    .map(|e| e.bridge.stats())
+                    .unwrap_or_default()
+            });
         StackStats {
             sockets_open: net.hosts[CLIENT_HOST].open + net.hosts[SERVER_HOST].open,
             pump_passes: net.passes,

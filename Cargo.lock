@@ -1461,6 +1461,7 @@ dependencies = [
  "fps-backend-afxdp",
  "fps-io",
  "fps-tcp-own",
+ "libc",
  "smoltcp",
  "socket2",
  "thiserror 2.0.21",

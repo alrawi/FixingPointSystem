@@ -17,8 +17,13 @@ thiserror = "2"
 tokio = { version = "1.54", features = ["io-util", "net", "rt", "sync", "time"] }
 
 [dev-dependencies]
+libc = "0.2"
 tokio = { version = "1.54", features = ["io-util", "macros", "net", "rt", "time"] }
 
 [[test]]
 name = "netns"
+harness = false
+
+[[test]]
+name = "interop_kernel"
 harness = false
