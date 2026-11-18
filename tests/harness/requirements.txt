@@ -1,4 +1,7 @@
-# Python tools that lint and test the namespace harness helpers.
+# Python tools that lint and test the namespace harness helpers, and the
+# AF_XDP realism plan builder of engine/fps-datapath/realism (PyYAML).
 pytest>=8.0
 ruff==0.16.9
 mypy==2.3.1
+PyYAML>=6.0
+types-PyYAML

@@ -4,7 +4,7 @@
 
 Gate 3 (v1 release). One 16 vCPU agent meets the tier T1 targets on KVM, multi agent runs aggregate correctly, every image format boots, and the web UI passes its end to end suite.
 
-This page lists 44 work packages. Packages marked critical path gate the phase.
+This page lists 45 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -31,6 +31,7 @@ flowchart LR
   TRN_34["TRN-34<br/>Pacing and faster loss detection in the own stack"]
   TRN_35["TRN-35<br/>The own stacks resolve their next hop"]
   ENG_31["ENG-31<br/>A transport seam in the runtime"]
+  AGT_27["AGT-27<br/>The standalone agent writes a TLS key log"]
   AGT_26["AGT-26<br/>The agent resolves next hops on the datapath"]
   AGT_25["AGT-25<br/>The agent runs its workers on the datapath"]
   CON_35["CON-35<br/>The agent reports the bound XDP mode after a plan"]
@@ -103,12 +104,14 @@ flowchart LR
   AGT_24 --> TRN_31
   AGT_25 --> TRN_31
   AGT_26 --> TRN_31
+  AGT_27 --> TRN_31
   CTL_54 --> TRN_31
   TRN_30 --> TRN_33
   TRN_33 --> TRN_34
   TRN_30 --> TRN_35
   TRN_27 --> ENG_31
   TRN_29 --> ENG_31
+  TRN_12 --> AGT_27
   AGT_25 --> AGT_26
   TRN_35 --> AGT_26
   AGT_24 --> AGT_25
@@ -164,11 +167,12 @@ flowchart LR
 | [TRN-28](#trn-28-os-profile-options-for-the-own-stack) | OS profile options for the own stack | S | TRN-24 |  |
 | [TRN-29](#trn-29-udp-over-frameio) | UDP over FrameIo | M | TRN-21, TRN-32, TRN-27 |  |
 | [TRN-30](#trn-30-ipv6-in-the-own-stack) | IPv6 in the own stack | M | TRN-26, TRN-29 |  |
-| [TRN-31](#trn-31-the-af_xdp-transport-becomes-available) | The AF_XDP transport becomes available | S | TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, CTL-54 |  |
+| [TRN-31](#trn-31-the-af_xdp-transport-becomes-available) | The AF_XDP transport becomes available | S | TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, AGT-27, CTL-54 |  |
 | [TRN-33](#trn-33-the-own-stack-api-that-the-datapath-needs) | The own stack API that the datapath needs | S | TRN-30 |  |
 | [TRN-34](#trn-34-pacing-and-faster-loss-detection-in-the-own-stack) | Pacing and faster loss detection in the own stack | M | TRN-33 |  |
 | [TRN-35](#trn-35-the-own-stacks-resolve-their-next-hop) | The own stacks resolve their next hop | S | TRN-30 |  |
 | [ENG-31](#eng-31-a-transport-seam-in-the-runtime) | A transport seam in the runtime | M | TRN-27, TRN-29 |  |
+| [AGT-27](#agt-27-the-standalone-agent-writes-a-tls-key-log) | The standalone agent writes a TLS key log | S | TRN-12 |  |
 | [AGT-26](#agt-26-the-agent-resolves-next-hops-on-the-datapath) | The agent resolves next hops on the datapath | S | AGT-25, TRN-35 |  |
 | [AGT-25](#agt-25-the-agent-runs-its-workers-on-the-datapath) | The agent runs its workers on the datapath | S | AGT-24, ENG-31 |  |
 | [CON-35](#con-35-the-agent-reports-the-bound-xdp-mode-after-a-plan) | The agent reports the bound XDP mode after a plan | S | AGT-24 |  |
@@ -570,7 +574,7 @@ Acceptance.
 
 Phase 3 · size S · workstream TRN
 
-- **Depends on.** TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, CTL-54
+- **Depends on.** TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, AGT-27, CTL-54
 - **Paths.** `engine/fps-backend-afxdp/`
 
 Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with native XDP, and a stack without congestion control must not become the default. AGT-24 and CTL-54 prepare the agent and the controller behind the flag first.
@@ -776,6 +780,23 @@ Acceptance.
 - [ ] The fps-hosts API gives the agent the leased addresses of a DHCP pool, so that a later agent change can build the pool at Prepare and filter a DHCP port by those addresses instead of keeping every session.
 
 ## AGT Agent service
+
+### AGT-27 The standalone agent writes a TLS key log
+
+Phase 3 · size S · workstream AGT
+
+- **Depends on.** TRN-12
+- **Paths.** `engine/fps-agent/`
+
+fps-agent run has no way to export the TLS secrets of a run, so the http1 realism run of TRN-12 on AF_XDP scores conformance, parser errors, and JA4 but cannot decrypt its capture. Add `run --keylog FILE`, which writes the secrets in the NSS key log format through the KeyTap that prepare_with already takes. The diff that TRN-12 built and ran in a scratch copy is in its log entry.
+
+Deliverables.
+
+- The flag with a test in tests/standalone.rs that runs an https scenario and finds CLIENT_TRAFFIC_SECRET_0 lines, and a line on the Agent page.
+
+Acceptance.
+
+- [ ] The afxdp job of mod-http1 decrypts every TLS session of its capture and classifies the decrypted view as HTTP, with no change to the job.
 
 ### AGT-26 The agent resolves next hops on the datapath
 

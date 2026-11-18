@@ -939,6 +939,29 @@ The fourth gap, `OwnStack::input(side, frame)` and `take_tx(side)` so that a lan
 
 Tests: `engine/fps-tcp-own/tests/api.rs` (six tests: the addresses over IPv4 and IPv6 and with several hosts, distinct peers, `unlisten` and listening again, a refused connect after `unlisten`, queued connections reset and a waiting accept failed, accepted sessions kept) and `tests/own.rs` (`unlisten_resets_a_handshake_that_is_not_finished`, with a link that drops everything the client sends after its SYN, so the server holds a connection in SYN-RECEIVED).
 
+### The http1 module on AF_XDP, end to end (TRN-12)
+
+TRN-12 closes the AF_XDP TCP path of decision record 0014. It runs the ten http1 scenarios (six in the clear, four over TLS with the browser profiles) through the agent on the AF_XDP backend and scores the capture with the realism runner, as the kernel run does. The agent is not changed: a plan with the backend `BACKEND_AF_XDP` and `fps-agent run` is the whole path (AGT-24, AGT-25).
+
+`engine/fps-datapath/realism/http1-afxdp.sh AGENT_BINARY OUTPUT_DIR` (root) does the run. `make_plan.py` writes the plan, the module tree it digests, and the labels: the scenarios of `modules/http1` become ten mix entries of one plan, the six plain ones on the ports 8080 to 8085 (two entries cannot listen on one port of one server host, and the kernel run does not meet that, because it runs the scenarios one after another) and the four https ones on 8443 to 8446 as their manifests say. The load is 5 sessions per second for each entry for 4 seconds at the default of 20 sessions per scenario (`FPS_AFXDP_SESSIONS`), and the clients and servers are the pools `10.1.0.0/24` (profile `windows11`) and `10.2.0.0/24` (profile `linux6`).
+
+The agent needs both arms of the datapath in one process, and AF_XDP takes the frames of its two ports before any tap, so the script builds this wire:
+
+```text
+ <p>-agent                      <p>-wire
+ dpc ---------------------- wc ]
+                                ] br0 (forwards only)
+ dps ---------------------- ws ]
+```
+
+`tcpdump` on `wc` sees every frame of both directions, as the capture on the router's client arm does in the kernel run. Both ends of the veth pairs have the checksum offloads off, and IPv6 is off in the namespaces, so the capture holds only the traffic of the run. The script then scores the capture with the labels of `modules/http1/fixtures/expected.yaml` (with the plain ports of the plan): the conformance check with nDPI, the parser error check (`FPS_AFXDP_PARSERS`, `tshark` by default and `tshark,zeek` in CI), the encryption check (decryption and JA4 of the four browser profiles), and `realism decrypted` for the HTTP inside TLS.
+
+The decryption needs the TLS secrets of the run, which a standalone `fps-agent run` has never exported (only a capture that the controller starts does). The script uses `fps-agent run --keylog FILE` when the agent knows it and injects the key log into the capture with `editcap`, as `capture.sh` does. An agent without the flag runs the same sessions, and the script prints a notice and leaves the `tls` section out of the labels, so the encryption check is not scored. See the log entry of TRN-12 for the change to the agent.
+
+Sandbox run (2 vCPU, debug build, kernel 6.18, `engine/fps-datapath/results/sandbox-2vcpu-trn12/`): 199 client and 199 server sessions attempted and succeeded, none failed (131 http1 and 68 https in the capture), 3,316 TCP frames through the lane, both ports native in copy mode. With the key log: conformance, parser errors (tshark), and encryption pass, 68 of 68 TLS sessions decrypt and match their JA4, and the decrypted view classifies as HTTP 68 of 68. A run with 100 sessions per scenario (1,027 sessions) passed the same checks in 24 seconds. Zeek is not installed in the sandbox, so the Zeek parser ran in CI only.
+
+`test_make_plan.py` (pytest, no root) checks the plan, the digest of the staged module tree, and the labels.
+
 ### Next hop resolution in the datapath (TRN-35)
 
 The own stack answered ARP and neighbor discovery for its pools but never asked, so a peer behind a router worked only when the next hop MAC address was configured by hand (the TRN-26 harness gave the router interface the MAC address that the stack used). With `DatapathConfig::neighbors` set (`Some(NeighborConfig)`, off by default) the datapath resolves the next hop itself, over IPv4 with ARP and over IPv6 with neighbor solicitation.
