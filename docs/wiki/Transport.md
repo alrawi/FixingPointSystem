@@ -538,9 +538,10 @@ TRN-32 gave the stack host pools. The connection table is keyed by the 4-tuple (
 | Teardown | FIN in both directions with the states FIN-WAIT-1, FIN-WAIT-2, CLOSE-WAIT, CLOSING, LAST-ACK, and TIME-WAIT. Half close works: data that arrives after the own FIN is delivered. `abort` sends a reset, and the peer reads `ConnectionReset` after its data was discarded. Dropping a session closes it with a FIN, or with a reset when unread data is left |
 | Loss recovery (TRN-23) | A round trip estimator and the retransmission timeout of RFC 6298 (minimum 200 ms, maximum 2 s, Karn's rule, backoff kept until a valid sample), fast retransmit on three duplicate acknowledgments with Limited Transmit, an out of order queue, and NewReno with an initial window of 10 segments. A one segment probe into a zero window, and a reset with `TimedOut` after 8 timeouts without any segment from the peer. See [Loss recovery in the own stack](#loss-recovery-in-the-own-stack-trn-23) |
 | Options for long fat paths (TRN-24) | Window scaling and timestamps (RFC 7323, with PAWS), selective acknowledgment (RFC 2018 blocks, RFC 6675 recovery beside NewReno), and a delayed acknowledgment (every second segment or 40 ms, at once for out of order data). Each is offered in the SYN and used only when the peer offers it. See [Options for long fat paths in the own stack](#options-for-long-fat-paths-in-the-own-stack-trn-24) |
+| CUBIC (TRN-25) | CUBIC of RFC 9438 is the default congestion control and NewReno stays selectable (`OwnConfig::congestion_control`, `tcp_bench --own-cc newreno\|cubic`). Both run on the same loss recovery. See [CUBIC in the own stack](#cubic-in-the-own-stack-trn-25) |
 | Checksums | The IPv4 header checksum and the TCP checksum are computed on send and verified on receive, so the numbers include them. A frame that fails a check is counted and dropped |
 
-What it leaves out is the list that a production stack must still do, and decision record 0014 has to price it: no CUBIC (TRN-25), no simultaneous open, no urgent data, no IP fragmentation, no keepalive, no IPv6, and one peer address per host. TIME-WAIT lasts one second and not minutes, so a rate run does not run out of the 55,000 client ports.
+What it leaves out is the list that a production stack must still do, and decision record 0014 has to price it: no HyStart, no PRR, no simultaneous open, no urgent data, no IP fragmentation, no keepalive, no IPv6, and one peer address per host. TIME-WAIT lasts one second and not minutes, so a rate run does not run out of the 55,000 client ports.
 
 Timers sit in a heap with at most one entry per connection, and a connection with no outstanding data has none. A poll with idle sockets therefore does not walk the sockets, which makes `idle_poll_us` flat in the socket count. A stack that walks its socket set, like smoltcp (see [The smoltcp adapter](#the-smoltcp-adapter)), grows with it. A connection is a slab entry of about 200 bytes with empty buffers, and the buffers exist only while data waits.
 
@@ -700,6 +701,40 @@ The hosted runner measured the kernel at 24.09 Mbit/s on this row against 13.17 
 
 Tests: `wire.rs` (the layout of a SYN with every option against the kernel's, the padding, three or four blocks, the cap of the shift, malformed and unknown options), `sack.rs` (the scoreboard: merge, trim, `IsLost`, `pipe`, `NextSeg`, the wrap), `recovery.rs` (the blocks and their order, NewReno with SACK), and `host/recovery_tests.rs` (the SYN and SYN-ACK, negotiation of all combinations and the fallback of each option, the window field, a scaled window, timestamps echoed and sampled where Karn's rule gives none, PAWS with the wrap and a reset, blocks in the ACK, several holes in one round trip against one per round trip, a hole with little above it, a lost retransmission, a long transfer with a loss every 17th segment, the delayed ACK timing in six cases, the restart of the timeout). `tests/lossy.rs` moves 2 MiB over 40 Mbit/s with 25 ms each way and needs the scaled window to pass 15 Mbit/s.
 
+### CUBIC in the own stack (TRN-25)
+
+TRN-25 added CUBIC (RFC 9438) beside the NewReno of TRN-23. `engine/fps-tcp-own/src/cubic.rs` holds the window function and its state, `recovery.rs` calls it from `NewReno` (the struct keeps the loss recovery: duplicate acknowledgments, `recover`, SACK entry, partial acknowledgments, timeout), and `host.rs` passes the time, the smoothed round trip time, and the flight with every acknowledgment. The choice is `OwnConfig::congestion_control` (`CongestionControl::Cubic`, the default, or `NewReno`), and `tcp_bench --own-cc newreno|cubic` sets it. CUBIC is the default because it is the default of the Linux kernel that the own stack is measured against.
+
+| Rule | CUBIC in the own stack |
+|---|---|
+| Slow start | The rule of RFC 5681, as in NewReno. There is no HyStart: slow start leaves on a loss |
+| Event (fast retransmit, SACK recovery) | The threshold is 0.7 of the flight and `W_max` the window, lowered to 0.85 of the window when it fell short of the last `W_max` (fast convergence, RFC 9438 section 4.7) |
+| Congestion avoidance | `W_cubic(t) = C (t - K)^3 + W_max` with `C` = 0.4 and `K` the cube root of `(W_max - cwnd) / C`; the target is the curve one smoothed round trip ahead, at most 1.5 times the window; the reno friendly estimate (alpha 0.53, then 1) is the floor |
+| Timeout | The threshold is 0.7 of the flight and the window one segment; a timeout inside a recovery does not lower `W_max` a second time |
+| Idle time | The epoch moves by the time the flight was zero (RFC 9438 section 4.2) |
+
+The code is a port of parts of smoltcp 0.14.0 (0BSD), file `src/socket/tcp/congestion/cubic.rs`: the constants, `cube_root`, the window function, the reno friendly estimate with its `alpha` switch, the 1.5 clamp, the idle absorption, and the event rules. The header comment of `cubic.rs` lists them and the differences: the epoch starts at the first acknowledgment after an event and `K` uses the window at that moment, an acknowledgment counts all its bytes (a batch is one ACK here), and the fraction of a byte that a step does not add carries over. The state is 72 bytes in the `Recovery` box, so an idle socket pays nothing: the scale row of the full profile reads 263 bytes per socket at 1,001,129 sockets (262 and 263 before).
+
+`tcp_bench` has a fairness variant of the loss workload. `--loss-flows N` makes the run one of N flows over the one link: every flow sends without end, the server counts the bytes of each flow, and the result is the bytes in a window (`--loss-window-secs`, default 10) that opens `--loss-warmup-secs` (default 5) after the last flow connected. The goodput is the sum over the window and the Jain index is `(sum x)^2 / (n sum x^2)` over the flows. `--loss-profile bottleneck` sets 4 flows, 0 percent loss, 20 ms in each direction, 1000 Mbit/s with a 4 MiB queue, and for the own stack 4 MiB windows and send buffers (`--own-sndbuf-kib` is new, because `--own-window-kib` sets the receive side only). The kernel runs the flows as one client process and one server process in the namespaces of the loss workload.
+
+Sandbox results (2 vCPU, release build; `engine/fps-tcp/results/sandbox-2vcpu-trn25/`, no kernel row because the sandbox has no `sch_netem`):
+
+| Row | Own CUBIC | Own NewReno | smoltcp |
+|---|---|---|---|
+| Fat path, 0.1 percent loss, mean of 6 | 20.00 Mbit/s | 14.18 | 4.91 (64 KiB window) |
+| Fat path, mean of 24 (seed 7) | 19.58 Mbit/s | 13.54 | not run |
+| Four flows, 1 Gbit/s, 20 ms: goodput (mean of 6) | 891 Mbit/s | 891 | 51 (64 KiB windows) |
+| Four flows: Jain index, mean (lowest run) | 0.941 (0.776) | 0.962 (0.932) | 1.000 |
+
+The fat path row has a large spread (6 to 32 Mbit/s per transfer) because a loss early in slow start leaves a small window that CUBIC (like the kernel) regrows slowly, so the mean of six moves by a few Mbit/s between runs. The acceptance reference (kernel 24.09, so 19.3 needed) is met with a thin margin of 1 to 4 percent in the sandbox; the coordinator reads the kernel rows on the hosted runner. Four flows fill the link at 891 Mbit/s of payload (the rate counts the frame bytes), and the Jain index is at or above 0.93 in 11 of the 12 runs of the two controls; one CUBIC run read 0.776 (two flows at 92 and 118 Mbit/s against 313 and 368), so a single window of 10 s can miss 0.9 although the mean of six does not.
+
+Tests: `cubic.rs` (cube root, `W_max` and `K`, fast convergence, the floor of two segments, the 1.5 clamp, the reno friendly region, alpha, idle time, the timeout rules, the recovery exit), `recovery.rs` (CUBIC with fast retransmit, SACK recovery, the recover guard, timeout, fast convergence across events, growth against NewReno at a large window), `host/recovery_tests.rs` (the default, the 0.7 reduction, a timeout, a SACK recovery that repairs four holes, a lost retransmission that falls back to the timeout), `workload.rs` and `tests/lossy.rs` (the Jain index and a two flow run over a rate limited link), `cli.rs` (`--own-cc`, the bottleneck profile and its overrides), `report.rs` (the fairness metrics), and `netns.rs` (the server result line of a fairness run).
+
+Run for the acceptance rows (the loss job of the `tcp-bench` workflow takes these as `loss_args`):
+
+- Fat path, one flow: `--loss-profile fat --loss-transfers 6` for kernel, own, and smoltcp, and `--loss-profile fat --loss-transfers 6 --own-cc newreno` for the NewReno row.
+- Four flows: `--loss-profile bottleneck --loss-transfers 3` for kernel, own, and smoltcp.
+
 ### Decision record 0014 and the one session run
 
 TRN-10 proposes decision record 0014 (`docs/decisions/0014-user-space-tcp-stack.md`), which chooses the own stack with loss recovery added for the AF_XDP backend, keeps smoltcp as a reference and a fallback, and leaves F-Stack to the parked TRN-13. Its numbers come from `engine/fps-tcp/results/sandbox-2vcpu-trn10/`, where the three stacks ran in one session on one sandbox, including the million socket rows of the own stack and smoltcp. The kernel row at a million sockets is not measured, because the open files limit of the sandbox is 20,000 and cannot be raised, so the kernel stops at 19,815 sockets. The fat-nuc numbers are still pending, and the record says when to revisit it.
@@ -715,5 +750,5 @@ TRN-10 proposes decision record 0014 (`docs/decisions/0014-user-space-tcp-stack.
 | The fat-nuc run of smoltcp needs a Rust toolchain for the relay account | The smoltcp results are from the sandbox only. The owner installs a stable toolchain, and then the host test of `docs/handoff/TRN-20.md` runs through the relay |
 | smoltcp walks its socket set on every poll and every frame | One socket set should hold a few thousand sockets, so a million sockets need sharding and a flow table of our own |
 | smoltcp runs with TIME-WAIT skip by default, with software checksums, and with Nagle off | The rate of smoltcp is an upper bound for a stack that holds tuples in TIME-WAIT. `--smol-time-wait keep` shows the other case |
-| The own stack runs NewReno on the scoreboard, and its window is bounded by its buffers (1 MiB by default) | A path with a bandwidth delay product above 1 MiB needs larger buffers (`--own-window-kib`), and the congestion control is NewReno only until TRN-25 adds CUBIC |
+| The own stack runs CUBIC (or NewReno) on the scoreboard, and its window is bounded by its buffers (1 MiB by default) | A path with a bandwidth delay product above 1 MiB needs larger buffers (`--own-window-kib` and `--own-sndbuf-kib`). There is no HyStart (slow start leaves on a loss) and no PRR (a recovery sets the window to the threshold at once), so after a loss the sender pauses for about 0.3 round trips |
 | The own stack measures its rate on one thread with a driver pass per wake up | The rate of one shard is latency bound. `--threads` runs one stack per thread, and the real multi core rate of an engine belongs to TRN-12 |

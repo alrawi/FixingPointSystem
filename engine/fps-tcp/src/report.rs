@@ -141,7 +141,11 @@ impl BenchReport {
                     Better::Lower,
                     "segments",
                 );
-                if let Some(secs) = level.mean_complete_secs() {
+                if let Some(jain) = level.mean_jain() {
+                    // A fairness run (TRN-25): the goodput above is the sum of
+                    // the flows, and the time is the window, not a completion.
+                    push(format!("{at}.jain_index"), jain, Better::Higher, "index");
+                } else if let Some(secs) = level.mean_complete_secs() {
                     push(format!("{at}.complete_s"), secs, Better::Lower, "s");
                 }
             }
@@ -265,6 +269,13 @@ impl BenchReport {
                 loss.bytes_per_transfer, loss.link
             ));
             notes.push("a metric of the loss workload is the mean over its transfers, and the key has the loss in percent with p for the decimal point".to_string());
+            if loss
+                .levels
+                .iter()
+                .any(|l| l.runs.iter().any(|r| !r.flow_bytes.is_empty()))
+            {
+                notes.push("fairness run (TRN-25): every flow sends without end, the goodput is the sum of the bytes that the server received from all flows in the measurement window over the window (the warm-up before it is not counted), and jain_index is (sum x)^2 / (n sum x^2) over the bytes of the flows; retransmits count the whole run, the warm-up included".to_string());
+            }
         }
         notes
     }
@@ -326,12 +337,32 @@ impl BenchReport {
                         run.failure.as_deref().unwrap_or("")
                     );
                 }
+                for (index, run) in level.runs.iter().enumerate() {
+                    if let Some(jain) = run.jain_index() {
+                        let secs = run.elapsed.as_secs_f64().max(1e-9);
+                        let rates: Vec<String> = run
+                            .flow_bytes
+                            .iter()
+                            .map(|b| format!("{:.1}", *b as f64 * 8.0 / 1e6 / secs))
+                            .collect();
+                        let _ = writeln!(
+                            out,
+                            "  {:>7} run {} flows Mbit/s: {}, Jain index {jain:.3}",
+                            percent_text(level.loss_ppm),
+                            index + 1,
+                            rates.join(" ")
+                        );
+                    }
+                }
                 let _ = writeln!(
                     out,
-                    "  {:>7} mean: {:.0}% completed, goodput {:.2} Mbit/s",
+                    "  {:>7} mean: {:.0}% completed, goodput {:.2} Mbit/s{}",
                     percent_text(level.loss_ppm),
                     level.completed_ratio() * 100.0,
-                    level.mean_goodput_mbit_per_s()
+                    level.mean_goodput_mbit_per_s(),
+                    level
+                        .mean_jain()
+                        .map_or(String::new(), |j| format!(", Jain index {j:.3}"))
                 );
             }
         }
@@ -557,6 +588,43 @@ mod tests {
         assert!(text.contains("sessions per second: 100"));
         assert!(text.contains("throughput: 2.500 Gbit/s"));
         assert!(text.contains("(not reached)"));
+    }
+
+    #[test]
+    fn a_fairness_level_reports_the_jain_index_and_the_flows() {
+        use crate::workload::{LossLevel, LossReport, LossRun};
+        use std::time::Duration;
+        let run = |bytes: [u64; 4]| LossRun {
+            completed: true,
+            confirmed_bytes: bytes.iter().sum(),
+            elapsed: Duration::from_secs(10),
+            flow_bytes: bytes.to_vec(),
+            ..LossRun::default()
+        };
+        let mut r = report();
+        r.loss = Some(LossReport {
+            link: "loss 0%, delay 20 ms".into(),
+            bytes_per_transfer: 0,
+            levels: vec![LossLevel {
+                loss_ppm: 0,
+                runs: vec![run([100, 100, 100, 100]), run([400, 0, 0, 0])],
+            }],
+        });
+        let metrics = r.metrics();
+        let value = |name: &str| {
+            metrics
+                .iter()
+                .find(|m| m.name == name)
+                .unwrap_or_else(|| panic!("no metric {name}"))
+                .value
+        };
+        // The first run is perfectly fair, the second gives all to one flow
+        // (1/n), and the level reports the mean.
+        assert!((value("kernel.loss.0pct.jain_index") - (1.0 + 0.25) / 2.0).abs() < 1e-9);
+        assert!(!metrics.iter().any(|m| m.name.ends_with("complete_s")));
+        let text = r.to_text();
+        assert!(text.contains("flows Mbit/s") && text.contains("Jain index 1.000"));
+        assert!(r.notes().iter().any(|n| n.contains("fairness run")));
     }
 
     #[test]

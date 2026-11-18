@@ -527,6 +527,16 @@ pub struct LossConfig {
     pub timeout: Duration,
     /// The server port.
     pub port: u16,
+    /// The concurrent flows over the one link. With more than one the run is
+    /// a fairness run (TRN-25): every flow sends without end, and the bytes
+    /// that the server receives from each flow in the measurement window
+    /// are the result (`bytes` and `timeout` do not apply).
+    pub flows: usize,
+    /// The time from the moment that every flow is connected until the
+    /// measurement window opens, so that slow start is over.
+    pub warmup: Duration,
+    /// The length of the measurement window.
+    pub window: Duration,
 }
 
 impl Default for LossConfig {
@@ -536,6 +546,9 @@ impl Default for LossConfig {
             chunk: 16 * 1024,
             timeout: Duration::from_secs(60),
             port: 9100,
+            flows: 1,
+            warmup: Duration::from_secs(5),
+            window: Duration::from_secs(10),
         }
     }
 }
@@ -561,9 +574,20 @@ pub struct LossRun {
     pub link_queue_dropped: u64,
     /// Why the transfer failed, when it did.
     pub failure: Option<String>,
+    /// The bytes that the server received from each flow in the measurement
+    /// window of a fairness run, and empty for a single transfer. Then
+    /// `confirmed_bytes` is their sum and `elapsed` the window.
+    pub flow_bytes: Vec<u64>,
 }
 
 impl LossRun {
+    /// Returns Jain's fairness index of the flows, `(sum x)^2 / (n sum x^2)`,
+    /// which is 1 when all flows got the same and `1/n` when one got
+    /// everything, and `None` for a run of one flow.
+    pub fn jain_index(&self) -> Option<f64> {
+        jain(&self.flow_bytes)
+    }
+
     /// Returns the goodput in Mbit/s: the confirmed bytes over the elapsed
     /// time, and 0 for a transfer that did not complete.
     pub fn goodput_mbit_per_s(&self) -> f64 {
@@ -600,6 +624,13 @@ impl LossLevel {
         mean(self.runs.iter().map(LossRun::goodput_mbit_per_s))
     }
 
+    /// Returns the mean fairness index over the runs of a fairness level, or
+    /// `None` when the runs have one flow.
+    pub fn mean_jain(&self) -> Option<f64> {
+        let values: Vec<f64> = self.runs.iter().filter_map(LossRun::jain_index).collect();
+        (!values.is_empty()).then(|| mean(values.into_iter()))
+    }
+
     /// Returns the mean retransmissions per transfer.
     pub fn mean_retransmits(&self) -> f64 {
         mean(self.runs.iter().map(|r| r.retransmits as f64))
@@ -616,6 +647,17 @@ impl LossLevel {
             .collect();
         (!done.is_empty()).then(|| mean(done.into_iter()))
     }
+}
+
+/// Jain's fairness index of `values`, or `None` for fewer than two values or
+/// all zero.
+pub fn jain(values: &[u64]) -> Option<f64> {
+    if values.len() < 2 {
+        return None;
+    }
+    let sum: f64 = values.iter().map(|v| *v as f64).sum();
+    let squares: f64 = values.iter().map(|v| (*v as f64) * (*v as f64)).sum();
+    (squares > 0.0).then(|| sum * sum / (values.len() as f64 * squares))
 }
 
 fn mean(values: impl Iterator<Item = f64>) -> f64 {
@@ -644,6 +686,9 @@ pub struct LossReport {
 /// when the client has read that answer. A failure is part of the result, not
 /// an error, because a stack that cannot finish at some loss is a finding.
 pub async fn loss_transfer<S: TcpStack>(stack: &S, config: &LossConfig) -> LossRun {
+    if config.flows > 1 {
+        return flows_transfer(stack, config).await;
+    }
     let mut run = LossRun::default();
     if let Err(error) = stack.listen(config.port) {
         run.failure = Some(format!("listen: {error}"));
@@ -689,6 +734,100 @@ pub async fn loss_transfer<S: TcpStack>(stack: &S, config: &LossConfig) -> LossR
             run.failure = Some(format!("the server counted {confirmed} of {bytes} bytes"));
         }
     }
+    run
+}
+
+/// Runs the fairness variant of the loss workload (TRN-25) on a stack whose
+/// link the caller has set up: `config.flows` flows share the link, each one
+/// sends without end, and the server counts the bytes of each. Once every
+/// flow is connected the run waits `config.warmup`, reads the counters, waits
+/// `config.window`, and reads them again; the difference per flow is the
+/// result. A flow that moved no byte in the window is a failure.
+pub async fn flows_transfer<S: TcpStack>(stack: &S, config: &LossConfig) -> LossRun {
+    let mut run = LossRun::default();
+    if let Err(error) = stack.listen(config.port) {
+        run.failure = Some(format!("listen: {error}"));
+        return run;
+    }
+    let driver = spawn_driver(stack);
+    let flows = config.flows.max(1);
+    let counters: Arc<Vec<AtomicU64>> = Arc::new((0..flows).map(|_| AtomicU64::new(0)).collect());
+    let accepted = Arc::new(AtomicU64::new(0));
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut tasks: Vec<JoinHandle<()>> = Vec::new();
+    let (port, chunk) = (config.port, config.chunk.max(1));
+    for index in 0..flows {
+        let (server_stack, client_stack) = (stack.clone(), stack.clone());
+        let (counters, accepted, stop) = (
+            Arc::clone(&counters),
+            Arc::clone(&accepted),
+            Arc::clone(&stop),
+        );
+        tasks.push(tokio::spawn(async move {
+            let Ok(mut session) = server_stack.accept(port).await else {
+                return;
+            };
+            accepted.fetch_add(1, Ordering::SeqCst);
+            let mut buffer = vec![0u8; chunk];
+            loop {
+                match session.read(&mut buffer).await {
+                    Ok(0) | Err(_) => return,
+                    Ok(read) => {
+                        counters[index].fetch_add(read as u64, Ordering::Relaxed);
+                    }
+                }
+            }
+        }));
+        tasks.push(tokio::spawn(async move {
+            let Ok(mut session) = client_stack.connect(port).await else {
+                return;
+            };
+            let buffer = vec![0xA5u8; chunk];
+            while !stop.load(Ordering::Relaxed) {
+                if session.write_all(&buffer).await.is_err() {
+                    return;
+                }
+            }
+        }));
+    }
+    let connect_limit = Duration::from_secs(30);
+    let connected = tokio::time::timeout(connect_limit, async {
+        while accepted.load(Ordering::SeqCst) < flows as u64 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    if connected.is_err() {
+        run.failure = Some(format!(
+            "only {} of {flows} flows connected within {connect_limit:?}",
+            accepted.load(Ordering::SeqCst)
+        ));
+    } else {
+        tokio::time::sleep(config.warmup).await;
+        let read = |counters: &[AtomicU64]| -> Vec<u64> {
+            counters.iter().map(|c| c.load(Ordering::Relaxed)).collect()
+        };
+        let before = read(&counters);
+        let opened = Instant::now();
+        tokio::time::sleep(config.window).await;
+        let after = read(&counters);
+        run.elapsed = opened.elapsed();
+        run.flow_bytes = after.iter().zip(&before).map(|(a, b)| a - b).collect();
+        run.confirmed_bytes = run.flow_bytes.iter().sum();
+        run.completed = run.flow_bytes.iter().all(|b| *b > 0);
+        if !run.completed {
+            run.failure = Some("a flow moved no byte in the window".to_string());
+        }
+    }
+    let stats = stack.stats();
+    stop.store(true, Ordering::Relaxed);
+    driver.abort();
+    for task in &tasks {
+        task.abort();
+    }
+    run.retransmits = stats.retransmits;
+    run.link_lost = stats.link_lost;
+    run.link_queue_dropped = stats.link_queue_dropped;
     run
 }
 
@@ -991,4 +1130,20 @@ async fn probe_rate<S: TcpStack>(
         samples,
         stats: stack.stats(),
     }]))
+}
+
+#[cfg(test)]
+mod fairness_tests {
+    use super::*;
+
+    #[test]
+    fn jain_is_one_for_equal_shares_and_one_over_n_for_a_monopoly() {
+        assert!((jain(&[5, 5, 5, 5]).expect("jain") - 1.0).abs() < 1e-12);
+        assert!((jain(&[8, 0, 0, 0]).expect("jain") - 0.25).abs() < 1e-12);
+        // Two flows of 1 and 3: 16 / (2 * 10) = 0.8.
+        assert!((jain(&[1, 3]).expect("jain") - 0.8).abs() < 1e-12);
+        assert_eq!(jain(&[7]), None);
+        assert_eq!(jain(&[]), None);
+        assert_eq!(jain(&[0, 0]), None);
+    }
 }

@@ -1,0 +1,8 @@
+Host: sandbox, 2 vCPU, release build, CARGO_BUILD_JOBS=1.
+Branch: wp/TRN-25 (CUBIC, default), base cfed57d (TRN-24 merged).
+Fat row: tcp_bench --stack own|smoltcp --workload loss --loss-profile fat --loss-transfers 6 [--own-cc newreno]
+Fat row, 24 transfers: --loss-profile fat --loss-transfers 24 --link-seed 7 --own-cc cubic|newreno
+Fairness row: tcp_bench --stack own|smoltcp --workload loss --loss-profile bottleneck --loss-transfers 6 [--own-cc newreno] (smoltcp: 3 transfers)
+Scale: --stack own --profile full --workload scale --shards 64 --own-pool 20000 (CUBIC default): 263 bytes per socket at 1,001,129 sockets.
+No kernel row: the sandbox has no sch_netem; the coordinator reads it from the tcp-bench workflow (job=loss, loss_args).
+Load average before and after: load-before.txt, load-after.txt.

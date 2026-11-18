@@ -255,6 +255,9 @@ pub fn kernel_transfer(
     congestion: Option<&str>,
 ) -> Result<LossRun, NetnsError> {
     let ns = NetnsLink::up(prefix, link, mtu)?;
+    if config.flows > 1 {
+        return kernel_flows(exe, &ns, config, buffer, congestion);
+    }
     let mut common = vec![
         "--port".to_string(),
         config.port.to_string(),
@@ -302,6 +305,101 @@ pub fn kernel_transfer(
     result
 }
 
+/// Runs the fairness variant of the loss workload (TRN-25) on the kernel
+/// stack in the namespaces of `ns`: the server peer accepts `config.flows`
+/// connections and reports the bytes of each in the measurement window, and
+/// the client peer opens the flows, sends without end, and reports the
+/// segments that the kernel sent again.
+fn kernel_flows(
+    exe: &Path,
+    ns: &NetnsLink,
+    config: &LossConfig,
+    buffer: Option<usize>,
+    congestion: Option<&str>,
+) -> Result<LossRun, NetnsError> {
+    let mut common = vec![
+        "--port".to_string(),
+        config.port.to_string(),
+        "--chunk".to_string(),
+        config.chunk.to_string(),
+        "--flows".to_string(),
+        config.flows.to_string(),
+        "--warmup-ms".to_string(),
+        config.warmup.as_millis().to_string(),
+        "--window-ms".to_string(),
+        config.window.as_millis().to_string(),
+    ];
+    if let Some(bytes) = buffer {
+        common.extend(["--buffer-bytes".to_string(), bytes.to_string()]);
+    }
+    if let Some(name) = congestion {
+        common.extend(["--cc".to_string(), name.to_string()]);
+    }
+    let mut server_args = vec!["server".to_string()];
+    server_args.extend(common.clone());
+    let mut server = spawn_peer(exe, ns.server_ns(), &server_args)?;
+    let result = (|| {
+        let server_lines = lines_of(&mut server)?;
+        match server_lines.recv_timeout(Duration::from_secs(15)) {
+            Ok(line) if line == "ready" => {}
+            other => return Err(NetnsError::Peer(format!("the server said {other:?}"))),
+        }
+        let mut client_args = vec!["client".to_string()];
+        client_args.extend(common);
+        let mut client = spawn_peer(exe, ns.client_ns(), &client_args)?;
+        let client_lines = lines_of(&mut client)?;
+        let limit = FLOWS_CONNECT_LIMIT + config.warmup + config.window + Duration::from_secs(20);
+        let server_line = server_lines.recv_timeout(limit);
+        let client_line = client_lines.recv_timeout(Duration::from_secs(30));
+        let _ = client.kill();
+        let _ = client.wait();
+        let server_line =
+            server_line.map_err(|_| NetnsError::Peer("the server reported nothing".into()))?;
+        let retransmits = client_line
+            .ok()
+            .and_then(|line| field_of(&line, "retransmits"))
+            .unwrap_or(0);
+        parse_flows(&server_line, retransmits)
+    })();
+    let _ = server.kill();
+    let _ = server.wait();
+    result
+}
+
+/// How long the flows of the kernel peers have to connect.
+const FLOWS_CONNECT_LIMIT: Duration = Duration::from_secs(30);
+
+/// Reads `key=value` from a result line.
+fn field_of(line: &str, key: &str) -> Option<u64> {
+    line.split_whitespace()
+        .find_map(|w| w.strip_prefix(key)?.strip_prefix('=')?.parse().ok())
+}
+
+/// Reads the result line of the server peer of a fairness run: `flows`,
+/// `window_us`, and `bytes` as a comma separated list per flow.
+fn parse_flows(line: &str, retransmits: u64) -> Result<LossRun, NetnsError> {
+    let bad = || NetnsError::Peer(format!("unreadable result {line:?}"));
+    let window_us = field_of(line, "window_us").ok_or_else(bad)?;
+    let list = line
+        .split_whitespace()
+        .find_map(|w| w.strip_prefix("bytes="))
+        .ok_or_else(bad)?;
+    let flow_bytes: Vec<u64> = list
+        .split(',')
+        .map(|v| v.parse().map_err(|_| bad()))
+        .collect::<Result<_, _>>()?;
+    let completed = !flow_bytes.is_empty() && flow_bytes.iter().all(|b| *b > 0);
+    Ok(LossRun {
+        completed,
+        confirmed_bytes: flow_bytes.iter().sum(),
+        elapsed: Duration::from_micros(window_us),
+        retransmits,
+        failure: (!completed).then(|| "a flow moved no byte in the window".to_string()),
+        flow_bytes,
+        ..LossRun::default()
+    })
+}
+
 /// Reads the result line of a client peer.
 fn parse_result(line: &str, wall: Duration) -> Result<LossRun, NetnsError> {
     let field = |key: &str| -> Option<u64> {
@@ -329,6 +427,7 @@ fn parse_result(line: &str, wall: Duration) -> Result<LossRun, NetnsError> {
         link_lost: 0,
         link_queue_dropped: 0,
         failure: (!completed).then(|| "not complete before the timeout".to_string()),
+        flow_bytes: Vec::new(),
     })
 }
 
@@ -368,6 +467,9 @@ pub fn peer_main(args: &[String]) -> i32 {
     let chunk = usize::try_from(number("--chunk", 16 * 1024)).unwrap_or(16 * 1024);
     let buffer = flag(args, "--buffer-bytes").and_then(|v| v.parse::<u32>().ok());
     let congestion = flag(args, "--cc");
+    let flows = usize::try_from(number("--flows", 1)).unwrap_or(1);
+    let warmup = Duration::from_millis(number("--warmup-ms", 5_000));
+    let window = Duration::from_millis(number("--window-ms", 10_000));
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
@@ -380,6 +482,23 @@ pub fn peer_main(args: &[String]) -> i32 {
         }
     };
     let outcome = match role {
+        "server" if flows > 1 => runtime.block_on(serve_flows(
+            port,
+            chunk,
+            buffer,
+            congestion.as_deref(),
+            flows,
+            warmup,
+            window,
+        )),
+        "client" if flows > 1 => runtime.block_on(send_flows(
+            port,
+            chunk,
+            buffer,
+            congestion.as_deref(),
+            flows,
+            warmup + window + FLOWS_CONNECT_LIMIT.min(Duration::from_secs(5)),
+        )),
         "server" => runtime.block_on(serve(port, chunk, buffer, congestion.as_deref())),
         "client" => runtime.block_on(send(
             port,
@@ -442,6 +561,108 @@ async fn serve(
     }
     stream.write_all(&total.to_be_bytes()).await?;
     stream.shutdown().await
+}
+
+/// The server of a fairness run: accepts `flows` connections, counts the bytes
+/// of each, and reports the counts of the measurement window.
+async fn serve_flows(
+    port: u16,
+    chunk: usize,
+    buffer: Option<u32>,
+    congestion: Option<&str>,
+    flows: usize,
+    warmup: Duration,
+    window: Duration,
+) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+    let socket = socket(buffer, congestion)?;
+    socket.set_reuseaddr(true)?;
+    socket.bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)))?;
+    let listener = socket.listen(64)?;
+    say("ready");
+    let counters: Arc<Vec<AtomicU64>> = Arc::new((0..flows).map(|_| AtomicU64::new(0)).collect());
+    let accept_all = async {
+        for index in 0..flows {
+            let (mut stream, _) = listener.accept().await?;
+            stream.set_nodelay(true)?;
+            let counters = Arc::clone(&counters);
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; chunk.max(1)];
+                loop {
+                    match stream.read(&mut buf).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => {
+                            counters[index].fetch_add(n as u64, Ordering::Relaxed);
+                        }
+                    }
+                }
+            });
+        }
+        Ok::<(), std::io::Error>(())
+    };
+    if tokio::time::timeout(FLOWS_CONNECT_LIMIT, accept_all)
+        .await
+        .is_err()
+    {
+        say(&format!(
+            "result flows={flows} window_us=0 bytes={}",
+            vec!["0"; flows].join(",")
+        ));
+        return Ok(());
+    }
+    tokio::time::sleep(warmup).await;
+    let read = || -> Vec<u64> { counters.iter().map(|c| c.load(Ordering::Relaxed)).collect() };
+    let before = read();
+    let opened = Instant::now();
+    tokio::time::sleep(window).await;
+    let after = read();
+    let elapsed = opened.elapsed();
+    let bytes: Vec<String> = after
+        .iter()
+        .zip(&before)
+        .map(|(a, b)| (a - b).to_string())
+        .collect();
+    say(&format!(
+        "result flows={flows} window_us={} bytes={}",
+        elapsed.as_micros(),
+        bytes.join(",")
+    ));
+    Ok(())
+}
+
+/// The client of a fairness run: opens `flows` connections, sends on all of
+/// them for `run` and reports the segments that the kernel sent again.
+async fn send_flows(
+    port: u16,
+    chunk: usize,
+    buffer: Option<u32>,
+    congestion: Option<&str>,
+    flows: usize,
+    run: Duration,
+) -> std::io::Result<()> {
+    let before = retrans_segs();
+    let mut tasks = Vec::new();
+    for _ in 0..flows {
+        let socket = socket(buffer, congestion)?;
+        let mut stream = socket
+            .connect(SocketAddr::from((SERVER_ADDR, port)))
+            .await?;
+        stream.set_nodelay(true)?;
+        tasks.push(tokio::spawn(async move {
+            let data = vec![0xA5u8; chunk.max(1)];
+            while stream.write_all(&data).await.is_ok() {}
+        }));
+    }
+    tokio::time::sleep(run).await;
+    for task in &tasks {
+        task.abort();
+    }
+    say(&format!(
+        "result retransmits={}",
+        retrans_segs().saturating_sub(before)
+    ));
+    Ok(())
 }
 
 async fn send(
@@ -509,6 +730,24 @@ mod tests {
         assert_eq!(run.elapsed, Duration::from_micros(2_500_000));
         assert_eq!(run.retransmits, 7);
         assert!((run.goodput_mbit_per_s() - 13.42).abs() < 0.01);
+    }
+
+    #[test]
+    fn the_server_line_of_a_fairness_run_gives_the_bytes_per_flow() {
+        let line = "result flows=4 window_us=10000500 bytes=100,200,300,400";
+        let run = parse_flows(line, 9).expect("parse");
+        assert!(run.completed);
+        assert_eq!(run.flow_bytes, vec![100, 200, 300, 400]);
+        assert_eq!(run.confirmed_bytes, 1000);
+        assert_eq!(run.elapsed, Duration::from_micros(10_000_500));
+        assert_eq!(run.retransmits, 9);
+        let jain = run.jain_index().expect("jain");
+        assert!((jain - 1000.0 * 1000.0 / (4.0 * 300_000.0)).abs() < 1e-9);
+        // A flow that moved nothing is a failure, and a damaged line is an error.
+        let stalled = parse_flows("result flows=2 window_us=5 bytes=7,0", 0).expect("parse");
+        assert!(!stalled.completed && stalled.failure.is_some());
+        assert!(parse_flows("result flows=2", 0).is_err());
+        assert!(parse_flows("result window_us=5 bytes=1,x", 0).is_err());
     }
 
     #[test]
