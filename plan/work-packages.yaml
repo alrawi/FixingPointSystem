@@ -2350,18 +2350,23 @@ work_packages:
     phase: 3
     workstream: TRN
     size: S
-    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, CTL-54]
+    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-34, TRN-35, TRN-36, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, AGT-29, AGT-30, CTL-54, CTL-55, CON-35, QA-06]
     paths: [engine/fps-backend-afxdp/]
+    owner_action: Before dispatch the vetting agent reads the QA-06 results under D13. The flip proceeds only if the forced AF_XDP backend is not behind the forced kernel backend on the tier T1 measures on that guest, and a mixed result goes to the owner.
     summary: >-
       Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with
-      native XDP, and a stack without congestion control must not become the default. AGT-24 and CTL-54 prepare the
-      agent and the controller behind the flag first.
+      native XDP. The vetting agent decided on 2026-11-18 that the flip waits for the kernel fallback of AGT-29, the
+      backend report of CON-35 and CTL-55, the loss detection of TRN-34, an AF_XDP realism job for every first party
+      module (TRN-36), lanes that follow the workers (AGT-30), and a KVM measurement of both backends (QA-06), because
+      without them the default would refuse most plans that run today and would never have run most modules.
     deliverables:
       - The flip, with a test that the selection picks AF_XDP on a fake host with native XDP.
-      - Before the flip, every harness, gate, and realism job that tests the kernel backend passes --backend kernel, because veth and virtio_net count as native XDP and the flip would otherwise move them all to the own stack at once. AF_XDP runs are added on purpose. The coordinator makes the workflow changes in the same pull request.
+      - A test for each shape that the datapath refuses, where an unforced agent runs it on the kernel backend and reports that, and a forced agent refuses it.
+      - Every harness, gate, and realism job that tests the kernel backend passes --backend kernel, and the AF_XDP jobs stay explicit. The coordinator makes the workflow changes in the same pull request.
+      - The selection and fallback rule stated on the Agent and Transport pages.
     acceptance:
       - On a host with native XDP the agent selects AF_XDP, runs the own stack, and reports the bound mode, and the controller inventory lists AF_XDP for that agent.
-
+      - Every file in contracts/examples/tests/ runs on an unforced agent on a veth pair after the flip.
   - id: TRN-33
     title: The own stack API that the datapath needs
     phase: 3
@@ -2447,6 +2452,73 @@ work_packages:
     acceptance:
       - A forced AF_XDP run of the http1 and dns modules through the agent over IPv6 pools completes on a veth pair in CI.
 
+  - id: AGT-29
+    title: An unforced agent falls back to the kernel backend
+    phase: 3
+    workstream: AGT
+    size: S
+    depends_on: [AGT-28, CON-35, TRN-36]
+    paths: [engine/fps-agent/]
+    summary: >-
+      check_af_xdp refuses every plan outside one shape: app_sim only, both sides in one process, one client and one
+      server pool on two interfaces, one family, one VLAN, no DHCP, and OS profiles the own stack knows. After the
+      flip of TRN-31 an unforced agent must run such a plan on the kernel backend instead of failing, and report that
+      through the fields of CON-35; a forced agent refuses as today. A pool with both prefixes falls back too, and
+      never runs over IPv4 alone without saying so.
+    deliverables:
+      - The fallback in prepare with tests on fake hosts for each refused shape, forced and unforced, and the report of the backend that ran and the bound mode of each port in the fields of CON-35.
+      - check_af_xdp refuses the mix entries of a module on the TRN-36 exclusion list.
+    acceptance:
+      - With TRANSPORT_AVAILABLE set in a test build, an unforced agent runs http_smoke.yaml and enterprise_mix_10g.yaml from contracts/examples/tests/ on the kernel backend and reports it, and a forced agent refuses them with the cause.
+
+  - id: AGT-30
+    title: Datapath lanes follow the workers of the plan
+    phase: 3
+    workstream: AGT
+    size: M
+    depends_on: [AGT-28]
+    paths: [engine/fps-agent/]
+    summary: >-
+      The agent starts one lane, queue 0 of each port, so an AF_XDP run uses one core whatever the plan asks for.
+      Start one lane per worker up to the queue count of each port, give each lane the hosts of its workers, and
+      report the lanes, so the AF_XDP backend can scale on a multi queue virtio_net port.
+    deliverables:
+      - Lanes per worker with tests on fake hosts and a veth pair with several queues.
+    acceptance:
+      - On a veth pair with four queues a forced AF_XDP run with four workers starts four lanes, each carries sessions, and the totals match the plan.
+
+  - id: CTL-55
+    title: The controller shows the backend that ran
+    phase: 3
+    workstream: CTL
+    size: S
+    depends_on: [CON-35]
+    paths: [controller/]
+    summary: >-
+      Store the backend that ran each plan and the bound XDP mode of each port from the fields of CON-35, show them in
+      the run report and the API, and mark a run whose backend differs from the one the inventory listed.
+    deliverables:
+      - Storage, API, and run report fields with tests.
+    acceptance:
+      - A run on an agent that fell back to the kernel backend shows the kernel backend and the mismatch in its report.
+
+  - id: TRN-36
+    title: An AF_XDP realism job for every first party module
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-12, AGT-27, AGT-28]
+    paths: [engine/fps-datapath/]
+    summary: >-
+      Only http1 has an AF_XDP realism job (TRN-12). Generalize engine/fps-datapath/realism/http1-afxdp.sh to any first
+      party module, sip_rtp included, and run each through the agent forced onto AF_XDP, scored like its kernel run.
+      A module that cannot pass on AF_XDP yet, for example because it needs ICMP or UDP datagrams above the MTU, is
+      listed with the reason, and TRN-31 either waits for it or excludes it in writing by the rule of AGT-29.
+    deliverables:
+      - The generic script with tests, results per module, and the exact YAML of a qa-gate2 or per module job for the coordinator.
+    acceptance:
+      - Every first party module passes its AF_XDP realism run in CI, or appears on the written exclusion list with its reason and the fallback that covers it.
+
   - id: AGT-27
     title: The standalone agent writes a TLS key log
     phase: 3
@@ -2501,7 +2573,7 @@ work_packages:
       - A forced AF_XDP run of the http1 and dns modules through the agent completes on a veth pair in CI.
 
   - id: CON-35
-    title: The agent reports the bound XDP mode after a plan
+    title: The agent reports the backend that ran and the bound XDP mode
     phase: 3
     workstream: CON
     size: S
@@ -2509,13 +2581,14 @@ work_packages:
     paths: [contracts/]
     summary: >-
       Register comes before any plan, so PortInfo.xdp_driver_mode carries only the driver table hint, and the mode
-      that each socket really bound in (AGT-24) reaches only the agent log. Add a field on the start result or the
-      heartbeat that carries the bound mode of each port, so the controller can show it.
+      that each socket really bound in (AGT-24) reaches only the agent log. After the flip of TRN-31 an unforced agent
+      may also run a plan on the kernel backend (AGT-29). Add fields on the start result or the heartbeat that carry
+      the backend that ran the plan and the bound mode of each port, so a benchmark never measures the wrong backend
+      unseen.
     deliverables:
-      - The contract field with its OpenAPI and protobuf checks.
+      - The contract fields with their OpenAPI and protobuf checks.
     acceptance:
-      - The contract tests show the bound mode of each port in the chosen message, and the change passes the breaking change check.
-
+      - The contract tests show the backend that ran and the bound mode of each port in the chosen message, and the change passes the breaking change check.
   - id: AGT-24
     title: The agent starts the selected backend
     phase: 3
@@ -2628,15 +2701,17 @@ work_packages:
     phase: 3
     workstream: QA
     size: M
-    depends_on: [TRN-14, QA-03, AGT-22, TRN-31]
+    depends_on: [TRN-14, QA-03, AGT-22, TRN-12, TRN-34, AGT-30]
     paths: [bench/]
+    owner_action: A KVM guest with a virtio_net port that supports native XDP, for example on fat-nuc, which the relay can reach. The default switch of TRN-31 waits for this measurement.
     summary: >-
-      Run the standard benchmark set on KVM and publish the results. Other hypervisors follow v1.
+      Run the standard benchmark set on KVM and publish the results, with the kernel backend and the AF_XDP backend
+      each forced, so that TRN-31 can show that AF_XDP is the fastest working backend before it becomes the default.
+      Other hypervisors follow v1.
     deliverables:
       - Benchmark definitions for throughput, session rate, concurrency, and TLS.
     acceptance:
-      - Results for KVM are published with host details and compared with tier T1 targets.
-
+      - Results for KVM with both backends forced are published with host details and the bound XDP mode of each port, and compared with tier T1 targets.
   - id: QA-07
     title: Gate 3 acceptance suite
     phase: 3
@@ -2748,7 +2823,7 @@ work_packages:
     phase: 3
     workstream: AGT
     size: M
-    depends_on: [HST-04, TRN-31]
+    depends_on: [HST-04, AGT-26]
     paths: [engine/fps-agent/]
     summary: >-
       Build a DHCP host pool at Prepare from the leases of HST-04, and filter a DHCP port by the leased addresses.
