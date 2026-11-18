@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-21` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 50% (2 of 4 plan steps) |
+| Progress | 75% (3 of 4 plan steps) |
 | Current holder | claude-b1c951, lease until 2026-11-18T02:08:13Z |
 | Last verified commit | none |
 
@@ -20,20 +20,22 @@ Move the own stack of TRN-18 (`engine/fps-tcp/src/own/` and its tests) into a ne
 
 - [x] 1. Create `fps-tcp-own` with the stack, the clock, and the component tests; `cargo tree` shows no smoltcp.
 - [x] 2. Reduce `fps-tcp` to the adapter and re-exports; tests, clippy, fmt pass for both crates.
-- [ ] 3. Run tcp_bench for the own stack (rate and a socket-scaling row) and commit the run under `engine/fps-tcp/results/` with host.txt.
+- [x] 3. Run tcp_bench for the own stack (rate and a socket-scaling row) and commit the run under `engine/fps-tcp/results/` with host.txt.
 - [ ] 4. Log entry, README and component page updates, plan checks, `cargo deny check`, PR and CI.
 
 ## Done and verified
 
 - Steps 1 and 2: `cargo test -p fps-tcp-own -p fps-tcp` passes (fps-tcp-own 9 unit + 22 component tests; fps-tcp 25 unit + 8 kernel + 1 own_workloads + 9 smol + 5 workloads). `cargo tree -p fps-tcp-own | grep -c smoltcp` prints 0. `cargo clippy -p fps-tcp -p fps-tcp-own --all-targets -- -D warnings` and `cargo fmt --check` are clean.
 
+- Step 3: results in `engine/fps-tcp/results/sandbox-2vcpu-trn21/` (A/B of the origin/main binary and this branch: rate 33.5k-35.5k vs 34.5k-35.5k sessions/s; scale 1,000,629 sockets, 228 B each, 56.1k vs 55.7k probe sessions/s). `cargo deny check` ok. plan.py check, render --check, lint ok.
+
 ## Remaining
 
-Step 3 (tcp_bench run), step 4 (`cargo deny check`, PR, CI).
+Step 4: open the PR and wait for CI.
 
 ## Next action
 
-Step 3: build `--release -p fps-tcp --example tcp_bench` and run `--stack own --profile small` and a scale run; commit under `engine/fps-tcp/results/sandbox-2vcpu-trn21/` with host.txt.
+Open the PR and poll CI.
 
 ## Blockers and open questions
 
@@ -63,4 +65,5 @@ cargo test -p fps-tcp-own -p fps-tcp
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-18 | claude-b1c951 | claim | 8bd0991 | claimed #621 |
-| 2026-11-18 | claude-b1c951 | checkpoint | see git log | steps 1 and 2 done, docs and log entry added |
+| 2026-11-18 | claude-b1c951 | checkpoint | 3321862 | steps 1 and 2 done, docs and log entry added |
+| 2026-11-18 | claude-b1c951 | checkpoint | see git log | step 3 done, bench results committed |
