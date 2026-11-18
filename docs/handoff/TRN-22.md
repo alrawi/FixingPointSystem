@@ -1,0 +1,69 @@
+# Handoff TRN-22 A lossy link and loss workloads for the TCP harness
+
+<!-- Copy this file to docs/handoff/<ID>.md when you claim a work package.
+     Update it at every checkpoint. A successor reads only this file, the
+     issue, and the branch, so write for an agent that knows nothing else. -->
+
+| Field | Value |
+|---|---|
+| Issue | #623 |
+| Branch | `wp/TRN-22` |
+| Pull request | #0 |
+| Status | in progress |
+| Progress | 0% (0 of 6 plan steps) |
+| Current holder | claude-9e6494, lease until 2026-11-18T03:55:16Z |
+| Last verified commit | none |
+
+Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
+
+## Goal
+
+Add loss, delay, reordering, and a rate limit with a bounded queue to the in memory links of the own and smoltcp stacks (a wrapper in fps-tcp, since the own link lives in fps-tcp-own), a netem counterpart for the kernel stack in a network namespace, and a loss workload in tcp_bench that reports goodput, retransmissions, and completion per transfer.
+
+## Plan
+
+Each step takes at most 30 minutes of work and ends in a state that tests can check.
+
+- [ ] 1. Read the code; design the lossy link
+- [ ] 2. Lossy link for smoltcp and own stacks with unit tests
+- [ ] 3. Netem namespace setup for the kernel stack
+- [ ] 4. Loss workload and tcp_bench command line
+- [ ] 5. Run the sweep, commit results
+- [ ] 6. Log entry, checks, PR
+
+## Done and verified
+
+List each finished step with the command that verified it and the result.
+
+## Remaining
+
+Everything.
+
+## Next action
+
+Step 1: read engine/fps-tcp/src/{link,smol,workload,cli}.rs and fps-tcp-own link seam.
+
+## Blockers and open questions
+
+Write "none" or name each blocker with a link to its issue.
+
+## Decisions taken in this package
+
+Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+
+## Pitfalls
+
+Record anything that cost time and that a successor should avoid.
+
+## Verify the current state
+
+```bash
+# Commands that a successor runs first, with the expected result
+```
+
+## Session log
+
+Append one row per session start, checkpoint, release, block, takeover, and finish. Never edit earlier rows.
+
+| Time (UTC) | Agent | Event | Commit | Note |
+|---|---|---|---|---|
