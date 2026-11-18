@@ -131,6 +131,9 @@ for _ in $(seq 50); do
   sleep 0.1
 done
 
+# The bridge and the veth ports need a moment before the first datagram: a UDP
+# session does not retransmit, and the first round lost its first datagrams here.
+sleep "${FPS_AFXDP_SETTLE:-1}"
 agent_rc=0
 : >"$work/keys.log"
 for ((round = 0; round < rounds; round++)); do
@@ -156,11 +159,17 @@ pcap=$out/$module-afxdp.pcapng
 python3 -I "$root/tests/harness/pcapng.py" convert "$raw" "$pcap"
 if [[ $keys == keylog ]]; then
   # Embed the key log in the capture, as capture.sh does for the kernel run.
-  editcap --inject-secrets "tls,$work/keys.log" "$pcap" "$work/keyed.pcapng"
-  mv "$work/keyed.pcapng" "$pcap"
+  # A module without TLS leaves the key log empty, and editcap refuses an empty file.
+  if [[ -s $work/keys.log ]]; then
+    editcap --inject-secrets "tls,$work/keys.log" "$pcap" "$work/keyed.pcapng"
+    mv "$work/keyed.pcapng" "$pcap"
+  fi
 fi
 
 cd "$root"
+# The labels of the kernel run count sessions that the agent starts at Poisson
+# arrivals, so the counts come from what it reported.
+python3 "$here/finalize.py" counts "$root" "$out" "$module"
 score_rc=0
 python3 -m realism score --pcap "$pcap" --labels "$out/labels.yaml" \
   --parsers "$parsers" --output "$out/$module-afxdp.report.json" || score_rc=$?
@@ -175,15 +184,21 @@ print(next(c["labelled_sessions"] for c in r["checks"] if c["check"] == "encrypt
     "$out/$module-afxdp.report.json")
   python3 -m realism decrypted --pcap "$pcap" "${decrypted_args[@]}" \
     --sessions "$tls_sessions" --parsers "$parsers" \
+    --view "$out/$module-afxdp.decrypted.pcap" \
     --output "$out/$module-afxdp.decrypted.json" || check_rc=$?
 fi
+# The scripts that the kernel run runs next to the score.
+extra_rc=0
+python3 "$here/finalize.py" checks "$root" "$out" "$module" "$pcap" || extra_rc=$?
 if [[ $score_rc -ne 0 ]]; then
   echo "module-afxdp.sh: $module failed a realism check, see $out/$module-afxdp.report.json" >&2
 elif [[ $check_rc -ne 0 ]]; then
   echo "module-afxdp.sh: $module failed the decrypted check, see $out/$module-afxdp.decrypted.json" >&2
+elif [[ $extra_rc -ne 0 ]]; then
+  echo "module-afxdp.sh: $module failed a check that its kernel run makes next to the score" >&2
 elif [[ $agent_rc -ne 0 ]]; then
   echo "module-afxdp.sh: a run of the agent failed, see $out/agent-*.log" >&2
 else
   echo "module-afxdp.sh: $module passed every realism check on AF_XDP" >&2
 fi
-exit $(( score_rc != 0 ? score_rc : (check_rc != 0 ? check_rc : agent_rc) ))
+exit $(( score_rc != 0 ? score_rc : (check_rc != 0 ? check_rc : (extra_rc != 0 ? extra_rc : agent_rc)) ))

@@ -135,6 +135,7 @@ def build_plan(
     client_if: str,
     server_if: str,
     client_hosts: int,
+    failed_ratio: float,
 ) -> dict[str, Any]:
     steady = max(1, *(math.ceil(e["sessions"] / RATE) for e in group))
     rates = [
@@ -214,9 +215,51 @@ def build_plan(
         },
         "warmup": "0s",
         "criteria": [
-            {"metric": "sessions.failed_ratio", "op": "CRITERION_OP_LT", "value": 0.001}
+            {
+                "metric": "sessions.failed_ratio",
+                "op": "CRITERION_OP_LT",
+                "value": failed_ratio,
+            }
         ],
     }
+
+
+def prune_labels(labels: dict[str, Any], profile: dict[str, Any]) -> None:
+    """Takes the labels of the excluded scenarios out of the labels of the kernel run.
+
+    The profile names them: drop_rules are the `match` fields of session rules,
+    drop_applications are applications that only excluded scenarios carry, and a
+    scenario of the structure section goes with the excluded scenario whose
+    file it names.
+    """
+    rules = profile.get("drop_rules", [])
+    apps = set(profile.get("drop_applications", []))
+    labels["sessions"] = [
+        entry
+        for entry in labels["sessions"]
+        if entry["match"] not in rules and entry["application"] not in apps
+    ]
+    for name in apps:
+        labels.get("applications", {}).pop(name, None)
+        for section in ("arrivals", "packets", "rungs"):
+            group = labels.get("temporal", {}).get(section, {})
+            group.get("applications", {}).pop(name, None)
+    temporal = labels.get("temporal", {})
+    for section in ("arrivals", "packets", "rungs"):
+        if section in temporal and not temporal[section].get("applications"):
+            del temporal[section]
+    if "temporal" in labels and not any(
+        isinstance(v, dict) for v in labels["temporal"].values()
+    ):
+        del labels["temporal"]
+    excluded = set(profile.get("excluded", {}))
+    structure = labels.get("structure")
+    if structure:
+        structure["scenarios"] = [
+            entry
+            for entry in structure["scenarios"]
+            if Path(entry["file"]).stem not in excluded
+        ]
 
 
 def build(
@@ -236,7 +279,9 @@ def build(
     digest = tree_digest(tree)
     per_scenario = sessions if sessions is not None else int(profile.get("sessions", 20))
     client_hosts = int(profile.get("client_hosts", 8))
-    skipped = set(profile.get("skip", []))
+    # The scenarios that capture.sh leaves out, and the scenarios that the AF_XDP
+    # run leaves out until the agent runs them (the exclusion list of TRN-36).
+    skipped = set(profile.get("skip", [])) | set(profile.get("excluded", {}))
     entries: list[dict[str, Any]] = []
     for rel in manifest["scenarios"]:
         text = (tree / rel).read_text(encoding="utf-8")
@@ -288,6 +333,7 @@ def build(
             client_if,
             server_if,
             client_hosts,
+            float(profile.get("max_failed_ratio", 0.001)),
         )
         directory = out / f"round-{index}"
         directory.mkdir(parents=True, exist_ok=True)
@@ -318,6 +364,12 @@ def build(
             encoding="utf-8"
         )
     )
+    prune_labels(labels, profile)
+    # The structure section names scenario files relative to the labels file.
+    for entry in labels.get("structure", {}).get("scenarios", []):
+        entry["file"] = str(
+            (root / "modules" / module / "fixtures" / entry["file"]).resolve()
+        )
     if not keys:
         # No key log: the capture cannot be decrypted. The https sessions keep
         # their application and nDPI class, and the encryption check (decryption

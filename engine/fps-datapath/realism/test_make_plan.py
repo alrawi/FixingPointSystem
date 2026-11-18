@@ -67,7 +67,7 @@ def test_a_round_never_listens_twice_on_one_port(
             "scenario"
         ]
         for rel in manifest["scenarios"]
-    } - set(profile.get("skip", []))
+    } - set(profile.get("skip", [])) - set(profile.get("excluded", {}))
     seen: list[str] = []
     for plan in plans(tmp_path):
         assert plan["backend"] == "BACKEND_AF_XDP"

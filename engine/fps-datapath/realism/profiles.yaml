@@ -19,15 +19,34 @@
 #   client_hosts
 #              hosts of the client pool, 8 by default. A scenario that announces
 #              the client address in its payload needs one.
+#   max_failed_ratio
+#              the criterion sessions.failed_ratio of the plans, 0.001 by default
 #   ports      the server_port of a scenario that capture.sh moves with --port
 #   skip       scenarios that capture.sh leaves out, with the reason in the
 #              comment next to them
+#   excluded   scenarios that capture.sh runs and the AF_XDP run leaves out,
+#              because the agent cannot run them on AF_XDP yet. Each has its
+#              reason. This is the exclusion list of TRN-36, which the log
+#              entry and the Transport page repeat. The kernel fallback of
+#              AGT-29 covers these scenarios.
+#   drop_rules, drop_applications
+#              the labels of the excluded scenarios: the match fields of the
+#              session rules and the applications that only they carry. The
+#              scenarios of the structure section go with their scenario.
+#   streams_from
+#              application of the rung check -> the scenario whose started
+#              sessions are its streams (finalize.py)
+#   checks     scripts that the kernel run runs next to the score, as the
+#              arguments of python3 from the repository root (run), with zeek
+#              when the script needs Zeek. finalize.py fills {pcap}, {view},
+#              {started}, and {sum:scenario*n+...}, the sessions that the
+#              agent started
 #   decrypted  the realism decrypted check of the capture, after the score:
 #              labels (a path from the repository root), starttls_port and
 #              view_port when the TLS sessions start in the clear, plaintext
 #              when the plain start joins the view (see capture.sh)
 #
-# Without a rounds key the scenarios of a module run in rounds. A round is one
+# The scenarios of a module run in rounds. A round is one
 # run of the agent, and all rounds go into one capture. A round holds scenarios
 # until two of them would listen on one port, because a plan listens once for
 # each port of a server host.
@@ -49,10 +68,30 @@ http2:
 
 dns:
   sessions: 20
+  excluded:
+    tcp_fallback: >-
+      its TCP leg starts right after the UDP leg ends, and its server side binds the port in that moment, so
+      the client sometimes connects first; the hub of AGT-25 completes the handshake and resets the session, and the
+      client does not retry a reset after the handshake (1 session in 24 fails)
+  drop_rules: [{transport: tcp, server_port: 53}]
 
 ftp:
   sessions: 8
   vars: {file_min: 2000, file_max: 12000, list_entries: 16}
+  # The session structure of the kernel run: one control connection per session
+  # and one data connection per transfer, to the announced port.
+  checks:
+    - run: [modules/ftp/fixtures/structure_check.py, '{pcap}', --controls, '{started}']
+    # LIST, RETR, and STOR commands of a session of each scenario: 1, 1, 1, 3, and
+    # 4 (the default of four files), of which 0, 1, 1, 2, and 4 are RETR or STOR.
+    - run:
+        - modules/ftp/fixtures/zeek_check.py
+        - '{pcap}'
+        - --transfers
+        - '{sum:list_pasv+retr_epsv+stor_pasv+mixed_session*3+batch_download*4}'
+        - --file-transfers
+        - '{sum:retr_epsv+stor_pasv+mixed_session*2+batch_download*4}'
+      zeek: true
 
 hls:
   # params.json of the kernel run: the ladder, the segment duration, and the
@@ -64,6 +103,13 @@ hls:
     vod_segments: {stages: 3, stage_segments: 11, segments: 33}
     live_refresh: {cycles: 8, window: 3, rung: 1}
   scenario_sessions: {vod_segments: 1}
+  excluded:
+    vod_segments: >-
+      it spawns 33 segment flows on the port 8092, and the server side of each binds the port after the client
+      dialed; the hub of AGT-25 completes the handshake and resets the session, so the playback fails (see dns)
+  drop_applications: [hls_playlist, hls_segment]
+  # The streams of the rung check are the playbacks that the agent started.
+  streams_from: {hls_vod: vod_ladder, hls_live: live_refresh}
 
 imap:
   sessions: 8
@@ -80,6 +126,8 @@ mqtt:
 
 ntp:
   sessions: 6
+  # --poll-ms 1000 of capture.sh: the pause of the poll exponent 6, and twice that for 7.
+  vars: {poll_interval_ms: 1000, poll_interval_long_ms: 2000}
 
 pop3:
   sessions: 8
@@ -93,6 +141,9 @@ sip_rtp:
   # The SDP lines announce the client address, so every call comes from one host.
   client_hosts: 1
   vars: {talk_ms: 2000, ring_ms: 300}
+  checks:
+    - run: [modules/sip_rtp/fixtures/zeek_check.py, '{pcap}', --calls, '{started}']
+      zeek: true
 
 smb2:
   sessions: 6
@@ -103,10 +154,33 @@ smtp:
   vars: {body_size: 900, attachment_min: 2000, attachment_max: 12000}
   ports: {starttls_submission: 5587}
   decrypted: {labels: realism/examples/decrypted/smtp.labels.yaml, starttls_port: "5587:smtp", view_port: 587, plaintext: upgrade}
+  checks:
+    # Messages of a plain session: 1 in every scenario but submission_batch, which
+    # sends 3, and attachments in all but text_only. The STARTTLS sessions come on
+    # top, and Zeek reads them on the decrypted view.
+    - run:
+        - modules/smtp/fixtures/zeek_check.py
+        - '{pcap}'
+        - --messages
+        - '{sum:relay+relay_pipelined+submission_login+submission_plain+text_only+submission_batch*3}'
+        - --attachments
+        - '{sum:relay+relay_pipelined+submission_login+submission_plain+submission_batch*3}'
+      zeek: true
+    - run:
+        - modules/smtp/fixtures/zeek_check.py
+        - '{view}'
+        - --messages
+        - '{sum:starttls_submission}'
+        - --attachments
+        - '{sum:starttls_submission}'
+      zeek: true
 
 ssh:
   sessions: 4
   vars: {commands: 3, typed: 6, output_bytes: 40000, file_bytes: 60000}
+  checks:
+    - run: [modules/ssh/fixtures/zeek_check.py, '{pcap}', --sessions, '{started}']
+      zeek: true
 
 strike:
   sessions: 20
@@ -116,3 +190,9 @@ strike:
   scenario_vars:
     conn_churn: {server_port: 8081, churn_port: 8082}
   skip: [bad_request_line, te_cl_conflict]
+  excluded:
+    conn_churn: >-
+      its churned connections reset before the server accepts them, and the own stack drops a connection that
+      was reset before accept, so the server side times out (18 of 24 sessions fail); a kernel keeps such a
+      connection in the accept queue
+  drop_rules: [{transport: tcp, server_port: 8081}]
