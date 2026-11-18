@@ -10,7 +10,7 @@
 | Branch | `wp/TRN-22` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 70% (4 of 6 plan steps) |
+| Progress | 90% (5 of 6 plan steps) |
 | Current holder | claude-9e6494, lease until 2026-11-18T03:55:16Z |
 | Last verified commit | none |
 
@@ -28,7 +28,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 2. Lossy link for smoltcp and own stacks with unit tests
 - [x] 3. Netem namespace setup for the kernel stack
 - [x] 4. Loss workload and tcp_bench command line
-- [ ] 5. Run the sweep, commit results
+- [x] 5. Run the sweep, commit results
 - [ ] 6. Log entry, checks, PR
 
 ## Done and verified
@@ -67,3 +67,15 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
+
+## Host test
+
+The kernel rows at 0, 0.1, and 1 percent with 20 ms need a kernel with `sch_netem`, which the sandbox lacks. Build once as the normal user, then run the binary as plain argv. It runs itself again through `sudo -n` (or run it as root).
+
+- Build: `cargo build --release -p fps-tcp --example tcp_bench`
+- Run: `target/release/examples/tcp_bench --stack kernel --workload loss --label "fat-nuc, kernel, loss 0/0.1/1 percent, 20 ms per direction" --out engine/fps-tcp/results/fat-nuc-trn22/kernel-loss.json`
+- Then the same with `--stack own` and `--stack smoltcp` in the same session, `--out .../own-loss.json` and `.../smoltcp-loss.json`.
+- Needs: root or `sudo -n`, `ip`, `tc`, `ethtool` (optional), module `sch_netem`. Creates three namespaces named `fpstcp<pid>x<n>c|r|s` per transfer and deletes them itself.
+- Timeout: 20 minutes (kernel 9 transfers of 4 MiB, each at most 60 s; the in memory stacks about 2 and 1 minutes).
+- Expected: exit 0 and a table with `yes` for every kernel transfer at 0 and 0.1 percent; exit 3 with a message when the kernel has no `sch_netem`.
+- Also: `cargo test -p fps-tcp --test netns` with `FPS_REQUIRE_NETEM=1` runs the three namespace scenarios and must print three `ok` lines.

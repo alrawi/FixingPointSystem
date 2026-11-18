@@ -58,8 +58,9 @@ with random loss (each --loss-levels value, default 0,0.1,1), a delay of --link-
 (default 20) in each direction, optional reordering (a share of frames skips the delay),
 and an optional rate limit with a bounded queue, and it reports goodput, retransmissions,
 and completion per transfer. The own and smoltcp stacks run over the in memory link with
-those settings. The kernel stack runs in two network namespaces joined by a veth pair with
-tc qdiscs (tbf for the rate, netem for the rest) on both ends, which needs root: without it
+those settings. The kernel stack runs in a client and a server network namespace with a
+router namespace between them, with tc qdiscs (tbf for the rate, netem for the rest) on both
+router interfaces, which needs root: without it
 tcp_bench runs itself again through sudo -n, and it exits with 3 when that is not possible
 (1 when CI=true or FPS_REQUIRE_NETEM=1), and also with 3 when the kernel has no sch_netem
 module. The link flags apply to the loss workload only.
@@ -709,7 +710,7 @@ fn loss_report(options: &Options) -> Result<BenchReport, LossError> {
             report = finish_report(
                 options,
                 "kernel",
-                "kernel TCP over a veth pair in network namespaces".to_string(),
+                "kernel TCP over a router in network namespaces".to_string(),
                 kernel_notes(options),
             );
             let mut count = 0u32;
@@ -747,7 +748,7 @@ fn kernel_notes(options: &Options) -> Vec<String> {
         .map_or_else(|_| "unknown".to_string(), |t| t.trim().to_string());
     vec![
         format!(
-            "the client and the server are processes of this binary in two network namespaces joined by a veth pair (mtu {}), each end with a tbf qdisc for the rate (when set) and a netem qdisc below it for delay, loss, and reordering, so both directions have the link settings; offloads on the veth ends are turned off",
+            "the client and the server are processes of this binary in two network namespaces, with a router namespace between them and a veth pair on each side (mtu {}); each interface of the router has a tbf qdisc for the rate (when set) and a netem qdisc below it for delay, loss, and reordering, so both directions have the link settings and a drop happens in the middle, as in a network; offloads on the veth ends are turned off",
             link_mtu(options)
         ),
         format!(

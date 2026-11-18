@@ -1,0 +1,39 @@
+Host of the results in this directory (recorded 2026-11-18 by TRN-22)
+
+what      the agent sandbox of the swarm, a Firecracker microVM, not the GitHub hosted runner and not fat-nuc
+stacks    the own minimal TCP stack (own) and smoltcp 0.14 over the impaired in memory link of TRN-22; the kernel over network namespaces
+cpu       Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vCPUs
+memory    8 GiB
+kernel    6.18.44-fc-v595, with CONFIG_NET_SCH_TBF=y and CONFIG_NET_SCH_NETEM not set (no sch_netem, and no module directory to load it from)
+rustc     1.97.0, release profile of the workspace
+load      load average 0.3 to 0.5 during the runs; other workers may have run during a run
+
+own-loss.json / .txt        tcp_bench --stack own --workload loss --label "sandbox 2 vcpu, own, loss 0/0.1/1 percent, 20 ms per direction" --out engine/fps-tcp/results/sandbox-2vcpu-trn22/own-loss.json
+smoltcp-loss.json / .txt    the same with --stack smoltcp
+kernel-loss.txt             the same with --stack kernel: IT DID NOT RUN. The sandbox kernel has no netem qdisc, so tc refuses "qdisc add ... netem" ("Specified qdisc kind is unknown"),
+                            and tcp_bench exits with 3 and the message in the file. The kernel rows at 0, 0.1, and 1 percent with 20 ms are NOT MEASURED in this directory.
+{kernel,own,smoltcp}-rate8.json / .txt
+                            tcp_bench --stack STACK --workload loss --loss-levels 0 --loss-transfers 3 --loss-kib 1024 --link-delay-ms 0 --link-rate-mbit 8 --link-queue-kib 64 --label "sandbox 2 vcpu, STACK, 8 Mbit/s with a 64 KiB queue, no delay, no loss" --out ...
+                            A rate limit needs tbf and no netem, so the kernel runs here, in a client, a router, and a server namespace, and the three stacks share one link setting.
+
+Settings of the *-loss runs (the defaults of the workload): 3 transfers of 4 MiB per loss level, one session each, a delay of 20 ms in each direction (a round trip of 40 ms), no reordering, no rate
+limit, a timeout of 60 s per transfer, and a fixed seed per transfer (the same loss pattern on every run of the command, apart from the timing of the stack).
+
+THE TCP STACKS UNDER TEST ARE NOT TUNED. The own stack has a window of at most 65,535 bytes, one timer per connection with a fixed initial timeout of 200 ms that doubles, go back N, and no congestion control.
+smoltcp has a 64 KiB buffer here and recovers by timeout and duplicate acknowledgments to the extent that its version does. The kernel, when it runs, sizes its buffers itself and uses its default congestion
+control. A goodput of the own stack that is far below the kernel is therefore the baseline for TRN-23 and TRN-24, not a defect of the link.
+
+Reading the numbers:
+- goodput is the confirmed bytes over the time from the first write to the confirmation of the server, and it counts as 0 for a transfer that did not complete in 60 s (the mean over the three transfers
+  includes that 0).
+- retransmissions of the own and smoltcp stacks are counted at the link, as data segments that start below the highest sequence number their flow sent before. The count includes every resent segment
+  (go back N resends all of a window) and any segment that a stack sends again without a loss. smoltcp shows about 40 of these per 4 MiB transfer at 0 percent loss and a 64 KiB buffer, and none with a
+  256 KiB buffer (--smol-buffer-kib 256, checked once, 46 Mbit/s); the cause (a window probe or a timer resend) is not established. The kernel counts RetransSegs of its own namespace.
+- link drops are the frames that the random loss and the full queue removed, and the kernel rows show 0 because the harness does not read the counters of tc.
+- the own rows at 8 Mbit/s repeat exactly (706 retransmissions, 32 drops, three times), because the link has no random loss and the same schedule repeats; they are not three independent samples.
+- a bimodal result (smoltcp at 0 percent loss: 10.3, 10.3, and 5.4 Mbit/s) is a result, not noise to average away: some runs stall on a timer once.
+- the kernel row at 8 Mbit/s: 7.69 Mbit/s of goodput at an 8 Mbit/s link, and 347 to 349 retransmitted segments of 724 per transfer, which is how the kernel overshoots a 64 KiB tail drop queue in slow start.
+
+THE ACCEPTANCE IS NOT MET IN THIS DIRECTORY FOR THE KERNEL STACK (no sch_netem here). It holds for the own and smoltcp stacks. Run
+  cargo run --release -p fps-tcp --example tcp_bench -- --stack kernel --workload loss --label "<host>, kernel, loss 0/0.1/1 percent, 20 ms per direction" --out engine/fps-tcp/results/<host>/kernel-loss.json
+on a host whose kernel has sch_netem (root or sudo -n, ip, tc; the command runs itself through sudo -n), and the same command for --stack own and --stack smoltcp in the same session.

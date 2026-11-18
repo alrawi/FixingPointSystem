@@ -4,9 +4,10 @@
 //!
 //! The loss workload for the kernel cannot use the loopback interface, because
 //! the kernel would carry the segments without a link to impair. [`NetnsLink`]
-//! builds two namespaces joined by a veth pair, with the `tc` qdiscs of
-//! [`crate::impair::netem_commands`] on both ends, so each direction has the
-//! settings of the in memory link. [`kernel_transfer`] then runs one transfer
+//! builds a client namespace and a server namespace with a router namespace
+//! between them, joined by two veth pairs, and puts the `tc` qdiscs of
+//! [`crate::impair::netem_commands`] on both interfaces of the router, so each
+//! direction has the settings of the in memory link. [`kernel_transfer`] then runs one transfer
 //! with a server process in one namespace and a client process in the other.
 //! The processes are this binary again, started with `ip netns exec` and the
 //! hidden flag `--netns-peer`, so the harness needs no `setns` and no unsafe
@@ -31,10 +32,10 @@ use tokio::net::TcpSocket;
 use crate::impair::{netem_commands, ImpairConfig};
 use crate::workload::{LossConfig, LossRun};
 
-/// The address of the client end of the veth pair.
-pub const CLIENT_ADDR: Ipv4Addr = Ipv4Addr::new(10, 77, 0, 1);
-/// The address of the server end of the veth pair.
-pub const SERVER_ADDR: Ipv4Addr = Ipv4Addr::new(10, 77, 0, 2);
+/// The address of the client host.
+pub const CLIENT_ADDR: Ipv4Addr = Ipv4Addr::new(10, 77, 1, 1);
+/// The address of the server host.
+pub const SERVER_ADDR: Ipv4Addr = Ipv4Addr::new(10, 77, 2, 1);
 /// The hidden first argument that turns the binary into a peer process.
 pub const PEER_FLAG: &str = "--netns-peer";
 
@@ -82,16 +83,24 @@ pub fn is_root() -> bool {
     std::fs::metadata("/proc/self").is_ok_and(|m| m.uid() == 0)
 }
 
-/// Two namespaces joined by a veth pair with the impairment on both ends. The
-/// namespaces go away when the value drops.
+/// Three namespaces, a client, a router, and a server, joined by two veth
+/// pairs, with the impairment on the two ends of the router. The namespaces
+/// go away when the value drops.
+///
+/// The impairment is in the router and not at the hosts for a reason. The
+/// kernel treats a drop in the qdisc of its own interface as congestion that
+/// it sees at once, and `RetransSegs` counts every retransmission that such a
+/// drop refuses. A bottleneck in the middle drops the way a network does, as
+/// the in memory link does.
 pub struct NetnsLink {
     client: String,
+    router: String,
     server: String,
 }
 
 impl NetnsLink {
-    /// Builds the link under the name prefix `prefix`, with `mtu` on both
-    /// ends.
+    /// Builds the link under the name prefix `prefix`, with `mtu` on every
+    /// interface.
     ///
     /// # Errors
     ///
@@ -101,41 +110,63 @@ impl NetnsLink {
     pub fn up(prefix: &str, config: &ImpairConfig, mtu: usize) -> Result<Self, NetnsError> {
         let link = Self {
             client: format!("{prefix}c"),
+            router: format!("{prefix}r"),
             server: format!("{prefix}s"),
         };
         // From here a failure drops `link`, which deletes what exists.
-        ip(&["netns", "add", &link.client])?;
-        ip(&["netns", "add", &link.server])?;
-        ip(&[
-            "link",
-            "add",
-            "vc",
-            "netns",
-            &link.client,
-            "type",
-            "veth",
-            "peer",
-            "name",
-            "vs",
-            "netns",
-            &link.server,
-        ])?;
+        for ns in [&link.client, &link.router, &link.server] {
+            ip(&["netns", "add", ns])?;
+        }
         let mtu = mtu.to_string();
-        for (ns, dev, addr) in [
-            (&link.client, "vc", CLIENT_ADDR),
-            (&link.server, "vs", SERVER_ADDR),
-        ] {
-            ip(&["-n", ns, "addr", "add", &format!("{addr}/24"), "dev", dev])?;
-            ip(&["-n", ns, "link", "set", dev, "mtu", &mtu, "up"])?;
-            ip(&["-n", ns, "link", "set", "lo", "up"])?;
-            // Offloads would pass segments larger than the MTU through the
-            // qdisc as one frame, so a loss would take many segments at once.
-            let _ = run_command(Command::new("ip").args([
-                "netns", "exec", ns, "ethtool", "-K", dev, "tso", "off", "gso", "off", "gro", "off",
-            ]));
+        // Each arm is a veth pair, the host end first and the router end
+        // second, on its own /24.
+        let arms = [
+            (link.client.as_str(), "vc", "10.77.1.1", "rc", "10.77.1.2"),
+            (link.server.as_str(), "vs", "10.77.2.1", "rs", "10.77.2.2"),
+        ];
+        for (host, host_dev, host_addr, router_dev, router_addr) in arms {
+            ip(&[
+                "link",
+                "add",
+                host_dev,
+                "netns",
+                host,
+                "type",
+                "veth",
+                "peer",
+                "name",
+                router_dev,
+                "netns",
+                &link.router,
+            ])?;
+            for (ns, dev, addr) in [
+                (host, host_dev, host_addr),
+                (link.router.as_str(), router_dev, router_addr),
+            ] {
+                ip(&["-n", ns, "addr", "add", &format!("{addr}/24"), "dev", dev])?;
+                ip(&["-n", ns, "link", "set", dev, "mtu", &mtu, "up"])?;
+                // Offloads would pass segments larger than the MTU through the
+                // qdisc as one frame, so a loss would take many segments at once.
+                let _ = run_command(Command::new("ip").args([
+                    "netns", "exec", ns, "ethtool", "-K", dev, "tso", "off", "gso", "off", "gro",
+                    "off",
+                ]));
+            }
+            ip(&["-n", host, "link", "set", "lo", "up"])?;
+            ip(&["-n", host, "route", "add", "default", "via", router_addr])?;
+        }
+        run_command(Command::new("ip").args([
+            "netns",
+            "exec",
+            &link.router,
+            "sysctl",
+            "-qw",
+            "net.ipv4.ip_forward=1",
+        ]))?;
+        for dev in ["rc", "rs"] {
             for args in netem_commands(config, dev) {
                 let mut cmd = Command::new("ip");
-                cmd.args(["netns", "exec", ns, "tc"]).args(&args);
+                cmd.args(["netns", "exec", &link.router, "tc"]).args(&args);
                 run_command(&mut cmd).map_err(|e| match e {
                     NetnsError::Command { detail, .. }
                         if args.iter().any(|a| a == "netem")
@@ -164,7 +195,7 @@ impl NetnsLink {
 
 impl Drop for NetnsLink {
     fn drop(&mut self) {
-        for ns in [&self.client, &self.server] {
+        for ns in [&self.client, &self.router, &self.server] {
             let _ = ip(&["netns", "del", ns]);
         }
     }

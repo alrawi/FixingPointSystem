@@ -1,0 +1,15 @@
+{
+  "format": "fps-bench/v1",
+  "suite": "tcp-stack",
+  "recorded": "2026-11-18T02:53:27Z",
+  "source": "kernel TCP over a router in network namespaces on sandbox 2 vcpu, kernel, 8 Mbit/s with a 64 KiB queue, no delay, no loss",
+  "host": {"cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz", "vcpus": 2, "kernel": "6.18.44-fc-v595", "mem_total_bytes": 8413851648},
+  "config": {"profile": "small", "nodelay": "true", "backlog": "4096", "loss.levels_percent": "0", "loss.transfers": "3", "loss.bytes": "1048576", "loss.chunk": "16384", "loss.timeout_secs": "60", "link.delay_us": "0", "link.reorder_percent": "0", "link.rate_bps": "8000000", "link.queue_bytes": "65536", "link.seed": "2047934465", "link.mtu": "1500", "kernel.buffer_bytes": "kernel default"},
+  "notes": ["the client and the server are processes of this binary in two network namespaces, with a router namespace between them and a veth pair on each side (mtu 1500); each interface of the router has a tbf qdisc for the rate (when set) and a netem qdisc below it for delay, loss, and reordering, so both directions have the link settings and a drop happens in the middle, as in a network; offloads on the veth ends are turned off", "the kernel sizes the socket buffers itself unless --buffer-kib is set, and its congestion control is bbr, so its window is far above the 64 KiB window of the own stack and of the smoltcp default", "retransmissions are the growth of RetransSegs in the client namespace during the transfer, which counts segments that the kernel sent again; the link drop counters are not read for the kernel", "every transfer has a fresh pair of namespaces, so the metrics cache of the kernel does not carry the slow start threshold of one transfer into the next", "the tbf token bucket holds 5 ms of the rate, which the in memory link does not have, so a kernel burst can pass the bottleneck that the in memory link serializes", "sockets counts both hosts of a pair and includes the listening sockets", "loss workload: one session sends 1048576 bytes and the transfer is complete when the server has confirmed the count; goodput is the confirmed bytes over the time from the first write to that confirmation, and counts as 0 for a transfer that did not complete; the link is loss 0%, delay 0 ms, reorder 0%, rate 8 Mbit/s with a queue of 64 KiB per direction, with the loss shown per row", "a metric of the loss workload is the mean over its transfers, and the key has the loss in percent with p for the decimal point"],
+  "metrics": {
+    "kernel.loss.0pct.goodput_mbit_per_s": {"value": 7.687049436399207, "better": "higher", "unit": "Mbit/s"},
+    "kernel.loss.0pct.completed_ratio": {"value": 1, "better": "higher", "unit": "ratio"},
+    "kernel.loss.0pct.retransmits": {"value": 348.3333333333333, "better": "lower", "unit": "segments"},
+    "kernel.loss.0pct.complete_s": {"value": 1.091265, "better": "lower", "unit": "s"}
+  }
+}
