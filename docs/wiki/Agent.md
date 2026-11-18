@@ -9,8 +9,10 @@ The command below runs one plan file and exits with the verdict of its criteria.
 ```bash
 fps-agent run --plan contracts/examples/plans/http_dns_smoke.json \
   --modules contracts/examples/modules [--side both|client|server] [--linger SECONDS] \
-  [--module-trust-store FILE] [--dev-modules]
+  [--keylog FILE] [--module-trust-store FILE] [--dev-modules]
 ```
+
+`--keylog FILE` writes the TLS secrets of the run in the NSS key log format (AGT-27), so that a capture of the run, which a tool such as `tcpdump` takes outside the agent, can be decrypted (`editcap --inject-secrets tls,FILE` embeds the lines, and the realism run `engine/fps-datapath/realism/http1-afxdp.sh` does so). The agent creates the file before the run starts, with mode 0600 (it sets that mode on a file that exists, too), so a path that cannot be written ends the command with exit code 2 before any load, and it fills the file when the run ends. The same 32 MiB limit as for a capture applies, and the agent logs "(truncated)" when it cuts the lines. Without the flag a standalone run keeps no secret. A key log is as sensitive as a private key.
 
 | Exit code | Meaning |
 |---|---|
