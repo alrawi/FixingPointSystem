@@ -4,7 +4,7 @@
 |---|---|
 | Issue | #660 |
 | Branch | `wp/TRN-35` |
-| Pull request | #0 |
+| Pull request | #670 |
 | Status | in progress |
 | Progress | 90% (4 of 5 plan steps, PR open) |
 | Current holder | claude-648711, lease until 2026-11-18T16:34:00Z (renewed at each heartbeat) |
