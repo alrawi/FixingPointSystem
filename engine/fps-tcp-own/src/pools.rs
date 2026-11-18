@@ -8,6 +8,8 @@
 //! from one ledger, so two sides cannot share a MAC address, and builds the
 //! [`Station`] of each side with the other side as its neighbor table.
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
 use fps_hosts::{
     HostPool, HostRange, MacAllocator, MacError, NeighborError, NeighborTable,
     PoolError as HostPoolError, PoolSpec,
@@ -30,7 +32,7 @@ pub enum PoolError {
     /// The VLAN identifier or another link setting is not valid.
     #[error("link: {0}")]
     Link(#[from] NetError),
-    /// A pool has no IPv4 prefix, which is all that the stack speaks.
+    /// A pool has no IPv4 prefix where the caller needs IPv4 addresses.
     #[error("pool {0} has no IPv4 prefix")]
     NoIpv4(String),
 }
@@ -64,6 +66,34 @@ impl HostSlice {
         }
         let addr = self.pool.ipv4_addr(self.range.offset + i).ok()??;
         Some(u32::from(addr))
+    }
+
+    /// The IPv6 address of the `i`-th host of the slice, by arithmetic.
+    pub fn address6(&self, i: u32) -> Option<Ipv6Addr> {
+        if i >= self.range.count {
+            return None;
+        }
+        self.pool.ipv6_addr(self.range.offset + i).ok()?
+    }
+
+    /// The address that the stack uses for the `i`-th host when the caller
+    /// does not name a family: the IPv4 address when the pool has one, and
+    /// otherwise the IPv6 address.
+    pub fn ip(&self, i: u32) -> Option<IpAddr> {
+        self.address(i)
+            .map(|a| IpAddr::V4(Ipv4Addr::from(a)))
+            .or_else(|| self.address6(i).map(IpAddr::V6))
+    }
+
+    /// The host of the slice that owns `ip`, as an index into the slice, or
+    /// `None` when the slice does not serve the address.
+    pub fn index_of(&self, ip: IpAddr) -> Option<u32> {
+        let index = match ip {
+            IpAddr::V4(a) => self.pool.index_of_ipv4(a)?,
+            IpAddr::V6(a) => self.pool.index_of_ipv6(a)?,
+        };
+        let relative = index.checked_sub(self.range.offset)?;
+        (relative < self.range.count).then_some(relative)
     }
 
     /// The IPv4 addresses of the hosts of the slice, in host order.
@@ -103,6 +133,43 @@ impl Pools {
     pub fn pair() -> Self {
         // The prefixes are constants and a unit test builds this value.
         Self::sized("10.0.0.0/24", 1, "10.0.1.0/24", 1, None).expect("the constant pair is valid")
+    }
+
+    /// One client host at `fd00:1::1` and one server host at `fd00:2::1`,
+    /// untagged: the IPv6 counterpart of [`Pools::pair`].
+    #[allow(clippy::expect_used)]
+    pub fn pair_v6() -> Self {
+        // The prefixes are constants and a unit test builds this value.
+        Self::sized_v6("fd00:1::/64", 1, "fd00:2::/64", 1, None)
+            .expect("the constant pair is valid")
+    }
+
+    /// `client_hosts` hosts in the IPv6 prefix `client_prefix` and
+    /// `server_hosts` hosts in `server_prefix`, with MAC addresses from a base
+    /// that `fps-hosts` derives from the pool name. The stack then speaks IPv6
+    /// only on both sides, and host `i` of a pool has the `i`-th usable
+    /// address of its prefix. A pool that has both families is built from a
+    /// `HostPool` with both prefixes and [`HostSlice::whole`].
+    pub fn sized_v6(
+        client_prefix: &str,
+        client_hosts: u32,
+        server_prefix: &str,
+        server_hosts: u32,
+        vlan: Option<u16>,
+    ) -> Result<Self, PoolError> {
+        let pool = |name, prefix, count| {
+            HostPool::parse(&PoolSpec {
+                name,
+                ipv6: Some(prefix),
+                count,
+                ..PoolSpec::default()
+            })
+        };
+        Ok(Self {
+            client: HostSlice::whole(pool("client", client_prefix, client_hosts)?),
+            server: HostSlice::whole(pool("server", server_prefix, server_hosts)?),
+            vlan,
+        })
     }
 
     /// `client_hosts` client hosts in a prefix of 10.0.0.0 and `server_hosts`

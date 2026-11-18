@@ -901,8 +901,305 @@ async fn connect_between_chosen_hosts_and_refuse_unknown_ones() {
         .map(|f| wire::parse_frame(f).expect("frame").header)
         .find(|h| h.flags == flags::SYN)
         .expect("syn");
-    assert_eq!(syn.src_ip, 0x0A01_0002, "client host 1");
-    assert_eq!(syn.dst_ip, 0x0A02_0002, "server host 1");
+    assert_eq!(syn.src_ip, wire::v4(0x0A01_0002), "client host 1");
+    assert_eq!(syn.dst_ip, wire::v4(0x0A02_0002), "server host 1");
+}
+
+// ---------------------------------------------------------------------------
+// IPv6 (TRN-30).
+
+fn ip6(text: &str) -> std::net::IpAddr {
+    std::net::IpAddr::V6(text.parse().expect("an IPv6 address"))
+}
+
+/// Every frame of `log` is an IPv6 frame, and the Ethernet type says so.
+fn assert_all_ipv6(log: &Log) {
+    let frames = frames_of(log);
+    assert!(!frames.is_empty());
+    for frame in frames {
+        let eth = decode_header(&frame).expect("ethernet");
+        assert_eq!(eth.ethertype, fps_tcp_own::net::ETHERTYPE_IPV6);
+        let h = wire::parse_frame(&frame).expect("frame").header;
+        assert!(h.src_ip.is_ipv6() && h.dst_ip.is_ipv6());
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_ipv6_pair_connects_moves_data_both_ways_and_closes() {
+    let lab = lab_pools(
+        OwnConfig::default(),
+        Pools::pair_v6(),
+        deliver_all(),
+        deliver_all(),
+    );
+    lab.stack.listen(PORT).expect("listen");
+    let driver = lab.start_clock_driver();
+    within(async {
+        let (client, server) = pair(&lab.stack).await;
+        let up = pattern(200_003);
+        let down = pattern(150_001);
+        let (up_len, down_len) = (up.len(), down.len());
+        let client_task = tokio::spawn(async move {
+            let mut got = vec![0u8; down_len];
+            let (mut rd, mut wr) = tokio::io::split(client);
+            let (written, read) = tokio::join!(wr.write_all(&up), rd.read_exact(&mut got));
+            written.expect("write");
+            read.expect("read");
+            wr.shutdown().await.expect("shutdown");
+            (got, rd, wr)
+        });
+        let server_task = tokio::spawn(async move {
+            let mut got = vec![0u8; up_len];
+            let (mut rd, mut wr) = tokio::io::split(server);
+            let (written, read) = tokio::join!(wr.write_all(&down), rd.read_exact(&mut got));
+            written.expect("write");
+            read.expect("read");
+            wr.shutdown().await.expect("shutdown");
+            (got, rd, wr)
+        });
+        let (client_side, server_side) = (
+            client_task.await.expect("task"),
+            server_task.await.expect("task"),
+        );
+        assert_eq!(client_side.0, pattern(150_001));
+        assert_eq!(server_side.0, pattern(200_003));
+    })
+    .await;
+    driver.abort();
+    assert_all_ipv6(&lab.client_log);
+    assert_all_ipv6(&lab.server_log);
+    let syn = parsed(&lab.client_log)[0];
+    assert_eq!(syn.flags, flags::SYN);
+    assert_eq!(syn.src_ip, ip6("fd00:1::1"));
+    assert_eq!(syn.dst_ip, ip6("fd00:2::1"));
+    // 1500 less 40 bytes of IPv6 and 20 of TCP.
+    assert_eq!(syn.mss, Some(1440));
+    let c = lab.stack.counters();
+    assert_eq!(c.client.bad_frames + c.server.bad_frames, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ipv6_segments_fit_the_mtu_and_a_small_mtu_lowers_the_mss() {
+    let config = OwnConfig {
+        mtu: 1280,
+        ..OwnConfig::default()
+    };
+    let lab = lab_pools(config, Pools::pair_v6(), deliver_all(), deliver_all());
+    lab.stack.listen(PORT).expect("listen");
+    let driver = lab.start_clock_driver();
+    within(async {
+        let (mut client, mut server) = pair(&lab.stack).await;
+        client.write_all(&pattern(40_000)).await.expect("write");
+        let mut got = vec![0u8; 40_000];
+        server.read_exact(&mut got).await.expect("read");
+        assert_eq!(got, pattern(40_000));
+        assert_eq!(parsed(&lab.client_log)[0].mss, Some(1220));
+        let longest = frames_of(&lab.client_log)
+            .iter()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0);
+        assert!(longest <= 1280 + 14, "{longest}");
+        assert!(longest > 1200, "segments use the MTU: {longest}");
+    })
+    .await;
+    driver.abort();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ipv6_lost_data_segments_are_sent_again_and_arrive_in_order() {
+    let mut data_frames = 0u32;
+    let client_rule: Rule = Box::new(move |frame| {
+        let parsed = wire::parse_frame(frame).expect("frame");
+        if parsed.payload.is_empty() {
+            return Fate::Deliver;
+        }
+        data_frames += 1;
+        if data_frames.is_multiple_of(7) {
+            Fate::Drop
+        } else {
+            Fate::Deliver
+        }
+    });
+    let lab = lab_pools(
+        OwnConfig::default(),
+        Pools::pair_v6(),
+        client_rule,
+        deliver_all(),
+    );
+    lab.stack.listen(PORT).expect("listen");
+    let driver = lab.start_clock_driver();
+    within(async {
+        let (mut client, mut server) = pair(&lab.stack).await;
+        let data = pattern(300_001);
+        let copy = data.clone();
+        let writer = tokio::spawn(async move {
+            client.write_all(&copy).await.expect("write");
+            client.shutdown().await.expect("shutdown");
+            client
+        });
+        let mut got = Vec::new();
+        server.read_to_end(&mut got).await.expect("read");
+        assert_eq!(got, data);
+        let _client = writer.await.expect("task");
+        assert!(lab.stack.counters().client.retransmits > 0);
+    })
+    .await;
+    driver.abort();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ipv6_corrupted_frames_are_counted_and_the_data_still_arrives() {
+    let mut n = 0u32;
+    let client_rule: Rule = Box::new(move |_| {
+        n += 1;
+        if n.is_multiple_of(11) {
+            Fate::Corrupt
+        } else {
+            Fate::Deliver
+        }
+    });
+    let lab = lab_pools(
+        OwnConfig::default(),
+        Pools::pair_v6(),
+        client_rule,
+        deliver_all(),
+    );
+    lab.stack.listen(PORT).expect("listen");
+    let driver = lab.start_clock_driver();
+    within(async {
+        let (mut client, mut server) = pair(&lab.stack).await;
+        client.write_all(&pattern(100_000)).await.expect("write");
+        let mut got = vec![0u8; 100_000];
+        server.read_exact(&mut got).await.expect("read");
+        assert_eq!(got, pattern(100_000));
+    })
+    .await;
+    driver.abort();
+    assert!(lab.stack.counters().server.bad_frames > 0);
+}
+
+fn dual_pools(vlan: Option<u16>) -> Pools {
+    let pool = |name, v4, v6, count| {
+        fps_hosts::HostPool::parse(&fps_hosts::PoolSpec {
+            name,
+            ipv4: Some(v4),
+            ipv6: Some(v6),
+            count,
+            ..fps_hosts::PoolSpec::default()
+        })
+        .expect("pool")
+    };
+    Pools {
+        client: fps_tcp_own::HostSlice::whole(pool("client", "10.1.0.0/24", "fd00:1::/64", 3)),
+        server: fps_tcp_own::HostSlice::whole(pool("server", "10.2.0.0/24", "fd00:2::/64", 2)),
+        vlan,
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_dual_stack_pool_serves_both_families_with_one_mac_per_host() {
+    let lab = lab_pools(
+        OwnConfig::default(),
+        dual_pools(Some(30)),
+        deliver_all(),
+        deliver_all(),
+    );
+    lab.stack.listen(PORT).expect("listen");
+    let driver = lab.start_clock_driver();
+    within(async {
+        // Without a family the stack uses IPv4, and by address it can use
+        // either, between any client host and server host.
+        let (v4, accepted4) = tokio::join!(lab.stack.connect(PORT), lab.stack.accept(PORT));
+        let (mut v4, mut accepted4) = (v4.expect("v4"), accepted4.expect("accept"));
+        let (v6, accepted6) = tokio::join!(
+            lab.stack
+                .connect_addrs(ip6("fd00:1::3"), ip6("fd00:2::2"), PORT),
+            lab.stack.accept(PORT)
+        );
+        let (mut v6, mut accepted6) = (v6.expect("v6"), accepted6.expect("accept"));
+        for (client, server, byte) in [(&mut v4, &mut accepted4, 4u8), (&mut v6, &mut accepted6, 6)]
+        {
+            client.write_all(&[byte; 5000]).await.expect("write");
+            let mut got = vec![0u8; 5000];
+            server.read_exact(&mut got).await.expect("read");
+            assert_eq!(got, vec![byte; 5000]);
+        }
+        // A pair of mixed families and an address that no host has.
+        let err = lab
+            .stack
+            .connect_addrs(ip6("fd00:1::1"), "10.2.0.1".parse().expect("addr"), PORT)
+            .await
+            .expect_err("mixed");
+        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+        let err = lab
+            .stack
+            .connect_addrs(ip6("fd00:1::ff"), ip6("fd00:2::1"), PORT)
+            .await
+            .expect_err("no such host");
+        assert_eq!(err.kind(), ErrorKind::AddrNotAvailable);
+        let err = lab
+            .stack
+            .connect_addrs(ip6("fd00:1::1"), ip6("fd00:2::ff"), PORT)
+            .await
+            .expect_err("no such neighbor");
+        assert_eq!(err.kind(), ErrorKind::HostUnreachable);
+    })
+    .await;
+    driver.abort();
+    let mut macs = std::collections::BTreeSet::new();
+    let mut families = std::collections::BTreeSet::new();
+    for frame in frames_of(&lab.client_log) {
+        let eth = decode_header(&frame).expect("ethernet");
+        assert_eq!(eth.vlan, Some(30));
+        let h = wire::parse_frame(&frame).expect("frame").header;
+        families.insert(h.src_ip.is_ipv4());
+        if h.flags == flags::SYN {
+            macs.insert((h.src_ip.is_ipv4(), eth.src));
+        }
+    }
+    assert_eq!(families.len(), 2, "frames of both families");
+    // The SYN of the IPv6 connect came from client host 2 (fd00:1::3), and
+    // the one of the IPv4 connect from client host 0: two MAC addresses.
+    assert_eq!(macs.len(), 2);
+    let c = lab.stack.counters();
+    assert_eq!(c.client.unresolved + c.server.unresolved, 0);
+    assert_eq!(c.client.link_dropped + c.server.link_dropped, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ipv6_pools_with_many_hosts_connect_by_index_on_a_tagged_link() {
+    let pools = Pools::sized_v6("fd00:a::/64", 4, "fd00:b::/64", 3, Some(100)).expect("pools");
+    let lab = lab_pools(OwnConfig::default(), pools, deliver_all(), deliver_all());
+    lab.stack.listen(PORT).expect("listen");
+    let driver = lab.start_clock_driver();
+    within(async {
+        let mut sessions = Vec::new();
+        for i in 0..12u8 {
+            let (client, server) = tokio::join!(lab.stack.connect(PORT), lab.stack.accept(PORT));
+            sessions.push((i, client.expect("connect"), server.expect("accept")));
+        }
+        for (i, client, server) in &mut sessions {
+            client.write_all(&[*i; 700]).await.expect("write");
+            let mut got = [0u8; 700];
+            server.read_exact(&mut got).await.expect("read");
+            assert_eq!(got, [*i; 700]);
+        }
+        let (c, s) = tokio::join!(lab.stack.connect_hosts(3, 2, PORT), lab.stack.accept(PORT));
+        let _ = (c.expect("connect"), s.expect("accept"));
+    })
+    .await;
+    driver.abort();
+    let mut tuples = std::collections::BTreeSet::new();
+    for frame in frames_of(&lab.client_log) {
+        assert_eq!(decode_header(&frame).expect("eth").vlan, Some(100));
+        let h = wire::parse_frame(&frame).expect("frame").header;
+        if h.flags == flags::SYN {
+            tuples.insert((h.src_ip, h.dst_ip));
+        }
+    }
+    assert_eq!(tuples.len(), 12, "each connect used its own address pair");
+    assert!(tuples.contains(&(ip6("fd00:a::4"), ip6("fd00:b::3"))));
 }
 
 /// The TTL, window, and option names of the first frame of `log` with the

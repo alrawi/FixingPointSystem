@@ -3,8 +3,9 @@
 //!
 //! The classifier reads only the headers that decide where a frame goes: the
 //! Ethernet header with its 802.1Q tags, the IPv4 header up to the transport
-//! protocol and, for UDP, the two ports, and the IPv6 header up to the first
-//! ICMPv6 type. It never allocates and never panics on a short frame.
+//! protocol and, for UDP, the two ports, and the IPv6 header up to the next
+//! header (TCP, UDP, or ICMPv6 and then its type). It never allocates and never
+//! panics on a short frame.
 
 use fps_hosts::wire::{
     ethernet_payload, ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ICMP6_NA, ICMP6_NS,
@@ -35,9 +36,17 @@ pub enum Class {
     Ipv4Udp,
     /// IPv4 with another protocol, which nothing takes.
     Ipv4Other(u8),
-    /// IPv6 neighbor discovery (ICMPv6 types 133 to 137), for the ND hook.
+    /// IPv6 neighbor discovery (ICMPv6 types 133 to 137): the responder of
+    /// `fps-hosts` answers the solicitations for the host pools, and the ND
+    /// hook gets the rest.
     Nd,
-    /// Other IPv6, which nothing takes yet.
+    /// IPv6 TCP right after the IPv6 header, which the own stack takes.
+    Ipv6Tcp,
+    /// IPv6 UDP right after the IPv6 header, for the UDP hook.
+    Ipv6Udp,
+    /// Other IPv6: another ICMPv6 type, a next header that is not TCP, UDP,
+    /// or ICMPv6, and a packet with an extension header in front of its
+    /// transport header. Nothing takes it.
     Ipv6Other,
     /// Another Ethernet type.
     Unknown(u16),
@@ -147,11 +156,16 @@ fn ipv6(frame: &[u8], pos: usize) -> Class {
     let Some(&next) = frame.get(pos + 6) else {
         return Class::Malformed;
     };
-    if next != NEXT_HEADER_ICMP6 {
-        return Class::Ipv6Other;
+    if frame.get(pos).is_some_and(|first| first >> 4 != 6) {
+        return Class::Malformed;
     }
-    match frame.get(pos + 40) {
-        Some(&(ICMP6_RS | ICMP6_RA | ICMP6_NS | ICMP6_NA | ICMP6_REDIRECT)) => Class::Nd,
+    match next {
+        PROTO_TCP => Class::Ipv6Tcp,
+        PROTO_UDP => Class::Ipv6Udp,
+        NEXT_HEADER_ICMP6 => match frame.get(pos + 40) {
+            Some(&(ICMP6_RS | ICMP6_RA | ICMP6_NS | ICMP6_NA | ICMP6_REDIRECT)) => Class::Nd,
+            _ => Class::Ipv6Other,
+        },
         _ => Class::Ipv6Other,
     }
 }
@@ -209,7 +223,27 @@ mod tests {
         nd.push(135);
         assert_eq!(class(&eth(0x86dd, None, &nd)), Class::Nd);
         nd[6] = 17;
+        assert_eq!(class(&eth(0x86dd, None, &nd)), Class::Ipv6Udp);
+        nd[6] = 6;
+        assert_eq!(class(&eth(0x86dd, None, &nd)), Class::Ipv6Tcp);
+        // An echo request, a hop by hop header, and a fragment header go
+        // nowhere.
+        nd[6] = 58;
+        nd[40] = 128;
         assert_eq!(class(&eth(0x86dd, None, &nd)), Class::Ipv6Other);
+        for next in [0, 43, 44, 59] {
+            nd[6] = next;
+            assert_eq!(class(&eth(0x86dd, None, &nd)), Class::Ipv6Other, "{next}");
+        }
+        // Every neighbor discovery type is ND.
+        nd[6] = 58;
+        for kind in 133..=137 {
+            nd[40] = kind;
+            assert_eq!(class(&eth(0x86dd, None, &nd)), Class::Nd, "{kind}");
+        }
+        // Version 4 in an IPv6 frame is malformed.
+        nd[0] = 0x40;
+        assert_eq!(class(&eth(0x86dd, None, &nd)), Class::Malformed);
     }
 
     #[test]

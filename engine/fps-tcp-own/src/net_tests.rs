@@ -208,9 +208,87 @@ fn receive_ignores_other_ethertypes() {
     let st = station(None);
     let mut reply = [0u8; MAX_REPLY_LEN];
     let mut f = Vec::new();
-    encode_header(&mut f, mac(0, 0xaa), mac(0, 0xbb), None, 0x86DD);
+    encode_header(&mut f, mac(0, 0xaa), mac(0, 0xbb), None, 0x88B5);
     f.extend_from_slice(&[0; 40]);
     assert_eq!(st.receive(&f, &mut reply), Ok(Received::Ignored));
+}
+
+/// A station whose pools have an IPv6 prefix beside the IPv4 one, so a host
+/// has both addresses and one MAC address.
+fn dual_station() -> Station {
+    let pool = |name, v4, v6, count, base| {
+        HostPool::parse(&PoolSpec {
+            name,
+            ipv4: Some(v4),
+            ipv6: Some(v6),
+            count,
+            mac_base: Some(base),
+            ..PoolSpec::default()
+        })
+        .expect("pool")
+    };
+    let client = pool("c", "10.1.0.0/24", "fd00:1::/64", 10, "02:aa:00:00:00:10");
+    let server = pool("s", "10.2.0.0/24", "fd00:2::/64", 3, "02:bb:00:00:00:00");
+    let mut ledger = MacAllocator::new();
+    let (c, s) = (table(&client, &mut ledger), table(&server, &mut ledger));
+    Station::new(c, s, None).expect("station")
+}
+
+#[test]
+fn the_head_of_an_ipv6_packet_has_the_ipv6_ethertype_and_the_same_macs() {
+    let st = dual_station();
+    let c0: Ipv6Addr = "fd00:1::1".parse().expect("addr");
+    let s2: Ipv6Addr = "fd00:2::3".parse().expect("addr");
+    let mut v6 = Vec::new();
+    assert!(st.head(&mut v6, c0, s2));
+    assert_eq!(&v6[12..14], &[0x86, 0xDD]);
+    let mut v4 = Vec::new();
+    assert!(st.head(&mut v4, C0, S2));
+    assert_eq!(&v4[12..14], &[0x08, 0x00]);
+    assert_eq!(&v6[..12], &v4[..12], "one MAC address per host");
+    assert!(st.owns(c0));
+    assert!(!st.owns(s2));
+    assert_eq!(st.resolve(s2), Some(mac(2, 0xbb)));
+    // An address outside the prefix, and a pair of mixed families.
+    let mut out = Vec::new();
+    assert!(!st.head(&mut out, c0, "fd00:3::1".parse::<Ipv6Addr>().expect("addr")));
+    assert!(!st.head(&mut out, IpAddr::V6(c0), IpAddr::V4(Ipv4Addr::from(S2))));
+    assert!(out.is_empty());
+}
+
+#[test]
+fn an_ipv6_packet_comes_back_as_ip_and_a_solicitation_is_answered() {
+    use fps_hosts::wire::ns_frame;
+    let st = dual_station();
+    let mut reply = [0u8; MAX_REPLY_LEN];
+    let mut f = Vec::new();
+    encode_header(&mut f, mac(0, 0xaa), mac(0, 0xbb), None, ETHERTYPE_IPV6);
+    let mut packet = vec![0x60, 0, 0, 0, 0, 20, 6, 64];
+    packet.resize(40 + 20, 0);
+    f.extend_from_slice(&packet);
+    assert_eq!(st.receive(&f, &mut reply), Ok(Received::Ip(&f[ETH_LEN..])));
+    // A solicitation for the host fd00:1::3 (host 2, MAC 02:aa:00:00:00:12).
+    let asker = MacAddr([0x02, 0xcc, 0, 0, 0, 1]);
+    let target: Ipv6Addr = "fd00:1::3".parse().expect("addr");
+    let ns = ns_frame(asker, "fd00:1::99".parse().expect("addr"), target, &[]);
+    let Ok(Received::Reply(len)) = st.receive(&ns, &mut reply) else {
+        panic!("no reply");
+    };
+    let advert = fps_hosts::wire::parse_neighbor_advert(&reply[..len]).expect("advert");
+    assert_eq!(advert.target, target);
+    assert_eq!(
+        advert.target_lla,
+        Some(MacAddr([0x02, 0xaa, 0, 0, 0, 0x12]))
+    );
+    assert!(advert.checksum_ok);
+    // A solicitation for a host of the other table is not ours to answer.
+    let other = ns_frame(
+        asker,
+        "fd00:1::99".parse().expect("addr"),
+        "fd00:2::1".parse().expect("addr"),
+        &[],
+    );
+    assert_eq!(st.receive(&other, &mut reply), Ok(Received::Ignored));
 }
 
 #[test]

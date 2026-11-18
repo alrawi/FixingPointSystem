@@ -14,12 +14,13 @@
 //! configuration fixes, so the lookup is a table read. The station does
 //! answer ARP requests for the hosts that it serves, through the
 //! [`Responder`] of `fps-hosts`, so a switch or a real peer can resolve them.
-//! The stack speaks IPv4 only, so IPv6 neighbor discovery has no user here.
+//! IPv6 neighbor solicitations for the hosts that the station serves are
+//! answered the same way, and the stack sends no solicitations of its own.
 
 use std::cell::Cell;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-pub use fps_hosts::wire::{ETHERTYPE_ARP, ETHERTYPE_IPV4, MAX_REPLY_LEN};
+pub use fps_hosts::wire::{ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_IPV6, MAX_REPLY_LEN};
 use fps_hosts::{MacAddr, NeighborTable, Responder, Verdict};
 
 /// The length of an Ethernet header without a tag.
@@ -33,6 +34,43 @@ pub const TPID_8021Q: u16 = 0x8100;
 pub const MIN_FRAME_LEN: usize = 60;
 /// The largest VLAN identifier of a tagged frame. 0 and 4095 are reserved.
 pub const MAX_VLAN_ID: u16 = 4094;
+
+/// An address that a [`Station`] looks up: an IPv4 address as the `u32` that
+/// `Ipv4Addr::from` reads (the form that the stack used before IPv6), an
+/// `Ipv4Addr`, an `Ipv6Addr`, or an `IpAddr`.
+pub trait IntoIp: Copy {
+    /// The address as an `IpAddr`.
+    fn into_ip(self) -> IpAddr;
+}
+
+impl IntoIp for IpAddr {
+    fn into_ip(self) -> IpAddr {
+        self
+    }
+}
+
+impl IntoIp for u32 {
+    fn into_ip(self) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::from(self))
+    }
+}
+
+impl IntoIp for Ipv4Addr {
+    fn into_ip(self) -> IpAddr {
+        IpAddr::V4(self)
+    }
+}
+
+impl IntoIp for Ipv6Addr {
+    fn into_ip(self) -> IpAddr {
+        IpAddr::V6(self)
+    }
+}
+
+/// The offset of the next header field in an IPv6 header.
+const IPV6_NEXT_HEADER_AT: usize = 6;
+/// The next header value of ICMPv6, which carries neighbor discovery.
+const NEXT_HEADER_ICMP6: u8 = 58;
 
 /// Why a frame or a station setting was rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -134,11 +172,11 @@ pub fn decode_header(frame: &[u8]) -> Result<EthHeader, NetError> {
 /// The result of [`Station::receive`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum Received<'a> {
-    /// An IPv4 packet for a host of the station. The slice starts at the IP
-    /// header.
+    /// An IPv4 or IPv6 packet. The slice starts at the IP header, and the
+    /// caller checks the destination address.
     Ip(&'a [u8]),
-    /// An ARP request for a host of the station. The reply of this length is
-    /// in the buffer that the caller passed.
+    /// An ARP request or neighbor solicitation for a host of the station. The
+    /// reply of this length is in the buffer that the caller passed.
     Reply(usize),
     /// A frame that the station ignores, for example ARP for another host.
     Ignored,
@@ -154,8 +192,16 @@ pub struct Station {
     /// of one connection repeat the same two addresses, so the table, which
     /// walks its slices, is read about once per connection and not once per
     /// frame.
-    last_local: Cell<Option<(u32, MacAddr)>>,
-    last_peer: Cell<Option<(u32, MacAddr)>>,
+    last_local: Cell<Option<(IpAddr, MacAddr)>>,
+    last_peer: Cell<Option<(IpAddr, MacAddr)>>,
+}
+
+/// The MAC address that `table` holds for `ip`.
+fn lookup(table: &NeighborTable, ip: IpAddr) -> Option<MacAddr> {
+    match ip {
+        IpAddr::V4(a) => table.lookup_v4(a),
+        IpAddr::V6(a) => table.lookup_v6(a),
+    }
 }
 
 impl Station {
@@ -191,48 +237,62 @@ impl Station {
     }
 
     /// Reports whether `ip` belongs to a host of the station.
-    pub fn owns(&self, ip: u32) -> bool {
+    pub fn owns(&self, ip: impl IntoIp) -> bool {
         self.local_mac(ip).is_some()
     }
 
     /// The MAC address of the local host `ip`.
-    pub fn local_mac(&self, ip: u32) -> Option<MacAddr> {
+    pub fn local_mac(&self, ip: impl IntoIp) -> Option<MacAddr> {
+        let ip = ip.into_ip();
         if let Some((cached, mac)) = self.last_local.get() {
             if cached == ip {
                 return Some(mac);
             }
         }
-        let mac = self.local.table().lookup_v4(Ipv4Addr::from(ip))?;
+        let mac = lookup(self.local.table(), ip)?;
         self.last_local.set(Some((ip, mac)));
         Some(mac)
     }
 
     /// The MAC address of the neighbor `ip`.
-    pub fn resolve(&self, ip: u32) -> Option<MacAddr> {
+    pub fn resolve(&self, ip: impl IntoIp) -> Option<MacAddr> {
+        let ip = ip.into_ip();
         if let Some((cached, mac)) = self.last_peer.get() {
             if cached == ip {
                 return Some(mac);
             }
         }
-        let mac = self.peers.lookup_v4(Ipv4Addr::from(ip))?;
+        let mac = lookup(&self.peers, ip)?;
         self.last_peer.set(Some((ip, mac)));
         Some(mac)
     }
 
     /// Writes the Ethernet header for a packet from the local host `src_ip`
     /// to the neighbor `dst_ip` and returns `true`, or returns `false` and
-    /// writes nothing when either address has no MAC address.
-    pub fn head(&self, out: &mut Vec<u8>, src_ip: u32, dst_ip: u32) -> bool {
+    /// writes nothing when either address has no MAC address. The Ethernet
+    /// type follows the family of the addresses, and a pair of mixed families
+    /// has no header.
+    pub fn head(&self, out: &mut Vec<u8>, src_ip: impl IntoIp, dst_ip: impl IntoIp) -> bool {
+        let (src_ip, dst_ip) = (src_ip.into_ip(), dst_ip.into_ip());
+        if src_ip.is_ipv4() != dst_ip.is_ipv4() {
+            return false;
+        }
         let (Some(src), Some(dst)) = (self.local_mac(src_ip), self.resolve(dst_ip)) else {
             return false;
         };
-        encode_header(out, dst, src, self.vlan, ETHERTYPE_IPV4);
+        let ethertype = if src_ip.is_ipv4() {
+            ETHERTYPE_IPV4
+        } else {
+            ETHERTYPE_IPV6
+        };
+        encode_header(out, dst, src, self.vlan, ethertype);
         true
     }
 
-    /// Takes one frame from the link. IPv4 for a host of the station comes
-    /// back as [`Received::Ip`], ARP requests for a host are answered into
-    /// `reply`, and everything else is an error or [`Received::Ignored`].
+    /// Takes one frame from the link. IPv4 and IPv6 packets come back as
+    /// [`Received::Ip`], ARP requests and neighbor solicitations for a host
+    /// are answered into `reply`, and everything else is an error or
+    /// [`Received::Ignored`].
     pub fn receive<'a>(&self, frame: &'a [u8], reply: &mut [u8]) -> Result<Received<'a>, NetError> {
         let head = decode_header(frame)?;
         match (self.vlan, head.vlan) {
@@ -243,6 +303,16 @@ impl Station {
         }
         match head.ethertype {
             ETHERTYPE_IPV4 => Ok(Received::Ip(&frame[head.payload_at..])),
+            ETHERTYPE_IPV6 => {
+                let packet = &frame[head.payload_at..];
+                if packet.get(IPV6_NEXT_HEADER_AT) != Some(&NEXT_HEADER_ICMP6) {
+                    return Ok(Received::Ip(packet));
+                }
+                match self.local.process(frame, reply) {
+                    Verdict::Reply(_, len) => Ok(Received::Reply(len)),
+                    _ => Ok(Received::Ignored),
+                }
+            }
             ETHERTYPE_ARP => match self.local.process(frame, reply) {
                 Verdict::Reply(_, len) => Ok(Received::Reply(len)),
                 _ => Ok(Received::Ignored),

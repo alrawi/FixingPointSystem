@@ -1041,6 +1041,7 @@ dependencies = [
  "fps-interp",
  "fps-io",
  "fps-module-dns",
+ "fps-tcp",
  "fps-tcp-own",
  "fps-udp-own",
  "libc",
@@ -1492,6 +1493,7 @@ dependencies = [
 name = "fps-udp-own"
 version = "0.0.1"
 dependencies = [
+ "fps-hosts",
  "fps-io",
  "fps-tcp-own",
  "tokio",

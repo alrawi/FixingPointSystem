@@ -3,7 +3,7 @@
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! The user space UDP layer of the engine (TRN-29).
 //!
-//! The layer carries UDP datagrams over Ethernet and IPv4 frames and offers
+//! The layer carries UDP datagrams over Ethernet and IPv4 or IPv6 frames and offers
 //! them through [`fps_io::DatagramIo`], so the UDP modules (dns, ntp,
 //! sip_rtp) run on it the way they run on the kernel backend. It has no
 //! socket of the kernel and no thread: a datapath loop hands it the frames of
@@ -17,7 +17,7 @@
 //! datapath loop calls two methods:
 //!
 //! * [`UdpArm::receive`] takes one Ethernet frame that the classifier
-//!   called IPv4 UDP, verifies it, and queues the datagram at the session
+//!   called IPv4 or IPv6 UDP, verifies it, and queues the datagram at the session
 //!   that it belongs to, or at a new session of a listener.
 //! * [`UdpArm::drain_tx`] hands over the frames that sessions queued.
 //!
@@ -35,8 +35,9 @@
 //!
 //! # What is checked and what is not
 //!
-//! The layer computes the IPv4 header checksum and the UDP checksum on send
-//! and verifies both on receive (a received UDP checksum of zero means none
+//! The layer computes the IPv4 header checksum and the UDP checksum (of either
+//! family) on send
+//! and verifies both on receive (a received IPv4 UDP checksum of zero means none
 //! and is accepted, RFC 768). Frames that fail a check are dropped and
 //! counted in [`UdpStats`].
 //!
@@ -54,7 +55,10 @@
 //!   comes from the neighbor table of the station, and for a peer that is
 //!   not in it the source MAC address of the first frame is used (a server
 //!   session) or the connect fails with `HostUnreachable` (a client session).
-//! * **IPv4 only.** IPv6 is TRN-30.
+//! * **IPv6** (TRN-30) works as IPv4 does, with the 40 byte header, a required
+//!   UDP checksum, and a fragment header for datagrams above the MTU. The
+//!   layer reads no extension header besides the fragment header, which it
+//!   counts and drops.
 //! * **Ports 67 and 68** are DHCP and never reach the layer.
 //!
 //! The layer has no unsafe code and takes no dependency besides `fps-io` and

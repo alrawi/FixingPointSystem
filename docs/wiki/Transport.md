@@ -787,14 +787,14 @@ Limits:
 A `Lane` is the unit of one thread: the queue of the client arm, the queue of the server arm, and the host pools (a slice of the test configuration) that the two arms serve. The own stack keeps one host per arm and owns both links, so a lane has exactly the two queues that the stack wants. `split_pools(pools, n)` cuts the pools into one slice per lane. A client host reaches only the server hosts of its own lane, and the receive side steering of a real port must send a flow to the queue of its lane (that is TRN-19 and the XDP program, not this crate).
 
 ```text
-wire -> queue -> Splitter -+-> IPv4 TCP -------> OwnStack (hosts, sessions, timers)
-                           +-> ARP ------------> fps-hosts Responder (reply sent by the splitter)
-                           +-> IPv4 UDP ------> UdpArm of fps-udp-own (TRN-29, see below)
-                           +-> ND, DHCP -------> FrameHook (answers Unsupported for now)
+wire -> queue -> Splitter -+-> IPv4 and IPv6 TCP -> OwnStack (hosts, sessions, timers)
+                           +-> ARP, NS -------------> fps-hosts Responder (reply sent by the splitter)
+                           +-> IPv4 and IPv6 UDP --> UdpArm of fps-udp-own (TRN-29, TRN-30)
+                           +-> other ND, DHCP ------> FrameHook (answers Unsupported for now)
 wire <- queue <------------------ frames of the stack and the replies of the splitter
 ```
 
-The `Splitter` wraps the `FrameIo` of one queue and is a `FrameIo` itself, so `fps-tcp-own` needed no change: the stack sees IPv4 TCP frames only. `classify` reads the Ethernet header with its 802.1Q tags, the IPv4 header up to the protocol and for UDP the two ports, and the IPv6 header up to an ICMPv6 neighbor discovery type, and it never panics on a short frame. A frame with another VLAN tag than the port has is counted in `vlan_dropped`. ARP requests for a host of the lane are answered by the `Responder` of `fps-hosts` from the same MAC addresses that the stack puts in its frames (the lane claims them from a fresh ledger in the order of `Pools::stations`, and a test compares an ARP reply with the source MAC of a SYN). The replies leave on the queue that took the request. ND, DHCP, and UDP frames go to a `FrameHook`; the default hook answers `Unsupported` and the splitter counts it (`nd_unsupported`, `dhcp_unsupported`, `udp_unsupported`). `DatapathConfig::hooks` builds the hooks per lane and side, which is where TRN-29 plugs UDP in, HST-04 `DhcpHosts`, and TRN-30 neighbor discovery. Everything else is counted in `other_dropped`.
+The `Splitter` wraps the `FrameIo` of one queue and is a `FrameIo` itself, so `fps-tcp-own` needed no change: the stack sees IPv4 TCP frames only. `classify` reads the Ethernet header with its 802.1Q tags, the IPv4 header up to the protocol and for UDP the two ports, and the IPv6 header up to an ICMPv6 neighbor discovery type, and it never panics on a short frame. A frame with another VLAN tag than the port has is counted in `vlan_dropped`. ARP requests for a host of the lane are answered by the `Responder` of `fps-hosts` from the same MAC addresses that the stack puts in its frames (the lane claims them from a fresh ledger in the order of `Pools::stations`, and a test compares an ARP reply with the source MAC of a SYN). The replies leave on the queue that took the request. ND, DHCP, and UDP frames go to a `FrameHook`; the default hook answers `Unsupported` and the splitter counts it (`nd_unsupported`, `dhcp_unsupported`, `udp_unsupported`). `DatapathConfig::hooks` builds the hooks per lane and side, which is where TRN-29 plugs UDP in and HST-04 `DhcpHosts`. Since TRN-30 the splitter answers IPv6 neighbor solicitations itself, as it does ARP, and only the other ND messages reach the ND hook. Everything else is counted in `other_dropped`.
 
 One thread per lane polls `OwnStack::pump`. `OwnStack::drive` does not fit a queue that the kernel fills, because it sleeps until the next timer or a notification and nothing notifies it when a frame arrives from the wire. A thread that found nothing spins for `spin_passes` (256) passes and then sleeps `idle_sleep` (30 microseconds), so an idle lane costs little CPU and a busy lane never sleeps.
 
@@ -805,7 +805,7 @@ The calls mirror `fps-backend-kernel`:
 | `Connector::connect(source, destination)` | `Datapath::connector()` gives a `Connector` that is `Clone`; `connect(source, destination)` opens a session from a client host address to a server host address of the same lane and fails with `UnknownSource`, `UnknownDestination`, `ConnectTimeout`, or `Stack` |
 | `KernelListener::bind(address, config)` and `accept` | `Datapath::listen(port)` listens at every server host of every lane, and `Listener::accept` returns the next session from any lane |
 | `KernelStream` | `DatapathSession`, the `OwnSession`, which is `SessionIo`, `AsyncRead`, and `AsyncWrite` |
-| IPv6 address | `DatapathError::Unsupported(Feature::Ipv6)`, with the package that adds it in the message |
+| IPv6 address | `connect` and `connect_udp` take the family from the addresses since TRN-30; the pools decide which family a lane has (see the IPv6 section below) |
 | `Connector::connect_datagram` and `KernelDatagramListener` | `Connector::connect_udp` and `Datapath::listen_udp` since TRN-29, see the section below |
 
 `Monitor` (`Datapath::monitor()`) reads `sockets_open` and the counters of every lane (`LaneStats`: the stack, the `FrameCounters` of both splitters, and the loop passes) from any task, and `Datapath::stop()` joins the threads and returns a `LaneReport` per lane.
@@ -841,7 +841,7 @@ Every run completed all its sessions with no failure and no wrong byte, and both
 | `accept` returns the session only | `OwnSession` has no `local_addr` and `peer_addr`, so the caller does not learn the client host of an accepted session |
 | Polling threads | A lane thread polls and sleeps 30 microseconds when idle, which adds up to that much to a round trip on an idle lane. Busy polling or `wait_readable` on both queues is a TRN-19 question |
 | No CPU pinning | `WorkerOptions::cpus` of the AF_XDP crate pins workers with `sched_setaffinity`, which this crate (no `unsafe`) does not call yet |
-| IPv6, DHCP, ND | Counted and answered with `Unsupported`, see the hooks above. UDP is served since TRN-29 |
+| DHCP, and ND that is not a solicitation for a host | Counted and answered with `Unsupported`, see the hooks above. UDP is served since TRN-29, IPv6 and neighbor solicitations since TRN-30 |
 
 ### UDP over FrameIo (TRN-29)
 
@@ -856,7 +856,7 @@ What a caller sees:
 
 | Kernel backend | Datapath |
 |---|---|
-| `Connector::connect_datagram(source, destination)` | `Connector::connect_udp(source, destination)`: a synchronous call that returns a `DatapathDatagram` (`UdpSession`, `DatagramIo`) with an ephemeral port of the client host (32768 to 60999 as Linux, one cursor per host, a 4 tuple table). It fails with `UnknownSource`, `UnknownDestination`, `Unsupported(Ipv6)`, and `Stack` for port 0 or an exhausted host |
+| `Connector::connect_datagram(source, destination)` | `Connector::connect_udp(source, destination)`: a synchronous call that returns a `DatapathDatagram` (`UdpSession`, `DatagramIo`) with an ephemeral port of the client host (32768 to 60999 as Linux, one cursor per host, a 4 tuple table). It fails with `UnknownSource`, `UnknownDestination`, and `Stack` for port 0 or an exhausted host (and, since TRN-30, `InvalidInput` for addresses of two families) |
 | `KernelDatagramListener::bind(address)` and `accept` | `Datapath::listen_udp(port)` returns a `UdpListener` for every server host of every lane. `accept` gives `(session, peer)` with the first datagram queued, and a closed session lets the next datagram of the peer open a new one |
 | `KernelDatagram` | `UdpSession`: connected, receive queue of 64 datagrams, cut to the buffer with the full length returned, `NotConnected` after `close` or drop, `InvalidInput` above `MAX_DATAGRAM` |
 
@@ -886,9 +886,45 @@ FPS_DNS_RESULTS=/tmp/dns FPS_REQUIRE_AFXDP=1 cargo test -p fps-datapath --test d
 |---|---|
 | No reassembly | A peer that fragments its datagrams is not heard. Needs a timer and a memory budget per host |
 | No ICMP | A module that waits for `ConnectionRefused` on UDP times out on this backend |
-| IPv4 only | IPv6 is TRN-30 |
+| IPv4 only | IPv6 since TRN-30, see the next section |
 | Ports 67 and 68 | DHCP goes to its own hook and never reaches the layer |
 | Neighbors from the pools | A client connect to an address that no pool holds fails with `HostUnreachable`. A server session answers a peer that the pools lack at the source MAC of its first frame |
+
+### IPv6 in the own stack (TRN-30)
+
+The own TCP stack (`fps-tcp-own`), the UDP layer (`fps-udp-own`), and the datapath (`fps-datapath`) speak IPv6 next to IPv4. A pool of the test configuration has IPv4 prefixes, IPv6 prefixes, or both (`HostPool` already allowed it, with one MAC address per host for both families), and the family of a session follows its addresses.
+
+| Layer | What changed |
+|---|---|
+| `fps-tcp-own` `wire` | The 40 byte IPv6 header (no extension headers, no header checksum, hop limit 64) and the TCP pseudo header of RFC 8200 section 8.1. `parse` reads the version nibble, `parse_frame` takes both Ethernet types. |
+| `fps-tcp-own` `host` | `Tuple` and `Conn` hold `IpAddr`. The MSS is the MTU minus 40 (IPv6) or 20 (IPv4) minus the 20 byte TCP header, and a peer that sends no MSS gets 536 (IPv4) or 1,220 (IPv6). A pair of two families is refused with `InvalidInput`. |
+| `fps-tcp-own` `net`, `pools` | `Station` caches by `IpAddr` and sends the ethertype of the family. `Pools::pair_v6` and `sized_v6` build IPv6 pools, `HostSlice::address6`, `ip`, and `index_of` read them, and `OwnStack::connect_addrs(local, remote, port)` opens a session of either family (`connect` and `connect_hosts` use IPv4 for a pool that has both). |
+| `fps-udp-own` | The UDP checksum is required (a zero checksum is a bad checksum), and a datagram above the MTU leaves as fragments with a fragment header. Received IPv6 fragments are dropped and counted, as for IPv4. `UdpArm::connect` takes the family from the addresses. |
+| `fps-datapath` | `classify` has `Ipv6Tcp`, `Ipv6Udp`, and `Ipv6Other`; the splitter hands neighbor solicitations to the `Responder` of `fps-hosts`, which answers for a host of the lane with the MAC address of the stack (`nd_replied`, `nd_ignored`), so a peer resolves the hosts of the pools. |
+
+What is not there: the stack sends no neighbor solicitation (neighbors come from the pools, and the next hop of a peer outside them is TRN-35), reads no ICMPv6 (no packet too big, no echo), and parses no extension header (such a frame is `Ipv6Other` and dropped). A connection costs 24 bytes more and a table entry 28 more than with IPv4 only, because the tuple holds two 17 byte `IpAddr` values.
+
+#### Tests
+
+- `engine/fps-tcp-own/tests/own.rs`: six IPv6 tests in memory (bulk both ways, MTU 1,280 with an MSS of 1,220, loss, corruption, a dual stack pool, many tagged hosts), and unit tests of the wire format with a hand computed checksum.
+- `engine/fps-udp-own/tests/layer.rs`: five IPv6 tests (request and response, MACs and ethertype and VLAN, a dual stack, fragments not heard, corrupted frames).
+- `engine/fps-datapath/tests/memory.rs`: TCP and UDP sessions on two IPv6 lanes, the ND answer compared with the source MAC of a SYN, an unknown target ignored, router advertisements to the hook, and the classes.
+- `engine/fps-datapath/tests/dns_scenarios.rs` runs the dns scenarios (TRN-29) and the loss workload (TRN-22) over both families, in memory and on a veth pair with an AF_XDP queue on each end. The kernel server variant gives the other end of the veth to the kernel with an IPv6 address; the kernel resolves the client hosts with neighbor solicitations that the splitter answers, and checks every IPv6 checksum. The loss workload of `fps-tcp` (`loss_transfer`) runs on the datapath through a `TcpStack` adapter of the test. A veth end that an AF_XDP socket owns bypasses the queueing disciplines, so each arm is wrapped in a queue that drops 2 percent of the received frames from a seeded generator, and the run must confirm every byte and show that the stacks sent segments again.
+
+```bash
+cargo test -p fps-tcp-own -p fps-udp-own                      # no root
+FPS_REQUIRE_AFXDP=1 cargo test -p fps-datapath --test dns_scenarios -- --nocapture
+```
+
+#### Limits
+
+| Limit | Consequence |
+|---|---|
+| No neighbor solicitation sent | A peer outside the pools needs its MAC address from elsewhere (TRN-35). The tests seed neighbors through the pools |
+| No ICMPv6 | No path MTU discovery (the MTU is fixed, and 1,280 is the floor), no `ConnectionRefused` over UDP |
+| No extension headers, no reassembly | A packet with a hop by hop or routing header, and a fragmented datagram, are dropped |
+| The kernel server test needs IPv6 in a new namespace | A kernel without IPv6 fails it under `CI=true` and skips it otherwise |
+| Per connection memory | 24 bytes more per connection and 28 per table entry, for both families |
 
 ### Interop of the own stack with smoltcp and the kernel (TRN-26)
 

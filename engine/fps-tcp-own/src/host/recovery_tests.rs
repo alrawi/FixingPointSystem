@@ -87,7 +87,7 @@ impl Pair {
         server.listen(SERVER_PORT).expect("listen");
         let now = 1_000_000;
         let c = client
-            .open(client_ip, server_ip, SERVER_PORT, now)
+            .open(wire::v4(client_ip), wire::v4(server_ip), SERVER_PORT, now)
             .expect("open");
         Self {
             client,
@@ -436,8 +436,10 @@ fn a_connection_with_recovery_state_costs_eight_bytes_more_than_before() {
     // The size of Conn was 168 bytes before TRN-23 and 176 after it. TRN-24
     // added the option bits (2 bytes) and the timestamp to echo (4) and took
     // them back from the timeout (a `u32` of microseconds in place of an
-    // `i64`) and a flag that moved into the option bits, so it is 176 still.
-    assert!(size <= 176, "{size}");
+    // `i64`) and a flag that moved into the option bits, so it was 176 still.
+    // TRN-30 gave the two addresses room for IPv6: a connection holds two
+    // `IpAddr` of 17 bytes where it held two `u32`, so it is 200 bytes.
+    assert!(size <= 200, "{size}");
 }
 
 // ---------------------------------------------------------------------------

@@ -231,7 +231,8 @@ async fn connect_refuses_what_it_cannot_serve() {
             p.client
                 .connect(p.client_ip(0), "[2001:db8::1]:53".parse().unwrap())
         ),
-        ErrorKind::Unsupported
+        ErrorKind::InvalidInput,
+        "an IPv4 source and an IPv6 destination"
     );
     assert_eq!(
         UdpListener::bind(&p.server, 0).unwrap_err().kind(),
@@ -626,4 +627,177 @@ async fn a_peer_outside_the_neighbor_table_is_answered_at_its_source_mac() {
     let mut back = Vec::new();
     p.server.drain_tx(8, &mut |f| back.push(f));
     assert_eq!(&back[0][0..6], &foreign_mac);
+}
+
+// ---------------------------------------------------------------------------
+// IPv6 (TRN-30).
+
+fn pair6(vlan: Option<u16>) -> Pair {
+    let pools = Pools::sized_v6("fd00:1::/64", 4, "fd00:2::/64", 4, vlan).unwrap();
+    pair_with(pools, &UdpConfig::default())
+}
+
+impl Pair {
+    fn client6(&self, i: u32) -> IpAddr {
+        IpAddr::V6(self.pools.client.address6(i).unwrap())
+    }
+
+    fn server6(&self, i: u32, port: u16) -> SocketAddr {
+        SocketAddr::new(IpAddr::V6(self.pools.server.address6(i).unwrap()), port)
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_ipv6_request_and_response_cross_the_two_arms() {
+    let p = pair6(None);
+    let mut listener = UdpListener::bind(&p.server, 53).unwrap();
+    let mut client = p.client.connect(p.client6(1), p.server6(2, 53)).unwrap();
+    assert_eq!(client.peer_addr(), p.server6(2, 53));
+    assert_eq!(client.local_addr().ip(), p.client6(1));
+    client.send_datagram(b"query one").await.unwrap();
+    p.shuttle();
+    let (mut server, peer) = listener.accept().await.unwrap();
+    assert_eq!(peer, client.local_addr());
+    assert_eq!(server.local_addr(), p.server6(2, 53));
+    assert_eq!(recv(&mut server).await, b"query one");
+    server.send_datagram(b"answer one").await.unwrap();
+    p.shuttle();
+    assert_eq!(recv(&mut client).await, b"answer one");
+    let (cs, ss) = (p.client.stats(), p.server.stats());
+    assert_eq!((cs.tx_datagrams, ss.tx_datagrams), (1, 1));
+    assert_eq!(
+        (ss.rx_accepted, ss.rx_delivered, cs.rx_delivered),
+        (1, 1, 1)
+    );
+    assert_eq!(
+        cs.rx_malformed + cs.rx_bad_udp_checksum + cs.rx_not_ours + ss.rx_not_ours,
+        0
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ipv6_frames_carry_the_macs_the_ethertype_and_valid_checksums() {
+    let p = pair6(Some(100));
+    let mut client = p.client.connect(p.client6(0), p.server6(3, 7000)).unwrap();
+    client.send_datagram(b"x").await.unwrap();
+    let mut frames = Vec::new();
+    p.client.drain_tx(8, &mut |f| frames.push(f));
+    assert_eq!(frames.len(), 1);
+    let f = &frames[0];
+    // The 802.1Q tag and then the IPv6 Ethernet type.
+    assert_eq!(&f[12..16], &[0x81, 0x00, 0x00, 100]);
+    assert_eq!(&f[16..18], &[0x86, 0xDD]);
+    let built = Pools::sized_v6("fd00:1::/64", 4, "fd00:2::/64", 4, Some(100))
+        .unwrap()
+        .stations()
+        .unwrap();
+    let src = built.client.local_mac(p.client6(0)).unwrap();
+    let dst = built
+        .client
+        .resolve(IpAddr::V6(p.pools.server.address6(3).unwrap()))
+        .unwrap();
+    assert_eq!(&f[0..6], &dst.0);
+    assert_eq!(&f[6..12], &src.0);
+    let parsed = wire::parse(&f[18..]).unwrap();
+    assert_eq!(parsed.payload, b"x");
+    assert_eq!(parsed.dst_port, 7000);
+    assert_eq!(parsed.src_ip, p.client6(0));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_dual_stack_arm_keeps_the_sessions_of_the_two_families_apart() {
+    let pool = |name, v4, v6, count| {
+        fps_hosts::HostPool::parse(&fps_hosts::PoolSpec {
+            name,
+            ipv4: Some(v4),
+            ipv6: Some(v6),
+            count,
+            ..fps_hosts::PoolSpec::default()
+        })
+        .unwrap()
+    };
+    let pools = Pools {
+        client: fps_tcp_own::HostSlice::whole(pool("c", "10.1.0.0/24", "fd00:1::/64", 2)),
+        server: fps_tcp_own::HostSlice::whole(pool("s", "10.2.0.0/24", "fd00:2::/64", 2)),
+        vlan: None,
+    };
+    let p = pair_with(pools, &UdpConfig::default());
+    let mut listener = UdpListener::bind(&p.server, 53).unwrap();
+    let mut c4 = p
+        .client
+        .connect(p.client_ip(0), p.server_addr(1, 53))
+        .unwrap();
+    let mut c6 = p.client.connect(p.client6(0), p.server6(1, 53)).unwrap();
+    // The same port number on the two hosts, which are one host of the pool.
+    assert_eq!(c4.local_addr().port(), c6.local_addr().port());
+    c4.send_datagram(b"four").await.unwrap();
+    c6.send_datagram(b"six").await.unwrap();
+    p.shuttle();
+    let (mut a, pa) = listener.accept().await.unwrap();
+    let (mut b, pb) = listener.accept().await.unwrap();
+    assert!(pa.is_ipv4() != pb.is_ipv4());
+    for (s, peer) in [(&mut a, pa), (&mut b, pb)] {
+        let want: &[u8] = if peer.is_ipv4() { b"four" } else { b"six" };
+        assert_eq!(recv(s).await, want);
+        s.send_datagram(want).await.unwrap();
+    }
+    p.shuttle();
+    assert_eq!(recv(&mut c4).await, b"four");
+    assert_eq!(recv(&mut c6).await, b"six");
+    // Mixed families are refused.
+    let err = p
+        .client
+        .connect(p.client6(0), p.server_addr(0, 53))
+        .unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ipv6_datagrams_above_the_mtu_leave_as_fragments_and_are_not_heard() {
+    let p = pair6(None);
+    let mut listener = UdpListener::bind(&p.server, 53).unwrap();
+    let mut client = p.client.connect(p.client6(0), p.server6(0, 53)).unwrap();
+    client.send_datagram(&[7u8; 4000]).await.unwrap();
+    client.send_datagram(b"small").await.unwrap();
+    p.shuttle();
+    assert_eq!(p.client.stats().tx_fragmented, 1);
+    assert_eq!(p.client.stats().tx_frames, 4);
+    assert_eq!(p.server.stats().rx_fragments, 3);
+    let (mut s, _) = listener.accept().await.unwrap();
+    assert_eq!(recv(&mut s).await, b"small");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn corrupted_ipv6_frames_are_counted_by_cause_and_dropped() {
+    let p = pair6(None);
+    let mut listener = UdpListener::bind(&p.server, 53).unwrap();
+    let mut client = p.client.connect(p.client6(0), p.server6(0, 53)).unwrap();
+    client.send_datagram(b"payload").await.unwrap();
+    let mut frames = Vec::new();
+    p.client.drain_tx(8, &mut |f| frames.push(f));
+    let good = frames.remove(0);
+    // A flipped payload byte: the UDP checksum.
+    let mut bad = good.clone();
+    bad[14 + 40 + 8] ^= 0x01;
+    p.server.receive(&bad);
+    // A zero UDP checksum is wrong over IPv6.
+    let mut zero = good.clone();
+    zero[14 + 40 + 6..14 + 40 + 8].copy_from_slice(&[0, 0]);
+    p.server.receive(&zero);
+    // A payload length beyond the frame.
+    let mut long = good.clone();
+    long[14 + 4..14 + 6].copy_from_slice(&900u16.to_be_bytes());
+    p.server.receive(&long);
+    // An IPv6 packet under the IPv4 Ethernet type, and the reverse.
+    let mut wrong_type = good.clone();
+    wrong_type[12..14].copy_from_slice(&[0x08, 0x00]);
+    p.server.receive(&wrong_type);
+    let stats = p.server.stats();
+    assert_eq!(stats.rx_bad_udp_checksum, 2);
+    assert_eq!(stats.rx_malformed, 1);
+    assert_eq!(stats.rx_not_ours, 1);
+    assert_eq!(stats.rx_delivered, 0);
+    p.server.receive(&good);
+    let (mut s, _) = listener.accept().await.unwrap();
+    assert_eq!(recv(&mut s).await, b"payload");
 }

@@ -36,7 +36,7 @@ fn handshake_with(client: Host, server: Host) -> Handshake {
     server.listen(SERVER_PORT).expect("listen");
     let now = 5_000_000;
     let c = client
-        .open(client_ip, server_ip, SERVER_PORT, now)
+        .open(wire::v4(client_ip), wire::v4(server_ip), SERVER_PORT, now)
         .expect("open");
     client.flush_dirty(now);
     let syn = client.out.queue.pop_front().expect("a SYN");
@@ -273,7 +273,9 @@ fn every_frame_of_a_host_carries_the_ttl_of_its_profile() {
         pools.client.addresses().expect("addresses")[0],
         pools.server.addresses().expect("addresses")[0],
     );
-    client.open(cip, sip, 9, 0).expect("open");
+    client
+        .open(wire::v4(cip), wire::v4(sip), 9, 0)
+        .expect("open");
     client.flush_dirty(0);
     let syn = client.out.queue.pop_front().expect("a SYN");
     server.input(&syn, 0);

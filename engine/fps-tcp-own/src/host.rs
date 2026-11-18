@@ -10,8 +10,9 @@
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, VecDeque};
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::io;
+use std::net::IpAddr;
 use std::task::Waker;
 
 use super::cubic::AckContext;
@@ -25,6 +26,9 @@ use super::OwnConfig;
 
 /// The MSS that a peer is assumed to have when its SYN carries no option.
 const DEFAULT_PEER_MSS: u16 = 536;
+/// The MSS that a peer is assumed to have over IPv6 when its SYN carries no
+/// option (RFC 6691: the minimum MTU of 1280 less 60 bytes of headers).
+const DEFAULT_PEER_MSS_V6: u16 = 1220;
 /// The first port of the ephemeral range of an active open.
 const EPHEMERAL_FIRST: u16 = 10_000;
 /// The bytes that the timestamp option takes in every segment, which the
@@ -60,6 +64,44 @@ fn shift_for(buffer: usize) -> u8 {
         shift += 1;
     }
     shift
+}
+
+/// The MSS that a host with the IP MTU `mtu` offers to a peer at `ip`.
+fn mss_for(mtu: usize, ip: IpAddr) -> u16 {
+    u16::try_from(mtu.saturating_sub(wire::ip_header_len(ip) + wire::TCP_LEN))
+        .unwrap_or(u16::MAX)
+        .max(64)
+}
+
+/// The MSS that a peer at `ip` is assumed to have without an MSS option.
+fn default_peer_mss(ip: IpAddr) -> u16 {
+    if ip.is_ipv4() {
+        DEFAULT_PEER_MSS
+    } else {
+        DEFAULT_PEER_MSS_V6
+    }
+}
+
+/// An address folded into 64 bits for the initial sequence number.
+fn ip_fold(ip: IpAddr) -> u64 {
+    match ip {
+        IpAddr::V4(a) => u64::from(u32::from(a)),
+        IpAddr::V6(a) => {
+            let n = u128::from(a);
+            (n as u64) ^ ((n >> 64) as u64)
+        }
+    }
+}
+
+fn hash_ip<H: Hasher>(ip: IpAddr, state: &mut H) {
+    match ip {
+        IpAddr::V4(a) => state.write_u32(u32::from(a)),
+        IpAddr::V6(a) => {
+            let n = u128::from(a);
+            state.write_u64(n as u64);
+            state.write_u64((n >> 64) as u64);
+        }
+    }
 }
 
 /// The timestamp clock: milliseconds of `now` plus a per host offset.
@@ -114,6 +156,9 @@ impl Hasher for IntHasher {
     fn write_u16(&mut self, value: u16) {
         self.0 = (self.0.rotate_left(23) ^ u64::from(value)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     }
+    fn write_u64(&mut self, value: u64) {
+        self.0 = (self.0.rotate_left(23) ^ value).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
 }
 
 type IntMap<K, V> = HashMap<K, V, BuildHasherDefault<IntHasher>>;
@@ -127,25 +172,37 @@ pub(crate) fn seq_le(a: u32, b: u32) -> bool {
 }
 
 /// The key of the connection table: the four values that name a connection
-/// from this host. It is 12 bytes, so an entry of the table with its `u32`
-/// handle takes 16 bytes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// from this host. An `IpAddr` is 17 bytes with the alignment of a byte, so
+/// the key is 38 bytes and an entry of the table with its `u32` handle takes
+/// 44 (it was 16 before IPv6, TRN-30).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tuple {
     /// The local address.
-    pub local_ip: u32,
+    pub local_ip: IpAddr,
     /// The remote address.
-    pub remote_ip: u32,
+    pub remote_ip: IpAddr,
     /// The local port.
     pub local_port: u16,
     /// The remote port.
     pub remote_port: u16,
 }
 
+impl Hash for Tuple {
+    /// Hashes the four fields with the integer writes that [`IntHasher`]
+    /// folds quickly, in place of the byte by byte path of a derived hash.
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        hash_ip(self.local_ip, state);
+        hash_ip(self.remote_ip, state);
+        state.write_u16(self.local_port);
+        state.write_u16(self.remote_port);
+    }
+}
+
 /// One connection.
 struct Conn {
     state: State,
-    local_ip: u32,
-    remote_ip: u32,
+    local_ip: IpAddr,
+    remote_ip: IpAddr,
     local_port: u16,
     remote_port: u16,
     iss: u32,
@@ -432,7 +489,7 @@ impl Out {
     fn send(
         &mut self,
         counters: &mut HostCounters,
-        ips: (u32, u32),
+        ips: (IpAddr, IpAddr),
         local_port: u16,
         remote_port: u16,
         seq: u32,
@@ -455,7 +512,7 @@ impl Out {
             mss,
             opts,
         };
-        let body = wire::IP_LEN
+        let body = wire::ip_header_len(ips.0)
             + wire::TCP_LEN
             + wire::options_len_styled(&header, &self.style)
             + payload.0.len()
@@ -479,7 +536,8 @@ impl Out {
 /// One host: its address, connections, listeners, timers, and output queue.
 pub struct Host {
     cfg: OwnConfig,
-    mss_own: u16,
+    /// The IP MTU, which gives the MSS that the host offers for each family.
+    mtu: usize,
     /// The operating system profile of the host, if it has one (TRN-28).
     profile: Option<OsProfile>,
     conns: Vec<Option<Conn>>,
@@ -511,12 +569,9 @@ impl Host {
     /// Creates the hosts of `station`, which share one connection table,
     /// with an IP MTU of `mtu` bytes.
     pub fn new(station: Station, cfg: OwnConfig, mtu: usize) -> Self {
-        let mss_own = u16::try_from(mtu.saturating_sub(wire::IP_LEN + wire::TCP_LEN))
-            .unwrap_or(u16::MAX)
-            .max(64);
         let cfg_secret = cfg.isn_secret;
         Self {
-            mss_own,
+            mtu,
             cfg,
             profile: None,
             conns: Vec::new(),
@@ -545,11 +600,16 @@ impl Host {
     #[must_use]
     pub fn with_profile(mut self, profile: Option<OsProfile>) -> Self {
         if let Some(p) = profile {
-            self.mss_own = self.mss_own.min(p.mss);
             self.out.style = p.style();
         }
         self.profile = profile.or(self.profile);
         self
+    }
+
+    /// The MSS that the host offers to a peer at `ip`: the one of its MTU for
+    /// the family, and at most the MSS of its profile.
+    fn own_mss(&self, ip: IpAddr) -> u16 {
+        mss_for(self.mtu, ip).min(self.profile.map_or(u16::MAX, |p| p.mss))
     }
 
     /// Whether the host offers window scaling.
@@ -602,10 +662,10 @@ impl Host {
     /// counter that ticks every 4 microseconds plus a hash of the tuple and a
     /// secret. The hash is a mixing function and not a keyed cryptographic one.
     fn isn(&self, t: Tuple, now: i64) -> u32 {
-        let tuple = (u64::from(t.local_ip) << 32)
+        let tuple = (ip_fold(t.local_ip) << 32)
             ^ (u64::from(t.local_port) << 16)
             ^ u64::from(t.remote_port);
-        let hash = mix(self.cfg.isn_secret ^ mix(tuple ^ (u64::from(t.remote_ip) << 17)));
+        let hash = mix(self.cfg.isn_secret ^ mix(tuple ^ (ip_fold(t.remote_ip) << 17)));
         ((now / 4) as u32).wrapping_add(hash as u32)
     }
 
@@ -709,11 +769,17 @@ impl Host {
     /// tuple, so two local hosts, or two neighbors, can use the same port.
     pub fn open(
         &mut self,
-        local_ip: u32,
-        remote_ip: u32,
+        local_ip: IpAddr,
+        remote_ip: IpAddr,
         remote_port: u16,
         now: i64,
     ) -> io::Result<(u32, u32)> {
+        if local_ip.is_ipv4() != remote_ip.is_ipv4() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the local and the remote address are of different families",
+            ));
+        }
         if !self.out.station.owns(local_ip) {
             return Err(io::Error::new(
                 io::ErrorKind::AddrNotAvailable,
@@ -760,7 +826,7 @@ impl Host {
         };
         let iss = self.isn(tuple, now);
         let mut conn = Conn::new(State::SynSent, tuple, iss, self.cfg.rto_us);
-        conn.mss = self.mss_own;
+        conn.mss = self.own_mss(local_ip);
         conn.set(O_WS, self.want_window_scale());
         conn.set(O_TS, self.want_timestamps());
         conn.set(O_SACK, self.want_sack());
@@ -1199,7 +1265,9 @@ impl Host {
         }
         conn.set(O_SACK, self.want_sack() && h.opts.sack_permitted);
         conn.snd_wnd = u32::from(h.window);
-        conn.mss = self.mss_own.min(h.mss.unwrap_or(DEFAULT_PEER_MSS));
+        conn.mss = self
+            .own_mss(h.dst_ip)
+            .min(h.mss.unwrap_or(default_peer_mss(h.src_ip)));
         if ts.is_some() {
             conn.mss = conn.mss.saturating_sub(TS_OVERHEAD).max(1);
         }
@@ -1261,7 +1329,9 @@ impl Host {
                     conn.set(O_SACK, false);
                 }
                 conn.adv_wnd = syn_window >> conn.rcv_shift();
-                conn.mss = conn.mss.min(h.mss.unwrap_or(DEFAULT_PEER_MSS));
+                conn.mss = conn
+                    .mss
+                    .min(h.mss.unwrap_or(default_peer_mss(conn.remote_ip)));
                 if conn.has(O_TS) {
                     conn.mss = conn.mss.saturating_sub(TS_OVERHEAD).max(1);
                 }
@@ -1836,7 +1906,8 @@ impl Host {
     fn output(&mut self, id: u32, now: i64) {
         let gen = self.gens.get(id as usize).copied().unwrap_or(0);
         let window_size = self.cfg.rcv_buffer;
-        let mss_own = self.mss_own;
+        let mtu = self.mtu;
+        let profile_mss = self.profile.map_or(u16::MAX, |p| p.mss);
         let ts_now = ts_clock(self.ts_base, now);
         let syn_window = self.syn_window();
         let Some(conn) = self.conns.get_mut(id as usize).and_then(Option::as_mut) else {
@@ -1878,7 +1949,7 @@ impl Host {
                 ack,
                 bits,
                 syn_window,
-                Some(mss_own),
+                Some(mss_for(mtu, ips.0).min(profile_mss)),
                 opts,
                 (&[], &[]),
             );
@@ -2218,8 +2289,8 @@ mod tests {
 
     fn tuple(local_ip: u32, remote_ip: u32, local_port: u16, remote_port: u16) -> Tuple {
         Tuple {
-            local_ip,
-            remote_ip,
+            local_ip: wire::v4(local_ip),
+            remote_ip: wire::v4(remote_ip),
             local_port,
             remote_port,
         }
@@ -2249,9 +2320,13 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_of_the_table_takes_16_bytes() {
-        assert_eq!(std::mem::size_of::<Tuple>(), 12);
-        assert_eq!(std::mem::size_of::<(Tuple, u32)>(), 16);
+    fn an_entry_of_the_table_takes_44_bytes() {
+        // Two addresses of 17 bytes, which hold an IPv4 or an IPv6 address
+        // (TRN-30), and two ports. The table took 16 bytes per entry while it
+        // held IPv4 addresses only.
+        assert_eq!(std::mem::size_of::<IpAddr>(), 17);
+        assert_eq!(std::mem::size_of::<Tuple>(), 38);
+        assert_eq!(std::mem::size_of::<(Tuple, u32)>(), 44);
     }
 
     #[test]
@@ -2272,8 +2347,8 @@ mod tests {
         let mut frame = Vec::new();
         assert!(built.client.head(&mut frame, src, dst));
         let header = Header {
-            src_ip: src,
-            dst_ip: dst,
+            src_ip: wire::v4(src),
+            dst_ip: wire::v4(dst),
             src_port: sp,
             dst_port: dp,
             seq: 1000,
@@ -2304,7 +2379,7 @@ mod tests {
         }
         assert_eq!(server.sockets(), 4, "the listener and three connections");
         server.flush_dirty(0);
-        let replies: Vec<(u32, u32)> = server
+        let replies: Vec<(IpAddr, IpAddr)> = server
             .out
             .queue
             .iter()
@@ -2314,7 +2389,15 @@ mod tests {
                 (h.src_ip, h.dst_ip)
             })
             .collect();
-        assert_eq!(replies, vec![(s[0], c[0]), (s[0], c[1]), (s[1], c[0])]);
+        let v4 = wire::v4;
+        assert_eq!(
+            replies,
+            vec![
+                (v4(s[0]), v4(c[0])),
+                (v4(s[0]), v4(c[1])),
+                (v4(s[1]), v4(c[0]))
+            ]
+        );
     }
 
     #[test]
@@ -2337,8 +2420,8 @@ mod tests {
             .client
             .head(&mut frame, built.client_ips[0], built.server_ips[0]));
         let header = Header {
-            src_ip: built.client_ips[0],
-            dst_ip: 0x0A02_0063,
+            src_ip: wire::v4(built.client_ips[0]),
+            dst_ip: wire::v4(0x0A02_0063),
             src_port: 5000,
             dst_port: 80,
             seq: 1,
@@ -2364,8 +2447,8 @@ mod tests {
             .client
             .head(&mut frame, built.client_ips[0], built.server_ips[0]));
         let header = Header {
-            src_ip: 0x0A09_0001,
-            dst_ip: built.server_ips[0],
+            src_ip: wire::v4(0x0A09_0001),
+            dst_ip: wire::v4(built.server_ips[0]),
             src_port: 5000,
             dst_port: 80,
             seq: 1,
@@ -2386,12 +2469,18 @@ mod tests {
         let built = stations(2, 2);
         let (c, s) = (built.client_ips.clone(), built.server_ips.clone());
         let mut client = Host::new(built.client, OwnConfig::default(), 1500);
-        let err = client.open(0x0A01_00FF, s[0], 80, 0).expect_err("local");
+        let err = client
+            .open(wire::v4(0x0A01_00FF), wire::v4(s[0]), 80, 0)
+            .expect_err("local");
         assert_eq!(err.kind(), io::ErrorKind::AddrNotAvailable);
-        let err = client.open(c[0], 0x0A02_00FF, 80, 0).expect_err("remote");
+        let err = client
+            .open(wire::v4(c[0]), wire::v4(0x0A02_00FF), 80, 0)
+            .expect_err("remote");
         assert_eq!(err.kind(), io::ErrorKind::HostUnreachable);
         for pair in [(c[0], s[0]), (c[1], s[0]), (c[0], s[1]), (c[0], s[0])] {
-            client.open(pair.0, pair.1, 80, 0).expect("open");
+            client
+                .open(wire::v4(pair.0), wire::v4(pair.1), 80, 0)
+                .expect("open");
         }
         assert_eq!(client.sockets(), 4);
         // Four distinct tuples in the table.
