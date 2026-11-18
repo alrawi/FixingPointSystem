@@ -5,10 +5,10 @@
 | Issue | #658 |
 | Branch | `wp/TRN-33` |
 | Pull request | #667 |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-7c2e91, lease renewed at each heartbeat |
-| Last verified commit | none |
+| Last verified commit | 43e842c (CI green, 54 of 54 checks) |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -36,11 +36,11 @@ Close the `fps-tcp-own` API gaps that TRN-27, TRN-29, and TRN-30 worked around: 
 
 ## Remaining
 
-CI result on the pull request.
+none
 
 ## Next action
 
-Wait for CI on the pull request, then set the handoff to ready for review.
+The coordinator reviews and merges PR 667.
 
 ## Blockers and open questions
 
@@ -68,3 +68,4 @@ CARGO_TARGET_DIR=$PWD/target-TRN-33 CARGO_BUILD_JOBS=1 cargo test -p fps-tcp-own
 |---|---|---|---|---|
 | 2026-11-18T13:30Z | claude-7c2e91 | claim | none | claimed #658 with card 6979999929 |
 | 2026-11-18T13:40Z | claude-7c2e91 | checkpoint | see git log | steps 2 to 4 done, tests pass |
+| 2026-11-18T15:30Z | claude-7c2e91 | finish | 43e842c | CI green on PR 667, ready for review |
