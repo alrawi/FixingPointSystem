@@ -16,8 +16,8 @@ LINT_TARGETS += lint-trn
 lint-trn:
 	shellcheck $(TRN_NETNS_DIR)/*.sh $(TRN_AFXDP_REALISM_DIR)/*.sh
 	@if command -v ruff >/dev/null 2>&1 && command -v mypy >/dev/null 2>&1; then \
-	  echo "ruff format --check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && ruff check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && mypy --strict $(TRN_NETNS_DIR)/handshakes.py $(TRN_AFXDP_REALISM_DIR)/make_plan.py"; \
-	  ruff format --check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && ruff check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && mypy --strict $(TRN_NETNS_DIR)/handshakes.py $(TRN_AFXDP_REALISM_DIR)/make_plan.py; \
+	  echo "ruff format --check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && ruff check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && mypy --strict $(TRN_NETNS_DIR)/handshakes.py $(TRN_AFXDP_REALISM_DIR)/make_plan.py $(TRN_AFXDP_REALISM_DIR)/finalize.py"; \
+	  ruff format --check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && ruff check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && mypy --strict $(TRN_NETNS_DIR)/handshakes.py $(TRN_AFXDP_REALISM_DIR)/make_plan.py $(TRN_AFXDP_REALISM_DIR)/finalize.py; \
 	else \
 	  echo "lint-trn skipped ruff and mypy because they are not installed"; \
 	fi

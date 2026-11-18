@@ -598,9 +598,13 @@ These are problems that the project has already met while it built modules, with
 
 **The estimate is plaintext, nDPI counts the wire.** `expected_bytes` counts application bytes above TLS, while the classifier measures the bytes on the wire, which include the TLS records. A mix with much TLS has its thinnest margin there (QA-05).
 
+**A TCP flow that follows another on the same port is reset on AF_XDP.** You see a session fail with `unexpected_reset`, and a capture with SYN, SYN-ACK, ACK, the first data segment, and an `RST` from the server, in about 1 session of 24 of a scenario like `dns/tcp_fallback` (a UDP leg, then a TCP leg on the same port with `after`) or in a long playback of `hls/vod_segments` (33 spawned flows on one port). The datapath listener of a port stays open after the first flow bound it, and the hub resets a connection that arrives while no flow waits, after the handshake, which the client does not retry as it retries a refused connect. A kernel answers that SYN with an RST, and the client retries. Until the hub holds such a connection for the grace period, these scenarios are on the exclusion list of the AF_XDP realism run and run on the kernel backend (TRN-36).
+
 **Two mix entries cannot share one server port.** A plan listens once for each port of each server host, so two scenarios of one module that both listen on 8080 fail with an address in use error when a plan runs them as two mix entries, although a fixture peer that runs the scenarios one after another meets no clash. Give each mix entry its own `server_port` parameter, as `engine/fps-datapath/realism/http1-afxdp.sh` does for the plain http1 scenarios (TRN-12).
 
 ### Native code (first party modules)
+
+A first party module needs an entry in `engine/fps-datapath/realism/profiles.yaml` with the sessions, variables, and ports of its `fixtures/capture.sh`. `test_every_first_party_module_has_a_profile` fails without it, and the AF_XDP realism job (`engine/fps-datapath/realism/module-afxdp.sh MODULE AGENT OUT`) runs the module from it. A scenario that the agent cannot run on AF_XDP yet goes under `excluded` with its reason (TRN-36).
 
 **Libraries with their own event loop do not fit.** The interpreter drives a protocol one message at a time. A full library such as `russh` runs its own async session loop, so the ssh module builds the packet layer on primitives, and the ldap module writes its own BER codec (MOD-11, MOD-17).
 

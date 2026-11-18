@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #682 |
 | Branch | `wp/TRN-36` |
-| Pull request | none yet |
-| Status | in progress (checks and pull request) |
-| Progress | 90% (4 of 5 plan steps) |
+| Pull request | #684 |
+| Status | ready for review |
+| Progress | 100% |
 | Current holder | claude-648128, lease until 2026-11-18T22:01:25Z |
 | Last verified commit | none |
 
