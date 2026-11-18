@@ -4,7 +4,7 @@
 
 Gate 3 (v1 release). One 16 vCPU agent meets the tier T1 targets on KVM, multi agent runs aggregate correctly, every image format boots, and the web UI passes its end to end suite.
 
-This page lists 46 work packages. Packages marked critical path gate the phase.
+This page lists 50 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -32,10 +32,14 @@ flowchart LR
   TRN_35["TRN-35<br/>The own stacks resolve their next hop"]
   ENG_31["ENG-31<br/>A transport seam in the runtime"]
   AGT_28["AGT-28<br/>The agent runs IPv6 host pools on the datapath"]
+  AGT_29["AGT-29<br/>An unforced agent falls back to the kernel backend"]
+  AGT_30["AGT-30<br/>Datapath lanes follow the workers of the plan"]
+  CTL_55["CTL-55<br/>The controller shows the backend that ran"]
+  TRN_36["TRN-36<br/>An AF_XDP realism job for every first party module"]
   AGT_27["AGT-27<br/>The standalone agent writes a TLS key log"]
   AGT_26["AGT-26<br/>The agent resolves next hops on the datapath"]
   AGT_25["AGT-25<br/>The agent runs its workers on the datapath"]
-  CON_35["CON-35<br/>The agent reports the bound XDP mode after a plan"]
+  CON_35["CON-35<br/>The agent reports the backend that ran and the bound XDP mode"]
   AGT_24["AGT-24<br/>The agent starts the selected backend"]
   CTL_54["CTL-54<br/>The orchestrator inventory uses the selected backend"]
   HST_03["HST-03<br/>ARP and ND for user space backends"]
@@ -101,13 +105,20 @@ flowchart LR
   TRN_29 --> TRN_31
   TRN_30 --> TRN_31
   TRN_33 --> TRN_31
+  TRN_34 --> TRN_31
   TRN_35 --> TRN_31
+  TRN_36 --> TRN_31
   AGT_24 --> TRN_31
   AGT_25 --> TRN_31
   AGT_26 --> TRN_31
   AGT_27 --> TRN_31
   AGT_28 --> TRN_31
+  AGT_29 --> TRN_31
+  AGT_30 --> TRN_31
   CTL_54 --> TRN_31
+  CTL_55 --> TRN_31
+  CON_35 --> TRN_31
+  QA_06 --> TRN_31
   TRN_30 --> TRN_33
   TRN_33 --> TRN_34
   TRN_30 --> TRN_35
@@ -115,6 +126,13 @@ flowchart LR
   TRN_29 --> ENG_31
   AGT_26 --> AGT_28
   TRN_30 --> AGT_28
+  AGT_28 --> AGT_29
+  CON_35 --> AGT_29
+  AGT_28 --> AGT_30
+  CON_35 --> CTL_55
+  TRN_12 --> TRN_36
+  AGT_27 --> TRN_36
+  AGT_28 --> TRN_36
   TRN_12 --> AGT_27
   AGT_25 --> AGT_26
   TRN_35 --> AGT_26
@@ -129,7 +147,9 @@ flowchart LR
   TRN_11 --> TRN_14
   TRN_14 --> QA_06
   AGT_22 --> QA_06
-  TRN_31 --> QA_06
+  TRN_12 --> QA_06
+  TRN_34 --> QA_06
+  AGT_30 --> QA_06
   QA_06 --> QA_07
   CTL_16 --> QA_07
   UI_07 --> QA_07
@@ -143,7 +163,7 @@ flowchart LR
   TRN_14 --> AGT_22
   CON_32 --> AGT_22
   HST_04 --> AGT_23
-  TRN_31 --> AGT_23
+  AGT_26 --> AGT_23
   CTL_16 --> CTL_51
   CTL_51 --> CTL_52
   CON_32 --> CTL_53
@@ -171,16 +191,20 @@ flowchart LR
 | [TRN-28](#trn-28-os-profile-options-for-the-own-stack) | OS profile options for the own stack | S | TRN-24 |  |
 | [TRN-29](#trn-29-udp-over-frameio) | UDP over FrameIo | M | TRN-21, TRN-32, TRN-27 |  |
 | [TRN-30](#trn-30-ipv6-in-the-own-stack) | IPv6 in the own stack | M | TRN-26, TRN-29 |  |
-| [TRN-31](#trn-31-the-af_xdp-transport-becomes-available) | The AF_XDP transport becomes available | S | TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, CTL-54 |  |
+| [TRN-31](#trn-31-the-af_xdp-transport-becomes-available) | The AF_XDP transport becomes available | S | TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-34, TRN-35, TRN-36, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, AGT-29, AGT-30, CTL-54, CTL-55, CON-35, QA-06 |  |
 | [TRN-33](#trn-33-the-own-stack-api-that-the-datapath-needs) | The own stack API that the datapath needs | S | TRN-30 |  |
 | [TRN-34](#trn-34-pacing-and-faster-loss-detection-in-the-own-stack) | Pacing and faster loss detection in the own stack | M | TRN-33 |  |
 | [TRN-35](#trn-35-the-own-stacks-resolve-their-next-hop) | The own stacks resolve their next hop | S | TRN-30 |  |
 | [ENG-31](#eng-31-a-transport-seam-in-the-runtime) | A transport seam in the runtime | M | TRN-27, TRN-29 |  |
 | [AGT-28](#agt-28-the-agent-runs-ipv6-host-pools-on-the-datapath) | The agent runs IPv6 host pools on the datapath | S | AGT-26, TRN-30 |  |
+| [AGT-29](#agt-29-an-unforced-agent-falls-back-to-the-kernel-backend) | An unforced agent falls back to the kernel backend | S | AGT-28, CON-35 |  |
+| [AGT-30](#agt-30-datapath-lanes-follow-the-workers-of-the-plan) | Datapath lanes follow the workers of the plan | M | AGT-28 |  |
+| [CTL-55](#ctl-55-the-controller-shows-the-backend-that-ran) | The controller shows the backend that ran | S | CON-35 |  |
+| [TRN-36](#trn-36-an-af_xdp-realism-job-for-every-first-party-module) | An AF_XDP realism job for every first party module | M | TRN-12, AGT-27, AGT-28 |  |
 | [AGT-27](#agt-27-the-standalone-agent-writes-a-tls-key-log) | The standalone agent writes a TLS key log | S | TRN-12 |  |
 | [AGT-26](#agt-26-the-agent-resolves-next-hops-on-the-datapath) | The agent resolves next hops on the datapath | S | AGT-25, TRN-35 |  |
 | [AGT-25](#agt-25-the-agent-runs-its-workers-on-the-datapath) | The agent runs its workers on the datapath | S | AGT-24, ENG-31 |  |
-| [CON-35](#con-35-the-agent-reports-the-bound-xdp-mode-after-a-plan) | The agent reports the bound XDP mode after a plan | S | AGT-24 |  |
+| [CON-35](#con-35-the-agent-reports-the-backend-that-ran-and-the-bound-xdp-mode) | The agent reports the backend that ran and the bound XDP mode | S | AGT-24 |  |
 | [AGT-24](#agt-24-the-agent-starts-the-selected-backend) | The agent starts the selected backend | S | AGT-22, TRN-27 |  |
 | [CTL-54](#ctl-54-the-orchestrator-inventory-uses-the-selected-backend) | The orchestrator inventory uses the selected backend | S | CTL-53 |  |
 | [HST-03](#hst-03-arp-and-nd-for-user-space-backends) | ARP and ND for user space backends | M | TRN-11 |  |
@@ -188,7 +212,7 @@ flowchart LR
 | [TRN-14](#trn-14-backend-selection-at-boot) | Backend selection at boot | S | TRN-11, AGT-03 |  |
 | [CTL-16](#ctl-16-multi-agent-runs) | Multi agent runs | M | CTL-07, CTL-08, CTL-12 |  |
 | [UI-07](#ui-07-web-ui-end-to-end-suite) | Web UI end to end suite | M | UI-03, UI-04, UI-05, UI-06, CTL-08 |  |
-| [QA-06](#qa-06-benchmark-suite-per-hypervisor) | Benchmark suite per hypervisor | M | TRN-14, QA-03, AGT-22, TRN-31 |  |
+| [QA-06](#qa-06-benchmark-suite-per-hypervisor) | Benchmark suite per hypervisor | M | TRN-14, QA-03, AGT-22, TRN-12, TRN-34, AGT-30 |  |
 | [QA-07](#qa-07-gate-3-acceptance-suite) | Gate 3 acceptance suite | M | QA-06, CTL-16, UI-07, IMG-03, TRN-31, HST-03 | yes |
 | [TRN-17](#trn-17-tcp-stack-bench-harness-with-a-kernel-reference-stack) | TCP stack bench harness with a kernel reference stack | M | TRN-01 |  |
 | [TRN-20](#trn-20-smoltcp-on-the-tcp-stack-bench-harness) | smoltcp on the TCP stack bench harness | S | TRN-17 |  |
@@ -196,7 +220,7 @@ flowchart LR
 | [TRN-19](#trn-19-af_xdp-rate-between-two-kvm-guests) | AF_XDP rate between two KVM guests | S | TRN-11 |  |
 | [HST-04](#hst-04-dhcp-for-user-space-backends) | DHCP for user space backends | S | HST-03, CON-34 |  |
 | [AGT-22](#agt-22-the-agent-selects-and-reports-its-backend) | The agent selects and reports its backend | S | TRN-14, CON-32 |  |
-| [AGT-23](#agt-23-the-agent-leases-the-addresses-of-a-dhcp-pool) | The agent leases the addresses of a DHCP pool | M | HST-04, TRN-31 |  |
+| [AGT-23](#agt-23-the-agent-leases-the-addresses-of-a-dhcp-pool) | The agent leases the addresses of a DHCP pool | M | HST-04, AGT-26 |  |
 | [CON-32](#con-32-kernel-release-selected-backend-and-xdp-mode-in-the-agent-capabilities) | Kernel release, selected backend, and XDP mode in the agent capabilities | S | none |  |
 | [CTL-51](#ctl-51-clock-offsets-of-agents-from-heartbeats) | Clock offsets of agents from heartbeats | S | CTL-16 |  |
 | [CTL-52](#ctl-52-multi-agent-runs-through-the-run-orchestrator) | Multi agent runs through the run orchestrator | M | CTL-51 |  |
@@ -224,22 +248,22 @@ Acceptance.
 
 ## CON Contracts
 
-### CON-35 The agent reports the bound XDP mode after a plan
+### CON-35 The agent reports the backend that ran and the bound XDP mode
 
 Phase 3 · size S · workstream CON
 
 - **Depends on.** AGT-24
 - **Paths.** `contracts/`
 
-Register comes before any plan, so PortInfo.xdp_driver_mode carries only the driver table hint, and the mode that each socket really bound in (AGT-24) reaches only the agent log. Add a field on the start result or the heartbeat that carries the bound mode of each port, so the controller can show it.
+Register comes before any plan, so PortInfo.xdp_driver_mode carries only the driver table hint, and the mode that each socket really bound in (AGT-24) reaches only the agent log. After the flip of TRN-31 an unforced agent may also run a plan on the kernel backend (AGT-29). Add fields on the start result or the heartbeat that carry the backend that ran the plan and the bound mode of each port, so a benchmark never measures the wrong backend unseen.
 
 Deliverables.
 
-- The contract field with its OpenAPI and protobuf checks.
+- The contract fields with their OpenAPI and protobuf checks.
 
 Acceptance.
 
-- [ ] The contract tests show the bound mode of each port in the chosen message, and the change passes the breaking change check.
+- [ ] The contract tests show the backend that ran and the bound mode of each port in the chosen message, and the change passes the breaking change check.
 
 ### CON-32 Kernel release, selected backend, and XDP mode in the agent capabilities
 
@@ -283,10 +307,11 @@ Acceptance.
 
 Phase 3 · size M · workstream QA
 
-- **Depends on.** TRN-14, QA-03, AGT-22, TRN-31
+- **Depends on.** TRN-14, QA-03, AGT-22, TRN-12, TRN-34, AGT-30
 - **Paths.** `bench/`
+- **Owner action.** A KVM guest with a virtio_net port that supports native XDP, for example on fat-nuc, which the relay can reach. The default switch of TRN-31 waits for this measurement.
 
-Run the standard benchmark set on KVM and publish the results. Other hypervisors follow v1.
+Run the standard benchmark set on KVM and publish the results, with the kernel backend and the AF_XDP backend each forced, so that TRN-31 can show that AF_XDP is the fastest working backend before it becomes the default. Other hypervisors follow v1.
 
 Deliverables.
 
@@ -294,7 +319,7 @@ Deliverables.
 
 Acceptance.
 
-- [ ] Results for KVM are published with host details and compared with tier T1 targets.
+- [ ] Results for KVM with both backends forced are published with host details and compared with tier T1 targets.
 
 ### QA-07 Gate 3 acceptance suite
 
@@ -579,19 +604,22 @@ Acceptance.
 
 Phase 3 · size S · workstream TRN
 
-- **Depends on.** TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, CTL-54
+- **Depends on.** TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-34, TRN-35, TRN-36, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, AGT-29, AGT-30, CTL-54, CTL-55, CON-35, QA-06
 - **Paths.** `engine/fps-backend-afxdp/`
 
-Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with native XDP, and a stack without congestion control must not become the default. AGT-24 and CTL-54 prepare the agent and the controller behind the flag first.
+Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with native XDP. The vetting agent decided on 2026-11-18 that the flip waits for the kernel fallback of AGT-29, the backend report of CON-35 and CTL-55, the loss detection of TRN-34, an AF_XDP realism job for every first party module (TRN-36), lanes that follow the workers (AGT-30), and a KVM measurement of both backends (QA-06), because without them the default would refuse most plans that run today and would never have run most modules.
 
 Deliverables.
 
 - The flip, with a test that the selection picks AF_XDP on a fake host with native XDP.
-- Before the flip, every harness, gate, and realism job that tests the kernel backend passes --backend kernel, because veth and virtio_net count as native XDP and the flip would otherwise move them all to the own stack at once. AF_XDP runs are added on purpose. The coordinator makes the workflow changes in the same pull request.
+- A test for each shape that the datapath refuses, where an unforced agent runs it on the kernel backend and reports that, and a forced agent refuses it.
+- Every harness, gate, and realism job that tests the kernel backend passes --backend kernel, and the AF_XDP jobs stay explicit. The coordinator makes the workflow changes in the same pull request.
+- The selection and fallback rule stated on the Agent and Transport pages.
 
 Acceptance.
 
 - [ ] On a host with native XDP the agent selects AF_XDP, runs the own stack, and reports the bound mode, and the controller inventory lists AF_XDP for that agent.
+- [ ] Every file in contracts/examples/tests/ runs on an unforced agent on a veth pair after the flip.
 
 ### TRN-33 The own stack API that the datapath needs
 
@@ -643,6 +671,23 @@ Deliverables.
 Acceptance.
 
 - [ ] On a veth pair in CI the own stack reaches a kernel peer behind a namespace router with no neighbor entry configured, over IPv4 and IPv6.
+
+### TRN-36 An AF_XDP realism job for every first party module
+
+Phase 3 · size M · workstream TRN
+
+- **Depends on.** TRN-12, AGT-27, AGT-28
+- **Paths.** `engine/fps-datapath/`
+
+Only http1 has an AF_XDP realism job (TRN-12). Generalize engine/fps-datapath/realism/http1-afxdp.sh to any first party module, sip_rtp included, and run each through the agent forced onto AF_XDP, scored like its kernel run. A module that cannot pass on AF_XDP yet, for example because it needs ICMP or UDP datagrams above the MTU, is listed with the reason, and TRN-31 either waits for it or excludes it in writing by the rule of AGT-29.
+
+Deliverables.
+
+- The generic script with tests, results per module, and the exact YAML of a qa-gate2 or per module job for the coordinator.
+
+Acceptance.
+
+- [ ] Every first party module passes its AF_XDP realism run in CI, or appears on the written exclusion list with its reason and the fallback that covers it.
 
 ### TRN-13 DPDK backend spike with F-Stack
 
@@ -803,6 +848,40 @@ Acceptance.
 
 - [ ] A forced AF_XDP run of the http1 and dns modules through the agent over IPv6 pools completes on a veth pair in CI.
 
+### AGT-29 An unforced agent falls back to the kernel backend
+
+Phase 3 · size S · workstream AGT
+
+- **Depends on.** AGT-28, CON-35
+- **Paths.** `engine/fps-agent/`
+
+check_af_xdp refuses every plan outside one shape: app_sim only, both sides in one process, one client and one server pool on two interfaces, one family, one VLAN, no DHCP, and OS profiles the own stack knows. After the flip of TRN-31 an unforced agent must run such a plan on the kernel backend instead of failing, and report that through the fields of CON-35; a forced agent refuses as today. A pool with both prefixes falls back too, and never runs over IPv4 alone without saying so.
+
+Deliverables.
+
+- The fallback in prepare with tests on fake hosts for each refused shape, forced and unforced, and the report of the backend that ran.
+
+Acceptance.
+
+- [ ] With TRANSPORT_AVAILABLE set in a test build, an unforced agent runs http_smoke.yaml and enterprise_mix_10g.yaml from contracts/examples/tests/ on the kernel backend and reports it, and a forced agent refuses them with the cause.
+
+### AGT-30 Datapath lanes follow the workers of the plan
+
+Phase 3 · size M · workstream AGT
+
+- **Depends on.** AGT-28
+- **Paths.** `engine/fps-agent/`
+
+The agent starts one lane, queue 0 of each port, so an AF_XDP run uses one core whatever the plan asks for. Start one lane per worker up to the queue count of each port, give each lane the hosts of its workers, and report the lanes, so the AF_XDP backend can scale on a multi queue virtio_net port.
+
+Deliverables.
+
+- Lanes per worker with tests on fake hosts and a veth pair with several queues.
+
+Acceptance.
+
+- [ ] On a veth pair with four queues a forced AF_XDP run with four workers starts four lanes, each carries sessions, and the totals match the plan.
+
 ### AGT-27 The standalone agent writes a TLS key log
 
 Phase 3 · size S · workstream AGT
@@ -892,7 +971,7 @@ Acceptance.
 
 Phase 3 · size M · workstream AGT
 
-- **Depends on.** HST-04, TRN-31
+- **Depends on.** HST-04, AGT-26
 - **Paths.** `engine/fps-agent/`
 
 Build a DHCP host pool at Prepare from the leases of HST-04, and filter a DHCP port by the leased addresses. The steps are in the Shared page notes of the HST-04 log entry (2026-11-17T0400).
@@ -908,6 +987,23 @@ Acceptance.
 - [ ] In the namespace harness, a run with a DHCP client pool on the user space backend leases every address before traffic starts, and the capture filter drops a session whose addresses are not leased.
 
 ## CTL Controller
+
+### CTL-55 The controller shows the backend that ran
+
+Phase 3 · size S · workstream CTL
+
+- **Depends on.** CON-35
+- **Paths.** `controller/`
+
+Store the backend that ran each plan and the bound XDP mode of each port from the fields of CON-35, show them in the run report and the API, and mark a run whose backend differs from the one the inventory listed.
+
+Deliverables.
+
+- Storage, API, and run report fields with tests.
+
+Acceptance.
+
+- [ ] A run on an agent that fell back to the kernel backend shows the kernel backend and the mismatch in its report.
 
 ### CTL-54 The orchestrator inventory uses the selected backend
 
