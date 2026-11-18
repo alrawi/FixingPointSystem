@@ -37,12 +37,14 @@ usage: tcp_bench [--stack kernel|own|smoltcp] [--workload rate|throughput|scale|
                [--direction upload|download] [--threads N]
   scale:       [--scale-steps N,N,...] [--shards N] [--scale-buffer-bytes N]
                [--step-seconds N] [--probe-sessions N] [--batch N]
-  loss:        [--loss-levels PCT,PCT,...] [--loss-transfers N] [--loss-kib N]
+  loss:        [--loss-profile fat] [--loss-levels PCT,PCT,...] [--loss-transfers N] [--loss-kib N]
                [--loss-timeout-secs N] [--link-delay-ms N] [--link-reorder PCT]
                [--link-rate-mbit N] [--link-queue-kib N] [--link-seed N]
   kernel:      [--nodelay on|off] [--buffer-kib N] [--backlog N]
   own:         [--own-mtu N] [--own-window-kib N] [--own-time-wait-ms N] [--own-rto-ms N]
                [--own-pool N] [--own-server-hosts N] [--own-vlan ID]
+               [--own-wscale on|off] [--own-timestamps on|off] [--own-sack on|off]
+               [--own-delayed-ack on|off]
   smoltcp:     [--smol-mtu N] [--smol-checksums on|off] [--smol-buffer-kib N]
                [--smol-time-wait skip|keep] [--smol-idle-poll-ms N]
 The stack kernel is the TCP of the operating system on the loopback interface, and it
@@ -64,6 +66,10 @@ router interfaces, which needs root: without it
 tcp_bench runs itself again through sudo -n, and it exits with 3 when that is not possible
 (1 when CI=true or FPS_REQUIRE_NETEM=1), and also with 3 when the kernel has no sch_netem
 module. The link flags apply to the loss workload only.
+--loss-profile fat (TRN-24) sets the long fat path of its acceptance: 0.1 percent loss, 50 ms of
+delay in each direction (a round trip of 100 ms), 50 Mbit/s with a queue of 1 MiB, so that the
+bandwidth delay product of 625 KB is far above 64 KB, and 8 MiB per transfer with a timeout of
+180 s. Flags after it override its values. Without it the loss workload keeps its defaults.
 The profile small finishes within a minute and fits a hosted CI runner. The profile
 full measures up to 1,000,000 sockets and is meant for a host with 16 GiB of memory.
 Every flag after the profile overrides the profile. Sockets count both hosts of a pair.
@@ -119,6 +125,8 @@ struct Options {
     /// The loss levels of the loss workload, in parts per million.
     loss_levels: Vec<u32>,
     loss_transfers: usize,
+    /// The named preset of the loss workload, when one was given.
+    loss_profile: Option<String>,
     /// The link of the loss workload. Its `loss_ppm` is set per level.
     link: ImpairConfig,
 }
@@ -160,6 +168,7 @@ fn profile_defaults(profile: &str) -> Option<Options> {
         loss: LossConfig::default(),
         loss_levels: vec![0, 1_000, 10_000],
         loss_transfers: 3,
+        loss_profile: None,
         link: ImpairConfig {
             delay_us: 20_000,
             ..ImpairConfig::default()
@@ -216,6 +225,14 @@ fn number<T: std::str::FromStr>(flag: &str, value: &str) -> Result<T, UsageError
         flag: flag.into(),
         value: value.into(),
     })
+}
+
+fn on_off(flag: &str, value: &str) -> Result<bool, UsageError> {
+    match value {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err(bad(flag, value)),
+    }
 }
 
 fn bad(flag: &str, value: &str) -> UsageError {
@@ -320,6 +337,22 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
             "--own-pool" => o.own_pools.0 = number::<u32>(f, v)?.max(1),
             "--own-server-hosts" => o.own_pools.1 = number::<u32>(f, v)?.max(1),
             "--own-vlan" => o.own_pools.2 = Some(number(f, v)?),
+            "--loss-profile" => {
+                if v != "fat" {
+                    return Err(bad(f, v));
+                }
+                o.loss_levels = vec![1_000];
+                o.link.delay_us = 50_000;
+                o.link.rate_bps = 50_000_000;
+                o.link.queue_bytes = 1024 * 1024;
+                o.loss.bytes = 8 * 1024 * 1024;
+                o.loss.timeout = Duration::from_secs(180);
+                o.loss_profile = Some(v.to_string());
+            }
+            "--own-wscale" => o.own.window_scale = on_off(f, v)?,
+            "--own-timestamps" => o.own.timestamps = on_off(f, v)?,
+            "--own-sack" => o.own.sack = on_off(f, v)?,
+            "--own-delayed-ack" => o.own.delayed_ack = on_off(f, v)?,
             "--loss-levels" => {
                 let levels: Result<Vec<u32>, _> = v
                     .split(',')
@@ -446,6 +479,10 @@ fn describe(o: &Options) -> Vec<(String, String)> {
         config.push(("own.time_wait_us".into(), o.own.time_wait_us.to_string()));
         config.push(("own.backlog".into(), o.own.backlog.to_string()));
         config.push(("own.link_depth".into(), o.own.link_depth.to_string()));
+        config.push(("own.window_scale".into(), o.own.window_scale.to_string()));
+        config.push(("own.timestamps".into(), o.own.timestamps.to_string()));
+        config.push(("own.sack".into(), o.own.sack.to_string()));
+        config.push(("own.delayed_ack".into(), o.own.delayed_ack.to_string()));
         config.push(("own.client_hosts".into(), o.own_pools.0.to_string()));
         config.push(("own.server_hosts".into(), o.own_pools.1.to_string()));
         config.push((
@@ -469,6 +506,9 @@ fn describe(o: &Options) -> Vec<(String, String)> {
     if o.selection.loss() {
         let levels: Vec<String> = o.loss_levels.iter().map(|p| percent_text(*p)).collect();
         config.push(("loss.levels_percent".into(), levels.join(",")));
+        if let Some(profile) = &o.loss_profile {
+            config.push(("loss.profile".into(), profile.clone()));
+        }
         config.push(("loss.transfers".into(), o.loss_transfers.to_string()));
         config.push(("loss.bytes".into(), o.loss.bytes.to_string()));
         config.push(("loss.chunk".into(), o.loss.chunk.to_string()));
@@ -1155,6 +1195,59 @@ mod tests {
         assert!(Pools::counts(1, 1, Some(0))
             .and_then(|p| p.stations())
             .is_err());
+    }
+
+    #[test]
+    fn the_fat_loss_profile_sets_the_long_fat_path_and_later_flags_override_it() {
+        let o = parse(&args(&["--workload", "loss", "--loss-profile", "fat"])).expect("parse");
+        assert_eq!(o.loss_levels, vec![1_000]);
+        assert_eq!(o.link.delay_us, 50_000);
+        assert_eq!(o.link.rate_bps, 50_000_000);
+        assert_eq!(o.link.queue_bytes, 1024 * 1024);
+        assert_eq!(o.loss.bytes, 8 * 1024 * 1024);
+        // A bandwidth delay product far above 64 KB: 50 Mbit/s and a round
+        // trip of 100 ms.
+        let bdp = o.link.rate_bps / 8 * (2 * o.link.delay_us as u64) / 1_000_000;
+        assert!(bdp > 64 * 1024, "{bdp}");
+        let o = parse(&args(&[
+            "--loss-profile",
+            "fat",
+            "--link-delay-ms",
+            "10",
+            "--loss-levels",
+            "0,1",
+        ]))
+        .expect("parse");
+        assert_eq!(o.link.delay_us, 10_000);
+        assert_eq!(o.loss_levels, vec![0, 10_000]);
+        assert!(parse(&args(&["--loss-profile", "thin"])).is_err());
+        // The default loss run is unchanged.
+        let o = parse(&args(&["--workload", "loss"])).expect("parse");
+        assert_eq!(o.loss_levels, vec![0, 1_000, 10_000]);
+        assert_eq!(o.link.delay_us, 20_000);
+        assert_eq!(o.link.rate_bps, 0);
+        assert!(o.loss_profile.is_none());
+    }
+
+    #[test]
+    fn the_own_option_flags_switch_each_option() {
+        let o = parse(&args(&[
+            "--stack",
+            "own",
+            "--own-wscale",
+            "off",
+            "--own-timestamps",
+            "off",
+            "--own-sack",
+            "off",
+            "--own-delayed-ack",
+            "off",
+        ]))
+        .expect("parse");
+        assert!(!o.own.window_scale && !o.own.timestamps && !o.own.sack && !o.own.delayed_ack);
+        assert!(parse(&args(&["--own-sack", "maybe"])).is_err());
+        let defaults = parse(&args(&["--stack", "own"])).expect("parse");
+        assert!(defaults.own.window_scale && defaults.own.timestamps && defaults.own.sack);
     }
 
     #[test]

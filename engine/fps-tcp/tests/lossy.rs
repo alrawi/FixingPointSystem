@@ -127,6 +127,26 @@ async fn a_rate_limit_caps_the_goodput_on_both_stacks() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn window_scaling_lets_the_own_stack_fill_a_path_above_64_kib_of_delay_and_rate() {
+    // 40 Mbit/s with 25 ms each way: a bandwidth delay product of 250 KB. A
+    // window of 64 KiB allows 64 KiB per 50 ms, which is 10.5 Mbit/s, so a
+    // transfer that goes beyond 15 Mbit/s uses the scaled window (TRN-24).
+    let path = ImpairConfig {
+        rate_bps: 40_000_000,
+        queue_bytes: 512 * 1024,
+        ..link(0, 25)
+    };
+    let stack = own(path);
+    let run = loss_transfer(&stack, &config(2048)).await;
+    assert!(run.completed, "{:?}", run.failure);
+    assert!(
+        run.goodput_mbit_per_s() > 15.0,
+        "{}",
+        run.goodput_mbit_per_s()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn a_small_queue_at_a_slow_rate_drops_frames_and_the_stack_sends_again() {
     // The window of 64 KiB is far above the queue, so the first burst
     // overflows it. smoltcp recovers from a loss by timeout, so a transfer
@@ -164,7 +184,7 @@ async fn a_transfer_that_cannot_finish_is_reported_not_raised() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn own_stack_completes_at_one_percent_loss_and_recovers_by_duplicate_acknowledgments() {
+async fn own_stack_completes_at_one_percent_loss_and_recovers_by_fast_retransmit() {
     // The acceptance setting of TRN-23: 1 percent loss and 20 ms of delay in
     // each direction. A 4 MiB transfer takes seconds in real time, so the
     // test moves 1 MiB, which still sees about 7 lost segments in the data
@@ -178,8 +198,16 @@ async fn own_stack_completes_at_one_percent_loss_and_recovers_by_duplicate_ackno
     assert!(run.completed, "{:?}", run.failure);
     assert!(run.link_lost > 0, "the link lost nothing");
     let host = stack.stack().counters();
-    // Most losses are recovered by a fast retransmit and not by a timeout.
-    assert!(host.client.fast_retransmits > 0, "{host:?}");
+    // Most losses are recovered by a fast retransmit, which with SACK is a
+    // recovery on the scoreboard (TRN-24), and not by a timeout.
+    assert!(
+        host.client.fast_retransmits + host.client.sack_recoveries > 0,
+        "{host:?}"
+    );
+    assert!(
+        host.client.timeouts <= host.client.sack_recoveries,
+        "{host:?}"
+    );
     assert!(host.client.aborted == 0 && host.server.aborted == 0);
     // At 1 percent the stack must stay above one Mbit/s, where the go back N
     // stack of TRN-18 sat at 1.8 with a third of its transfers not finishing.

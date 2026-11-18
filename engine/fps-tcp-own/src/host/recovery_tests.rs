@@ -281,12 +281,12 @@ fn a_lost_tail_is_recovered_by_the_timer_and_restarts_slow_start() {
     // The only segment is lost, so no duplicate acknowledgment can come.
     p.pump(&mut |i| i == 0);
     assert!(p.received.is_empty());
-    assert_eq!(p.conn().rto_us, 200_000);
+    assert_eq!(p.conn().rto_us(), 200_000);
     p.now += 250_000;
     assert_eq!(p.client.expire(p.now), 1);
     assert_eq!(p.client.counters.timeouts, 1);
     // The timeout doubled.
-    assert_eq!(p.conn().rto_us, 400_000);
+    assert_eq!(p.conn().rto_us(), 400_000);
     p.pump(&mut |_| false);
     assert_eq!(p.received, data);
 }
@@ -315,19 +315,19 @@ fn karns_rule_keeps_the_backoff_until_a_segment_that_was_not_sent_again_is_ackno
     p.pump(&mut |i| i == 0);
     p.now += 300_000;
     p.client.expire(p.now);
-    assert_eq!(p.conn().rto_us, 400_000);
+    assert_eq!(p.conn().rto_us(), 400_000);
     // The retransmission is acknowledged. That says nothing of the round
     // trip, because the ACK could be for either send, so the timeout stays.
     p.hop = 20_000;
     p.pump(&mut |_| false);
     assert_eq!(p.received.len(), 1000);
-    assert_eq!(p.conn().rto_us, 400_000);
+    assert_eq!(p.conn().rto_us(), 400_000);
     // A new segment is sent once and acknowledged after 40 ms: SRTT = 40 ms,
     // RTTVAR = 20 ms, RTO = 40 + 4 * 20 = 120 ms.
     p.write(&pattern(1000));
     p.pump(&mut |_| false);
     assert_eq!(p.received.len(), 2000);
-    assert_eq!(p.conn().rto_us, 120_000);
+    assert_eq!(p.conn().rto_us(), 120_000);
 }
 
 #[test]
@@ -337,7 +337,7 @@ fn the_timeout_is_kept_at_the_minimum() {
     p.write(&pattern(1000));
     p.pump(&mut |_| false);
     // 2 ms of round trip gives 6 ms, and the minimum is 200 ms.
-    assert_eq!(p.conn().rto_us, 200_000);
+    assert_eq!(p.conn().rto_us(), 200_000);
 }
 
 #[test]
@@ -420,9 +420,11 @@ fn a_connection_with_recovery_state_costs_eight_bytes_more_than_before() {
     // field takes two bytes that fit in the padding of the struct.
     assert_eq!(std::mem::size_of::<Option<Box<Recovery>>>(), 8);
     let size = std::mem::size_of::<Conn>();
-    // The size of Conn was 168 bytes before TRN-23 and 176 before TRN-24,
-    // which added the option bits (2 bytes) and the timestamp to echo (4).
-    assert!(size <= 176 + 8, "{size}");
+    // The size of Conn was 168 bytes before TRN-23 and 176 after it. TRN-24
+    // added the option bits (2 bytes) and the timestamp to echo (4) and took
+    // them back from the timeout (a `u32` of microseconds in place of an
+    // `i64`) and a flag that moved into the option bits, so it is 176 still.
+    assert!(size <= 176, "{size}");
 }
 
 // ---------------------------------------------------------------------------
@@ -687,14 +689,14 @@ fn a_timestamp_gives_a_round_trip_sample_where_karns_rule_gives_none() {
     p.pump(&mut |i| i == 0);
     p.now += 300_000;
     p.client.expire(p.now);
-    assert_eq!(p.conn().rto_us, 400_000);
+    assert_eq!(p.conn().rto_us(), 400_000);
     // The retransmission carries a new timestamp, so its acknowledgment is a
     // sample of 40 ms (SRTT 40 ms, RTTVAR 20 ms, RTO 120 ms) at once, where
     // the plain stack keeps the backoff (see the Karn test above).
     p.hop = 20_000;
     p.pump(&mut |_| false);
     assert_eq!(p.received.len(), 1000);
-    assert_eq!(p.conn().rto_us, 120_000);
+    assert_eq!(p.conn().rto_us(), 120_000);
 }
 
 #[test]

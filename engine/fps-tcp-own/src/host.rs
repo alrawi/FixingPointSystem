@@ -45,6 +45,8 @@ const O_UNACKED: u16 = 1 << 4;
 /// heap, which keeps a second delayed ACK from pushing another. The entry of
 /// a timeout cannot serve: it lies at least 200 ms ahead.
 const O_DQ: u16 = 1 << 13;
+/// The connection counts in the backlog of its listener.
+const O_BACKLOG: u16 = 1 << 14;
 const RCV_SHIFT_AT: u16 = 5;
 const SND_SHIFT_AT: u16 = 9;
 const SHIFT_MASK: u16 = 0xF;
@@ -162,9 +164,10 @@ struct Conn {
     probe: bool,
     armed: bool,
     in_heap: bool,
-    in_backlog: bool,
     retries: u8,
-    rto_us: i64,
+    /// The retransmission timeout in microseconds, 4 bytes (it never
+    /// exceeds the maximum of the configuration, seconds at most).
+    rto: u32,
     deadline: i64,
     /// The listener whose accept queue the connection belongs to, or 0.
     listener: u16,
@@ -186,6 +189,7 @@ struct Conn {
 
 impl Conn {
     fn new(state: State, tuple: Tuple, iss: u32, rto_us: i64) -> Self {
+        let rto = u32::try_from(rto_us.max(0)).unwrap_or(u32::MAX);
         Self {
             state,
             local_ip: tuple.local_ip,
@@ -210,9 +214,8 @@ impl Conn {
             probe: false,
             armed: false,
             in_heap: false,
-            in_backlog: false,
             retries: 0,
-            rto_us,
+            rto,
             deadline: 0,
             listener: 0,
             error: None,
@@ -223,6 +226,15 @@ impl Conn {
             opts: 0,
             ts_recent: 0,
         }
+    }
+
+    /// The retransmission timeout in microseconds.
+    fn rto_us(&self) -> i64 {
+        i64::from(self.rto)
+    }
+
+    fn set_rto(&mut self, us: i64) {
+        self.rto = u32::try_from(us.max(0)).unwrap_or(u32::MAX);
     }
 
     fn has(&self, bit: u16) -> bool {
@@ -725,7 +737,7 @@ impl Host {
             }
             listener.pending = listener.pending.saturating_sub(1);
             if let Some(conn) = self.conn(handle.0) {
-                conn.in_backlog = false;
+                conn.set(O_BACKLOG, false);
             }
             return Ok(Some(handle));
         }
@@ -982,9 +994,9 @@ impl Host {
             remote_port: conn.remote_port,
         };
         let listener = conn.listener;
-        let was_pending = previous == State::SynReceived && conn.in_backlog;
+        let was_pending = previous == State::SynReceived && conn.has(O_BACKLOG);
         if was_pending {
-            conn.in_backlog = false;
+            conn.set(O_BACKLOG, false);
         }
         for waker in [conn.read_waker.take(), conn.write_waker.take()]
             .into_iter()
@@ -1142,7 +1154,7 @@ impl Host {
             conn.mss = conn.mss.saturating_sub(TS_OVERHEAD).max(1);
         }
         conn.listener = h.dst_port;
-        conn.in_backlog = true;
+        conn.set(O_BACKLOG, true);
         let (id, _gen) = self.alloc(conn);
         self.table.insert(tuple, id);
         if let Some(listener) = self.listeners.get_mut(&h.dst_port) {
@@ -1205,7 +1217,7 @@ impl Host {
                 conn.state = State::Established;
                 conn.armed = false;
                 conn.retries = 0;
-                conn.rto_us = self.cfg.rto_us;
+                conn.set_rto(self.cfg.rto_us);
                 conn.ack_pending = true;
                 if let Some(waker) = conn.write_waker.take() {
                     waker.wake();
@@ -1359,7 +1371,7 @@ impl Host {
                 conn.snd_una = h.ack;
                 conn.state = State::Established;
                 conn.armed = false;
-                conn.rto_us = self.cfg.rto_us;
+                conn.set_rto(self.cfg.rto_us);
                 conn.snd_wnd = u32::from(h.window) << conn.snd_shift();
                 let listener = conn.listener;
                 let handle = (id, gen);
@@ -1440,7 +1452,7 @@ impl Host {
                 if let Some(sample) = rec.take_sample(h.ack, now).or(ts_sample) {
                     rec.rtt.sample(sample);
                     if let Some(rto) = rec.rtt.rto_us(self.cfg.min_rto_us, self.cfg.max_rto_us) {
-                        conn.rto_us = rto;
+                        conn.rto = u32::try_from(rto.max(0)).unwrap_or(u32::MAX);
                     }
                 }
                 if rec.cc.on_new_ack(h.ack, advanced) == Action::Retransmit {
@@ -1453,7 +1465,7 @@ impl Host {
                 }
             }
             if conn.outstanding() {
-                conn.deadline = now + conn.rto_us;
+                conn.deadline = now + conn.rto_us();
             } else {
                 conn.armed = false;
             }
@@ -1710,7 +1722,7 @@ impl Host {
                     self.close_conn(id, Some(io::ErrorKind::TimedOut));
                     return;
                 }
-                conn.rto_us = recovery::backoff_us(conn.rto_us, max_rto);
+                conn.set_rto(recovery::backoff_us(conn.rto_us(), max_rto));
                 let snd_max = conn.snd_max();
                 if let Some(rec) = conn.rec.as_deref_mut() {
                     // The window falls to one segment and slow start sends
@@ -1734,7 +1746,7 @@ impl Host {
                 }
                 self.counters.retransmits += 1;
                 self.counters.timeouts += 1;
-                let deadline = now + self.conn(id).map_or(0, |c| c.rto_us);
+                let deadline = now + self.conn(id).map_or(0, |c| c.rto_us());
                 self.arm(id, gen, deadline);
                 self.mark_dirty(id);
             }
@@ -1799,7 +1811,7 @@ impl Host {
             conn.snd_nxt = conn.iss.wrapping_add(1);
             conn.acked();
             if !conn.armed {
-                let deadline = now + conn.rto_us;
+                let deadline = now + conn.rto_us();
                 conn.deadline = deadline;
                 conn.armed = true;
                 if !conn.in_heap {
@@ -2049,7 +2061,7 @@ impl Host {
             conn.adv_wnd = rcv_wnd;
         }
         if sent_anything && conn.outstanding() && !conn.armed {
-            let deadline = now + conn.rto_us;
+            let deadline = now + conn.rto_us();
             conn.deadline = deadline;
             conn.armed = true;
             if !conn.in_heap {
