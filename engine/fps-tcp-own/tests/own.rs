@@ -14,7 +14,7 @@ use fps_io::SessionIo;
 use fps_tcp_own::clock::ManualClock;
 use fps_tcp_own::net::decode_header;
 use fps_tcp_own::wire::{self, flags};
-use fps_tcp_own::{OwnConfig, OwnSession, OwnStack, Pools};
+use fps_tcp_own::{OsProfile, OwnConfig, OwnSession, OwnStack, Pools};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinHandle;
 
@@ -1200,4 +1200,108 @@ async fn ipv6_pools_with_many_hosts_connect_by_index_on_a_tagged_link() {
     }
     assert_eq!(tuples.len(), 12, "each connect used its own address pair");
     assert!(tuples.contains(&(ip6("fd00:a::4"), ip6("fd00:b::3"))));
+}
+
+/// The TTL, window, and option names of the first frame of `log` with the
+/// flags `want`, read from the bytes.
+fn handshake_fields(log: &Log, want: u8) -> (u8, u16, Vec<&'static str>) {
+    let frames = frames_of(log);
+    let frame = frames
+        .iter()
+        .find(|f| wire::parse_frame(f).is_ok_and(|p| p.header.flags == want))
+        .expect("a handshake frame");
+    let head = decode_header(frame).expect("an Ethernet header");
+    let ip = &frame[head.payload_at..];
+    let tcp = &ip[wire::IP_LEN..];
+    let window = u16::from_be_bytes([tcp[14], tcp[15]]);
+    let mut names = Vec::new();
+    let mut at = wire::TCP_LEN;
+    let end = usize::from(tcp[12] >> 4) * 4;
+    while at < end {
+        let kind = tcp[at];
+        let (name, len) = match kind {
+            0 => ("eol", 1),
+            1 => ("nop", 1),
+            2 => ("mss", 4),
+            3 => ("ws", 3),
+            4 => ("sok", 2),
+            8 => ("ts", 10),
+            other => panic!("option kind {other}"),
+        };
+        names.push(name);
+        if kind == 0 {
+            break;
+        }
+        at += len;
+    }
+    (ip[8], window, names)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn os_profiles_shape_the_handshake_and_the_data_still_flows() {
+    // Each profile on both sides, a transfer in both directions, and the
+    // table of the Transport page read off the captured frames. A peer with
+    // the same profile offers the same options, so the SYN-ACK carries the
+    // order of the SYN.
+    let table = [
+        (
+            "windows11",
+            128u8,
+            64240u16,
+            vec!["mss", "nop", "ws", "nop", "nop", "sok"],
+        ),
+        ("linux6", 64, 64240, vec!["mss", "sok", "ts", "nop", "ws"]),
+        (
+            "macos14",
+            64,
+            65535,
+            vec!["mss", "nop", "ws", "nop", "nop", "ts", "sok", "eol"],
+        ),
+    ];
+    for (name, ttl, window, options) in table {
+        let profile = OsProfile::builtin(name).expect("a built in profile");
+        let config = OwnConfig {
+            client_os_profile: Some(profile),
+            server_os_profile: Some(profile),
+            ..OwnConfig::default()
+        };
+        let lab = lab(config, deliver_all(), deliver_all());
+        lab.stack.listen(PORT).expect("listen");
+        let driver = lab.start_clock_driver();
+        within(async {
+            let (mut client, mut server) = pair(&lab.stack).await;
+            let up = pattern(600_011);
+            let down = pattern(200_003);
+            let (up_copy, down_copy) = (up.clone(), down.clone());
+            let writer = tokio::spawn(async move {
+                client.write_all(&up_copy).await.expect("write");
+                let mut got = vec![0u8; down_copy.len()];
+                client.read_exact(&mut got).await.expect("read");
+                assert_eq!(got, down_copy);
+                client
+            });
+            let mut got = vec![0u8; up.len()];
+            server.read_exact(&mut got).await.expect("read");
+            assert_eq!(got, up, "{name}");
+            server.write_all(&down).await.expect("write");
+            let _client = writer.await.expect("task");
+        })
+        .await;
+        driver.abort();
+        for (log, bits) in [
+            (&lab.client_log, flags::SYN),
+            (&lab.server_log, flags::SYN | flags::ACK),
+        ] {
+            let (got_ttl, got_window, got_options) = handshake_fields(log, bits);
+            assert_eq!(got_ttl, ttl, "{name} ttl of {bits:#x}");
+            assert_eq!(got_window, window, "{name} window of {bits:#x}");
+            assert_eq!(got_options, options, "{name} options of {bits:#x}");
+        }
+        for log in [&lab.client_log, &lab.server_log] {
+            for frame in frames_of(log) {
+                let head = decode_header(&frame).expect("an Ethernet header");
+                assert_eq!(frame[head.payload_at + 8], ttl, "{name} every frame");
+            }
+        }
+    }
 }

@@ -9,6 +9,11 @@
 //! on send and verified on receive, so the measurements include their cost.
 //! IPv6 has no header checksum, and its TCP checksum covers the pseudo header
 //! of RFC 8200 section 8.1.
+//!
+//! A [`Style`] gives the frames of a host the look of an operating system
+//! (TRN-28): the IP TTL (the hop limit of IPv6) and the order of the options
+//! in a SYN or SYN-ACK. Without a style the frames carry TTL 64 and the option
+//! order of the Linux kernel.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -17,8 +22,6 @@ pub const IP_LEN: usize = 20;
 /// The length of the IPv6 header that the stack sends and accepts. The stack
 /// sends no extension header and drops a packet that has one.
 pub const IP6_LEN: usize = 40;
-/// The hop limit of the packets that the stack sends (the TTL of IPv4).
-const HOP_LIMIT: u8 = 64;
 /// The length of the TCP header without options.
 pub const TCP_LEN: usize = 20;
 /// The length of the MSS option.
@@ -31,6 +34,66 @@ pub const MAX_SACK_BLOCKS: usize = 4;
 pub const MAX_WSCALE: u8 = 14;
 /// The length of the timestamp option with its two padding bytes.
 pub const TIMESTAMP_OPTION_LEN: usize = 12;
+
+/// One entry of the option order of a SYN or SYN-ACK, as the OS profile
+/// table of the Transport page names them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SynOption {
+    /// The MSS option (`mss`), written when the header has an MSS.
+    Mss,
+    /// A padding byte (`nop`). It is written only when the option after it
+    /// is written, so a skipped option takes its padding with it.
+    Nop,
+    /// The window scale option (`ws`), written when the header offers one.
+    WindowScale,
+    /// SACK permitted (`sok`), written when the header offers it.
+    SackPermitted,
+    /// The timestamp option (`ts`), written when the header has one.
+    Timestamp,
+    /// An end of list byte (`eol`), always written where it stands. Zero
+    /// bytes pad the options to a multiple of 4 either way.
+    EndOfList,
+}
+
+impl SynOption {
+    /// The name that the OS profile table uses.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Mss => "mss",
+            Self::Nop => "nop",
+            Self::WindowScale => "ws",
+            Self::SackPermitted => "sok",
+            Self::Timestamp => "ts",
+            Self::EndOfList => "eol",
+        }
+    }
+}
+
+/// How a host writes its frames: the IP TTL and, for SYN and SYN-ACK
+/// segments, the order of the options.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Style {
+    /// The IP time to live of every frame.
+    pub ttl: u8,
+    /// The option order of a SYN or SYN-ACK. Empty means the order of the
+    /// Linux kernel: MSS, SACK permitted with the timestamp (or padding),
+    /// window scale.
+    pub syn_order: &'static [SynOption],
+}
+
+impl Style {
+    /// TTL 64 and the option order of the Linux kernel.
+    pub const DEFAULT: Self = Self {
+        ttl: 64,
+        syn_order: &[],
+    };
+}
+
+impl Default for Style {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
 
 /// The options of a segment besides the MSS (RFC 7323, RFC 2018).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -70,11 +133,72 @@ impl Options {
     }
 }
 
+/// Writes the options of a SYN or SYN-ACK in the order of `order`. An option
+/// that `h` does not carry is left out with the padding before it. Returns
+/// the length, which is a multiple of 4 (zero bytes fill the end).
+fn write_ordered(h: &Header, order: &[SynOption], buf: &mut [u8; OPTIONS_MAX]) -> usize {
+    let mut n = 0;
+    let mut nops = 0;
+    for option in order {
+        let mut bytes = [0u8; 10];
+        let len = match option {
+            SynOption::Nop => {
+                nops += 1;
+                continue;
+            }
+            SynOption::EndOfList => {
+                if n < OPTIONS_MAX {
+                    // The buffer is zero, so the byte is already in place.
+                    n += 1;
+                }
+                nops = 0;
+                continue;
+            }
+            SynOption::Mss => h.mss.map_or(0, |mss| {
+                bytes[..2].copy_from_slice(&[2, 4]);
+                bytes[2..4].copy_from_slice(&mss.to_be_bytes());
+                4
+            }),
+            SynOption::WindowScale => h.opts.wscale.map_or(0, |shift| {
+                bytes[..3].copy_from_slice(&[3, 3, shift.min(MAX_WSCALE)]);
+                3
+            }),
+            SynOption::SackPermitted => {
+                if h.opts.sack_permitted {
+                    bytes[..2].copy_from_slice(&[4, 2]);
+                    2
+                } else {
+                    0
+                }
+            }
+            SynOption::Timestamp => h.opts.timestamp.map_or(0, |(value, echo)| {
+                bytes[..2].copy_from_slice(&[8, 10]);
+                bytes[2..6].copy_from_slice(&value.to_be_bytes());
+                bytes[6..10].copy_from_slice(&echo.to_be_bytes());
+                10
+            }),
+        };
+        let pad = std::mem::take(&mut nops);
+        if len == 0 || n + pad + len > OPTIONS_MAX {
+            continue;
+        }
+        buf[n..n + pad].fill(1);
+        n += pad;
+        buf[n..n + len].copy_from_slice(&bytes[..len]);
+        n += len;
+    }
+    n.div_ceil(4) * 4
+}
+
 /// Writes the options of `h` after the MSS option, in the order of the Linux
 /// kernel: MSS, SACK permitted with the timestamp (or padding), window scale,
-/// then SACK blocks. Returns the length, which is a multiple of 4.
-fn write_options(h: &Header, buf: &mut [u8; OPTIONS_MAX]) -> usize {
+/// then SACK blocks. A SYN follows `style.syn_order` when it has one. Returns
+/// the length, which is a multiple of 4.
+fn write_options(h: &Header, style: &Style, buf: &mut [u8; OPTIONS_MAX]) -> usize {
     let syn = h.flags & flags::SYN != 0;
+    if syn && !style.syn_order.is_empty() {
+        return write_ordered(h, style.syn_order, buf);
+    }
     let mut n = 0;
     if let Some(mss) = h.mss {
         buf[n..n + 2].copy_from_slice(&[2, 4]);
@@ -116,8 +240,13 @@ fn write_options(h: &Header, buf: &mut [u8; OPTIONS_MAX]) -> usize {
 
 /// The length of the TCP options that [`encode`] writes for `h`.
 pub fn options_len(h: &Header) -> usize {
+    options_len_styled(h, &Style::DEFAULT)
+}
+
+/// The length of the TCP options that [`encode_styled`] writes for `h`.
+pub fn options_len_styled(h: &Header, style: &Style) -> usize {
     let mut buf = [0u8; OPTIONS_MAX];
-    write_options(h, &mut buf)
+    write_options(h, style, &mut buf)
 }
 
 /// The TCP flag bits.
@@ -274,8 +403,13 @@ fn pseudo_sum(src: IpAddr, dst: IpAddr, tcp_len: usize) -> u64 {
 /// an IPv6 address. The payload comes in two slices, because a ring buffer
 /// hands out two.
 pub fn encode(out: &mut Vec<u8>, header: &Header, payload: (&[u8], &[u8])) {
+    encode_styled(out, header, payload, &Style::DEFAULT);
+}
+
+/// [`encode`] with the TTL and the SYN option order of `style`.
+pub fn encode_styled(out: &mut Vec<u8>, header: &Header, payload: (&[u8], &[u8]), style: &Style) {
     let mut option_bytes = [0u8; OPTIONS_MAX];
-    let options = write_options(header, &mut option_bytes);
+    let options = write_options(header, style, &mut option_bytes);
     let tcp_len = TCP_LEN + options + payload.0.len() + payload.1.len();
     let ip_len = ip_header_len(header.src_ip);
     let total = ip_len + tcp_len;
@@ -285,7 +419,7 @@ pub fn encode(out: &mut Vec<u8>, header: &Header, payload: (&[u8], &[u8])) {
         IpAddr::V4(src) => {
             out.extend_from_slice(&[0x45, 0]);
             out.extend_from_slice(&(total as u16).to_be_bytes());
-            out.extend_from_slice(&[0, 0, 0x40, 0, HOP_LIMIT, 6, 0, 0]);
+            out.extend_from_slice(&[0, 0, 0x40, 0, style.ttl, 6, 0, 0]);
             out.extend_from_slice(&src.octets());
             out.extend_from_slice(&v4_of(header.dst_ip).to_be_bytes());
             let ip_sum = !fold(sum_words(0, &out[base..base + IP_LEN]));
@@ -294,7 +428,7 @@ pub fn encode(out: &mut Vec<u8>, header: &Header, payload: (&[u8], &[u8])) {
         IpAddr::V6(src) => {
             out.extend_from_slice(&[0x60, 0, 0, 0]);
             out.extend_from_slice(&(tcp_len as u16).to_be_bytes());
-            out.extend_from_slice(&[6, HOP_LIMIT]);
+            out.extend_from_slice(&[6, style.ttl]);
             out.extend_from_slice(&src.octets());
             out.extend_from_slice(&v6_of(header.dst_ip).octets());
         }
@@ -818,5 +952,125 @@ mod tests {
         if let Ok(parsed) = parse(&bad) {
             assert!(parsed.header.opts.blocks().is_empty());
         }
+    }
+
+    use SynOption::{EndOfList, Mss, Nop, SackPermitted, Timestamp, WindowScale};
+
+    const KERNEL: [SynOption; 5] = [Mss, SackPermitted, Timestamp, Nop, WindowScale];
+
+    fn syn_with(ws: Option<u8>, sack: bool, ts: Option<(u32, u32)>) -> Header {
+        let mut h = header();
+        h.flags = flags::SYN;
+        h.opts.wscale = ws;
+        h.opts.sack_permitted = sack;
+        h.opts.timestamp = ts;
+        h
+    }
+
+    fn options_of(h: &Header, style: &Style) -> Vec<u8> {
+        let mut out = Vec::new();
+        encode_styled(&mut out, h, (&[], &[]), style);
+        let offset = usize::from(out[IP_LEN + 12] >> 4) * 4;
+        out[IP_LEN + TCP_LEN..IP_LEN + offset].to_vec()
+    }
+
+    #[test]
+    fn the_kernel_order_as_a_list_gives_the_bytes_of_the_built_in_writer() {
+        let style = Style {
+            ttl: 64,
+            syn_order: &KERNEL,
+        };
+        let h = syn_with(Some(7), true, Some((1, 2)));
+        assert_eq!(options_of(&h, &style), options_of(&h, &Style::DEFAULT));
+        assert_eq!(options_of(&h, &style).len(), 20);
+    }
+
+    #[test]
+    fn an_order_writes_the_options_in_its_sequence_and_pads_with_zeros() {
+        let style = Style {
+            ttl: 64,
+            syn_order: &[
+                Mss,
+                Nop,
+                WindowScale,
+                Nop,
+                Nop,
+                Timestamp,
+                SackPermitted,
+                EndOfList,
+            ],
+        };
+        let h = syn_with(Some(6), true, Some((0x0102_0304, 0x0506_0708)));
+        assert_eq!(
+            options_of(&h, &style),
+            [2, 4, 5, 0xB4, 1, 3, 3, 6, 1, 1, 8, 10, 1, 2, 3, 4, 5, 6, 7, 8, 4, 2, 0, 0]
+        );
+    }
+
+    #[test]
+    fn an_option_that_is_left_out_takes_its_padding_with_it() {
+        let style = Style {
+            ttl: 64,
+            syn_order: &[Mss, Nop, WindowScale, Nop, Nop, SackPermitted],
+        };
+        // No window scale: the first NOP goes, the two before SACK stay.
+        let h = syn_with(None, true, None);
+        assert_eq!(options_of(&h, &style), [2, 4, 5, 0xB4, 1, 1, 4, 2]);
+        // Nothing offered: the MSS alone.
+        let h = syn_with(None, false, None);
+        assert_eq!(options_of(&h, &style), [2, 4, 5, 0xB4]);
+        // No MSS either: no options at all.
+        let mut h = syn_with(None, false, None);
+        h.mss = None;
+        assert!(options_of(&h, &style).is_empty());
+    }
+
+    #[test]
+    fn an_order_is_used_for_a_syn_only_and_the_ttl_for_every_frame() {
+        let style = Style {
+            ttl: 128,
+            syn_order: &[Mss, WindowScale],
+        };
+        let mut h = header();
+        h.flags = flags::ACK;
+        h.mss = None;
+        h.opts.timestamp = Some((5, 6));
+        let mut out = Vec::new();
+        encode_styled(&mut out, &h, (b"x", &[]), &style);
+        assert_eq!(out[8], 128);
+        assert_eq!(&out[IP_LEN + TCP_LEN..IP_LEN + TCP_LEN + 4], [1, 1, 8, 10]);
+        let parsed = parse(&out).expect("a valid frame");
+        assert_eq!(parsed.header.opts.timestamp, Some((5, 6)));
+        // The default style keeps TTL 64.
+        let mut plain = Vec::new();
+        encode(&mut plain, &h, (b"x", &[]));
+        assert_eq!(plain[8], 64);
+    }
+
+    #[test]
+    fn an_order_that_overflows_the_header_drops_what_does_not_fit() {
+        let style = Style {
+            ttl: 64,
+            syn_order: &[
+                Mss,
+                Timestamp,
+                Timestamp,
+                Timestamp,
+                Timestamp,
+                WindowScale,
+                SackPermitted,
+            ],
+        };
+        let h = syn_with(Some(3), true, Some((1, 2)));
+        let bytes = options_of(&h, &style);
+        assert!(bytes.len() <= OPTIONS_MAX);
+        assert_eq!(bytes.len() % 4, 0);
+        assert!(parse_options_ok(&h, &style));
+    }
+
+    fn parse_options_ok(h: &Header, style: &Style) -> bool {
+        let mut out = Vec::new();
+        encode_styled(&mut out, h, (&[], &[]), style);
+        parse(&out).is_ok()
     }
 }

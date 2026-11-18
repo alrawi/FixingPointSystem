@@ -890,6 +890,7 @@ class Swarm:
                 "pull_request" in issue
                 or "needs:split" in labels
                 or "type:followup" in labels
+                or "parked" in labels
             ):
                 continue
             deps = depends_on(issue.get("body") or "")

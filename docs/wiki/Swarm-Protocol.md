@@ -72,7 +72,7 @@ Every work package issue carries exactly one status label. The `tools/swarm/boot
 | `status:review` | A pull request meets the Definition of Done and waits for review | in-progress, done |
 | `status:done` | The pull request merged and the issue closed | none |
 
-Other labels classify the package. These include `type:wp`, `type:bug`, `type:followup`, `ws:<workstream>`, `phase:<n>`, `size:S|M|L`, `critical-path`, `needs:owner`, `needs:split`, `has-handoff`, and `wip` on pull requests.
+Other labels classify the package. These include `type:wp`, `type:bug`, `type:followup`, `ws:<workstream>`, `phase:<n>`, `size:S|M|L`, `critical-path`, `needs:owner`, `needs:split`, `parked`, `has-handoff`, and `wip` on pull requests.
 
 ## The status card
 
@@ -153,7 +153,7 @@ swarm list             # claimable items in selection order, tab separated
 
 The promotion sweep applies three rules. A label change that returns 404 means that another agent already made it, and the sweep ignores that error.
 
-1. A `status:backlog` work package becomes `status:ready` when every dependency id in its body maps to an issue that closed with `state_reason` equal to `completed`. The sweep skips issues labeled `needs:split` or `type:followup`.
+1. A `status:backlog` work package becomes `status:ready` when every dependency id in its body maps to an issue that closed with `state_reason` equal to `completed`. The sweep skips issues labeled `needs:split`, `type:followup`, or `parked`. The owner parks a package by adding `parked`; it stays in backlog until the owner removes the label.
 2. A `status:blocked` item becomes `status:ready` when every issue that its blocking comment names has closed as completed. The sweep adds `has-handoff`.
 3. A closed item that still carries a status label gets `status:done` in place of that label.
 
