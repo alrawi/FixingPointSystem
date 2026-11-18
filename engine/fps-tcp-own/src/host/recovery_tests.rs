@@ -1241,9 +1241,9 @@ fn run_for(p: &mut Pair, total: i64, step: i64, drop: &mut dyn FnMut(usize) -> b
 }
 
 #[test]
-fn pacing_and_hystart_are_off_by_default_and_without_the_switches_the_box_has_no_log() {
+fn default_switches_and_no_log_without_them() {
     let cfg = OwnConfig::default();
-    assert!(!cfg.pacing && !cfg.hystart && cfg.rack && cfg.tlp);
+    assert!(!cfg.pacing && cfg.hystart && cfg.rack && cfg.tlp);
     let mut p = Pair::new(sack_only());
     p.write(&pattern(20 * MSS_TS));
     p.client.flush_dirty(p.now);

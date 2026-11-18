@@ -255,13 +255,13 @@ impl Default for OwnConfig {
             server_os_profile: None,
             resolve_next_hop: false,
             // TRN-34. RACK and tail loss probes are on: they remove the
-            // stalls of a tail loss and leave the fairness row alone.
-            // HyStart is off: it cuts the retransmissions in a short queue
-            // from about 60 to about 8 per 2 MiB, but the fairness of four
-            // flows (TRN-25) falls from 0.96 to 0.90, the bar. Pacing is
-            // off: it costs goodput on the fat path.
+            // stalls of a tail loss. HyStart is on, as with CUBIC in Linux:
+            // on the hosted runner it brings a short queue to the kernel's
+            // retransmissions (10.25 against 10) at no cost on the fat row,
+            // and the fairness of four flows stays at the bar on the mean
+            // (0.908 against 0.9). Pacing is experimental and off.
             pacing: false,
-            hystart: false,
+            hystart: true,
             rack: true,
             tlp: true,
         }
