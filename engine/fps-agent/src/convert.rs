@@ -735,6 +735,19 @@ pub fn snapshot_to_pb(
     Ok(out)
 }
 
+/// Fills the `RunPort` entries of a heartbeat (CON-35) from the ports of a
+/// started plan.
+pub fn run_ports_to_pb(ports: &[crate::backend::RunPort]) -> Vec<pb::RunPort> {
+    ports
+        .iter()
+        .map(|p| pb::RunPort {
+            name: p.name.clone(),
+            interface_name: p.interface_name.clone(),
+            xdp_mode: p.xdp_mode.number(),
+        })
+        .collect()
+}
+
 /// Fills the generated `Capabilities` from the hand written mirror.
 pub fn capabilities_to_pb(c: &proto::Capabilities) -> pb::Capabilities {
     pb::Capabilities {
