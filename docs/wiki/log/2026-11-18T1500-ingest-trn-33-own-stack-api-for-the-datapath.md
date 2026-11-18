@@ -1,0 +1,24 @@
+## [2026-11-18] ingest | TRN-33 the own stack API that the datapath needs
+
+TRN-33 closes the `fps-tcp-own` gaps that TRN-27, TRN-29, and TRN-30 worked around, and moves the datapath onto the new calls. It edits `engine/fps-tcp-own/`, `engine/fps-udp-own/` (nothing to change there, see below), `engine/fps-datapath/`, its handoff, this entry, and `Transport.md`. It also changes one line in each of two test files outside its paths, which call `Listener::accept` (see the first shared page note).
+
+- `fps-tcp-own`: `OwnSession::local_addr()` and `peer_addr()` return `io::Result<SocketAddr>` as `KernelStream` does (`NotConnected` after `abort`). `OwnStack::unlisten(port)` frees a port as closing a listening socket does: connections in the backlog (handshaking, or established and not accepted) are reset, a task in `accept` fails with `InvalidInput`, accepted sessions keep running, and the port can be listened on again. `Pools::tables()` returns `Tables { client, server }`, the neighbor table of each side from one ledger, and `Pools::stations()` is built from it. `Host::unlisten` and `Host::addrs` carry the two calls.
+- `fps-datapath`: `Listener::accept` returns `(DatapathSession, SocketAddr)` like `KernelListener::accept`. Dropping a `Listener` calls `unlisten` on every lane. `Datapath::listen` undoes the lanes that already listen when a later lane fails. `responders` builds its ARP and ND responders from `Pools::tables`, so the MAC addresses of the replies and of the frames of the stack have one source. The UDP arms take their stations from `Pools::stations`, which is built from the same tables, so `fps-udp-own` needed no change.
+- The optional fourth item (`OwnStack::input(side, frame)` and `take_tx(side)`) is not done. It changes how the stack is driven and is not small.
+
+Tests: `fps-tcp-own` `tests/api.rs` (6 tests: addresses over IPv4, IPv6, and several hosts, distinct peers, `unlisten` and listening again, a refused connect after `unlisten`, queued connections reset and a waiting accept failed with accepted sessions kept), `tests/own.rs` `unlisten_resets_a_handshake_that_is_not_finished`, and three unit tests in `pools.rs` (distinct MACs, stations equal tables for IPv4, IPv6, and a tagged link, repeatable). `fps-datapath` `tests/listener.rs` (3 tests: the peer and both ends of a session, a port free again after the listener is dropped for three rounds on two lanes, a second listener fails without taking the port). The test that pinned the ARP reply against the MAC of a SYN (`arp_replies_carry_the_mac_that_the_stack_uses`) is replaced by `arp_replies_carry_the_mac_of_the_neighbor_table`, and the neighbor discovery test reads the expected MAC from `Pools::tables` the same way, so no test compares two tables that were built twice.
+
+Findings:
+
+- A listener that is dropped while connections wait in its backlog must reset them. Without the reset a connection that finished its handshake after the listener left is established and never accepted, and its slot is never freed (`passive_open` stops adding to a missing listener, but the ACK still completes the handshake). `Host::unlisten` finds them by the `O_BACKLOG` flag, which is set from the SYN until the accept, and aborts each one. It walks the connection table once, so `unlisten` costs a pass over the sockets of the host; a datapath that listens and unlistens often at a million sockets would want an index of the backlog per port.
+- `Listener::accept` changed its type, so any caller outside the crate has to change one line. The callers in this repository are in `engine/fps-agent/tests/afxdp_veth.rs` and `engine/fps-backend-afxdp/tests/datapath_veth.rs`, and both got the mechanical edit `let (mut session, _peer) = ...` to keep the workspace building.
+
+### Shared page notes
+
+- Paths outside the package: two one line edits (the tuple pattern at the call of `Listener::accept`) in `engine/fps-agent/tests/afxdp_veth.rs` and `engine/fps-backend-afxdp/tests/datapath_veth.rs`. A branch that changes either file (AGT-25 touches the agent) may meet a trivial conflict there; the resolution is the same pattern. AGT-25 can use the peer from `Listener::accept` and `OwnSession::local_addr` directly.
+- Workflow (coordinator file `.github/workflows/trn.yml`): nothing new. `fps-datapath` and `fps-tcp-own` tests need no root for the new tests, and the `rust` job runs them.
+- Testing page: `cargo test -p fps-tcp-own --test api` and `cargo test -p fps-datapath --test listener` need no root.
+- Module development (`Module-Development.md`, "Watch out for"): not affected, this package changes no module interface.
+- `Cargo.lock`: unchanged.
+- Implementation Plan / sidebar: nothing.
+- API gaps, not worked around: `OwnStack::input` and `take_tx` per side (item 4 of the TRN-27 notes). The `fps-tcp` harness (`engine/fps-tcp`, owner TRN-34 and the harness package) still builds its own pair from `Pools::pair`; it needs no change for this package.

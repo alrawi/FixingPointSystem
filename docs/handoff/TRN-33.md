@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-33` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 60% (3 of 5 plan steps) |
+| Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-7c2e91, lease renewed at each heartbeat |
 | Last verified commit | none |
 
@@ -22,7 +22,7 @@ Close the `fps-tcp-own` API gaps that TRN-27, TRN-29, and TRN-30 worked around: 
 - [x] 2. OwnSession addresses and OwnStack::unlisten with tests
 - [x] 3. Pools::tables, and the datapath and the UDP layer moved onto it
 - [x] 4. Datapath Listener::accept returns the peer, listener drop frees the port, duplicate-table test removed
-- [ ] 5. Checks, log entry, component page, PR
+- [x] 5. Checks, log entry, component page, PR
 
 ## Done and verified
 
@@ -30,13 +30,17 @@ Close the `fps-tcp-own` API gaps that TRN-27, TRN-29, and TRN-30 worked around: 
 - fps-tcp-own: `Host::unlisten`/`addrs`, `OwnStack::unlisten`, `OwnSession::local_addr`/`peer_addr` (io::Result, as the kernel stream), `Pools::tables` returning `Tables`, `Pools::stations` built from it.
 - fps-datapath: `responders` uses `Pools::tables`; `Listener::accept` returns `(session, peer)`; dropping a `Listener` unlistens on every lane; failed `listen` undoes lanes already listening.
 
+- fmt, clippy `-D warnings` (fps-tcp-own, fps-udp-own, fps-datapath, all targets), `cargo check --tests` of fps-agent and fps-backend-afxdp, `plan.py check`, `render --check`, and `lint` are clean. The full tests of the three crates pass (the veth tests of `dns_scenarios` need root).
+- Log entry `docs/wiki/log/2026-11-18T1500-ingest-trn-33-own-stack-api-for-the-datapath.md` and the section "The own stack API for the datapath (TRN-33)" of `Transport.md` are written.
+- Not done: the optional input and take_tx seam (not small).
+
 ## Remaining
 
-Checks (fmt, clippy, workspace crates that call `Listener::accept`), log entry, Transport page, PR.
+CI result on the pull request.
 
 ## Next action
 
-Run clippy and the tests of fps-udp-own, then write the log entry and the Transport page notes.
+Wait for CI on the pull request, then set the handoff to ready for review.
 
 ## Blockers and open questions
 
