@@ -216,7 +216,7 @@ pub fn own_kernel_transfer(
         )));
     }
     let ns = NetnsLink::up(prefix, &config.link, config.mtu)?;
-    if let Err(error) = ns.complete_checksums() {
+    if let Err(error) = ns.complete_checksums(exe) {
         eprintln!("interop: could not turn the transmit checksum offload off: {error}");
     }
     match config.pairing {

@@ -39,6 +39,11 @@ pub const SERVER_ADDR: Ipv4Addr = Ipv4Addr::new(10, 77, 2, 1);
 /// The hidden first argument that turns the binary into a peer process.
 pub const PEER_FLAG: &str = "--netns-peer";
 
+/// The flag with which a binary is asked to turn the transmit checksum
+/// offload of one interface off and exit (see
+/// [`NetnsLink::complete_checksums`]).
+pub const OFFLOAD_FLAG: &str = "--netns-offload-off";
+
 /// Errors of the namespace setup and the peer processes.
 #[derive(Debug, thiserror::Error)]
 pub enum NetnsError {
@@ -203,21 +208,33 @@ impl NetnsLink {
     /// three namespaces, so every frame that leaves a host carries a complete
     /// TCP checksum. A frame that reaches an AF_XDP socket (TRN-26) has no
     /// later hop that would complete a partial checksum, and the own stack
-    /// verifies it. Needs `ethtool`.
+    /// verifies it. The command is `ethtool`; a host without it (the hosted
+    /// runner image has none) runs `exe` again in the namespace with
+    /// [`OFFLOAD_FLAG`] and the interface, which the binary answers with the
+    /// ethtool ioctl (the test binary of TRN-26 does, because this crate
+    /// forbids unsafe code).
     ///
     /// # Errors
     ///
-    /// Returns an error when `ethtool` is missing or refuses.
-    pub fn complete_checksums(&self) -> Result<(), NetnsError> {
+    /// Returns an error when neither way works.
+    pub fn complete_checksums(&self, exe: &Path) -> Result<(), NetnsError> {
         for (ns, dev) in [
             (&self.client, "vc"),
             (&self.router, "rc"),
             (&self.router, "rs"),
             (&self.server, "vs"),
         ] {
-            run_command(
+            let by_command = run_command(
                 Command::new("ip").args(["netns", "exec", ns, "ethtool", "-K", dev, "tx", "off"]),
-            )?;
+            );
+            if by_command.is_err() {
+                run_command(
+                    Command::new("ip")
+                        .args(["netns", "exec", ns])
+                        .arg(exe)
+                        .args([OFFLOAD_FLAG, dev]),
+                )?;
+            }
         }
         Ok(())
     }

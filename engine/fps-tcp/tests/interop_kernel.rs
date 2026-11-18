@@ -19,8 +19,9 @@
 //! `sudo -n` and skips with a message when that is not possible. `CI=true`
 //! turns every skip into a failure, and so do `FPS_REQUIRE_AFXDP=1` (root,
 //! sudo, `ip`, AF_XDP) and `FPS_REQUIRE_NETEM=1` (the qdisc). Complete TCP
-//! checksums need `ethtool` to turn the transmit offload off: without it the
-//! tap counts wrong checksums and the scenarios fail with that reason.
+//! checksums need the transmit offload off on every interface: the harness
+//! uses `ethtool` where it is installed and otherwise this binary, which
+//! sets it with the ethtool ioctl (the hosted runner image has no `ethtool`).
 //!
 //! The target has its own `main` (`harness = false`), because the peers are
 //! this binary again, started with `ip netns exec` and the flag `--netns-peer`.
@@ -37,7 +38,7 @@ use fps_tcp::interop::Pairing;
 use fps_tcp::interop_kernel::{
     own_kernel_transfer, KernelInterop, KernelInteropConfig, OwnOptions,
 };
-use fps_tcp::netns::{self, NetnsError, PEER_FLAG};
+use fps_tcp::netns::{self, NetnsError, OFFLOAD_FLAG, PEER_FLAG};
 use fps_tcp::wiretap::{violations, OwnSide};
 use fps_tcp::workload::LossConfig;
 
@@ -266,8 +267,7 @@ fn run_scenario(index: usize, scenario: &Scenario) -> Result<Option<String>, Str
     let mut found = violations(wire, &side, scenario.drops(), None);
     found.extend(kernel_expectations(scenario, &result));
     if wire.bad_checksums > 0 {
-        found
-            .push("wrong checksums: is ethtool installed to turn the transmit offload off?".into());
+        found.push("wrong checksums: the transmit offload is still on".into());
     }
     let sent_again = match scenario.pairing {
         Pairing::OwnClient => result.own_retransmits,
@@ -373,8 +373,58 @@ fn run_again_as_root() -> Result<(), String> {
     }
 }
 
+/// Turns the transmit checksum offload of `dev` off with the ethtool ioctl
+/// (`ETHTOOL_STXCSUM`), for a host without the `ethtool` command. The binary
+/// runs in the namespace of the interface, started by
+/// `NetnsLink::complete_checksums`.
+fn tx_checksum_off(dev: &str) -> std::io::Result<()> {
+    #[repr(C)]
+    struct EthtoolValue {
+        cmd: u32,
+        data: u32,
+    }
+    const SIOCETHTOOL: libc::Ioctl = 0x8946;
+    const ETHTOOL_STXCSUM: u32 = 0x17;
+    // SAFETY: `socket` takes no pointers.
+    let sock = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+    if sock < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut value = EthtoolValue {
+        cmd: ETHTOOL_STXCSUM,
+        data: 0,
+    };
+    // SAFETY: `ifreq` is plain data for which all zero bytes are valid.
+    let mut request: libc::ifreq = unsafe { std::mem::zeroed() };
+    for (slot, byte) in request.ifr_name.iter_mut().zip(dev.bytes().take(15)) {
+        *slot = byte as libc::c_char;
+    }
+    request.ifr_ifru.ifru_data = std::ptr::addr_of_mut!(value).cast();
+    // SAFETY: `request` points at `value`, and both outlive the call, which
+    // reads `cmd` and `data` of the structure that the request names.
+    let result = unsafe { libc::ioctl(sock, SIOCETHTOOL, &mut request) };
+    let error = std::io::Error::last_os_error();
+    // SAFETY: `sock` is the descriptor from above, which nothing else owns.
+    unsafe { libc::close(sock) };
+    if result < 0 {
+        Err(error)
+    } else {
+        Ok(())
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some(OFFLOAD_FLAG) {
+        return match args.get(1).map(|dev| tx_checksum_off(dev)) {
+            Some(Ok(())) => ExitCode::SUCCESS,
+            Some(Err(error)) => {
+                eprintln!("offload off: {error}");
+                ExitCode::FAILURE
+            }
+            None => ExitCode::FAILURE,
+        };
+    }
     if args.first().map(String::as_str) == Some(PEER_FLAG) {
         let code = netns::peer_main(&args[1..]);
         return ExitCode::from(u8::try_from(code).unwrap_or(1));
