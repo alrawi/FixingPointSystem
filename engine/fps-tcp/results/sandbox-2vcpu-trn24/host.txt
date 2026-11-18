@@ -1,0 +1,10 @@
+Host: sandbox, 2 vCPU, release build, CARGO_BUILD_JOBS=1.
+Branch base commit: 2aaca09 (wp/TRN-24); main binary built from a git archive of origin/main (TRN-23).
+Fat row: tcp_bench --stack own|smoltcp --workload loss --loss-profile fat --loss-transfers 6
+Main fat row: --workload loss --loss-levels 0.1 --link-delay-ms 50 --link-rate-mbit 50 --link-queue-kib 1024 --loss-kib 8192 --loss-timeout-secs 180 --loss-transfers 6
+Options-off row: fat row with --own-sack off --own-timestamps off --own-delayed-ack off
+Default loss run: --stack own --workload loss
+Scale: --stack own --profile full --workload scale --shards 64 --own-pool 20000, order main, branch, main, branch.
+Load average before: 0.50, 0.29, 0.23
+Load average after: 0.17, 0.24, 0.24
+No kernel row: the sandbox has no sch_netem; the coordinator reads it from the tcp-bench workflow (job=loss).

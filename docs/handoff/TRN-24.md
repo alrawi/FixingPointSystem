@@ -9,8 +9,8 @@
 | Issue | #625 |
 | Branch | `wp/TRN-24` |
 | Pull request | #0 |
-| Status | in progress |
-| Progress | 80% (5 of 6 plan steps) |
+| Status | ready for review |
+| Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-e5c1d3, lease until 2026-11-18T06:18:38Z |
 | Last verified commit | none |
 
@@ -29,19 +29,19 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 3. SACK receiver blocks from the OOO queue
 - [x] 4. SACK scoreboard, pipe, RFC 6675 recovery inside Recovery box
 - [x] 5. Delayed ACK
-- [ ] 6. tcp_bench loss configuration, results, log entry, component page
+- [x] 6. tcp_bench loss configuration, results, log entry, component page
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+All six steps. cargo test, clippy -D warnings and fmt for fps-tcp-own and fps-tcp, cargo deny, and plan.py check, render --check and lint pass. Bench results are in engine/fps-tcp/results/sandbox-2vcpu-trn24/.
 
 ## Remaining
 
-Step 6: tcp_bench loss configuration for 0.1 percent loss and 50 ms with BDP above 64 KB, sandbox runs of own and smoltcp, 1M scale row against main, log entry and Transport page, CI.
+The kernel row of the acceptance (80 percent of the kernel) on the hosted runner, and CI.
 
 ## Next action
 
-Run `cargo test -p fps-tcp` (lossy tests with the new defaults), then add the loss configuration to `engine/fps-tcp/src/cli.rs` and run the bench.
+Coordinator: read the kernel fat row (tcp-bench, job=loss) and merge.
 
 ## Blockers and open questions
 
@@ -49,11 +49,11 @@ Write "none" or name each blocker with a link to its issue.
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+The hole at snd_una counts as lost in a SACK recovery; the delayed ACK waits only while no RTO is armed; the RTO restarts when the oldest segment is sent again; the scoreboard is cleared on an RTO; the 50 ms is per direction (RTT 100 ms). Details in Transport.md.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+A stale handshake RTO heap entry blocked the delayed-ACK entry (fixed with the O_DQ bit). Without the RTO restart on a head retransmit, runs with SACK and timestamps had spurious timeouts.
 
 ## Verify the current state
 

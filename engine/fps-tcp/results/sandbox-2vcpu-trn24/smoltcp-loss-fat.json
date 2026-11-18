@@ -1,0 +1,15 @@
+{
+  "format": "fps-bench/v1",
+  "suite": "tcp-stack",
+  "recorded": "2026-11-18T05:27:56Z",
+  "source": "smoltcp 0.14 on sandbox 2vcpu smoltcp, fat path",
+  "host": {"cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz", "vcpus": 2, "kernel": "6.18.44-fc-v595", "mem_total_bytes": 8413851648},
+  "config": {"profile": "small", "smol.mtu": "1500", "smol.checksums": "true", "smol.time_wait": "Skip", "smol.nagle": "false", "smol.idle_poll_ms": "100", "smol.backlog": "8", "loss.levels_percent": "0.1", "loss.profile": "fat", "loss.transfers": "6", "loss.bytes": "8388608", "loss.chunk": "16384", "loss.timeout_secs": "180", "link.delay_us": "50000", "link.reorder_percent": "0", "link.rate_bps": "50000000", "link.queue_bytes": "1048576", "link.seed": "2047934465", "link.mtu": "1500"},
+  "notes": ["the client host and the server host are two smoltcp interfaces in one process, joined by an in memory IP link that is impaired (loss 0%, delay 50 ms, reorder 0%, rate 50 Mbit/s with a queue of 1024 KiB per direction); retransmissions are counted at the link as data segments that start below the highest sequence number sent before (mtu 1500, software checksums on), so there is no kernel socket and no descriptor", "smoltcp walks every socket of a host on every poll, so the poll with idle sockets grows with the socket count, and a run with many sockets splits them over shards, each shard with its own pair of socket sets", "the driver polls only after a session did something, and otherwise once per 1 ms, so timers run while all sessions idle", "a socket in TIME-WAIT is removed at once, which models a stack that reuses a 4-tuple at once", "every socket owns a receive buffer of 65536 bytes and a transmit buffer of 65536 bytes, which smoltcp allocates at once, so bytes_per_socket is mostly buffer; Nagle is off", "bytes_per_socket is the growth of the resident set of the process and includes the socket sets, the buffers, and the link", "sockets counts both hosts of a pair and includes the listening sockets", "loss workload: one session sends 8388608 bytes and the transfer is complete when the server has confirmed the count; goodput is the confirmed bytes over the time from the first write to that confirmation, and counts as 0 for a transfer that did not complete; the link is loss 0%, delay 50 ms, reorder 0%, rate 50 Mbit/s with a queue of 1024 KiB per direction, with the loss shown per row", "a metric of the loss workload is the mean over its transfers, and the key has the loss in percent with p for the decimal point"],
+  "metrics": {
+    "smoltcp.loss.0p1pct.goodput_mbit_per_s": {"value": 4.915016023220255, "better": "higher", "unit": "Mbit/s"},
+    "smoltcp.loss.0p1pct.completed_ratio": {"value": 1, "better": "higher", "unit": "ratio"},
+    "smoltcp.loss.0p1pct.retransmits": {"value": 15, "better": "lower", "unit": "segments"},
+    "smoltcp.loss.0p1pct.complete_s": {"value": 13.658308472500002, "better": "lower", "unit": "s"}
+  }
+}

@@ -1,0 +1,39 @@
+own minimal TCP (fps-tcp) on sandbox 2vcpu own TRN-24, fat path, sack timestamps delayed-ack off
+host: Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vcpus, kernel 6.18.44-fc-v595
+  profile = small
+  own.mtu = 1500
+  own.rcv_buffer = 1048576
+  own.snd_buffer = 1048576
+  own.rto_us = 200000
+  own.time_wait_us = 1000000
+  own.backlog = 4096
+  own.link_depth = 8192
+  own.window_scale = true
+  own.timestamps = false
+  own.sack = false
+  own.delayed_ack = false
+  own.client_hosts = 1
+  own.server_hosts = 1
+  own.vlan = none
+  loss.levels_percent = 0.1
+  loss.profile = fat
+  loss.transfers = 6
+  loss.bytes = 8388608
+  loss.chunk = 16384
+  loss.timeout_secs = 180
+  link.delay_us = 50000
+  link.reorder_percent = 0
+  link.rate_bps = 50000000
+  link.queue_bytes = 1048576
+  link.seed = 2047934465
+  link.mtu = 1500
+loss workload, 8388608 bytes per transfer, link: loss 0%, delay 50 ms, reorder 0%, rate 50 Mbit/s with a queue of 1024 KiB per direction
+   loss %  run  complete goodput Mb/s    time s retransmits link drops  note
+      0.1    1       yes         4.37     15.36          14        17  
+      0.1    2       yes         6.58     10.20          11        18  
+      0.1    3       yes        31.57      2.13           2         2  
+      0.1    4       yes         4.68     14.33           8        11  
+      0.1    5       yes        12.68      5.29           7        11  
+      0.1    6       yes        24.53      2.74           5         9  
+      0.1 mean: 100% completed, goodput 14.07 Mbit/s
+wrote /home/claude/fixingpointsystem/.claude/worktrees/agent-a95a76e2bb5ccd5fa/engine/fps-tcp/results/sandbox-2vcpu-trn24/own-loss-fat-nosack.json
