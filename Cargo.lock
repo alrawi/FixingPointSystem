@@ -1041,6 +1041,7 @@ dependencies = [
  "fps-interp",
  "fps-io",
  "fps-module-dns",
+ "fps-tcp",
  "fps-tcp-own",
  "fps-udp-own",
  "libc",

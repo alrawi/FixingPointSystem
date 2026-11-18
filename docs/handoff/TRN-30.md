@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-30` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 70% (4 of 6 plan steps) |
+| Progress | 90% (5 of 6 plan steps) |
 | Current holder | claude-1d4805, lease until 2026-11-18T13:31:09Z |
 | Last verified commit | none |
 
@@ -22,10 +22,12 @@ IPv6 for the own TCP stack (`fps-tcp-own`), the user space UDP layer (`fps-udp-o
 - [x] 2. IPv6 in fps-tcp-own (wire, host, pools, net).
 - [x] 3. IPv6 in fps-udp-own.
 - [x] 4. ND in fps-datapath and the IPv6 connect and listen calls.
-- [ ] 5. Tests in memory and on a veth pair (dns done, loss workload open).
+- [x] 5. Tests in memory and on a veth pair (dns scenarios and loss workload over IPv4 and IPv6).
 - [ ] 6. Checks, log entry, Transport page, pull request, CI.
 
 ## Done and verified
+
+Step 5: `cargo test -p fps-datapath` passes locally with `FPS_REQUIRE_AFXDP=1` (root in the sandbox): dns scenarios over IPv6 in memory and on a veth pair, the loss workload of `fps-tcp` over IPv4 and IPv6 in memory and on a veth pair (a lossy queue around each AF_XDP arm drops 2 percent of the frames). The kernel server over IPv6 test cannot run here (the sandbox kernel has no IPv6), so only CI shows it. Log entry and Transport page written; `plan.py check`, `render --check`, `lint`, `make lint-trn test-trn` pass.
 
 Step 4: classifier (Ipv6Tcp, Ipv6Udp, Ipv6Other, Nd), splitter answers neighbor solicitations of the host pools through the Responder (counters nd_replied and nd_ignored), Connector connects TCP and UDP by address family (`Feature::Ipv6` and `Feature::Nd` removed). `cargo test -p fps-datapath --test memory --lib` passes (3 new IPv6 tests).
 
@@ -37,11 +39,11 @@ Step 2: wire, net, pools, host, lib of fps-tcp-own speak IPv4 and IPv6; `cargo t
 
 ## Remaining
 
-Loss workload over IPv6 (a lossy FrameIo wrapper in fps-datapath/tests), compile checks of fps-tcp, fps-agent, fps-backend-afxdp, log entry, Transport page, PR, CI.
+Open the pull request, watch CI (the dependents `fps-tcp`, `fps-agent`, `fps-backend-afxdp` build only there, the sandbox disk is too small), fix failures.
 
 ## Next action
 
-Write the IPv6 loss test in engine/fps-datapath/tests, then run cargo check on the dependents.
+Open the pull request and poll CI.
 
 ## Blockers and open questions
 

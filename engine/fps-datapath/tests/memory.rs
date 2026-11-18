@@ -527,7 +527,7 @@ fn pools_split_into_lanes_that_cover_every_host_once() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn ipv6_sessions_and_datagrams_complete_over_the_same_loop() {
-    use fps_io::{DatagramIo, DatagramIoExt};
+    use fps_io::DatagramIoExt;
 
     let pools = Pools::sized_v6("fd00:1::/64", 4, "fd00:2::/64", 4, None).unwrap();
     let slices = split_pools(&pools, 2).unwrap();
