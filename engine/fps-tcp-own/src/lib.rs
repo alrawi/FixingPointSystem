@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //! The own TCP stack of the engine, the second measured candidate of TRN-10.
 //!
-//! The stack is two [`host::Host`]s, a client at `10.0.0.1` and a server at
-//! `10.0.0.2`, that exchange IPv4 frames over a pair of
+//! The stack is two [`host::Host`]s, a client side and a server side, each
+//! serving a pool of hosts ([`Pools`]; by default one host at `10.0.0.1` and
+//! one at `10.0.1.1`), that exchange Ethernet frames (IPv4, optionally with an
+//! 802.1Q tag, see [`net`]) over a pair of
 //! [`fps_backend_afxdp::FrameIo`] queues. The default link is the in memory
 //! pair of the AF_XDP crate, so the stack needs no root, and the same code
 //! runs over an AF_XDP queue in TRN-12. Sessions leave the stack as
@@ -38,7 +40,9 @@
 //! * Out of order segments are dropped, and the receiver repeats its ACK.
 //! * No simultaneous open, no urgent data, no IP fragmentation or options, no
 //!   keepalive, and no IPv6.
-//! * One peer per host, so the table is keyed by the two ports.
+//! * No ARP requests of its own: the neighbors are read from the tables of
+//!   `fps-hosts` (HST-03), and the stack answers ARP for its own hosts. The
+//!   connection table is keyed by both addresses and both ports (TRN-32).
 //!
 //! The timers sit in a heap with at most one entry per connection, so a poll
 //! with idle sockets costs the same for ten sockets and for a million, which
@@ -50,6 +54,8 @@
 
 pub mod clock;
 pub mod host;
+pub mod net;
+pub mod pools;
 pub mod wire;
 
 use std::future::Future;
@@ -69,19 +75,18 @@ use tokio::sync::Notify;
 use crate::clock::{Clock, MonotonicClock};
 
 use host::{Host, HostCounters};
+use net::{ETH_LEN, VLAN_TAG_LEN};
+pub use pools::{HostSlice, PoolError, Pools};
 
-/// The address of the client host, 10.0.0.1.
-const CLIENT_IP: u32 = 0x0A00_0001;
-/// The address of the server host, 10.0.0.2.
-const SERVER_IP: u32 = 0x0A00_0002;
 /// The frames that one call of the link moves at most.
 const BATCH: usize = 64;
 
 /// Settings of an [`OwnStack`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OwnConfig {
-    /// The largest frame, which sets the MSS to this minus 40 bytes. A link
-    /// with a smaller frame limit lowers it.
+    /// The largest IP packet, which sets the MSS to this minus 40 bytes. The
+    /// link carries this plus the Ethernet header (14 bytes, 18 with a VLAN
+    /// tag). A link with a smaller frame limit lowers it.
     pub mtu: usize,
     /// The receive buffer of a connection in bytes, which is also the
     /// advertised window up to 65,535.
@@ -141,6 +146,10 @@ pub struct OwnCounters {
 pub struct OwnStats {
     /// Sockets that the pair holds now, counted on both hosts.
     pub sockets_open: u64,
+    /// The hosts that serve the client side, which is the size of its pool.
+    pub client_hosts: u64,
+    /// The hosts that serve the server side.
+    pub server_hosts: u64,
     /// Passes of the driver that moved at least one frame or socket event.
     pub pump_passes: u64,
     /// Frames that both hosts transmitted since the pair was created.
@@ -210,6 +219,10 @@ impl Endpoint {
 struct Inner {
     client: Endpoint,
     server: Endpoint,
+    client_hosts: HostSlice,
+    server_hosts: HostSlice,
+    /// The number of connects so far, which picks the next pair of hosts.
+    connects: u64,
     passes: u64,
 }
 
@@ -236,6 +249,23 @@ impl Inner {
             }
             moved = true;
         }
+    }
+
+    /// The pair of addresses of the next connect: the client hosts take
+    /// turns, and the server host changes after each full round of them.
+    fn next_pair(&mut self) -> Option<(u32, u32)> {
+        let (n, m) = (
+            u64::from(self.client_hosts.hosts()),
+            u64::from(self.server_hosts.hosts()),
+        );
+        if n == 0 || m == 0 {
+            return None;
+        }
+        let c = self.connects;
+        self.connects = self.connects.wrapping_add(1);
+        let local = self.client_hosts.address((c % n) as u32)?;
+        let remote = self.server_hosts.address(((c / n) % m) as u32)?;
+        Some((local, remote))
     }
 
     fn blocked(&self) -> bool {
@@ -303,42 +333,79 @@ impl OwnStack {
         Self::with_clock(config, Arc::new(MonotonicClock::new()))
     }
 
-    /// Creates a stack over an in memory link that reads `clock`.
+    /// Creates a stack over an in memory link that reads `clock`, with one
+    /// client host and one server host.
+    #[allow(clippy::expect_used)]
     pub fn with_clock(config: OwnConfig, clock: Arc<dyn Clock>) -> Self {
-        let (client, server) = frame_pair(config.link_depth.max(1), config.mtu);
-        Self::with_links(Box::new(client), Box::new(server), config, clock)
+        Self::with_pools(config, Pools::pair(), clock).expect("the constant pair of pools is valid")
+    }
+
+    /// Creates a stack whose sides serve the host pools `pools`, joined by
+    /// the in memory link.
+    pub fn with_pools(
+        config: OwnConfig,
+        pools: Pools,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, PoolError> {
+        let frame = config.mtu + ETH_LEN + VLAN_TAG_LEN;
+        let (client, server) = frame_pair(config.link_depth.max(1), frame);
+        Self::with_links_and_pools(Box::new(client), Box::new(server), config, pools, clock)
     }
 
     /// Creates a stack over two ends of a link, which tests use to lose or
-    /// delay frames and TRN-12 uses for AF_XDP queues.
+    /// delay frames and TRN-12 uses for AF_XDP queues, with one client host
+    /// and one server host.
+    #[allow(clippy::expect_used)]
     pub fn with_links(
         client: Box<dyn FrameIo>,
         server: Box<dyn FrameIo>,
         config: OwnConfig,
         clock: Arc<dyn Clock>,
     ) -> Self {
+        Self::with_links_and_pools(client, server, config, Pools::pair(), clock)
+            .expect("the constant pair of pools is valid")
+    }
+
+    /// Creates a stack over the given links whose sides serve `pools`.
+    pub fn with_links_and_pools(
+        client: Box<dyn FrameIo>,
+        server: Box<dyn FrameIo>,
+        config: OwnConfig,
+        pools: Pools,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, PoolError> {
+        let built = pools.stations()?;
+        let overhead = ETH_LEN
+            + if pools.vlan.is_some() {
+                VLAN_TAG_LEN
+            } else {
+                0
+            };
         let mtu = config
             .mtu
-            .min(client.max_frame_len())
-            .min(server.max_frame_len());
-        Self {
+            .min(client.max_frame_len().saturating_sub(overhead))
+            .min(server.max_frame_len().saturating_sub(overhead));
+        Ok(Self {
             shared: Arc::new(Shared {
                 inner: Mutex::new(Inner {
                     client: Endpoint {
-                        host: Host::new(CLIENT_IP, SERVER_IP, config.clone(), mtu),
+                        host: Host::new(built.client, config.clone(), mtu),
                         link: client,
                     },
                     server: Endpoint {
-                        host: Host::new(SERVER_IP, CLIENT_IP, config, mtu),
+                        host: Host::new(built.server, config, mtu),
                         link: server,
                     },
+                    client_hosts: pools.client,
+                    server_hosts: pools.server,
+                    connects: 0,
                     passes: 0,
                 }),
                 work: Notify::new(),
                 clock,
                 pumped: AtomicU64::new(0),
             }),
-        }
+        })
     }
 
     /// Runs the hosts until nothing moves and returns whether anything did.
@@ -403,12 +470,53 @@ impl OwnStack {
     /// Opens a session from the client host to `port` at the server host and
     /// completes when the handshake finished.
     pub fn connect(&self, port: u16) -> impl Future<Output = io::Result<OwnSession>> + Send {
+        self.connect_with(None, port)
+    }
+
+    /// Opens a connection from client host `client_host` to server host
+    /// `server_host` (indexes into the two slices) on `port`.
+    pub fn connect_hosts(
+        &self,
+        client_host: usize,
+        server_host: usize,
+        port: u16,
+    ) -> impl Future<Output = io::Result<OwnSession>> + Send {
+        self.connect_with(Some((client_host, server_host)), port)
+    }
+
+    fn connect_with(
+        &self,
+        hosts: Option<(usize, usize)>,
+        port: u16,
+    ) -> impl Future<Output = io::Result<OwnSession>> + Send {
         let stack = self.clone();
         async move {
             let now = stack.shared.now();
             let handle = {
                 let mut inner = stack.shared.lock();
-                let handle = inner.endpoint(Side::Client).open(port, now)?;
+                let pair = match hosts {
+                    None => inner.next_pair(),
+                    Some((c, s)) => {
+                        u32::try_from(c)
+                            .ok()
+                            .zip(u32::try_from(s).ok())
+                            .and_then(|(c, s)| {
+                                inner
+                                    .client_hosts
+                                    .address(c)
+                                    .zip(inner.server_hosts.address(s))
+                            })
+                    }
+                };
+                let Some((local, remote)) = pair else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AddrNotAvailable,
+                        "no such client or server host",
+                    ));
+                };
+                let handle = inner
+                    .endpoint(Side::Client)
+                    .open(local, remote, port, now)?;
                 stack.shared.kick(&inner);
                 handle
             };
@@ -492,6 +600,8 @@ impl OwnStack {
         let inner = self.shared.lock();
         OwnStats {
             sockets_open: inner.client.host.sockets() + inner.server.host.sockets(),
+            client_hosts: u64::from(inner.client_hosts.hosts()),
+            server_hosts: u64::from(inner.server_hosts.hosts()),
             pump_passes: inner.passes,
             frames: inner.client.host.counters.frames_out + inner.server.host.counters.frames_out,
         }

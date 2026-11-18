@@ -1,0 +1,28 @@
+Host of the results in this directory (recorded 2026-11-18 by TRN-32)
+
+what      the agent sandbox of the swarm, a Firecracker microVM, not the GitHub hosted runner and not fat-nuc
+stacks    the own minimal TCP stack (own) after TRN-32 (4-tuple table, Ethernet and VLAN framing, neighbors from fps-hosts), and, for the A/B rows, the stack built from origin/main (476d80f, after TRN-21)
+cpu       Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vCPUs
+memory    8 GiB
+kernel    6.18.44-fc-v595
+rustc     1.97.0, release profile of the workspace
+load      load average 0.7 to 1.0 during the runs; other workers may have run during a run
+limits    open files 20000 soft and hard; the own stack uses no descriptor per socket
+
+own-scale-pool20000.json   tcp_bench --stack own --profile full --workload scale --shards 64 --own-pool 20000 --label "sandbox 2 vcpu, own stack with a pool of 20,000 client addresses, scale to 1,000,000 sockets in 64 shards" --out engine/fps-tcp/results/sandbox-2vcpu-trn32/own-scale-pool20000.json
+own-scale-pool20000.txt    the text report of that run (the first run of this file, not the best of several)
+ab-runs.txt                the last row (1,000,000 sockets) of five alternating runs of the new binary with --own-pool 20000 and of the base binary (no pool), same command otherwise
+ab-runs-probe5000.txt      three alternating pairs with --probe-sessions 5000
+
+Every command is `cargo run --release -p fps-tcp --example tcp_bench -- ARGS` and was run as the built example. These are sandbox results.
+
+The 1,000,000 socket row, pool of 20,000 client addresses and one server host, in the committed run: 1,001,129 sockets, 253 B per socket, 48,138 probe sessions per second,
+idle poll 28 us. Five alternating pairs: new 46,501 to 48,581 probe sessions per second; base 47,154 to 49,072.
+
+THE ACCEPTANCE (at least 50,000 probe sessions per second) IS NOT MET IN THIS SESSION. The same session measures the unchanged base binary at 47,000 to 49,000, so this
+sandbox is about 14 percent slower than the TRN-21 session (56,142 on the base). The new stack equals the base within noise (the pool does not matter: a pool of 1 gives the
+same rate). The row must be rerun on a quiet host, fat-nuc or the hosted runner, to read the absolute number against 50,000.
+
+Memory: 253 B per socket against 228 B on the base, +25 B. A connection now stores both addresses (+8 B in the connection) and the table entry is the 12 byte
+4-tuple plus the handle, 16 B against 8 B (+8 to +9 B with the load factor of the table). The rest is the frame link, which is 18 bytes larger per frame buffer. The pool
+itself costs no memory per socket: the addresses of a pool are computed, and the neighbor table holds ranges.

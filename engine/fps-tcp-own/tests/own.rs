@@ -12,8 +12,9 @@ use fps_backend_afxdp::memory::{frame_pair, MemoryFrames};
 use fps_backend_afxdp::{FrameIo, QueueStats};
 use fps_io::SessionIo;
 use fps_tcp_own::clock::ManualClock;
+use fps_tcp_own::net::decode_header;
 use fps_tcp_own::wire::{self, flags};
-use fps_tcp_own::{OwnConfig, OwnSession, OwnStack};
+use fps_tcp_own::{OwnConfig, OwnSession, OwnStack, Pools};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinHandle;
 
@@ -129,10 +130,14 @@ struct Lab {
 }
 
 fn lab(config: OwnConfig, client_rule: Rule, server_rule: Rule) -> Lab {
-    let (client, server) = frame_pair(config.link_depth, config.mtu);
+    lab_pools(config, Pools::pair(), client_rule, server_rule)
+}
+
+fn lab_pools(config: OwnConfig, pools: Pools, client_rule: Rule, server_rule: Rule) -> Lab {
+    let (client, server) = frame_pair(config.link_depth, config.mtu + 18);
     let (client_log, server_log) = (Log::default(), Log::default());
     let clock = Arc::new(ManualClock::new());
-    let stack = OwnStack::with_links(
+    let stack = OwnStack::with_links_and_pools(
         Box::new(FaultyLink::new(
             client,
             client_rule,
@@ -144,8 +149,10 @@ fn lab(config: OwnConfig, client_rule: Rule, server_rule: Rule) -> Lab {
             Arc::clone(&server_log),
         )),
         config,
+        pools,
         clock.clone(),
-    );
+    )
+    .expect("pools");
     Lab {
         stack,
         clock,
@@ -195,7 +202,7 @@ fn parsed(log: &Log) -> Vec<wire::Header> {
     log.lock()
         .unwrap_or_else(PoisonError::into_inner)
         .iter()
-        .filter_map(|f| wire::parse(f).ok().map(|p| p.header))
+        .filter_map(|f| wire::parse_frame(f).ok().map(|p| p.header))
         .collect()
 }
 
@@ -528,7 +535,7 @@ async fn a_lost_syn_and_a_lost_syn_ack_are_sent_again() {
     let mut seen_syn = false;
     let mut seen_syn_ack = false;
     let client_rule: Rule = Box::new(move |frame| {
-        let h = wire::parse(frame).expect("frame").header;
+        let h = wire::parse_frame(frame).expect("frame").header;
         if h.flags == flags::SYN && !seen_syn {
             seen_syn = true;
             return Fate::Drop;
@@ -536,7 +543,7 @@ async fn a_lost_syn_and_a_lost_syn_ack_are_sent_again() {
         Fate::Deliver
     });
     let server_rule: Rule = Box::new(move |frame| {
-        let h = wire::parse(frame).expect("frame").header;
+        let h = wire::parse_frame(frame).expect("frame").header;
         if h.flags == flags::SYN | flags::ACK && !seen_syn_ack {
             seen_syn_ack = true;
             return Fate::Drop;
@@ -563,7 +570,7 @@ async fn lost_data_segments_are_sent_again_and_arrive_in_order() {
     // The client loses every seventh frame that carries data.
     let mut data_frames = 0u32;
     let client_rule: Rule = Box::new(move |frame| {
-        let parsed = wire::parse(frame).expect("frame");
+        let parsed = wire::parse_frame(frame).expect("frame");
         if parsed.payload.is_empty() {
             return Fate::Deliver;
         }
@@ -600,7 +607,7 @@ async fn lost_data_segments_are_sent_again_and_arrive_in_order() {
 async fn a_lost_fin_is_sent_again() {
     let mut dropped = false;
     let client_rule: Rule = Box::new(move |frame| {
-        let h = wire::parse(frame).expect("frame").header;
+        let h = wire::parse_frame(frame).expect("frame").header;
         if h.flags & flags::FIN != 0 && !dropped {
             dropped = true;
             return Fate::Drop;
@@ -628,7 +635,7 @@ async fn a_frame_that_arrives_late_is_dropped_and_sent_again() {
     // receiver sees as a gap and drops, so only the retransmission delivers.
     let mut data_frames = 0u32;
     let client_rule: Rule = Box::new(move |frame| {
-        let parsed = wire::parse(frame).expect("frame");
+        let parsed = wire::parse_frame(frame).expect("frame");
         if parsed.payload.is_empty() {
             return Fate::Deliver;
         }
@@ -664,7 +671,7 @@ async fn a_frame_that_arrives_late_is_dropped_and_sent_again() {
 async fn corrupted_frames_are_counted_and_dropped_and_the_data_still_arrives() {
     let mut data_frames = 0u32;
     let client_rule: Rule = Box::new(move |frame| {
-        let parsed = wire::parse(frame).expect("frame");
+        let parsed = wire::parse_frame(frame).expect("frame");
         if parsed.payload.is_empty() {
             return Fate::Deliver;
         }
@@ -806,8 +813,94 @@ async fn a_smaller_mtu_lowers_the_mss_and_still_moves_data() {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
-            .all(|f| f.len() <= 576));
+            .all(|f| f.len() <= 576 + 14));
     })
     .await;
     driver.abort();
+}
+
+fn frames_of(log: &Log) -> Vec<Vec<u8>> {
+    log.lock().unwrap_or_else(PoisonError::into_inner).clone()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pools_talk_over_a_tagged_link_with_one_mac_per_host() {
+    let pools = Pools::sized("10.1.0.0/16", 4, "10.2.0.0/16", 3, Some(100)).expect("pools");
+    let lab = lab_pools(OwnConfig::default(), pools, deliver_all(), deliver_all());
+    lab.stack.listen(PORT).expect("listen");
+    assert_eq!(lab.stack.stats().client_hosts, 4);
+    assert_eq!(lab.stack.stats().server_hosts, 3);
+    let driver = lab.start_clock_driver();
+    within(async {
+        // 12 connects use each of the 4 x 3 address pairs once, on one port.
+        let mut pairs = Vec::new();
+        for i in 0..12u8 {
+            let (client, server) = tokio::join!(lab.stack.connect(PORT), lab.stack.accept(PORT));
+            pairs.push((i, client.expect("connect"), server.expect("accept")));
+        }
+        for (i, client, server) in &mut pairs {
+            client.write_all(&[*i; 700]).await.expect("write");
+            let mut got = [0u8; 700];
+            server.read_exact(&mut got).await.expect("read");
+            assert_eq!(got, [*i; 700]);
+        }
+    })
+    .await;
+    driver.abort();
+    let mut tuples = std::collections::BTreeSet::new();
+    let mut client_macs = std::collections::BTreeSet::new();
+    for frame in frames_of(&lab.client_log) {
+        let eth = decode_header(&frame).expect("ethernet");
+        assert_eq!(eth.vlan, Some(100), "every frame carries the tag");
+        assert!(frame.len() >= 60, "frames are padded to the minimum");
+        client_macs.insert(eth.src);
+        let h = wire::parse_frame(&frame).expect("frame").header;
+        if h.flags == flags::SYN {
+            tuples.insert((h.src_ip, h.dst_ip));
+        }
+    }
+    assert_eq!(tuples.len(), 12, "each connect used its own address pair");
+    assert_eq!(client_macs.len(), 4, "one MAC per client host");
+    let mut server_macs = std::collections::BTreeSet::new();
+    for frame in frames_of(&lab.server_log) {
+        let eth = decode_header(&frame).expect("ethernet");
+        assert_eq!(eth.vlan, Some(100));
+        assert!(
+            client_macs.contains(&eth.dst),
+            "replies go to a client host"
+        );
+        server_macs.insert(eth.src);
+    }
+    assert_eq!(server_macs.len(), 3, "one MAC per server host");
+    let c = lab.stack.counters();
+    assert_eq!(c.client.unresolved + c.server.unresolved, 0);
+    assert_eq!(c.client.link_dropped + c.server.link_dropped, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn connect_between_chosen_hosts_and_refuse_unknown_ones() {
+    let pools = Pools::sized("10.1.0.0/16", 2, "10.2.0.0/16", 2, None).expect("pools");
+    let lab = lab_pools(OwnConfig::default(), pools, deliver_all(), deliver_all());
+    lab.stack.listen(PORT).expect("listen");
+    let driver = lab.start_clock_driver();
+    within(async {
+        let (client, server) =
+            tokio::join!(lab.stack.connect_hosts(1, 1, PORT), lab.stack.accept(PORT));
+        let _ = (client.expect("connect"), server.expect("accept"));
+        let err = lab
+            .stack
+            .connect_hosts(2, 0, PORT)
+            .await
+            .expect_err("no host 2");
+        assert_eq!(err.kind(), ErrorKind::AddrNotAvailable);
+    })
+    .await;
+    driver.abort();
+    let syn = frames_of(&lab.client_log)
+        .iter()
+        .map(|f| wire::parse_frame(f).expect("frame").header)
+        .find(|h| h.flags == flags::SYN)
+        .expect("syn");
+    assert_eq!(syn.src_ip, 0x0A01_0002, "client host 1");
+    assert_eq!(syn.dst_ip, 0x0A02_0002, "server host 1");
 }

@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: GPL-3.0-only
+//! The host pools of an [`crate::OwnStack`]: which addresses each side serves
+//! and the neighbor tables that follow from them.
+//!
+//! A side serves a slice of a pool of `fps-hosts` ([`HostSlice`]). Host `i` of
+//! the pool has the `i`-th usable address of the prefix and the MAC address
+//! `mac_base + i`. [`Pools::stations`] claims the MAC addresses of both sides
+//! from one ledger, so two sides cannot share a MAC address, and builds the
+//! [`Station`] of each side with the other side as its neighbor table.
+
+use fps_hosts::{
+    HostPool, HostRange, MacAllocator, MacError, NeighborError, NeighborTable,
+    PoolError as HostPoolError, PoolSpec,
+};
+
+use crate::net::{NetError, Station};
+
+/// Why a pool setup was rejected.
+#[derive(Debug, thiserror::Error)]
+pub enum PoolError {
+    /// A pool of the setup is not valid.
+    #[error("host pool: {0}")]
+    Pool(#[from] HostPoolError),
+    /// The MAC addresses of the two sides conflict, or a slice is empty.
+    #[error("MAC addresses: {0}")]
+    Mac(#[from] MacError),
+    /// The neighbor table refused a slice, for example a pool without IPv4.
+    #[error("neighbor table: {0}")]
+    Neighbor(#[from] NeighborError),
+    /// The VLAN identifier or another link setting is not valid.
+    #[error("link: {0}")]
+    Link(#[from] NetError),
+    /// A pool has no IPv4 prefix, which is all that the stack speaks.
+    #[error("pool {0} has no IPv4 prefix")]
+    NoIpv4(String),
+}
+
+/// The hosts of one side: a contiguous slice of a pool.
+#[derive(Clone, Debug)]
+pub struct HostSlice {
+    /// The pool of the test configuration.
+    pub pool: HostPool,
+    /// The hosts of the pool that this side serves.
+    pub range: HostRange,
+}
+
+impl HostSlice {
+    /// A slice of all `pool.count()` hosts of `pool`.
+    pub fn whole(pool: HostPool) -> Self {
+        let range = HostRange::new(0, pool.count());
+        Self { pool, range }
+    }
+
+    /// The number of hosts of the slice.
+    pub fn hosts(&self) -> u32 {
+        self.range.count
+    }
+
+    /// The IPv4 address of the `i`-th host of the slice, by arithmetic and
+    /// without a list, so a pool of a million hosts costs no memory here.
+    pub fn address(&self, i: u32) -> Option<u32> {
+        if i >= self.range.count {
+            return None;
+        }
+        let addr = self.pool.ipv4_addr(self.range.offset + i).ok()??;
+        Some(u32::from(addr))
+    }
+
+    /// The IPv4 addresses of the hosts of the slice, in host order.
+    pub fn addresses(&self) -> Result<Vec<u32>, PoolError> {
+        (self.range.offset..self.range.offset + self.range.count)
+            .map(|i| match self.pool.ipv4_addr(i)? {
+                Some(a) => Ok(u32::from(a)),
+                None => Err(PoolError::NoIpv4(self.pool.name().to_owned())),
+            })
+            .collect()
+    }
+}
+
+/// The pools of both sides and the VLAN of the link between them.
+#[derive(Clone, Debug)]
+pub struct Pools {
+    /// The hosts of the client side, which open connections.
+    pub client: HostSlice,
+    /// The hosts of the server side, which listen.
+    pub server: HostSlice,
+    /// The 802.1Q VLAN of both ports, or `None` for untagged frames.
+    pub vlan: Option<u16>,
+}
+
+/// The stations of both sides.
+pub struct Built {
+    /// The link layer of the client side.
+    pub client: Station,
+    /// The link layer of the server side.
+    pub server: Station,
+}
+
+impl Pools {
+    /// One client host at 10.0.0.1 and one server host at 10.0.1.1, untagged.
+    /// This is the pair that the stack had before pools.
+    #[allow(clippy::expect_used)]
+    pub fn pair() -> Self {
+        // The prefixes are constants and a unit test builds this value.
+        Self::sized("10.0.0.0/24", 1, "10.0.1.0/24", 1, None).expect("the constant pair is valid")
+    }
+
+    /// `client_hosts` client hosts in a prefix of 10.0.0.0 and `server_hosts`
+    /// server hosts in a prefix of 11.0.0.0, each as long as the pool needs,
+    /// untagged unless `vlan` is set. A pool of 20,000 hosts gets a /17.
+    pub fn counts(
+        client_hosts: u32,
+        server_hosts: u32,
+        vlan: Option<u16>,
+    ) -> Result<Self, PoolError> {
+        let prefix = |base: &str, hosts: u32| {
+            // The network and broadcast addresses are not hosts.
+            let bits = (u64::from(hosts) + 2)
+                .next_power_of_two()
+                .trailing_zeros()
+                .max(2);
+            format!("{base}/{}", 32 - bits.min(30))
+        };
+        Self::sized(
+            &prefix("10.0.0.0", client_hosts),
+            client_hosts,
+            &prefix("11.0.0.0", server_hosts),
+            server_hosts,
+            vlan,
+        )
+    }
+
+    /// `client_hosts` hosts in `client_prefix` and `server_hosts` hosts in
+    /// `server_prefix`, with MAC addresses from a base that `fps-hosts`
+    /// derives from the pool name. The setup is invalid when a prefix is too
+    /// short for its hosts.
+    pub fn sized(
+        client_prefix: &str,
+        client_hosts: u32,
+        server_prefix: &str,
+        server_hosts: u32,
+        vlan: Option<u16>,
+    ) -> Result<Self, PoolError> {
+        let pool = |name, prefix, count| {
+            HostPool::parse(&PoolSpec {
+                name,
+                ipv4: Some(prefix),
+                count,
+                ..PoolSpec::default()
+            })
+        };
+        Ok(Self {
+            client: HostSlice::whole(pool("client", client_prefix, client_hosts)?),
+            server: HostSlice::whole(pool("server", server_prefix, server_hosts)?),
+            vlan,
+        })
+    }
+
+    /// Builds the station of each side.
+    pub fn stations(&self) -> Result<Built, PoolError> {
+        let mut ledger = MacAllocator::new();
+        let client_block = ledger.claim(&self.client.pool, self.client.range)?;
+        let server_block = ledger.claim(&self.server.pool, self.server.range)?;
+        let mut client_table = NeighborTable::new();
+        client_table.add(&self.client.pool, &client_block)?;
+        let mut server_table = NeighborTable::new();
+        server_table.add(&self.server.pool, &server_block)?;
+        Ok(Built {
+            client: Station::new(client_table.clone(), server_table.clone(), self.vlan)?,
+            server: Station::new(server_table, client_table, self.vlan)?,
+        })
+    }
+}
