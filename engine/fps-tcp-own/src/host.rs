@@ -14,10 +14,11 @@ use std::hash::{BuildHasherDefault, Hasher};
 use std::io;
 use std::task::Waker;
 
+use super::cubic::AckContext;
 use super::net::{
     NetError, Received, Station, ETH_LEN, MAX_REPLY_LEN, MIN_FRAME_LEN, VLAN_TAG_LEN,
 };
-use super::recovery::{self, AckView, Action, Recovery};
+use super::recovery::{self, AckView, Action, CongestionControl, Recovery};
 use super::wire::{self, flags, Header, Options};
 use super::OwnConfig;
 
@@ -339,10 +340,10 @@ impl Conn {
     }
 
     /// The recovery state, made on first use.
-    fn rec_mut(&mut self, iw: u32) -> &mut Recovery {
+    fn rec_mut(&mut self, cc: CongestionControl, iw: u32) -> &mut Recovery {
         let (mss, snd_nxt) = (self.mss, self.snd_nxt);
         self.rec
-            .get_or_insert_with(|| Box::new(Recovery::new(mss, iw, snd_nxt)))
+            .get_or_insert_with(|| Box::new(Recovery::new(cc, mss, iw, snd_nxt)))
     }
 
     /// The sequence space that was sent and is not acknowledged.
@@ -1325,7 +1326,8 @@ impl Host {
                     if queue {
                         let rcv_nxt = conn.rcv_nxt;
                         let offset = u64::from(seq.wrapping_sub(rcv_nxt));
-                        let rec = conn.rec_mut(self.cfg.initial_cwnd_segments);
+                        let rec = conn
+                            .rec_mut(self.cfg.congestion_control, self.cfg.initial_cwnd_segments);
                         if rec.ooo.insert(rcv_nxt, seq, data, wnd_now) > 0 {
                             self.counters.ooo_segments += 1;
                         }
@@ -1445,6 +1447,7 @@ impl Host {
                 }
                 _ => None,
             };
+            let flight_after = conn.snd_max().wrapping_sub(h.ack);
             if let Some(rec) = conn.rec.as_deref_mut() {
                 // Karn's rule: only a segment that was never sent again gives
                 // a sample, and the timeout keeps its backoff until one does.
@@ -1455,7 +1458,12 @@ impl Host {
                         conn.rto = u32::try_from(rto.max(0)).unwrap_or(u32::MAX);
                     }
                 }
-                if rec.cc.on_new_ack(h.ack, advanced) == Action::Retransmit {
+                let ctx = AckContext {
+                    now_us: now,
+                    srtt_us: rec.rtt.srtt_us(),
+                    flight: flight_after,
+                };
+                if rec.cc.on_new_ack_at(h.ack, advanced, &ctx) == Action::Retransmit {
                     rec.rtx = true;
                     rec.retransmitted();
                 }
@@ -1954,7 +1962,7 @@ impl Host {
                     break;
                 }
                 if conn.rec.is_none() {
-                    conn.rec_mut(self.cfg.initial_cwnd_segments);
+                    conn.rec_mut(self.cfg.congestion_control, self.cfg.initial_cwnd_segments);
                 }
                 let mut wnd = conn.snd_wnd;
                 if conn.probe {

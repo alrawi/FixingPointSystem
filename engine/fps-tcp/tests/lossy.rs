@@ -232,3 +232,34 @@ async fn own_stack_survives_reordering_with_the_out_of_order_queue() {
     let host = stack.stack().counters();
     assert!(host.server.ooo_segments > 0, "{host:?}");
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn two_flows_share_a_bottleneck_and_each_moves_bytes_in_the_window() {
+    // The fairness variant of TRN-25 at a small scale: two flows over a
+    // 40 Mbit/s link with 5 ms of delay, a window of one second.
+    let limited = ImpairConfig {
+        rate_bps: 40_000_000,
+        queue_bytes: 128 * 1024,
+        ..link(0, 5)
+    };
+    let stack = own(limited);
+    let cfg = LossConfig {
+        flows: 2,
+        warmup: Duration::from_millis(500),
+        window: Duration::from_secs(1),
+        ..LossConfig::default()
+    };
+    let run = loss_transfer(&stack, &cfg).await;
+    assert!(run.completed, "{:?}", run.failure);
+    assert_eq!(run.flow_bytes.len(), 2);
+    assert_eq!(run.confirmed_bytes, run.flow_bytes.iter().sum::<u64>());
+    // The link carries at most 40 Mbit/s, which is 5 MB in the window.
+    assert!(run.confirmed_bytes <= 5_200_000, "{}", run.confirmed_bytes);
+    assert!(
+        run.goodput_mbit_per_s() > 5.0,
+        "{}",
+        run.goodput_mbit_per_s()
+    );
+    let jain = run.jain_index().expect("two flows");
+    assert!(jain > 0.5 && jain <= 1.0, "{jain}");
+}

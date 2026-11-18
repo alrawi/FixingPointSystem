@@ -11,7 +11,8 @@ use std::future::Future;
 use std::io;
 
 pub use fps_tcp_own::{
-    host, net, wire, OwnConfig, OwnCounters, OwnSession, OwnStack, OwnStats, PoolError, Pools,
+    host, net, wire, CongestionControl, OwnConfig, OwnCounters, OwnSession, OwnStack, OwnStats,
+    PoolError, Pools,
 };
 
 use crate::stack::{StackStats, TcpStack};
@@ -34,6 +35,7 @@ impl TcpStack for OwnStack {
             "loss recovery (TRN-23): a round trip estimator with the retransmission timeout of RFC 6298 (minimum 200 ms, Karn's rule, exponential backoff), fast retransmit on three duplicate acknowledgments with Limited Transmit, an out of order receive queue, and NewReno with an initial window of 10 segments; the state sits in a box that a connection holds only while data is in flight or waits behind a hole".to_string(),
             "the in memory link of the lossless workloads loses nothing, so they never retransmit".to_string(),
             "options for long fat paths (TRN-24): window scaling (RFC 7323, a 1 MiB receive buffer gives a shift of 5), timestamps (round trip samples and PAWS), selective acknowledgment (RFC 2018 blocks from the out of order queue and the scoreboard and pipe of RFC 6675 beside NewReno), and a delayed acknowledgment (every second segment or 40 ms, at once for out of order data); each is offered in the SYN and used when the peer offers it too; the scoreboard lives in the box of the connection, so an idle socket holds only 6 bytes of option state".to_string(),
+            "congestion control (TRN-25): CUBIC (RFC 9438: the cubic window function of the time since the last event, a decrease to 0.7, fast convergence, and the reno friendly region; ported from smoltcp 0.14.0) is the default and NewReno stays selectable (--own-cc); the CUBIC state is part of the box of the connection, so an idle socket pays nothing for it".to_string(),
             "timers live in a heap with one entry per connection, so a poll with idle sockets does not grow with the socket count, where a stack that walks its sockets does".to_string(),
             "a closed tuple is held for one second in TIME-WAIT instead of minutes, so a rate run does not run out of ports".to_string(),
             "bytes_per_socket is the growth of the resident set of the process and includes the connection table, the buffers that the held sockets own (none while idle), and the frame link".to_string(),

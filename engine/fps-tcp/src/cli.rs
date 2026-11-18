@@ -16,7 +16,7 @@ use crate::impair::{percent_text, percent_to_ppm, ImpairConfig};
 use crate::kernel::{KernelConfig, KernelStack};
 use crate::lossy::LossyOwn;
 use crate::netns::{self, NetnsError};
-use crate::own::{OwnConfig, OwnStack, Pools};
+use crate::own::{CongestionControl, OwnConfig, OwnStack, Pools};
 use crate::report::BenchReport;
 use crate::smol::{SmolConfig, SmolStack, TimeWait};
 use crate::stack::TcpStack;
@@ -37,14 +37,15 @@ usage: tcp_bench [--stack kernel|own|smoltcp] [--workload rate|throughput|scale|
                [--direction upload|download] [--threads N]
   scale:       [--scale-steps N,N,...] [--shards N] [--scale-buffer-bytes N]
                [--step-seconds N] [--probe-sessions N] [--batch N]
-  loss:        [--loss-profile fat] [--loss-levels PCT,PCT,...] [--loss-transfers N] [--loss-kib N]
-               [--loss-timeout-secs N] [--link-delay-ms N] [--link-reorder PCT]
+  loss:        [--loss-profile fat|bottleneck] [--loss-levels PCT,PCT,...] [--loss-transfers N]
+               [--loss-kib N] [--loss-timeout-secs N] [--link-delay-ms N] [--link-reorder PCT]
                [--link-rate-mbit N] [--link-queue-kib N] [--link-seed N]
+               [--loss-flows N] [--loss-warmup-secs N] [--loss-window-secs N]
   kernel:      [--nodelay on|off] [--buffer-kib N] [--backlog N] [--kernel-cc NAME]
   own:         [--own-mtu N] [--own-window-kib N] [--own-time-wait-ms N] [--own-rto-ms N]
                [--own-pool N] [--own-server-hosts N] [--own-vlan ID]
                [--own-wscale on|off] [--own-timestamps on|off] [--own-sack on|off]
-               [--own-delayed-ack on|off]
+               [--own-delayed-ack on|off] [--own-cc newreno|cubic] [--own-sndbuf-kib N]
   smoltcp:     [--smol-mtu N] [--smol-checksums on|off] [--smol-buffer-kib N]
                [--smol-time-wait skip|keep] [--smol-idle-poll-ms N]
 The stack kernel is the TCP of the operating system on the loopback interface, and it
@@ -70,6 +71,16 @@ module. The link flags apply to the loss workload only.
 delay in each direction (a round trip of 100 ms), 50 Mbit/s with a queue of 1 MiB, so that the
 bandwidth delay product of 625 KB is far above 64 KB, and 8 MiB per transfer with a timeout of
 180 s. Flags after it override its values. Without it the loss workload keeps its defaults.
+--loss-profile bottleneck (TRN-25) sets the fairness run of its acceptance: 4 flows (--loss-flows)
+share a link of 1000 Mbit/s with 20 ms of delay in each direction (a round trip of 40 ms), no
+random loss, and a queue of 4 MiB, which is a little under the bandwidth delay product of 5 MB.
+Every flow sends without end, and the report gives the bytes that the server received from
+each flow in a window of 10 s that opens 5 s after the last flow connected (--loss-warmup-secs,
+--loss-window-secs): the goodput is their sum over the window and the Jain fairness index is
+(sum x)^2 / (n sum x^2). The profile also gives the own stack a window and a send buffer of
+4 MiB (the 1 MiB default would keep four flows below the link), and it applies to the kernel
+and smoltcp stacks with the same link. --own-cc chooses the congestion control of the own
+stack: cubic (RFC 9438, the default) or newreno (RFC 5681 and RFC 6582).
 The profile small finishes within a minute and fits a hosted CI runner. The profile
 full measures up to 1,000,000 sockets and is meant for a host with 16 GiB of memory.
 Every flag after the profile overrides the profile. Sockets count both hosts of a pair.
@@ -349,16 +360,42 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
             "--own-server-hosts" => o.own_pools.1 = number::<u32>(f, v)?.max(1),
             "--own-vlan" => o.own_pools.2 = Some(number(f, v)?),
             "--loss-profile" => {
-                if v != "fat" {
-                    return Err(bad(f, v));
+                match v {
+                    "fat" => {
+                        o.loss_levels = vec![1_000];
+                        o.link.delay_us = 50_000;
+                        o.link.rate_bps = 50_000_000;
+                        o.link.queue_bytes = 1024 * 1024;
+                        o.loss.bytes = 8 * 1024 * 1024;
+                        o.loss.timeout = Duration::from_secs(180);
+                    }
+                    "bottleneck" => {
+                        o.loss_levels = vec![0];
+                        o.link.delay_us = 20_000;
+                        o.link.rate_bps = 1_000_000_000;
+                        o.link.queue_bytes = 4 * 1024 * 1024;
+                        o.loss.flows = 4;
+                        o.loss.warmup = Duration::from_secs(5);
+                        o.loss.window = Duration::from_secs(10);
+                        o.own.rcv_buffer = 4 * 1024 * 1024;
+                        o.own.snd_buffer = 4 * 1024 * 1024;
+                    }
+                    _ => return Err(bad(f, v)),
                 }
-                o.loss_levels = vec![1_000];
-                o.link.delay_us = 50_000;
-                o.link.rate_bps = 50_000_000;
-                o.link.queue_bytes = 1024 * 1024;
-                o.loss.bytes = 8 * 1024 * 1024;
-                o.loss.timeout = Duration::from_secs(180);
                 o.loss_profile = Some(v.to_string());
+            }
+            "--loss-flows" => o.loss.flows = number::<usize>(f, v)?.clamp(1, 64),
+            "--loss-warmup-secs" => o.loss.warmup = Duration::from_secs(number(f, v)?),
+            "--loss-window-secs" => {
+                o.loss.window = Duration::from_secs(number::<u64>(f, v)?.max(1));
+            }
+            "--own-cc" => {
+                o.own.congestion_control =
+                    CongestionControl::from_name(v).ok_or_else(|| bad(f, v))?;
+            }
+            "--own-sndbuf-kib" => {
+                let kib: usize = number(f, v)?;
+                o.own.snd_buffer = kib.saturating_mul(1024).clamp(1, 1 << 30);
             }
             "--own-wscale" => o.own.window_scale = on_off(f, v)?,
             "--own-timestamps" => o.own.timestamps = on_off(f, v)?,
@@ -493,6 +530,10 @@ fn describe(o: &Options) -> Vec<(String, String)> {
         config.push(("own.window_scale".into(), o.own.window_scale.to_string()));
         config.push(("own.timestamps".into(), o.own.timestamps.to_string()));
         config.push(("own.sack".into(), o.own.sack.to_string()));
+        config.push((
+            "own.congestion_control".into(),
+            o.own.congestion_control.name().to_string(),
+        ));
         config.push(("own.delayed_ack".into(), o.own.delayed_ack.to_string()));
         config.push(("own.client_hosts".into(), o.own_pools.0.to_string()));
         config.push(("own.server_hosts".into(), o.own_pools.1.to_string()));
@@ -524,6 +565,17 @@ fn describe(o: &Options) -> Vec<(String, String)> {
             config.push(("loss.profile".into(), profile.clone()));
         }
         config.push(("loss.transfers".into(), o.loss_transfers.to_string()));
+        if o.loss.flows > 1 {
+            config.push(("loss.flows".into(), o.loss.flows.to_string()));
+            config.push((
+                "loss.warmup_secs".into(),
+                o.loss.warmup.as_secs().to_string(),
+            ));
+            config.push((
+                "loss.window_secs".into(),
+                o.loss.window.as_secs().to_string(),
+            ));
+        }
         config.push(("loss.bytes".into(), o.loss.bytes.to_string()));
         config.push(("loss.chunk".into(), o.loss.chunk.to_string()));
         config.push((
@@ -1204,6 +1256,59 @@ mod tests {
         assert!(json.contains("kernel.rate.sessions_per_s"));
         assert!(json.contains("loopback interface"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn own_cc_chooses_the_congestion_control_and_cubic_is_the_default() {
+        let o = parse(&args(&["--stack", "own"])).expect("parse");
+        assert_eq!(o.own.congestion_control, CongestionControl::Cubic);
+        let o = parse(&args(&["--own-cc", "newreno"])).expect("parse");
+        assert_eq!(o.own.congestion_control, CongestionControl::NewReno);
+        let o = parse(&args(&["--stack", "own", "--own-cc", "cubic"])).expect("parse");
+        assert_eq!(o.own.congestion_control, CongestionControl::Cubic);
+        assert!(format!("{:?}", describe(&o)).contains("own.congestion_control"));
+        assert!(parse(&args(&["--own-cc", "bbr"])).is_err());
+    }
+
+    #[test]
+    fn the_bottleneck_profile_sets_four_flows_on_a_gigabit_link_and_flags_override_it() {
+        let o = parse(&args(&[
+            "--workload",
+            "loss",
+            "--loss-profile",
+            "bottleneck",
+        ]))
+        .expect("parse");
+        assert_eq!(o.loss.flows, 4);
+        assert_eq!(o.loss_levels, vec![0]);
+        assert_eq!(o.link.rate_bps, 1_000_000_000);
+        assert_eq!(o.link.delay_us, 20_000);
+        assert_eq!(o.link.queue_bytes, 4 * 1024 * 1024);
+        assert_eq!(o.loss.warmup, Duration::from_secs(5));
+        assert_eq!(o.loss.window, Duration::from_secs(10));
+        // The own stack gets windows that can fill the link.
+        assert_eq!(o.own.rcv_buffer, 4 * 1024 * 1024);
+        assert_eq!(o.own.snd_buffer, 4 * 1024 * 1024);
+        let o = parse(&args(&[
+            "--loss-profile",
+            "bottleneck",
+            "--loss-flows",
+            "8",
+            "--loss-window-secs",
+            "3",
+            "--loss-warmup-secs",
+            "1",
+            "--own-sndbuf-kib",
+            "512",
+        ]))
+        .expect("parse");
+        assert_eq!(o.loss.flows, 8);
+        assert_eq!(o.loss.window, Duration::from_secs(3));
+        assert_eq!(o.loss.warmup, Duration::from_secs(1));
+        assert_eq!(o.own.snd_buffer, 512 * 1024);
+        // Without the profile one flow is the default.
+        let o = parse(&args(&["--workload", "loss"])).expect("parse");
+        assert_eq!(o.loss.flows, 1);
     }
 
     #[test]
