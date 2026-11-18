@@ -397,7 +397,12 @@ impl NewReno {
     pub fn on_timeout(&mut self, flight: u32, snd_max: u32) {
         let (cwnd, was_recovery) = (self.cwnd, self.in_recovery);
         self.ssthresh = match self.cubic.as_mut() {
-            Some(cubic) => cubic.on_rto(cwnd, flight, was_recovery),
+            // A timeout in a recovery never raises the threshold that the
+            // recovery set: the flight of a SACK recovery grows beyond the
+            // window, and 0.7 of it would restart slow start far above what
+            // the path carries.
+            Some(cubic) if was_recovery => cubic.on_rto(cwnd, flight, true).min(self.ssthresh),
+            Some(cubic) => cubic.on_rto(cwnd, flight, false),
             None => self.reduced(flight),
         };
         self.cwnd = self.mss;

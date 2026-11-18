@@ -71,7 +71,9 @@ fn total(v: &Ranges) -> u32 {
 #[derive(Debug, Default)]
 pub struct Scoreboard {
     sacked: Ranges,
-    rexmit: Ranges,
+    /// The ranges that were sent again, with the highest sequence number
+    /// that the sender had sent when it did so.
+    rexmit: Vec<(u32, u32, u32)>,
 }
 
 impl Scoreboard {
@@ -105,7 +107,15 @@ impl Scoreboard {
     /// Drops what `snd_una` passed.
     pub fn advance(&mut self, snd_una: u32) {
         trim_ranges(&mut self.sacked, snd_una);
-        trim_ranges(&mut self.rexmit, snd_una);
+        self.rexmit.retain_mut(|(s, e, _)| {
+            if seq_le(*e, snd_una) {
+                return false;
+            }
+            if seq_lt(*s, snd_una) {
+                *s = snd_una;
+            }
+            true
+        });
     }
 
     /// Takes the SACK blocks of one ACK. A block counts only when it lies
@@ -158,9 +168,42 @@ impl Scoreboard {
 
     /// Records that `[start, start + len)` was sent again.
     pub fn mark_rexmit(&mut self, snd_una: u32, start: u32, len: u32) {
+        self.mark_rexmit_at(snd_una, start, len, start.wrapping_add(len));
+    }
+
+    /// Notes that `len` bytes at `start` were sent again while `snd_max` was
+    /// the highest sequence number sent, so that
+    /// [`Scoreboard::detect_lost_rexmit`] can tell when the copy was lost.
+    pub fn mark_rexmit_at(&mut self, snd_una: u32, start: u32, len: u32, snd_max: u32) {
         if len > 0 && !seq_lt(start, snd_una) {
-            insert_range(&mut self.rexmit, snd_una, start, start.wrapping_add(len));
+            let end = start.wrapping_add(len);
+            // A range that is already marked stays one entry, so the pipe
+            // never counts a byte twice.
+            self.rexmit
+                .retain(|&(rs, re, _)| seq_le(re, start) || seq_le(end, rs));
+            self.rexmit.push((start, end, snd_max));
+            // The walks of `next_hole` rely on the order of the sequence.
+            self.rexmit
+                .sort_by_key(|&(rs, _, _)| rs.wrapping_sub(snd_una));
         }
+    }
+
+    /// Forgets the sent again ranges whose copy the receiver cannot have
+    /// held: data sent after the copy, by more than two segments, has been
+    /// selectively acknowledged, so the copy was lost. The range is then a
+    /// hole that [`Scoreboard::next_hole`] offers again, and the pipe stops
+    /// counting it. This is the detection of a lost retransmission that the
+    /// kernel makes (`tcp_mark_lost_retrans`), which RFC 6675 leaves to the
+    /// retransmission timer. Returns the number of ranges that were lost.
+    pub fn detect_lost_rexmit(&mut self, mss: u32) -> u32 {
+        let Some(&(_, high)) = self.sacked.last() else {
+            return 0;
+        };
+        let margin = (DUP_THRESH - 1) * mss;
+        let before = self.rexmit.len();
+        self.rexmit
+            .retain(|&(_, _, at)| !seq_lt(at.wrapping_add(margin), high));
+        (before - self.rexmit.len()) as u32
     }
 
     /// RFC 6675 `pipe`: the bytes that the sender believes are in the
@@ -194,7 +237,7 @@ impl Scoreboard {
     /// The bytes of `[s, e)` that were sent again.
     fn rexmit_in(&self, s: u32, e: u32) -> u32 {
         let mut n = 0u32;
-        for &(rs, re) in &self.rexmit {
+        for &(rs, re, _) in &self.rexmit {
             let lo = if seq_lt(rs, s) { s } else { rs };
             let hi = if seq_lt(e, re) { e } else { re };
             if seq_lt(lo, hi) {
@@ -213,7 +256,7 @@ impl Scoreboard {
                 return false;
             }
             let mut cursor = s;
-            for &(rs, re) in &self.rexmit {
+            for &(rs, re, _) in &self.rexmit {
                 if seq_le(rs, cursor) && seq_lt(cursor, re) {
                     cursor = re;
                 }
@@ -221,7 +264,7 @@ impl Scoreboard {
             if seq_lt(cursor, e) {
                 // The next sent again range above the cursor bounds the piece.
                 let mut end = e;
-                for &(rs, _) in &self.rexmit {
+                for &(rs, _, _) in &self.rexmit {
                     if seq_lt(cursor, rs) && seq_lt(rs, end) {
                         end = rs;
                     }
@@ -401,5 +444,38 @@ mod tests {
         sb.clear();
         assert!(sb.is_empty());
         assert_eq!(sb.pipe(0, 8 * M, M, false), 8 * M);
+    }
+
+    #[test]
+    fn a_copy_is_lost_when_data_sent_after_it_was_selectively_acknowledged() {
+        // The first segment was sent again while 20 segments were out. The
+        // copy went to the tail of a full queue and was dropped.
+        let mut sb = board(0, &[(5 * M, 9 * M)]);
+        sb.mark_rexmit_at(0, 0, M, 20 * M);
+        assert_eq!(sb.pipe(0, 30 * M, M, true), 22 * M);
+        assert_eq!(sb.next_hole(0, M, true), Some((M, M)));
+        // Data below the mark says nothing about the copy.
+        assert_eq!(sb.detect_lost_rexmit(M), 0);
+        // The data that came after the copy is acknowledged, but by two
+        // segments only, which reordering explains.
+        sb.update(0, 30 * M, &[(20 * M, 22 * M)]);
+        assert_eq!(sb.detect_lost_rexmit(M), 0);
+        // A third segment beyond the mark: the copy is lost. The first
+        // segment is a hole again and stops counting in the pipe.
+        sb.update(0, 30 * M, &[(20 * M, 23 * M)]);
+        assert_eq!(sb.detect_lost_rexmit(M), 1);
+        assert_eq!(sb.next_hole(0, M, true), Some((0, M)));
+        assert_eq!(sb.pipe(0, 30 * M, M, true), 7 * M);
+    }
+
+    #[test]
+    fn a_copy_that_was_delivered_is_not_counted_twice() {
+        let mut sb = board(0, &[(5 * M, 9 * M)]);
+        sb.mark_rexmit_at(0, 0, M, 20 * M);
+        // The same range sent again once more replaces the entry.
+        sb.mark_rexmit_at(0, 0, M, 25 * M);
+        assert_eq!(sb.pipe(0, 30 * M, M, true), 22 * M);
+        sb.advance(M);
+        assert_eq!(sb.detect_lost_rexmit(M), 0);
     }
 }

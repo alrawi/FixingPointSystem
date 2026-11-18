@@ -848,7 +848,23 @@ Findings:
 
 - A frame from a kernel socket reaches an AF_XDP queue with a partial TCP checksum (the veth keeps `CHECKSUM_PARTIAL`), the own stack drops it, and the handshake never completes. The harness turns the transmit offload off on every interface, with `ethtool` or, because the hosted runner has none, with the ethtool ioctl in the test binary. Any run of a kernel peer against an AF_XDP veth end needs it.
 - The own stack against smoltcp and against the kernel agrees on every option it offers, and falls back to none cleanly.
-- On a 20 Mbit/s bottleneck with a 32 KiB queue and no delay, the own client sent 517 segments again on the hosted runner (41 in the sandbox) and reached 3.6 Mbit/s against 19.4 with its options off. The own stack's recovery under tail drop at a very short round trip is slower than the kernel's, which TRN-12 may look at; the 1 percent loss rows are not affected.
+- On a 20 Mbit/s bottleneck with a 32 KiB queue and no delay, the own client sent 517 segments again on the hosted runner (41 in the sandbox) and reached 3.6 Mbit/s against 19.4 with its options off. The own stack's recovery under tail drop at a very short round trip is slower than the kernel's; bug 652 found the cause and fixed it (see the next section). The 1 percent loss rows are not affected.
+
+### A short tail-drop queue under SACK and CUBIC (bug 652)
+
+With every option on, the own sender collapsed behind a 20 Mbit/s bottleneck with a 32 KiB tail-drop queue and no added delay: 3.61 Mbit/s and 517 retransmissions on the hosted runner (7.4 Mbit/s and 192 to 254 in the sandbox) against 19.4 Mbit/s with the options off. The regression test `engine/fps-tcp/tests/bottleneck.rs` reproduces it in memory, without root: own to own, 2 MiB, best of three runs each, options on against options off. Before the fix it read 5.3 against 18.8 Mbit/s, with 746 retransmissions and 7 timeouts. It needs SACK and CUBIC together, with a receive window that the flight can outgrow (window scaling): each one alone, or SACK with NewReno, ran at 18 to 19 Mbit/s.
+
+Two causes, both in `engine/fps-tcp-own/`:
+
+- **A lost retransmission was never found lost.** RFC 6675 counts a segment that was sent again in the pipe until it is acknowledged. When the queue is full the copy is dropped too (the sender runs at a window that is above the queue), nothing says so, and the recovery waits for the retransmission timer while its pipe has room for new data, so the flight grows to the receive window (535 KB in the trace). The scoreboard now keeps the highest sequence number sent when a range was sent again (`mark_rexmit_at`), and `detect_lost_rexmit` drops the range as soon as data sent after it, by more than two segments, was selectively acknowledged. The range is then a hole that `next_hole` offers again and the pipe stops counting. The kernel does the same (`tcp_mark_lost_retrans`). The counter `sack_lost_rexmits` in `HostCounters` counts them.
+- **CUBIC reduced from the flight.** `ssthresh` was 0.7 of the flight, and the flight of a SACK recovery grows beyond the window. The next threshold was then above the window that had just lost packets, and a timeout inside a recovery restarted slow start at 0.7 of the whole grown flight (734 KB, with a path that carries 40 KB). RFC 9438 section 4.6 reduces the window: the reduction is now `0.7 * min(cwnd, flight)`, and a timeout in a recovery never raises the threshold that the recovery set (the kernel keeps it).
+
+After the fix the same test reads 18.8 against 18.7 Mbit/s with 42 to 54 retransmissions against 36 to 39, and no timeout. The kernel interop row "own client to kernel server, bottleneck with tail drop" reads 19.2 Mbit/s with 43 to 67 retransmissions in the sandbox (7.4 Mbit/s with 192 to 254 before), and 19.4 with the own options off.
+
+Not changed, and open:
+
+- The kernel sends 9 segments again on this link where the own stack sends 40 to 70. The own stack does not pace and has no HyStart, so each probe of the 32 KiB queue overflows it by a few segments. Pacing in slow start, HyStart or a tail loss probe (RFC 8985) would lower it; none is in the stack.
+- Against smoltcp 0.14, the own sender with options on stalls twice on this link (11.3 against 18.8 Mbit/s, two timeouts). The assembler of smoltcp holds four out of order ranges and discards the rest without reporting them in SACK blocks, so the unreported tail stays in the pipe of the sender until the timer fires. The kernel reports what it holds, so it does not show there. A time based loss detection (RACK, RFC 8985) would end the stall at the sender.
 
 ### Decision record 0014 and the one session run
 

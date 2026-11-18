@@ -121,6 +121,7 @@ impl Cubic {
     /// fast convergence rule (RFC 9438 section 4.7) releases bandwidth to a
     /// new flow when the window fell short of the last maximum.
     pub fn on_loss(&mut self, cwnd: u32, flight: u32) -> u32 {
+        let basis = flight.min(cwnd);
         let cwnd = f64::from(cwnd);
         self.cwnd_prior = cwnd;
         self.w_max = if cwnd < self.w_max {
@@ -131,20 +132,22 @@ impl Cubic {
         self.epoch_us = None;
         self.idle_us = None;
         self.carry = 0.0;
-        self.reduced(flight)
+        self.reduced(basis)
     }
 
     /// The retransmission timeout fired with `flight` bytes outstanding.
     /// `in_recovery` says that a recovery had reduced the window already,
     /// which then counts as the event. Returns the slow start threshold.
     pub fn on_rto(&mut self, cwnd: u32, flight: u32, in_recovery: bool) -> u32 {
-        if !in_recovery {
-            self.on_loss(cwnd, flight);
-        }
+        let reduced = if in_recovery {
+            self.reduced(flight)
+        } else {
+            self.on_loss(cwnd, flight)
+        };
         self.epoch_us = None;
         self.idle_us = None;
         self.carry = 0.0;
-        self.reduced(flight)
+        reduced
     }
 
     /// `max(beta * flight, 2 SMSS)`.
@@ -463,5 +466,19 @@ mod tests {
         c.on_recovery_exit(cwnd);
         assert!(c.epoch_us.is_none());
         assert_eq!(c.w_est(), f64::from(cwnd));
+    }
+
+    #[test]
+    fn the_reduction_follows_the_window_when_the_flight_is_larger() {
+        // A SACK recovery sends new data beyond the window, and a timeout
+        // leaves the whole old flight outstanding. Neither raises the
+        // threshold above beta times the window (RFC 9438 section 4.6).
+        let mut c = Cubic::new(MSS);
+        assert_eq!(c.on_loss(40 * MSS, 100 * MSS), 28 * MSS);
+        // An application limited flow has less in flight than the window.
+        let mut c = Cubic::new(MSS);
+        assert_eq!(c.on_loss(40 * MSS, 10 * MSS), 7 * MSS);
+        let mut c = Cubic::new(MSS);
+        assert_eq!(c.on_rto(1, 100 * MSS, false), 2 * MSS);
     }
 }
