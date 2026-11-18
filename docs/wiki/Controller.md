@@ -784,7 +784,7 @@ Two adapter types connect the registry and the agent manager to the interfaces t
 |---|---|---|
 | `wiring.Catalog` | `store.ModuleCatalog` and `runs.Catalog` with `Scenarios` | The scenario files of the latest installed version of each module, with the module name, version, tree digest, the `settings` key of the manifest as `SettingsSchema`, which stays empty for a manifest without it, and the manifest `expected_bytes` entry of the scenario as `BytesPerSession`, which stays 0 for a scenario without one (CTL-47). Configurations name a module without a version, so older versions stay out of the catalog |
 | `wiring.Catalog` | `api.ModuleLister` with `ModuleSummaries` | Every installed version from `Registry.List` |
-| `wiring.Inventory` | `store.AgentInventory` with `AvailableAgents` | Agents that are online or reserved, with cores, the first known backend, and the port names, as the orchestrator compiles them |
+| `wiring.Inventory` | `store.AgentInventory` with `AvailableAgents` | Agents that are online or reserved, with cores, the selected backend (the first known entry of `backends` for an agent that selected none, the same choice as `agents.ToAPI`, CTL-54), and the port names, as the orchestrator compiles them |
 | `wiring.Inventory` | `api.AgentInventory` with `AgentCapabilities` | Every agent through `agents.ToAPI`, with every backend of its latest registration |
 
 ### Combined server

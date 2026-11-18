@@ -144,8 +144,10 @@ var compilerBackends = map[agentpb.Backend]string{
 }
 
 // AvailableAgents implements store.AgentInventory. It returns the agents that
-// are online or reserved, with the first backend that each agent reports, as
-// the run orchestrator compiles them.
+// are online or reserved, with the backend that each agent selected, as the run
+// orchestrator compiles them. An agent that selected none (agent protocol 0.2.4
+// or earlier) gets the first known entry of its backends. agents.ToAPI makes
+// that choice, so the inventory and the REST view always agree.
 func (inv Inventory) AvailableAgents(context.Context) ([]compiler.Agent, error) {
 	var out []compiler.Agent
 	for _, ag := range inv.Agents.List() {
@@ -154,11 +156,8 @@ func (inv Inventory) AvailableAgents(context.Context) ([]compiler.Agent, error) 
 		}
 		c := ag.Capabilities
 		ca := compiler.Agent{ID: ag.ID, Cores: c.GetCores()}
-		for _, b := range c.GetBackends() {
-			if name, ok := compilerBackends[b]; ok {
-				ca.Backend = name
-				break
-			}
+		if b := agents.ToAPI(ag).Backend; b != nil {
+			ca.Backend = string(*b)
 		}
 		for _, p := range c.GetPorts() {
 			ca.Interfaces = append(ca.Interfaces, p.GetName())

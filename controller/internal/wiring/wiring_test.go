@@ -403,6 +403,41 @@ func TestInventoryAdaptsAgents(t *testing.T) {
 	}
 }
 
+// TestInventoryUsesSelectedBackend checks the backend that the orchestrator
+// compiles for an agent: the selected one, even when it is not the first of
+// backends, and the first known one for an old agent that selects none.
+func TestInventoryUsesSelectedBackend(t *testing.T) {
+	both := []agentpb.Backend{agentpb.Backend_BACKEND_KERNEL, agentpb.Backend_BACKEND_AF_XDP}
+	inv := Inventory{Agents: fakeLister{
+		{ID: "selected", State: api.AgentStateOnline, Capabilities: &agentpb.Capabilities{
+			Backends: both, SelectedBackend: agentpb.Backend_BACKEND_AF_XDP}},
+		{ID: "old", State: api.AgentStateOnline, Capabilities: &agentpb.Capabilities{
+			Backends: both}},
+		{ID: "old-unknown-first", State: api.AgentStateOnline, Capabilities: &agentpb.Capabilities{
+			Backends: []agentpb.Backend{agentpb.Backend_BACKEND_UNSPECIFIED, agentpb.Backend_BACKEND_AF_XDP}}},
+		{ID: "kernel", State: api.AgentStateOnline, Capabilities: &agentpb.Capabilities{
+			Backends: both, SelectedBackend: agentpb.Backend_BACKEND_KERNEL}},
+		{ID: "none", State: api.AgentStateOnline, Capabilities: &agentpb.Capabilities{}},
+		{ID: "nocaps", State: api.AgentStateReserved},
+	}}
+	got, err := inv.AvailableAgents(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"selected": "af_xdp", "old": "kernel", "old-unknown-first": "af_xdp",
+		"kernel": "kernel", "none": "", "nocaps": "",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("AvailableAgents returned %d agents, want %d", len(got), len(want))
+	}
+	for _, a := range got {
+		if a.Backend != want[a.ID] {
+			t.Errorf("agent %s backend = %q, want %q", a.ID, a.Backend, want[a.ID])
+		}
+	}
+}
+
 // TestRunServesAgentsAndStops runs the gRPC service on a loopback listener,
 // registers a fake agent, checks the REST inventory, and stops.
 func TestRunServesAgentsAndStops(t *testing.T) {
