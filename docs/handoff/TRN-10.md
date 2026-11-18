@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #561 |
 | Branch | `wp/TRN-10` |
-| Pull request | opened after this commit, see the issue card |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #616 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-9d41e7, lease until 2026-11-18T01:16:47Z |
-| Last verified commit | none |
+| Last verified commit | d57d803 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -21,7 +21,7 @@ Propose decision record 0014 for the TCP stack of the AF_XDP backend (TRN-12): c
 - [x] 1. Re-run the missing rows in one session in the sandbox and commit the results under `engine/fps-tcp/results/`.
 - [x] 2. Write `docs/decisions/0014-user-space-tcp-stack.md` and add it to the decisions index.
 - [x] 3. Write the log entry and run the checks.
-- [ ] 4. Open the pull request, wait for CI, and move to review.
+- [x] 4. Open the pull request, wait for CI, and move to review.
 
 ## Done and verified
 
@@ -34,7 +34,7 @@ Propose decision record 0014 for the TCP stack of the AF_XDP backend (TRN-12): c
 
 ## Next action
 
-Wait for CI on the pull request, then run `fps_swarm.py review 561 --pr N`.
+Done: CI was green on d57d803 (49 checks). The coordinator merges after the vetting agent decides.
 
 ## Host test
 
