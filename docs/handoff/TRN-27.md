@@ -9,10 +9,10 @@
 | Issue | #628 |
 | Branch | `wp/TRN-27` |
 | Pull request | #650 |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-7c27a1, lease until 2026-11-18T09:08:48Z |
-| Last verified commit | none |
+| Last verified commit | e5a083f |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -28,7 +28,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 2. In-memory tests (`engine/fps-datapath/tests/memory.rs`), no root.
 - [x] 3. Veth test on AF_XDP queues (`engine/fps-backend-afxdp/tests/datapath_veth.rs`), sessions per second and sockets held.
 - [x] 4. Results of the CI runner and the sandbox under `engine/fps-datapath/results/`, Transport.md section, log entry.
-- [ ] 5. CI green on the final commit, review.
+- [x] 5. CI green (rust, afxdp) on e5a083f, review requested.
 
 ## Done and verified
 
