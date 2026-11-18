@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from realism import decrypted
+from realism import decrypted, messages
 from realism.capture import decode_segment, read_frames, summarize
 from realism.classifier import NdpiClassifier
 from realism.cli import EXIT_ERROR, EXIT_FAIL, EXIT_PASS, main
@@ -223,6 +223,63 @@ def test_tshark_numbers_the_connections_of_a_reused_port_in_the_view(tmp_path: P
         check=True,
     ).stdout
     assert sorted(set(out.split())) == ["0", "1"]
+
+
+def _h2_frame(kind: int, flags: int, stream: int, payload: bytes = b"") -> bytes:
+    return (
+        len(payload).to_bytes(3, "big") + bytes([kind, flags]) + stream.to_bytes(4, "big") + payload
+    )
+
+
+def _h2_session_bytes(requests: int) -> list[tuple[bool, bytes]]:
+    """Return the plaintext of an HTTP/2 connection with the given number of GET requests."""
+    preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+    # HPACK: :method GET, :scheme http, :path /, and :status 200 are static table entries.
+    get = bytes([0x82, 0x86, 0x84])
+    ok = bytes([0x88])
+    chunks = [(True, preface + _h2_frame(4, 0, 0)), (False, _h2_frame(4, 0, 0))]
+    for n in range(requests):
+        stream = 2 * n + 1
+        chunks.append((True, _h2_frame(1, 0x05, stream, get)))
+        chunks.append((False, _h2_frame(1, 0x05, stream, ok)))
+    return chunks
+
+
+def _h2_messages_failures(view: Path, port: int, expected: int) -> tuple[list[str], list[int]]:
+    labels = parse_labels(
+        {
+            "labels": "fps-realism-labels",
+            "version": 1,
+            "sessions": [{"application": "web", "match": {"transport": "tcp"}}],
+            "applications": {"web": {"stub": ["HTTP"]}},
+            "messages": [
+                {
+                    "protocol": "http2",
+                    "match": {"server_port": port},
+                    "expect": {"requests": expected},
+                }
+            ],
+        }
+    )
+    sessions = summarize(view).sessions
+    result = messages.check(view, sessions, labels, messages.TsharkMessageProbe(TSHARK.program))
+    return result.failures, [r.observed["requests"] for r in result.results]
+
+
+@pytest.mark.skipif(not HAS_TSHARK, reason="no tshark")
+def test_the_messages_of_sessions_on_a_reused_client_port_count_per_session(
+    tmp_path: Path,
+) -> None:
+    client, server = ("10.201.0.2", 55428), ("10.202.0.2", 8443)
+    sessions = [
+        TlsSession(0, 1, client, server, inside=_h2_session_bytes(7)),
+        TlsSession(1, 2, client, server, inside=_h2_session_bytes(7)),
+    ]
+    view = tmp_path / "view.pcap"
+    write_view(view, sessions)
+    failures, observed = _h2_messages_failures(view, 8443, 7)
+    assert failures == []
+    assert observed == [7, 7]
 
 
 def test_the_view_keeps_the_server_port_by_default(tmp_path: Path) -> None:

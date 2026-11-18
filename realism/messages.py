@@ -32,7 +32,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from realism.capture import Session, SessionKey
+from realism.capture import (
+    Session,
+    SessionKey,
+    SessionResolver,
+    decode_segment,
+    read_frames,
+)
 from realism.labels import Count, Labels, MessageRule
 from realism.parsers import (
     _AGGREGATOR,
@@ -93,6 +99,19 @@ _SINGULAR = {
 }
 
 
+@dataclass(frozen=True)
+class FrameCount:
+    """The messages that one frame of a capture carries, with the four tuple of the frame.
+
+    A probe that reports frames lets :func:`check` attribute messages to the connection of the
+    frame. The counts per four tuple merge two connections that reuse a client port.
+    """
+
+    frame: int
+    key: SessionKey
+    counts: Counter[str]
+
+
 @dataclass
 class MessageObservation:
     """What a probe counted in a capture for one protocol, with the tool version."""
@@ -100,6 +119,7 @@ class MessageObservation:
     tool: str
     version: str
     counts: dict[SessionKey, Counter[str]] = field(default_factory=dict)
+    frames: list[FrameCount] = field(default_factory=list)
 
 
 class MessageProbe(Protocol):
@@ -156,18 +176,48 @@ class TsharkMessageProbe:
         return self.runner.available()
 
     def observe(self, capture: Path, protocol: str, ports: Sequence[int]) -> MessageObservation:
-        """Run tshark on the capture and count the messages of the protocol per session."""
+        """Run tshark on the capture and count the messages of the protocol per frame."""
         display_filter, dissector, kinds = _PROTOCOLS[protocol]
         argv = ["-r", str(capture), "-n"]
         for port in sorted(set(ports)):
             argv += ["-d", f"tcp.port=={port},{dissector}"]
         argv += ["-Y", display_filter, "-T", "fields", "-E", "header=n", "-E", "separator=/t"]
         argv += ["-E", "occurrence=a", "-E", f"aggregator={_AGGREGATOR}"]
-        for name in (*_ENDPOINT_FIELDS, *(tshark_field for _, tshark_field in kinds)):
+        for name in (
+            "frame.number",
+            *_ENDPOINT_FIELDS,
+            *(tshark_field for _, tshark_field in kinds),
+        ):
             argv += ["-e", name]
         proc = _run(self.program, argv, f"tshark {protocol} {capture}", self.runner.timeout_s)
-        counts = parse_fields(proc.stdout, [kind for kind, _ in kinds], source=str(capture))
-        return MessageObservation(TSHARK, self.runner.version(), counts)
+        names = [kind for kind, _ in kinds]
+        frames = parse_frame_fields(proc.stdout, names, source=str(capture))
+        counts: dict[SessionKey, Counter[str]] = {}
+        for entry in frames:
+            counts.setdefault(entry.key, Counter()).update(entry.counts)
+        return MessageObservation(TSHARK, self.runner.version(), counts, frames)
+
+
+def parse_frame_fields(
+    text: str, kinds: Sequence[str], source: str = "<tshark>"
+) -> list[FrameCount]:
+    """Parse the field output of :class:`TsharkMessageProbe` into the counts of each frame.
+
+    Each line starts with the frame number and holds then the fields that
+    :func:`parse_fields` reads.
+    """
+    frames: list[FrameCount] = []
+    for line in text.splitlines():
+        number, _, rest = line.partition("\t")
+        if not number.strip():
+            continue
+        try:
+            frame = int(number)
+        except ValueError as exc:
+            raise ValueError(f"{source}: frame number {number!r} is not a number") from exc
+        for key, counter in parse_fields(rest, kinds, source).items():
+            frames.append(FrameCount(frame, key, counter))
+    return frames
 
 
 def parse_fields(
@@ -314,6 +364,34 @@ def judge(protocol: str, observed: Mapping[str, int], expect: Mapping[str, Count
     return reasons
 
 
+def counts_by_session(
+    capture: Path, sessions: Sequence[Session], frames: Sequence[FrameCount]
+) -> dict[int, Counter[str]]:
+    """Attribute the counted frames to the sessions of the table, by session id.
+
+    Two connections that reuse a client port have the same four tuple, so the frame decides:
+    the resolver replays the rule of the session table (RLM-24) over the frames of the capture,
+    and a frame belongs to the connection that it starts or continues.
+    """
+    wanted = {entry.frame for entry in frames}
+    resolver = SessionResolver(s for s in sessions if s.transport == "tcp")
+    owner: dict[int, Session] = {}
+    _, stream = read_frames(capture)
+    for number, frame in enumerate(stream, start=1):
+        segment = decode_segment(frame)
+        if segment is None or segment.packet.transport != "tcp":
+            continue
+        session = resolver.session_of(segment.packet)
+        if session is not None and number in wanted:
+            owner[number] = session
+    result: dict[int, Counter[str]] = {}
+    for entry in frames:
+        session = owner.get(entry.frame)
+        if session is not None:
+            result.setdefault(session.id, Counter()).update(entry.counts)
+    return result
+
+
 def check(
     capture: Path,
     sessions: Sequence[Session],
@@ -350,10 +428,17 @@ def check(
             continue
         observation = probe.observe(capture, protocol, ports)
         tool = {"tool": observation.tool, "version": observation.version}
+        by_session = (
+            counts_by_session(capture, sessions, observation.frames) if observation.frames else None
+        )
         for i in indexes:
             rule, summary = rules[i], rule_results[i]
             for session in selected[i]:
-                counts = observation.counts.get(session.key, Counter())
+                counts = (
+                    by_session.get(session.id, Counter())
+                    if by_session is not None
+                    else observation.counts.get(session.key, Counter())
+                )
                 observed = {name: counts[name] for name in rule.expect}
                 result = SessionResult(
                     session, i + 1, protocol, observed, judge(protocol, observed, rule.expect)
