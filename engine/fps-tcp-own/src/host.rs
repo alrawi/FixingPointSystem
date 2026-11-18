@@ -18,8 +18,9 @@ use super::cubic::AckContext;
 use super::net::{
     NetError, Received, Station, ETH_LEN, MAX_REPLY_LEN, MIN_FRAME_LEN, VLAN_TAG_LEN,
 };
+use super::profile::OsProfile;
 use super::recovery::{self, AckView, Action, CongestionControl, Recovery};
-use super::wire::{self, flags, Header, Options};
+use super::wire::{self, flags, Header, Options, Style};
 use super::OwnConfig;
 
 /// The MSS that a peer is assumed to have when its SYN carries no option.
@@ -422,6 +423,8 @@ pub struct Out {
     /// The built frames, oldest first.
     pub queue: VecDeque<Vec<u8>>,
     station: Station,
+    /// The TTL and the SYN option order of the host (TRN-28).
+    style: Style,
 }
 
 impl Out {
@@ -454,7 +457,7 @@ impl Out {
         };
         let body = wire::IP_LEN
             + wire::TCP_LEN
-            + wire::options_len(&header)
+            + wire::options_len_styled(&header, &self.style)
             + payload.0.len()
             + payload.1.len();
         // One allocation for the whole frame, with room for a VLAN tag and
@@ -464,7 +467,7 @@ impl Out {
             counters.unresolved += 1;
             return;
         }
-        wire::encode(&mut frame, &header, payload);
+        wire::encode_styled(&mut frame, &header, payload, &self.style);
         if frame.len() < MIN_FRAME_LEN {
             frame.resize(MIN_FRAME_LEN, 0);
         }
@@ -477,6 +480,8 @@ impl Out {
 pub struct Host {
     cfg: OwnConfig,
     mss_own: u16,
+    /// The operating system profile of the host, if it has one (TRN-28).
+    profile: Option<OsProfile>,
     conns: Vec<Option<Conn>>,
     gens: Vec<u32>,
     free: Vec<u32>,
@@ -513,6 +518,7 @@ impl Host {
         Self {
             mss_own,
             cfg,
+            profile: None,
             conns: Vec::new(),
             gens: Vec::new(),
             free: Vec::new(),
@@ -526,9 +532,53 @@ impl Host {
             out: Out {
                 queue: VecDeque::new(),
                 station,
+                style: Style::DEFAULT,
             },
             counters: HostCounters::default(),
         }
+    }
+
+    /// Gives the host the operating system profile `profile` (TRN-28), which
+    /// sets the TTL, MSS, SYN window, window scale, offered options, and
+    /// option order of its SYN and SYN-ACK. `None` keeps the host as it is.
+    /// Call it before the host opens or accepts a connection.
+    #[must_use]
+    pub fn with_profile(mut self, profile: Option<OsProfile>) -> Self {
+        if let Some(p) = profile {
+            self.mss_own = self.mss_own.min(p.mss);
+            self.out.style = p.style();
+        }
+        self.profile = profile.or(self.profile);
+        self
+    }
+
+    /// Whether the host offers window scaling.
+    fn want_window_scale(&self) -> bool {
+        self.profile
+            .map_or(self.cfg.window_scale, |p| p.window_scaling)
+    }
+
+    /// Whether the host offers timestamps.
+    fn want_timestamps(&self) -> bool {
+        self.profile.map_or(self.cfg.timestamps, |p| p.timestamps)
+    }
+
+    /// Whether the host offers SACK.
+    fn want_sack(&self) -> bool {
+        self.profile.map_or(self.cfg.sack, |p| p.sack)
+    }
+
+    /// The shift of the window scale option that the host offers.
+    fn own_shift(&self) -> u8 {
+        self.profile
+            .map_or_else(|| shift_for(self.cfg.rcv_buffer), |p| p.window_scale)
+    }
+
+    /// The window field of a SYN or SYN-ACK, which is never scaled (RFC 7323
+    /// section 2.2) and never more than the receive buffer.
+    fn syn_window(&self) -> u16 {
+        let wanted = self.profile.map_or(65_535, |p| p.syn_window);
+        wanted.min(u16::try_from(self.cfg.rcv_buffer).unwrap_or(u16::MAX))
     }
 
     /// The sockets of the host, connections plus listeners.
@@ -711,10 +761,10 @@ impl Host {
         let iss = self.isn(tuple, now);
         let mut conn = Conn::new(State::SynSent, tuple, iss, self.cfg.rto_us);
         conn.mss = self.mss_own;
-        conn.set(O_WS, self.cfg.window_scale);
-        conn.set(O_TS, self.cfg.timestamps);
-        conn.set(O_SACK, self.cfg.sack);
-        conn.set_shifts(shift_for(self.cfg.rcv_buffer), 0);
+        conn.set(O_WS, self.want_window_scale());
+        conn.set(O_TS, self.want_timestamps());
+        conn.set(O_SACK, self.want_sack());
+        conn.set_shifts(self.own_shift(), 0);
         let (id, gen) = self.alloc(conn);
         self.table.insert(tuple, id);
         self.mark_dirty(id);
@@ -1129,20 +1179,16 @@ impl Host {
         conn.rcv_nxt = h.seq.wrapping_add(1);
         // The options: each one is used when the SYN carries it and this host
         // wants it, and the SYN-ACK answers only those.
-        let ws = if self.cfg.window_scale {
+        let ws = if self.want_window_scale() {
             h.opts.wscale
         } else {
             None
         };
         conn.set(O_WS, ws.is_some());
-        let rcv_shift = if ws.is_some() {
-            shift_for(self.cfg.rcv_buffer)
-        } else {
-            0
-        };
+        let rcv_shift = if ws.is_some() { self.own_shift() } else { 0 };
         conn.set_shifts(rcv_shift, ws.unwrap_or(0));
-        conn.adv_wnd = 65_535 >> rcv_shift;
-        let ts = if self.cfg.timestamps {
+        conn.adv_wnd = self.syn_window() >> rcv_shift;
+        let ts = if self.want_timestamps() {
             h.opts.timestamp
         } else {
             None
@@ -1151,7 +1197,7 @@ impl Host {
         if let Some((value, _)) = ts {
             conn.ts_recent = value;
         }
-        conn.set(O_SACK, self.cfg.sack && h.opts.sack_permitted);
+        conn.set(O_SACK, self.want_sack() && h.opts.sack_permitted);
         conn.snd_wnd = u32::from(h.window);
         conn.mss = self.mss_own.min(h.mss.unwrap_or(DEFAULT_PEER_MSS));
         if ts.is_some() {
@@ -1170,6 +1216,7 @@ impl Host {
     #[allow(clippy::too_many_lines)]
     fn on_segment(&mut self, id: u32, h: &Header, payload: &[u8], now: i64) {
         let ts_now = ts_clock(self.ts_base, now);
+        let syn_window = self.syn_window();
         let Some(conn) = self.conns.get_mut(id as usize).and_then(Option::as_mut) else {
             return;
         };
@@ -1213,7 +1260,7 @@ impl Host {
                 if !h.opts.sack_permitted {
                     conn.set(O_SACK, false);
                 }
-                conn.adv_wnd = 65_535 >> conn.rcv_shift();
+                conn.adv_wnd = syn_window >> conn.rcv_shift();
                 conn.mss = conn.mss.min(h.mss.unwrap_or(DEFAULT_PEER_MSS));
                 if conn.has(O_TS) {
                     conn.mss = conn.mss.saturating_sub(TS_OVERHEAD).max(1);
@@ -1791,6 +1838,7 @@ impl Host {
         let window_size = self.cfg.rcv_buffer;
         let mss_own = self.mss_own;
         let ts_now = ts_clock(self.ts_base, now);
+        let syn_window = self.syn_window();
         let Some(conn) = self.conns.get_mut(id as usize).and_then(Option::as_mut) else {
             return;
         };
@@ -1820,7 +1868,6 @@ impl Host {
                 conn.rcv_nxt
             };
             // The window of a SYN is never scaled (RFC 7323 section 2.2).
-            let syn_wnd = u16::try_from(space.min(65_535)).unwrap_or(65_535);
             let opts = conn.syn_opts(ts_now);
             self.out.send(
                 &mut self.counters,
@@ -1830,7 +1877,7 @@ impl Host {
                 conn.iss,
                 ack,
                 bits,
-                syn_wnd,
+                syn_window,
                 Some(mss_own),
                 opts,
                 (&[], &[]),
@@ -2121,6 +2168,9 @@ fn not_connected() -> io::Error {
 
 #[cfg(test)]
 mod recovery_tests;
+
+#[cfg(test)]
+mod profile_tests;
 
 #[cfg(test)]
 mod tests {
