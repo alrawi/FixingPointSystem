@@ -151,6 +151,10 @@ fn connect(args: &[String]) -> ExitCode {
             // The runs of this agent start the backend that it selected, and
             // a plan for another backend is refused (AGT-24).
             cfg.backend = Some(selection.backend);
+            // An agent that nobody forced runs a plan that its AF_XDP datapath
+            // refuses on the kernel backend and reports that (AGT-29). A forced
+            // agent refuses the plan with the cause.
+            cfg.fall_back = selection.reason != fps_backend_afxdp::SelectionReason::Forced;
             let mut caps = host.capabilities_for(&selection);
             caps.modules = fps_agent::modules::installed(&cfg.modules)
                 .into_iter()

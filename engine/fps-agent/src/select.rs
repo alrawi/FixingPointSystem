@@ -84,13 +84,28 @@ pub fn weakest_driver(ports: &[DetectedPort]) -> XdpSupport {
 /// `transport_available`, and the other checks (kernel support and driver)
 /// still decide. Without a forced backend the facts stay as they are.
 pub fn selection_input(host: &HostCapabilities, forced: Option<BackendKind>) -> SelectionInput {
-    let defaults = AfXdpFacts::default();
+    selection_input_with(host, forced, AfXdpFacts::default().transport_available)
+}
+
+/// Like [`selection_input`], with the transport fact given and not taken from
+/// `fps_backend_afxdp::TRANSPORT_AVAILABLE`.
+///
+/// This is how a test shows what the agent does after the flip of TRN-31
+/// without changing the constant: an unforced selection on a host with native
+/// XDP then chooses AF_XDP. `transport_available` is still set for a forced
+/// AF_XDP backend, as in [`selection_input`]. The agent itself never calls this
+/// with anything but the constant.
+pub fn selection_input_with(
+    host: &HostCapabilities,
+    forced: Option<BackendKind>,
+    transport_available: bool,
+) -> SelectionInput {
     SelectionInput {
         forced,
         kernel: KernelFacts::default(),
         af_xdp: AfXdpFacts {
             kernel_support: host.af_xdp.is_supported(),
-            transport_available: defaults.transport_available || forced == Some(BackendKind::AfXdp),
+            transport_available: transport_available || forced == Some(BackendKind::AfXdp),
             driver: weakest_driver(&host.ports),
         },
     }
@@ -109,6 +124,19 @@ pub fn select(
     forced: Option<BackendKind>,
 ) -> Result<Selection, SelectError> {
     select_backend(&selection_input(host, forced))
+}
+
+/// Like [`select`], with the transport fact of [`selection_input_with`].
+///
+/// # Errors
+///
+/// As [`select`].
+pub fn select_with_transport(
+    host: &HostCapabilities,
+    forced: Option<BackendKind>,
+    transport_available: bool,
+) -> Result<Selection, SelectError> {
+    select_backend(&selection_input_with(host, forced, transport_available))
 }
 
 /// Maps a selected backend to the proto enum.

@@ -69,6 +69,9 @@ prost-types = "0.14"
 # The canonical JSON mapping of the plan.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Reads the exclusion list of the AF_XDP realism run from profiles.yaml (AGT-29).
+# serde_norway is a maintained fork of the deprecated serde_yaml (RUSTSEC-2024-0449).
+serde_norway = "0.9"
 # SHA-256 of module trees and scenario sources. MIT or Apache-2.0.
 sha2 = "0.10"
 # Error enums for library code, as docs/wiki/Coding-Standards.md requires.

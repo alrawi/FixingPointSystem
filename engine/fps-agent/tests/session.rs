@@ -21,11 +21,14 @@ use fps_agent::pb::controller_service_server::{ControllerService, ControllerServ
 use fps_agent::pb::{self, session_request, session_response, AgentState, ErrorCode};
 use fps_agent::plan::Plan;
 use fps_agent::session::{serve, Backoff, Config};
+use fps_backend_afxdp::BackendKind;
 use serde_json::Value as Json;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status, Streaming};
+
+mod common;
 
 const WAIT: Duration = Duration::from_secs(20);
 
@@ -186,6 +189,16 @@ impl Harness {
     /// Starts an agent that selected `backend` at boot (AGT-24), or one that
     /// leaves the backend to the plan.
     async fn start_on(agent_id: &str, backend: Option<fps_backend_afxdp::BackendKind>) -> Self {
+        Self::start_with(agent_id, backend, false).await
+    }
+
+    /// Like [`Harness::start_on`], and `fall_back` says that the selection
+    /// chose the backend by its rules and nobody forced it (AGT-29).
+    async fn start_with(
+        agent_id: &str,
+        backend: Option<fps_backend_afxdp::BackendKind>,
+        fall_back: bool,
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
         let shared = Arc::new(Shared::default());
@@ -210,6 +223,7 @@ impl Harness {
         };
         cfg.capabilities.engine_api = "0.1.0".into();
         cfg.backend = backend;
+        cfg.fall_back = fall_back;
         let (stop_agent, rx) = oneshot::channel::<()>();
         let agent = tokio::spawn(async move {
             serve(cfg, async {
@@ -493,7 +507,6 @@ async fn a_bad_plan_fails_prepare_and_leaves_the_state_unchanged() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_plan_for_another_backend_than_the_selected_one_fails_prepare() {
-    use fps_backend_afxdp::BackendKind;
     // An agent that selected the kernel backend refuses a plan for AF_XDP,
     // with a code that tells the controller the agent cannot run it, and it
     // still prepares a plan for the kernel backend.
@@ -597,5 +610,119 @@ async fn a_silent_controller_makes_the_agent_abort_and_release_the_plan() {
     assert_eq!(reg.plan_id, "");
     let hb = h.wait_state(AgentState::Idle).await;
     assert_eq!(hb.plan_id, "");
+    h.shutdown().await;
+}
+
+/// The plan of `contracts/examples/tests/http_smoke.yaml` as the controller
+/// compiles it for one agent, on loopback pools and a port above 1024, with a
+/// short run. Its two ports are both the interface `lo`.
+fn http_smoke_plan(c: u8, s: u8, http_port: u16) -> pb::Plan {
+    let mut plan = common::plan_of("http_smoke.yaml");
+    for sc in plan["scenarios"].as_array_mut().expect("scenarios") {
+        let src = sc["source"].as_str().expect("source");
+        let src = src.replace("server_port: 8080", &format!("server_port: {http_port}"));
+        sc["digest"] = sha256_digest(src.as_bytes()).into();
+        sc["source"] = src.into();
+    }
+    plan["hostPools"][0]["ipv4Prefix"] = format!("127.{c}.0.0/24").into();
+    plan["hostPools"][1]["ipv4Prefix"] = format!("127.{s}.0.0/24").into();
+    plan["workers"][0]["rates"][0]["sessionsPerSecond"] = 40.into();
+    plan["load"]["phases"] = phases(1, 1);
+    plan["warmup"] = "0s".into();
+    plan_to_pb(&Plan::parse(&plan.to_string()).expect("http_smoke plan"))
+}
+
+fn port_modes(hb: &pb::Heartbeat) -> Vec<(String, String, i32)> {
+    hb.run_ports
+        .iter()
+        .map(|p| (p.name.clone(), p.interface_name.clone(), p.xdp_mode))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_unforced_agent_runs_http_smoke_on_the_kernel_backend_and_reports_it() {
+    // The agent selected AF_XDP by its rules, and the datapath refuses
+    // http_smoke.yaml: both ports are the interface lo.
+    let mut h = Harness::start_with("agent-a", Some(BackendKind::AfXdp), true).await;
+    let idle = h.wait_state(AgentState::Idle).await;
+    assert_eq!(idle.run_backend, pb::Backend::Unspecified as i32);
+    assert!(idle.run_ports.is_empty());
+
+    let plan = http_smoke_plan(91, 92, 18_680);
+    let id = plan.plan_id.clone();
+    let r = h.command(prepare(&plan)).await;
+    assert!(r.error.is_none(), "the unforced agent refused: {r:?}");
+    // Nothing has started, so no heartbeat names a backend yet.
+    let prepared = h.wait_state(AgentState::Prepared).await;
+    assert_eq!(prepared.run_backend, pb::Backend::Unspecified as i32);
+    assert!(prepared.run_ports.is_empty());
+
+    assert!(h.command(start(&id)).await.error.is_none());
+    let kernel_ports = vec![
+        ("client0".to_owned(), "lo".to_owned(), 0),
+        ("server0".to_owned(), "lo".to_owned(), 0),
+    ];
+    let running = loop {
+        let hb = h.wait_state(AgentState::Running).await;
+        if hb.run_backend != pb::Backend::Unspecified as i32 {
+            break hb;
+        }
+    };
+    assert_eq!(running.run_backend, pb::Backend::Kernel as i32);
+    assert_eq!(port_modes(&running), kernel_ports);
+
+    // The run ends on its own, and the stopped agent still reports the
+    // backend that ran the plan.
+    let stopped = h.wait_state(AgentState::Stopped).await;
+    assert_eq!(stopped.run_backend, pb::Backend::Kernel as i32);
+    assert_eq!(port_modes(&stopped), kernel_ports);
+    let snapshot = h.snapshots.last().expect("a snapshot");
+    assert!(snapshot.is_final);
+    assert!(count(snapshot, "sessions.succeeded") > 0, "{snapshot:?}");
+
+    // A new plan has not started, so it releases the report.
+    let next = http_smoke_plan(93, 94, 18_780);
+    assert!(h.command(prepare(&next)).await.error.is_none());
+    let fresh = h.wait_state(AgentState::Prepared).await;
+    assert_eq!(fresh.run_backend, pb::Backend::Unspecified as i32);
+    assert!(fresh.run_ports.is_empty());
+    h.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_forced_agent_refuses_http_smoke_with_the_cause() {
+    let mut h = Harness::start_with("agent-a", Some(BackendKind::AfXdp), false).await;
+    h.wait_state(AgentState::Idle).await;
+    let r = h.command(prepare(&http_smoke_plan(95, 96, 18_880))).await;
+    assert_eq!(error_code(&r), Some(ErrorCode::InvalidArgument), "{r:?}");
+    let message = r.error.map(|e| e.message).unwrap_or_default();
+    assert!(
+        message.starts_with("backend af_xdp: ") && message.contains("same interface lo"),
+        "{message}"
+    );
+    // The refusal leaves nothing started.
+    let hb = h.wait_state(AgentState::Idle).await;
+    assert_eq!(hb.run_backend, pb::Backend::Unspecified as i32);
+    h.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_agent_on_the_kernel_backend_reports_it_too() {
+    let mut h = Harness::start_on("agent-a", Some(BackendKind::Kernel)).await;
+    h.wait_state(AgentState::Idle).await;
+    let plan = loopback_plan(97, 98, 18_980, 15_953, phases(1, 1));
+    let id = plan.plan_id.clone();
+    assert!(h.command(prepare(&plan)).await.error.is_none());
+    assert!(h.command(start(&id)).await.error.is_none());
+    let stopped = h.wait_state(AgentState::Stopped).await;
+    assert_eq!(stopped.run_backend, pb::Backend::Kernel as i32);
+    let ports: Vec<_> = port_modes(&stopped);
+    assert_eq!(
+        ports,
+        [
+            ("client0".to_owned(), "veth-c0".to_owned(), 0),
+            ("server0".to_owned(), "veth-s0".to_owned(), 0),
+        ]
+    );
     h.shutdown().await;
 }
