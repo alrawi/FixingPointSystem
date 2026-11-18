@@ -1,0 +1,3 @@
+runner=GitHub hosted ubuntu-24.04, job afxdp of trn.yml (debug build), PR 650 at e3aa4f2
+source=log of job 134656276304, the report lines of the test
+cpus=not recorded (the test writes host.txt when FPS_DATAPATH_RESULTS is set)

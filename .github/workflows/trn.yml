@@ -13,6 +13,8 @@ on:
     paths:
       - engine/fps-backend-kernel/**
       - engine/fps-backend-afxdp/**
+      - engine/fps-datapath/**
+      - engine/fps-tcp-own/**
       - tests/harness/**
       - realism/**
       - mk/trn.mk
@@ -23,6 +25,8 @@ on:
     paths:
       - engine/fps-backend-kernel/**
       - engine/fps-backend-afxdp/**
+      - engine/fps-datapath/**
+      - engine/fps-tcp-own/**
       - tests/harness/**
       - realism/**
       - mk/trn.mk

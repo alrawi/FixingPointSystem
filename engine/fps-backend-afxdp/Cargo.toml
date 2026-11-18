@@ -10,3 +10,13 @@ publish.workspace = true
 [dependencies]
 libc = "0.2"
 thiserror = "2"
+
+# The datapath depends on this crate, so these are dev-dependencies only, which
+# Cargo allows to form a cycle. The tests/datapath_veth.rs test of TRN-27 runs
+# the datapath over AF_XDP queues here, so the afxdp job of trn.yml (which runs
+# this crate's tests with FPS_REQUIRE_AFXDP=1) covers it without a job of its
+# own.
+[dev-dependencies]
+fps-datapath = { path = "../fps-datapath" }
+fps-tcp-own = { path = "../fps-tcp-own" }
+tokio = { version = "1.54", features = ["io-util", "macros", "rt", "sync", "time"] }

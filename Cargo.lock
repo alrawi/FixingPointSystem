@@ -996,8 +996,11 @@ dependencies = [
 name = "fps-backend-afxdp"
 version = "0.0.1"
 dependencies = [
+ "fps-datapath",
+ "fps-tcp-own",
  "libc",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -1021,6 +1024,17 @@ version = "0.0.1"
 dependencies = [
  "fps-io",
  "fps-module-tls",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "fps-datapath"
+version = "0.0.1"
+dependencies = [
+ "fps-backend-afxdp",
+ "fps-hosts",
+ "fps-tcp-own",
  "thiserror 2.0.21",
  "tokio",
 ]

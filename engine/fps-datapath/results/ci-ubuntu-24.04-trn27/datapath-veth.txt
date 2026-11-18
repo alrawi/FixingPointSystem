@@ -1,0 +1,3 @@
+held sessions=2000 sockets_held=4001 failed=0
+result sessions=10000 failed=0 bad_bytes=0 concurrency=64 hold=2000 elapsed_ms=1447 sessions_per_second=6908 sockets_held=4001 sockets_peak=11176 client=copy server=copy
+frames stack_tx=117581 client_tcp=57581 server_tcp=60000 client_arp=0 client_other=4 client_nd_unsupported=3 client_udp_unsupported=0 loop_passes=1914278 panicked=0
