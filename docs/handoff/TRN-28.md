@@ -10,7 +10,7 @@
 | Branch | `wp/TRN-28` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Progress | 90% (4 of 4 plan steps, CI pending) |
 | Current holder | claude-7a7cf0, lease until 2026-11-18T12:59:34Z |
 | Last verified commit | none |
 
@@ -27,20 +27,22 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Read the own stack handshake code and the kernel profile table
 - [x] 2. Profile type and the mapping onto the SYN and SYN-ACK
 - [x] 3. Tests that compare the SYN and SYN-ACK bytes of each profile with the table
-- [ ] 4. Wiki ingest (log entry, Transport page), checks, pull request
+- [x] 4. Wiki ingest (log entry, Transport page), checks, pull request
 
 ## Done and verified
 
 - Steps 1 to 3: `cargo test -p fps-tcp-own` passes (177 unit, 25 in `tests/own.rs`, 3 in `tests/profile_table.rs`), `cargo clippy -p fps-tcp-own --all-targets -- -D warnings` and `cargo fmt -p fps-tcp-own -- --check` are clean.
+- Capture evidence: `cargo run -p fps-tcp-own --example os_profile_capture -- DIR`, then `python3 -m realism score --pcap DIR/NAME.pcapng --labels LABELS --parsers none --os-profile NAME --client-hops 0 --server-hops 0 --transport-strict` gives a passed `transport_behavior` entry with no failure and no deviation for windows11, linux6, and macos14. Each capture scored as another profile fails.
+- `python3 tools/plan/plan.py check`, `render --check`, and `lint` pass; `make lint-trn test-trn` passes.
 - `profile.rs` has `OsProfile` (windows11, linux6, macos14), `wire.rs` has `Style` (TTL and SYN option order) and `encode_styled`, `host.rs` has `Host::with_profile`, `OwnConfig` has `client_os_profile` and `server_os_profile`.
 
 ## Remaining
 
-Step 4: log entry, Transport page, PR and CI. Optional: an example that writes a pcapng of the handshakes, so the capture checks of the kernel backend can score the own stack.
+CI result of the pull request; then `ready for review`, 100%, and `fps_swarm.py review 629 --pr N`.
 
 ## Next action
 
-Write the log entry `docs/wiki/log/2026-11-18T1300-ingest-trn-28-os-profiles-own-stack.md` and the Transport page section, run the checks of AGENTS.md, open the PR.
+Wait for CI on the pull request and fix failures inside engine/fps-tcp-own/, the log entry, the handoff, and docs/wiki/Transport.md.
 
 ## Blockers and open questions
 
@@ -72,3 +74,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-18T11:30Z | claude-7a7cf0 | claim | | Claimed #629 with 4 steps |
 | 2026-11-18T11:55Z | claude-7a7cf0 | checkpoint | | Profile type, wire style, host mapping, tests (steps 1 to 3) |
+| 2026-11-18T12:15Z | claude-7a7cf0 | checkpoint | | Capture example, log entry, Transport page, checks (step 4) |
