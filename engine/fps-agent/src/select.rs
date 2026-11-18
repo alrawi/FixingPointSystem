@@ -12,7 +12,7 @@
 //! | `forced` | the operator, through `--backend` of `fps-agent connect` |
 //! | `kernel` | `KernelFacts::default()`, which the kernel backend crate decides |
 //! | `af_xdp.kernel_support` | [`HostCapabilities::af_xdp`], where only a `Supported` kernel counts and `Unknown` does not |
-//! | `af_xdp.transport_available` | `AfXdpFacts::default()`, which copies `fps_backend_afxdp::TRANSPORT_AVAILABLE` |
+//! | `af_xdp.transport_available` | `AfXdpFacts::default()`, which copies `fps_backend_afxdp::TRANSPORT_AVAILABLE`, and `true` when the operator forces AF_XDP (AGT-24) |
 //! | `af_xdp.driver` | the weakest port, see [`weakest_driver`] |
 //!
 //! The selection reads facts that detection already collected. It opens no
@@ -75,15 +75,23 @@ pub fn weakest_driver(ports: &[DetectedPort]) -> XdpSupport {
 ///
 /// `forced` is the backend that the operator asks for, or `None` to let the
 /// rules choose. The transport facts come from the defaults of the backend
-/// crates, so TRN-12 turns AF_XDP on by changing a constant of its own crate.
+/// crates, so TRN-31 turns AF_XDP on by changing a constant of its own crate.
+///
+/// An operator who forces AF_XDP gets it before that flip (AGT-24): the
+/// datapath of TRN-27 is a transport that exists, and the constant only keeps
+/// AF_XDP from becoming the default of every host before the own stack has
+/// loss recovery and congestion control. So a forced AF_XDP run sets
+/// `transport_available`, and the other checks (kernel support and driver)
+/// still decide. Without a forced backend the facts stay as they are.
 pub fn selection_input(host: &HostCapabilities, forced: Option<BackendKind>) -> SelectionInput {
+    let defaults = AfXdpFacts::default();
     SelectionInput {
         forced,
         kernel: KernelFacts::default(),
         af_xdp: AfXdpFacts {
             kernel_support: host.af_xdp.is_supported(),
+            transport_available: defaults.transport_available || forced == Some(BackendKind::AfXdp),
             driver: weakest_driver(&host.ports),
-            ..AfXdpFacts::default()
         },
     }
 }
@@ -368,43 +376,64 @@ mod tests {
 
     #[test]
     fn a_forced_af_xdp_on_a_host_without_a_driver_fails() {
-        // A supported kernel and a driver without XDP, or a host without
-        // ports. With the transport missing the transport cause comes first,
-        // so the check follows the constant.
+        // A supported kernel and a host without ports. A forced AF_XDP run
+        // has a transport (AGT-24), so the driver is the cause, whatever the
+        // transport constant says.
         let h = host("6.8.0", SUPPORTED, &[]);
         let err = select(&h, Some(BackendKind::AfXdp)).unwrap_err();
-        let why = if TRANSPORT_AVAILABLE {
-            Unavailable::NoDriverSupport
-        } else {
-            Unavailable::NoTransport
-        };
         assert_eq!(
             err,
             SelectError::ForcedUnsupported {
                 backend: BackendKind::AfXdp,
-                why
+                why: Unavailable::NoDriverSupport,
             }
+        );
+        // A bridge has no driver, so no queue could bind to it.
+        let h = host("6.12.0", SUPPORTED, &[""]);
+        let err = select(&h, Some(BackendKind::AfXdp)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "backend af_xdp was forced but is unsupported: the driver takes no XDP program"
         );
     }
 
     #[test]
-    fn a_forced_af_xdp_without_a_transport_fails_with_a_clear_message() {
-        if TRANSPORT_AVAILABLE {
-            return;
-        }
+    fn a_forced_af_xdp_runs_before_the_transport_constant_is_flipped() {
+        // The test holds before and after TRN-31, because a forced run does
+        // not read the constant.
         let h = host("6.12.0", SUPPORTED, &["ice"]);
-        let err = select(&h, Some(BackendKind::AfXdp)).unwrap_err();
-        assert_eq!(
-            err,
-            SelectError::ForcedUnsupported {
-                backend: BackendKind::AfXdp,
-                why: Unavailable::NoTransport,
-            }
-        );
-        assert_eq!(
-            err.to_string(),
-            "backend af_xdp was forced but is unsupported: no transport carries TCP over this backend"
-        );
+        let input = selection_input(&h, Some(BackendKind::AfXdp));
+        assert!(input.af_xdp.transport_available);
+        let sel = select(&h, Some(BackendKind::AfXdp)).unwrap();
+        assert_eq!(sel.backend, BackendKind::AfXdp);
+        assert_eq!(sel.reason, SelectionReason::Forced);
+        assert_eq!(sel.xdp, Some(XdpSupport::ZeroCopy));
+        // A forced run on a generic only host is the operator's call.
+        let h = host("6.12.0", SUPPORTED, &["e1000e"]);
+        let sel = select(&h, Some(BackendKind::AfXdp)).unwrap();
+        assert_eq!(sel.backend, BackendKind::AfXdp);
+        assert_eq!(sel.xdp, Some(XdpSupport::Generic));
+    }
+
+    #[test]
+    fn without_a_forced_af_xdp_the_transport_fact_is_the_constant() {
+        let h = host("6.12.0", SUPPORTED, &["ice"]);
+        for forced in [None, Some(BackendKind::Kernel)] {
+            assert_eq!(
+                selection_input(&h, forced).af_xdp.transport_available,
+                TRANSPORT_AVAILABLE,
+                "{forced:?}"
+            );
+        }
+        if !TRANSPORT_AVAILABLE {
+            // The default selection stays the kernel backend until TRN-31.
+            let sel = select(&h, None).unwrap();
+            assert_eq!(sel.backend, BackendKind::Kernel);
+            assert_eq!(
+                sel.reason,
+                SelectionReason::Default(Unavailable::NoTransport)
+            );
+        }
     }
 
     #[test]
