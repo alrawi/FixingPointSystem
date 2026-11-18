@@ -49,8 +49,10 @@
 //!
 //! # What this transport does not do
 //!
-//! IPv6 hosts and DHCP are refused when the backend starts, see
-//! [`crate::backend`], so every address here is IPv4.
+//! DHCP hosts are refused when the backend starts, see [`crate::backend`].
+//! The addresses are IPv4 or IPv6 (AGT-28): both pools of a run use one
+//! family, and the datapath finds the lane of a session by the family of its
+//! hosts.
 
 use std::collections::HashMap;
 use std::fmt;

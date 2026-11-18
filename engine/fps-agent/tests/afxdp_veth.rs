@@ -25,10 +25,20 @@
 //!    criteria with no failed session, and reports the frames that each lane
 //!    carried.
 //!
+//! The same run exists over IPv6 (AGT-28): the second test gives both pools an
+//! IPv6 prefix (`fd00:1::/64` for the clients, `fd00:2::/64` for the servers)
+//! and no IPv4 prefix, so every frame on the pair is IPv6 and the agent starts
+//! the datapath with IPv6 pools. The check of the run is the same. The
+//! kernel never sees the frames of the stack (the AF_XDP socket takes them
+//! before the IP layer), so the test does not need IPv6 in the kernel, only
+//! the veth pair.
+//!
 //! The own stack sends no ARP requests, and the station tables of the pools
-//! hold the MAC address of every host, so the harness seeds no neighbors. No
-//! kernel socket is a peer here, so the transmit checksum offload of the veth
-//! pair does not matter (a kernel peer needs it off, see TRN-26).
+//! hold the MAC address of every host, so the harness seeds no neighbors (a
+//! pool with a gateway turns the next hop resolution on, see
+//! `afxdp_router.rs`). No kernel socket is a peer here, so the transmit
+//! checksum offload of the veth pair does not matter (a kernel peer needs it
+//! off, see TRN-26).
 //!
 //! AF_XDP needs root. As a normal user the test runs itself again through
 //! `sudo -n` and skips with a message when neither works. `CI=true` or
@@ -56,7 +66,32 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const MARK: &str = "fps-agent-afxdp ";
 const TEST: &str = "a_forced_af_xdp_run_starts_the_datapath_on_a_veth_pair";
+const TEST_V6: &str = "a_forced_af_xdp_run_over_ipv6_pools_starts_the_datapath_on_a_veth_pair";
 const PORT: u16 = 8080;
+
+/// The address family of the pools of a run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Family {
+    V4,
+    V6,
+}
+
+impl Family {
+    fn name(self) -> &'static str {
+        match self {
+            Self::V4 => "ipv4",
+            Self::V6 => "ipv6",
+        }
+    }
+
+    /// The family that the parent test names for the helper.
+    fn from_env() -> Self {
+        match std::env::var("FPS_AGENT_AFXDP_FAMILY").as_deref() {
+            Ok("ipv6") => Self::V6,
+            _ => Self::V4,
+        }
+    }
+}
 
 fn run_cmd(cmd: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new(cmd)
@@ -119,6 +154,18 @@ fn contracts() -> PathBuf {
 
 #[test]
 fn a_forced_af_xdp_run_starts_the_datapath_on_a_veth_pair() {
+    drive(TEST, Family::V4);
+}
+
+#[test]
+fn a_forced_af_xdp_run_over_ipv6_pools_starts_the_datapath_on_a_veth_pair() {
+    drive(TEST_V6, Family::V6);
+}
+
+/// Runs the helper of `family` in a namespace and checks what it reports.
+/// `test` is the name of the calling test, which a run as a normal user
+/// starts again under `sudo -n`.
+fn drive(test: &str, family: Family) {
     let root = run_cmd("id", &["-u"]).is_ok_and(|s| s.trim() == "0");
     if !root {
         if run_cmd("sudo", &["-n", "true"]).is_err() {
@@ -134,7 +181,7 @@ fn a_forced_af_xdp_run_starts_the_datapath_on_a_veth_pair() {
         }
         let status = cmd
             .arg(exe)
-            .args(["--exact", TEST, "--nocapture"])
+            .args(["--exact", test, "--nocapture"])
             .status()
             .expect("sudo starts");
         assert!(status.success(), "the test failed under sudo");
@@ -148,7 +195,8 @@ fn a_forced_af_xdp_run_starts_the_datapath_on_a_veth_pair() {
         Ok(_) => {}
         Err(e) => return skip(&format!("capability detection failed: {e}")),
     }
-    let name = format!("ag{}", std::process::id() % 100_000);
+    // Both tests run in one process, so the family is part of the name.
+    let name = format!("ag{}{}", std::process::id() % 100_000, &family.name()[3..]);
     let ns = match Namespace::up(&name) {
         Ok(ns) => ns,
         Err(e) => return skip(&format!("the namespace did not come up: {e}")),
@@ -160,6 +208,7 @@ fn a_forced_af_xdp_run_starts_the_datapath_on_a_veth_pair() {
         .arg(exe)
         .args(["--ignored", "--exact", "helper_afxdp", "--nocapture"])
         .env("FPS_AGENT_AFXDP_ROLE", "run")
+        .env("FPS_AGENT_AFXDP_FAMILY", family.name())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
@@ -175,7 +224,9 @@ fn a_forced_af_xdp_run_starts_the_datapath_on_a_veth_pair() {
         eprintln!("{MARK}{l}");
     }
     assert!(status.success(), "the helper failed: {lines:?}");
+    let pools = format!("pools family={}", family.name());
     for want in [
+        pools.as_str(),
         "selected backend=af_xdp",
         "port client0 interface dpa",
         "port server0 interface dpb",
@@ -216,7 +267,7 @@ fn say(msg: &str) {
 }
 
 /// The example plan on the two ends of the veth pair with the AF_XDP backend.
-fn af_xdp_plan() -> Json {
+fn af_xdp_plan(family: Family) -> Json {
     let text = std::fs::read_to_string(contracts().join("examples/plans/http_dns_smoke.json"))
         .expect("example plan");
     let mut plan: Json = serde_json::from_str(&text).expect("example plan JSON");
@@ -225,10 +276,25 @@ fn af_xdp_plan() -> Json {
         { "name": "client0", "interfaceName": "dpa" },
         { "name": "server0", "interfaceName": "dpb" }
     ]);
-    plan["hostPools"][0]["ipv4Prefix"] = "10.1.0.0/24".into();
+    for (pool, v4, v6) in [
+        (0, "10.1.0.0/24", "fd00:1::/64"),
+        (1, "10.2.0.0/24", "fd00:2::/64"),
+    ] {
+        match family {
+            Family::V4 => plan["hostPools"][pool]["ipv4Prefix"] = v4.into(),
+            // No IPv4 prefix at all, so no frame of the run can be IPv4 and
+            // the agent has to start the datapath with IPv6 pools (AGT-28).
+            Family::V6 => {
+                plan["hostPools"][pool]
+                    .as_object_mut()
+                    .expect("a host pool is an object")
+                    .remove("ipv4Prefix");
+                plan["hostPools"][pool]["ipv6Prefix"] = v6.into();
+            }
+        }
+    }
     plan["hostPools"][0]["poolCount"] = 4.into();
     plan["hostPools"][0]["count"] = 4.into();
-    plan["hostPools"][1]["ipv4Prefix"] = "10.2.0.0/24".into();
     // One OS profile for each side (TRN-28): the own stack writes them into
     // the SYN and the SYN-ACK.
     plan["hostPools"][0]["osProfile"] = "windows11".into();
@@ -274,19 +340,32 @@ fn host_address(plan: &Plan, pool: &str, i: u32) -> IpAddr {
         .iter()
         .find(|p| p.name == pool)
         .expect("the pool");
+    let opt = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+    let (v4, v6) = (opt(&slice.ipv4_prefix), opt(&slice.ipv6_prefix));
     let parsed = HostPool::parse(&PoolSpec {
         name: &slice.name,
-        ipv4: Some(&slice.ipv4_prefix),
+        ipv4: v4.as_deref(),
+        ipv6: v6.as_deref(),
         count: slice.pool_count,
         ..PoolSpec::default()
     })
     .expect("the pool parses");
-    IpAddr::V4(
-        parsed
-            .ipv4_addr(i)
-            .expect("an address")
-            .expect("an IPv4 pool"),
-    )
+    // IPv4 when the pool has it, as the workers of the agent pick.
+    if v4.is_some() {
+        IpAddr::V4(
+            parsed
+                .ipv4_addr(i)
+                .expect("an address")
+                .expect("an IPv4 pool"),
+        )
+    } else {
+        IpAddr::V6(
+            parsed
+                .ipv6_addr(i)
+                .expect("an address")
+                .expect("an IPv6 pool"),
+        )
+    }
 }
 
 #[test]
@@ -295,15 +374,28 @@ fn helper_afxdp() {
     if std::env::var("FPS_AGENT_AFXDP_ROLE").is_err() {
         return;
     }
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fps-agent-afxdp");
+    let family = Family::from_env();
+    let dir =
+        Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("fps-agent-afxdp-{}", family.name()));
     std::fs::create_dir_all(&dir).expect("plan dir");
     let path = dir.join("af_xdp_plan.json");
-    std::fs::write(&path, serde_json::to_string_pretty(&af_xdp_plan()).unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&af_xdp_plan(family)).unwrap(),
+    )
+    .unwrap();
     let modules = contracts().join("examples/modules");
 
     // 1. The run follows the selection. The agent selected AF_XDP, and the
     //    plan agrees.
     let plan = Plan::load(&path).expect("the plan loads");
+    for pool in &plan.host_pools {
+        match family {
+            Family::V4 => assert!(pool.ipv6_prefix.is_empty() && !pool.ipv4_prefix.is_empty()),
+            Family::V6 => assert!(pool.ipv4_prefix.is_empty() && !pool.ipv6_prefix.is_empty()),
+        }
+    }
+    say(&format!("pools family={}", family.name()));
     let prepared = fps_agent::run::prepare_on(
         plan.clone(),
         &modules,
@@ -383,9 +475,12 @@ fn helper_afxdp() {
         let connector = backend.datapath().connector();
         let src = host_address(&plan, "clients", 0);
         let dst = SocketAddr::new(host_address(&plan, "servers", 0), PORT);
+        assert_eq!(src.is_ipv6(), family == Family::V6, "{src}");
+        assert_eq!(dst.is_ipv6(), family == Family::V6, "{dst}");
         let (sent, ok) = runtime.block_on(async move {
             let server = tokio::spawn(async move {
-                let (mut session, _peer) = listener.accept().await.expect("accept");
+                let (mut session, peer) = listener.accept().await.expect("accept");
+                assert_eq!(peer.ip(), src, "the server sees the client host");
                 let mut buf = vec![0u8; 4096];
                 session.read_exact(&mut buf).await.expect("read");
                 // Echo the bytes back inverted, so a reflected frame is not
@@ -485,6 +580,16 @@ fn helper_afxdp() {
     assert!(lane.stats.udp_client.tx_datagrams > 0, "{lane:?}");
     assert!(lane.stats.udp_server.rx_accepted > 0, "{lane:?}");
     assert_eq!(lane.stats.udp_client.rx_no_listener, 0, "{lane:?}");
+    // No frame needed a neighbor resolution, because no pool names a gateway.
+    // (Frames that the kernel of the namespace sends on its own, such as
+    // multicast listener reports, are counted as other protocols, so the test
+    // does not pin `other_dropped`.)
+    for (side, frames) in [
+        ("client", &lane.stats.client),
+        ("server", &lane.stats.server),
+    ] {
+        assert_eq!(frames.neighbor_requests, 0, "{side}: {frames:?}");
+    }
     say(&format!("run outcome=pass sessions {}", sessions.join(" ")));
 
     // The lease of a queue ends with the run, so a second start works.
