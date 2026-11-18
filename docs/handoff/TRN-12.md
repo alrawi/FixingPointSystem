@@ -1,68 +1,73 @@
 # Handoff TRN-12 User space TCP over AF_XDP, end to end
 
-<!-- Copy this file to docs/handoff/<ID>.md when you claim a work package.
-     Update it at every checkpoint. A successor reads only this file, the
-     issue, and the branch, so write for an agent that knows nothing else. -->
-
 | Field | Value |
 |---|---|
 | Issue | #563 |
 | Branch | `wp/TRN-12` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
-| Current holder | claude-7c41e9, lease until 2026-11-18T17:31:32Z |
-| Last verified commit | none |
+| Progress | 80% (4 of 5 plan steps) |
+| Current holder | claude-7c41e9, lease until 2026-11-18T17:43:15Z |
+| Last verified commit | 16b6f56 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
 ## Goal
 
-The http1 module passes realism CI on the AF_XDP backend: the agent forced onto AF_XDP runs the http1 scenarios over a veth pair in the namespace harness and the capture scores like the kernel run.
+The http1 module passes realism CI on the AF_XDP backend: the agent forced onto AF_XDP runs the http1 scenarios over a veth pair, and the capture scores like the kernel run (conformance, parser errors, encryption). The coordinator adds the CI job.
 
 ## Plan
 
-Each step takes at most 30 minutes of work and ends in a state that tests can check.
-
-- [ ] 1. Read the code, run afxdp_veth locally
-- [ ] 2. Script that records the http1 run on AF_XDP
-- [ ] 3. Fix what the run finds in the paths
-- [ ] 4. Log entry, component page, checks
-- [ ] 5. PR and CI
+- [x] 1. Read the code, run the agent on a veth pair locally
+- [x] 2. Script that records the http1 run on AF_XDP (`engine/fps-datapath/realism/`)
+- [x] 3. Fix what the run finds inside the paths (nothing; one gap in the agent, described in the log entry)
+- [x] 4. Log entry, Transport page, local checks
+- [ ] 5. Pull request and CI
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- `sudo engine/fps-datapath/realism/http1-afxdp.sh target-TRN-12/debug/fps-agent OUT` with the stock agent: 199 of 199 sessions pass, conformance and parser errors pass, the encryption check fails for lack of keys (the script notices the agent has no `run --keylog` and leaves the `tls` labels out, exit 0).
+- The same run with the agent change of the log entry (scratch copy outside the repo): conformance, parser errors, encryption pass, 68 of 68 TLS sessions decrypt, `realism decrypted` passes.
+- `python3 -m pytest -q engine/fps-datapath/realism` (4 passed), `shellcheck`, `ruff`, `mypy --strict` on the new files, `plan.py check`, `render --check`, `lint`, `build_log.py --check`.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Open the PR and wait for CI. The PR runs no job for the new script, because the coordinator adds the workflow job (see the log entry, Shared page notes).
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Open the pull request, run `fps_swarm.py review 563 --pr N`, and report.
 
 ## Blockers and open questions
 
-Write "none" or name each blocker with a link to its issue.
+none. The key log of a standalone agent run is an agent change outside the paths; the exact diff is in the log entry.
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- One agent process on a veth pair with a bridge as the tap: the agent starts AF_XDP only with `--side both`, AF_XDP takes the frames before any tap, and the harness router needs next hop resolution in the agent (TRN-35, AGT-26).
+- The plain scenarios get one port each (8080 to 8085) because two mix entries cannot listen on one port of one server host.
+- No `--scenario` structure check: it fails on the committed kernel capture too, and the kernel run does not use it.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+- `grep -q` on the output of the agent under `set -o pipefail` ends the pipe early and fails the pipeline with SIGPIPE; the script reads the usage text into a variable instead.
+- A tcpdump on either veth end of an AF_XDP port sees nothing.
+- The sandbox has no IPv6, so the `sysctl` that turns it off must tolerate a missing file.
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+sudo engine/fps-datapath/realism/http1-afxdp.sh target/debug/fps-agent /tmp/http1-afxdp   # exit 0, three checks pass
+python3 -m pytest -q engine/fps-datapath/realism                                         # 4 passed
 ```
+
+## Host test
+
+Not needed: the run needs only root, network namespaces, and veth, which hosted runners and the sandbox have. Argv: `engine/fps-datapath/realism/http1-afxdp.sh PATH_TO_FPS_AGENT OUTPUT_DIR`, sudo, timeout 120 seconds, expected exit 0 and the line `realism decrypted: 68 of 68 TLS sessions decrypt` (the count varies) when the agent has `--keylog`.
 
 ## Session log
 
-Append one row per session start, checkpoint, release, block, takeover, and finish. Never edit earlier rows.
-
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
+| 2026-11-18T17:21Z | claude-7c41e9 | claim | none | Claimed #563 |
+| 2026-11-18T17:33Z | claude-7c41e9 | checkpoint | 16b6f56 | The script and the plan generator |

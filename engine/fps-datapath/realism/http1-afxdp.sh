@@ -24,7 +24,7 @@
 # The capture is scored like the kernel run: the labels of expected.yaml with
 # the plain scenarios on the ports 8080 to 8085, the conformance check, the
 # parser error check, and the encryption check (decryption and JA4) of the https
-# sessions. The script exits with 0 when every check passes, 1 when a check
+# sessions, then the HTTP inside TLS on the decrypted view. The script exits with 0 when every check passes, 1 when a check
 # fails, and 2 when the run cannot start. It needs root, ip, ethtool, tcpdump,
 # editcap, ndpiReader, tshark, and PyYAML (realism/ci/install-tools.sh installs
 # them).
@@ -79,7 +79,8 @@ trap cleanup EXIT
 # leaves the decryption out of the labels, and the script says so.
 keys=none
 keylog_args=()
-if "$agent" run --help 2>&1 | grep -q -- '--keylog'; then
+usage=$("$agent" run --help 2>&1 || true)
+if [[ $usage == *"--keylog"* ]]; then
   keys=keylog
   keylog_args=(--keylog "$work/keys.log")
 else
@@ -137,4 +138,17 @@ cd "$root"
 score_rc=0
 python3 -m realism score --pcap "$out/http1-afxdp.pcapng" --labels "$out/labels.yaml" \
   --parsers "$parsers" --output "$out/http1-afxdp.report.json" || score_rc=$?
-exit $(( score_rc != 0 ? score_rc : agent_rc ))
+check_rc=0
+if [[ $keys == keylog ]]; then
+  # The HTTP inside the TLS sessions, scored on a decrypted view as in the kernel
+  # run. Every labelled https session of the capture must be in the view.
+  tls_sessions=$(python3 -I -c 'import json, sys
+r = json.load(open(sys.argv[1]))
+print(next(c["labelled_sessions"] for c in r["checks"] if c["check"] == "encryption"))' \
+    "$out/http1-afxdp.report.json")
+  python3 -m realism decrypted --pcap "$out/http1-afxdp.pcapng" \
+    --labels "$root/realism/examples/decrypted/http1.labels.yaml" \
+    --sessions "$tls_sessions" --parsers "$parsers" \
+    --output "$out/http1-afxdp.decrypted.json" || check_rc=$?
+fi
+exit $(( score_rc != 0 ? score_rc : (check_rc != 0 ? check_rc : agent_rc) ))
