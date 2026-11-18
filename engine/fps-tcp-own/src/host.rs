@@ -1709,6 +1709,9 @@ fn not_connected() -> io::Error {
 }
 
 #[cfg(test)]
+mod recovery_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

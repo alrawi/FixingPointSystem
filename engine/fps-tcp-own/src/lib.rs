@@ -23,21 +23,48 @@
 //!   segments to unknown connections, and for refused connections.
 //! * IPv4 and TCP checksums, computed and verified on every frame.
 //!
+//! # Loss recovery (TRN-23)
+//!
+//! The pure mechanisms are in [`recovery`], the state machine that uses them in
+//! [`host`].
+//!
+//! * A round trip estimator with the retransmission timeout of RFC 6298
+//!   (`SRTT`, `RTTVAR`, a timeout of `SRTT + max(G, 4 RTTVAR)` between a
+//!   minimum of 200 ms and a maximum of 2 s), Karn's rule (one segment is
+//!   timed at a time, and none that was sent again), and a timeout that doubles
+//!   on every expiry and keeps its backoff until a valid sample arrives.
+//! * Fast retransmit on the third duplicate acknowledgment (RFC 5681), with
+//!   Limited Transmit (RFC 3042) on the first two.
+//! * An out of order queue: segments inside the receive window that arrive
+//!   behind a hole are held, the receiver repeats its ACK at once for every
+//!   one of them (so the sender counts duplicates), and a FIN behind a hole is
+//!   remembered until the hole fills.
+//! * NewReno: slow start and congestion avoidance (RFC 5681), fast recovery
+//!   with partial acknowledgments (RFC 6582), a window of 10 segments to start
+//!   with (RFC 6928, [`OwnConfig::initial_cwnd_segments`]), and a window of one
+//!   segment after a timeout.
+//!
+//! The state of these mechanisms lives in a box that a connection holds only
+//! while data is in flight or queued to send, or while data waits behind a
+//! hole. An idle connection holds a `None` of 8 bytes, so the per socket cost
+//! stays flat; the price is that an idle connection restarts slow start from
+//! the initial window and forgets `SRTT` and the slow start threshold (its
+//! retransmission timeout stays).
+//!
 //! # What the stack leaves out, on purpose
 //!
 //! These are the limits that decision record 0014 has to weigh, because every
 //! one of them is work that a production stack would still have to do.
 //!
-//! * Retransmission is minimal. One timer per connection with a fixed initial
-//!   timeout of 200 ms that doubles up to 2 s, go back N from the first
-//!   unacknowledged byte, and a reset after 8 timeouts without any segment
-//!   from the peer. There is no round trip estimate, no fast retransmit, no
-//!   selective acknowledgment, and no persist timer beyond the same probe.
-//! * No congestion control. The sender is limited by the window of the peer
-//!   only, which is right for a link of two hosts and wrong for a network.
-//! * No window scaling, so a window is at most 65,535 bytes. No timestamps, no
-//!   delayed acknowledgments, no Nagle (the stack sends what it has).
-//! * Out of order segments are dropped, and the receiver repeats its ACK.
+//! * No selective acknowledgment (TRN-24), so a window with several losses
+//!   recovers one hole per round trip, and no persist timer beyond the
+//!   retransmission probe. A connection is reset after 8 timeouts without any
+//!   segment from the peer.
+//! * No window scaling, so a window is at most 65,535 bytes, which caps the
+//!   goodput at 13 Mbit/s on a round trip of 40 ms. No timestamps, no delayed
+//!   acknowledgments, no Nagle (the stack sends what it has). The receiver
+//!   sends a window update when a read opened the window by a segment or half
+//!   the buffer since the last one it sent.
 //! * No simultaneous open, no urgent data, no IP fragmentation or options, no
 //!   keepalive, and no IPv6.
 //! * No ARP requests of its own: the neighbors are read from the tables of

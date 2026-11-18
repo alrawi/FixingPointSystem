@@ -172,13 +172,12 @@ async fn own_stack_completes_at_one_percent_loss_and_recovers_by_duplicate_ackno
     let stack = own(link(10_000, 20));
     let cfg = LossConfig {
         timeout: Duration::from_secs(60),
-        ..config(4096)
+        ..config(1024)
     };
     let run = loss_transfer(&stack, &cfg).await;
     assert!(run.completed, "{:?}", run.failure);
     assert!(run.link_lost > 0, "the link lost nothing");
     let host = stack.stack().counters();
-    eprintln!("own at 1%: {host:?} link {run:?}");
     // Most losses are recovered by a fast retransmit and not by a timeout.
     assert!(host.client.fast_retransmits > 0, "{host:?}");
     assert!(host.client.aborted == 0 && host.server.aborted == 0);

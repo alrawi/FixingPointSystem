@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-23` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 50% (3 of 6 plan steps) |
 | Current holder | claude-eae373, lease until 2026-11-18T05:08:24Z |
 | Last verified commit | none |
 
@@ -18,24 +18,25 @@ The own stack (`engine/fps-tcp-own`) recovers from loss: an RFC 6298 RTT estimat
 
 ## Plan
 
-- [ ] 1. Pure mechanisms in `recovery.rs` (estimator, NewReno, out of order queue) with unit tests
-- [ ] 2. Wire them into the state machine (`host.rs`), per-connection state in a box that exists only while data is in flight
-- [ ] 3. Host tests for loss recovery over the lossy link (`engine/fps-tcp/tests/lossy.rs`)
+- [x] 1. Pure mechanisms in `recovery.rs` (estimator, NewReno, out of order queue) with unit tests
+- [x] 2. Wire them into the state machine (`host.rs`), per-connection state in a box that exists only while data is in flight
+- [x] 3. Host tests for loss recovery over the lossy link (`engine/fps-tcp/tests/lossy.rs`)
 - [ ] 4. Measure the loss workload and the 1M scale row, commit results with host.txt
 - [ ] 5. Docs: Transport page, log entry, bench notes
 - [ ] 6. Checks, PR, CI, review
 
 ## Done and verified
 
-Nothing yet.
+- `cargo test -p fps-tcp-own -p fps-tcp` passes (72 unit tests in the lib incl. 14 host level recovery tests, 24 integration); clippy -D warnings clean.
+- Sandbox loss run (own): 0% 11.98, 0.1% 7.5, 1% 3.12 Mbit/s, all complete (was 12.2, 8.0, 1.8 with one transfer unfinished).
 
 ## Remaining
 
-Everything.
+Measure and commit results (loss and scale rows with main in the same session), docs (Transport page, log entry), cargo deny, plan.py checks, PR.
 
 ## Next action
 
-Write `engine/fps-tcp-own/src/recovery.rs`.
+Run the final measurements into `engine/fps-tcp/results/sandbox-2vcpu-trn23/` with host.txt.
 
 ## Blockers and open questions
 
@@ -43,11 +44,13 @@ none
 
 ## Decisions taken in this package
 
-none yet
+- Recovery state is `Option<Box<Recovery>>` in `Conn` (8 bytes idle), dropped when nothing is in flight, nothing waits to be sent, and nothing is held out of order.
+- Slow start grows by the bytes acknowledged (the stack acks a batch with one ACK), full ACK ends recovery at ssthresh, Limited Transmit on dupacks 1 and 2, `recover` holds snd_max.
+- The receiver now sends a window update when a read opened the window by a segment since the last advertised window (`adv_wnd`, 2 bytes); the old rule only fired when the window had been nearly closed, which halved the 0% goodput once the congestion window kept the flight below the window.
 
 ## Pitfalls
 
-none yet
+- A test helper that counts data segments must read the TCP header length: the SYN carries an MSS option.
 
 ## Verify the current state
 
@@ -60,3 +63,4 @@ cargo test -p fps-tcp-own
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-18T04:08Z | claude-eae373 | claim | none | claimed #624, base origin/main b3c4b29 |
+| 2026-11-18T05:05Z | claude-eae373 | checkpoint | e248c3a | mechanisms, host tests, clippy clean |
