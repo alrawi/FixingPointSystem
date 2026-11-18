@@ -589,3 +589,14 @@ def test_the_decrypted_command_names_the_failed_count(tmp_path: Path) -> None:
     assert "missing imap message: found 2, expected 3" in broken.failures[1]
     entry = next(c for c in broken.report["checks"] if c["check"] == "messages")
     assert entry["failures_total"] == 8
+
+
+def test_parse_frame_fields_keeps_the_frame_of_every_count() -> None:
+    from realism.messages import parse_frame_fields
+
+    row = "\t".join(["7", "10.0.0.1", "", "40000", "10.0.0.2", "", "443", "GET"])
+    frames = parse_frame_fields(row + "\n\n", ["requests"])
+    assert [f.frame for f in frames] == [7]
+    assert [dict(f.counts) for f in frames] == [{"requests": 1}]
+    with pytest.raises(ValueError, match="not a number"):
+        parse_frame_fields("x\t10.0.0.1\n", ["requests"])
