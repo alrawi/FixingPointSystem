@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #662 |
 | Branch | `wp/AGT-25` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (4 of 4 plan steps, PR and CI to come) |
+| Pull request | #668 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | claude-eda452, lease until 2026-11-18T15:50:20Z |
-| Last verified commit | 834eeb7 |
+| Last verified commit | 3dfc75f |
 
 ## Goal
 
@@ -26,14 +26,15 @@
 - `cargo test -p fps-agent` passes (the whole crate, including `afxdp_veth` as root in this sandbox: 87 client and 87 server sessions, 0 failed, verdict pass, 1900 TCP frames and 48 UDP datagrams through the queues).
 - `cargo clippy -p fps-agent --all-targets -- -D warnings` and `cargo fmt -p fps-agent --check` are clean.
 - `plan.py check`, `render --check`, and `lint` pass.
+- CI of PR #668 on 3dfc75f: every check green, including `rust` and the `afxdp` job of `trn.yml`, which runs `afxdp_veth` with `CI=true`.
 
 ## Remaining
 
-Open the pull request, wait for CI (the `rust` job and the `afxdp` job of `trn.yml`), then `fps_swarm.py review`.
+Nothing. The coordinator reviews and merges PR #668.
 
 ## Next action
 
-Open the pull request against `main` with the acceptance evidence of the log entry.
+Review PR #668.
 
 ## Blockers and open questions
 
@@ -66,3 +67,4 @@ Both pass. The second prints `run outcome=pass sessions http1=.. dns=..`.
 |---|---|---|---|---|
 | 2026-11-18T14:20Z | claude-eda452 | claim | none | claimed #662 |
 | 2026-11-18T14:45Z | claude-eda452 | checkpoint | 834eeb7 | transport, wiring, tests, docs |
+| 2026-11-18T15:35Z | claude-eda452 | ready for review | 3dfc75f | PR #668, CI green |
