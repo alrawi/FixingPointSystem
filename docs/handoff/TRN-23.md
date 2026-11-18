@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #624 |
 | Branch | `wp/TRN-23` |
-| Pull request | none yet |
+| Pull request | #645 |
 | Status | in progress |
-| Progress | 50% (3 of 6 plan steps) |
+| Progress | 85% (5 of 6 plan steps) |
 | Current holder | claude-eae373, lease until 2026-11-18T05:08:24Z |
 | Last verified commit | none |
 
@@ -21,22 +21,23 @@ The own stack (`engine/fps-tcp-own`) recovers from loss: an RFC 6298 RTT estimat
 - [x] 1. Pure mechanisms in `recovery.rs` (estimator, NewReno, out of order queue) with unit tests
 - [x] 2. Wire them into the state machine (`host.rs`), per-connection state in a box that exists only while data is in flight
 - [x] 3. Host tests for loss recovery over the lossy link (`engine/fps-tcp/tests/lossy.rs`)
-- [ ] 4. Measure the loss workload and the 1M scale row, commit results with host.txt
-- [ ] 5. Docs: Transport page, log entry, bench notes
+- [x] 4. Measure the loss workload and the 1M scale row, commit results with host.txt
+- [x] 5. Docs: Transport page, log entry, bench notes
 - [ ] 6. Checks, PR, CI, review
 
 ## Done and verified
 
 - `cargo test -p fps-tcp-own -p fps-tcp` passes (72 unit tests in the lib incl. 14 host level recovery tests, 24 integration); clippy -D warnings clean.
-- Sandbox loss run (own): 0% 11.98, 0.1% 7.5, 1% 3.12 Mbit/s, all complete (was 12.2, 8.0, 1.8 with one transfer unfinished).
+- Sandbox loss run (own), committed in `engine/fps-tcp/results/sandbox-2vcpu-trn23/`: 0% 12.0, 0.1% 7.5, 1% 3.12 Mbit/s, all complete (was 12.2, 8.0, 1.8 with one transfer unfinished). 1M scale row: +8 B per socket against main in the same session, probe rate within 4 percent.
+- cargo deny, plan.py check, render --check, lint, fmt, clippy pass.
 
 ## Remaining
 
-Measure and commit results (loss and scale rows with main in the same session), docs (Transport page, log entry), cargo deny, plan.py checks, PR.
+CI result on PR #645, then review. The kernel comparison at 1 percent is made by the coordinator on the hosted runner (job=loss).
 
 ## Next action
 
-Run the final measurements into `engine/fps-tcp/results/sandbox-2vcpu-trn23/` with host.txt.
+Wait for CI on #645; fix failures inside the package paths.
 
 ## Blockers and open questions
 
@@ -64,3 +65,4 @@ cargo test -p fps-tcp-own
 |---|---|---|---|---|
 | 2026-11-18T04:08Z | claude-eae373 | claim | none | claimed #624, base origin/main b3c4b29 |
 | 2026-11-18T05:05Z | claude-eae373 | checkpoint | e248c3a | mechanisms, host tests, clippy clean |
+| 2026-11-18T04:25Z | claude-eae373 | pr | ed535f4 | opened #645, waiting for CI |
