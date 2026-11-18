@@ -16,6 +16,12 @@
 //! [`Responder`] of `fps-hosts`, so a switch or a real peer can resolve them.
 //! IPv6 neighbor solicitations for the hosts that the station serves are
 //! answered the same way, and the stack sends no solicitations of its own.
+//!
+//! A peer behind a router has no entry in any table. A station that
+//! [defers](Station::defer_peers) its peers (TRN-35) puts [`NEXT_HOP_MAC`] in
+//! the Ethernet destination of every frame to a peer, and the layer below the
+//! stack, which sees the frame as it leaves, finds the real next hop with ARP
+//! or neighbor discovery and replaces the address (`fps-datapath`).
 
 use std::cell::Cell;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -34,6 +40,11 @@ pub const TPID_8021Q: u16 = 0x8100;
 pub const MIN_FRAME_LEN: usize = 60;
 /// The largest VLAN identifier of a tagged frame. 0 and 4095 are reserved.
 pub const MAX_VLAN_ID: u16 = 4094;
+/// The Ethernet destination that a station with [deferred](Station::defer_peers)
+/// peers writes in a frame whose next hop is not known yet. It is a locally
+/// administered unicast address that no pool hands out, and the layer that
+/// resolves the next hop replaces it before the frame reaches the wire.
+pub const NEXT_HOP_MAC: MacAddr = MacAddr([0x02, 0xfe, 0xed, 0x00, 0x00, 0x01]);
 
 /// An address that a [`Station`] looks up: an IPv4 address as the `u32` that
 /// `Ipv4Addr::from` reads (the form that the stack used before IPv6), an
@@ -188,6 +199,9 @@ pub struct Station {
     vlan: Option<u16>,
     local: Responder,
     peers: NeighborTable,
+    /// Whether the MAC address of a peer is left to the layer below
+    /// ([`Station::defer_peers`]).
+    defer_peers: bool,
     /// The last local host and the last neighbor that were found. The frames
     /// of one connection repeat the same two addresses, so the table, which
     /// walks its slices, is read about once per connection and not once per
@@ -221,9 +235,27 @@ impl Station {
             vlan,
             local: Responder::new(local),
             peers,
+            defer_peers: false,
             last_local: Cell::new(None),
             last_peer: Cell::new(None),
         })
+    }
+
+    /// Leaves the MAC address of every peer to the layer below the stack
+    /// (TRN-35). [`Station::resolve`] then answers [`NEXT_HOP_MAC`] for any
+    /// address, in the table or not, and a frame to a peer carries that
+    /// address until the layer finds the next hop (a gateway, or the peer
+    /// itself on the same link) with ARP or neighbor discovery. Without the
+    /// call the peers are the hosts of the neighbor table, as before.
+    #[must_use]
+    pub fn defer_peers(mut self) -> Self {
+        self.defer_peers = true;
+        self
+    }
+
+    /// Reports whether the peers are deferred ([`Station::defer_peers`]).
+    pub fn defers_peers(&self) -> bool {
+        self.defer_peers
     }
 
     /// The VLAN of the port.
@@ -254,8 +286,12 @@ impl Station {
         Some(mac)
     }
 
-    /// The MAC address of the neighbor `ip`.
+    /// The MAC address of the neighbor `ip`, or [`NEXT_HOP_MAC`] when the
+    /// peers are deferred.
     pub fn resolve(&self, ip: impl IntoIp) -> Option<MacAddr> {
+        if self.defer_peers {
+            return Some(NEXT_HOP_MAC);
+        }
         let ip = ip.into_ip();
         if let Some((cached, mac)) = self.last_peer.get() {
             if cached == ip {

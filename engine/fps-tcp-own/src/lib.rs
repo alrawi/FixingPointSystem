@@ -73,6 +73,9 @@
 //! * No ARP requests of its own: the neighbors are read from the tables of
 //!   `fps-hosts` (HST-03), and the stack answers ARP for its own hosts. The
 //!   connection table is keyed by both addresses and both ports (TRN-32).
+//!   With [`OwnConfig::resolve_next_hop`] (TRN-35) the stack leaves the MAC
+//!   address of every peer to the layer below it, which resolves the next hop
+//!   of a peer behind a router (`fps-datapath`).
 //!
 //! The timers sit in a heap with at most one entry per connection, so a poll
 //! with idle sockets costs the same for ten sockets and for a million, which
@@ -185,6 +188,12 @@ pub struct OwnConfig {
     pub client_os_profile: Option<OsProfile>,
     /// The operating system profile of the server side, as above.
     pub server_os_profile: Option<OsProfile>,
+    /// Leave the MAC address of every peer to the layer below the stack
+    /// (TRN-35): frames to a peer carry [`net::NEXT_HOP_MAC`], and a peer
+    /// need not be in the neighbor table, so a host behind a router can be
+    /// reached. The datapath sets it with its neighbor resolution. With
+    /// `false` the stack reads the peers from the pools, as before.
+    pub resolve_next_hop: bool,
 }
 
 impl Default for OwnConfig {
@@ -211,6 +220,7 @@ impl Default for OwnConfig {
             delayed_ack_us: 40_000,
             client_os_profile: None,
             server_os_profile: None,
+            resolve_next_hop: false,
         }
     }
 }
@@ -468,7 +478,11 @@ impl OwnStack {
         pools: Pools,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, PoolError> {
-        let built = pools.stations()?;
+        let mut built = pools.stations()?;
+        if config.resolve_next_hop {
+            built.client = built.client.defer_peers();
+            built.server = built.server.defer_peers();
+        }
         let (client_profile, server_profile) = (config.client_os_profile, config.server_os_profile);
         let overhead = ETH_LEN
             + if pools.vlan.is_some() {
