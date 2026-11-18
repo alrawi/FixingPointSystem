@@ -8,6 +8,7 @@ use std::task::Waker;
 
 use super::*;
 use crate::pools::Pools;
+use crate::CongestionControl;
 
 const SERVER_PORT: u16 = 80;
 const MSS: usize = 1460;
@@ -843,6 +844,9 @@ fn flight_with_losses(cfg: OwnConfig, len: usize, drops: &[usize]) -> (Pair, i64
 fn sack_only() -> OwnConfig {
     OwnConfig {
         delayed_ack: false,
+        hystart: false,
+        rack: false,
+        tlp: false,
         ..OwnConfig::default()
     }
 }
@@ -1195,4 +1199,306 @@ fn a_lost_retransmission_under_cubic_falls_back_to_the_timeout_and_completes() {
     p.pump(&mut |_| false);
     assert_eq!(p.received, pattern(10 * 1400));
     assert_eq!(p.client.counters.timeouts, 1);
+}
+
+// ---- Pacing, HyStart, RACK, and tail loss probes (TRN-34) ----
+
+/// The payload of a segment with the timestamp option.
+const MSS_TS: usize = 1448;
+
+fn rack_only() -> OwnConfig {
+    OwnConfig {
+        delayed_ack: false,
+        hystart: false,
+        rack: true,
+        tlp: false,
+        pacing: false,
+        ..OwnConfig::default()
+    }
+}
+
+fn probing() -> OwnConfig {
+    OwnConfig {
+        delayed_ack: false,
+        hystart: false,
+        rack: true,
+        tlp: true,
+        pacing: false,
+        ..OwnConfig::default()
+    }
+}
+
+/// Moves the clock forward in steps of `step` for `total`, firing the timers
+/// of both hosts and moving the frames that come of it.
+fn run_for(p: &mut Pair, total: i64, step: i64, drop: &mut dyn FnMut(usize) -> bool) {
+    let end = p.now + total;
+    while p.now < end {
+        p.now += step;
+        p.client.expire(p.now);
+        p.server.expire(p.now);
+        p.pump(drop);
+    }
+}
+
+#[test]
+fn pacing_and_hystart_are_off_by_default_and_without_the_switches_the_box_has_no_log() {
+    let cfg = OwnConfig::default();
+    assert!(!cfg.pacing && !cfg.hystart && cfg.rack && cfg.tlp);
+    let mut p = Pair::new(sack_only());
+    p.write(&pattern(20 * MSS_TS));
+    p.client.flush_dirty(p.now);
+    let rec = p.conn().rec.as_ref().expect("state");
+    assert!(rec.log.is_empty());
+    assert!(!rec.feat.needs_log());
+    assert!(rec.cc.hystart().is_none());
+}
+
+#[test]
+fn the_send_log_holds_one_entry_per_burst_and_goes_with_the_box() {
+    let mut p = Pair::new(rack_only());
+    p.write(&pattern(20 * MSS_TS));
+    p.client.flush_dirty(p.now);
+    let rec = p.conn().rec.as_ref().expect("state");
+    // Ten segments left at one reading of the clock: one entry.
+    assert_eq!(rec.log.len(), 1);
+    assert_eq!(rec.log.end(), Some(rec.snd_max));
+    p.pump(&mut |_| false);
+    assert!(p.client.conn(p.c.0).is_none() || p.conn().rec.is_none());
+}
+
+#[test]
+fn a_lost_tail_without_the_switches_waits_for_the_timeout() {
+    let mut p = Pair::new(sack_only());
+    p.hop = 10_000;
+    p.timers = true;
+    let data = pattern(40 * MSS_TS);
+    p.write(&data);
+    // The last two segments are lost: no acknowledgment can follow them.
+    p.pump(&mut |i| i >= 38);
+    run_for(&mut p, 150_000, 5_000, &mut |_| false);
+    assert_ne!(p.received, data);
+    assert_eq!(p.client.counters.timeouts, 0);
+    run_for(&mut p, 400_000, 5_000, &mut |_| false);
+    assert_eq!(p.received, data);
+    assert_eq!(p.client.counters.timeouts, 1);
+}
+
+#[test]
+fn a_probe_finds_a_lost_tail_and_rack_repairs_it_before_the_timeout() {
+    let mut p = Pair::new(probing());
+    p.hop = 10_000;
+    p.timers = true;
+    let data = pattern(40 * MSS_TS);
+    p.write(&data);
+    p.pump(&mut |i| i == 38 || i == 39);
+    let start = p.now;
+    run_for(&mut p, 150_000, 5_000, &mut |_| false);
+    assert_eq!(p.received, data);
+    let c = p.client.counters;
+    assert_eq!(c.timeouts, 0, "{c:?}");
+    assert_eq!(c.tlp_probes, 1, "{c:?}");
+    // The answer to the probe marked the segment before it lost.
+    assert_eq!(c.rack_recoveries, 1, "{c:?}");
+    // Two round trips of 20 ms and the repair, well before 200 ms.
+    assert!(p.now - start < 200_000);
+}
+
+#[test]
+fn a_clean_transfer_sends_no_probe_and_no_retransmission() {
+    let mut p = Pair::new(probing());
+    p.hop = 10_000;
+    p.timers = true;
+    let data = pattern(40 * MSS_TS);
+    p.write(&data);
+    p.pump(&mut |_| false);
+    assert_eq!(p.received, data);
+    assert_eq!(p.client.counters.tlp_probes, 0);
+    assert_eq!(p.client.counters.timeouts, 0);
+    assert_eq!(p.client.counters.retransmits, 0);
+}
+
+#[test]
+fn rack_finds_a_hole_with_one_segment_behind_it_after_the_reordering_window() {
+    // Segment 8 of ten is lost and only segment 9 follows it: the count of
+    // RFC 6675 needs three, so without RACK the timer decides.
+    let mut p = Pair::new(rack_only());
+    p.hop = 10_000;
+    let data = pattern(10 * MSS_TS);
+    p.write(&data);
+    p.pump(&mut |i| i == 8);
+    assert_ne!(p.received, data);
+    // The reordering timer is armed: a quarter of the round trip after the
+    // round trip of the delivered segment.
+    {
+        let conn = p.conn();
+        assert!(conn.armed);
+        let rec = conn.rec.as_ref().expect("state");
+        assert_eq!(rec.timer, TimerKind::Reo);
+        assert!(rec.reo_at.is_some());
+    }
+    p.timers = true;
+    run_for(&mut p, 80_000, 5_000, &mut |_| false);
+    assert_eq!(p.received, data);
+    let c = p.client.counters;
+    assert_eq!(
+        (c.timeouts, c.reorder_timeouts, c.rack_recoveries),
+        (0, 1, 1),
+        "{c:?}"
+    );
+    assert_eq!(c.retransmits, 1);
+}
+
+#[test]
+fn without_rack_the_same_hole_waits_for_the_timeout() {
+    let mut p = Pair::new(sack_only());
+    p.hop = 10_000;
+    p.timers = true;
+    let data = pattern(10 * MSS_TS);
+    p.write(&data);
+    p.pump(&mut |i| i == 8);
+    run_for(&mut p, 150_000, 5_000, &mut |_| false);
+    assert_ne!(p.received, data);
+    run_for(&mut p, 400_000, 5_000, &mut |_| false);
+    assert_eq!(p.received, data);
+    assert_eq!(p.client.counters.timeouts, 1);
+}
+
+#[test]
+fn a_segment_that_is_only_reordered_is_not_resent_before_the_window_ends() {
+    // The last segment of a flight arrives first. With RACK its SACK starts
+    // the timer, and the hole fills before it fires.
+    let mut p = Pair::new(rack_only());
+    p.write(&pattern(10 * MSS_TS));
+    p.client.flush_dirty(p.now);
+    let flight: Vec<Vec<u8>> = p.client.out.queue.drain(..).collect();
+    p.server.input(&flight[9], p.now);
+    p.server.flush_dirty(p.now);
+    for ack in p.server.out.queue.drain(..).collect::<Vec<_>>() {
+        p.client.input(&ack, p.now + 2_000);
+    }
+    assert_eq!(p.client.counters.rack_recoveries, 0);
+    // The rest arrives before the window is over.
+    for frame in &flight[..9] {
+        p.server.input(frame, p.now + 2_100);
+    }
+    p.server.flush_dirty(p.now + 2_100);
+    p.now += 2_200;
+    for ack in p.server.out.queue.drain(..).collect::<Vec<_>>() {
+        p.client.input(&ack, p.now);
+    }
+    p.client.expire(p.now + 1_000_000);
+    assert_eq!(p.client.counters.retransmits, 0);
+    assert_eq!(p.client.counters.rack_recoveries, 0);
+}
+
+#[test]
+fn a_timeout_clears_the_log_and_the_probe_waits_for_progress() {
+    let mut p = Pair::new(probing());
+    p.hop = 10_000;
+    p.write(&pattern(20 * MSS_TS));
+    p.pump(&mut |i| i < 10);
+    p.now += 400_000;
+    p.client.expire(p.now);
+    assert_eq!(p.client.counters.timeouts, 1);
+    let rec = p.conn().rec.as_ref().expect("state");
+    assert!(rec.log.is_empty());
+    assert!(rec.probe_out, "no probe before something is acknowledged");
+    assert!(rec.reo_at.is_none());
+}
+
+fn paced() -> OwnConfig {
+    OwnConfig {
+        delayed_ack: false,
+        hystart: false,
+        rack: false,
+        tlp: false,
+        pacing: true,
+        ..OwnConfig::default()
+    }
+}
+
+/// The frames that one flush of the client sends after the first
+/// acknowledgments, which give the round trip.
+fn burst_after_first_ack(cfg: OwnConfig) -> (usize, Pair) {
+    let mut p = Pair::new(cfg);
+    p.write(&pattern(200 * MSS_TS));
+    p.client.flush_dirty(p.now);
+    let flight: Vec<Vec<u8>> = p.client.out.queue.drain(..).collect();
+    assert_eq!(flight.len(), 10);
+    for frame in &flight {
+        p.server.input(frame, p.now);
+    }
+    p.server.flush_dirty(p.now);
+    let acks: Vec<Vec<u8>> = p.server.out.queue.drain(..).collect();
+    // The acknowledgments arrive 20 ms later, all at the same time.
+    p.now += 20_000;
+    for ack in &acks {
+        p.client.input(ack, p.now);
+    }
+    p.client.flush_dirty(p.now);
+    (p.client.out.queue.len(), p)
+}
+
+#[test]
+fn without_pacing_the_acknowledgments_of_a_flight_release_a_burst() {
+    let (burst, _) = burst_after_first_ack(sack_only());
+    // Window of 20 segments after ten acknowledged: all of them go at once.
+    assert!(burst >= 20, "{burst}");
+}
+
+#[test]
+fn pacing_spreads_the_window_over_the_round_trip_and_wakes_at_the_next_time() {
+    let (burst, mut p) = burst_after_first_ack(paced());
+    // The round trip is 20 ms and the window 20 segments in slow start:
+    // twice the window per round trip is one segment per 500 us. A burst is
+    // what the lag allows, 1 ms, so a few segments.
+    assert!((1..=6).contains(&burst), "{burst}");
+    assert!(p.client.counters.paced_waits >= 1);
+    let wake = p.client.next_deadline().expect("a pacing time");
+    assert!(
+        wake > p.now && wake <= p.now + 2_000,
+        "{wake} after {}",
+        p.now
+    );
+    // Nothing leaves before that time, and something does at it.
+    p.client.out.queue.clear();
+    p.client.expire(wake - 1);
+    p.client.flush_dirty(wake - 1);
+    assert!(p.client.out.queue.is_empty());
+    p.now = wake;
+    p.client.expire(p.now);
+    p.client.flush_dirty(p.now);
+    assert!(!p.client.out.queue.is_empty());
+}
+
+#[test]
+fn a_transfer_with_pacing_completes_without_loss_or_timeout() {
+    let mut p = Pair::new(paced());
+    p.hop = 10_000;
+    p.timers = true;
+    let data = pattern(300 * MSS_TS);
+    p.write(&data);
+    run_for(&mut p, 2_000_000, 1_000, &mut |_| false);
+    assert_eq!(p.received, data);
+    assert_eq!(p.client.counters.timeouts, 0);
+    assert_eq!(p.client.counters.retransmits, 0);
+}
+
+#[test]
+fn every_switch_on_still_repairs_a_transfer_with_losses() {
+    let mut p = Pair::new(OwnConfig {
+        delayed_ack: false,
+        pacing: true,
+        hystart: true,
+        rack: true,
+        tlp: true,
+        ..OwnConfig::default()
+    });
+    p.hop = 5_000;
+    p.timers = true;
+    let data = pattern(500_000);
+    p.write(&data);
+    run_for(&mut p, 6_000_000, 1_000, &mut |i| i % 23 == 5);
+    assert_eq!(p.received, data);
+    assert!(p.client.counters.sack_recoveries >= 3);
 }

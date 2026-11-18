@@ -10,8 +10,8 @@
 | Branch | `wp/TRN-34` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
-| Current holder | claude-50b39c, lease until 2026-11-18T19:37:47Z |
+| Progress | 85% (5 of 6 plan steps) |
+| Current holder | claude-50b39c, lease until 2026-11-18T21:08:28Z |
 | Last verified commit | none |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
@@ -24,24 +24,25 @@ Add sender pacing, HyStart for the CUBIC slow start, and tail loss probes with R
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Read the recovery, CUBIC and host code; baseline of the bottleneck test
-- [ ] 2. HyStart in `cubic.rs`
-- [ ] 3. Pacing in `host.rs`
-- [ ] 4. RACK and tail loss probe in `recovery.rs`
-- [ ] 5. Defaults, tests, bench comparison, Transport.md
+- [x] 1. Read the recovery, CUBIC and host code; baseline of the bottleneck test
+- [x] 2. HyStart in `cubic.rs`
+- [x] 3. Pacing in `host.rs`
+- [x] 4. RACK and tail loss probe in `recovery.rs`
+- [x] 5. Defaults, tests, bench comparison, Transport.md
 - [ ] 6. Checks, PR, CI
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- Steps 1 to 5. `cargo test -p fps-tcp-own -p fps-tcp` (220 lib tests, bottleneck, interop, cli) passes; `cargo clippy -p fps-tcp-own -p fps-tcp --all-targets -- -D warnings` is clean. Results in `engine/fps-tcp/results/sandbox-2vcpu-trn34/`, and the Transport page section of TRN-34 has the tables.
+- Defaults: RACK and tail loss probes on, HyStart and pacing off (HyStart lowers the TRN-25 Jain index to 0.90 to 0.91).
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Step 6: plan checks, `make lint test`, the pull request, CI. The hosted dispatches are listed in the log entry (Shared page notes).
 
 ## Next action
 
-Step 1.
+Step 6.
 
 ## Blockers and open questions
 
@@ -49,11 +50,14 @@ none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- HyStart off by default: fairness of four flows falls to the bar of 0.9. Pacing off: no retransmission gain and a small cost on the fat row.
+- Pacing sends up to 1 ms of data per wake (`PACING_QUANTUM_US`), because the driver wakes in steps of about 1 ms.
+- One timer per connection serves the retransmission, probe and reorder kinds (`TimerKind`), so the heap holds one entry per connection.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+- The sandbox kernel sends with BBR; use `--kernel-cc cubic` for a like for like kernel row.
+- HyStart misses its exit in about one run in ten (ACK spacing above 2 ms), so tests take the best of three.
 
 ## Verify the current state
 
@@ -68,3 +72,5 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-18T18:08Z | claude-50b39c | claim | none | claimed #659 |
+| 2026-11-18T19:38Z | claude-50b39c | takeover | none | the lease of card 6987227256 ran out during the long measurements; took over my own item with card 6989460130 |
+| 2026-11-18T19:45Z | claude-50b39c | checkpoint | see PR | steps 1 to 5 done, step 6 next |

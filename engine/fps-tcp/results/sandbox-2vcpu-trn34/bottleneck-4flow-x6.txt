@@ -1,0 +1,7 @@
+        0 run 1 flows Mbit/s: 339.7 202.5 183.1 165.8, Jain index 0.913
+        0 run 2 flows Mbit/s: 434.4 197.4 103.2 151.5, Jain index 0.752
+        0 run 3 flows Mbit/s: 294.9 200.9 178.8 216.5, Jain index 0.963
+        0 run 4 flows Mbit/s: 330.9 204.8 159.6 195.6, Jain index 0.922
+        0 run 5 flows Mbit/s: 301.8 214.7 179.1 195.5, Jain index 0.957
+        0 run 6 flows Mbit/s: 262.1 219.3 260.5 147.3, Jain index 0.958
+        0 mean: 100% completed, goodput 889.99 Mbit/s, Jain index 0.911

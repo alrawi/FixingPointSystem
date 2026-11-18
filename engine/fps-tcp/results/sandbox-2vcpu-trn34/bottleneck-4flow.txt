@@ -1,0 +1,14 @@
+  link.queue_bytes = 4194304
+  link.seed = 2047934465
+  link.mtu = 1500
+loss workload, 4194304 bytes per transfer, link: loss 0%, delay 20 ms, reorder 0%, rate 1000 Mbit/s with a queue of 4096 KiB per direction
+   loss %  run  complete goodput Mb/s    time s retransmits link drops  note
+        0    1       yes       890.89     10.00         592       592  
+        0    2       yes       891.08     10.00         740       740  
+        0    3       yes       891.07     10.00         720       720  
+        0 run 1 flows Mbit/s: 309.8 203.8 170.4 206.9, Jain index 0.948
+        0 run 2 flows Mbit/s: 320.5 252.3 175.5 142.8, Jain index 0.912
+        0 run 3 flows Mbit/s: 269.9 281.0 175.4 164.7, Jain index 0.946
+        0 mean: 100% completed, goodput 891.01 Mbit/s, Jain index 0.936
+===kernel
+tcp_bench: the kernel has no netem qdisc (module sch_netem), so the kernel stack cannot be measured on a lossy link here: Error: Specified qdisc kind is unknown.

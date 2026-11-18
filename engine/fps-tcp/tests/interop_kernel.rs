@@ -36,7 +36,7 @@ use std::time::Duration;
 use fps_tcp::impair::ImpairConfig;
 use fps_tcp::interop::Pairing;
 use fps_tcp::interop_kernel::{
-    own_kernel_transfer, KernelInterop, KernelInteropConfig, OwnOptions,
+    own_kernel_transfer, KernelInterop, KernelInteropConfig, LossSwitches, OwnOptions,
 };
 use fps_tcp::netns::{self, NetnsError, OFFLOAD_FLAG, PEER_FLAG};
 use fps_tcp::wiretap::{violations, OwnSide};
@@ -93,6 +93,8 @@ struct Scenario {
     kib: u64,
     own: OwnOptions,
     kernel_options: bool,
+    /// The switches of TRN-34 of the own stack.
+    loss: LossSwitches,
 }
 
 impl Scenario {
@@ -151,6 +153,7 @@ fn scenarios() -> Vec<Scenario> {
                 kib,
                 own,
                 kernel_options,
+                loss: LossSwitches::default(),
             });
         };
         add("clean link", clean(), 1024, ALL, true);
@@ -170,14 +173,41 @@ fn scenarios() -> Vec<Scenario> {
             NONE,
             true,
         );
+        // TRN-34: the same link with pacing, HyStart, RACK, and tail loss
+        // probes on, for the comparison of the retransmissions of the own
+        // stack with those of the kernel.
+        all.push(Scenario {
+            name: format!("{from} to {to}, {SWITCHED_ROW}"),
+            pairing,
+            link: bottleneck(),
+            kib: 2048,
+            own: ALL,
+            kernel_options: true,
+            loss: LossSwitches::ALL,
+        });
+        all.push(Scenario {
+            name: format!("{from} to {to}, {SWITCHED_LOSS_ROW}"),
+            pairing,
+            link: one_percent(),
+            kib: 2048,
+            own: ALL,
+            kernel_options: true,
+            loss: LossSwitches::ALL,
+        });
     }
     all
 }
+
+/// The name of the TRN-34 row on the bottleneck.
+const SWITCHED_ROW: &str = "bottleneck with tail drop, loss switches on";
+/// The name of the TRN-34 row at 1 percent loss.
+const SWITCHED_LOSS_ROW: &str = "1% loss and 20 ms, loss switches on";
 
 fn config_of(scenario: &Scenario) -> KernelInteropConfig {
     KernelInteropConfig {
         pairing: scenario.pairing,
         own: scenario.own,
+        loss: scenario.loss,
         kernel_options: scenario.kernel_options,
         transfer: LossConfig {
             bytes: scenario.kib * KIB,
@@ -230,7 +260,11 @@ fn kernel_expectations(scenario: &Scenario, result: &KernelInterop) -> Vec<Strin
     out
 }
 
-fn run_scenario(index: usize, scenario: &Scenario) -> Result<Option<String>, String> {
+/// The row text, the goodput in Mbit/s, and the segments that the sender sent
+/// again.
+type Row = (String, f64, u64);
+
+fn run_scenario(index: usize, scenario: &Scenario) -> Result<Option<Row>, String> {
     let prefix = format!("fpsix{}x{index}", std::process::id() % 100_000);
     let config = config_of(scenario);
     let result = match own_kernel_transfer(&exe(), &prefix, &config) {
@@ -301,8 +335,41 @@ fn run_scenario(index: usize, scenario: &Scenario) -> Result<Option<String>, Str
         wire.acceptor.sack_segments,
     );
     println!("ok {text}");
-    Ok(Some(text))
+    Ok(Some((text, run.goodput_mbit_per_s(), sent_again)))
 }
+
+/// TRN-34: on the short tail-drop queue, the own sender with the switches on
+/// sends at most twice as many segments again as the kernel sender does (with
+/// a floor for the probing of the queue that a single run cannot avoid) and
+/// reaches at least 90 percent of its goodput.
+fn compare_with_the_kernel(measures: &[(String, f64, u64)]) -> Result<(), String> {
+    let find = |name: &str| measures.iter().find(|(n, _, _)| n == name);
+    let own = find(&format!("own client to kernel server, {SWITCHED_ROW}"));
+    let kernel = find("kernel client to own server, bottleneck with tail drop");
+    let (Some((_, own_goodput, own_sent)), Some((_, kernel_goodput, kernel_sent))) = (own, kernel)
+    else {
+        return Ok(());
+    };
+    println!(
+        "the own sender with the switches on: {own_goodput:.2} Mbit/s and {own_sent} segments sent again; the kernel sender: {kernel_goodput:.2} Mbit/s and {kernel_sent}"
+    );
+    let bound = 2 * kernel_sent + RETRANSMIT_FLOOR;
+    if *own_sent > bound {
+        return Err(format!(
+            "the own sender sent {own_sent} segments again on the short queue, the bound is {bound} (the kernel sent {kernel_sent})"
+        ));
+    }
+    if *own_goodput < 0.9 * kernel_goodput {
+        return Err(format!(
+            "the own sender reached {own_goodput:.2} Mbit/s, below 90% of the {kernel_goodput:.2} Mbit/s of the kernel sender"
+        ));
+    }
+    Ok(())
+}
+
+/// The retransmissions that one run of the probing of a 32 KiB queue may cost
+/// beyond twice those of the kernel, so that a loaded host does not decide.
+const RETRANSMIT_FLOOR: u64 = 8;
 
 fn leftover_namespaces() -> bool {
     Command::new("ip")
@@ -326,11 +393,14 @@ fn run_all() -> Result<(), String> {
         );
     }
     let mut rows = Vec::new();
+    let mut measures: Vec<(String, f64, u64)> = Vec::new();
     for (index, scenario) in scenarios().iter().enumerate() {
-        if let Some(row) = run_scenario(index, scenario)? {
-            rows.push(row);
+        if let Some((text, goodput, retransmits)) = run_scenario(index, scenario)? {
+            rows.push(text);
+            measures.push((scenario.name.clone(), goodput, retransmits));
         }
     }
+    compare_with_the_kernel(&measures)?;
     if leftover_namespaces() {
         return Err("the namespaces were not removed".into());
     }

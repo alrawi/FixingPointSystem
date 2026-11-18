@@ -1,0 +1,12 @@
+== --own-hystart off --own-rack off --own-tlp off
+        0 mean: 100% completed, goodput 52.70 Mbit/s
+      0.1 mean: 100% completed, goodput 25.76 Mbit/s
+        1 mean: 100% completed, goodput 3.11 Mbit/s
+== 
+        0 mean: 100% completed, goodput 52.59 Mbit/s
+      0.1 mean: 100% completed, goodput 25.93 Mbit/s
+        1 mean: 100% completed, goodput 3.12 Mbit/s
+== --own-hystart off
+        0 mean: 100% completed, goodput 57.20 Mbit/s
+      0.1 mean: 100% completed, goodput 25.83 Mbit/s
+        1 mean: 100% completed, goodput 3.13 Mbit/s

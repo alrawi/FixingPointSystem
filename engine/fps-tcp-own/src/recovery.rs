@@ -18,8 +18,9 @@
 //! that the smoothed round trip time and the slow start threshold are
 //! forgotten. The retransmission timeout itself stays in the connection.
 
-use super::cubic::{AckContext, Cubic};
+use super::cubic::{AckContext, Cubic, HyStart};
 use super::host::{seq_le, seq_lt};
+use super::rack::{self, Features, Rack, TxLog};
 use super::sack::Scoreboard;
 
 /// The clock granularity `G` of RFC 6298, in microseconds.
@@ -139,6 +140,9 @@ pub struct NewReno {
     /// when the stack is configured for it. The loss recovery around it is
     /// the same.
     cubic: Option<Cubic>,
+    /// HyStart (TRN-34), which ends the slow start of CUBIC early, when the
+    /// stack is configured for it.
+    hystart: Option<HyStart>,
 }
 
 /// The choice of congestion control in the stack configuration.
@@ -188,6 +192,7 @@ impl NewReno {
             has_recover: false,
             sack: false,
             cubic: None,
+            hystart: None,
         }
     }
 
@@ -199,6 +204,18 @@ impl NewReno {
             state.cubic = Some(Cubic::new(state.mss));
         }
         state
+    }
+
+    /// Turns HyStart on, which only CUBIC uses (as in the Linux kernel).
+    pub fn enable_hystart(&mut self) {
+        if self.cubic.is_some() {
+            self.hystart = Some(HyStart::new());
+        }
+    }
+
+    /// The HyStart state, when it is on.
+    pub fn hystart(&self) -> Option<&HyStart> {
+        self.hystart.as_ref()
     }
 
     /// The CUBIC state, when CUBIC is the control.
@@ -366,6 +383,14 @@ impl NewReno {
             // stack acknowledges a whole batch of segments with one ACK, and
             // a limit of one segment per ACK would not double the window per
             // round trip), up to the threshold.
+            if let Some(h) = self.hystart.as_mut() {
+                // HyStart ends the slow start where the path starts to queue:
+                // the threshold falls to the window, and the rest of this
+                // acknowledgment is congestion avoidance.
+                if h.on_ack(self.cwnd, self.mss, ctx) {
+                    self.ssthresh = self.cwnd;
+                }
+            }
             let room = self.ssthresh - self.cwnd;
             let grow = acked.min(room);
             self.cwnd = self.cwnd.saturating_add(grow);
@@ -411,6 +436,9 @@ impl NewReno {
         self.dupacks = 0;
         self.recover = snd_max;
         self.has_recover = true;
+        if let Some(h) = self.hystart.as_mut() {
+            h.reset();
+        }
     }
 }
 
@@ -605,6 +633,45 @@ pub struct Recovery {
     pub ooo: OooQueue,
     /// The SACK scoreboard of the sender side (RFC 6675).
     pub sb: Scoreboard,
+    /// The mechanisms of TRN-34 that are on for this connection.
+    pub feat: Features,
+    /// When the data in flight left, for round trip samples and RACK.
+    pub log: TxLog,
+    /// RACK (RFC 8985).
+    pub rack: Rack,
+    /// What the timer of the connection is armed for.
+    pub timer: TimerKind,
+    /// The time at which RACK turns the oldest segment lost, when it waits
+    /// for the reordering window.
+    pub reo_at: Option<i64>,
+    /// A tail loss probe is due at the next output.
+    pub probe_due: bool,
+    /// A probe went out and nothing was acknowledged since, so no second one
+    /// is scheduled (RFC 8985 section 7.3).
+    pub probe_out: bool,
+    /// The time at which the next segment may leave, with pacing.
+    pub pace_next: i64,
+    /// The end of the highest segment that was sent again. Data below it may
+    /// have been sent twice, so its acknowledgment tells no round trip
+    /// (Karn's rule) and no delivery time.
+    pub rtx_end: Option<u32>,
+    /// The latest segment that was sent again: its range and the time it
+    /// left. RACK takes the send time of a retransmission that is selectively
+    /// acknowledged, which is what lets the answer to a tail loss probe mark
+    /// the segments before it lost (RFC 8985 section 6.2).
+    pub last_rtx: Option<(u32, u32, u32)>,
+}
+
+/// What the one timer of a connection is armed for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TimerKind {
+    /// The retransmission timeout.
+    #[default]
+    Rto,
+    /// The probe timeout of the tail loss probe.
+    Pto,
+    /// The reordering timer of RACK.
+    Reo,
 }
 
 impl Recovery {
@@ -620,7 +687,129 @@ impl Recovery {
             probe: None,
             ooo: OooQueue::default(),
             sb: Scoreboard::default(),
+            feat: Features::default(),
+            log: TxLog::default(),
+            rack: Rack::default(),
+            timer: TimerKind::Rto,
+            reo_at: None,
+            probe_due: false,
+            probe_out: false,
+            pace_next: 0,
+            rtx_end: None,
+            last_rtx: None,
         }
+    }
+
+    /// Turns on the mechanisms of `feat`.
+    pub fn with_features(mut self, feat: Features) -> Self {
+        self.feat = feat;
+        if feat.hystart {
+            self.cc.enable_hystart();
+        }
+        self
+    }
+
+    /// A segment of `len` bytes left at `now`: the next one may leave after
+    /// the time that the pacing rate gives it (a no-op without pacing or a
+    /// round trip sample).
+    pub fn pace_after(&mut self, now: i64, len: u32) {
+        if !self.feat.pacing {
+            return;
+        }
+        let Some(srtt) = self.rtt.srtt_us() else {
+            return;
+        };
+        let cwnd = self.cc.cwnd();
+        let gap = rack::pacing_gap_us(len, cwnd, srtt, cwnd < self.cc.ssthresh());
+        let base = if self.pace_next < now - rack::PACING_LAG_US {
+            now
+        } else {
+            self.pace_next
+        };
+        self.pace_next = base + gap;
+    }
+
+    /// Notes that `[start, end)` was sent again at `now`.
+    pub fn note_rtx(&mut self, start: u32, end: u32, now: i64) {
+        if self.rtx_end.is_none_or(|e| seq_lt(e, end)) {
+            self.rtx_end = Some(end);
+        }
+        self.last_rtx = Some((start, end, rack::t32(now)));
+    }
+
+    /// Notes that everything up to `end` was sent again after a timeout, so
+    /// nothing below it says anything about a round trip.
+    pub fn note_rtx_all(&mut self, end: u32) {
+        self.rtx_end = Some(end);
+        self.last_rtx = None;
+    }
+
+    /// Whether the byte at `seq` has only been sent once.
+    pub fn is_original(&self, seq: u32) -> bool {
+        self.rtx_end.is_none_or(|end| seq_le(end, seq)) && !self.sb.is_rexmit(seq)
+    }
+
+    /// An acknowledgment up to `ack` moved `snd_una` at `now`. Returns the
+    /// round trip that the newest segment it covers measured, in
+    /// microseconds, or 0 when there is none (the connection logs no send
+    /// times, or the segment was sent again). The segment also counts as
+    /// delivered for RACK.
+    pub fn delivered_cum(&mut self, ack: u32, now: i64) -> u32 {
+        if !self.feat.needs_log() {
+            return 0;
+        }
+        let last = ack.wrapping_sub(1);
+        if !self.is_original(last) {
+            return 0;
+        }
+        let Some(ts) = self.log.time_of(last) else {
+            return 0;
+        };
+        self.rack.delivered(ts, ack, now);
+        rack::since(rack::t32(now), ts).max(1) as u32
+    }
+
+    /// New SACK blocks arrived at `now`: the highest byte they report is
+    /// delivered, which RACK notes.
+    pub fn rack_on_sack(&mut self, now: i64) {
+        if !self.feat.rack {
+            return;
+        }
+        let Some(high) = self.sb.highest_sacked() else {
+            return;
+        };
+        let last = high.wrapping_sub(1);
+        if let Some((start, end, ts)) = self.last_rtx {
+            if seq_le(start, last) && seq_lt(last, end) {
+                // The copy that was sent last is the one that arrived.
+                self.rack.delivered(ts, high, now);
+                return;
+            }
+        }
+        if !self.is_original(last) {
+            return;
+        }
+        if let Some(ts) = self.log.time_of(last) {
+            self.rack.delivered(ts, high, now);
+        }
+    }
+
+    /// Finds what RACK calls lost at `now` and when the next segment turns
+    /// lost: the scoreboard takes the first, and `reo_at` holds the second.
+    pub fn rack_detect(&mut self, now: i64, una: u32) {
+        if !self.feat.rack {
+            return;
+        }
+        let lost = self
+            .rack
+            .lost_to(&self.log, now)
+            .filter(|&to| seq_lt(una, to));
+        self.sb.set_rack_lost(lost);
+        self.reo_at = if self.sb.ranges() > 0 {
+            self.rack.reorder_deadline(&self.log, now, lost)
+        } else {
+            None
+        };
     }
 
     /// Starts timing a segment that ends at `end` unless one is timed
@@ -1247,6 +1436,7 @@ mod tests {
             now_us,
             srtt_us: Some(100_000),
             flight,
+            ..AckContext::default()
         }
     }
 
@@ -1395,5 +1585,63 @@ mod tests {
             cub.cwnd(),
             reno.cwnd()
         );
+    }
+
+    // ---- HyStart in the window rules (TRN-34) ----
+
+    #[test]
+    fn hystart_ends_slow_start_by_setting_the_threshold_to_the_window() {
+        let mut cc = cubic(20);
+        cc.enable_hystart();
+        let ctx = |now_us: i64, una: u32| AckContext {
+            now_us,
+            srtt_us: Some(1000),
+            flight: 10 * M,
+            rtt_us: 1000,
+            snd_una: una,
+            snd_nxt: 500 * M,
+        };
+        assert_eq!(cc.ssthresh(), u32::MAX);
+        cc.on_new_ack_at(M, M, &ctx(0, M));
+        let w = cc.cwnd();
+        // The second acknowledgment of the train, 900 us later.
+        cc.on_new_ack_at(2 * M, M, &ctx(900, 2 * M));
+        assert!(cc.hystart().expect("on").found());
+        // The threshold is the window at the time (plus nothing), and the
+        // acknowledged bytes went to congestion avoidance, not slow start.
+        assert!(
+            cc.ssthresh() >= w && cc.ssthresh() < w + 2 * M,
+            "{} {w}",
+            cc.ssthresh()
+        );
+        let before = cc.cwnd();
+        cc.on_new_ack_at(3 * M, M, &ctx(1_000, 3 * M));
+        assert!(cc.cwnd() < before + M / 2, "{} {before}", cc.cwnd());
+    }
+
+    #[test]
+    fn newreno_has_no_hystart() {
+        let mut cc = NewReno::new(MSS, 20);
+        cc.enable_hystart();
+        assert!(cc.hystart().is_none());
+    }
+
+    #[test]
+    fn a_timeout_resets_hystart() {
+        let mut cc = cubic(20);
+        cc.enable_hystart();
+        let ctx = |now_us: i64, una: u32| AckContext {
+            now_us,
+            srtt_us: Some(1000),
+            flight: 10 * M,
+            rtt_us: 1000,
+            snd_una: una,
+            snd_nxt: 500 * M,
+        };
+        cc.on_new_ack_at(M, M, &ctx(0, M));
+        cc.on_new_ack_at(2 * M, M, &ctx(900, 2 * M));
+        assert!(cc.hystart().expect("on").found());
+        cc.on_timeout(10 * M, 30 * M);
+        assert!(!cc.hystart().expect("on").found());
     }
 }

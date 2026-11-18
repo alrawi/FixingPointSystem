@@ -54,6 +54,129 @@ pub struct AckContext {
     pub srtt_us: Option<i64>,
     /// The data still in flight after the acknowledgment.
     pub flight: u32,
+    /// The round trip that this acknowledgment measured, in microseconds, or
+    /// 0 when it gave none (it acknowledged a segment that was sent again, or
+    /// the connection does not log send times).
+    pub rtt_us: u32,
+    /// The oldest unacknowledged sequence number after the acknowledgment.
+    pub snd_una: u32,
+    /// The next sequence number to send.
+    pub snd_nxt: u32,
+}
+
+/// HyStart (Linux `tcp_cubic.c`, Ha and Rhee): leaves slow start before the
+/// window overflows the queue of the path, on one of two signs. The ACK train:
+/// the acknowledgments of one round arrive back to back, and the train is
+/// longer than half the smallest round trip, so the window already fills the
+/// pipe. The delay: the smallest round trip of the round, from eight samples,
+/// rose above the smallest ever seen by a few milliseconds, so a queue builds.
+/// Either one sets the slow start threshold to the window, which ends slow
+/// start and starts the cubic function from there.
+///
+/// It runs only above 16 segments (`hystart_low_window`), as the kernel does.
+/// The state is 24 bytes in the [`crate::recovery::Recovery`] box.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HyStart {
+    /// The smallest round trip seen, in microseconds (0: none yet).
+    delay_min: u32,
+    /// The start of the round, a truncated clock reading.
+    round_start: u32,
+    /// The time of the last acknowledgment of the train.
+    last_ack: u32,
+    /// The sequence number that ends the round: `snd_nxt` at its start.
+    end_seq: u32,
+    /// The smallest round trip of the round so far (`u32::MAX`: none).
+    curr_rtt: u32,
+    samples: u8,
+    started: bool,
+    found: bool,
+}
+
+/// The window below which HyStart does not decide, in segments.
+const HYSTART_LOW_WINDOW: u32 = 16;
+/// The acknowledgments of a train are at most this far apart, in microseconds.
+const HYSTART_ACK_DELTA_US: i32 = 2_000;
+/// The samples of a round before its delay counts.
+const HYSTART_MIN_SAMPLES: u8 = 8;
+/// The bounds of the delay threshold, in microseconds.
+const HYSTART_DELAY_MIN_US: u32 = 4_000;
+const HYSTART_DELAY_MAX_US: u32 = 16_000;
+
+impl HyStart {
+    /// A state that waits for its first round.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether HyStart has ended the slow start.
+    pub fn found(&self) -> bool {
+        self.found
+    }
+
+    /// The smallest round trip seen, in microseconds.
+    pub fn delay_min_us(&self) -> Option<u32> {
+        (self.delay_min != 0).then_some(self.delay_min)
+    }
+
+    /// Starts over, as the kernel does when a timeout puts the connection
+    /// back in slow start.
+    pub fn reset(&mut self) {
+        self.found = false;
+        self.started = false;
+        self.samples = 0;
+    }
+
+    fn start_round(&mut self, now: u32, snd_nxt: u32) {
+        self.started = true;
+        self.round_start = now;
+        self.last_ack = now;
+        self.end_seq = snd_nxt;
+        self.curr_rtt = u32::MAX;
+        self.samples = 0;
+    }
+
+    /// An acknowledgment arrived in slow start with the window `cwnd`.
+    /// Returns true when slow start is over.
+    pub fn on_ack(&mut self, cwnd: u32, mss: u32, ctx: &AckContext) -> bool {
+        if ctx.rtt_us != 0 && (self.delay_min == 0 || ctx.rtt_us < self.delay_min) {
+            self.delay_min = ctx.rtt_us;
+        }
+        if self.found || cwnd < HYSTART_LOW_WINDOW * mss.max(1) {
+            return false;
+        }
+        let now = crate::rack::t32(ctx.now_us);
+        if !self.started || crate::host::seq_lt(self.end_seq, ctx.snd_una) {
+            self.start_round(now, ctx.snd_nxt);
+        }
+        let delay_min = self.delay_min;
+        if delay_min == 0 {
+            return false;
+        }
+        // The ACK train: acknowledgments that follow each other within two
+        // milliseconds, in a train longer than half the smallest round trip.
+        if crate::rack::since(now, self.last_ack) <= HYSTART_ACK_DELTA_US {
+            self.last_ack = now;
+            if crate::rack::since(now, self.round_start) > (delay_min >> 1) as i32 {
+                self.found = true;
+                return true;
+            }
+        }
+        // The delay: the smallest round trip of this round, once there are
+        // enough samples, against the smallest ever seen.
+        if ctx.rtt_us != 0 {
+            self.curr_rtt = self.curr_rtt.min(ctx.rtt_us);
+            if self.samples < HYSTART_MIN_SAMPLES {
+                self.samples += 1;
+            } else {
+                let thresh = (delay_min >> 3).clamp(HYSTART_DELAY_MIN_US, HYSTART_DELAY_MAX_US);
+                if self.curr_rtt > delay_min.saturating_add(thresh) {
+                    self.found = true;
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 /// The CUBIC state of one connection.
@@ -280,6 +403,7 @@ mod tests {
             now_us,
             srtt_us: Some(100_000),
             flight: 10 * MSS,
+            ..AckContext::default()
         }
     }
 
@@ -434,6 +558,7 @@ mod tests {
             now_us: 1_000_000,
             srtt_us: Some(100_000),
             flight: 0,
+            ..AckContext::default()
         };
         let _ = c.on_ack(cwnd, MSS, &idle);
         let epoch_before = c.epoch_us.unwrap();
@@ -480,5 +605,89 @@ mod tests {
         assert_eq!(c.on_loss(40 * MSS, 10 * MSS), 7 * MSS);
         let mut c = Cubic::new(MSS);
         assert_eq!(c.on_rto(1, 100 * MSS, false), 2 * MSS);
+    }
+
+    // ---- HyStart (TRN-34) ----
+
+    fn hs_ctx(now_us: i64, rtt_us: u32, snd_una: u32, snd_nxt: u32) -> AckContext {
+        AckContext {
+            now_us,
+            srtt_us: Some(10_000),
+            flight: 0,
+            rtt_us,
+            snd_una,
+            snd_nxt,
+        }
+    }
+
+    #[test]
+    fn hystart_does_not_decide_below_sixteen_segments() {
+        let mut h = HyStart::new();
+        for i in 0..40 {
+            let ctx = hs_ctx(i * 100, 1000, 1000 * i as u32, 100_000);
+            assert!(!h.on_ack(15 * MSS, MSS, &ctx));
+        }
+        assert!(!h.found());
+        // The smallest round trip is kept all the same.
+        assert_eq!(h.delay_min_us(), Some(1000));
+    }
+
+    #[test]
+    fn an_ack_train_longer_than_half_the_smallest_round_trip_ends_slow_start() {
+        let mut h = HyStart::new();
+        // The first acknowledgment of a round starts it and gives the minimum.
+        assert!(!h.on_ack(20 * MSS, MSS, &hs_ctx(0, 1000, 0, 50_000)));
+        // The next one 400 us later is within the train, and the train is not
+        // yet longer than 500 us.
+        assert!(!h.on_ack(20 * MSS, MSS, &hs_ctx(400, 1000, 1000, 50_000)));
+        assert!(h.on_ack(20 * MSS, MSS, &hs_ctx(900, 1000, 2000, 50_000)));
+        assert!(h.found());
+        // Once found it stays quiet.
+        assert!(!h.on_ack(20 * MSS, MSS, &hs_ctx(5000, 1000, 3000, 50_000)));
+    }
+
+    #[test]
+    fn acknowledgments_far_apart_are_not_a_train() {
+        let mut h = HyStart::new();
+        assert!(!h.on_ack(20 * MSS, MSS, &hs_ctx(0, 10_000, 0, 500_000)));
+        // Three milliseconds apart (more than the two of a train), each one
+        // with the same round trip: neither sign.
+        for i in 1..12 {
+            let ctx = hs_ctx(i * 3_000, 10_000, 1000 * i as u32, 500_000);
+            assert!(!h.on_ack(20 * MSS, MSS, &ctx), "{i}");
+        }
+        assert!(!h.found());
+    }
+
+    #[test]
+    fn a_round_of_larger_round_trips_after_the_minimum_ends_slow_start() {
+        let mut h = HyStart::new();
+        let mut t = 0;
+        // Round one: the minimum of 10 ms.
+        h.on_ack(20 * MSS, MSS, &hs_ctx(t, 10_000, 0, 10_000));
+        // Round two begins when `snd_una` passes 10,000 and every sample is
+        // 20 ms: the ninth sample finds the rise.
+        let mut found_at = None;
+        for i in 0..12u32 {
+            t += 3_000;
+            let ctx = hs_ctx(t, 20_000, 10_001 + i * 100, 90_000);
+            if h.on_ack(20 * MSS, MSS, &ctx) {
+                found_at = Some(i);
+                break;
+            }
+        }
+        assert_eq!(found_at, Some(8), "{h:?}");
+    }
+
+    #[test]
+    fn a_reset_starts_the_search_again() {
+        let mut h = HyStart::new();
+        h.on_ack(20 * MSS, MSS, &hs_ctx(0, 1000, 0, 50_000));
+        h.on_ack(20 * MSS, MSS, &hs_ctx(900, 1000, 1000, 50_000));
+        assert!(h.found());
+        h.reset();
+        assert!(!h.found());
+        // The minimum survives, as in the kernel.
+        assert_eq!(h.delay_min_us(), Some(1000));
     }
 }
