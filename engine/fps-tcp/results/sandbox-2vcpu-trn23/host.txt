@@ -1,0 +1,50 @@
+Host of the results in this directory (recorded 2026-11-18 by TRN-23)
+
+what      the agent sandbox of the swarm, a Firecracker microVM, not the GitHub hosted runner and not fat-nuc
+stacks    the own TCP stack after TRN-23 (loss recovery and NewReno) over the impaired in memory link of TRN-22, and the own stack of main b3c4b29 (before TRN-23) for the scale rows, built from `git archive` of that commit
+cpu       Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vCPUs
+memory    8 GiB
+kernel    6.18.44-fc-v595 (no sch_netem, so the kernel rows at loss and delay cannot be measured here; the coordinator measures them on the hosted runner)
+rustc     1.97.0, release profile of the workspace
+load      load average 0.3 to 0.9 during the runs; other workers may have run during a run
+commit    03dd9b1 of wp/TRN-23 for the own rows after TRN-23 (the loss and scale rows were measured on this code)
+
+own-loss.json / .txt          tcp_bench --stack own --workload loss --label "sandbox 2 vcpu, own after TRN-23, loss 0/0.1/1 percent, 20 ms per direction" --out engine/fps-tcp/results/sandbox-2vcpu-trn23/own-loss.json
+own-rate8.json / .txt         tcp_bench --stack own --workload loss --loss-levels 0 --loss-transfers 3 --loss-kib 1024 --link-delay-ms 0 --link-rate-mbit 8 --link-queue-kib 64 --label "..." --out ...
+own-scale.json / .txt         tcp_bench --stack own --profile full --workload scale --shards 64 --own-pool 20000 --label "..." --out ...
+main-own-scale.json / .txt    the same command with the binary built from main b3c4b29, run right before own-scale in the same session
+own-scale-2 / main-own-scale-2   a second pair, run after the first, in the order main, own, main, own
+
+Settings of the loss run (the defaults of the workload): 3 transfers of 4 MiB per loss level, one session each, a delay of 20 ms in each direction (a round trip of 40 ms), no reordering, no rate limit,
+a timeout of 60 s per transfer, a fixed seed per transfer (the same loss pattern on every run of the command, apart from the timing of the stack).
+
+Results, own stack, mean goodput over the 3 transfers (before is sandbox-2vcpu-trn22/own-loss.txt of main):
+
+  loss    before TRN-23                                        after TRN-23
+  0 %     12.2 Mbit/s                                          12.00 Mbit/s, 3 of 3 complete, 0 retransmissions
+  0.1 %   8.0 Mbit/s, 111 retransmissions                      7.50 Mbit/s, 3 of 3 complete, 2 to 5 retransmissions per transfer
+  1 %     1.8 Mbit/s, one transfer of three not complete       3.12 Mbit/s, 3 of 3 complete (2.96, 2.71, 3.70), 15 to 34 retransmissions per transfer
+
+The acceptance (every transfer completes at 1 percent loss and 20 ms, and the own goodput is at least 50 percent of the kernel on the same link) needs the kernel row of the same link settings. The hosted
+runner measured the kernel at 4.2 Mbit/s (comment on PR #642), so the threshold is 2.1 Mbit/s and the own stack gives 3.12 here. The own row is NOT measured on the hosted runner by this package: the
+coordinator re-reads it with the tcp-bench workflow, job=loss, on the branch. The 0.1 percent row is a little below the stack before TRN-23, which resent a whole window per loss and
+was limited only by the 64 KiB window: with NewReno the window halves per loss and regrows by one segment per round trip. Window scaling and selective acknowledgment (TRN-24) are what lift it.
+
+Rate limit row (8 Mbit/s, 64 KiB queue, no delay, no loss; trn22 own-rate8.txt for the stack before): 7.69 Mbit/s with 1 retransmission per transfer, where the stack before gave 1.32 Mbit/s with 706
+retransmissions (the kernel gave 7.69 Mbit/s with 347 to 349).
+
+Scale row (1,000,000 sockets in 64 shards, pool of 20,000 client addresses), own stack, main against TRN-23 in the same session:
+
+  run   stack    sockets    bytes per socket   idle poll us   probe sessions per s
+  1     main     1,001,129  253                28             49,920
+  1     TRN-23   1,001,129  261                28             47,826
+  2     main     1,001,129  255                56             48,913
+  2     TRN-23   1,001,129  262                28             48,773
+
+The cost is +8 bytes per socket: the `Option<Box<Recovery>>` of a connection, which is `None` while the connection is idle, so nothing grows with idle sockets and the state exists only while data is in
+flight or waits behind a hole (a field of 2 bytes for the advertised window fits in the padding of the struct). The probe rate is within the noise of main in the same session (0.96 and 1.00 of main); the
+absolute rate is about 49,000 per second here, as in the TRN-10 record, and the 50,000 per second of the brief is met only relative to main on this host. The rows at 1,000 sockets show 433 to 508 bytes per
+socket for TRN-23 against 346 to 350 for main: at 1,089 sockets the figure divides a one time growth of the process by few sockets (probably the recovery boxes of the 500 probe sessions that the allocator keeps; not
+checked), and it falls to 289 to 290 against 280 at 100,000 sockets.
+
+Reading the numbers: see sandbox-2vcpu-trn22/host.txt. The own retransmissions are counted at the link, as data segments that start below the highest sequence number the flow sent before.

@@ -1,0 +1,39 @@
+own minimal TCP (fps-tcp) on sandbox 2 vcpu, own after TRN-23, loss 0/0.1/1 percent, 20 ms per direction
+host: Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vcpus, kernel 6.18.44-fc-v595
+  profile = small
+  own.mtu = 1500
+  own.rcv_buffer = 65535
+  own.snd_buffer = 131072
+  own.rto_us = 200000
+  own.time_wait_us = 1000000
+  own.backlog = 4096
+  own.link_depth = 8192
+  own.client_hosts = 1
+  own.server_hosts = 1
+  own.vlan = none
+  loss.levels_percent = 0,0.1,1
+  loss.transfers = 3
+  loss.bytes = 4194304
+  loss.chunk = 16384
+  loss.timeout_secs = 60
+  link.delay_us = 20000
+  link.reorder_percent = 0
+  link.rate_bps = 0
+  link.queue_bytes = 262144
+  link.seed = 2047934465
+  link.mtu = 1500
+loss workload, 4194304 bytes per transfer, link: loss 0%, delay 20 ms, reorder 0%, no rate limit per direction
+   loss %  run  complete goodput Mb/s    time s retransmits link drops  note
+        0    1       yes        12.02      2.79           0         0  
+        0    2       yes        12.00      2.80           0         0  
+        0    3       yes        11.98      2.80           0         0  
+        0 mean: 100% completed, goodput 12.00 Mbit/s
+      0.1    1       yes         6.58      5.10           5         5  
+      0.1    2       yes         7.68      4.37           3         4  
+      0.1    3       yes         8.24      4.07           2         2  
+      0.1 mean: 100% completed, goodput 7.50 Mbit/s
+        1    1       yes         2.96     11.35          29        34  
+        1    2       yes         2.71     12.36          34        43  
+        1    3       yes         3.70      9.07          15        28  
+        1 mean: 100% completed, goodput 3.12 Mbit/s
+wrote engine/fps-tcp/results/sandbox-2vcpu-trn23/own-loss.json
