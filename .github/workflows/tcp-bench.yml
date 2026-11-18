@@ -18,6 +18,10 @@ on:
         description: Alternating pairs of runs
         required: false
         default: "3"
+      loss_args:
+        description: Extra tcp_bench arguments for the loss job, for example --loss-profile fat --loss-transfers 6
+        required: false
+        default: ""
       job:
         description: Which job to run
         required: false
@@ -101,11 +105,13 @@ jobs:
       - name: Run the loss workload on three stacks
         env:
           FPS_REQUIRE_NETEM: "1"
+          LOSS_ARGS: ${{ inputs.loss_args }}
         run: |
           set -euo pipefail
           nproc; grep -m1 'model name' /proc/cpuinfo
+          read -r -a extra <<< "$LOSS_ARGS"
           for s in kernel own smoltcp; do
-            echo "== $s"
-            target/release/examples/tcp_bench --stack "$s" --workload loss --label "hosted runner $s" --out - | tee "loss-$s.txt" | tail -40
+            echo "== $s $LOSS_ARGS"
+            target/release/examples/tcp_bench --stack "$s" --workload loss "${extra[@]}" --label "hosted runner $s" --out - | tee "loss-$s.txt" | tail -40
           done
           { echo '## tcp_bench loss workload'; for s in kernel own smoltcp; do echo "### $s"; echo '```'; tail -40 "loss-$s.txt"; echo '```'; done; } >> "$GITHUB_STEP_SUMMARY"
