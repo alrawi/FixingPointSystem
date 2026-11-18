@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-30` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 20% (1 of 6 plan steps) |
 | Current holder | claude-1d4805, lease until 2026-11-18T13:31:09Z |
 | Last verified commit | none |
 
@@ -18,8 +18,8 @@ IPv6 for the own TCP stack (`fps-tcp-own`), the user space UDP layer (`fps-udp-o
 
 ## Plan
 
-- [ ] 1. Read the code of the three crates and decide the address and header types.
-- [ ] 2. IPv6 in fps-tcp-own (wire, host, pools, net).
+- [x] 1. Read the code of the three crates and decide the address and header types.
+- [x] 2. IPv6 in fps-tcp-own (wire, host, pools, net).
 - [ ] 3. IPv6 in fps-udp-own.
 - [ ] 4. ND in fps-datapath and the IPv6 connect and listen calls.
 - [ ] 5. Tests in memory and on a veth pair.
@@ -27,15 +27,15 @@ IPv6 for the own TCP stack (`fps-tcp-own`), the user space UDP layer (`fps-udp-o
 
 ## Done and verified
 
-Nothing yet.
+Step 2: wire, net, pools, host, lib of fps-tcp-own speak IPv4 and IPv6; `cargo test -p fps-tcp-own` passes (163 unit, 30 integration, 6 new IPv6 integration tests), clippy clean.
 
 ## Remaining
 
-Everything.
+Steps 3 to 6.
 
 ## Next action
 
-Read engine/fps-tcp-own/src/wire.rs and net.rs.
+Start step 3: IPv6 in engine/fps-udp-own (wire.rs, arm.rs).
 
 ## Blockers and open questions
 

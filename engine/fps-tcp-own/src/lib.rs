@@ -3,7 +3,7 @@
 //!
 //! The stack is two [`host::Host`]s, a client side and a server side, each
 //! serving a pool of hosts ([`Pools`]; by default one host at `10.0.0.1` and
-//! one at `10.0.1.1`), that exchange Ethernet frames (IPv4, optionally with an
+//! one at `10.0.1.1`), that exchange Ethernet frames (IPv4 or IPv6, optionally with an
 //! 802.1Q tag, see [`net`]) over a pair of
 //! [`fps_backend_afxdp::FrameIo`] queues. The default link is the in memory
 //! pair of the AF_XDP crate, so the stack needs no root, and the same code
@@ -21,7 +21,10 @@
 //! * Teardown with FIN in both directions, the states FIN-WAIT-1, FIN-WAIT-2,
 //!   CLOSE-WAIT, CLOSING, LAST-ACK, and TIME-WAIT, and RST for aborts, for
 //!   segments to unknown connections, and for refused connections.
-//! * IPv4 and TCP checksums, computed and verified on every frame.
+//! * IPv4 and IPv6 (TRN-30): the headers without options or extension headers,
+//!   the IPv4 header checksum, and the TCP checksum of both families, computed
+//!   and verified on every frame. The family of a connection is the family of
+//!   its addresses, and a pool may have prefixes of both.
 //!
 //! # Loss recovery (TRN-23)
 //!
@@ -66,7 +69,7 @@
 //!   sends a window update when a read opened the window by a segment or half
 //!   the buffer since the last one it sent.
 //! * No simultaneous open, no urgent data, no IP fragmentation or options, no
-//!   keepalive, and no IPv6.
+//!   keepalive, and no IPv6 extension headers, path MTU discovery, or ICMP.
 //! * No ARP requests of its own: the neighbors are read from the tables of
 //!   `fps-hosts` (HST-03), and the stack answers ARP for its own hosts. The
 //!   connection table is keyed by both addresses and both ports (TRN-32).
@@ -90,6 +93,7 @@ pub mod wire;
 
 use std::future::Future;
 use std::io;
+use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -320,7 +324,7 @@ impl Inner {
 
     /// The pair of addresses of the next connect: the client hosts take
     /// turns, and the server host changes after each full round of them.
-    fn next_pair(&mut self) -> Option<(u32, u32)> {
+    fn next_pair(&mut self) -> Option<(IpAddr, IpAddr)> {
         let (n, m) = (
             u64::from(self.client_hosts.hosts()),
             u64::from(self.server_hosts.hosts()),
@@ -330,8 +334,8 @@ impl Inner {
         }
         let c = self.connects;
         self.connects = self.connects.wrapping_add(1);
-        let local = self.client_hosts.address((c % n) as u32)?;
-        let remote = self.server_hosts.address(((c / n) % m) as u32)?;
+        let local = self.client_hosts.ip((c % n) as u32)?;
+        let remote = self.server_hosts.ip(((c / n) % m) as u32)?;
         Some((local, remote))
     }
 
@@ -352,6 +356,17 @@ impl Inner {
     fn has_dirty(&self) -> bool {
         self.client.host.has_dirty() || self.server.host.has_dirty()
     }
+}
+
+/// Which hosts a connect uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Target {
+    /// The next pair in turn.
+    Next,
+    /// A client host and a server host by index.
+    Hosts(usize, usize),
+    /// A client host and a server host by address.
+    Addrs(IpAddr, IpAddr),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -537,23 +552,37 @@ impl OwnStack {
     /// Opens a session from the client host to `port` at the server host and
     /// completes when the handshake finished.
     pub fn connect(&self, port: u16) -> impl Future<Output = io::Result<OwnSession>> + Send {
-        self.connect_with(None, port)
+        self.connect_with(Target::Next, port)
     }
 
     /// Opens a connection from client host `client_host` to server host
-    /// `server_host` (indexes into the two slices) on `port`.
+    /// `server_host` (indexes into the two slices) on `port`, over IPv4 when
+    /// the pools have IPv4 prefixes and over IPv6 when they have only IPv6
+    /// ones. [`OwnStack::connect_addrs`] picks the family.
     pub fn connect_hosts(
         &self,
         client_host: usize,
         server_host: usize,
         port: u16,
     ) -> impl Future<Output = io::Result<OwnSession>> + Send {
-        self.connect_with(Some((client_host, server_host)), port)
+        self.connect_with(Target::Hosts(client_host, server_host), port)
+    }
+
+    /// Opens a connection from the client host that owns `local` to the server
+    /// host that owns `remote` on `port`. The two addresses are of one family,
+    /// which is the family of the connection (TRN-30).
+    pub fn connect_addrs(
+        &self,
+        local: IpAddr,
+        remote: IpAddr,
+        port: u16,
+    ) -> impl Future<Output = io::Result<OwnSession>> + Send {
+        self.connect_with(Target::Addrs(local, remote), port)
     }
 
     fn connect_with(
         &self,
-        hosts: Option<(usize, usize)>,
+        target: Target,
         port: u16,
     ) -> impl Future<Output = io::Result<OwnSession>> + Send {
         let stack = self.clone();
@@ -561,19 +590,13 @@ impl OwnStack {
             let now = stack.shared.now();
             let handle = {
                 let mut inner = stack.shared.lock();
-                let pair = match hosts {
-                    None => inner.next_pair(),
-                    Some((c, s)) => {
-                        u32::try_from(c)
-                            .ok()
-                            .zip(u32::try_from(s).ok())
-                            .and_then(|(c, s)| {
-                                inner
-                                    .client_hosts
-                                    .address(c)
-                                    .zip(inner.server_hosts.address(s))
-                            })
-                    }
+                let pair = match target {
+                    Target::Next => inner.next_pair(),
+                    Target::Addrs(local, remote) => Some((local, remote)),
+                    Target::Hosts(c, s) => u32::try_from(c)
+                        .ok()
+                        .zip(u32::try_from(s).ok())
+                        .and_then(|(c, s)| inner.client_hosts.ip(c).zip(inner.server_hosts.ip(s))),
                 };
                 let Some((local, remote)) = pair else {
                     return Err(io::Error::new(
