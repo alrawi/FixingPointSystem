@@ -56,6 +56,7 @@ pub mod clock;
 pub mod host;
 pub mod net;
 pub mod pools;
+pub mod recovery;
 pub mod wire;
 
 use std::future::Future;
@@ -93,10 +94,17 @@ pub struct OwnConfig {
     pub rcv_buffer: usize,
     /// The send buffer of a connection in bytes.
     pub snd_buffer: usize,
-    /// The retransmission timeout at the start, in microseconds.
+    /// The retransmission timeout before the first round trip sample, in
+    /// microseconds.
     pub rto_us: i64,
+    /// The smallest retransmission timeout, in microseconds. RFC 6298 asks
+    /// for one second, which the kernel lowers to 200 ms, and so does this
+    /// stack.
+    pub min_rto_us: i64,
     /// The largest retransmission timeout, in microseconds.
     pub max_rto_us: i64,
+    /// The initial congestion window in segments (RFC 6928 allows ten).
+    pub initial_cwnd_segments: u32,
     /// The timeouts in a row after which a connection is reset.
     pub max_retries: u8,
     /// How long a closed tuple is held, in microseconds. RFC 9293 says twice
@@ -121,7 +129,9 @@ impl Default for OwnConfig {
             rcv_buffer: 65_535,
             snd_buffer: 128 * 1024,
             rto_us: 200_000,
+            min_rto_us: 200_000,
             max_rto_us: 2_000_000,
+            initial_cwnd_segments: 10,
             max_retries: 8,
             time_wait_us: 1_000_000,
             fin_wait2_us: 10_000_000,
