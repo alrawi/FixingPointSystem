@@ -157,7 +157,7 @@ async fn sessions_complete_on_two_lanes_and_the_splitters_count_tcp() {
     let server = tokio::spawn(async move {
         let mut served = 0u32;
         while served < 40 {
-            let mut session = listener.accept().await.unwrap();
+            let (mut session, _peer) = listener.accept().await.unwrap();
             tokio::spawn(async move {
                 let mut request = [0u8; 300];
                 session.read_exact(&mut request).await.unwrap();
@@ -218,7 +218,7 @@ async fn tagged_pools_carry_sessions_and_answer_tagged_arp_only() {
     let dp = Datapath::start(vec![looped_lane(pools.clone())], DatapathConfig::default()).unwrap();
     let mut listener = dp.listen(9001).unwrap();
     let echo = tokio::spawn(async move {
-        let mut session = listener.accept().await.unwrap();
+        let (mut session, _peer) = listener.accept().await.unwrap();
         let mut buf = [0u8; 64];
         session.read_exact(&mut buf).await.unwrap();
         session.write_all(&buf).await.unwrap();
@@ -252,33 +252,21 @@ async fn tagged_pools_carry_sessions_and_answer_tagged_arp_only() {
 }
 
 #[test]
-fn arp_replies_carry_the_mac_that_the_stack_uses() {
+fn arp_replies_carry_the_mac_of_the_neighbor_table() {
     let pools = Pools::counts(4, 4, None).unwrap();
     let host0 = pools.client.address(0).unwrap();
     let unknown = [172, 16, 0, 1];
+    // The one source of the MAC addresses of the pools: the stack takes the
+    // MACs of its frames from the same tables (TRN-33).
+    let table_mac = pools
+        .tables()
+        .unwrap()
+        .client
+        .lookup_v4(Ipv4Addr::from(host0))
+        .expect("a MAC address for the host");
+    let syn_mac = table_mac.0.to_vec();
     let (lane, mut tap) = tapped_lane(pools.clone());
     let dp = Datapath::start(vec![lane], DatapathConfig::default()).unwrap();
-
-    // A connect makes the stack send a SYN, whose source MAC is the MAC of
-    // the client host.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .unwrap();
-    let destination = SocketAddr::new(v4(pools.server.address(0).unwrap()), 80);
-    let connector = dp.connector();
-    let source = v4(host0);
-    runtime.block_on(async {
-        let _ = tokio::time::timeout(
-            Duration::from_millis(50),
-            connector.connect(source, destination),
-        )
-        .await;
-    });
-    let syn_mac = wait_for(&mut tap, |f| {
-        (f.get(12..14) == Some(&[0x08, 0x00][..])).then(|| f.get(6..12).map(<[u8]>::to_vec))?
-    })
-    .expect("a SYN from the client host");
 
     send(&mut tap, &arp_request(None, unknown));
     send(&mut tap, &arp_request(None, host0.to_be_bytes()));
@@ -537,7 +525,7 @@ async fn ipv6_sessions_and_datagrams_complete_over_the_same_loop() {
     let mut udp_listener = dp.listen_udp(5400).unwrap();
     let tcp_server = tokio::spawn(async move {
         for _ in 0..8 {
-            let mut session = listener.accept().await.unwrap();
+            let (mut session, _peer) = listener.accept().await.unwrap();
             tokio::spawn(async move {
                 let mut request = [0u8; 200];
                 session.read_exact(&mut request).await.unwrap();
@@ -630,27 +618,14 @@ fn neighbor_solicitations_for_the_host_pools_are_answered() {
     let (lane, mut tap) = tapped_lane(pools.clone());
     let dp = Datapath::start(vec![lane], DatapathConfig::default()).unwrap();
 
-    // A connect makes the stack send a SYN, whose source MAC is the MAC of
-    // the client host.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .unwrap();
-    let destination = SocketAddr::new(IpAddr::V6(pools.server.address6(0).unwrap()), 80);
-    let connector = dp.connector();
-    runtime.block_on(async {
-        let _ = tokio::time::timeout(
-            Duration::from_millis(50),
-            connector.connect(IpAddr::V6(host0), destination),
-        )
-        .await;
-    });
-    let syn = wait_for(&mut tap, |f| {
-        (f.get(12..14) == Some(&[0x86, 0xdd][..])).then(|| f.to_vec())
-    })
-    .expect("a SYN over IPv6");
-    assert_eq!(syn.get(14).map(|b| b >> 4), Some(6));
-    let syn_mac = syn.get(6..12).unwrap().to_vec();
+    let syn_mac = pools
+        .tables()
+        .unwrap()
+        .client
+        .lookup_v6(host0)
+        .expect("a MAC address for the host")
+        .0
+        .to_vec();
 
     send(&mut tap, &ns_frame(MacAddr(PEER_MAC), peer, unknown, &[]));
     send(&mut tap, &ns_frame(MacAddr(PEER_MAC), peer, host0, &[]));

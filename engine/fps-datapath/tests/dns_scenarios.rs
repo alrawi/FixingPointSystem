@@ -320,7 +320,7 @@ impl Opener for TcpServer<'_> {
 
     async fn open(&mut self, _request: OpenRequest<'_>) -> io::Result<Self::Io> {
         let io: Box<dyn SessionIo> = match &mut self.acceptor {
-            TcpAcceptor::Datapath(l) => Box::new(l.accept().await.map_err(io::Error::other)?),
+            TcpAcceptor::Datapath(l) => Box::new(l.accept().await.map_err(io::Error::other)?.0),
             TcpAcceptor::Kernel(l) => Box::new(l.accept().await.map_err(io::Error::other)?.0),
         };
         Ok(io)
@@ -1202,7 +1202,11 @@ impl TcpStack for DatapathStack {
         async move {
             let listener = listener.ok_or_else(|| io::Error::other("port not listened on"))?;
             let mut listener = listener.lock().await;
-            listener.accept().await.map_err(io::Error::other)
+            listener
+                .accept()
+                .await
+                .map(|(session, _peer)| session)
+                .map_err(io::Error::other)
         }
     }
 

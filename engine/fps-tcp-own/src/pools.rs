@@ -118,6 +118,16 @@ pub struct Pools {
     pub vlan: Option<u16>,
 }
 
+/// The neighbor tables of both sides: the hosts that each side serves with
+/// the MAC addresses that [`Pools::tables`] gave them.
+#[derive(Clone, Debug)]
+pub struct Tables {
+    /// The hosts of the client side.
+    pub client: NeighborTable,
+    /// The hosts of the server side.
+    pub server: NeighborTable,
+}
+
 /// The stations of both sides.
 pub struct Built {
     /// The link layer of the client side.
@@ -223,18 +233,100 @@ impl Pools {
         })
     }
 
-    /// Builds the station of each side.
-    pub fn stations(&self) -> Result<Built, PoolError> {
+    /// Claims the MAC addresses of both sides from one ledger (the client
+    /// block first, then the server block) and returns the neighbor table of
+    /// each side. This is the one place that assigns MAC addresses to the
+    /// hosts of the pools: [`Pools::stations`] and a datapath that answers
+    /// ARP and neighbor discovery both take their tables from it, so they
+    /// cannot disagree.
+    pub fn tables(&self) -> Result<Tables, PoolError> {
         let mut ledger = MacAllocator::new();
         let client_block = ledger.claim(&self.client.pool, self.client.range)?;
         let server_block = ledger.claim(&self.server.pool, self.server.range)?;
-        let mut client_table = NeighborTable::new();
-        client_table.add(&self.client.pool, &client_block)?;
-        let mut server_table = NeighborTable::new();
-        server_table.add(&self.server.pool, &server_block)?;
+        let mut client = NeighborTable::new();
+        client.add(&self.client.pool, &client_block)?;
+        let mut server = NeighborTable::new();
+        server.add(&self.server.pool, &server_block)?;
+        Ok(Tables { client, server })
+    }
+
+    /// Builds the station of each side from [`Pools::tables`], with the other
+    /// side as its neighbor table.
+    pub fn stations(&self) -> Result<Built, PoolError> {
+        let tables = self.tables()?;
         Ok(Built {
-            client: Station::new(client_table.clone(), server_table.clone(), self.vlan)?,
-            server: Station::new(server_table, client_table, self.vlan)?,
+            client: Station::new(tables.client.clone(), tables.server.clone(), self.vlan)?,
+            server: Station::new(tables.server, tables.client, self.vlan)?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v4(pool: &HostSlice, i: u32) -> Ipv4Addr {
+        Ipv4Addr::from(pool.address(i).expect("host in the slice"))
+    }
+
+    #[test]
+    fn tables_give_each_host_one_distinct_mac_address() {
+        let pools = Pools::counts(3, 2, None).expect("pools");
+        let tables = pools.tables().expect("tables");
+        let mut seen = std::collections::HashSet::new();
+        for i in 0..3 {
+            let mac = tables.client.lookup_v4(v4(&pools.client, i));
+            assert!(seen.insert(mac.expect("client host")), "client host {i}");
+        }
+        for i in 0..2 {
+            let mac = tables.server.lookup_v4(v4(&pools.server, i));
+            assert!(seen.insert(mac.expect("server host")), "server host {i}");
+        }
+        assert_eq!(seen.len(), 5, "no MAC address is shared by two hosts");
+        assert!(tables
+            .client
+            .lookup_v4(Ipv4Addr::new(172, 16, 0, 1))
+            .is_none());
+        assert!(
+            tables.client.lookup_v4(v4(&pools.server, 0)).is_none(),
+            "a side serves only its own hosts"
+        );
+    }
+
+    #[test]
+    fn stations_use_the_macs_of_the_tables() {
+        for pools in [
+            Pools::counts(4, 4, Some(100)).expect("pools"),
+            Pools::sized_v6("fd00:1::/64", 4, "fd00:2::/64", 4, None).expect("pools"),
+        ] {
+            let tables = pools.tables().expect("tables");
+            let built = pools.stations().expect("stations");
+            for i in 0..4 {
+                let client = pools.client.ip(i).expect("client host");
+                let server = pools.server.ip(i).expect("server host");
+                let (c, s) = match (client, server) {
+                    (IpAddr::V4(c), IpAddr::V4(s)) => {
+                        (tables.client.lookup_v4(c), tables.server.lookup_v4(s))
+                    }
+                    (IpAddr::V6(c), IpAddr::V6(s)) => {
+                        (tables.client.lookup_v6(c), tables.server.lookup_v6(s))
+                    }
+                    _ => unreachable!("the pools of one setup have one family"),
+                };
+                assert!(c.is_some() && s.is_some());
+                assert_eq!(built.client.local_mac(client), c);
+                assert_eq!(built.server.local_mac(server), s);
+                assert_eq!(built.client.resolve(server), s, "neighbor of the client");
+                assert_eq!(built.server.resolve(client), c, "neighbor of the server");
+            }
+        }
+    }
+
+    #[test]
+    fn tables_are_the_same_on_every_call() {
+        let pools = Pools::counts(2, 2, None).expect("pools");
+        let (a, b) = (pools.tables().expect("a"), pools.tables().expect("b"));
+        let host = v4(&pools.server, 1);
+        assert_eq!(a.server.lookup_v4(host), b.server.lookup_v4(host));
     }
 }

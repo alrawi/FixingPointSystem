@@ -94,7 +94,7 @@ pub mod wire;
 
 use std::future::Future;
 use std::io;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -111,7 +111,7 @@ use crate::clock::{Clock, MonotonicClock};
 
 use host::{Host, HostCounters};
 use net::{ETH_LEN, VLAN_TAG_LEN};
-pub use pools::{HostSlice, PoolError, Pools};
+pub use pools::{HostSlice, PoolError, Pools, Tables};
 pub use profile::{OsProfile, ProfileError};
 pub use recovery::CongestionControl;
 
@@ -558,9 +558,25 @@ impl Drop for AcceptGuard {
 impl OwnStack {
     /// Starts listening on `port` at the server host.
     ///
-    /// A port may be listened on once.
+    /// A port may be listened on once at a time: listening again fails with
+    /// `AddrInUse` until [`OwnStack::unlisten`] stopped the first listener.
     pub fn listen(&self, port: u16) -> io::Result<()> {
         self.shared.lock().endpoint(Side::Server).listen(port)
+    }
+
+    /// Stops listening on `port` at the server host and frees the port, as
+    /// closing a listening socket does (TRN-33).
+    ///
+    /// Connections that arrived and were not accepted yet are reset, a task
+    /// that waits in [`OwnStack::accept`] for the port fails with
+    /// `InvalidInput`, and the port can be listened on again. Sessions that
+    /// were accepted keep running. Returns `false` when the port was not
+    /// listened on.
+    pub fn unlisten(&self, port: u16) -> bool {
+        let mut inner = self.shared.lock();
+        let was = inner.endpoint(Side::Server).unlisten(port);
+        self.shared.kick(&inner);
+        was
     }
 
     /// Opens a session from the client host to `port` at the server host and
@@ -735,6 +751,38 @@ impl std::fmt::Debug for OwnSession {
 
 fn not_connected() -> io::Error {
     io::Error::new(io::ErrorKind::NotConnected, "the session was aborted")
+}
+
+impl OwnSession {
+    /// The address of the host of this side and the port of the session:
+    /// the client host and its ephemeral port on the client side, the server
+    /// host that the peer reached and the listening port on the server side.
+    ///
+    /// # Errors
+    ///
+    /// `NotConnected` after [`SessionIo::abort`].
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.addrs().map(|(local, _)| local)
+    }
+
+    /// The address and port of the other end, which is what
+    /// `KernelListener::accept` returns next to a session.
+    ///
+    /// # Errors
+    ///
+    /// `NotConnected` after [`SessionIo::abort`].
+    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
+        self.addrs().map(|(_, peer)| peer)
+    }
+
+    fn addrs(&self) -> io::Result<(SocketAddr, SocketAddr)> {
+        let (id, gen) = self.handle.ok_or_else(not_connected)?;
+        let mut inner = self.shared.lock();
+        inner
+            .endpoint(self.side)
+            .addrs(id, gen)
+            .ok_or_else(not_connected)
+    }
 }
 
 impl AsyncRead for OwnSession {
