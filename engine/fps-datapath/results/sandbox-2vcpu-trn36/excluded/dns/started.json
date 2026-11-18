@@ -1,0 +1,9 @@
+{
+  "lookup_a": 23,
+  "lookup_aaaa": 21,
+  "lookup_cname": 22,
+  "lookup_mx": 16,
+  "lookup_txt": 17,
+  "nxdomain": 17,
+  "tcp_fallback": 24
+}

@@ -5,9 +5,9 @@
 | Issue | #682 |
 | Branch | `wp/TRN-36` |
 | Pull request | none yet |
-| Status | in progress |
-| Progress | 10% (0 of 5 plan steps) |
-| Current holder | claude-worker, lease until 2026-11-18T21:34:51Z |
+| Status | in progress (checks and pull request) |
+| Progress | 90% (4 of 5 plan steps) |
+| Current holder | claude-648128, lease until 2026-11-18T22:01:25Z |
 | Last verified commit | none |
 
 ## Goal
@@ -16,23 +16,25 @@ Run every first party module through the agent forced onto AF_XDP and score the 
 
 ## Plan
 
-- [ ] 1. Generic `module-afxdp.sh`, `make_plan.py`, `profiles.yaml`, and tests (no root).
-- [ ] 2. Run each module locally as root, fix what lies inside the paths.
-- [ ] 3. Exclusion list with causes, results under `engine/fps-datapath/results/`.
-- [ ] 4. Transport page, log entry, CI YAML.
+- [x] 1. Generic `module-afxdp.sh`, `make_plan.py`, `profiles.yaml`, and tests (no root).
+- [x] 2. Run each module locally as root, fix what lies inside the paths.
+- [x] 3. Exclusion list with causes, results under `engine/fps-datapath/results/`.
+- [x] 4. Transport page, log entry, CI YAML.
 - [ ] 5. Checks, pull request, CI.
 
 ## Done and verified
 
-Nothing yet.
+- All 15 modules with scenarios pass locally as root (tshark and Zeek parsers, nDPI 4.14, the extra checks of each kernel run), in three consecutive sweeps. Results are in `engine/fps-datapath/results/sandbox-2vcpu-trn36/`.
+- Excluded: `dns/tcp_fallback`, `hls/vod_segments`, `strike/conn_churn`, with causes and fixes in the log entry and on the Transport page.
+- `python3 -m pytest -q engine/fps-datapath/realism`: 47 passed.
 
 ## Remaining
 
-Everything above.
+Plan step 5: checks, pull request, CI, review.
 
 ## Next action
 
-Build `fps-agent` (debug) with `CARGO_TARGET_DIR=$PWD/target-TRN-36` and run `sudo engine/fps-datapath/realism/module-afxdp.sh MODULE target-TRN-36/debug/fps-agent OUT` for each module.
+Wait for CI. Run `fps_swarm.py review 682 --pr N` when green. (Local runs: build `fps-agent` (debug) with `CARGO_TARGET_DIR=$PWD/target-TRN-36` and run `sudo engine/fps-datapath/realism/module-afxdp.sh MODULE target-TRN-36/debug/fps-agent OUT` for each module.)
 
 ## Blockers and open questions
 
@@ -56,4 +58,6 @@ python3 -m pytest -q engine/fps-datapath/realism
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
-| 2026-11-18T21:05Z | claude worker | claim | none | claimed #682 |
+| 2026-11-18T21:05Z | claude-648128 | claim | 88b4119 | claimed #682 |
+| 2026-11-18T21:40Z | claude-648128 | push | ab86316 | generic runner, profiles, tests |
+| 2026-11-18T22:00Z | claude-648128 | local runs | none | 15 modules pass, 3 scenarios excluded |

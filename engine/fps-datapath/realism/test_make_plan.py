@@ -54,20 +54,22 @@ def test_every_first_party_module_has_a_profile() -> None:
 
 
 @pytest.mark.parametrize("module", modules())
-def test_a_round_never_listens_twice_on_one_port(
-    module: str, tmp_path: Path
-) -> None:
+def test_a_round_never_listens_twice_on_one_port(module: str, tmp_path: Path) -> None:
     rounds = make_plan.build(ROOT, tmp_path, module, None, 42, "dpc", "dps", True)
     manifest = yaml.safe_load(
         (ROOT / "modules" / module / "manifest.yaml").read_text(encoding="utf-8")
     )
     profile = make_plan.load_profile(module)
-    wanted = {
-        yaml.safe_load((ROOT / "modules" / module / rel).read_text(encoding="utf-8"))[
-            "scenario"
-        ]
-        for rel in manifest["scenarios"]
-    } - set(profile.get("skip", [])) - set(profile.get("excluded", {}))
+    wanted = (
+        {
+            yaml.safe_load(
+                (ROOT / "modules" / module / rel).read_text(encoding="utf-8")
+            )["scenario"]
+            for rel in manifest["scenarios"]
+        }
+        - set(profile.get("skip", []))
+        - set(profile.get("excluded", {}))
+    )
     seen: list[str] = []
     for plan in plans(tmp_path):
         assert plan["backend"] == "BACKEND_AF_XDP"
@@ -96,7 +98,9 @@ def test_the_variables_of_a_profile_are_declared_by_a_scenario(module: str) -> N
     docs = {
         d["scenario"]: d
         for d in (
-            yaml.safe_load((ROOT / "modules" / module / rel).read_text(encoding="utf-8"))
+            yaml.safe_load(
+                (ROOT / "modules" / module / rel).read_text(encoding="utf-8")
+            )
             for rel in manifest["scenarios"]
         )
     }

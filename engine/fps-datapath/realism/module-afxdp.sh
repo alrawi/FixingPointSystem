@@ -40,6 +40,7 @@
 #   FPS_AFXDP_SESSIONS  sessions per scenario, about; default the profile of the module
 #   FPS_AFXDP_PARSERS   reference parsers of the realism runner, default tshark
 #   FPS_AFXDP_NETNS     name prefix of the namespaces, default fpsxd
+#   FPS_AFXDP_EXCLUDED  run: run the scenarios of the exclusion list too (profiles.yaml)
 #   FPS_AFXDP_LINGER    seconds that the agent keeps the sockets after a round, default 2
 set -euo pipefail
 
@@ -99,6 +100,8 @@ else
 fi
 session_args=()
 [[ -z ${FPS_AFXDP_SESSIONS:-} ]] || session_args=(--sessions "$FPS_AFXDP_SESSIONS")
+# FPS_AFXDP_EXCLUDED=run puts the scenarios of the exclusion list back in the run.
+[[ ${FPS_AFXDP_EXCLUDED:-} != run ]] || session_args+=(--include-excluded)
 rounds=$(python3 "$here/make_plan.py" "$root" "$out" "$module" "${session_args[@]}" --keys "$keys") ||
   die "make_plan.py could not plan $module"
 

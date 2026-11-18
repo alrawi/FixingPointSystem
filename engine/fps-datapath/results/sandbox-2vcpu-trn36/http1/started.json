@@ -1,0 +1,12 @@
+{
+  "http10_fetch": 17,
+  "http10_keepalive": 17,
+  "https_fetch": 24,
+  "https_fetch_tls12": 26,
+  "https_keepalive_browse": 14,
+  "https_keepalive_browse_tls12": 16,
+  "keepalive_browse": 21,
+  "single_fetch": 23,
+  "upload": 22,
+  "upload_chunked": 16
+}

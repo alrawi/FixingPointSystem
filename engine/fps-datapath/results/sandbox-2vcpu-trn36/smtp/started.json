@@ -1,0 +1,9 @@
+{
+  "relay": 8,
+  "relay_pipelined": 9,
+  "starttls_submission": 4,
+  "submission_batch": 10,
+  "submission_login": 5,
+  "submission_plain": 10,
+  "text_only": 11
+}

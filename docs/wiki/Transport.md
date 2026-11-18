@@ -943,7 +943,7 @@ Tests: `engine/fps-tcp-own/tests/api.rs` (six tests: the addresses over IPv4 and
 
 TRN-12 closes the AF_XDP TCP path of decision record 0014. It runs the ten http1 scenarios (six in the clear, four over TLS with the browser profiles) through the agent on the AF_XDP backend and scores the capture with the realism runner, as the kernel run does. The agent is not changed: a plan with the backend `BACKEND_AF_XDP` and `fps-agent run` is the whole path (AGT-24, AGT-25).
 
-`engine/fps-datapath/realism/http1-afxdp.sh AGENT_BINARY OUTPUT_DIR` (root) does the run. `make_plan.py` writes the plan, the module tree it digests, and the labels: the scenarios of `modules/http1` become ten mix entries of one plan, the six plain ones on the ports 8080 to 8085 (two entries cannot listen on one port of one server host, and the kernel run does not meet that, because it runs the scenarios one after another) and the four https ones on 8443 to 8446 as their manifests say. The load is 5 sessions per second for each entry for 4 seconds at the default of 20 sessions per scenario (`FPS_AFXDP_SESSIONS`), and the clients and servers are the pools `10.1.0.0/24` (profile `windows11`) and `10.2.0.0/24` (profile `linux6`).
+`engine/fps-datapath/realism/http1-afxdp.sh AGENT_BINARY OUTPUT_DIR` (root) does the run. TRN-36 generalized it to every first party module (`module-afxdp.sh MODULE AGENT_BINARY OUTPUT_DIR`, see [Every first party module on AF_XDP (TRN-36)](#every-first-party-module-on-af_xdp-trn-36)), and the http1 script is now a call of that one. TRN-12 had moved the six plain scenarios to the ports 8080 to 8085, because two mix entries cannot listen on one port of one server host. TRN-36 runs them in rounds instead and keeps the port 8080 of the kernel run. The four https scenarios keep the ports 8443 to 8446 of their manifests. The load is 5 sessions per second for each entry at the default of 20 sessions per scenario (`FPS_AFXDP_SESSIONS`), and the clients and servers are the pools `10.1.R.0/24` (profile `windows11`, R is the round) and `10.2.0.0/24` (profile `linux6`).
 
 The agent needs both arms of the datapath in one process, and AF_XDP takes the frames of its two ports before any tap, so the script builds this wire:
 
@@ -954,13 +954,70 @@ The agent needs both arms of the datapath in one process, and AF_XDP takes the f
  dps ---------------------- ws ]
 ```
 
-`tcpdump` on `wc` sees every frame of both directions, as the capture on the router's client arm does in the kernel run. Both ends of the veth pairs have the checksum offloads off, and IPv6 is off in the namespaces, so the capture holds only the traffic of the run. The script then scores the capture with the labels of `modules/http1/fixtures/expected.yaml` (with the plain ports of the plan): the conformance check with nDPI, the parser error check (`FPS_AFXDP_PARSERS`, `tshark` by default and `tshark,zeek` in CI), the encryption check (decryption and JA4 of the four browser profiles), and `realism decrypted` for the HTTP inside TLS.
+`tcpdump` on `wc` sees every frame of both directions, as the capture on the router's client arm does in the kernel run. Both ends of the veth pairs have the checksum offloads off, and IPv6 is off in the namespaces, so the capture holds only the traffic of the run. The script then scores the capture with the labels of `modules/http1/fixtures/expected.yaml`: the conformance check with nDPI, the parser error check (`FPS_AFXDP_PARSERS`, `tshark` by default and `tshark,zeek` in CI), the encryption check (decryption and JA4 of the four browser profiles), and `realism decrypted` for the HTTP inside TLS.
 
 The decryption needs the TLS secrets of the run. `fps-agent run --keylog FILE` writes the secrets (AGT-27), and the script injects them into the capture with `editcap`, as `capture.sh` does. An older agent without the flag runs the same sessions, and the script prints a notice and leaves the `tls` section out of the labels, so the encryption check is not scored.
 
 Sandbox run (2 vCPU, debug build, kernel 6.18, `engine/fps-datapath/results/sandbox-2vcpu-trn12/`): 199 client and 199 server sessions attempted and succeeded, none failed (131 http1 and 68 https in the capture), 3,316 TCP frames through the lane, both ports native in copy mode. With the key log: conformance, parser errors (tshark), and encryption pass, 68 of 68 TLS sessions decrypt and match their JA4, and the decrypted view classifies as HTTP 68 of 68. A run with 100 sessions per scenario (1,027 sessions) passed the same checks in 24 seconds. Zeek is not installed in the sandbox, so the Zeek parser ran in CI only.
 
 `test_make_plan.py` (pytest, no root) checks the plan, the digest of the staged module tree, and the labels.
+
+### Every first party module on AF_XDP (TRN-36)
+
+TRN-36 generalized the http1 run of TRN-12 to every first party module that has scenarios, so each one runs through the agent forced onto AF_XDP and is scored like its kernel run. `engine/fps-datapath/realism/module-afxdp.sh MODULE AGENT_BINARY OUTPUT_DIR` (root) does it, and `http1-afxdp.sh` calls it for http1. The wire, the key log, and the scoring are those of the TRN-12 section above. These are the parts that are new.
+
+- **Rounds.** A plan listens once for each port of a server host, and most modules run all their scenarios on one port (dns on 53, imap on 143, ssh on 22), so the scenarios do not fit one plan. `make_plan.py` groups them into rounds, a round holding scenarios until two would listen on one transport and port. The script runs the agent once for each round, and all rounds go into one capture. The labels of the kernel run (`modules/MODULE/fixtures/expected.yaml`) therefore keep their ports, and a dissector that works by port (tshark, Zeek) reads the capture as it reads the kernel capture. Each round has its own client prefix (`10.1.R.0/24`), MAC base, and seed, because the own stack numbers client ports upward from 10000 in every run and a 5-tuple that came up twice would merge two sessions.
+- **Profiles.** `engine/fps-datapath/realism/profiles.yaml` holds what the `capture.sh` of each module sets: the sessions per scenario, the variables (`--var`, `--var-tls`, hls `params.json`), the moved ports (imap and smtp STARTTLS), the skipped scenarios, and the decrypted check. A module without an entry fails `test_every_first_party_module_has_a_profile`. `content` and `tls` have no scenarios, so they have no run: `content` is a function library that the mail, ftp, and hls scenarios call, and `tls` is the TLS library that the https scenarios of http1, http2, imap, and smtp exercise.
+- **Sessions.** The agent starts sessions at Poisson arrivals (5 per second for each entry, for as long as the sessions of the profile need). The same seed gives the same arrivals, so the counts repeat, but they are not the counts of the kernel run. `finalize.py counts` reads the sessions that the agent started for each scenario and puts them into the labels that name a number (the instances of the structure check of strike, the streams of the rung check of hls), so the capture must still hold every session that the agent started.
+- **Checks next to the score.** The kernel run of ftp, smtp, ssh, and sip_rtp also runs `structure_check.py` or `zeek_check.py`. The profile names them, and `finalize.py checks` runs them with the counts that follow from the sessions that the agent started (messages, transfers, calls). They need Zeek and are skipped without it, as in the kernel run.
+- **UDP needs a moment.** The first datagrams of the first round were lost when the agent started at once after the bridge came up, and a UDP session does not retransmit. The script waits a second (`FPS_AFXDP_SETTLE`).
+- **Exit code.** 0 when the agent exited with 0 in every round (the criterion `sessions.failed_ratio < 0.001` holds) and every check passes, 1 when a check or an agent run fails, 2 when the run cannot start.
+
+Results (sandbox, 2 vCPU, root, kernel 6.18, debug build, nDPI 4.14 built by `realism/ci/build-ndpi.sh`, tshark 4.2.2 and Zeek 9.0.1 as parsers; files in `engine/fps-datapath/results/sandbox-2vcpu-trn36/`). Every row passed in three consecutive sweeps.
+
+| Module | Rounds | Scenarios run | Sessions started and succeeded | Sessions in the capture | Run time | Checks scored |
+|---|---|---|---|---|---|---|
+| dns | 6 | 6 | 116 of 116 | 116 | 28 s | conformance, parser errors |
+| ftp | 5 | 5 | 36 of 36 | 36 | 14 s | conformance, parser errors, structure_check.py, zeek_check.py |
+| hls | 1 | 2 | 6 of 6 | 6 | 8 s | conformance, parser errors, temporal |
+| http1 | 6 | 10 | 196 of 196 | 196 | 32 s | conformance, parser errors, encryption, decrypted view |
+| http2 | 1 | 4 | 87 of 87 | 87 | 12 s | conformance, parser errors, encryption, decrypted view |
+| imap | 5 | 6 | 46 of 46 | 46 | 16 s | conformance, parser errors, encryption, decrypted view |
+| ldap | 4 | 4 | 27 of 27 | 27 | 24 s | conformance, parser errors |
+| mqtt | 5 | 5 | 21 of 21 | 21 | 28 s | conformance, parser errors |
+| ntp | 5 | 5 | 30 of 30 | 30 | 24 s | conformance, parser errors |
+| pop3 | 5 | 5 | 36 of 36 | 36 | 14 s | conformance, parser errors |
+| sip_rtp | 5 | 5 | 18 of 18 | 34 | 20 s | conformance, parser errors, temporal, zeek_check.py |
+| smb2 | 3 | 3 | 22 of 22 | 22 | 10 s | conformance, parser errors |
+| smtp | 3 | 7 | 57 of 57 | 57 | 14 s | conformance, parser errors, encryption, decrypted view, zeek_check.py, zeek_check.py |
+| ssh | 4 | 4 | 19 of 19 | 19 | 18 s | conformance, parser errors, zeek_check.py |
+| strike | 1 | 1 | 23 of 23 | 23 | 11 s | conformance, parser errors, structure |
+
+The sessions of sip_rtp in the capture are the SIP dialogs and the RTP flows. The run time includes the time of the rounds only, not the build. A forced run of a module took 8 to 32 seconds.
+
+#### The exclusion list
+
+Three scenarios cannot pass on AF_XDP yet. They are left out of the run (`excluded` in `profiles.yaml`), and their labels go with them. The kernel fallback of AGT-29 covers them: an unforced agent runs a plan with one of these mix entries on the kernel backend and reports that, and a forced agent refuses it with the cause (AGT-29 reads this list in `check_af_xdp`). The other modules are not excluded.
+
+| Scenario | Cause | What fixes it |
+|---|---|---|
+| `dns/tcp_fallback` | Its TCP leg starts when the UDP leg ends, and its server side binds TCP 53 only then. A client that dials before the bind finds the datapath listener of the port open (the first bind keeps it for the run) without a subscriber, so the hub of AGT-25 completes the handshake and resets the session after the first data. The client retries a refused connection and not a reset, so the session fails (`unexpected_reset`, about 1 session in 24). The capture shows SYN, SYN-ACK, ACK, the query, and `RST` | `engine/fps-agent/src/transport.rs`: a session that no call claims waits for a subscriber of its host for the grace of the runtime (2 s, `PENDING_GRACE`) before the hub resets it, as `fps-runtime::rendezvous` does for the kernel transport |
+| `hls/vod_segments` | It spawns 33 segment flows on TCP 8092 for each playback, and the server side of each binds after the client dialed, so the same reset hits a playback with high probability and fails it. The temporal checks of the segment sessions then see a session without a request | The same change |
+| `strike/conn_churn` | The client connects and resets, and the server accepts and resets. The own stack drops a connection that was reset before it was accepted, so the accept times out (18 of 24 sessions fail with `connect_timeout`). A kernel keeps such a connection in the accept queue, and `accept` returns it | `engine/fps-tcp-own`: deliver a connection that was reset before `accept` to the listener, which then reports the reset on its first read |
+
+The exclusion list is the key `excluded` of `profiles.yaml`, and removing an entry puts the scenario back in the run. Nothing else needs ICMP, UDP datagrams above the MTU, several pools on a side, VLANs, or DHCP: the first party scenarios use TCP and UDP datagrams below 1,500 bytes between one client pool and one server pool.
+
+#### The CI job
+
+`.github/workflows/trn-afxdp-modules.yml` (added by the coordinator) builds `fps-agent` once and runs one matrix job for each of the 15 modules on a hosted `ubuntu-24.04` runner, with `sudo`, the tools from `realism/ci/install-tools.sh`, and `FPS_AFXDP_PARSERS=tshark,zeek`. Each job keeps its result files as an artifact. Run one module by hand with `sudo engine/fps-datapath/realism/module-afxdp.sh MODULE target/debug/fps-agent OUT`. It needs ip, ethtool, tcpdump, editcap, ndpiReader (4.14 for http2), tshark, PyYAML, and Zeek for the Zeek checks.
+
+`test_make_plan.py` and `test_finalize.py` (pytest, no root) check that every module has a profile, that no round listens twice on a port, that the profile variables exist, the digest of the staged tree, the labels with and without the key log, the exclusions, and the counts.
+
+| Limit | Effect |
+|---|---|
+| The scenarios of a module run one round after another | Two scenarios on one port never overlap in time, as in the kernel run. A plan that mixes them still needs one port for each entry |
+| The counts of sessions are Poisson | A scenario with a small count (ssh `scp_download` 2, mqtt `subscribe` 2) has few sessions in the capture. The seed fixes the count, so a run repeats |
+| One lane, queue 0 | The runs use one core each, because the agent starts one lane (AGT-30) |
 
 ### Next hop resolution in the datapath (TRN-35)
 

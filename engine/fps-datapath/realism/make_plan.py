@@ -9,7 +9,7 @@ so the agent runs the sessions on the user space datapath, and it scores the
 capture with the labels of the kernel run (modules/MODULE/fixtures/expected.yaml).
 
     make_plan.py REPO_ROOT OUT_DIR MODULE [--sessions N] [--seed S] [--client IF]
-                 [--server IF] [--keys keylog|none]
+                 [--server IF] [--keys keylog|none] [--include-excluded]
 
 Every scenario of the manifest is a mix entry, except the scenarios that the
 profile of the module leaves out (profiles.yaml, which holds the variables and
@@ -271,13 +271,26 @@ def build(
     client_if: str,
     server_if: str,
     keys: bool,
+    include_excluded: bool = False,
 ) -> int:
-    """Writes the plans, the module tree, and the labels. Returns the number of rounds."""
+    """Writes the plans, the module tree, and the labels. Returns the number of rounds.
+
+    include_excluded runs the scenarios of the exclusion list too and keeps their
+    labels, to see whether the agent runs them now.
+    """
     profile = load_profile(module)
+    if include_excluded:
+        profile = {
+            k: v
+            for k, v in profile.items()
+            if k not in ("excluded", "drop_rules", "drop_applications")
+        }
     tree = stage(root, out, module)
     manifest = yaml.safe_load((tree / "manifest.yaml").read_text(encoding="utf-8"))
     digest = tree_digest(tree)
-    per_scenario = sessions if sessions is not None else int(profile.get("sessions", 20))
+    per_scenario = (
+        sessions if sessions is not None else int(profile.get("sessions", 20))
+    )
     client_hosts = int(profile.get("client_hosts", 8))
     # The scenarios that capture.sh leaves out, and the scenarios that the AF_XDP
     # run leaves out until the agent runs them (the exclusion list of TRN-36).
@@ -303,7 +316,9 @@ def build(
             {
                 "id": name,
                 "listen": (l4, port),
-                "sessions": int(profile.get("scenario_sessions", {}).get(name, per_scenario)),
+                "sessions": int(
+                    profile.get("scenario_sessions", {}).get(name, per_scenario)
+                ),
                 "params": params,
                 "declared": declared,
                 "scenario": {
@@ -407,6 +422,11 @@ def main(argv: list[str]) -> int:
         default="keylog",
         help="keylog: the capture carries the TLS secrets and the labels ask for decryption",
     )
+    parser.add_argument(
+        "--include-excluded",
+        action="store_true",
+        help="run the scenarios of the exclusion list too, with their labels",
+    )
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     rounds = build(
@@ -418,6 +438,7 @@ def main(argv: list[str]) -> int:
         args.client,
         args.server,
         args.keys == "keylog",
+        args.include_excluded,
     )
     print(rounds)
     return 0

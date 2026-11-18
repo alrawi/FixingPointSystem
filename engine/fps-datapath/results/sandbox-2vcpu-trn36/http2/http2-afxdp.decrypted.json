@@ -1,0 +1,1003 @@
+{
+  "capture": "http2-afxdp.pcapng",
+  "plaintext": "inside",
+  "passed": true,
+  "failures": [],
+  "tls_sessions": 40,
+  "expected_sessions": 40,
+  "decrypted_sessions": 40,
+  "server_ports": {
+    "8443": 14,
+    "8444": 26
+  },
+  "view": "/tmp/claude-0/-home-claude/aaf3499a-4351-5300-9ccb-84f55279a5c5/scratchpad/sweep-TRN-36-A/http2/http2-afxdp.decrypted.pcap",
+  "classifier": "ndpi 4.14.0-1-90090b9",
+  "report": {
+    "report": "fps-realism-report",
+    "version": "0.21.0",
+    "generator": "fps-realism 0.1.0",
+    "passed": true,
+    "capture": {
+      "file": "http2-afxdp.decrypted.pcap",
+      "sha256": "5a3fdeb1436cda48f2dbfe2226de4a09186cc7f0879dd30304263678d16f92ce",
+      "format": "pcap",
+      "link_types": [
+        1
+      ],
+      "frames": 811,
+      "skipped_frames": 0,
+      "sessions": 40
+    },
+    "labels": {
+      "file": "http2.labels.yaml",
+      "sha256": "84cb988d1f529adc63367a11083f6f28f5e1b646c9e74657e8c027bac84da273"
+    },
+    "checks": [
+      {
+        "check": "conformance",
+        "passed": true,
+        "classifier": "ndpi",
+        "classifier_version": "4.14.0-1-90090b9",
+        "threshold": 0.99,
+        "metrics": [
+          {
+            "name": "realism.conformance_ratio",
+            "labels": {
+              "application": "https2_decrypted",
+              "classifier": "ndpi"
+            },
+            "value": 1.0
+          },
+          {
+            "name": "realism.check_failures",
+            "labels": {
+              "check": "conformance"
+            },
+            "value": 0
+          }
+        ],
+        "applications": [
+          {
+            "application": "https2_decrypted",
+            "accepted": [
+              "HTTP2"
+            ],
+            "sessions": 40,
+            "conforming": 40,
+            "ratio": 1.0,
+            "passed": true,
+            "observed": {
+              "HTTP2": 40
+            }
+          }
+        ],
+        "unlabelled_sessions": 0,
+        "mismatches": [],
+        "mismatches_total": 0
+      },
+      {
+        "check": "parser_errors",
+        "passed": true,
+        "metrics": [
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "https2_decrypted",
+              "parser": "tshark"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "all",
+              "parser": "tshark"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "https2_decrypted",
+              "parser": "zeek"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "all",
+              "parser": "zeek"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.check_failures",
+            "labels": {
+              "check": "parser_errors"
+            },
+            "value": 0
+          }
+        ],
+        "parsers": [
+          {
+            "parser": "tshark",
+            "version": "4.2.2"
+          },
+          {
+            "parser": "zeek",
+            "version": "9.0.1"
+          }
+        ],
+        "missing_parsers": [],
+        "skipped_parsers": [],
+        "applications": [
+          {
+            "application": "https2_decrypted",
+            "sessions": 40,
+            "parser_errors": 0,
+            "malformed_packets": 0,
+            "by_parser": {
+              "tshark": {
+                "parser_errors": 0,
+                "malformed_packets": 0
+              },
+              "zeek": {
+                "parser_errors": 0,
+                "malformed_packets": 0
+              }
+            }
+          }
+        ],
+        "unlabelled_errors": {
+          "tshark": 0,
+          "zeek": 0
+        },
+        "unattributed_errors": {
+          "tshark": 0,
+          "zeek": 0
+        },
+        "errors": [],
+        "errors_total": 0,
+        "not_counted": [],
+        "not_counted_total": 0,
+        "port_collision_ports": 922,
+        "expected_findings": [],
+        "expected_total": 0,
+        "missing_findings": [],
+        "unchecked_expectations": []
+      },
+      {
+        "check": "messages",
+        "metrics": [
+          {
+            "name": "realism.check_failures",
+            "labels": {
+              "check": "messages"
+            },
+            "value": 0
+          }
+        ],
+        "passed": true,
+        "tool": {
+          "tool": "tshark",
+          "version": "4.2.2"
+        },
+        "sessions_checked": 40,
+        "sessions_failed": 0,
+        "rules": [
+          {
+            "rule": 1,
+            "protocol": "http2",
+            "match": {
+              "server_port": 8443
+            },
+            "expected": {
+              "requests": {
+                "min": 7,
+                "max": 7
+              },
+              "responses": {
+                "min": 7,
+                "max": 7
+              }
+            },
+            "sessions": 14,
+            "failed_sessions": 0,
+            "observed_total": {
+              "requests": 98,
+              "responses": 98
+            }
+          },
+          {
+            "rule": 2,
+            "protocol": "http2",
+            "match": {
+              "server_port": 8444
+            },
+            "expected": {
+              "requests": {
+                "min": 2,
+                "max": 2
+              },
+              "responses": {
+                "min": 2,
+                "max": 2
+              }
+            },
+            "sessions": 26,
+            "failed_sessions": 0,
+            "observed_total": {
+              "requests": 52,
+              "responses": 52
+            }
+          }
+        ],
+        "failures_total": 0,
+        "failures": [],
+        "sessions": [
+          {
+            "session": 1,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.1",
+              "port": 10000
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 2,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.2",
+              "port": 10004
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 8,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.3",
+              "port": 10014
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 15,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.4",
+              "port": 10032
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 17,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.5",
+              "port": 10038
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 18,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.6",
+              "port": 10040
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 19,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.7",
+              "port": 10041
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 22,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.8",
+              "port": 10047
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 24,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.1",
+              "port": 10054
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 25,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.2",
+              "port": 10055
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 30,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.3",
+              "port": 10065
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 34,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.4",
+              "port": 10078
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 37,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.5",
+              "port": 10082
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 40,
+            "rule": 1,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.6",
+              "port": 10085
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8443
+            },
+            "observed": {
+              "requests": 7,
+              "responses": 7
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 3,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.1",
+              "port": 10005
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 4,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.2",
+              "port": 10007
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 5,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.3",
+              "port": 10008
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 6,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.4",
+              "port": 10011
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 7,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.5",
+              "port": 10013
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 9,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.6",
+              "port": 10017
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 10,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.7",
+              "port": 10018
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 11,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.8",
+              "port": 10019
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 12,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.1",
+              "port": 10020
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 13,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.2",
+              "port": 10026
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 14,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.3",
+              "port": 10030
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 16,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.4",
+              "port": 10033
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 20,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.5",
+              "port": 10042
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 21,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.6",
+              "port": 10046
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 23,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.7",
+              "port": 10052
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 26,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.8",
+              "port": 10057
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 27,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.1",
+              "port": 10061
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 28,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.2",
+              "port": 10062
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 29,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.3",
+              "port": 10063
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 31,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.4",
+              "port": 10066
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 32,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.5",
+              "port": 10067
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 33,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.6",
+              "port": 10073
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 35,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.7",
+              "port": 10079
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 36,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.8",
+              "port": 10081
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 38,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.1",
+              "port": 10083
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 39,
+            "rule": 2,
+            "protocol": "http2",
+            "client": {
+              "ip": "10.1.0.2",
+              "port": 10084
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 8444
+            },
+            "observed": {
+              "requests": 2,
+              "responses": 2
+            },
+            "passed": true,
+            "reasons": []
+          }
+        ]
+      }
+    ]
+  }
+}

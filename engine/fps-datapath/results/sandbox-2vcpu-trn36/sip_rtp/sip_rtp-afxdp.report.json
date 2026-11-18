@@ -1,0 +1,273 @@
+{
+  "report": "fps-realism-report",
+  "version": "0.21.0",
+  "generator": "fps-realism 0.1.0",
+  "passed": true,
+  "capture": {
+    "file": "sip_rtp-afxdp.pcapng",
+    "sha256": "9b320033a45b1446ed1a3def12310b3fd5fa1044e9d0132f2edd7904efd00560",
+    "format": "pcapng",
+    "link_types": [
+      1
+    ],
+    "frames": 2912,
+    "skipped_frames": 0,
+    "sessions": 34
+  },
+  "labels": {
+    "file": "labels.yaml",
+    "sha256": "548b30b1db27fbffc80c18addf697979e965b78b56b7ff16a5928138cb99d1fb"
+  },
+  "checks": [
+    {
+      "check": "conformance",
+      "passed": true,
+      "classifier": "ndpi",
+      "classifier_version": "4.14.0-1-90090b9",
+      "threshold": 0.99,
+      "metrics": [
+        {
+          "name": "realism.conformance_ratio",
+          "labels": {
+            "application": "rtp",
+            "classifier": "ndpi"
+          },
+          "value": 1.0
+        },
+        {
+          "name": "realism.conformance_ratio",
+          "labels": {
+            "application": "sip",
+            "classifier": "ndpi"
+          },
+          "value": 1.0
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "conformance"
+          },
+          "value": 0
+        }
+      ],
+      "applications": [
+        {
+          "application": "rtp",
+          "accepted": [
+            "RTP"
+          ],
+          "sessions": 16,
+          "conforming": 16,
+          "ratio": 1.0,
+          "passed": true,
+          "observed": {
+            "RTP": 16
+          }
+        },
+        {
+          "application": "sip",
+          "accepted": [
+            "SIP"
+          ],
+          "sessions": 18,
+          "conforming": 18,
+          "ratio": 1.0,
+          "passed": true,
+          "observed": {
+            "SIP": 18
+          }
+        }
+      ],
+      "unlabelled_sessions": 0,
+      "mismatches": [],
+      "mismatches_total": 0
+    },
+    {
+      "check": "parser_errors",
+      "passed": true,
+      "metrics": [
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "rtp",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "sip",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "all",
+            "parser": "tshark"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "rtp",
+            "parser": "zeek"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "sip",
+            "parser": "zeek"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.parser_errors",
+          "labels": {
+            "application": "all",
+            "parser": "zeek"
+          },
+          "value": 0
+        },
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "parser_errors"
+          },
+          "value": 0
+        }
+      ],
+      "parsers": [
+        {
+          "parser": "tshark",
+          "version": "4.2.2"
+        },
+        {
+          "parser": "zeek",
+          "version": "9.0.1"
+        }
+      ],
+      "missing_parsers": [],
+      "skipped_parsers": [],
+      "applications": [
+        {
+          "application": "rtp",
+          "sessions": 16,
+          "parser_errors": 0,
+          "malformed_packets": 0,
+          "by_parser": {
+            "tshark": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            },
+            "zeek": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            }
+          }
+        },
+        {
+          "application": "sip",
+          "sessions": 18,
+          "parser_errors": 0,
+          "malformed_packets": 0,
+          "by_parser": {
+            "tshark": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            },
+            "zeek": {
+              "parser_errors": 0,
+              "malformed_packets": 0
+            }
+          }
+        }
+      ],
+      "unlabelled_errors": {
+        "tshark": 0,
+        "zeek": 0
+      },
+      "unattributed_errors": {
+        "tshark": 0,
+        "zeek": 0
+      },
+      "errors": [],
+      "errors_total": 0,
+      "not_counted": [],
+      "not_counted_total": 0,
+      "port_collision_ports": 922,
+      "expected_findings": [],
+      "expected_total": 0,
+      "missing_findings": [],
+      "unchecked_expectations": []
+    },
+    {
+      "check": "temporal",
+      "metrics": [
+        {
+          "name": "realism.check_failures",
+          "labels": {
+            "check": "temporal"
+          },
+          "value": 0
+        }
+      ],
+      "passed": true,
+      "alpha": 0.01,
+      "min_samples": 30,
+      "sessions_total": 34,
+      "skipped_encrypted_sessions": 0,
+      "comparisons": [
+        {
+          "property": "packet_gap",
+          "application": "rtp",
+          "direction": "both",
+          "unit": "seconds",
+          "target": {
+            "dist": "constant",
+            "parameters": {
+              "tolerance": 0.008,
+              "within": 0.9
+            },
+            "values": [
+              0.02,
+              0.03
+            ],
+            "median": null,
+            "source": null
+          },
+          "test": "constant",
+          "method": "constant",
+          "alpha": 0.01,
+          "path": null,
+          "min_samples": 30,
+          "n": 2760,
+          "reference_n": null,
+          "statistic": 0.020202,
+          "p_value": 1.0,
+          "status": "pass",
+          "reason": null,
+          "observed": {
+            "min": 0.000157,
+            "median": 0.020413,
+            "mean": 0.022848,
+            "max": 0.039523
+          },
+          "streams": {
+            "judged": 32,
+            "failed": 0,
+            "too_short": 0
+          }
+        }
+      ],
+      "rungs": [],
+      "insufficient_comparisons": 0,
+      "failures": []
+    }
+  ]
+}

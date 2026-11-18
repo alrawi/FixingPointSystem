@@ -125,7 +125,10 @@ def run_checks(
         if check.get("zeek") and zeek is None:
             # The kernel run skips these checks the same way, and the realism
             # job installs Zeek.
-            print(f"finalize.py: skipped {check['run'][0]}, Zeek is not installed", file=sys.stderr)
+            print(
+                f"finalize.py: skipped {check['run'][0]}, Zeek is not installed",
+                file=sys.stderr,
+            )
             continue
         argv = [expand(str(arg), values, counts) for arg in check["run"]]
         if check.get("zeek"):

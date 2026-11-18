@@ -1,0 +1,484 @@
+{
+  "capture": "imap-afxdp.pcapng",
+  "plaintext": "inside",
+  "passed": true,
+  "failures": [],
+  "tls_sessions": 10,
+  "expected_sessions": 10,
+  "decrypted_sessions": 10,
+  "server_ports": {
+    "1143": 10
+  },
+  "view": "/tmp/claude-0/-home-claude/aaf3499a-4351-5300-9ccb-84f55279a5c5/scratchpad/sweep-TRN-36-A/imap/imap-afxdp.decrypted.pcap",
+  "classifier": "ndpi 4.14.0-1-90090b9",
+  "report": {
+    "report": "fps-realism-report",
+    "version": "0.21.0",
+    "generator": "fps-realism 0.1.0",
+    "passed": true,
+    "capture": {
+      "file": "imap-afxdp.decrypted.pcap",
+      "sha256": "c59d235c100f42b2e78b7d6e8617f3e01b5f61c146d46ad4853a65fb0765080f",
+      "format": "pcap",
+      "link_types": [
+        1
+      ],
+      "frames": 377,
+      "skipped_frames": 0,
+      "sessions": 10
+    },
+    "labels": {
+      "file": "imap.labels.yaml",
+      "sha256": "377492b9f52a7e1041a0597a1f290b88ff0ed1d456eed6d2c73cf1dca4f80db6"
+    },
+    "checks": [
+      {
+        "check": "conformance",
+        "passed": true,
+        "classifier": "ndpi",
+        "classifier_version": "4.14.0-1-90090b9",
+        "threshold": 0.99,
+        "metrics": [
+          {
+            "name": "realism.conformance_ratio",
+            "labels": {
+              "application": "starttls_decrypted",
+              "classifier": "ndpi"
+            },
+            "value": 1.0
+          },
+          {
+            "name": "realism.check_failures",
+            "labels": {
+              "check": "conformance"
+            },
+            "value": 0
+          }
+        ],
+        "applications": [
+          {
+            "application": "starttls_decrypted",
+            "accepted": [
+              "IMAP"
+            ],
+            "sessions": 10,
+            "conforming": 10,
+            "ratio": 1.0,
+            "passed": true,
+            "observed": {
+              "IMAP": 10
+            }
+          }
+        ],
+        "unlabelled_sessions": 0,
+        "mismatches": [],
+        "mismatches_total": 0
+      },
+      {
+        "check": "parser_errors",
+        "passed": true,
+        "metrics": [
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "starttls_decrypted",
+              "parser": "tshark"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "all",
+              "parser": "tshark"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "starttls_decrypted",
+              "parser": "zeek"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.parser_errors",
+            "labels": {
+              "application": "all",
+              "parser": "zeek"
+            },
+            "value": 0
+          },
+          {
+            "name": "realism.check_failures",
+            "labels": {
+              "check": "parser_errors"
+            },
+            "value": 0
+          }
+        ],
+        "parsers": [
+          {
+            "parser": "tshark",
+            "version": "4.2.2"
+          },
+          {
+            "parser": "zeek",
+            "version": "9.0.1"
+          }
+        ],
+        "missing_parsers": [],
+        "skipped_parsers": [],
+        "applications": [
+          {
+            "application": "starttls_decrypted",
+            "sessions": 10,
+            "parser_errors": 0,
+            "malformed_packets": 0,
+            "by_parser": {
+              "tshark": {
+                "parser_errors": 0,
+                "malformed_packets": 0
+              },
+              "zeek": {
+                "parser_errors": 0,
+                "malformed_packets": 0
+              }
+            }
+          }
+        ],
+        "unlabelled_errors": {
+          "tshark": 0,
+          "zeek": 0
+        },
+        "unattributed_errors": {
+          "tshark": 0,
+          "zeek": 0
+        },
+        "errors": [],
+        "errors_total": 0,
+        "not_counted": [],
+        "not_counted_total": 0,
+        "port_collision_ports": 922,
+        "expected_findings": [],
+        "expected_total": 0,
+        "missing_findings": [],
+        "unchecked_expectations": []
+      },
+      {
+        "check": "messages",
+        "metrics": [
+          {
+            "name": "realism.check_failures",
+            "labels": {
+              "check": "messages"
+            },
+            "value": 0
+          }
+        ],
+        "passed": true,
+        "tool": {
+          "tool": "tshark",
+          "version": "4.2.2"
+        },
+        "sessions_checked": 10,
+        "sessions_failed": 0,
+        "rules": [
+          {
+            "rule": 1,
+            "protocol": "imap",
+            "match": {
+              "server_port": 143
+            },
+            "expected": {
+              "commands.CAPABILITY": {
+                "min": 1,
+                "max": 1
+              },
+              "commands.LOGIN": {
+                "min": 1,
+                "max": 1
+              },
+              "commands.SELECT": {
+                "min": 1,
+                "max": 1
+              },
+              "commands.FETCH": {
+                "min": 3,
+                "max": 3
+              },
+              "commands.LOGOUT": {
+                "min": 1,
+                "max": 1
+              },
+              "replies.OK": {
+                "min": 7,
+                "max": 7
+              },
+              "messages": {
+                "min": 2,
+                "max": 2
+              }
+            },
+            "sessions": 10,
+            "failed_sessions": 0,
+            "observed_total": {
+              "commands.CAPABILITY": 10,
+              "commands.LOGIN": 10,
+              "commands.SELECT": 10,
+              "commands.FETCH": 30,
+              "commands.LOGOUT": 10,
+              "replies.OK": 70,
+              "messages": 20
+            }
+          }
+        ],
+        "failures_total": 0,
+        "failures": [],
+        "sessions": [
+          {
+            "session": 1,
+            "rule": 1,
+            "protocol": "imap",
+            "client": {
+              "ip": "10.1.0.1",
+              "port": 10000
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 143
+            },
+            "observed": {
+              "commands.CAPABILITY": 1,
+              "commands.LOGIN": 1,
+              "commands.SELECT": 1,
+              "commands.FETCH": 3,
+              "commands.LOGOUT": 1,
+              "replies.OK": 7,
+              "messages": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 2,
+            "rule": 1,
+            "protocol": "imap",
+            "client": {
+              "ip": "10.1.0.2",
+              "port": 10004
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 143
+            },
+            "observed": {
+              "commands.CAPABILITY": 1,
+              "commands.LOGIN": 1,
+              "commands.SELECT": 1,
+              "commands.FETCH": 3,
+              "commands.LOGOUT": 1,
+              "replies.OK": 7,
+              "messages": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 3,
+            "rule": 1,
+            "protocol": "imap",
+            "client": {
+              "ip": "10.1.0.3",
+              "port": 10005
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 143
+            },
+            "observed": {
+              "commands.CAPABILITY": 1,
+              "commands.LOGIN": 1,
+              "commands.SELECT": 1,
+              "commands.FETCH": 3,
+              "commands.LOGOUT": 1,
+              "replies.OK": 7,
+              "messages": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 4,
+            "rule": 1,
+            "protocol": "imap",
+            "client": {
+              "ip": "10.1.0.4",
+              "port": 10007
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 143
+            },
+            "observed": {
+              "commands.CAPABILITY": 1,
+              "commands.LOGIN": 1,
+              "commands.SELECT": 1,
+              "commands.FETCH": 3,
+              "commands.LOGOUT": 1,
+              "replies.OK": 7,
+              "messages": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 5,
+            "rule": 1,
+            "protocol": "imap",
+            "client": {
+              "ip": "10.1.0.5",
+              "port": 10008
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 143
+            },
+            "observed": {
+              "commands.CAPABILITY": 1,
+              "commands.LOGIN": 1,
+              "commands.SELECT": 1,
+              "commands.FETCH": 3,
+              "commands.LOGOUT": 1,
+              "replies.OK": 7,
+              "messages": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 6,
+            "rule": 1,
+            "protocol": "imap",
+            "client": {
+              "ip": "10.1.0.6",
+              "port": 10009
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 143
+            },
+            "observed": {
+              "commands.CAPABILITY": 1,
+              "commands.LOGIN": 1,
+              "commands.SELECT": 1,
+              "commands.FETCH": 3,
+              "commands.LOGOUT": 1,
+              "replies.OK": 7,
+              "messages": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 7,
+            "rule": 1,
+            "protocol": "imap",
+            "client": {
+              "ip": "10.1.0.7",
+              "port": 10011
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 143
+            },
+            "observed": {
+              "commands.CAPABILITY": 1,
+              "commands.LOGIN": 1,
+              "commands.SELECT": 1,
+              "commands.FETCH": 3,
+              "commands.LOGOUT": 1,
+              "replies.OK": 7,
+              "messages": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 8,
+            "rule": 1,
+            "protocol": "imap",
+            "client": {
+              "ip": "10.1.0.8",
+              "port": 10012
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 143
+            },
+            "observed": {
+              "commands.CAPABILITY": 1,
+              "commands.LOGIN": 1,
+              "commands.SELECT": 1,
+              "commands.FETCH": 3,
+              "commands.LOGOUT": 1,
+              "replies.OK": 7,
+              "messages": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 9,
+            "rule": 1,
+            "protocol": "imap",
+            "client": {
+              "ip": "10.1.0.1",
+              "port": 10016
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 143
+            },
+            "observed": {
+              "commands.CAPABILITY": 1,
+              "commands.LOGIN": 1,
+              "commands.SELECT": 1,
+              "commands.FETCH": 3,
+              "commands.LOGOUT": 1,
+              "replies.OK": 7,
+              "messages": 2
+            },
+            "passed": true,
+            "reasons": []
+          },
+          {
+            "session": 10,
+            "rule": 1,
+            "protocol": "imap",
+            "client": {
+              "ip": "10.1.0.2",
+              "port": 10017
+            },
+            "server": {
+              "ip": "10.2.0.1",
+              "port": 143
+            },
+            "observed": {
+              "commands.CAPABILITY": 1,
+              "commands.LOGIN": 1,
+              "commands.SELECT": 1,
+              "commands.FETCH": 3,
+              "commands.LOGOUT": 1,
+              "replies.OK": 7,
+              "messages": 2
+            },
+            "passed": true,
+            "reasons": []
+          }
+        ]
+      }
+    ]
+  }
+}
