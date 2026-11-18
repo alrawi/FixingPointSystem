@@ -312,3 +312,29 @@ fn the_station_answers_arp_for_its_hosts_and_for_no_one_else() {
         Ok(Received::Ignored)
     );
 }
+
+#[test]
+fn deferred_peers_resolve_to_the_next_hop_marker_for_any_address() {
+    let s = station(None);
+    assert!(!s.defers_peers());
+    assert_eq!(s.resolve(S2), Some(mac(3, 0xbb)), "the table answers");
+    assert_eq!(s.resolve(0xC0A8_0001u32), None, "and knows no one else");
+
+    let s = station(None).defer_peers();
+    assert!(s.defers_peers());
+    for ip in [S2, 0xC0A8_0001u32] {
+        assert_eq!(s.resolve(ip), Some(NEXT_HOP_MAC), "{ip:#x}");
+    }
+    assert_eq!(
+        s.resolve(std::net::Ipv6Addr::LOCALHOST),
+        Some(NEXT_HOP_MAC),
+        "a peer of either family"
+    );
+    // The local hosts keep their MAC addresses, and the frame carries the
+    // marker where the neighbor goes.
+    let local = s.local_mac(C0).expect("a local host");
+    let mut out = Vec::new();
+    assert!(s.head(&mut out, C0, 0xC0A8_0001u32));
+    assert_eq!(out.get(..6), Some(&NEXT_HOP_MAC.0[..]));
+    assert_eq!(out.get(6..12), Some(&local.0[..]));
+}

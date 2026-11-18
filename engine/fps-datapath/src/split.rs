@@ -15,18 +15,28 @@
 //! A hook also sends: the splitter asks every hook for frames of its own
 //! ([`FrameHook::poll_tx`]) on each pass of the queue, and sends them on the
 //! queue after the replies.
+//!
+//! With [`Splitter::with_next_hop`] the splitter also resolves the next hop of
+//! the frames that the stack sends (TRN-35). A frame whose Ethernet
+//! destination is `NEXT_HOP_MAC` goes through the neighbor cache, which finds
+//! the MAC address of the gateway or the peer with ARP or neighbor
+//! solicitation, holds the frame while it asks, and reads the answers that
+//! arrive on the queue.
 
 use std::collections::VecDeque;
 use std::io;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use fps_backend_afxdp::{FrameIo, QueueStats};
-use fps_hosts::wire::MAX_REPLY_LEN;
-use fps_hosts::{Responder, Verdict};
+use fps_hosts::wire::{parse_arp, parse_neighbor_advert, MAX_REPLY_LEN};
+use fps_hosts::{MacAddr, Responder, Verdict};
+use fps_tcp_own::clock::Clock;
 
 use crate::classify::{classify, Class};
+use crate::neighbor::{needs_next_hop, NeighborConfig, Neighbors, Outcome, Route};
 
 /// The most replies that wait for a free transmit slot. A queue that stays
 /// full drops the oldest replies, which a peer asks for again.
@@ -168,6 +178,33 @@ pub struct FrameCounters {
     /// Replies that were dropped, because the queue refused them or stayed
     /// full.
     pub replies_dropped: u64,
+    /// ARP replies, ARP requests, and neighbor advertisements that the
+    /// neighbor cache read as answers (TRN-35). Zero without next hop
+    /// resolution.
+    pub neighbor_answers: u64,
+    /// ARP requests and neighbor solicitations that the cache sent, repeats
+    /// included.
+    pub neighbor_requests: u64,
+    /// Resolutions that ended with a MAC address.
+    pub neighbor_resolved: u64,
+    /// Resolutions that ended without an answer after the last request.
+    pub neighbor_failed: u64,
+    /// Known entries that an answer refreshed.
+    pub neighbor_refreshed: u64,
+    /// Entries that ran out of their lifetime or of their failure hold.
+    pub neighbor_expired: u64,
+    /// Frames that the cache held while it asked.
+    pub neighbor_held: u64,
+    /// Held frames that left after the answer came.
+    pub neighbor_released: u64,
+    /// Frames that the cache dropped: a hold that overflowed, a resolution
+    /// that failed, a next hop in its failure hold, a full table, and a frame
+    /// that the cache could not read.
+    pub neighbor_dropped: u64,
+    /// The subset of `neighbor_dropped` that a full table caused.
+    pub neighbor_table_full: u64,
+    /// The next hops that the cache knows now.
+    pub neighbor_entries: u64,
 }
 
 /// The counters behind a [`FrameCounters`]. The splitter lives inside the
@@ -191,6 +228,17 @@ pub struct SharedCounters {
     malformed: AtomicU64,
     replies_sent: AtomicU64,
     replies_dropped: AtomicU64,
+    pub(crate) neighbor_answers: AtomicU64,
+    pub(crate) neighbor_requests: AtomicU64,
+    pub(crate) neighbor_resolved: AtomicU64,
+    pub(crate) neighbor_failed: AtomicU64,
+    pub(crate) neighbor_refreshed: AtomicU64,
+    pub(crate) neighbor_expired: AtomicU64,
+    pub(crate) neighbor_held: AtomicU64,
+    pub(crate) neighbor_released: AtomicU64,
+    pub(crate) neighbor_dropped: AtomicU64,
+    pub(crate) neighbor_table_full: AtomicU64,
+    pub(crate) neighbor_entries: AtomicU64,
 }
 
 fn bump(counter: &AtomicU64) {
@@ -220,6 +268,17 @@ impl SharedCounters {
             malformed: get(&self.malformed),
             replies_sent: get(&self.replies_sent),
             replies_dropped: get(&self.replies_dropped),
+            neighbor_answers: get(&self.neighbor_answers),
+            neighbor_requests: get(&self.neighbor_requests),
+            neighbor_resolved: get(&self.neighbor_resolved),
+            neighbor_failed: get(&self.neighbor_failed),
+            neighbor_refreshed: get(&self.neighbor_refreshed),
+            neighbor_expired: get(&self.neighbor_expired),
+            neighbor_held: get(&self.neighbor_held),
+            neighbor_released: get(&self.neighbor_released),
+            neighbor_dropped: get(&self.neighbor_dropped),
+            neighbor_table_full: get(&self.neighbor_table_full),
+            neighbor_entries: get(&self.neighbor_entries),
         }
     }
 }
@@ -232,6 +291,7 @@ pub struct Splitter {
     hooks: Hooks,
     pending: VecDeque<Vec<u8>>,
     counters: Arc<SharedCounters>,
+    neighbors: Option<Neighbors>,
 }
 
 impl Splitter {
@@ -253,17 +313,79 @@ impl Splitter {
             hooks,
             pending: VecDeque::new(),
             counters: Arc::clone(&counters),
+            neighbors: None,
         };
         (splitter, counters)
     }
 
+    /// Resolves the next hop of the frames that the stack above sends
+    /// (TRN-35). The stack must leave the MAC address of its peers to the
+    /// splitter (`OwnConfig::resolve_next_hop`), and the frames of a peer
+    /// then leave only with the address that ARP or neighbor discovery found.
+    /// `route` says which destinations are on the link and where the gateway
+    /// is, and `clock` times the retries and the aging of the entries.
+    #[must_use]
+    pub fn with_next_hop(
+        mut self,
+        config: NeighborConfig,
+        route: Route,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        self.neighbors = Some(Neighbors::new(
+            config,
+            route,
+            self.vlan,
+            clock,
+            Arc::clone(&self.counters),
+        ));
+        self
+    }
+
     /// Sends the replies that wait, as many as the queue takes.
     fn drain_pending(&mut self) {
-        drain(&mut *self.inner, &mut self.pending, &self.counters);
+        drain(
+            &mut *self.inner,
+            &mut self.pending,
+            &self.counters,
+            self.neighbors.as_mut(),
+        );
     }
 }
 
-fn drain(inner: &mut dyn FrameIo, pending: &mut VecDeque<Vec<u8>>, counters: &SharedCounters) {
+/// Gives the frames of `pending` that wait for their next hop to the cache:
+/// frames to a known next hop get their MAC address, and the others are held
+/// or dropped, with the requests that this takes queued behind them.
+fn resolve_pending(neighbors: &mut Neighbors, pending: &mut VecDeque<Vec<u8>>) {
+    if !pending.iter().any(|f| needs_next_hop(f)) {
+        return;
+    }
+    for mut frame in std::mem::take(pending) {
+        if !needs_next_hop(&frame) {
+            pending.push_back(frame);
+            continue;
+        }
+        if let Outcome::Send(mac) = neighbors.route_frame(&frame, pending) {
+            set_destination(&mut frame, mac);
+            pending.push_back(frame);
+        }
+    }
+}
+
+fn set_destination(frame: &mut [u8], mac: MacAddr) {
+    if let Some(dst) = frame.get_mut(..6) {
+        dst.copy_from_slice(&mac.0);
+    }
+}
+
+fn drain(
+    inner: &mut dyn FrameIo,
+    pending: &mut VecDeque<Vec<u8>>,
+    counters: &SharedCounters,
+    neighbors: Option<&mut Neighbors>,
+) {
+    if let Some(neighbors) = neighbors {
+        resolve_pending(neighbors, pending);
+    }
     let mut sent_any = false;
     while !pending.is_empty() {
         let result = {
@@ -336,6 +458,7 @@ fn queue_reply(pending: &mut VecDeque<Vec<u8>>, reply: &[u8], counters: &SharedC
 }
 
 /// Sends one frame where its class says.
+#[allow(clippy::too_many_arguments)] // reason: the pieces of one queue that a frame touches
 fn dispatch(
     frame: &[u8],
     vlan: Option<u16>,
@@ -343,6 +466,7 @@ fn dispatch(
     hooks: &mut Hooks,
     pending: &mut VecDeque<Vec<u8>>,
     counters: &SharedCounters,
+    neighbors: &mut Option<Neighbors>,
     to_stack: &mut dyn FnMut(&[u8]),
 ) {
     bump(&counters.rx_frames);
@@ -361,6 +485,12 @@ fn dispatch(
             to_stack(frame);
         }
         Class::Arp => {
+            if let (Some(cache), Some(arp)) = (neighbors.as_mut(), parse_arp(frame)) {
+                // A reply answers a request of the cache, and a request from a
+                // next hop that the cache knows tells its MAC address too.
+                cache.learn(IpAddr::V4(arp.sender_ip), arp.sender_mac, pending);
+                bump(&counters.neighbor_answers);
+            }
             let mut out = [0u8; MAX_REPLY_LEN];
             match responder.process(frame, &mut out) {
                 Verdict::Reply(_, len) => {
@@ -374,6 +504,19 @@ fn dispatch(
             }
         }
         Class::Nd => {
+            if let Some(cache) = neighbors.as_mut() {
+                if let Some(advert) = parse_neighbor_advert(frame) {
+                    // RFC 4861 section 7.1.2: an advertisement with another hop
+                    // limit than 255 or a wrong checksum did not come from a
+                    // neighbor and is not believed.
+                    if advert.hop_limit == 255 && advert.checksum_ok {
+                        let mac = advert.target_lla.unwrap_or(advert.eth_src);
+                        cache.learn(IpAddr::V6(advert.target), mac, pending);
+                        bump(&counters.neighbor_answers);
+                        return;
+                    }
+                }
+            }
             // The responder answers the solicitations for the hosts of the
             // port, as it answers ARP. The hook gets what it passes.
             let mut out = [0u8; MAX_REPLY_LEN];
@@ -424,8 +567,9 @@ impl FrameIo for Splitter {
 
     /// Takes frames from the queue and passes the IPv4 TCP frames to
     /// `frame`. The count is the number of frames that came off the queue
-    /// plus the frames that hooks queued for sending, so a pass that only saw
-    /// ARP, or only sent datagrams, still counts as work.
+    /// plus the frames that hooks queued for sending and the requests of the
+    /// neighbor cache, so a pass that only saw ARP, or only sent datagrams,
+    /// still counts as work.
     fn recv_batch(&mut self, max: usize, frame: &mut dyn FnMut(&[u8])) -> io::Result<usize> {
         let Self {
             inner,
@@ -434,13 +578,21 @@ impl FrameIo for Splitter {
             hooks,
             pending,
             counters,
+            neighbors,
         } = self;
         let taken = inner.recv_batch(max, &mut |f| {
-            dispatch(f, *vlan, responder, hooks, pending, counters, frame);
+            dispatch(
+                f, *vlan, responder, hooks, pending, counters, neighbors, frame,
+            );
         })?;
-        let queued = poll_hooks(hooks, pending);
+        let mut queued = poll_hooks(hooks, pending);
+        if let Some(cache) = neighbors.as_mut() {
+            let before = pending.len();
+            cache.poll(pending);
+            queued += pending.len().saturating_sub(before);
+        }
         if !pending.is_empty() {
-            drain(&mut **inner, pending, counters);
+            drain(&mut **inner, pending, counters, neighbors.as_mut());
         }
         Ok(taken + queued)
     }
@@ -450,12 +602,87 @@ impl FrameIo for Splitter {
         count: usize,
         fill: &mut dyn FnMut(usize, &mut [u8]) -> usize,
     ) -> io::Result<usize> {
+        if self.neighbors.is_some() {
+            // A frame must be read before the cache can decide on it, so the
+            // frames are built first and go through `send_batch`. A frame
+            // that is not taken is built again by the caller.
+            let max = self.inner.max_frame_len();
+            let mut staged: Vec<Vec<u8>> = Vec::with_capacity(count);
+            for i in 0..count {
+                let mut buf = vec![0u8; max];
+                let len = fill(i, &mut buf);
+                if len == 0 || len > max {
+                    break;
+                }
+                buf.truncate(len);
+                staged.push(buf);
+            }
+            let frames: Vec<&[u8]> = staged.iter().map(Vec::as_slice).collect();
+            return self.send_batch(&frames);
+        }
         self.drain_pending();
         if !self.pending.is_empty() {
             // The queue is full. The caller flushes and tries again.
             return Ok(0);
         }
         self.inner.send_batch_with(count, fill)
+    }
+
+    /// Queues the frames of `frames` in order and returns how many it took.
+    /// Without next hop resolution the frames go to the queue. With it, a
+    /// frame to a next hop with a fresh entry leaves with the MAC address of
+    /// the entry, and a frame to an unknown next hop is held while the cache
+    /// asks for it, which counts as taken: the stack does not send it again.
+    fn send_batch(&mut self, frames: &[&[u8]]) -> io::Result<usize> {
+        self.drain_pending();
+        if !self.pending.is_empty() {
+            // The queue is full. The caller flushes and tries again.
+            return Ok(0);
+        }
+        let Self {
+            inner,
+            pending,
+            neighbors,
+            ..
+        } = self;
+        let Some(cache) = neighbors.as_mut() else {
+            return inner.send_batch(frames);
+        };
+        let max = inner.max_frame_len();
+        if frames.iter().any(|f| f.is_empty() || f.len() > max) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("a frame is empty or longer than {max} bytes"),
+            ));
+        }
+        let mut taken = 0;
+        let mut run: Vec<(&[u8], Option<MacAddr>)> = Vec::with_capacity(frames.len());
+        for &frame in frames {
+            if !needs_next_hop(frame) {
+                run.push((frame, None));
+                continue;
+            }
+            if let Some(mac) = cache.cached(frame) {
+                run.push((frame, Some(mac)));
+                continue;
+            }
+            // The cache will hold or drop this frame, which must not happen
+            // before the frames in front of it are on the queue, or a frame
+            // that the queue refuses would be held a second time when the
+            // stack offers it again.
+            let queued = send_run(&mut **inner, &run)?;
+            if queued < run.len() {
+                return Ok(taken + queued);
+            }
+            taken += queued;
+            run.clear();
+            if let Outcome::Send(mac) = cache.route_frame(frame, pending) {
+                run.push((frame, Some(mac)));
+            } else {
+                taken += 1;
+            }
+        }
+        Ok(taken + send_run(&mut **inner, &run)?)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -470,4 +697,25 @@ impl FrameIo for Splitter {
     fn stats(&self) -> QueueStats {
         self.inner.stats()
     }
+}
+
+/// Sends `run`, the frames with the MAC address that replaces their
+/// destination, in order, and returns how many the queue took.
+fn send_run(inner: &mut dyn FrameIo, run: &[(&[u8], Option<MacAddr>)]) -> io::Result<usize> {
+    if run.is_empty() {
+        return Ok(0);
+    }
+    inner.send_batch_with(run.len(), &mut |i, buf| {
+        let Some((frame, mac)) = run.get(i) else {
+            return 0;
+        };
+        let Some(out) = buf.get_mut(..frame.len()) else {
+            return 0;
+        };
+        out.copy_from_slice(frame);
+        if let Some(mac) = mac {
+            set_destination(out, *mac);
+        }
+        frame.len()
+    })
 }
