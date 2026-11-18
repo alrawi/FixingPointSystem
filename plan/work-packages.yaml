@@ -2250,7 +2250,7 @@ work_packages:
     deliverables:
       - The four options with unit tests and results committed.
     acceptance:
-      - At 0.1 percent loss and 50 ms of delay with a bandwidth delay product above 64 KB, the goodput of the own stack is at least 80 percent of the kernel stack.
+      - At 0.1 percent loss and 50 ms of delay with a bandwidth delay product above 64 KB, the goodput of the own stack is at least 80 percent of the kernel stack running Reno (tcp_bench --kernel-cc reno), so that both sides use the same congestion control. The comparison with the default kernel (CUBIC) belongs to TRN-25.
 
   - id: TRN-25
     title: CUBIC in the own stack
@@ -2266,6 +2266,7 @@ work_packages:
       - CUBIC behind a choice in the stack configuration, with tests and results committed.
     acceptance:
       - Four flows that share a 1 Gbps bottleneck with 20 ms of delay reach a Jain fairness index of at least 0.9 and together at least 80 percent of the goodput of four kernel flows on the same link.
+      - A single flow on the fat path of TRN-24 (tcp_bench --loss-profile fat: 50 Mbit/s, 50 ms per direction, 0.1 percent loss) reaches at least 80 percent of the goodput of the default kernel (CUBIC) on the same link.
 
   - id: TRN-26
     title: Interop of the own stack with smoltcp and the kernel
