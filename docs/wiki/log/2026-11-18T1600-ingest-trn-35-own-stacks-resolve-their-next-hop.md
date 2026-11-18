@@ -19,7 +19,7 @@ Findings:
 
 Gaps, not worked around:
 
-1. `fps-agent` (`backend.rs`) starts the datapath with `DatapathConfig::default()`, so an agent run keeps reading peers from the pools. AGT-25 or a follow up sets `neighbors: Some(NeighborConfig::default())` when the plan's host pools carry a gateway.
+1. `fps-agent` (`backend.rs`, AGT-25) builds its `DatapathConfig` from the own stack settings and leaves `neighbors` at `None`, so an agent run keeps reading peers from the pools. A follow up sets `neighbors: Some(NeighborConfig::default())` when the plan's host pools carry a gateway.
 2. DHCP pools: the lease router (`LeaseTable::router_of`) is the gateway of a leased host. It becomes available when the DHCP hook is wired into the datapath; then `Route` can be built from the lease and not from the pool.
 3. No reachability probing and no ICMP redirects: an entry is trusted for its lifetime. A gateway that changes its MAC address inside it is found when it sends a request of its own or when the entry ages out.
 
