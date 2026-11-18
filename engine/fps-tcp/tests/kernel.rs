@@ -53,6 +53,32 @@ async fn request_and_response_round_trip() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn a_congestion_algorithm_is_set_on_a_socket_and_an_unknown_one_is_refused() {
+    // `reno` is always built into Linux.
+    let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+    fps_tcp::kernel::set_congestion(&socket, "reno").expect("reno");
+    let name = socket2::SockRef::from(&socket)
+        .tcp_congestion()
+        .expect("read back");
+    assert!(name.starts_with(b"reno"));
+    assert!(fps_tcp::kernel::set_congestion(&socket, "no-such-algorithm").is_err());
+    let config = KernelConfig {
+        congestion: Some("reno".into()),
+        ..KernelConfig::default()
+    };
+    let stack = stack(config);
+    stack.listen(PORT).expect("listen");
+    let driver = start_driver(&stack);
+    within(async {
+        let (client, server) = tokio::join!(stack.connect(PORT), stack.accept(PORT));
+        client.expect("connect");
+        server.expect("accept");
+    })
+    .await;
+    driver.abort();
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn bulk_transfer_through_small_buffers_keeps_every_byte() {
     // Small buffers make the writer wait for window updates many times.
     let config = KernelConfig {

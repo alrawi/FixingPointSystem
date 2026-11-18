@@ -11,6 +11,7 @@ publish.workspace = true
 fps-backend-afxdp = { path = "../fps-backend-afxdp" }
 fps-io = { path = "../fps-io" }
 fps-tcp-own = { path = "../fps-tcp-own" }
+socket2 = { version = "0.6", features = ["all"] }
 smoltcp = { version = "0.14", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "socket-tcp", "async"] }
 thiserror = "2"
 tokio = { version = "1.54", features = ["io-util", "net", "rt", "sync", "time"] }

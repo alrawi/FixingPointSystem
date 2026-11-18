@@ -40,7 +40,7 @@ usage: tcp_bench [--stack kernel|own|smoltcp] [--workload rate|throughput|scale|
   loss:        [--loss-profile fat] [--loss-levels PCT,PCT,...] [--loss-transfers N] [--loss-kib N]
                [--loss-timeout-secs N] [--link-delay-ms N] [--link-reorder PCT]
                [--link-rate-mbit N] [--link-queue-kib N] [--link-seed N]
-  kernel:      [--nodelay on|off] [--buffer-kib N] [--backlog N]
+  kernel:      [--nodelay on|off] [--buffer-kib N] [--backlog N] [--kernel-cc NAME]
   own:         [--own-mtu N] [--own-window-kib N] [--own-time-wait-ms N] [--own-rto-ms N]
                [--own-pool N] [--own-server-hosts N] [--own-vlan ID]
                [--own-wscale on|off] [--own-timestamps on|off] [--own-sack on|off]
@@ -313,6 +313,17 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
                     _ => return Err(bad(f, v)),
                 }
             }
+            "--kernel-cc" => {
+                if v.is_empty()
+                    || v.len() > 15
+                    || !v
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                {
+                    return Err(bad(f, v));
+                }
+                o.kernel.congestion = Some(v.to_string());
+            }
             "--buffer-kib" => {
                 let kib: usize = number(f, v)?;
                 o.kernel.buffer_bytes = Some(kib.saturating_mul(1024));
@@ -502,6 +513,9 @@ fn describe(o: &Options) -> Vec<(String, String)> {
     } else {
         config.push(("nodelay".into(), o.kernel.nodelay.to_string()));
         config.push(("backlog".into(), o.kernel.backlog.to_string()));
+        if let Some(name) = &o.kernel.congestion {
+            config.push(("kernel.congestion".into(), name.clone()));
+        }
     }
     if o.selection.loss() {
         let levels: Vec<String> = o.loss_levels.iter().map(|p| percent_text(*p)).collect();
@@ -758,7 +772,16 @@ fn loss_report(options: &Options) -> Result<BenchReport, LossError> {
                 count += 1;
                 let prefix = format!("fpstcp{}x{count}", std::process::id() % 100_000);
                 let buffer = options.kernel.buffer_bytes;
-                netns::kernel_transfer(&exe, &prefix, link, &options.loss, link_mtu(options), buffer)
+                let congestion = options.kernel.congestion.as_deref();
+                netns::kernel_transfer(
+                    &exe,
+                    &prefix,
+                    link,
+                    &options.loss,
+                    link_mtu(options),
+                    buffer,
+                    congestion,
+                )
                     .map_err(|error| match error {
                         NetnsError::NetemMissing(detail) => LossError::Skip(format!(
                             "the kernel has no netem qdisc (module sch_netem), so the kernel stack cannot be measured on a lossy link here: {detail}"
@@ -1069,6 +1092,16 @@ mod tests {
         assert_eq!(o.kernel.backlog, 512);
         assert_eq!(o.scale_buffer, Some(2048));
         assert_eq!(parse(&args(&[])).expect("parse").kernel.buffer_bytes, None);
+    }
+
+    #[test]
+    fn kernel_cc_reaches_the_kernel_config_and_defaults_to_the_system_choice() {
+        assert_eq!(parse(&args(&[])).expect("parse").kernel.congestion, None);
+        let o = parse(&args(&["--kernel-cc", "reno"])).expect("parse");
+        assert_eq!(o.kernel.congestion.as_deref(), Some("reno"));
+        assert!(parse(&args(&["--kernel-cc", ""])).is_err());
+        assert!(parse(&args(&["--kernel-cc", "a b"])).is_err());
+        assert!(parse(&args(&["--kernel-cc", "averyveryverylongname"])).is_err());
     }
 
     #[test]

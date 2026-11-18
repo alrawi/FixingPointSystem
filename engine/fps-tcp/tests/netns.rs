@@ -72,7 +72,7 @@ fn config(bytes: u64) -> LossConfig {
 
 fn transfer(tag: &str, link: &ImpairConfig, bytes: u64) -> Result<LossRun, NetnsError> {
     let prefix = format!("fpstcpt{}{tag}", std::process::id() % 100_000);
-    netns::kernel_transfer(&exe(), &prefix, link, &config(bytes), 1500, None)
+    netns::kernel_transfer(&exe(), &prefix, link, &config(bytes), 1500, None, None)
 }
 
 fn leftover_namespaces() -> bool {

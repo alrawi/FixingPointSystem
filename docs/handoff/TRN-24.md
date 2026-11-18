@@ -8,7 +8,7 @@
 |---|---|
 | Issue | #625 |
 | Branch | `wp/TRN-24` |
-| Pull request | #0 |
+| Pull request | #646 |
 | Status | ready for review |
 | Progress | 100% (6 of 6 plan steps) |
 | Current holder | claude-e5c1d3, lease until 2026-11-18T06:18:38Z |

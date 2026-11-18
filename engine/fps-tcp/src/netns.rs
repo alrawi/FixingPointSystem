@@ -252,6 +252,7 @@ pub fn kernel_transfer(
     config: &LossConfig,
     mtu: usize,
     buffer: Option<usize>,
+    congestion: Option<&str>,
 ) -> Result<LossRun, NetnsError> {
     let ns = NetnsLink::up(prefix, link, mtu)?;
     let mut common = vec![
@@ -262,6 +263,9 @@ pub fn kernel_transfer(
     ];
     if let Some(bytes) = buffer {
         common.extend(["--buffer-bytes".to_string(), bytes.to_string()]);
+    }
+    if let Some(name) = congestion {
+        common.extend(["--cc".to_string(), name.to_string()]);
     }
     let mut server_args = vec!["server".to_string()];
     server_args.extend(common.clone());
@@ -363,6 +367,7 @@ pub fn peer_main(args: &[String]) -> i32 {
     let port = u16::try_from(number("--port", 9100)).unwrap_or(9100);
     let chunk = usize::try_from(number("--chunk", 16 * 1024)).unwrap_or(16 * 1024);
     let buffer = flag(args, "--buffer-bytes").and_then(|v| v.parse::<u32>().ok());
+    let congestion = flag(args, "--cc");
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
@@ -375,11 +380,12 @@ pub fn peer_main(args: &[String]) -> i32 {
         }
     };
     let outcome = match role {
-        "server" => runtime.block_on(serve(port, chunk, buffer)),
+        "server" => runtime.block_on(serve(port, chunk, buffer, congestion.as_deref())),
         "client" => runtime.block_on(send(
             port,
             chunk,
             buffer,
+            congestion.as_deref(),
             number("--bytes", 0),
             Duration::from_millis(number("--timeout-ms", 60_000)),
         )),
@@ -400,8 +406,11 @@ fn say(line: &str) {
     let _ = out.flush();
 }
 
-fn socket(buffer: Option<u32>) -> std::io::Result<TcpSocket> {
+fn socket(buffer: Option<u32>, congestion: Option<&str>) -> std::io::Result<TcpSocket> {
     let socket = TcpSocket::new_v4()?;
+    if let Some(name) = congestion {
+        crate::kernel::set_congestion(&socket, name)?;
+    }
     if let Some(bytes) = buffer {
         socket.set_send_buffer_size(bytes)?;
         socket.set_recv_buffer_size(bytes)?;
@@ -409,8 +418,13 @@ fn socket(buffer: Option<u32>) -> std::io::Result<TcpSocket> {
     Ok(socket)
 }
 
-async fn serve(port: u16, chunk: usize, buffer: Option<u32>) -> std::io::Result<()> {
-    let socket = socket(buffer)?;
+async fn serve(
+    port: u16,
+    chunk: usize,
+    buffer: Option<u32>,
+    congestion: Option<&str>,
+) -> std::io::Result<()> {
+    let socket = socket(buffer, congestion)?;
     socket.set_reuseaddr(true)?;
     socket.bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port)))?;
     let listener = socket.listen(16)?;
@@ -434,13 +448,14 @@ async fn send(
     port: u16,
     chunk: usize,
     buffer: Option<u32>,
+    congestion: Option<&str>,
     bytes: u64,
     timeout: Duration,
 ) -> std::io::Result<()> {
     let before = retrans_segs();
     let started = Instant::now();
     let transfer = async {
-        let socket = socket(buffer)?;
+        let socket = socket(buffer, congestion)?;
         let mut stream = socket
             .connect(SocketAddr::from((SERVER_ADDR, port)))
             .await?;
