@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #679 |
 | Branch | `wp/AGT-29` |
-| Pull request | none |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #691 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-d4a52a, lease until 2026-11-18T23:33:46Z |
-| Last verified commit | none |
+| Last verified commit | a02605a |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,19 +22,21 @@ An agent whose backend the selection chose (not forced) runs a plan that `check_
 - [x] 2. The fallback in `prepare` (`resolve_with_fallback`, `prepare_selected`, `Config::fall_back`)
 - [x] 3. The heartbeat fields `run_backend` and `run_ports`, set after the backend starts, without `..Default::default()`
 - [x] 4. Tests: unit tests per refused shape (forced and unforced), `tests/fallback.rs` on the fake host, `tests/session.rs` heartbeats
-- [ ] 5. Agent page, log entry, checks, pull request, CI
+- [x] 5. Agent page, log entry, checks, pull request, CI
 
 ## Done and verified
 
+- CI of pull request #691 at a02605a: all 81 check runs succeed. The `rust` job failed once on `fps-tcp` `interop_kernel` (`the peer did not report in time`, a crate this package does not touch) and passed on rerun.
+- Checks run locally: `cargo fmt`, `cargo clippy -p fps-agent --all-targets -- -D warnings`, `cargo test -p fps-agent` (the AF_XDP veth and router tests ran as root and passed), `plan.py check`, `render --check`, `lint`.
 - Steps 1 to 4: `cargo test -p fps-agent --lib backend::` (25 passed), `--test fallback` (8 passed), `--test session` (8 passed), all with `CARGO_TARGET_DIR=$PWD/target-AGT-29 CARGO_BUILD_JOBS=1 --offline`.
 
 ## Remaining
 
-Run clippy and the whole crate test suite, the plan checks, and open the pull request. Open question for the coordinator and the vetting agent: `enterprise_mix_10g.yaml` is accepted by `check_af_xdp` and refused by `assemble` on both backends (see Pitfalls and the log entry), so its half of the acceptance cannot hold as written.
+Nothing in this package. Open question for the coordinator and the vetting agent: `enterprise_mix_10g.yaml` is accepted by `check_af_xdp` and refused by `assemble` on both backends (see Pitfalls and the log entry), so its half of the acceptance cannot hold as written.
 
 ## Next action
 
-Run `python3 tools/plan/plan.py check`, `render --check`, `lint`, then push and open the pull request.
+The coordinator reviews pull request #691 and the vetting agent settles the `enterprise_mix_10g.yaml` question below before it merges.
 
 ## Blockers and open questions
 
@@ -66,4 +68,5 @@ CARGO_TARGET_DIR=$PWD/target-AGT-29 CARGO_BUILD_JOBS=1 cargo test -p fps-agent -
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-18T22:04Z | claude-d4a52a | claim | none | Claimed #679 with a 90 minute lease. |
-| 2026-11-18T22:20Z | claude-d4a52a | checkpoint | none | Code and tests of steps 1 to 4. |
+| 2026-11-18T22:20Z | claude-d4a52a | checkpoint | a02605a | Code, tests, Agent page, and log entry. Pull request #691 opened. |
+| 2026-11-18T22:58Z | claude-d4a52a | review | a02605a | CI green (one rerun of an unrelated fps-tcp flake). |
