@@ -18,13 +18,52 @@ use super::net::{
     NetError, Received, Station, ETH_LEN, MAX_REPLY_LEN, MIN_FRAME_LEN, VLAN_TAG_LEN,
 };
 use super::recovery::{self, AckView, Action, Recovery};
-use super::wire::{self, flags, Header};
+use super::wire::{self, flags, Header, Options};
 use super::OwnConfig;
 
 /// The MSS that a peer is assumed to have when its SYN carries no option.
 const DEFAULT_PEER_MSS: u16 = 536;
 /// The first port of the ephemeral range of an active open.
 const EPHEMERAL_FIRST: u16 = 10_000;
+/// The bytes that the timestamp option takes in every segment, which the
+/// payload of a segment gives up (RFC 7323 section 2.2).
+const TS_OVERHEAD: u16 = wire::TIMESTAMP_OPTION_LEN as u16;
+
+// The option bits of a connection, packed into `Conn::opts` with the two
+// window scale shifts (4 bits each) and two flags of the delayed ACK.
+/// Window scaling is in use (or offered, before the handshake ends).
+const O_WS: u16 = 1;
+/// Timestamps are in use.
+const O_TS: u16 = 1 << 1;
+/// Selective acknowledgment is in use.
+const O_SACK: u16 = 1 << 2;
+/// The connection timer runs for a delayed ACK and not for a timeout.
+const O_DELACK: u16 = 1 << 3;
+/// One in order segment was received and its ACK is held back.
+const O_UNACKED: u16 = 1 << 4;
+/// An entry of the timer heap that was pushed for a delayed ACK may be in the
+/// heap, which keeps a second delayed ACK from pushing another. The entry of
+/// a timeout cannot serve: it lies at least 200 ms ahead.
+const O_DQ: u16 = 1 << 13;
+/// The connection counts in the backlog of its listener.
+const O_BACKLOG: u16 = 1 << 14;
+const RCV_SHIFT_AT: u16 = 5;
+const SND_SHIFT_AT: u16 = 9;
+const SHIFT_MASK: u16 = 0xF;
+
+/// The shift that lets a buffer of `buffer` bytes fit the 16 bit window.
+fn shift_for(buffer: usize) -> u8 {
+    let mut shift = 0u8;
+    while shift < wire::MAX_WSCALE && (buffer >> shift) > 65_535 {
+        shift += 1;
+    }
+    shift
+}
+
+/// The timestamp clock: milliseconds of `now` plus a per host offset.
+fn ts_clock(base: u32, now: i64) -> u32 {
+    ((now.max(0) / 1000) as u32).wrapping_add(base)
+}
 
 /// The state of a connection, as RFC 9293 names them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,9 +164,10 @@ struct Conn {
     probe: bool,
     armed: bool,
     in_heap: bool,
-    in_backlog: bool,
     retries: u8,
-    rto_us: i64,
+    /// The retransmission timeout in microseconds, 4 bytes (it never
+    /// exceeds the maximum of the configuration, seconds at most).
+    rto: u32,
     deadline: i64,
     /// The listener whose accept queue the connection belongs to, or 0.
     listener: u16,
@@ -140,10 +180,16 @@ struct Conn {
     /// The window that the last segment sent advertised, which decides when
     /// a read of the application is worth a window update.
     adv_wnd: u16,
+    /// The negotiated options and the window scale shifts (see the `O_`
+    /// bits), 2 bytes for the whole set.
+    opts: u16,
+    /// The timestamp of the peer that is echoed (RFC 7323 `TS.Recent`).
+    ts_recent: u32,
 }
 
 impl Conn {
     fn new(state: State, tuple: Tuple, iss: u32, rto_us: i64) -> Self {
+        let rto = u32::try_from(rto_us.max(0)).unwrap_or(u32::MAX);
         Self {
             state,
             local_ip: tuple.local_ip,
@@ -168,9 +214,8 @@ impl Conn {
             probe: false,
             armed: false,
             in_heap: false,
-            in_backlog: false,
             retries: 0,
-            rto_us,
+            rto,
             deadline: 0,
             listener: 0,
             error: None,
@@ -178,6 +223,94 @@ impl Conn {
             write_waker: None,
             rec: None,
             adv_wnd: u16::MAX,
+            opts: 0,
+            ts_recent: 0,
+        }
+    }
+
+    /// The retransmission timeout in microseconds.
+    fn rto_us(&self) -> i64 {
+        i64::from(self.rto)
+    }
+
+    fn set_rto(&mut self, us: i64) {
+        self.rto = u32::try_from(us.max(0)).unwrap_or(u32::MAX);
+    }
+
+    fn has(&self, bit: u16) -> bool {
+        self.opts & bit != 0
+    }
+
+    fn set(&mut self, bit: u16, on: bool) {
+        if on {
+            self.opts |= bit;
+        } else {
+            self.opts &= !bit;
+        }
+    }
+
+    /// The shift that the receive window of this side is advertised with.
+    fn rcv_shift(&self) -> u8 {
+        ((self.opts >> RCV_SHIFT_AT) & SHIFT_MASK) as u8
+    }
+
+    /// The shift of the window that the peer advertises.
+    fn snd_shift(&self) -> u8 {
+        ((self.opts >> SND_SHIFT_AT) & SHIFT_MASK) as u8
+    }
+
+    fn set_shifts(&mut self, rcv: u8, snd: u8) {
+        self.opts &= !((SHIFT_MASK << RCV_SHIFT_AT) | (SHIFT_MASK << SND_SHIFT_AT));
+        self.opts |= (u16::from(rcv) << RCV_SHIFT_AT) | (u16::from(snd) << SND_SHIFT_AT);
+    }
+
+    /// The window field for `space` free bytes of the receive buffer.
+    fn window_field(&self, space: usize) -> u16 {
+        u16::try_from((space >> self.rcv_shift()).min(65_535)).unwrap_or(65_535)
+    }
+
+    /// An acknowledgment went out (or goes out with a segment): nothing is
+    /// owed any more, and a timer that ran for the delayed ACK stops.
+    fn acked(&mut self) {
+        self.ack_pending = false;
+        self.opts &= !O_UNACKED;
+        if self.has(O_DELACK) {
+            self.opts &= !O_DELACK;
+            self.armed = false;
+        }
+    }
+
+    /// The options of a segment after the handshake: the timestamp, and SACK
+    /// blocks while data waits behind a hole.
+    fn tx_opts(&self, ts_now: u32) -> Options {
+        let mut opts = Options::default();
+        if self.has(O_TS) {
+            opts.timestamp = Some((ts_now, self.ts_recent));
+        }
+        if self.has(O_SACK) {
+            if let Some(rec) = &self.rec {
+                if !rec.ooo.is_empty() {
+                    rec.ooo.sack_blocks(self.rcv_nxt, &mut opts);
+                }
+            }
+        }
+        opts
+    }
+
+    /// The options of a SYN or SYN-ACK: what is offered, or what was agreed.
+    fn syn_opts(&self, ts_now: u32) -> Options {
+        Options {
+            wscale: self.has(O_WS).then(|| self.rcv_shift()),
+            sack_permitted: self.has(O_SACK),
+            timestamp: self.has(O_TS).then(|| {
+                let echo = if self.state == State::SynReceived {
+                    self.ts_recent
+                } else {
+                    0
+                };
+                (ts_now, echo)
+            }),
+            ..Options::default()
         }
     }
 
@@ -197,7 +330,11 @@ impl Conn {
     /// can go: no data in flight or waiting, no segment held out of order.
     fn recovery_idle(&self) -> bool {
         self.rec.as_ref().is_some_and(|r| {
-            !r.rtx && r.ooo.is_empty() && self.sndbuf.is_empty() && self.snd_max() == self.snd_una
+            !r.rtx
+                && r.ooo.is_empty()
+                && r.sb.is_empty()
+                && self.sndbuf.is_empty()
+                && self.snd_max() == self.snd_una
         })
     }
 
@@ -264,6 +401,16 @@ pub struct HostCounters {
     pub link_dropped: u64,
     /// ARP replies that the host built for hosts it serves.
     pub arp_replies: u64,
+    /// Acknowledgments that the delayed ACK timer sent.
+    pub delayed_acks: u64,
+    /// Segments dropped by the PAWS test of RFC 7323 (an old timestamp, or no
+    /// timestamp on a connection that agreed on them).
+    pub paws_drops: u64,
+    /// Recoveries that the SACK scoreboard drove (RFC 6675).
+    pub sack_recoveries: u64,
+    /// Segments that the scoreboard picked to send again, which are also in
+    /// `retransmits`.
+    pub sack_retransmits: u64,
 }
 
 /// The frames that wait for the link.
@@ -286,6 +433,7 @@ impl Out {
         flag_bits: u8,
         window: u16,
         mss: Option<u16>,
+        opts: Options,
         payload: (&[u8], &[u8]),
     ) {
         let header = Header {
@@ -298,14 +446,11 @@ impl Out {
             flags: flag_bits,
             window,
             mss,
+            opts,
         };
         let body = wire::IP_LEN
             + wire::TCP_LEN
-            + if mss.is_some() {
-                wire::MSS_OPTION_LEN
-            } else {
-                0
-            }
+            + wire::options_len(&header)
             + payload.0.len()
             + payload.1.len();
         // One allocation for the whole frame, with room for a VLAN tag and
@@ -337,6 +482,8 @@ pub struct Host {
     dirty: Vec<u32>,
     timers: BinaryHeap<Reverse<(i64, u32, u32)>>,
     next_port: u16,
+    /// The offset of the timestamp clock of this host.
+    ts_base: u32,
     /// The frames that wait for the link.
     pub out: Out,
     /// The counters of the host.
@@ -358,6 +505,7 @@ impl Host {
         let mss_own = u16::try_from(mtu.saturating_sub(wire::IP_LEN + wire::TCP_LEN))
             .unwrap_or(u16::MAX)
             .max(64);
+        let cfg_secret = cfg.isn_secret;
         Self {
             mss_own,
             cfg,
@@ -370,6 +518,7 @@ impl Host {
             dirty: Vec::new(),
             timers: BinaryHeap::new(),
             next_port: EPHEMERAL_FIRST,
+            ts_base: mix(cfg_secret) as u32,
             out: Out {
                 queue: VecDeque::new(),
                 station,
@@ -452,6 +601,7 @@ impl Host {
         };
         conn.deadline = deadline;
         conn.armed = true;
+        conn.opts &= !O_DELACK;
         if !conn.in_heap {
             conn.in_heap = true;
             self.timers.push(Reverse((deadline, id, gen)));
@@ -478,6 +628,7 @@ impl Host {
             bits,
             0,
             None,
+            Options::default(),
             (&[], &[]),
         );
     }
@@ -556,6 +707,10 @@ impl Host {
         let iss = self.isn(tuple, now);
         let mut conn = Conn::new(State::SynSent, tuple, iss, self.cfg.rto_us);
         conn.mss = self.mss_own;
+        conn.set(O_WS, self.cfg.window_scale);
+        conn.set(O_TS, self.cfg.timestamps);
+        conn.set(O_SACK, self.cfg.sack);
+        conn.set_shifts(shift_for(self.cfg.rcv_buffer), 0);
         let (id, gen) = self.alloc(conn);
         self.table.insert(tuple, id);
         self.mark_dirty(id);
@@ -582,7 +737,7 @@ impl Host {
             }
             listener.pending = listener.pending.saturating_sub(1);
             if let Some(conn) = self.conn(handle.0) {
-                conn.in_backlog = false;
+                conn.set(O_BACKLOG, false);
             }
             return Ok(Some(handle));
         }
@@ -636,7 +791,9 @@ impl Host {
             // see the window shrink by what is unread at every ACK.
             let space = rcv_cap.saturating_sub(conn.rcvbuf.len());
             let step = usize::from(conn.mss).min(rcv_cap / 2).max(1);
-            if space.min(65_535).saturating_sub(usize::from(conn.adv_wnd)) >= step
+            let shift = conn.rcv_shift();
+            let open_now = usize::from(conn.window_field(space)) << shift;
+            if open_now.saturating_sub(usize::from(conn.adv_wnd) << shift) >= step
                 && !matches!(conn.state, State::Closed | State::TimeWait)
             {
                 conn.ack_pending = true;
@@ -799,6 +956,7 @@ impl Host {
             flags::RST | flags::ACK,
             0,
             None,
+            Options::default(),
             (&[], &[]),
         );
     }
@@ -836,9 +994,9 @@ impl Host {
             remote_port: conn.remote_port,
         };
         let listener = conn.listener;
-        let was_pending = previous == State::SynReceived && conn.in_backlog;
+        let was_pending = previous == State::SynReceived && conn.has(O_BACKLOG);
         if was_pending {
-            conn.in_backlog = false;
+            conn.set(O_BACKLOG, false);
         }
         for waker in [conn.read_waker.take(), conn.write_waker.take()]
             .into_iter()
@@ -965,10 +1123,38 @@ impl Host {
         let iss = self.isn(tuple, now);
         let mut conn = Conn::new(State::SynReceived, tuple, iss, self.cfg.rto_us);
         conn.rcv_nxt = h.seq.wrapping_add(1);
+        // The options: each one is used when the SYN carries it and this host
+        // wants it, and the SYN-ACK answers only those.
+        let ws = if self.cfg.window_scale {
+            h.opts.wscale
+        } else {
+            None
+        };
+        conn.set(O_WS, ws.is_some());
+        let rcv_shift = if ws.is_some() {
+            shift_for(self.cfg.rcv_buffer)
+        } else {
+            0
+        };
+        conn.set_shifts(rcv_shift, ws.unwrap_or(0));
+        conn.adv_wnd = 65_535 >> rcv_shift;
+        let ts = if self.cfg.timestamps {
+            h.opts.timestamp
+        } else {
+            None
+        };
+        conn.set(O_TS, ts.is_some());
+        if let Some((value, _)) = ts {
+            conn.ts_recent = value;
+        }
+        conn.set(O_SACK, self.cfg.sack && h.opts.sack_permitted);
         conn.snd_wnd = u32::from(h.window);
         conn.mss = self.mss_own.min(h.mss.unwrap_or(DEFAULT_PEER_MSS));
+        if ts.is_some() {
+            conn.mss = conn.mss.saturating_sub(TS_OVERHEAD).max(1);
+        }
         conn.listener = h.dst_port;
-        conn.in_backlog = true;
+        conn.set(O_BACKLOG, true);
         let (id, _gen) = self.alloc(conn);
         self.table.insert(tuple, id);
         if let Some(listener) = self.listeners.get_mut(&h.dst_port) {
@@ -979,6 +1165,7 @@ impl Host {
 
     #[allow(clippy::too_many_lines)]
     fn on_segment(&mut self, id: u32, h: &Header, payload: &[u8], now: i64) {
+        let ts_now = ts_clock(self.ts_base, now);
         let Some(conn) = self.conns.get_mut(id as usize).and_then(Option::as_mut) else {
             return;
         };
@@ -1005,12 +1192,32 @@ impl Host {
             if syn && has_ack {
                 conn.rcv_nxt = h.seq.wrapping_add(1);
                 conn.snd_una = h.ack;
+                // The SYN-ACK answers the offer: an option that it lacks is
+                // off, and its window is never scaled.
                 conn.snd_wnd = u32::from(h.window);
+                match h.opts.wscale {
+                    Some(shift) if conn.has(O_WS) => conn.set_shifts(conn.rcv_shift(), shift),
+                    _ => {
+                        conn.set(O_WS, false);
+                        conn.set_shifts(0, 0);
+                    }
+                }
+                match h.opts.timestamp {
+                    Some((value, _)) if conn.has(O_TS) => conn.ts_recent = value,
+                    _ => conn.set(O_TS, false),
+                }
+                if !h.opts.sack_permitted {
+                    conn.set(O_SACK, false);
+                }
+                conn.adv_wnd = 65_535 >> conn.rcv_shift();
                 conn.mss = conn.mss.min(h.mss.unwrap_or(DEFAULT_PEER_MSS));
+                if conn.has(O_TS) {
+                    conn.mss = conn.mss.saturating_sub(TS_OVERHEAD).max(1);
+                }
                 conn.state = State::Established;
                 conn.armed = false;
                 conn.retries = 0;
-                conn.rto_us = self.cfg.rto_us;
+                conn.set_rto(self.cfg.rto_us);
                 conn.ack_pending = true;
                 if let Some(waker) = conn.write_waker.take() {
                     waker.wake();
@@ -1027,6 +1234,28 @@ impl Host {
             return;
         }
 
+        if conn.has(O_TS) && !rst && !syn {
+            // PAWS (RFC 7323 section 5): an old timestamp marks a segment of
+            // an earlier incarnation or a wrapped sequence number, and a
+            // segment without the option breaks the agreement (section 3.2).
+            // Either is dropped, and a drop is answered with an ACK.
+            match h.opts.timestamp {
+                Some((value, _)) if (value.wrapping_sub(conn.ts_recent) as i32) >= 0 => {
+                    // TS.Recent follows the segments that start at or before
+                    // the next byte expected, and with a delayed ACK pending
+                    // it keeps the older one, which the ACK will echo.
+                    if seq_le(h.seq, conn.rcv_nxt) && !conn.has(O_UNACKED) {
+                        conn.ts_recent = value;
+                    }
+                }
+                _ => {
+                    self.counters.paws_drops += 1;
+                    conn.ack_pending = true;
+                    self.mark_dirty(id);
+                    return;
+                }
+            }
+        }
         let wnd_now = self.cfg.rcv_buffer.saturating_sub(conn.rcvbuf.len()) as u32;
         let mut seq = h.seq;
         let mut data = payload;
@@ -1104,7 +1333,8 @@ impl Host {
                             rec.ooo.set_fin(seq.wrapping_add(data.len() as u32));
                         }
                     }
-                    let window = u16::try_from(wnd_now.min(65_535)).unwrap_or(65_535);
+                    let window = conn.window_field(wnd_now as usize);
+                    let opts = conn.tx_opts(ts_now);
                     self.out.send(
                         &mut self.counters,
                         (conn.local_ip, conn.remote_ip),
@@ -1115,9 +1345,10 @@ impl Host {
                         flags::ACK,
                         window,
                         None,
+                        opts,
                         (&[], &[]),
                     );
-                    conn.ack_pending = false;
+                    conn.acked();
                     conn.adv_wnd = window;
                 }
                 data = &[];
@@ -1140,8 +1371,8 @@ impl Host {
                 conn.snd_una = h.ack;
                 conn.state = State::Established;
                 conn.armed = false;
-                conn.rto_us = self.cfg.rto_us;
-                conn.snd_wnd = u32::from(h.window);
+                conn.set_rto(self.cfg.rto_us);
+                conn.snd_wnd = u32::from(h.window) << conn.snd_shift();
                 let listener = conn.listener;
                 let handle = (id, gen);
                 if let Some(l) = self.listeners.get_mut(&listener) {
@@ -1161,15 +1392,31 @@ impl Host {
         };
         let mut state_changed = false;
         let snd_max = conn.snd_max();
+        let peer_wnd = u32::from(h.window) << conn.snd_shift();
+        let control = h.flags & (flags::SYN | flags::FIN | flags::RST) != 0;
+        // The SACK blocks come first: they refine what the acknowledgment
+        // number says (RFC 6675 section 5).
+        let sack_ok = conn.has(O_SACK);
+        let una_now = conn.snd_una;
+        let sack_new = sack_ok
+            && !h.opts.blocks().is_empty()
+            && conn
+                .rec
+                .as_deref_mut()
+                .is_some_and(|r| r.sb.update(una_now, snd_max, h.opts.blocks()));
         let dup = recovery::is_dupack(&AckView {
             ack: h.ack,
             snd_una: conn.snd_una,
             snd_max,
             payload_len: payload.len(),
-            control: h.flags & (flags::SYN | flags::FIN | flags::RST) != 0,
-            window: u32::from(h.window),
+            control,
+            window: peer_wnd,
             last_window: conn.snd_wnd,
-        });
+        }) || (sack_new
+            && h.ack == conn.snd_una
+            && conn.snd_una != snd_max
+            && payload.is_empty()
+            && !control);
         if seq_lt(conn.snd_una, h.ack) && seq_le(h.ack, snd_max) {
             let advanced = h.ack.wrapping_sub(conn.snd_una);
             let fin_in_flight = conn.sent_fin || conn.rec.as_ref().is_some_and(|r| r.fin_sent);
@@ -1188,22 +1435,37 @@ impl Host {
             if fin_acked {
                 conn.sent_fin = true;
             }
+            // A timestamp echo gives a sample for any acknowledgment that moves
+            // `snd_una`, a segment sent again included (RFC 7323 section 4.3),
+            // with the resolution of the millisecond clock.
+            let ts_sample = match h.opts.timestamp {
+                Some((_, echo)) if conn.has(O_TS) && echo != 0 => {
+                    let age = ts_now.wrapping_sub(echo) as i32;
+                    (age >= 0).then(|| i64::from(age.max(1)) * 1000)
+                }
+                _ => None,
+            };
             if let Some(rec) = conn.rec.as_deref_mut() {
                 // Karn's rule: only a segment that was never sent again gives
                 // a sample, and the timeout keeps its backoff until one does.
-                if let Some(sample) = rec.take_sample(h.ack, now) {
+                // The timed segment has the finer clock, so it wins.
+                if let Some(sample) = rec.take_sample(h.ack, now).or(ts_sample) {
                     rec.rtt.sample(sample);
                     if let Some(rto) = rec.rtt.rto_us(self.cfg.min_rto_us, self.cfg.max_rto_us) {
-                        conn.rto_us = rto;
+                        conn.rto = u32::try_from(rto.max(0)).unwrap_or(u32::MAX);
                     }
                 }
                 if rec.cc.on_new_ack(h.ack, advanced) == Action::Retransmit {
                     rec.rtx = true;
                     rec.retransmitted();
                 }
+                rec.sb.advance(h.ack);
+                if !rec.cc.in_recovery() {
+                    rec.sb.clear_rexmit();
+                }
             }
             if conn.outstanding() {
-                conn.deadline = now + conn.rto_us;
+                conn.deadline = now + conn.rto_us();
             } else {
                 conn.armed = false;
             }
@@ -1235,14 +1497,25 @@ impl Host {
         } else if dup {
             if let Some(rec) = conn.rec.as_deref_mut() {
                 let flight = snd_max.wrapping_sub(conn.snd_una);
-                if rec.cc.on_dupack(h.ack, flight, snd_max) == Action::Retransmit {
+                if sack_ok {
+                    let lost = rec.sb.lost_at_una(conn.snd_una, u32::from(conn.mss));
+                    if rec.cc.on_dupack_sack(h.ack, flight, snd_max, lost) == Action::Retransmit {
+                        // The scoreboard picks the segments. Without SACK
+                        // information the first segment goes out at once
+                        // (RFC 6675 section 5, step 4.1).
+                        rec.sb.clear_rexmit();
+                        rec.rtx = !lost;
+                        rec.retransmitted();
+                        self.counters.sack_recoveries += 1;
+                    }
+                } else if rec.cc.on_dupack(h.ack, flight, snd_max) == Action::Retransmit {
                     rec.rtx = true;
                     rec.retransmitted();
                 }
             }
         }
         if !seq_lt(h.ack, conn.snd_una) {
-            let wnd = u32::from(h.window);
+            let wnd = peer_wnd;
             if wnd > conn.snd_wnd {
                 if let Some(waker) = conn.write_waker.take() {
                     waker.wake();
@@ -1277,6 +1550,7 @@ impl Host {
                 let space = self.cfg.rcv_buffer.saturating_sub(conn.rcvbuf.len());
                 let take = space.min(data.len());
                 all_taken = take == data.len();
+                let behind_hole = conn.rec.as_ref().is_some_and(|r| !r.ooo.is_empty());
                 if take > 0 {
                     conn.rcvbuf.extend(&data[..take]);
                     conn.rcv_nxt = conn.rcv_nxt.wrapping_add(take as u32);
@@ -1297,7 +1571,31 @@ impl Host {
                         waker.wake();
                     }
                 }
-                conn.ack_pending = true;
+                // A delayed ACK (RFC 1122 section 4.2.3.2, RFC 5681 section
+                // 4.2): the first in order segment waits for a second one or
+                // for the timer. Everything else is answered at once: data
+                // that fills or follows a hole, data that did not fit, a
+                // FIN, and any segment while a timeout is armed, which the
+                // single timer of the connection could not serve together
+                // with the delay.
+                if self.cfg.delayed_ack
+                    && all_taken
+                    && !fin
+                    && !behind_hole
+                    && !conn.has(O_UNACKED)
+                    && !conn.armed
+                {
+                    let due = now + self.cfg.delayed_ack_us;
+                    conn.opts |= O_UNACKED | O_DELACK;
+                    conn.deadline = due;
+                    conn.armed = true;
+                    if !conn.has(O_DQ) {
+                        conn.opts |= O_DQ;
+                        self.timers.push(Reverse((due, id, gen)));
+                    }
+                } else {
+                    conn.ack_pending = true;
+                }
             }
         }
 
@@ -1371,6 +1669,7 @@ impl Host {
             }
             let Some(conn) = self.conn(id) else { continue };
             conn.in_heap = false;
+            conn.opts &= !O_DQ;
             if !conn.armed {
                 continue;
             }
@@ -1391,6 +1690,14 @@ impl Host {
         let max_rto = self.cfg.max_rto_us;
         let max_retries = self.cfg.max_retries;
         let Some(conn) = self.conn(id) else { return };
+        if conn.has(O_DELACK) {
+            // The timer ran for a delayed ACK: send it.
+            conn.set(O_DELACK, false);
+            conn.ack_pending = true;
+            self.counters.delayed_acks += 1;
+            self.mark_dirty(id);
+            return;
+        }
         match conn.state {
             State::TimeWait | State::FinWait2 => {
                 // The hold of TIME-WAIT is over, or an orphan waited long
@@ -1415,7 +1722,7 @@ impl Host {
                     self.close_conn(id, Some(io::ErrorKind::TimedOut));
                     return;
                 }
-                conn.rto_us = recovery::backoff_us(conn.rto_us, max_rto);
+                conn.set_rto(recovery::backoff_us(conn.rto_us(), max_rto));
                 let snd_max = conn.snd_max();
                 if let Some(rec) = conn.rec.as_deref_mut() {
                     // The window falls to one segment and slow start sends
@@ -1425,6 +1732,9 @@ impl Host {
                         .on_timeout(snd_max.wrapping_sub(conn.snd_una), snd_max);
                     rec.snd_max = snd_max;
                     rec.rtx = false;
+                    // The receiver may have dropped what it reported
+                    // (RFC 2018 section 8), and go back N sends it all again.
+                    rec.sb.clear();
                     rec.retransmitted();
                 }
                 // Go back N: everything after the first unacknowledged byte
@@ -1439,7 +1749,7 @@ impl Host {
                 }
                 self.counters.retransmits += 1;
                 self.counters.timeouts += 1;
-                let deadline = now + self.conn(id).map_or(0, |c| c.rto_us);
+                let deadline = now + self.conn(id).map_or(0, |c| c.rto_us());
                 self.arm(id, gen, deadline);
                 self.mark_dirty(id);
             }
@@ -1456,18 +1766,26 @@ impl Host {
         count
     }
 
+    #[allow(clippy::too_many_lines)]
     fn output(&mut self, id: u32, now: i64) {
         let gen = self.gens.get(id as usize).copied().unwrap_or(0);
         let window_size = self.cfg.rcv_buffer;
+        let mss_own = self.mss_own;
+        let ts_now = ts_clock(self.ts_base, now);
         let Some(conn) = self.conns.get_mut(id as usize).and_then(Option::as_mut) else {
             return;
         };
         conn.dirty = false;
-        let rcv_wnd = u16::try_from(window_size.saturating_sub(conn.rcvbuf.len()).min(65_535))
-            .unwrap_or(65_535);
+        let space = window_size.saturating_sub(conn.rcvbuf.len());
+        let rcv_wnd = conn.window_field(space);
         let ips = (conn.local_ip, conn.remote_ip);
         let (lp, rp) = (conn.local_port, conn.remote_port);
         let mut sent_anything = false;
+        // The oldest segment went out again: the timeout starts over, as the
+        // kernel does, so a recovery that lasts a round trip does not run
+        // into a timer that the last advancing ACK set (RFC 6298 section 5.4
+        // for the segment, RFC 6675 section 5.1 for the recovery).
+        let mut restart_rto = false;
         let frames_before = self.counters.frames_out;
 
         if conn.syn_pending && matches!(conn.state, State::SynSent | State::SynReceived) {
@@ -1482,7 +1800,9 @@ impl Host {
             } else {
                 conn.rcv_nxt
             };
-            let mss = Some(conn.mss);
+            // The window of a SYN is never scaled (RFC 7323 section 2.2).
+            let syn_wnd = u16::try_from(space.min(65_535)).unwrap_or(65_535);
+            let opts = conn.syn_opts(ts_now);
             self.out.send(
                 &mut self.counters,
                 ips,
@@ -1491,14 +1811,15 @@ impl Host {
                 conn.iss,
                 ack,
                 bits,
-                rcv_wnd,
-                mss,
+                syn_wnd,
+                Some(mss_own),
+                opts,
                 (&[], &[]),
             );
             conn.snd_nxt = conn.iss.wrapping_add(1);
-            conn.ack_pending = false;
+            conn.acked();
             if !conn.armed {
-                let deadline = now + conn.rto_us;
+                let deadline = now + conn.rto_us();
                 conn.deadline = deadline;
                 conn.armed = true;
                 if !conn.in_heap {
@@ -1531,6 +1852,7 @@ impl Host {
                 let outstanding = conn.snd_max().wrapping_sub(conn.snd_una) as usize;
                 let data_out = outstanding - usize::from(fin_out).min(outstanding);
                 let n = data_out.min(conn.sndbuf.len()).min(usize::from(conn.mss));
+                let opts = conn.tx_opts(ts_now);
                 if n > 0 {
                     let (a, b) = conn.sndbuf.as_slices();
                     let payload = slices_range(a, b, 0, n);
@@ -1544,6 +1866,7 @@ impl Host {
                         flags::ACK,
                         rcv_wnd,
                         None,
+                        opts,
                         payload,
                     );
                 } else if fin_out && outstanding > 0 {
@@ -1557,16 +1880,71 @@ impl Host {
                         flags::FIN | flags::ACK,
                         rcv_wnd,
                         None,
+                        opts,
                         (&[], &[]),
                     );
                 }
                 self.counters.retransmits += 1;
                 self.counters.fast_retransmits += 1;
-                conn.ack_pending = false;
+                conn.acked();
                 sent_anything = true;
+                restart_rto = true;
+                let una = conn.snd_una;
                 if let Some(rec) = conn.rec.as_deref_mut() {
                     rec.rtx = false;
                     rec.retransmitted();
+                    if rec.cc.sack_recovery() {
+                        rec.sb.mark_rexmit(una, una, n as u32);
+                    }
+                }
+            }
+            if conn.rec.as_ref().is_some_and(|r| r.cc.sack_recovery()) {
+                // RFC 6675 section 5: while the window leaves room beyond the
+                // pipe, send the lowest lost range that was not sent again.
+                let mss = u32::from(conn.mss);
+                loop {
+                    let una = conn.snd_una;
+                    let high = conn.snd_max();
+                    let Some(rec) = conn.rec.as_deref() else {
+                        break;
+                    };
+                    let pipe = rec.sb.pipe(una, high, mss, true);
+                    if rec.cc.cwnd().saturating_sub(pipe) < mss {
+                        break;
+                    }
+                    let Some((start, len)) = rec.sb.next_hole(una, mss, true) else {
+                        break;
+                    };
+                    let off = start.wrapping_sub(una) as usize;
+                    let n = (len as usize).min(conn.sndbuf.len().saturating_sub(off));
+                    if n == 0 {
+                        break;
+                    }
+                    let opts = conn.tx_opts(ts_now);
+                    let (a, b) = conn.sndbuf.as_slices();
+                    let payload = slices_range(a, b, off, n);
+                    self.out.send(
+                        &mut self.counters,
+                        ips,
+                        lp,
+                        rp,
+                        start,
+                        conn.rcv_nxt,
+                        flags::ACK,
+                        rcv_wnd,
+                        None,
+                        opts,
+                        payload,
+                    );
+                    conn.acked();
+                    self.counters.retransmits += 1;
+                    self.counters.sack_retransmits += 1;
+                    sent_anything = true;
+                    restart_rto |= start == una;
+                    if let Some(rec) = conn.rec.as_deref_mut() {
+                        rec.sb.mark_rexmit(una, start, n as u32);
+                        rec.retransmitted();
+                    }
                 }
             }
             loop {
@@ -1590,12 +1968,20 @@ impl Host {
                 // The congestion window never cuts a segment short: with less
                 // room than the segment, the sender waits for an ACK. It
                 // cannot stall, because the window is at least one segment.
+                // In a recovery on the scoreboard the pipe is what counts
+                // against the window, not the distance to `snd_nxt`.
                 let cwnd_room = conn.rec.as_ref().map_or(usize::MAX, |r| {
-                    r.cc.send_window().saturating_sub(conn.in_flight()) as usize
+                    let flight = if r.cc.sack_recovery() {
+                        r.sb.pipe(conn.snd_una, conn.snd_max(), u32::from(conn.mss), true)
+                    } else {
+                        conn.in_flight()
+                    };
+                    r.cc.send_window().saturating_sub(flight) as usize
                 });
                 if cwnd_room < n {
                     break;
                 }
+                let opts = conn.tx_opts(ts_now);
                 let (a, b) = conn.sndbuf.as_slices();
                 let payload = slices_range(a, b, unacked, n);
                 let bits = flags::ACK | if n == avail { flags::PSH } else { 0 };
@@ -1609,11 +1995,12 @@ impl Host {
                     bits,
                     rcv_wnd,
                     None,
+                    opts,
                     payload,
                 );
                 let is_new = conn.snd_max() == conn.snd_nxt;
                 conn.snd_nxt = conn.snd_nxt.wrapping_add(n as u32);
-                conn.ack_pending = false;
+                conn.acked();
                 conn.probe = false;
                 sent_anything = true;
                 let snd_nxt = conn.snd_nxt;
@@ -1630,6 +2017,7 @@ impl Host {
             }
             let all_sent = conn.sndbuf.len() <= conn.unacked_data();
             if conn.fin_wanted && !conn.sent_fin && all_sent {
+                let opts = conn.tx_opts(ts_now);
                 self.out.send(
                     &mut self.counters,
                     ips,
@@ -1640,11 +2028,12 @@ impl Host {
                     flags::FIN | flags::ACK,
                     rcv_wnd,
                     None,
+                    opts,
                     (&[], &[]),
                 );
                 conn.sent_fin = true;
                 conn.snd_nxt = conn.snd_nxt.wrapping_add(1);
-                conn.ack_pending = false;
+                conn.acked();
                 let snd_nxt = conn.snd_nxt;
                 if let Some(rec) = conn.rec.as_deref_mut() {
                     rec.fin_sent = true;
@@ -1662,7 +2051,8 @@ impl Host {
         }
         conn.probe = false;
         if conn.ack_pending {
-            conn.ack_pending = false;
+            conn.acked();
+            let opts = conn.tx_opts(ts_now);
             self.out.send(
                 &mut self.counters,
                 ips,
@@ -1673,14 +2063,15 @@ impl Host {
                 flags::ACK,
                 rcv_wnd,
                 None,
+                opts,
                 (&[], &[]),
             );
         }
         if self.counters.frames_out != frames_before {
             conn.adv_wnd = rcv_wnd;
         }
-        if sent_anything && conn.outstanding() && !conn.armed {
-            let deadline = now + conn.rto_us;
+        if sent_anything && conn.outstanding() && (!conn.armed || restart_rto) {
+            let deadline = now + conn.rto_us();
             conn.deadline = deadline;
             conn.armed = true;
             if !conn.in_heap {
@@ -1820,6 +2211,7 @@ mod tests {
             flags: flags::SYN,
             window: 1000,
             mss: Some(1460),
+            opts: Options::default(),
         };
         wire::encode(&mut frame, &header, (&[], &[]));
         frame
@@ -1884,6 +2276,7 @@ mod tests {
             flags: flags::SYN,
             window: 1,
             mss: None,
+            opts: Options::default(),
         };
         wire::encode(&mut frame, &header, (&[], &[]));
         server.input(&frame, 0);
@@ -1910,6 +2303,7 @@ mod tests {
             flags: flags::SYN,
             window: 1,
             mss: None,
+            opts: Options::default(),
         };
         wire::encode(&mut frame, &header, (&[], &[]));
         server.input(&frame, 0);

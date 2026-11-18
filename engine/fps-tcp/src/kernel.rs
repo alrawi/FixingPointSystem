@@ -50,6 +50,10 @@ pub struct KernelConfig {
     /// The accept backlog of each listened port. The kernel caps it at
     /// `net.core.somaxconn`.
     pub backlog: u32,
+    /// The congestion control algorithm that `TCP_CONGESTION` sets on every
+    /// socket (for example `reno` or `cubic`), or `None` to leave the choice to
+    /// the system default.
+    pub congestion: Option<String>,
 }
 
 impl Default for KernelConfig {
@@ -58,8 +62,18 @@ impl Default for KernelConfig {
             nodelay: true,
             buffer_bytes: None,
             backlog: 4096,
+            congestion: None,
         }
     }
+}
+
+/// Sets `TCP_CONGESTION` of `socket` to the algorithm `name`.
+///
+/// # Errors
+///
+/// Returns an error when the kernel does not know the algorithm.
+pub fn set_congestion(socket: &impl std::os::fd::AsFd, name: &str) -> io::Result<()> {
+    socket2::SockRef::from(socket).set_tcp_congestion(name.as_bytes())
 }
 
 /// Counts the sockets of a stack. Dropping the guard removes one.
@@ -113,6 +127,9 @@ impl Shared {
             let bytes = u32::try_from(bytes).unwrap_or(u32::MAX);
             socket.set_recv_buffer_size(bytes)?;
             socket.set_send_buffer_size(bytes)?;
+        }
+        if let Some(name) = &self.config.congestion {
+            set_congestion(&socket, name)?;
         }
         Ok(socket)
     }

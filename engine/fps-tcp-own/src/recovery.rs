@@ -19,6 +19,7 @@
 //! forgotten. The retransmission timeout itself stays in the connection.
 
 use super::host::{seq_le, seq_lt};
+use super::sack::Scoreboard;
 
 /// The clock granularity `G` of RFC 6298, in microseconds.
 pub const CLOCK_GRANULARITY_US: i64 = 1_000;
@@ -130,6 +131,9 @@ pub struct NewReno {
     in_recovery: bool,
     recover: u32,
     has_recover: bool,
+    /// The recovery runs on the SACK scoreboard (RFC 6675): the window does
+    /// not inflate and a partial acknowledgment sends nothing by itself.
+    sack: bool,
 }
 
 /// The largest congestion window, which no real flight of this stack reaches.
@@ -148,6 +152,7 @@ impl NewReno {
             in_recovery: false,
             recover: 0,
             has_recover: false,
+            sack: false,
         }
     }
 
@@ -187,7 +192,9 @@ impl NewReno {
     pub fn on_dupack(&mut self, ack: u32, flight: u32, snd_max: u32) -> Action {
         self.dupacks = self.dupacks.saturating_add(1);
         if self.in_recovery {
-            self.cwnd = self.cwnd.saturating_add(self.mss).min(CWND_MAX);
+            if !self.sack {
+                self.cwnd = self.cwnd.saturating_add(self.mss).min(CWND_MAX);
+            }
             return Action::None;
         }
         if self.dupacks != DUPACK_THRESHOLD {
@@ -202,6 +209,34 @@ impl NewReno {
         self.in_recovery = true;
         self.cwnd = self.ssthresh.saturating_add(3 * self.mss).min(CWND_MAX);
         Action::Retransmit
+    }
+
+    /// A duplicate acknowledgment on a connection with SACK (RFC 6675
+    /// section 5). The recovery starts on the third duplicate, or at once
+    /// when the scoreboard presumes the first segment lost (`lost`), under
+    /// the same `recover` guard as [`NewReno::on_dupack`]. The window falls
+    /// to the threshold without inflation, and the scoreboard decides what to
+    /// send through the pipe.
+    pub fn on_dupack_sack(&mut self, ack: u32, flight: u32, snd_max: u32, lost: bool) -> Action {
+        self.dupacks = self.dupacks.saturating_add(1);
+        if self.in_recovery || !(lost || self.dupacks >= DUPACK_THRESHOLD) {
+            return Action::None;
+        }
+        if self.has_recover && seq_lt(ack, self.recover) {
+            return Action::None;
+        }
+        self.ssthresh = self.reduced(flight);
+        self.cwnd = self.ssthresh;
+        self.recover = snd_max;
+        self.has_recover = true;
+        self.in_recovery = true;
+        self.sack = true;
+        Action::Retransmit
+    }
+
+    /// Whether the recovery that runs is driven by the SACK scoreboard.
+    pub fn sack_recovery(&self) -> bool {
+        self.in_recovery && self.sack
     }
 
     /// What the sender may have in flight: the congestion window, plus one
@@ -223,12 +258,18 @@ impl NewReno {
     pub fn on_new_ack(&mut self, ack: u32, acked: u32) -> Action {
         self.dupacks = 0;
         if self.in_recovery {
+            if self.sack && seq_lt(ack, self.recover) {
+                // A partial acknowledgment under SACK: the window stays at
+                // the threshold and the scoreboard picks the next segment.
+                return Action::None;
+            }
             if seq_le(self.recover, ack) {
                 // A full acknowledgment: the inflated window falls to the
                 // threshold (RFC 5681 section 3.2, step 6, which RFC 6582
                 // section 3.2 step 3 keeps as its second option).
                 self.cwnd = self.ssthresh;
                 self.in_recovery = false;
+                self.sack = false;
                 return Action::None;
             }
             // A partial acknowledgment.
@@ -272,6 +313,7 @@ impl NewReno {
         self.ssthresh = self.reduced(flight);
         self.cwnd = self.mss;
         self.in_recovery = false;
+        self.sack = false;
         self.dupacks = 0;
         self.recover = snd_max;
         self.has_recover = true;
@@ -285,6 +327,9 @@ impl NewReno {
 pub struct OooQueue {
     segs: Vec<(u32, Vec<u8>)>,
     fin: Option<u32>,
+    /// The first byte of the segment that arrived last, which the first
+    /// SACK block must cover (RFC 2018 section 4).
+    recent: Option<u32>,
 }
 
 impl OooQueue {
@@ -312,6 +357,7 @@ impl OooQueue {
         if start == 0 || start >= window || data.is_empty() {
             return 0;
         }
+        self.recent = Some(seq);
         let end = start.saturating_add(data.len() as u32).min(window);
         // The parts of [start, end) that no held run covers.
         let mut pieces = vec![(start, end)];
@@ -360,6 +406,29 @@ impl OooQueue {
             merged.push((s, d));
         }
         self.segs = merged;
+    }
+
+    /// Notes that the peer's FIN sits at sequence number `seq`, after the data
+    /// held.
+    /// Writes the SACK blocks for an ACK into `opts`: first the run that
+    /// holds the segment that arrived last, then the others from the lowest
+    /// sequence number, as many as the option holds.
+    pub fn sack_blocks(&self, rcv_nxt: u32, opts: &mut crate::wire::Options) {
+        let recent = self.recent.map(|r| r.wrapping_sub(rcv_nxt));
+        let mut first = None;
+        for (i, (s, d)) in self.segs.iter().enumerate() {
+            let a = s.wrapping_sub(rcv_nxt);
+            if recent.is_some_and(|r| r >= a && r < a.saturating_add(d.len() as u32)) {
+                first = Some(i);
+                opts.push_block(*s, s.wrapping_add(d.len() as u32));
+                break;
+            }
+        }
+        for (i, (s, d)) in self.segs.iter().enumerate() {
+            if Some(i) != first && !opts.push_block(*s, s.wrapping_add(d.len() as u32)) {
+                break;
+            }
+        }
     }
 
     /// Notes that the peer's FIN sits at sequence number `seq`, after the data
@@ -440,6 +509,8 @@ pub struct Recovery {
     pub probe: Option<(u32, i64)>,
     /// Data that arrived beyond a hole.
     pub ooo: OooQueue,
+    /// The SACK scoreboard of the sender side (RFC 6675).
+    pub sb: Scoreboard,
 }
 
 impl Recovery {
@@ -454,6 +525,7 @@ impl Recovery {
             rtx: false,
             probe: None,
             ooo: OooQueue::default(),
+            sb: Scoreboard::default(),
         }
     }
 
@@ -949,5 +1021,124 @@ mod tests {
         assert_eq!(r.cc.cwnd(), 14_600);
         assert_eq!(r.snd_max, 77);
         assert!(r.probe.is_none() && r.ooo.is_empty() && !r.rtx && !r.fin_sent);
+    }
+
+    // ---- SACK (TRN-24) ----
+
+    #[test]
+    fn sack_blocks_start_with_the_run_of_the_latest_segment() {
+        use crate::wire::Options;
+        let mut q = OooQueue::default();
+        q.insert(100, 1100, &[1; 100], 10_000);
+        q.insert(100, 1500, &[2; 100], 10_000);
+        q.insert(100, 2000, &[3; 100], 10_000);
+        let mut o = Options::default();
+        q.sack_blocks(100, &mut o);
+        // The segment at 2000 came last, so its run is first; the rest
+        // follow from the lowest.
+        assert_eq!(o.blocks(), [(2000, 2100), (1100, 1200), (1500, 1600)]);
+        // A segment that joins two runs gives one block, first.
+        q.insert(100, 1200, &[4; 300], 10_000);
+        let mut o = Options::default();
+        q.sack_blocks(100, &mut o);
+        assert_eq!(o.blocks(), [(1100, 1600), (2000, 2100)]);
+    }
+
+    #[test]
+    fn sack_blocks_stop_where_the_option_is_full() {
+        use crate::wire::Options;
+        let mut q = OooQueue::default();
+        for i in 0..6u32 {
+            q.insert(0, 1000 + 200 * i, &[0; 100], 10_000);
+        }
+        let mut o = Options::default();
+        q.sack_blocks(0, &mut o);
+        assert_eq!(o.blocks().len(), 4);
+        assert_eq!(o.blocks()[0], (2000, 2100));
+        let mut o = Options {
+            timestamp: Some((0, 0)),
+            ..Options::default()
+        };
+        q.sack_blocks(0, &mut o);
+        assert_eq!(o.blocks().len(), 3);
+    }
+
+    #[test]
+    fn sack_blocks_wrap_with_the_sequence_numbers() {
+        use crate::wire::Options;
+        let rcv_nxt = u32::MAX - 150;
+        let mut q = OooQueue::default();
+        q.insert(rcv_nxt, rcv_nxt.wrapping_add(100), &[0; 100], 10_000);
+        q.insert(rcv_nxt, rcv_nxt.wrapping_add(400), &[0; 100], 10_000);
+        let mut o = Options::default();
+        q.sack_blocks(rcv_nxt, &mut o);
+        assert_eq!(
+            o.blocks(),
+            [
+                (rcv_nxt.wrapping_add(400), rcv_nxt.wrapping_add(500)),
+                (rcv_nxt.wrapping_add(100), rcv_nxt.wrapping_add(200))
+            ]
+        );
+    }
+
+    #[test]
+    fn with_sack_the_third_duplicate_starts_a_recovery_that_does_not_inflate() {
+        let mut cc = NewReno::new(MSS, 10);
+        assert_eq!(cc.on_dupack_sack(5000, 8 * M, 13_000, false), Action::None);
+        assert_eq!(cc.on_dupack_sack(5000, 8 * M, 13_000, false), Action::None);
+        assert_eq!(
+            cc.on_dupack_sack(5000, 8 * M, 13_000, false),
+            Action::Retransmit
+        );
+        assert!(cc.sack_recovery());
+        // The window is the threshold, without the 3 segments of inflation.
+        assert_eq!(cc.ssthresh(), 4 * M);
+        assert_eq!(cc.cwnd(), 4 * M);
+        // More duplicates change nothing.
+        assert_eq!(cc.on_dupack_sack(5000, 8 * M, 13_000, true), Action::None);
+        assert_eq!(cc.cwnd(), 4 * M);
+    }
+
+    #[test]
+    fn a_scoreboard_loss_starts_the_recovery_on_the_first_duplicate() {
+        let mut cc = NewReno::new(MSS, 10);
+        assert_eq!(
+            cc.on_dupack_sack(5000, 8 * M, 13_000, true),
+            Action::Retransmit
+        );
+        assert!(cc.in_recovery());
+    }
+
+    #[test]
+    fn a_partial_acknowledgment_in_a_sack_recovery_leaves_the_window_and_sends_nothing() {
+        let mut cc = NewReno::new(MSS, 10);
+        cc.on_dupack_sack(5000, 8 * M, 13_000, true);
+        assert_eq!(cc.on_new_ack(7000, 2 * M), Action::None);
+        assert_eq!(cc.cwnd(), 4 * M);
+        assert!(cc.sack_recovery());
+        // A full acknowledgment ends it at the threshold.
+        assert_eq!(cc.on_new_ack(13_000, 6 * M), Action::None);
+        assert!(!cc.in_recovery());
+        assert!(!cc.sack_recovery());
+        assert_eq!(cc.cwnd(), 4 * M);
+    }
+
+    #[test]
+    fn a_timeout_ends_a_sack_recovery() {
+        let mut cc = NewReno::new(MSS, 10);
+        cc.on_dupack_sack(5000, 8 * M, 13_000, true);
+        cc.on_timeout(8 * M, 13_000);
+        assert!(!cc.sack_recovery());
+        assert_eq!(cc.cwnd(), M);
+    }
+
+    #[test]
+    fn the_recover_guard_also_holds_for_sack() {
+        let mut cc = NewReno::new(MSS, 10);
+        cc.on_timeout(8 * M, 13_000);
+        // Duplicates below `recover` do not start a recovery again.
+        for _ in 0..4 {
+            assert_eq!(cc.on_dupack_sack(9000, 8 * M, 13_000, true), Action::None);
+        }
     }
 }

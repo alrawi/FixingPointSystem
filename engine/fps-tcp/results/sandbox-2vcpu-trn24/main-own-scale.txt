@@ -1,0 +1,28 @@
+own minimal TCP (fps-tcp) on sandbox 2vcpu own main (TRN-23) scale
+host: Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vcpus, kernel 6.18.44-fc-v595
+  profile = full
+  own.mtu = 1500
+  own.rcv_buffer = 65535
+  own.snd_buffer = 131072
+  own.rto_us = 200000
+  own.time_wait_us = 1000000
+  own.backlog = 4096
+  own.link_depth = 8192
+  own.client_hosts = 20000
+  own.server_hosts = 1
+  own.vlan = none
+  scale.steps = 1000,10000,100000,250000,500000,750000,1000000
+  scale.shards = 64
+  open_files_soft_limit = 20000
+  scale.step_budget_secs = 300
+  scale.probe_sessions = 500
+socket scaling over 64 shards:
+      target    sockets   setup s    sockets/s  B/socket idle poll us     probe /s probe p99
+        1000       1089      0.00       496559       560           29        49703        45
+       10000      10677      0.01       646723       449           29        45558        55
+      100000     101161      0.14       664128       290           29        36136       133
+      250000     251677      0.23       640551       281           28        47679        70
+      500000     502161      0.39       644198       270           66        43445       107
+      750000     751145      0.46       544491       298           35        47361        75
+     1000000    1001129      0.48       524278       264           41        43121       107
+wrote /home/claude/fixingpointsystem/.claude/worktrees/agent-a95a76e2bb5ccd5fa/engine/fps-tcp/results/sandbox-2vcpu-trn24/main-own-scale.json
