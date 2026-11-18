@@ -1035,6 +1035,7 @@ dependencies = [
  "fps-backend-afxdp",
  "fps-hosts",
  "fps-tcp-own",
+ "fps-udp-own",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -1476,6 +1477,15 @@ dependencies = [
  "fps-hosts",
  "fps-io",
  "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "fps-udp-own"
+version = "0.0.1"
+dependencies = [
+ "fps-io",
+ "fps-tcp-own",
  "tokio",
 ]
 

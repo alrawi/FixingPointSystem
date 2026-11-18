@@ -4,9 +4,14 @@
 //! A [`Splitter`] wraps the [`FrameIo`] of one queue and is itself a
 //! `FrameIo`. The stack above it sees IPv4 TCP frames only. Every other frame
 //! stops here: ARP goes to the `fps-hosts` responder, whose replies the
-//! splitter sends on its own, and ND, DHCP, and UDP go to a [`FrameHook`],
-//! which answers [`HookOutcome::Unsupported`] until a later package plugs in a
-//! real handler. A frame that nothing takes is counted and dropped.
+//! splitter sends on its own, and ND, DHCP, and UDP go to a [`FrameHook`].
+//! The UDP hook of a datapath is the UDP layer of `fps-udp-own` (TRN-29). A
+//! hook that nothing replaced answers [`HookOutcome::Unsupported`]. A frame
+//! that nothing takes is counted and dropped.
+//!
+//! A hook also sends: the splitter asks every hook for frames of its own
+//! ([`FrameHook::poll_tx`]) on each pass of the queue, and sends them on the
+//! queue after the replies.
 
 use std::collections::VecDeque;
 use std::io;
@@ -25,6 +30,8 @@ use crate::classify::{classify, Class};
 const MAX_PENDING: usize = 1024;
 /// The most frames that one attempt to send replies hands to the queue.
 const REPLY_BATCH: usize = 32;
+/// The most frames that a hook may add on one pass of its queue.
+const TX_BATCH: usize = 256;
 
 /// What a hook did with a frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,27 +46,50 @@ pub enum HookOutcome {
 /// the frame that it handles.
 pub struct Replies<'a> {
     queue: &'a mut VecDeque<Vec<u8>>,
+    pushed: usize,
 }
 
 impl Replies<'_> {
     /// Queues one Ethernet frame for transmission. A frame that is empty or
     /// longer than the queue allows is dropped when the splitter sends it.
     pub fn push(&mut self, frame: &[u8]) {
+        self.push_vec(frame.to_vec());
+    }
+
+    /// Like [`Replies::push`], for a frame that the caller owns, so it is not
+    /// copied again.
+    pub fn push_vec(&mut self, frame: Vec<u8>) {
         if self.queue.len() >= MAX_PENDING {
             self.queue.pop_front();
         }
-        self.queue.push_back(frame.to_vec());
+        self.queue.push_back(frame);
+        self.pushed += 1;
+    }
+
+    /// How many frames fit before the oldest one would be dropped. A hook
+    /// that sends on its own ([`FrameHook::poll_tx`]) stops at this number
+    /// and goes on at the next pass.
+    #[must_use]
+    pub fn room(&self) -> usize {
+        MAX_PENDING.saturating_sub(self.queue.len()).min(TX_BATCH)
     }
 }
 
 /// The handler of one protocol that the datapath does not serve itself.
 ///
-/// TRN-29 plugs UDP into this seam, HST-04 DHCP (`fps_hosts::DhcpHosts`), and
-/// a later package IPv6 neighbor discovery. A hook runs on the thread of its
-/// queue, so it must not block.
+/// TRN-29 plugs UDP into this seam (`fps_udp_own::UdpArm`), HST-04 DHCP
+/// (`fps_hosts::DhcpHosts`), and a later package IPv6 neighbor discovery. A
+/// hook runs on the thread of its queue, so it must not block.
 pub trait FrameHook: Send {
     /// Handles one frame of the class that the hook serves.
     fn handle(&mut self, frame: &[u8], replies: &mut Replies<'_>) -> HookOutcome;
+
+    /// Offers the hook a turn to send frames that it did not make in answer
+    /// to a frame, for example the datagrams that tasks queued. The splitter
+    /// calls it on every pass of the queue, after the frames of the pass were
+    /// handled. A hook adds at most [`Replies::room`] frames per call. The
+    /// default sends nothing.
+    fn poll_tx(&mut self, _replies: &mut Replies<'_>) {}
 }
 
 /// A hook for a protocol that is not served yet.
@@ -257,11 +287,28 @@ fn run_hook(
     pending: &mut VecDeque<Vec<u8>>,
     (handled, unsupported): (&AtomicU64, &AtomicU64),
 ) {
-    let mut replies = Replies { queue: pending };
+    let mut replies = Replies {
+        queue: pending,
+        pushed: 0,
+    };
     match hook.handle(frame, &mut replies) {
         HookOutcome::Handled => bump(handled),
         HookOutcome::Unsupported => bump(unsupported),
     }
+}
+
+/// Gives every hook its turn to send, and returns the frames that they queued.
+fn poll_hooks(hooks: &mut Hooks, pending: &mut VecDeque<Vec<u8>>) -> usize {
+    let mut queued = 0;
+    for hook in [&mut hooks.nd, &mut hooks.dhcp, &mut hooks.udp] {
+        let mut replies = Replies {
+            queue: pending,
+            pushed: 0,
+        };
+        hook.poll_tx(&mut replies);
+        queued += replies.pushed;
+    }
+    queued
 }
 
 /// Sends one frame where its class says.
@@ -341,8 +388,9 @@ impl FrameIo for Splitter {
     }
 
     /// Takes frames from the queue and passes the IPv4 TCP frames to
-    /// `frame`. The count is the number of frames that came off the queue,
-    /// so a pass that only saw ARP still counts as work.
+    /// `frame`. The count is the number of frames that came off the queue
+    /// plus the frames that hooks queued for sending, so a pass that only saw
+    /// ARP, or only sent datagrams, still counts as work.
     fn recv_batch(&mut self, max: usize, frame: &mut dyn FnMut(&[u8])) -> io::Result<usize> {
         let Self {
             inner,
@@ -355,10 +403,11 @@ impl FrameIo for Splitter {
         let taken = inner.recv_batch(max, &mut |f| {
             dispatch(f, *vlan, responder, hooks, pending, counters, frame);
         })?;
+        let queued = poll_hooks(hooks, pending);
         if !pending.is_empty() {
             drain(&mut **inner, pending, counters);
         }
-        Ok(taken)
+        Ok(taken + queued)
     }
 
     fn send_batch_with(
