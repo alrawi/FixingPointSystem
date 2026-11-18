@@ -21,7 +21,7 @@
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 pub mod cli;
-pub mod clock;
+pub use fps_tcp_own::clock;
 pub mod kernel;
 pub mod link;
 pub mod own;

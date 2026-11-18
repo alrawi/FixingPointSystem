@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A minimal TCP stack of our own, the second measured candidate of TRN-10.
+//! The own TCP stack of the engine, the second measured candidate of TRN-10.
 //!
 //! The stack is two [`host::Host`]s, a client at `10.0.0.1` and a server at
 //! `10.0.0.2`, that exchange IPv4 frames over a pair of
@@ -45,6 +45,10 @@
 //! is the reason `idle_poll_us` of this stack is flat where a stack that walks
 //! its socket set grows with the socket count.
 
+#![forbid(unsafe_code)]
+#![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+pub mod clock;
 pub mod host;
 pub mod wire;
 
@@ -63,12 +67,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::Notify;
 
 use crate::clock::{Clock, MonotonicClock};
-use crate::stack::{StackStats, TcpStack};
 
 use host::{Host, HostCounters};
-
-/// The name that the reports use for this stack.
-pub const OWN_STACK_NAME: &str = "own minimal TCP (fps-tcp)";
 
 /// The address of the client host, 10.0.0.1.
 const CLIENT_IP: u32 = 0x0A00_0001;
@@ -134,6 +134,17 @@ pub struct OwnCounters {
     pub client: HostCounters,
     /// The server host.
     pub server: HostCounters,
+}
+
+/// The totals of an [`OwnStack`], for the reports of the bench harness.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OwnStats {
+    /// Sockets that the pair holds now, counted on both hosts.
+    pub sockets_open: u64,
+    /// Passes of the driver that moved at least one frame or socket event.
+    pub pump_passes: u64,
+    /// Frames that both hosts transmitted since the pair was created.
+    pub frames: u64,
 }
 
 /// A host and its end of the link.
@@ -279,7 +290,7 @@ impl Shared {
 /// The own stack: a client host and a server host joined by a frame link.
 ///
 /// The stack is cheap to clone, and all clones share the two hosts. It makes
-/// progress while a task polls [`TcpStack::drive`], or when a test calls
+/// progress while a task polls [`OwnStack::drive`], or when a test calls
 /// [`OwnStack::pump`].
 #[derive(Clone)]
 pub struct OwnStack {
@@ -381,32 +392,17 @@ impl Drop for AcceptGuard {
     }
 }
 
-impl TcpStack for OwnStack {
-    type Session = OwnSession;
-
-    fn name(&self) -> String {
-        OWN_STACK_NAME.to_string()
-    }
-
-    fn notes(&self) -> Vec<String> {
-        let inner = self.shared.lock();
-        let _ = &inner;
-        vec![
-            "the client host and the server host are two instances of the own TCP state machine in one process, joined by an in memory pair of frame queues of fps-backend-afxdp, so there is no kernel socket and no descriptor".to_string(),
-            "frames are IPv4 with TCP, with an IP header checksum and a TCP checksum that are computed on send and verified on receive".to_string(),
-            "retransmission is minimal: one timer per connection, a fixed initial timeout that doubles, go back N, no round trip estimate and no fast retransmit, and the link loses nothing, so the measurements never retransmit".to_string(),
-            "there is no congestion control, no window scaling (the window is at most 65,535 bytes), no delayed acknowledgment, and no out of order queue".to_string(),
-            "timers live in a heap with one entry per connection, so a poll with idle sockets does not grow with the socket count, where a stack that walks its sockets does".to_string(),
-            "a closed tuple is held for one second in TIME-WAIT instead of minutes, so a rate run does not run out of ports".to_string(),
-            "bytes_per_socket is the growth of the resident set of the process and includes the connection table, the buffers that the held sockets own (none while idle), and the frame link".to_string(),
-        ]
-    }
-
-    fn listen(&self, port: u16) -> io::Result<()> {
+impl OwnStack {
+    /// Starts listening on `port` at the server host.
+    ///
+    /// A port may be listened on once.
+    pub fn listen(&self, port: u16) -> io::Result<()> {
         self.shared.lock().endpoint(Side::Server).listen(port)
     }
 
-    fn connect(&self, port: u16) -> impl Future<Output = io::Result<OwnSession>> + Send {
+    /// Opens a session from the client host to `port` at the server host and
+    /// completes when the handshake finished.
+    pub fn connect(&self, port: u16) -> impl Future<Output = io::Result<OwnSession>> + Send {
         let stack = self.clone();
         async move {
             let now = stack.shared.now();
@@ -432,7 +428,9 @@ impl TcpStack for OwnStack {
         }
     }
 
-    fn accept(&self, port: u16) -> impl Future<Output = io::Result<OwnSession>> + Send {
+    /// Completes with the next session that arrived at `port` on the server
+    /// host.
+    pub fn accept(&self, port: u16) -> impl Future<Output = io::Result<OwnSession>> + Send {
         let stack = self.clone();
         async move {
             let mut guard = AcceptGuard {
@@ -458,7 +456,9 @@ impl TcpStack for OwnStack {
         }
     }
 
-    fn drive(&self) -> impl Future<Output = ()> + Send {
+    /// Moves frames and timers for both hosts until the future is dropped.
+    /// The stack makes progress only while a task polls this future.
+    pub fn drive(&self) -> impl Future<Output = ()> + Send {
         let stack = self.clone();
         async move {
             loop {
@@ -487,13 +487,10 @@ impl TcpStack for OwnStack {
         }
     }
 
-    fn poll_once(&self) {
-        self.pump();
-    }
-
-    fn stats(&self) -> StackStats {
+    /// The counters of the pair.
+    pub fn stats(&self) -> OwnStats {
         let inner = self.shared.lock();
-        StackStats {
+        OwnStats {
             sockets_open: inner.client.host.sockets() + inner.server.host.sockets(),
             pump_passes: inner.passes,
             frames: inner.client.host.counters.frames_out + inner.server.host.counters.frames_out,

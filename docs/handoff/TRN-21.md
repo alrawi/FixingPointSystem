@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-21` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 50% (2 of 4 plan steps) |
 | Current holder | claude-b1c951, lease until 2026-11-18T02:08:13Z |
 | Last verified commit | none |
 
@@ -18,28 +18,32 @@ Move the own stack of TRN-18 (`engine/fps-tcp/src/own/` and its tests) into a ne
 
 ## Plan
 
-- [ ] 1. Create `fps-tcp-own` with the stack, the clock, and the component tests; `cargo tree` shows no smoltcp.
-- [ ] 2. Reduce `fps-tcp` to the adapter and re-exports; tests, clippy, fmt pass for both crates.
+- [x] 1. Create `fps-tcp-own` with the stack, the clock, and the component tests; `cargo tree` shows no smoltcp.
+- [x] 2. Reduce `fps-tcp` to the adapter and re-exports; tests, clippy, fmt pass for both crates.
 - [ ] 3. Run tcp_bench for the own stack (rate and a socket-scaling row) and commit the run under `engine/fps-tcp/results/` with host.txt.
 - [ ] 4. Log entry, README and component page updates, plan checks, `cargo deny check`, PR and CI.
 
 ## Done and verified
 
-Nothing yet.
+- Steps 1 and 2: `cargo test -p fps-tcp-own -p fps-tcp` passes (fps-tcp-own 9 unit + 22 component tests; fps-tcp 25 unit + 8 kernel + 1 own_workloads + 9 smol + 5 workloads). `cargo tree -p fps-tcp-own | grep -c smoltcp` prints 0. `cargo clippy -p fps-tcp -p fps-tcp-own --all-targets -- -D warnings` and `cargo fmt --check` are clean.
 
 ## Remaining
 
-Everything.
+Step 3 (tcp_bench run), step 4 (`cargo deny check`, PR, CI).
 
 ## Next action
 
-Step 1.
+Step 3: build `--release -p fps-tcp --example tcp_bench` and run `--stack own --profile small` and a scale run; commit under `engine/fps-tcp/results/sandbox-2vcpu-trn21/` with host.txt.
 
 ## Blockers and open questions
 
 none
 
 ## Decisions taken in this package
+
+- `OwnStack` gets inherent `listen`, `connect`, `accept`, `drive`, `stats` (type `OwnStats`); the `TcpStack` impl in `fps-tcp/src/own.rs` delegates to them. The stack code is unchanged. The orphan rule allows the impl because `TcpStack` is local to `fps-tcp`.
+- The clocks moved with the stack (the stack reads them) and `fps-tcp` re-exports the module as `fps_tcp::clock`.
+- `Cargo.lock` is part of the PR (new package).
 
 - The workspace members glob `engine/*` already covers the new crate, so the root `Cargo.toml` needs no edit.
 
@@ -58,4 +62,5 @@ cargo test -p fps-tcp-own -p fps-tcp
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
-| 2026-11-18 | claude-b1c951 | claim | none | claimed #621 |
+| 2026-11-18 | claude-b1c951 | claim | 8bd0991 | claimed #621 |
+| 2026-11-18 | claude-b1c951 | checkpoint | see git log | steps 1 and 2 done, docs and log entry added |
