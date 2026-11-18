@@ -41,7 +41,7 @@ use fps_agent::{detect, require_kernel, Outcome, RunOptions, SystemRoot};
 use fps_backend_afxdp::BackendKind;
 
 const USAGE: &str = "usage: fps-agent capabilities [--root DIR]
-       fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS] [--module-trust-store FILE] [--dev-modules]
+       fps-agent run --plan FILE --modules DIR [--side both|client|server] [--linger SECONDS] [--keylog FILE] [--module-trust-store FILE] [--dev-modules]
        fps-agent connect --controller URI --agent-id ID --modules DIR [--root DIR] [--side both|client|server] [--backend kernel|af_xdp] [--label KEY=VALUE]... [--redial-limit SECONDS] [--capture-dir DIR] [--capture-retention SECONDS]
                           [--module-trust-store FILE] [--dev-modules]
                           [--cert-dir DIR [--tls-ca FILE] [--tls-ca-sha256 HEX] [--enroll-address HOST:PORT]
@@ -419,6 +419,7 @@ fn chain(e: &dyn std::error::Error) -> String {
 fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
     let (mut plan, mut modules, mut sides, mut linger) = (None, None, Sides::Both, None);
     let mut signing = SigningFlags::default();
+    let mut keylog = None;
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         if flag == "--dev-modules" {
@@ -430,6 +431,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
             "--module-trust-store" => signing.store = Some(PathBuf::from(value)),
             "--plan" => plan = Some(PathBuf::from(value)),
             "--modules" => modules = Some(PathBuf::from(value)),
+            "--keylog" => keylog = Some(PathBuf::from(value)),
             "--side" => {
                 sides = Sides::parse(value).ok_or_else(|| format!("unknown side {value:?}"))?;
             }
@@ -450,6 +452,7 @@ fn parse_run_args(args: &[String]) -> Result<RunOptions, String> {
     );
     opts.sides = sides;
     opts.policy = signing.policy()?;
+    opts.keylog = keylog;
     if let Some(l) = linger {
         opts.linger = l;
     }

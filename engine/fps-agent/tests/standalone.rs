@@ -386,3 +386,113 @@ fn a_changed_module_tree_or_scenario_is_an_error() {
     let err = run(&options(&path), &mut Vec::new(), &mut Vec::new()).unwrap_err();
     assert!(matches!(err, RunError::Unimplemented(_)), "{err}");
 }
+
+// AGT-27: `run --keylog FILE` writes the TLS secrets of a standalone run. ---
+
+/// Returns a plan that runs the https scenario `https_fetch` of the http1
+/// module of the repository on loopback pools for two seconds.
+fn https_plan(port: u16) -> Json {
+    let modules = repo_modules();
+    let manifest = std::fs::read_to_string(modules.join("http1/manifest.yaml")).expect("manifest");
+    let version = manifest
+        .lines()
+        .find_map(|l| l.strip_prefix("version:"))
+        .map(|v| v.trim().trim_matches('"').to_owned())
+        .expect("version");
+    let source = std::fs::read_to_string(modules.join("http1/scenarios/https_fetch.yaml"))
+        .expect("scenario source");
+    let mut plan = example();
+    plan["modules"] = serde_json::json!([{
+        "name": "http1",
+        "version": version,
+        "digest": tree_digest("http1", &modules.join("http1")).expect("digest"),
+    }]);
+    plan["scenarios"] = serde_json::json!([{
+        "ref": "http1/https_fetch",
+        "module": "http1",
+        "digest": sha256_digest(source.as_bytes()),
+        "source": source,
+    }]);
+    plan["mix"] = serde_json::json!([{
+        "id": "https_fetch",
+        "scenario": "http1/https_fetch",
+        "weight": 1,
+        "params": { "server_port": port },
+        "clientPool": "clients",
+        "serverPool": "servers",
+    }]);
+    plan["hostPools"][0]["ipv4Prefix"] = "127.83.0.0/24".into();
+    plan["hostPools"][1]["ipv4Prefix"] = "127.84.0.0/24".into();
+    for w in plan["workers"].as_array_mut().expect("workers") {
+        w["rates"] = serde_json::json!([{ "mixEntry": "https_fetch", "sessionsPerSecond": 4 }]);
+    }
+    plan["load"]["phases"] = serde_json::json!([
+        { "name": "steady", "duration": "2s", "shape": "PHASE_SHAPE_HOLD",
+          "startFraction": 1, "endFraction": 1 }
+    ]);
+    plan["warmup"] = "0s".into();
+    plan["criteria"] = serde_json::json!([]);
+    plan
+}
+
+fn repo_modules() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules")
+}
+
+#[test]
+fn keylog_writes_the_tls_secrets_of_the_run_to_a_private_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = write_plan("https-keylog.json", &https_plan(18_861));
+    let keylog = path.with_file_name("https-keylog.keys");
+    // A file that exists with a wide mode and old content is replaced and
+    // closed to other users.
+    std::fs::write(&keylog, "stale\n").expect("old key log");
+    std::fs::set_permissions(&keylog, std::fs::Permissions::from_mode(0o644)).expect("mode");
+
+    let mut opts = RunOptions::new(path, repo_modules());
+    opts.keylog = Some(keylog.clone());
+    let (mut out, mut log) = (Vec::new(), Vec::new());
+    let summary = run(&opts, &mut out, &mut log).expect("run");
+    let log = String::from_utf8(log).expect("log text");
+    assert_eq!(summary.outcome, Outcome::Pass, "{log}");
+    let client = summary.client.as_ref().expect("client totals");
+    assert!(
+        client.counter_total(fps_stats::metric::SESSIONS_SUCCEEDED) > 0,
+        "{log}"
+    );
+    assert!(log.contains("bytes of TLS secrets"), "{log}");
+
+    let text = std::fs::read_to_string(&keylog).expect("key log");
+    assert!(!text.contains("stale"), "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("CLIENT_TRAFFIC_SECRET_0 ")),
+        "{text}"
+    );
+    // NSS format: label, 64 hex digits of the client random, then the secret.
+    for line in &lines {
+        let parts: Vec<&str> = line.split(' ').collect();
+        assert_eq!(parts.len(), 3, "{line}");
+        assert_eq!(parts[1].len(), 64, "{line}");
+        assert!(parts[1].bytes().all(|b| b.is_ascii_hexdigit()), "{line}");
+    }
+    let mode = std::fs::metadata(&keylog)
+        .expect("metadata")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600, "mode {mode:o}");
+}
+
+#[test]
+fn a_key_log_path_that_cannot_be_written_ends_the_run_before_any_load() {
+    let path = write_plan("https-badkeylog.json", &https_plan(18_862));
+    let mut opts = RunOptions::new(path, repo_modules());
+    opts.keylog = Some(PathBuf::from("/nonexistent-agt27-dir/keys.log"));
+    let (mut out, mut log) = (Vec::new(), Vec::new());
+    let err = run(&opts, &mut out, &mut log).unwrap_err();
+    assert!(matches!(err, RunError::Output(_)), "{err}");
+    assert!(out.is_empty(), "the run started before the key log failed");
+}

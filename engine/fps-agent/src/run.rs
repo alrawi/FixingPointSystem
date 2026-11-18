@@ -66,6 +66,11 @@ pub struct RunOptions {
     /// What the agent requires of the module signatures. The default asks for
     /// none.
     pub policy: ModulePolicy,
+    /// A file that receives the TLS secrets of the run in the NSS key log
+    /// format, so that a capture of the run can be decrypted. The default is
+    /// none, and the secrets then stay in memory. The file is created with
+    /// mode 0600.
+    pub keylog: Option<PathBuf>,
 }
 
 impl RunOptions {
@@ -79,6 +84,7 @@ impl RunOptions {
             interval: Duration::from_secs(1),
             linger: Duration::from_secs(5),
             policy: ModulePolicy::default(),
+            keylog: None,
         }
     }
 }
@@ -750,7 +756,17 @@ pub fn run(
     log: &mut dyn Write,
 ) -> Result<RunSummary, RunError> {
     let plan = Plan::load(&opts.plan)?;
-    let prepared = prepare(plan, &opts.modules, opts.sides, &opts.policy)?;
+    // The file exists before the run starts, so that a path that cannot be
+    // written ends the command before any load.
+    let mut keylog = match &opts.keylog {
+        Some(path) => Some((create_private(path)?, path)),
+        None => None,
+    };
+    let keys = KeyTap::new();
+    if keylog.is_some() {
+        keys.begin();
+    }
+    let prepared = prepare_with(plan, &opts.modules, opts.sides, &opts.policy, &keys)?;
     for warning in prepared.warnings() {
         writeln!(log, "fps-agent: warning: {warning}")?;
     }
@@ -795,6 +811,18 @@ pub fn run(
     }
     let phase_end = active.phase_at(active.elapsed());
     let finished = active.finish(SERVER_RAMP_DOWN)?;
+    if let Some((file, path)) = keylog.as_mut() {
+        let lines = keys.end();
+        file.write_all(lines.text.as_bytes())?;
+        file.flush()?;
+        writeln!(
+            log,
+            "fps-agent: wrote {} bytes of TLS secrets to {}{}",
+            lines.text.len(),
+            path.display(),
+            if lines.truncated { " (truncated)" } else { "" }
+        )?;
+    }
     printer.line(&finished.shown, phase_end, true)?;
     let lines = printer.sequence;
 
@@ -860,4 +888,19 @@ pub fn run(
         lines,
         lanes: finished.lanes,
     })
+}
+
+/// Creates or truncates the key log file with mode 0600, because it holds the
+/// secrets of every session of the run. A file that exists keeps its owner, and
+/// its mode is set to 0600 too.
+fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
 }
