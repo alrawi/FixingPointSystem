@@ -427,6 +427,63 @@ async fn drain<T: SessionIo>(session: &mut T, chunk: usize) -> io::Result<u64> {
     }
 }
 
+/// The byte at `offset` of the checked stream of [`LossConfig::verify`]. The
+/// value depends on the position, so a lost, repeated, shifted, or swapped
+/// segment shows as a wrong byte.
+pub fn pattern_byte(offset: u64) -> u8 {
+    let mixed = offset.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    u8::try_from(mixed >> 56).unwrap_or(0)
+}
+
+/// Fills `buf` with the pattern from `offset` on.
+pub fn fill_pattern(offset: u64, buf: &mut [u8]) {
+    for (i, byte) in buf.iter_mut().enumerate() {
+        *byte = pattern_byte(offset.wrapping_add(i as u64));
+    }
+}
+
+/// Returns the index of the first byte of `buf` that is not the pattern from
+/// `offset` on, or `None` when all of them match.
+pub fn first_mismatch(offset: u64, buf: &[u8]) -> Option<usize> {
+    buf.iter()
+        .enumerate()
+        .position(|(i, byte)| *byte != pattern_byte(offset.wrapping_add(i as u64)))
+}
+
+/// Writes `total` bytes of the pattern and closes the write side.
+async fn send_pattern<T: SessionIo>(session: &mut T, total: u64, chunk: usize) -> io::Result<()> {
+    let mut buffer = vec![0u8; chunk.max(1)];
+    let mut sent = 0u64;
+    while sent < total {
+        let take = usize::try_from(total - sent)
+            .unwrap_or(usize::MAX)
+            .min(buffer.len());
+        fill_pattern(sent, &mut buffer[..take]);
+        session.write_all(&buffer[..take]).await?;
+        sent += take as u64;
+    }
+    session.shutdown().await
+}
+
+/// Reads to the end of the stream and returns the byte count, or `u64::MAX`
+/// when a byte was not the pattern (the rest is still read, so the peer can
+/// finish).
+async fn drain_checked<T: SessionIo>(session: &mut T, chunk: usize) -> io::Result<u64> {
+    let mut buffer = vec![0u8; chunk.max(1)];
+    let mut total = 0u64;
+    let mut wrong = false;
+    loop {
+        let read = session.read(&mut buffer).await?;
+        if read == 0 {
+            return Ok(if wrong { u64::MAX } else { total });
+        }
+        if !wrong && first_mismatch(total, &buffer[..read]).is_some() {
+            wrong = true;
+        }
+        total += read as u64;
+    }
+}
+
 /// Runs the throughput workload on one stack.
 pub async fn throughput<S: TcpStack>(
     stack: &S,
@@ -537,6 +594,10 @@ pub struct LossConfig {
     pub warmup: Duration,
     /// The length of the measurement window.
     pub window: Duration,
+    /// Whether the stream is a position dependent pattern that the server
+    /// checks byte by byte (TRN-26), and not the constant fill of the plain
+    /// workload. The server answers with `u64::MAX` after a wrong byte.
+    pub verify: bool,
 }
 
 impl Default for LossConfig {
@@ -549,6 +610,7 @@ impl Default for LossConfig {
             flows: 1,
             warmup: Duration::from_secs(5),
             window: Duration::from_secs(10),
+            verify: false,
         }
     }
 }
@@ -696,10 +758,14 @@ pub async fn loss_transfer<S: TcpStack>(stack: &S, config: &LossConfig) -> LossR
     }
     let driver = spawn_driver(stack);
     let (server_stack, client_stack) = (stack.clone(), stack.clone());
-    let (port, bytes, chunk) = (config.port, config.bytes, config.chunk);
+    let (port, bytes, chunk, verify) = (config.port, config.bytes, config.chunk, config.verify);
     let server = tokio::spawn(async move {
         let mut session = server_stack.accept(port).await?;
-        let received = drain(&mut session, chunk).await?;
+        let received = if verify {
+            drain_checked(&mut session, chunk).await?
+        } else {
+            drain(&mut session, chunk).await?
+        };
         session.write_all(&received.to_be_bytes()).await?;
         session.shutdown().await?;
         Ok::<u64, io::Error>(received)
@@ -707,7 +773,11 @@ pub async fn loss_transfer<S: TcpStack>(stack: &S, config: &LossConfig) -> LossR
     let client = tokio::spawn(async move {
         let mut session = client_stack.connect(port).await?;
         let first_write = Instant::now();
-        send_bulk(&mut session, bytes, chunk).await?;
+        if verify {
+            send_pattern(&mut session, bytes, chunk).await?;
+        } else {
+            send_bulk(&mut session, bytes, chunk).await?;
+        }
         let mut answer = [0u8; 8];
         session.read_exact(&mut answer).await?;
         Ok::<(u64, Duration), io::Error>((u64::from_be_bytes(answer), first_write.elapsed()))
@@ -729,6 +799,9 @@ pub async fn loss_transfer<S: TcpStack>(stack: &S, config: &LossConfig) -> LossR
             run.completed = true;
             run.confirmed_bytes = confirmed;
             run.elapsed = elapsed;
+        }
+        Ok(Ok(Ok((u64::MAX, _)))) => {
+            run.failure = Some("the server read a byte that is not the pattern".to_string());
         }
         Ok(Ok(Ok((confirmed, _)))) => {
             run.failure = Some(format!("the server counted {confirmed} of {bytes} bytes"));

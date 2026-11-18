@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-26` |
 | Pull request | not opened yet |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 50% (3 of 6 plan steps) |
 | Current holder | claude-7c2e91, lease until 2026-11-18T09:58:49Z |
 | Last verified commit | none |
 
@@ -18,24 +18,24 @@ Conformance and interop tests in the harness (`engine/fps-tcp/`): the own stack 
 
 ## Plan
 
-- [ ] 1. Claim, handoff, and a pattern checked loss transfer in `workload.rs`.
-- [ ] 2. A wire tap that reads TCP options with the smoltcp parser, and the smoltcp adapter with one external side.
-- [ ] 3. The in memory pairings (own and smoltcp, both directions) and `tests/interop_smol.rs`.
+- [x] 1. Claim, handoff, and a pattern checked loss transfer in `workload.rs`.
+- [x] 2. A wire tap that reads TCP options with the smoltcp parser, and the smoltcp adapter with one external side.
+- [x] 3. The in memory pairings (own and smoltcp, both directions) and `tests/interop_smol.rs`.
 - [ ] 4. The kernel pairing: three namespaces, AF_XDP queue on the own arm, peer roles, and `tests/interop_kernel.rs`.
 - [ ] 5. The matrix in `Transport.md`, the log entry, and the checks.
 - [ ] 6. Pull request, CI, review.
 
 ## Done and verified
 
-Nothing yet.
+- Steps 1 to 3: `workload.rs` has `LossConfig::verify` (position dependent pattern, checked by the receiver), `wiretap.rs` reads options with the smoltcp parser, `smol.rs` has `SmolStack::bridged` (one smoltcp host behind an `IpBridge`), `interop.rs` has `InteropStack` (own and smoltcp over the impaired link with Ethernet framing). `cargo test -p fps-tcp --test interop_smol` passes 8 tests, five runs in a row (about 8 s each run).
 
 ## Remaining
 
-Everything.
+Steps 4 to 6: the kernel pairing, the matrix in Transport.md, the log entry, the checks, the pull request.
 
 ## Next action
 
-Step 1.
+Step 4: write `src/interop_kernel.rs` (namespaces, AF_XDP queue, peer roles) and `tests/interop_kernel.rs`.
 
 ## Blockers and open questions
 
@@ -60,3 +60,4 @@ cargo test -p fps-tcp
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-18T08:29Z | claude-7c2e91 | claim | none | lease 30 minutes |
+| 2026-11-18T08:58Z | claude-7c2e91 | checkpoint | see git | steps 1 to 3 done |

@@ -23,6 +23,7 @@
 pub mod cli;
 pub use fps_tcp_own::clock;
 pub mod impair;
+pub mod interop;
 pub mod kernel;
 pub mod link;
 pub mod lossy;
@@ -32,6 +33,7 @@ pub mod report;
 pub mod smol;
 pub mod stack;
 pub mod sysinfo;
+pub mod wiretap;
 pub mod workload;
 
 pub use clock::{Clock, ManualClock, MonotonicClock};
@@ -41,7 +43,7 @@ pub use link::LinkConfig;
 pub use lossy::LossyOwn;
 pub use own::{OwnConfig, OwnCounters, OwnSession, OwnStack};
 pub use report::BenchReport;
-pub use smol::{SmolConfig, SmolSession, SmolStack, TimeWait};
+pub use smol::{IpBridge, Role, SmolConfig, SmolSession, SmolStack, TimeWait};
 pub use stack::{StackStats, TcpStack};
 pub use workload::{
     loss_transfer, session_rate, socket_scaling, throughput, BenchError, Direction, LossConfig,
