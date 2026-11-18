@@ -2350,7 +2350,7 @@ work_packages:
     phase: 3
     workstream: TRN
     size: S
-    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, AGT-27, CTL-54]
+    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, CTL-54]
     paths: [engine/fps-backend-afxdp/]
     summary: >-
       Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with
@@ -2429,6 +2429,23 @@ work_packages:
       - The trait, the kernel implementation, and the workers moved onto it, with the existing runtime tests unchanged.
     acceptance:
       - Every runtime and agent test passes on the kernel backend through the trait, and a test runs a worker over a fake Transport in memory.
+
+  - id: AGT-28
+    title: The agent runs IPv6 host pools on the datapath
+    phase: 3
+    workstream: AGT
+    size: S
+    depends_on: [AGT-26, TRN-30]
+    paths: [engine/fps-agent/]
+    summary: >-
+      TRN-30 made the own stack, the UDP layer, and the datapath speak IPv6, but the agent still refuses a host pool
+      without an IPv4 prefix on AF_XDP (backend.rs, "IPv6 is TRN-30"), so an IPv6 plan cannot run there and would
+      fail after the flip of TRN-31. Pass IPv6 pools to Pools (pair_v6 and sized_v6), with their gateways for the
+      neighbor resolution of TRN-35.
+    deliverables:
+      - The IPv6 pool wiring with tests on fake hosts.
+    acceptance:
+      - A forced AF_XDP run of the http1 and dns modules through the agent over IPv6 pools completes on a veth pair in CI.
 
   - id: AGT-27
     title: The standalone agent writes a TLS key log
