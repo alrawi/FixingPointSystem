@@ -84,6 +84,7 @@ fn server_runtime(scenario: &Arc<Scenario>, ip: IpAddr) -> RuntimeHandle {
     let worker = WorkerConfig {
         id: 10,
         core: None,
+        transport: None,
         role: Role::Server(ServerConfig {
             flow: flow_ref(scenario),
             listen: vec![SocketAddr::new(ip, 0)],
@@ -124,6 +125,7 @@ fn client_config(
     let worker = WorkerConfig {
         id: 0,
         core: None,
+        transport: None,
         role: Role::Client(Box::new(ClientConfig {
             flow: flow_ref(scenario),
             schedule,

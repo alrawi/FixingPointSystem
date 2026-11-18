@@ -15,7 +15,8 @@ use fps_hosts::{HostPool, HostSelector};
 use fps_interp::Limits;
 use fps_sched::ScheduleConfig;
 
-use crate::{ExtensionSet, RuntimeError, TlsProfiles};
+use crate::transport::Transport;
+use crate::{ExtensionSet, KernelTransport, RuntimeError, TlsProfiles};
 
 /// Builds the module functions of one session.
 ///
@@ -124,7 +125,8 @@ pub struct ClientConfig {
     pub port: Option<u16>,
     /// The source hosts.
     pub sources: SourceHosts,
-    /// The kernel connector configuration.
+    /// The kernel connector configuration, which the worker uses when
+    /// [`WorkerConfig::transport`] is `None`.
     pub connect: ConnectConfig,
 }
 
@@ -136,7 +138,8 @@ pub struct ServerConfig {
     /// The addresses to listen on. Port 0 lets the kernel pick a port, which
     /// [`crate::RuntimeHandle::listen_addrs`] reports.
     pub listen: Vec<SocketAddr>,
-    /// The kernel listener configuration.
+    /// The kernel listener configuration, which the worker uses when
+    /// [`WorkerConfig::transport`] is `None`.
     pub config: ListenConfig,
 }
 
@@ -162,6 +165,23 @@ pub struct WorkerConfig {
     pub core: Option<usize>,
     /// What the worker does.
     pub role: Role,
+    /// The transport that the worker opens and accepts its sessions with, or
+    /// `None` for the kernel backend with the [`ClientConfig::connect`] or
+    /// [`ServerConfig::config`] of the role. Workers may share one transport.
+    pub transport: Option<Arc<dyn Transport>>,
+}
+
+impl WorkerConfig {
+    /// Returns the transport of the worker: the one that the configuration
+    /// names, or the kernel backend with the options of the role.
+    pub(crate) fn transport(&self) -> Arc<dyn Transport> {
+        self.transport.clone().unwrap_or_else(|| {
+            Arc::new(match &self.role {
+                Role::Client(c) => KernelTransport::new(c.connect.clone(), ListenConfig::default()),
+                Role::Server(s) => KernelTransport::new(ConnectConfig::default(), s.config.clone()),
+            })
+        })
+    }
 }
 
 /// The configuration of a runtime.

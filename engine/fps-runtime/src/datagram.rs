@@ -3,11 +3,11 @@
 //!
 //! A UDP flow of an instance opens in one of three ways.
 //!
-//! - A client side dials with [`fps_backend_kernel::Connector::connect_datagram`],
-//!   which binds a socket of its own on a source address of the host range,
-//!   takes a source port of the configured range, and connects the socket to
-//!   the server. Every flow therefore has its own source port and its own
-//!   5-tuple.
+//! - A client side dials with [`crate::transport::Transport::connect_datagram`],
+//!   which on the kernel backend binds a socket of its own on a source address
+//!   of the host range, takes a source port of the configured range, and
+//!   connects the socket to the server. Every flow therefore has its own
+//!   source port and its own 5-tuple.
 //! - A server side that is the entry flow takes the first session of a UDP
 //!   port that the worker listens on, the way a TCP server worker takes an
 //!   accepted connection.
@@ -16,216 +16,101 @@
 //!   the flow starts and the port is free again when the last session of the
 //!   port ends.
 //!
-//! All server sides of one port share one bound socket. A task per port reads
-//! it and sorts every datagram by its source address: a datagram of a known
-//! peer goes to the queue of that session, and the first datagram of a new
-//! peer opens a session that waits for the instance that expects its source
-//! host, see [`crate::rendezvous`]. Two instances that draw the same RTP port
-//! therefore share the socket and each takes the sessions of its own host.
+//! All server sides of one port share one listener of the transport. A task
+//! per port takes the session that the listener opens for each new peer and
+//! offers it to the instance that expects its source host, see
+//! [`crate::rendezvous`]. Two instances that draw the same RTP port therefore
+//! share the listener and each takes the sessions of its own host.
 //!
-//! The sessions send from the shared socket, so a reply carries the address
-//! that the peer sent to. Bind the listen address of a worker to one host
-//! address and not to the unspecified address when the host has several.
+//! The kernel transport sends the replies of its sessions from the shared
+//! socket, so a reply carries the address that the peer sent to, see
+//! [`crate::KernelTransport`]. Bind the listen address of a worker to one
+//! host address and not to the unspecified address when the host has several.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::task::{Context, Poll, Waker};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::task::{Context, Poll};
 
-use fps_backend_kernel::KernelDatagram;
 use fps_capture::{CaptureCell, Side as TapSide, TappedDatagram};
 use fps_interp::{DatagramOpener, OpenKind, OpenRequest, Side};
-use fps_io::{DatagramIo, MAX_DATAGRAM};
-use tokio::net::UdpSocket;
+use fps_io::DatagramIo;
 use tokio::sync::Notify;
 use tokio::time::{sleep, sleep_until, Instant};
 
 use crate::instance::{OPEN_GRACE, RETRY_FIRST, RETRY_MAX};
 use crate::opener::Endpoints;
 use crate::rendezvous::Rendezvous;
+use crate::transport::{DatagramListener, DatagramSession, Transport as NetTransport};
 
-/// The number of datagrams that a server session queues. Datagrams beyond it
-/// are dropped, as a full receive queue of the kernel drops them.
-const SESSION_QUEUE: usize = 64;
-
-/// The receive buffer of a port, which holds any UDP payload.
-const PORT_BUFFER: usize = 65_536;
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    // A critical section of this module only pushes, pops, or replaces whole
-    // values, so a panic in another one leaves the data consistent.
-    m.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-fn closed() -> io::Error {
-    io::Error::new(io::ErrorKind::NotConnected, "the udp session was closed")
-}
-
+/// The number of sessions of a port that are open, and the signal that one
+/// closed. The sessions are `Send`, so this part of a port is too.
 #[derive(Default)]
-struct InboxState {
-    datagrams: VecDeque<Vec<u8>>,
-    waker: Option<Waker>,
+struct Gauge {
+    open: AtomicUsize,
+    closed: Notify,
 }
 
-/// The datagrams of one peer that the port task sorted to a session.
-#[derive(Default)]
-struct Inbox {
-    state: Mutex<InboxState>,
+/// A session of a port that counts itself in the [`Gauge`] of the port until
+/// it closes or drops, so the port task learns when the last one ended.
+struct Counted {
+    io: Box<dyn DatagramIo>,
+    gauge: Arc<Gauge>,
+    counted: bool,
 }
 
-impl Inbox {
-    fn push(&self, datagram: Vec<u8>) {
-        let waker = {
-            let mut state = lock(&self.state);
-            if state.datagrams.len() < SESSION_QUEUE {
-                state.datagrams.push_back(datagram);
-            }
-            state.waker.take()
-        };
-        if let Some(w) = waker {
-            w.wake();
+impl Counted {
+    fn wrap(session: DatagramSession, gauge: &Arc<Gauge>) -> DatagramSession {
+        gauge.open.fetch_add(1, Ordering::AcqRel);
+        let (io, local, peer) = session.into_parts();
+        DatagramSession::new(
+            Self {
+                io,
+                gauge: Arc::clone(gauge),
+                counted: true,
+            },
+            local,
+            peer,
+        )
+    }
+
+    fn release(&mut self) {
+        if std::mem::replace(&mut self.counted, false) {
+            self.gauge.open.fetch_sub(1, Ordering::AcqRel);
+            self.gauge.closed.notify_one();
         }
     }
 }
 
-/// What a bound port and its sessions share. The sessions are `Send`, so this
-/// part of a port is too, and its mutex is only ever taken by the thread of
-/// the worker.
-struct Shared {
-    socket: UdpSocket,
-    local: SocketAddr,
-    sessions: Mutex<HashMap<SocketAddr, Arc<Inbox>>>,
-    /// Wakes the port task when a session closed.
-    changed: Notify,
-}
-
-/// One server side session of a UDP port: the datagrams of one peer.
-///
-/// It receives from the queue that the port task fills and sends from the
-/// shared socket to its peer.
-pub(crate) struct ServerDatagram {
-    shared: Arc<Shared>,
-    peer: SocketAddr,
-    inbox: Arc<Inbox>,
-    closed: bool,
-}
-
-impl ServerDatagram {
-    pub(crate) fn local_addr(&self) -> SocketAddr {
-        self.shared.local
-    }
-
-    pub(crate) fn peer_addr(&self) -> SocketAddr {
-        self.peer
-    }
-}
-
-impl DatagramIo for ServerDatagram {
+impl DatagramIo for Counted {
     fn poll_send(&mut self, cx: &mut Context<'_>, datagram: &[u8]) -> Poll<io::Result<()>> {
-        if self.closed {
-            return Poll::Ready(Err(closed()));
-        }
-        if datagram.len() > MAX_DATAGRAM {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "datagram of {} bytes exceeds {MAX_DATAGRAM} bytes",
-                    datagram.len()
-                ),
-            )));
-        }
-        self.shared
-            .socket
-            .poll_send_to(cx, datagram, self.peer)
-            .map_ok(|_| ())
+        self.io.poll_send(cx, datagram)
     }
 
     fn poll_recv(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
-        if self.closed {
-            return Poll::Ready(Err(closed()));
-        }
-        let mut state = lock(&self.inbox.state);
-        match state.datagrams.pop_front() {
-            Some(d) => {
-                let n = d.len().min(buf.len());
-                if let (Some(to), Some(from)) = (buf.get_mut(..n), d.get(..n)) {
-                    to.copy_from_slice(from);
-                }
-                Poll::Ready(Ok(d.len()))
-            }
-            None => {
-                state.waker = Some(cx.waker().clone());
-                Poll::Pending
-            }
-        }
+        self.io.poll_recv(cx, buf)
     }
 
     fn close(&mut self) {
-        if std::mem::replace(&mut self.closed, true) {
-            return;
-        }
-        {
-            let mut sessions = lock(&self.shared.sessions);
-            // A later session of the same peer may have replaced this entry.
-            if sessions
-                .get(&self.peer)
-                .is_some_and(|i| Arc::ptr_eq(i, &self.inbox))
-            {
-                sessions.remove(&self.peer);
-            }
-        }
-        lock(&self.inbox.state).datagrams.clear();
-        self.shared.changed.notify_one();
+        self.io.close();
+        self.release();
     }
 }
 
-impl Drop for ServerDatagram {
+impl Drop for Counted {
     fn drop(&mut self) {
-        self.close();
+        self.release();
     }
 }
 
-/// A UDP session of an instance on either side.
-pub(crate) enum RuntimeDatagram {
-    /// A connected socket of its own.
-    Client(KernelDatagram),
-    /// A peer of a shared port.
-    Server(ServerDatagram),
-}
-
-impl DatagramIo for RuntimeDatagram {
-    fn poll_send(&mut self, cx: &mut Context<'_>, datagram: &[u8]) -> Poll<io::Result<()>> {
-        match self {
-            Self::Client(io) => io.poll_send(cx, datagram),
-            Self::Server(io) => io.poll_send(cx, datagram),
-        }
-    }
-
-    fn poll_recv(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
-        match self {
-            Self::Client(io) => io.poll_recv(cx, buf),
-            Self::Server(io) => io.poll_recv(cx, buf),
-        }
-    }
-
-    fn close(&mut self) {
-        match self {
-            Self::Client(io) => io.close(),
-            Self::Server(io) => io.close(),
-        }
-    }
-}
-
-impl Endpoints for RuntimeDatagram {
+impl Endpoints for DatagramSession {
     fn endpoints(&self) -> Option<(SocketAddr, SocketAddr)> {
-        Some(match self {
-            Self::Client(io) => (io.local_addr(), io.peer_addr()),
-            Self::Server(io) => (io.local_addr(), io.peer_addr()),
-        })
+        Some((self.local_addr(), self.peer_addr()))
     }
 }
 
@@ -236,12 +121,14 @@ pub(crate) struct DatagramPorts {
 }
 
 struct Inner {
+    transport: Arc<dyn NetTransport>,
     ports: RefCell<HashMap<SocketAddr, Rc<Port>>>,
 }
 
 struct Port {
-    shared: Arc<Shared>,
-    waiting: RefCell<Rendezvous<ServerDatagram>>,
+    local: SocketAddr,
+    gauge: Arc<Gauge>,
+    waiting: RefCell<Rendezvous<DatagramSession>>,
     /// The number of [`Listening`] guards, which keep a port open while no
     /// session and no waiter holds it.
     pins: Cell<usize>,
@@ -252,28 +139,7 @@ impl Port {
     fn is_idle(&self) -> bool {
         self.pins.get() == 0
             && self.waiting.borrow().is_idle()
-            && lock(&self.shared.sessions).is_empty()
-    }
-
-    /// Sorts one datagram to its session, or opens the session of a new peer.
-    fn route(&self, from: SocketAddr, datagram: &[u8]) {
-        let known = lock(&self.shared.sessions).get(&from).cloned();
-        if let Some(inbox) = known {
-            inbox.push(datagram.to_vec());
-            return;
-        }
-        let inbox = Arc::new(Inbox::default());
-        inbox.push(datagram.to_vec());
-        lock(&self.shared.sessions).insert(from, Arc::clone(&inbox));
-        let session = ServerDatagram {
-            shared: Arc::clone(&self.shared),
-            peer: from,
-            inbox,
-            closed: false,
-        };
-        self.waiting
-            .borrow_mut()
-            .offer(from.ip(), session, Instant::now());
+            && self.gauge.open.load(Ordering::Acquire) == 0
     }
 }
 
@@ -303,10 +169,12 @@ impl Drop for Registered<'_> {
 }
 
 impl DatagramPorts {
-    /// Returns the ports of a worker, none of them bound yet.
-    pub(crate) fn new() -> Self {
+    /// Returns the ports of a worker, none of them bound yet, which listen
+    /// through `transport`.
+    pub(crate) fn new(transport: Arc<dyn NetTransport>) -> Self {
         Self {
             inner: Rc::new(Inner {
+                transport,
                 ports: RefCell::new(HashMap::new()),
             }),
         }
@@ -327,16 +195,14 @@ impl DatagramPorts {
             if let Some(port) = held {
                 return Ok(port);
             }
-            match UdpSocket::bind(addr).await {
-                Ok(socket) => {
-                    let local = socket.local_addr()?;
+            match self.inner.transport.listen_datagram(&[addr]) {
+                Ok(listener) => {
+                    let local = listener.local_addrs().first().copied().ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::Other, "the transport bound no address")
+                    })?;
                     let port = Rc::new(Port {
-                        shared: Arc::new(Shared {
-                            socket,
-                            local,
-                            sessions: Mutex::new(HashMap::new()),
-                            changed: Notify::new(),
-                        }),
+                        local,
+                        gauge: Arc::default(),
                         waiting: RefCell::new(Rendezvous::new()),
                         pins: Cell::new(0),
                         changed: Notify::new(),
@@ -345,7 +211,11 @@ impl DatagramPorts {
                         .ports
                         .borrow_mut()
                         .insert(local, Rc::clone(&port));
-                    tokio::task::spawn_local(serve(Rc::clone(&self.inner), Rc::clone(&port)));
+                    tokio::task::spawn_local(serve(
+                        Rc::clone(&self.inner),
+                        Rc::clone(&port),
+                        listener,
+                    ));
                     return Ok(port);
                 }
                 Err(e)
@@ -366,7 +236,7 @@ impl DatagramPorts {
     pub(crate) async fn listen(&self, addr: SocketAddr) -> io::Result<(Listening, SocketAddr)> {
         let port = self.port(addr).await?;
         port.pins.set(port.pins.get() + 1);
-        let local = port.shared.local;
+        let local = port.local;
         Ok((Listening { port }, local))
     }
 
@@ -378,7 +248,7 @@ impl DatagramPorts {
         &self,
         addr: SocketAddr,
         expect: Option<IpAddr>,
-    ) -> io::Result<ServerDatagram> {
+    ) -> io::Result<DatagramSession> {
         let port = self.port(addr).await?;
         let (id, rx) = port.waiting.borrow_mut().register(expect);
         // A session that already waited completes the receiver now.
@@ -391,23 +261,23 @@ impl DatagramPorts {
 
 /// What woke the task of a port.
 enum Event {
-    Datagram(usize, SocketAddr),
+    Session(DatagramSession),
     Failed,
     Woken,
 }
 
-/// Reads the socket of one port and sorts its datagrams, until the port has
-/// no pin, no waiter, no waiting session, and no open session.
-async fn serve(inner: Rc<Inner>, port: Rc<Port>) {
-    let mut buf = vec![0u8; PORT_BUFFER];
+/// Takes the sessions that the listener of one port opens and offers them to
+/// the waiters, until the port has no pin, no waiter, no waiting session, and
+/// no open session.
+async fn serve(inner: Rc<Inner>, port: Rc<Port>, mut listener: Box<dyn DatagramListener>) {
     loop {
         let deadline = {
             let mut waiting = port.waiting.borrow_mut();
             waiting.expire(Instant::now());
-            // Dropping an expired session closes it, which empties the map.
+            // Dropping an expired session closes it, which lowers the gauge.
             drop(waiting);
             if port.is_idle() {
-                // The entry leaves the map in the same step as the socket
+                // The entry leaves the map in the same step as the listener
                 // leaves this task, so a later accept binds the port again.
                 inner
                     .ports
@@ -418,12 +288,12 @@ async fn serve(inner: Rc<Inner>, port: Rc<Port>) {
             port.waiting.borrow().next_deadline()
         };
         let event = tokio::select! {
-            received = port.shared.socket.recv_from(&mut buf) => match received {
-                Ok((n, from)) => Event::Datagram(n, from),
+            accepted = listener.accept() => match accepted {
+                Ok(session) => Event::Session(session),
                 Err(_) => Event::Failed,
             },
             () = port.changed.notified() => Event::Woken,
-            () = port.shared.changed.notified() => Event::Woken,
+            () = port.gauge.closed.notified() => Event::Woken,
             () = async {
                 match deadline {
                     Some(d) => sleep_until(d).await,
@@ -432,8 +302,14 @@ async fn serve(inner: Rc<Inner>, port: Rc<Port>) {
             } => Event::Woken,
         };
         match event {
-            Event::Datagram(n, from) => port.route(from, buf.get(..n).unwrap_or(&buf)),
-            // One failed receive leaves the socket usable.
+            Event::Session(session) => {
+                let from = session.peer_addr().ip();
+                let session = Counted::wrap(session, &port.gauge);
+                port.waiting
+                    .borrow_mut()
+                    .offer(from, session, Instant::now());
+            }
+            // One failed accept leaves the listener usable.
             Event::Failed => tokio::task::yield_now().await,
             Event::Woken => {}
         }
@@ -451,7 +327,7 @@ pub(crate) enum DatagramNet {
         entry: bool,
     },
     /// Hands out the session that the worker accepted for the entry flow.
-    Accepted(Option<ServerDatagram>),
+    Accepted(Option<DatagramSession>),
     /// Accepts on the port that the program renders.
     Bind {
         ip: IpAddr,
@@ -480,7 +356,7 @@ enum Plan {
         source: IpAddr,
         to: SocketAddr,
     },
-    Accepted(Option<ServerDatagram>),
+    Accepted(Option<DatagramSession>),
     Bind {
         addr: SocketAddr,
         ports: DatagramPorts,
@@ -490,12 +366,12 @@ enum Plan {
 }
 
 impl DatagramOpener for DatagramFlowOpener {
-    type Io = RuntimeDatagram;
+    type Io = DatagramSession;
 
     fn open(
         &mut self,
         request: OpenRequest<'_>,
-    ) -> impl Future<Output = io::Result<RuntimeDatagram>> {
+    ) -> impl Future<Output = io::Result<DatagramSession>> {
         let plan = match (&mut self.kind, request.kind) {
             (
                 DatagramNet::Connect {
@@ -538,21 +414,13 @@ impl DatagramOpener for DatagramFlowOpener {
             match plan {
                 Plan::Fail(e) => Err(e),
                 Plan::Accepted(session) => session
-                    .map(RuntimeDatagram::Server)
                     .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "session used")),
-                Plan::Connect { ctx, source, to } => ctx
-                    .connector
-                    .connect_datagram(source, to)
-                    .map(RuntimeDatagram::Client)
-                    .map_err(|e| io::Error::new(e.io_kind().unwrap_or(io::ErrorKind::Other), e)),
+                Plan::Connect { ctx, source, to } => ctx.transport.connect_datagram(source, to),
                 Plan::Bind {
                     addr,
                     ports,
                     expect,
-                } => ports
-                    .accept(addr, expect)
-                    .await
-                    .map(RuntimeDatagram::Server),
+                } => ports.accept(addr, expect).await,
             }
         }
     }
@@ -578,13 +446,13 @@ impl<O> TapDatagramOpener<O> {
     }
 }
 
-impl<O: DatagramOpener<Io = RuntimeDatagram>> DatagramOpener for TapDatagramOpener<O> {
-    type Io = TappedDatagram<RuntimeDatagram>;
+impl<O: DatagramOpener<Io = DatagramSession>> DatagramOpener for TapDatagramOpener<O> {
+    type Io = TappedDatagram<DatagramSession>;
 
     fn open(
         &mut self,
         request: OpenRequest<'_>,
-    ) -> impl Future<Output = io::Result<TappedDatagram<RuntimeDatagram>>> {
+    ) -> impl Future<Output = io::Result<TappedDatagram<DatagramSession>>> {
         let (cell, id, side) = (self.cell.clone(), self.session_id, self.side);
         let opened = self.inner.open(request);
         async move {
@@ -606,9 +474,11 @@ mod tests {
     use std::time::Duration;
 
     use fps_io::DatagramIoExt;
+    use tokio::net::UdpSocket;
     use tokio::task::LocalSet;
 
     use super::*;
+    use crate::KernelTransport;
 
     fn lo(port: u16) -> SocketAddr {
         SocketAddr::from(([127, 0, 0, 1], port))
@@ -620,7 +490,7 @@ mod tests {
             .expect("a source address")
     }
 
-    async fn first(session: &mut ServerDatagram) -> Vec<u8> {
+    async fn first(session: &mut DatagramSession) -> Vec<u8> {
         let mut buf = vec![0u8; 64];
         let n = session.recv_datagram(&mut buf).await.expect("a datagram");
         buf.truncate(n);
@@ -631,7 +501,7 @@ mod tests {
     async fn each_instance_gets_the_peer_of_its_host_on_a_shared_port() {
         LocalSet::new()
             .run_until(async {
-                let ports = DatagramPorts::new();
+                let ports = DatagramPorts::new(Arc::new(KernelTransport::default()));
                 let (_pin, addr) = ports.listen(lo(0)).await.expect("bound");
                 let one = tokio::task::spawn_local({
                     let ports = ports.clone();
@@ -669,7 +539,7 @@ mod tests {
     async fn a_datagram_that_comes_before_its_waiter_waits_for_it() {
         LocalSet::new()
             .run_until(async {
-                let ports = DatagramPorts::new();
+                let ports = DatagramPorts::new(Arc::new(KernelTransport::default()));
                 let (_pin, addr) = ports.listen(lo(0)).await.expect("bound");
                 let a = peer(2).await;
                 a.send_to(b"one", addr).await.expect("sent");
@@ -689,7 +559,7 @@ mod tests {
     async fn the_port_is_free_when_its_last_session_ends() {
         LocalSet::new()
             .run_until(async {
-                let ports = DatagramPorts::new();
+                let ports = DatagramPorts::new(Arc::new(KernelTransport::default()));
                 let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("a free port");
                 let addr = probe.local_addr().expect("an address");
                 drop(probe);
@@ -720,7 +590,7 @@ mod tests {
     async fn a_pinned_port_stays_bound_between_sessions() {
         LocalSet::new()
             .run_until(async {
-                let ports = DatagramPorts::new();
+                let ports = DatagramPorts::new(Arc::new(KernelTransport::default()));
                 let (pin, addr) = ports.listen(lo(0)).await.expect("bound");
                 let accept = ports.accept(addr, None);
                 peer(2).await.send_to(b"a", addr).await.expect("sent");

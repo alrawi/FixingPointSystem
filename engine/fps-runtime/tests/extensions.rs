@@ -147,6 +147,7 @@ fn a_looping_extension_fails_only_its_own_sessions() {
             .map(|(id, scenario, n)| WorkerConfig {
                 id,
                 core: None,
+                transport: None,
                 role: Role::Server(ServerConfig {
                     flow: with_extensions(scenario, &ext),
                     listen: vec![SocketAddr::new(v4(60, 0, 1 + n), 0)],
@@ -191,6 +192,7 @@ fn a_looping_extension_fails_only_its_own_sessions() {
             WorkerConfig {
                 id,
                 core: None,
+                transport: None,
                 role: Role::Client(Box::new(ClientConfig {
                     flow: with_extensions(scenario, &ext),
                     schedule,

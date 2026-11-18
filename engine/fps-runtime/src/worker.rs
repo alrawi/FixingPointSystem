@@ -8,7 +8,6 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
-use fps_backend_kernel::{Connector, KernelListener, ListenConfig};
 use fps_capture::CaptureCell;
 use fps_flow::program::Op;
 use fps_flow::template::Filler;
@@ -31,6 +30,7 @@ use crate::metrics::{SessionMetrics, TlsMetrics};
 use crate::opener::{global_session_id, Accepted, ClientOpener, Endpoints, TapOpener};
 use crate::runtime::WorkerExit;
 use crate::tls::{SessionTls, TlsEvent};
+use crate::transport::{StreamListener, Transport as NetTransport};
 use crate::{RuntimeError, SessionKey, TlsProfiles, Transport};
 
 /// What a worker thread receives from the runtime.
@@ -127,7 +127,7 @@ impl Worker {
         start: &WorkerStart,
         side: Side,
         flow: &FlowRef,
-        listen_config: ListenConfig,
+        transport: &Arc<dyn NetTransport>,
     ) -> Result<Self, RuntimeError> {
         let id = start.config.id;
         let f = flow.get()?;
@@ -144,8 +144,8 @@ impl Worker {
             shard: RefCell::new(shard),
             metrics,
             instance: flow.scenario.flows.len() > 1,
-            data_ports: DataPorts::new(listen_config),
-            datagram_ports: DatagramPorts::new(),
+            data_ports: DataPorts::new(Arc::clone(transport)),
+            datagram_ports: DatagramPorts::new(Arc::clone(transport)),
             open: Cell::new(0),
             closed: Notify::new(),
             sequence: Cell::new(0),
@@ -305,23 +305,34 @@ impl Worker {
 async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
     let id = start.config.id;
     let role = start.config.role.clone();
+    let transport = start.config.transport();
     let prepared = match &role {
-        Role::Client(c) => Worker::new(&start, Side::Client, &c.flow, ListenConfig::default())
-            .and_then(|w| {
-                let sched = Schedule::new(c.schedule.clone())
-                    .map_err(|source| RuntimeError::Schedule { worker: id, source })?;
-                Ok((w, Vec::new(), Some(sched)))
-            }),
+        Role::Client(c) => Worker::new(&start, Side::Client, &c.flow, &transport).and_then(|w| {
+            let sched = Schedule::new(c.schedule.clone())
+                .map_err(|source| RuntimeError::Schedule { worker: id, source })?;
+            Ok((w, StreamListening::default(), Some(sched)))
+        }),
         Role::Server(s) => {
-            Worker::new(&start, Side::Server, &s.flow, s.config.clone()).and_then(|w| {
+            Worker::new(&start, Side::Server, &s.flow, &transport).and_then(|w| {
                 // A UDP entry flow has no TCP listener.
                 let udp = w.is_instance() && instance::entry_is_udp(&s.flow.scenario, s.flow.flow);
-                let listeners = if udp { Vec::new() } else { bind(id, s)? };
-                Ok((w, listeners, None))
+                let listening = if udp {
+                    StreamListening::default()
+                } else {
+                    bind(id, s, &*transport)?
+                };
+                Ok((w, listening, None))
             })
         }
     };
-    let (worker, listeners, sched) = match prepared {
+    let (
+        worker,
+        StreamListening {
+            listeners,
+            addrs: stream_addrs,
+        },
+        sched,
+    ) = match prepared {
         Ok(p) => p,
         Err(e) => {
             let _ = start.ready.send((id, Err(clone_err(&e))));
@@ -344,9 +355,8 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
         }
         _ => Vec::new(),
     };
-    let addrs = listeners
-        .iter()
-        .map(KernelListener::local_addr)
+    let addrs = stream_addrs
+        .into_iter()
         .chain(datagram_entries.iter().map(|(_, a)| *a))
         .collect();
     let rate = match (&role, &sched) {
@@ -369,7 +379,9 @@ async fn run_worker(start: WorkerStart) -> Result<WorkerExit, RuntimeError> {
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let stop = match role {
         Role::Client(c) => match sched {
-            Some(sched) => client_loop(&worker, *c, sched, &mut control, &mut tick).await,
+            Some(sched) => {
+                client_loop(&worker, *c, transport, sched, &mut control, &mut tick).await
+            }
             None => Control::Run,
         },
         Role::Server(_) => {
@@ -436,14 +448,52 @@ async fn bind_datagrams(
     Ok(entries)
 }
 
-fn bind(worker: u32, s: &ServerConfig) -> Result<Vec<KernelListener>, RuntimeError> {
-    s.listen
-        .iter()
-        .map(|a| {
-            KernelListener::bind(*a, &s.config)
-                .map_err(|source| RuntimeError::Listen { worker, source })
-        })
-        .collect()
+/// The stream listeners of a server worker and their bound addresses in the
+/// order of [`ServerConfig::listen`].
+#[derive(Default)]
+struct StreamListening {
+    listeners: Vec<Box<dyn StreamListener>>,
+    addrs: Vec<SocketAddr>,
+}
+
+/// Starts the stream listeners of a server worker, one call to the transport
+/// for each port, so a transport whose stack serves a port for all hosts
+/// listens on it once. The addresses of port 0 stay one call each, because
+/// each one gets a port of its own.
+fn bind(
+    worker: u32,
+    s: &ServerConfig,
+    transport: &dyn NetTransport,
+) -> Result<StreamListening, RuntimeError> {
+    let mut groups: Vec<(u16, Vec<usize>)> = Vec::new();
+    for (i, a) in s.listen.iter().enumerate() {
+        match groups
+            .iter_mut()
+            .find(|(port, _)| *port != 0 && *port == a.port())
+        {
+            Some((_, members)) => members.push(i),
+            None => groups.push((a.port(), vec![i])),
+        }
+    }
+    let mut listening = StreamListening::default();
+    let mut bound: Vec<Option<SocketAddr>> = vec![None; s.listen.len()];
+    for (_, members) in groups {
+        let addresses: Vec<SocketAddr> = members
+            .iter()
+            .filter_map(|i| s.listen.get(*i).copied())
+            .collect();
+        let listener = transport
+            .listen(&addresses)
+            .map_err(|source| RuntimeError::Listen { worker, source })?;
+        for (i, a) in members.iter().zip(listener.local_addrs()) {
+            if let Some(slot) = bound.get_mut(*i) {
+                *slot = Some(a);
+            }
+        }
+        listening.listeners.push(listener);
+    }
+    listening.addrs = bound.into_iter().flatten().collect();
+    Ok(listening)
 }
 
 /// Starts sessions on the schedule until it ends or a stop arrives, and
@@ -451,12 +501,13 @@ fn bind(worker: u32, s: &ServerConfig) -> Result<Vec<KernelListener>, RuntimeErr
 async fn client_loop(
     worker: &Rc<Worker>,
     c: ClientConfig,
+    transport: Arc<dyn NetTransport>,
     mut sched: Schedule,
     control: &mut watch::Receiver<Control>,
     tick: &mut tokio::time::Interval,
 ) -> Control {
     let ctx = Rc::new(ClientCtx {
-        connector: Connector::new(c.connect.clone()),
+        transport,
         config: c,
     });
     let clock = TokioClock::start_now();
@@ -478,7 +529,7 @@ async fn client_loop(
                 }
                 let ctx = &*ctx;
                 let opener = ClientOpener::new(
-                    &ctx.connector,
+                    &*ctx.transport,
                     &ctx.config.sources,
                     &ctx.config.servers,
                     ctx.config.port,
@@ -515,25 +566,25 @@ async fn client_loop(
 }
 
 pub(crate) struct ClientCtx {
-    pub(crate) connector: Connector,
+    pub(crate) transport: Arc<dyn NetTransport>,
     pub(crate) config: ClientConfig,
 }
 
 /// Accepts sessions until a stop arrives, and returns the stop.
 async fn server_loop(
     worker: &Rc<Worker>,
-    listeners: Vec<KernelListener>,
+    listeners: Vec<Box<dyn StreamListener>>,
     datagram_entries: Vec<(Listening, SocketAddr)>,
     control: &mut watch::Receiver<Control>,
     tick: &mut tokio::time::Interval,
 ) -> Control {
     let next_id = Rc::new(Cell::new(0u64));
     let mut accepts = Vec::with_capacity(listeners.len());
-    for listener in listeners {
+    for mut listener in listeners {
         let (w, next_id) = (Rc::clone(worker), Rc::clone(&next_id));
         accepts.push(tokio::task::spawn_local(async move {
             loop {
-                let Ok((io, _peer)) = listener.accept().await else {
+                let Ok(io) = listener.accept().await else {
                     // One failed accept, such as EMFILE, leaves the listener usable.
                     tokio::task::yield_now().await;
                     continue;

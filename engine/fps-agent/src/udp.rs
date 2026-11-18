@@ -898,6 +898,7 @@ mod tests {
         let server = WorkerConfig {
             id: 1,
             core: None,
+            transport: None,
             role: Role::Server(ServerConfig {
                 flow: FlowRef::new(Arc::clone(&s), 0),
                 listen: vec![SocketAddr::new("127.61.0.1".parse().unwrap(), port)],
@@ -925,6 +926,7 @@ mod tests {
         let client = WorkerConfig {
             id: 0,
             core: None,
+            transport: None,
             role: Role::Client(Box::new(ClientConfig {
                 flow: FlowRef::new(Arc::clone(&s), 0),
                 schedule,

@@ -60,7 +60,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use fps_backend_kernel::KernelStream;
 use fps_capture::CaptureCell;
 use fps_flow::program::{Flow, L4};
 use fps_flow::{FnCall, FnError, Scenario, TemplateFn};
@@ -72,10 +71,11 @@ use rand::RngCore;
 use tokio::time::{sleep, Instant};
 
 use crate::data_ports::DataPorts;
-use crate::datagram::{DatagramFlowOpener, DatagramNet, ServerDatagram, TapDatagramOpener};
+use crate::datagram::{DatagramFlowOpener, DatagramNet, TapDatagramOpener};
 use crate::extension::close_reason_of;
 use crate::opener::{destination, global_session_id, invalid, source_address, TapOpener};
 use crate::tls::SessionTls;
+use crate::transport::{DatagramSession, StreamSession};
 use crate::worker::{ClientCtx, Worker};
 use crate::{SessionExtensions, SessionKey, Transport};
 
@@ -100,16 +100,16 @@ pub(crate) enum Peer {
     /// A client session start, which dials.
     Client(Rc<ClientCtx>),
     /// A server session over TCP, which the listener of the worker accepted.
-    Server(KernelStream),
+    Server(StreamSession),
     /// A server session over UDP, which the first datagram of a peer opened on
     /// a port that the worker listens on.
-    ServerDatagram(ServerDatagram),
+    ServerDatagram(DatagramSession),
 }
 
 /// The session that a server worker accepted for the entry flow.
 enum Entry {
-    Stream(KernelStream),
-    Datagram(ServerDatagram),
+    Stream(StreamSession),
+    Datagram(DatagramSession),
 }
 
 /// What the environment keeps of one flow side that the instance started.
@@ -171,7 +171,7 @@ enum FlowNet {
         entry: bool,
     },
     /// Hands out the connection that the worker accepted.
-    Accepted(Option<KernelStream>),
+    Accepted(Option<StreamSession>),
     /// Waits for the connection of the expected host on the rendered port.
     Bind {
         ip: IpAddr,
@@ -196,15 +196,18 @@ enum Plan {
         to: SocketAddr,
         retry: bool,
     },
-    Accepted(Option<KernelStream>),
+    Accepted(Option<StreamSession>),
     Bind(SocketAddr, DataPorts, Option<IpAddr>),
     Fail(io::Error),
 }
 
 impl Opener for FlowOpener {
-    type Io = KernelStream;
+    type Io = StreamSession;
 
-    fn open(&mut self, request: OpenRequest<'_>) -> impl Future<Output = io::Result<KernelStream>> {
+    fn open(
+        &mut self,
+        request: OpenRequest<'_>,
+    ) -> impl Future<Output = io::Result<StreamSession>> {
         let plan = match (&mut self.kind, request.kind) {
             (
                 FlowNet::Connect {
@@ -254,22 +257,17 @@ impl Opener for FlowOpener {
                     let deadline = Instant::now() + OPEN_GRACE;
                     let mut wait = RETRY_FIRST;
                     loop {
-                        match ctx.connector.connect(source, to).await {
+                        match ctx.transport.connect(source, to).await {
                             Ok(s) => return Ok(s),
                             Err(e)
                                 if retry
-                                    && e.io_kind() == Some(io::ErrorKind::ConnectionRefused)
+                                    && e.kind() == io::ErrorKind::ConnectionRefused
                                     && Instant::now() + wait < deadline =>
                             {
                                 sleep(wait).await;
                                 wait = (wait * 2).min(RETRY_MAX);
                             }
-                            Err(e) => {
-                                return Err(io::Error::new(
-                                    e.io_kind().unwrap_or(io::ErrorKind::Other),
-                                    e,
-                                ))
-                            }
+                            Err(e) => return Err(e),
                         }
                     }
                 }
@@ -492,7 +490,7 @@ pub(crate) async fn run(worker: Rc<Worker>, local_id: u64, peer: Peer) {
             let bind_ip = io
                 .local_addr()
                 .map_or(IpAddr::from([0, 0, 0, 0]), |a| a.ip());
-            let expect = io.peer_addr().ok().map(|a| a.ip());
+            let expect = io.peer_addr().map(|a| a.ip());
             (
                 Sides::Server,
                 Net::Server {

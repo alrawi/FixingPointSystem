@@ -20,13 +20,14 @@ use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
+use std::sync::Arc;
 
-use fps_backend_kernel::{KernelListener, KernelStream, ListenConfig};
 use tokio::sync::Notify;
 use tokio::time::{sleep, sleep_until, Instant};
 
 use crate::instance::{OPEN_GRACE, RETRY_FIRST, RETRY_MAX};
 use crate::rendezvous::Rendezvous;
+use crate::transport::{StreamListener, StreamSession, Transport as NetTransport};
 
 /// The listeners of the data ports of one worker.
 #[derive(Clone)]
@@ -35,12 +36,12 @@ pub(crate) struct DataPorts {
 }
 
 struct Inner {
-    listen: ListenConfig,
+    transport: Arc<dyn NetTransport>,
     ports: RefCell<HashMap<SocketAddr, Rc<Port>>>,
 }
 
 struct Port {
-    waiting: RefCell<Rendezvous<KernelStream>>,
+    waiting: RefCell<Rendezvous<StreamSession>>,
     /// Wakes the task of the port when a waiter came or went.
     changed: Notify,
 }
@@ -59,11 +60,11 @@ impl Drop for Registered<'_> {
 }
 
 impl DataPorts {
-    /// Returns the ports of a worker, which bind with `listen`.
-    pub(crate) fn new(listen: ListenConfig) -> Self {
+    /// Returns the ports of a worker, which listen through `transport`.
+    pub(crate) fn new(transport: Arc<dyn NetTransport>) -> Self {
         Self {
             inner: Rc::new(Inner {
-                listen,
+                transport,
                 ports: RefCell::new(HashMap::new()),
             }),
         }
@@ -79,7 +80,7 @@ impl DataPorts {
         &self,
         addr: SocketAddr,
         expect: Option<IpAddr>,
-    ) -> io::Result<KernelStream> {
+    ) -> io::Result<StreamSession> {
         let deadline = Instant::now() + OPEN_GRACE;
         let mut wait = RETRY_FIRST;
         let (port, id, rx) = loop {
@@ -88,7 +89,7 @@ impl DataPorts {
                 let (id, rx) = port.waiting.borrow_mut().register(expect);
                 break (port, id, rx);
             }
-            match KernelListener::bind(addr, &self.inner.listen) {
+            match self.inner.transport.listen(&[addr]) {
                 Ok(listener) => {
                     let port = Rc::new(Port {
                         waiting: RefCell::new(Rendezvous::new()),
@@ -105,18 +106,12 @@ impl DataPorts {
                     break (port, id, rx);
                 }
                 Err(e)
-                    if e.io_kind() == Some(io::ErrorKind::AddrInUse)
-                        && Instant::now() + wait < deadline =>
+                    if e.kind() == io::ErrorKind::AddrInUse && Instant::now() + wait < deadline =>
                 {
                     sleep(wait).await;
                     wait = (wait * 2).min(RETRY_MAX);
                 }
-                Err(e) => {
-                    return Err(io::Error::new(
-                        e.io_kind().unwrap_or(io::ErrorKind::Other),
-                        e,
-                    ))
-                }
+                Err(e) => return Err(e),
             }
         };
         // A connection that already waited completes the receiver now.
@@ -129,7 +124,12 @@ impl DataPorts {
 
 /// Accepts the connections of one port and hands them to the waiters, until
 /// nobody waits and no connection waits for anybody.
-async fn serve(inner: Rc<Inner>, addr: SocketAddr, port: Rc<Port>, listener: KernelListener) {
+async fn serve(
+    inner: Rc<Inner>,
+    addr: SocketAddr,
+    port: Rc<Port>,
+    mut listener: Box<dyn StreamListener>,
+) {
     loop {
         let deadline = {
             let mut waiting = port.waiting.borrow_mut();
@@ -144,8 +144,13 @@ async fn serve(inner: Rc<Inner>, addr: SocketAddr, port: Rc<Port>, listener: Ker
         };
         tokio::select! {
             accepted = listener.accept() => match accepted {
-                Ok((stream, peer)) => {
-                    port.waiting.borrow_mut().offer(peer.ip(), stream, Instant::now());
+                Ok(session) => {
+                    // A session without a peer address cannot match a waiter
+                    // that expects a host, so it goes to one that expects none.
+                    let from = session
+                        .peer_addr()
+                        .map_or(IpAddr::from([0, 0, 0, 0]), |a| a.ip());
+                    port.waiting.borrow_mut().offer(from, session, Instant::now());
                 }
                 // One failed accept, such as EMFILE, leaves the listener usable.
                 Err(_) => tokio::task::yield_now().await,
@@ -170,6 +175,7 @@ mod tests {
     use tokio::task::LocalSet;
 
     use super::*;
+    use crate::KernelTransport;
 
     async fn dial(from: u8, to: SocketAddr) -> TcpStream {
         let socket = TcpSocket::new_v4().expect("a socket");
@@ -185,7 +191,7 @@ mod tests {
     }
 
     /// The tests tell the connections apart by the address that dialed.
-    fn peer_ip(stream: &KernelStream) -> IpAddr {
+    fn peer_ip(stream: &StreamSession) -> IpAddr {
         stream.peer_addr().expect("a peer").ip()
     }
 
@@ -193,7 +199,7 @@ mod tests {
     async fn two_waiters_on_one_port_each_get_their_own_connection() {
         LocalSet::new()
             .run_until(async {
-                let ports = DataPorts::new(ListenConfig::default());
+                let ports = DataPorts::new(Arc::new(KernelTransport::default()));
                 let addr = free_port();
                 let one = tokio::task::spawn_local({
                     let ports = ports.clone();
@@ -222,7 +228,7 @@ mod tests {
     async fn a_connection_that_comes_before_its_waiter_waits_for_it() {
         LocalSet::new()
             .run_until(async {
-                let ports = DataPorts::new(ListenConfig::default());
+                let ports = DataPorts::new(Arc::new(KernelTransport::default()));
                 let addr = free_port();
                 let first = tokio::task::spawn_local({
                     let ports = ports.clone();
@@ -257,7 +263,7 @@ mod tests {
     async fn a_waiter_that_gives_up_frees_the_port() {
         LocalSet::new()
             .run_until(async {
-                let ports = DataPorts::new(ListenConfig::default());
+                let ports = DataPorts::new(Arc::new(KernelTransport::default()));
                 let addr = free_port();
                 let waiting = tokio::time::timeout(
                     Duration::from_millis(20),
@@ -278,7 +284,7 @@ mod tests {
             .run_until(async {
                 let holder = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("a holder");
                 let addr = holder.local_addr().expect("an address");
-                let ports = DataPorts::new(ListenConfig::default());
+                let ports = DataPorts::new(Arc::new(KernelTransport::default()));
                 let accept = tokio::task::spawn_local({
                     let ports = ports.clone();
                     async move { ports.accept(addr, None).await }
