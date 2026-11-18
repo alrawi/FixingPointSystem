@@ -6,9 +6,9 @@
 | Branch | `wp/AGT-25` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 4 plan steps) |
+| Progress | 90% (4 of 4 plan steps, PR and CI to come) |
 | Current holder | claude-eda452, lease until 2026-11-18T15:50:20Z |
-| Last verified commit | none |
+| Last verified commit | 834eeb7 |
 
 ## Goal
 
@@ -16,22 +16,24 @@
 
 ## Plan
 
-- [ ] 1. A `Transport` over the datapath (`src/transport.rs`): listen once per port, route accepted sessions by `local_addr`, TCP and UDP.
-- [ ] 2. The agent wiring: the UDP workers of `udp.rs` open sessions through a `Transport`, `start_on` hands the datapath transport to every worker, `Active` keeps the backend and stops it, the os profiles reach `OwnConfig`.
-- [ ] 3. Tests on fake hosts, and `tests/afxdp_veth.rs` runs the http1 and dns entries through the agent.
-- [ ] 4. Docs: this file, the log entry, `Agent.md`.
+- [x] 1. A `Transport` over the datapath (`src/transport.rs`): listen once per port, route accepted sessions by `local_addr`, TCP and UDP.
+- [x] 2. The agent wiring: the UDP workers of `udp.rs` open sessions through a `Transport`, `start_on` hands the datapath transport to every worker, `Active` keeps the backend and stops it, the os profiles reach `OwnConfig`.
+- [x] 3. Tests on fake hosts, and `tests/afxdp_veth.rs` runs the http1 and dns entries through the agent.
+- [x] 4. Docs: this file, the log entry, `Agent.md`.
 
 ## Done and verified
 
-Nothing yet.
+- `cargo test -p fps-agent` passes (the whole crate, including `afxdp_veth` as root in this sandbox: 87 client and 87 server sessions, 0 failed, verdict pass, 1900 TCP frames and 48 UDP datagrams through the queues).
+- `cargo clippy -p fps-agent --all-targets -- -D warnings` and `cargo fmt -p fps-agent --check` are clean.
+- `plan.py check`, `render --check`, and `lint` pass.
 
 ## Remaining
 
-Everything.
+Open the pull request, wait for CI (the `rust` job and the `afxdp` job of `trn.yml`), then `fps_swarm.py review`.
 
 ## Next action
 
-Write `engine/fps-agent/src/transport.rs`.
+Open the pull request against `main` with the acceptance evidence of the log entry.
 
 ## Blockers and open questions
 
@@ -40,19 +42,27 @@ none
 ## Decisions taken in this package
 
 - The datapath transport owns one background Tokio runtime (the hub), because `Datapath::listen` spawns its accept tasks on the runtime of the caller and a worker runtime ends with its worker. The hub keeps one datapath listener per port for the whole run and routes each accepted session to the worker whose `listen` call named its `local_addr()`.
+- A port that a worker asked for by number stays open for the run (the data ports bind and release often, and a port cannot be listened on twice at once). A port that the transport chose for a listen on port 0 closes with its last call.
+- The UDP workers keep their kernel sockets when no transport is set, so the kernel path is byte for byte as before. With a transport they listen once for each address of their range.
+- `backend::start_on_queues` exists so the wiring is tested without root on in memory links.
 
 ## Pitfalls
 
-none yet
+- `EndGuard` must be created before the async block, or a task that the hub drops before its first poll never clears its port and `accept` waits for ever.
+- The reset of a session for an unheld host can fail the client `connect` or its first read, so a test has to accept both.
 
 ## Verify the current state
 
 ```bash
-CARGO_TARGET_DIR=$PWD/target-AGT-25 cargo test -p fps-agent --lib
+CARGO_TARGET_DIR=$PWD/target-AGT-25 cargo test -p fps-agent --test datapath_transport --test datapath_run
+sudo FPS_REQUIRE_AFXDP=1 CARGO_TARGET_DIR=$PWD/target-AGT-25 cargo test -p fps-agent --test afxdp_veth -- --nocapture
 ```
+
+Both pass. The second prints `run outcome=pass sessions http1=.. dns=..`.
 
 ## Session log
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-18T14:20Z | claude-eda452 | claim | none | claimed #662 |
+| 2026-11-18T14:45Z | claude-eda452 | checkpoint | 834eeb7 | transport, wiring, tests, docs |
