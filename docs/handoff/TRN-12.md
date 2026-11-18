@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #563 |
 | Branch | `wp/TRN-12` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 80% (4 of 5 plan steps) |
+| Pull request | #672 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-7c41e9, lease until 2026-11-18T17:43:15Z |
-| Last verified commit | 16b6f56 |
+| Last verified commit | e56b445 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -22,7 +22,7 @@ The http1 module passes realism CI on the AF_XDP backend: the agent forced onto 
 - [x] 2. Script that records the http1 run on AF_XDP (`engine/fps-datapath/realism/`)
 - [x] 3. Fix what the run finds inside the paths (nothing; one gap in the agent, described in the log entry)
 - [x] 4. Log entry, Transport page, local checks
-- [ ] 5. Pull request and CI
+- [x] 5. Pull request and CI (all 17 workflows green on e56b445)
 
 ## Done and verified
 
@@ -32,11 +32,11 @@ The http1 module passes realism CI on the AF_XDP backend: the agent forced onto 
 
 ## Remaining
 
-Open the PR and wait for CI. The PR runs no job for the new script, because the coordinator adds the workflow job (see the log entry, Shared page notes).
+The coordinator adds the workflow job (see the log entry, Shared page notes) and the agent change for `run --keylog`. The PR runs no job for the new script.
 
 ## Next action
 
-Open the pull request, run `fps_swarm.py review 563 --pr N`, and report.
+Coordinator review and merge.
 
 ## Blockers and open questions
 
@@ -71,3 +71,4 @@ Not needed: the run needs only root, network namespaces, and veth, which hosted 
 |---|---|---|---|---|
 | 2026-11-18T17:21Z | claude-7c41e9 | claim | none | Claimed #563 |
 | 2026-11-18T17:33Z | claude-7c41e9 | checkpoint | 16b6f56 | The script and the plan generator |
+| 2026-11-18T18:10Z | claude-7c41e9 | ready for review | e56b445 | PR #672, CI green; rerun on merged main (TRN-35) passed |
