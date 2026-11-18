@@ -679,6 +679,14 @@ fn own(role: &str, scenario: Role) {
                     .shutdown()
                     .await
                     .map_err(|e| format!("shutdown: {e}"))?;
+                // The echo is only in the send buffer. Wait for the peer to
+                // read it all and close, or stopping the datapath would cut
+                // the transfer short.
+                let mut rest = Vec::new();
+                tokio::time::timeout(Duration::from_secs(30), session.read_to_end(&mut rest))
+                    .await
+                    .map_err(|_| "the peer did not close within 30 s".to_owned())?
+                    .map_err(|e| format!("read to the end: {e}"))?;
                 intact
             };
             Ok::<bool, String>(echoed)

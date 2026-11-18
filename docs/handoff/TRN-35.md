@@ -52,7 +52,8 @@ none
 
 ## Pitfalls
 
-none yet
+- Stopping a datapath right after `write_all` and `shutdown` cuts the data in the send buffer short. The router helper of the own server waits for the peer to close first (the first CI run failed once for this).
+- The sandbox kernel has no IPv6, so the IPv6 router scenarios run only in CI (they passed there in the first run).
 
 ## Verify the current state
 
