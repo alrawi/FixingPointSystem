@@ -87,9 +87,15 @@ jobs:
       - name: Install netem and namespace tools
         run: |
           set -euo pipefail
-          tools/ci/apt-install.sh iproute2 "linux-modules-extra-$(uname -r)"
-          sudo modprobe sch_netem
-          lsmod | grep -E '^sch_netem' || true
+          tools/ci/apt-install.sh iproute2
+          uname -r
+          # The cloud kernels of the hosted image may ship sch_netem in their base
+          # modules; the extra modules package exists only for some kernels.
+          if ! sudo modprobe sch_netem; then
+            tools/ci/apt-install.sh "linux-modules-extra-$(uname -r)" || echo "no linux-modules-extra package for $(uname -r)"
+            sudo modprobe sch_netem
+          fi
+          lsmod | grep -E '^sch_netem'
       - name: Build tcp_bench
         run: cargo build --release -p fps-tcp --example tcp_bench
       - name: Run the loss workload on three stacks
