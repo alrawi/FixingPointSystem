@@ -84,6 +84,7 @@ pub mod host;
 pub mod net;
 pub mod pools;
 pub mod recovery;
+pub mod sack;
 pub mod wire;
 
 use std::future::Future;
@@ -117,7 +118,8 @@ pub struct OwnConfig {
     /// tag). A link with a smaller frame limit lowers it.
     pub mtu: usize,
     /// The receive buffer of a connection in bytes, which is also the
-    /// advertised window up to 65,535.
+    /// advertised window. Above 65,535 the window needs the scale option
+    /// (`window_scale`) and the peer's agreement.
     pub rcv_buffer: usize,
     /// The send buffer of a connection in bytes.
     pub snd_buffer: usize,
@@ -147,14 +149,30 @@ pub struct OwnConfig {
     pub isn_secret: u64,
     /// The frames that the in memory link holds per direction.
     pub link_depth: usize,
+    /// Offer the window scale option (RFC 7323) in the handshake. It is used
+    /// when the peer offers it too.
+    pub window_scale: bool,
+    /// Offer the timestamp option (RFC 7323), which gives a round trip sample
+    /// per acknowledgment and protects against old duplicate segments (PAWS).
+    pub timestamps: bool,
+    /// Offer selective acknowledgment (RFC 2018) and recover with the
+    /// scoreboard of RFC 6675 when the peer offers it too.
+    pub sack: bool,
+    /// Delay the acknowledgment of in order data until a second full segment
+    /// arrives or `delayed_ack_us` has passed (RFC 1122 section 4.2.3.2,
+    /// RFC 5681 section 4.2).
+    pub delayed_ack: bool,
+    /// The longest an acknowledgment waits, in microseconds. RFC 1122 allows
+    /// 500 ms, the kernel waits 40 ms at the shortest.
+    pub delayed_ack_us: i64,
 }
 
 impl Default for OwnConfig {
     fn default() -> Self {
         Self {
             mtu: 1500,
-            rcv_buffer: 65_535,
-            snd_buffer: 128 * 1024,
+            rcv_buffer: 1024 * 1024,
+            snd_buffer: 1024 * 1024,
             rto_us: 200_000,
             min_rto_us: 200_000,
             max_rto_us: 2_000_000,
@@ -165,6 +183,11 @@ impl Default for OwnConfig {
             backlog: 4096,
             isn_secret: 0x005E_ED0F_F1C5_0001,
             link_depth: 8192,
+            window_scale: true,
+            timestamps: true,
+            sack: true,
+            delayed_ack: true,
+            delayed_ack_us: 40_000,
         }
     }
 }

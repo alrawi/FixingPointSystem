@@ -10,7 +10,7 @@
 | Branch | `wp/TRN-24` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 80% (5 of 6 plan steps) |
 | Current holder | claude-e5c1d3, lease until 2026-11-18T06:18:38Z |
 | Last verified commit | none |
 
@@ -24,11 +24,11 @@ Window scaling, timestamps, SACK (RFC 2018 blocks, RFC 6675 recovery) and delaye
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Option codec and negotiation (wire.rs), flags in a few bits
-- [ ] 2. Window scaling and timestamps (RTT samples, PAWS)
-- [ ] 3. SACK receiver blocks from the OOO queue
-- [ ] 4. SACK scoreboard, pipe, RFC 6675 recovery inside Recovery box
-- [ ] 5. Delayed ACK
+- [x] 1. Option codec and negotiation (wire.rs), flags in a few bits
+- [x] 2. Window scaling and timestamps (RTT samples, PAWS)
+- [x] 3. SACK receiver blocks from the OOO queue
+- [x] 4. SACK scoreboard, pipe, RFC 6675 recovery inside Recovery box
+- [x] 5. Delayed ACK
 - [ ] 6. tcp_bench loss configuration, results, log entry, component page
 
 ## Done and verified
@@ -37,11 +37,11 @@ List each finished step with the command that verified it and the result.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Step 6: tcp_bench loss configuration for 0.1 percent loss and 50 ms with BDP above 64 KB, sandbox runs of own and smoltcp, 1M scale row against main, log entry and Transport page, CI.
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Run `cargo test -p fps-tcp` (lossy tests with the new defaults), then add the loss configuration to `engine/fps-tcp/src/cli.rs` and run the bench.
 
 ## Blockers and open questions
 

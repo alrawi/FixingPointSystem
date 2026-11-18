@@ -307,7 +307,7 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
             "--own-mtu" => o.own.mtu = number::<usize>(f, v)?.clamp(128, 65_535),
             "--own-window-kib" => {
                 let kib: usize = number(f, v)?;
-                o.own.rcv_buffer = kib.saturating_mul(1024).clamp(1, 65_535);
+                o.own.rcv_buffer = kib.saturating_mul(1024).clamp(1, 1 << 30);
             }
             "--own-time-wait-ms" => {
                 let ms: i64 = number(f, v)?;
