@@ -686,6 +686,12 @@ def test_promotion_sweep_applies_the_three_rules() -> None:
         ["type:wp", "status:backlog", "needs:split"],
         body="- **Depends on.** none\n",
     )
+    gh.add_issue(
+        94,
+        "[ENG-94] Parked by the owner",
+        ["type:wp", "status:backlog", "needs:owner", "parked"],
+        body="- **Depends on.** none\n",
+    )
     s = swarm(gh, "claude-sweep")
     assert s.promotion_sweep(dry_run=True) == [(92, "status:done")]
     assert gh.mutations() == []
@@ -698,6 +704,7 @@ def test_promotion_sweep_applies_the_three_rules() -> None:
         (92, "status:done"),
     ]
     assert "status:ready" in gh.labels(90) and "status:backlog" not in gh.labels(90)
+    assert "status:backlog" in gh.labels(94)
     assert "status:backlog" in gh.labels(91) and "status:backlog" in gh.labels(93)
     assert "status:done" in gh.labels(92)
 
