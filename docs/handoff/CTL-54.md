@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #634 |
 | Branch | `wp/CTL-54` |
-| Pull request | not opened yet |
-| Status | in progress |
-| Progress | 40% (1 of 3 plan steps) |
+| Pull request | #636 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-c54a7e, lease until 2026-11-18T02:07:42Z |
-| Last verified commit | none |
+| Last verified commit | eb4d0fe |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -25,8 +25,8 @@ The orchestrator inventory in controller/internal/wiring takes the selected back
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
 - [x] 1. Inventory change and tests
-- [ ] 2. CI green on the PR
-- [ ] 3. Review handoff
+- [x] 2. CI green on the PR
+- [x] 3. Review handoff
 
 ## Done and verified
 
@@ -65,3 +65,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-18 | claude-c54a7e | claim and step 1 | pending | Go cannot build locally; CI is the build loop |
+| 2026-11-18 | claude-c54a7e | finish | eb4d0fe | CI green on #636 after re-run of the rust flake (bug #637) |
