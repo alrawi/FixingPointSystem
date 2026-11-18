@@ -1305,3 +1305,57 @@ async fn os_profiles_shape_the_handshake_and_the_data_still_flows() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Listener lifetime (TRN-33).
+
+#[tokio::test(flavor = "current_thread")]
+async fn unlisten_resets_a_handshake_that_is_not_finished() {
+    // The client delivers its SYN and drops everything after it, so the
+    // server holds a connection in SYN-RECEIVED that the backlog counts.
+    let mut sent = 0;
+    let lab = lab(
+        OwnConfig::default(),
+        Box::new(move |_| {
+            sent += 1;
+            if sent == 1 {
+                Fate::Deliver
+            } else {
+                Fate::Drop
+            }
+        }),
+        deliver_all(),
+    );
+    lab.stack.listen(PORT).expect("listen");
+    within(async {
+        let connect = tokio::spawn({
+            let stack = lab.stack.clone();
+            async move { stack.connect(PORT).await }
+        });
+        tokio::task::yield_now().await;
+        lab.stack.pump();
+        // The client thinks it is established, because the SYN-ACK arrived.
+        let mut client = connect.await.expect("task").expect("connect");
+        // One connection of each host and the listener.
+        assert_eq!(lab.stack.stats().sockets_open, 3);
+        assert!(lab.stack.unlisten(PORT));
+        assert_eq!(
+            lab.stack.stats().sockets_open,
+            1,
+            "the half open connection and the listener are gone"
+        );
+        lab.stack.pump();
+        let mut byte = [0u8; 1];
+        let error = client.read(&mut byte).await.expect_err("reset");
+        assert_eq!(error.kind(), ErrorKind::ConnectionReset);
+        let sent_rst = frames_of(&lab.server_log)
+            .iter()
+            .filter_map(|f| wire::parse_frame(f).ok())
+            .any(|p| p.header.flags & flags::RST != 0);
+        assert!(
+            sent_rst,
+            "the server sent a reset for the half open connection"
+        );
+    })
+    .await;
+}

@@ -38,8 +38,10 @@
 //! `fps_backend_kernel::Connector`: `connect(source, destination)` opens a
 //! session from a client host address to a server host address. A session is
 //! an [`DatapathSession`], which implements `fps_io::SessionIo`.
-//! [`Datapath::listen`] returns a [`Listener`] whose `accept` gives sessions
-//! that arrived at any server host of the datapath.
+//! [`Datapath::listen`] returns a [`Listener`] whose `accept` gives the
+//! sessions that arrived at any server host of the datapath, each with its
+//! peer address, as `KernelListener::accept` does. Dropping the listener
+//! frees the port.
 //!
 //! # UDP
 //!
@@ -83,7 +85,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use fps_backend_afxdp::FrameIo;
-use fps_hosts::{MacAllocator, NeighborTable, Responder, SliceError};
+use fps_hosts::{Responder, SliceError};
 use fps_tcp_own::clock::MonotonicClock;
 use fps_tcp_own::{HostSlice, OwnConfig, OwnSession, OwnStack, OwnStats, PoolError, Pools};
 use fps_udp_own::UdpArm;
@@ -385,18 +387,13 @@ pub fn split_pools(pools: &Pools, parts: usize) -> Result<Vec<Pools>, DatapathEr
         .collect())
 }
 
-/// The neighbor tables of the hosts of each arm, with the MAC addresses that
-/// [`Pools::stations`] gives the same hosts (it claims them in this order from
-/// a fresh ledger, so the ARP replies and the frames of the stack agree).
+/// The ARP and neighbor discovery responder of each arm, from the neighbor
+/// tables of [`Pools::tables`], which also give the stations of the stack and
+/// of the UDP layer their MAC addresses, so a reply and a frame of the stack
+/// carry the same MAC address by construction.
 fn responders(pools: &Pools) -> Result<(Responder, Responder), PoolError> {
-    let mut ledger = MacAllocator::new();
-    let client_block = ledger.claim(&pools.client.pool, pools.client.range)?;
-    let server_block = ledger.claim(&pools.server.pool, pools.server.range)?;
-    let mut client = NeighborTable::new();
-    client.add(&pools.client.pool, &client_block)?;
-    let mut server = NeighborTable::new();
-    server.add(&pools.server.pool, &server_block)?;
-    Ok((Responder::new(client), Responder::new(server)))
+    let tables = pools.tables()?;
+    Ok((Responder::new(tables.client), Responder::new(tables.server)))
 }
 
 /// The settings of the UDP layer of one arm: the MTU that the queue carries
@@ -554,18 +551,27 @@ impl Datapath {
 
     /// Starts listening on `port` at every server host of every lane.
     ///
-    /// The stack lets a port be listened on once for the life of the
-    /// datapath, so listening again on a port that an earlier listener used
-    /// fails. The call must run inside a Tokio runtime, which carries one
-    /// task per lane that moves accepted sessions to [`Listener::accept`].
+    /// Dropping the listener stops the listening on every lane and frees the
+    /// port, as closing a listening socket does: connections that arrived and
+    /// were not accepted are reset, and the port can be listened on again
+    /// (TRN-33). Sessions that were accepted keep running. The call must run
+    /// inside a Tokio runtime, which carries one task per lane that moves
+    /// accepted sessions to [`Listener::accept`].
     ///
     /// # Errors
     ///
     /// Returns [`DatapathError::Stack`] when a lane already listens on the
-    /// port.
+    /// port. The lanes that started before the failure stop listening again.
     pub fn listen(&self, port: u16) -> Result<Listener, DatapathError> {
         let (tx, rx) = mpsc::channel(1024);
-        let mut tasks = Vec::with_capacity(self.lanes.len());
+        // Built first, so that an error on a later lane drops it and undoes
+        // the lanes that already listen.
+        let mut listener = Listener {
+            port,
+            rx,
+            tasks: Vec::with_capacity(self.lanes.len()),
+            stacks: Vec::with_capacity(self.lanes.len()),
+        };
         for lane in self.lanes.iter() {
             lane.stack
                 .listen(port)
@@ -573,8 +579,9 @@ impl Datapath {
                     op: "listen",
                     source,
                 })?;
+            listener.stacks.push(lane.stack.clone());
             let (stack, tx) = (lane.stack.clone(), tx.clone());
-            tasks.push(tokio::spawn(async move {
+            listener.tasks.push(tokio::spawn(async move {
                 loop {
                     let accepted = stack.accept(port).await;
                     let failed = accepted.is_err();
@@ -584,7 +591,7 @@ impl Datapath {
                 }
             }));
         }
-        Ok(Listener { port, rx, tasks })
+        Ok(listener)
     }
 
     /// Starts listening for UDP on `port` at every server host of every
@@ -800,11 +807,21 @@ impl Connector {
 }
 
 /// The accept side of [`Datapath::listen`].
-#[derive(Debug)]
 pub struct Listener {
     port: u16,
     rx: mpsc::Receiver<io::Result<OwnSession>>,
     tasks: Vec<TaskHandle<()>>,
+    /// The stacks that listen on the port, which the drop stops.
+    stacks: Vec<OwnStack>,
+}
+
+impl std::fmt::Debug for Listener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Listener")
+            .field("port", &self.port)
+            .field("lanes", &self.stacks.len())
+            .finish()
+    }
 }
 
 impl Listener {
@@ -814,20 +831,25 @@ impl Listener {
         self.port
     }
 
-    /// Completes with the next session that arrived at a server host.
+    /// Completes with the next session that arrived at a server host, and
+    /// the address of its peer (a client host and its port), as
+    /// `KernelListener::accept` does.
     ///
     /// # Errors
     ///
     /// Returns [`DatapathError::Stack`] when a lane failed to accept, and the
     /// same error with the kind [`io::ErrorKind::BrokenPipe`] when the
     /// accepting tasks ended.
-    pub async fn accept(&mut self) -> Result<DatapathSession, DatapathError> {
+    pub async fn accept(&mut self) -> Result<(DatapathSession, SocketAddr), DatapathError> {
         let fail = |source| DatapathError::Stack {
             op: "accept",
             source,
         };
         match self.rx.recv().await {
-            Some(Ok(session)) => Ok(session),
+            Some(Ok(session)) => {
+                let peer = session.peer_addr().map_err(fail)?;
+                Ok((session, peer))
+            }
             Some(Err(source)) => Err(fail(source)),
             None => Err(fail(io::ErrorKind::BrokenPipe.into())),
         }
@@ -838,6 +860,9 @@ impl Drop for Listener {
     fn drop(&mut self) {
         for task in &self.tasks {
             task.abort();
+        }
+        for stack in &self.stacks {
+            stack.unlisten(self.port);
         }
     }
 }

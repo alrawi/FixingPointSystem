@@ -339,7 +339,7 @@ fn helper_afxdp() {
         let dst = SocketAddr::new(host_address(&plan, "servers", 0), PORT);
         let (sent, ok) = runtime.block_on(async move {
             let server = tokio::spawn(async move {
-                let mut session = listener.accept().await.expect("accept");
+                let (mut session, _peer) = listener.accept().await.expect("accept");
                 let mut buf = vec![0u8; 4096];
                 session.read_exact(&mut buf).await.expect("read");
                 // Echo the bytes back inverted, so a reflected frame is not

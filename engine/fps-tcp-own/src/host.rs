@@ -12,7 +12,7 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashMap, VecDeque};
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::io;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::task::Waker;
 
 use super::cubic::AckContext;
@@ -760,6 +760,48 @@ impl Host {
         }
         self.listeners.insert(port, Listener::default());
         Ok(())
+    }
+
+    /// Stops listening on `port`, as closing a listening socket does: the
+    /// connections that wait in the backlog, handshaking or established and
+    /// not accepted yet, are reset, the tasks that wait in an accept are
+    /// woken (their accept fails with `InvalidInput`), and the port can be
+    /// listened on again. Connections that were accepted are not touched.
+    ///
+    /// Returns `false` when the port was not listened on.
+    pub fn unlisten(&mut self, port: u16) -> bool {
+        let Some(listener) = self.listeners.remove(&port) else {
+            return false;
+        };
+        for waker in listener.waiters.into_values() {
+            waker.wake();
+        }
+        let waiting: Vec<(u32, u32)> = self
+            .conns
+            .iter()
+            .enumerate()
+            .filter_map(|(id, slot)| {
+                let conn = slot.as_ref()?;
+                (conn.listener == port && conn.has(O_BACKLOG)).then(|| (id as u32, self.gens[id]))
+            })
+            .collect();
+        for (id, gen) in waiting {
+            self.abort(id, gen);
+        }
+        true
+    }
+
+    /// The local and the remote address of connection `id`, or `None` when
+    /// the handle is stale.
+    pub fn addrs(&self, id: u32, gen: u32) -> Option<(SocketAddr, SocketAddr)> {
+        if !self.valid(id, gen) {
+            return None;
+        }
+        let conn = self.conns.get(id as usize)?.as_ref()?;
+        Some((
+            SocketAddr::new(conn.local_ip, conn.local_port),
+            SocketAddr::new(conn.remote_ip, conn.remote_port),
+        ))
     }
 
     /// Starts an active open from the local host `local_ip` to `remote_port`

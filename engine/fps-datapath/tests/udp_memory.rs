@@ -119,7 +119,7 @@ async fn udp_and_tcp_share_a_lane_and_a_port_number() {
     let mut tcp = dp.listen(7777).unwrap();
     let mut udp = dp.listen_udp(7777).unwrap();
     let tcp_server = tokio::spawn(async move {
-        let mut s = tcp.accept().await.unwrap();
+        let (mut s, _) = tcp.accept().await.unwrap();
         let mut buf = [0u8; 32];
         s.read_exact(&mut buf).await.unwrap();
         s.write_all(&buf).await.unwrap();

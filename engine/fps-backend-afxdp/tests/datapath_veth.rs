@@ -366,7 +366,7 @@ fn helper_datapath() {
         let _guard = runtime.enter();
         let mut listener = dp.listen(PORT).unwrap();
         runtime.spawn(async move {
-            while let Ok(mut session) = listener.accept().await {
+            while let Ok((mut session, _peer)) = listener.accept().await {
                 tokio::spawn(async move {
                     let mut request = [0u8; REQUEST];
                     if session.read_exact(&mut request).await.is_err() {
