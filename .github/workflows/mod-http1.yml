@@ -4,7 +4,8 @@
 # its Rust tests. The module job validates the manifest and scenarios and scores
 # the committed fixture with nDPI and tshark. The harness job records a fresh
 # capture in the QA-01 namespace harness over kernel sockets and scores it, so
-# the fixture stays reproducible.
+# the fixture stays reproducible. The afxdp job records the module through the
+# agent on the AF_XDP backend and scores it the same way (TRN-12).
 name: mod-http1
 
 on:
@@ -81,3 +82,24 @@ jobs:
             modules/http1/fixtures/capture.sh "$RUNNER_TEMP/fixture"
           python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); print(json.dumps([c.get("applications", c["check"]) for c in r["checks"]], indent=2))' \
             "$RUNNER_TEMP/fixture/http1.report.json"
+
+  afxdp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the harness and realism tools
+        run: realism/ci/install-tools.sh
+      - run: cargo build -p fps-agent
+      - name: Record the http1 module on the AF_XDP backend and score it
+        run: |
+          sudo env "PATH=/opt/zeek/bin:$PATH" FPS_AFXDP_PARSERS=tshark,zeek \
+            engine/fps-datapath/realism/http1-afxdp.sh "$PWD/target/debug/fps-agent" "$RUNNER_TEMP/http1-afxdp"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: http1-afxdp
+          path: ${{ runner.temp }}/http1-afxdp
+          if-no-files-found: ignore

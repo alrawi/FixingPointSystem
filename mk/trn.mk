@@ -5,6 +5,7 @@
 # profiles and the lint and unit tests of its helpers.
 
 TRN_NETNS_DIR := engine/fps-backend-kernel/tests/netns
+TRN_AFXDP_REALISM_DIR := engine/fps-datapath/realism
 # The probe binary of the capture test. sudo drops CARGO_TARGET_DIR, so pass
 # TRN_PROBE explicitly when the build used another target directory.
 TRN_PROBE ?= $(or $(CARGO_TARGET_DIR),target)/debug/examples/os_profile_probe
@@ -13,10 +14,10 @@ TRN_PROBE ?= $(or $(CARGO_TARGET_DIR),target)/debug/examples/os_profile_probe
 # when they are installed. CI installs them from tests/harness/requirements.txt.
 LINT_TARGETS += lint-trn
 lint-trn:
-	shellcheck $(TRN_NETNS_DIR)/*.sh
+	shellcheck $(TRN_NETNS_DIR)/*.sh $(TRN_AFXDP_REALISM_DIR)/*.sh
 	@if command -v ruff >/dev/null 2>&1 && command -v mypy >/dev/null 2>&1; then \
-	  echo "ruff format --check $(TRN_NETNS_DIR) && ruff check $(TRN_NETNS_DIR) && mypy --strict $(TRN_NETNS_DIR)/handshakes.py"; \
-	  ruff format --check $(TRN_NETNS_DIR) && ruff check $(TRN_NETNS_DIR) && mypy --strict $(TRN_NETNS_DIR)/handshakes.py; \
+	  echo "ruff format --check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && ruff check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && mypy --strict $(TRN_NETNS_DIR)/handshakes.py $(TRN_AFXDP_REALISM_DIR)/make_plan.py"; \
+	  ruff format --check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && ruff check $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR) && mypy --strict $(TRN_NETNS_DIR)/handshakes.py $(TRN_AFXDP_REALISM_DIR)/make_plan.py; \
 	else \
 	  echo "lint-trn skipped ruff and mypy because they are not installed"; \
 	fi
@@ -24,7 +25,7 @@ lint-trn:
 # The unit tests of the handshake checker, which need no root.
 TEST_TARGETS += test-trn
 test-trn:
-	$(PYTHON) -m pytest -q $(TRN_NETNS_DIR)
+	$(PYTHON) -m pytest -q $(TRN_NETNS_DIR) $(TRN_AFXDP_REALISM_DIR)
 
 # Builds the probe as the calling user, so the root only target below needs no
 # Rust toolchain.
