@@ -8,8 +8,9 @@
 
 use std::fmt::Write as _;
 
+use crate::impair::percent_text;
 use crate::sysinfo::HostInfo;
-use crate::workload::{RateReport, ScaleReport, ThroughputReport};
+use crate::workload::{LossReport, RateReport, ScaleReport, ThroughputReport};
 
 /// The direction in which a metric improves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +64,8 @@ pub struct BenchReport {
     pub throughput: Option<ThroughputReport>,
     /// The scaling result, when the workload ran.
     pub scale: Option<ScaleReport>,
+    /// The loss workload result, when the workload ran.
+    pub loss: Option<LossReport>,
     /// When the run finished, in seconds since the Unix epoch.
     pub finished_unix_secs: u64,
 }
@@ -113,6 +116,35 @@ impl BenchReport {
                 Better::Higher,
                 "Gbit/s",
             );
+        }
+        if let Some(loss) = &self.loss {
+            for level in &loss.levels {
+                let at = format!(
+                    "{key}.loss.{}pct",
+                    percent_text(level.loss_ppm).replace('.', "p")
+                );
+                push(
+                    format!("{at}.goodput_mbit_per_s"),
+                    level.mean_goodput_mbit_per_s(),
+                    Better::Higher,
+                    "Mbit/s",
+                );
+                push(
+                    format!("{at}.completed_ratio"),
+                    level.completed_ratio(),
+                    Better::Higher,
+                    "ratio",
+                );
+                push(
+                    format!("{at}.retransmits"),
+                    level.mean_retransmits(),
+                    Better::Lower,
+                    "segments",
+                );
+                if let Some(secs) = level.mean_complete_secs() {
+                    push(format!("{at}.complete_s"), secs, Better::Lower, "s");
+                }
+            }
         }
         if let Some(scale) = &self.scale {
             push(
@@ -227,6 +259,13 @@ impl BenchReport {
                 notes.push(reason.clone());
             }
         }
+        if let Some(loss) = &self.loss {
+            notes.push(format!(
+                "loss workload: one session sends {} bytes and the transfer is complete when the server has confirmed the count; goodput is the confirmed bytes over the time from the first write to that confirmation, and counts as 0 for a transfer that did not complete; the link is {}, with the loss shown per row",
+                loss.bytes_per_transfer, loss.link
+            ));
+            notes.push("a metric of the loss workload is the mean over its transfers, and the key has the loss in percent with p for the decimal point".to_string());
+        }
         notes
     }
 
@@ -260,6 +299,41 @@ impl BenchReport {
                 "throughput: {:.3} Gbit/s ({} bytes in {:.2} s)",
                 t.gbit_per_s, t.bytes, t.elapsed_secs
             );
+        }
+        if let Some(loss) = &self.loss {
+            let _ = writeln!(
+                out,
+                "loss workload, {} bytes per transfer, link: {}",
+                loss.bytes_per_transfer, loss.link
+            );
+            let _ = writeln!(
+                out,
+                "  {:>7} {:>4} {:>9} {:>12} {:>9} {:>11} {:>9}  note",
+                "loss %", "run", "complete", "goodput Mb/s", "time s", "retransmits", "link drops"
+            );
+            for level in &loss.levels {
+                for (index, run) in level.runs.iter().enumerate() {
+                    let _ = writeln!(
+                        out,
+                        "  {:>7} {:>4} {:>9} {:>12.2} {:>9.2} {:>11} {:>9}  {}",
+                        percent_text(level.loss_ppm),
+                        index + 1,
+                        if run.completed { "yes" } else { "NO" },
+                        run.goodput_mbit_per_s(),
+                        run.elapsed.as_secs_f64(),
+                        run.retransmits,
+                        run.link_lost + run.link_queue_dropped,
+                        run.failure.as_deref().unwrap_or("")
+                    );
+                }
+                let _ = writeln!(
+                    out,
+                    "  {:>7} mean: {:.0}% completed, goodput {:.2} Mbit/s",
+                    percent_text(level.loss_ppm),
+                    level.completed_ratio() * 100.0,
+                    level.mean_goodput_mbit_per_s()
+                );
+            }
         }
         if let Some(scale) = &self.scale {
             let _ = writeln!(out, "socket scaling over {} shards:", scale.shards);
@@ -443,6 +517,7 @@ mod tests {
                 ],
                 stopped: Some("step 2000 stopped".into()),
             }),
+            loss: None,
             finished_unix_secs: 1_700_000_000,
         }
     }
@@ -482,5 +557,59 @@ mod tests {
         assert!(text.contains("sessions per second: 100"));
         assert!(text.contains("throughput: 2.500 Gbit/s"));
         assert!(text.contains("(not reached)"));
+    }
+
+    #[test]
+    fn loss_levels_report_goodput_completion_and_retransmissions() {
+        use crate::workload::{LossLevel, LossReport, LossRun};
+        use std::time::Duration;
+        let done = |secs: u64, retransmits: u64| LossRun {
+            completed: true,
+            confirmed_bytes: 1_000_000,
+            elapsed: Duration::from_secs(secs),
+            retransmits,
+            ..LossRun::default()
+        };
+        let failed = LossRun {
+            elapsed: Duration::from_secs(60),
+            failure: Some("not complete after 60s".into()),
+            ..LossRun::default()
+        };
+        let mut r = report();
+        r.loss = Some(LossReport {
+            link: "loss 0%, delay 20 ms".into(),
+            bytes_per_transfer: 1_000_000,
+            levels: vec![
+                LossLevel {
+                    loss_ppm: 1_000,
+                    runs: vec![done(1, 4), done(2, 6)],
+                },
+                LossLevel {
+                    loss_ppm: 10_000,
+                    runs: vec![done(4, 30), failed],
+                },
+            ],
+        });
+        let metrics = r.metrics();
+        let value = |name: &str| {
+            metrics
+                .iter()
+                .find(|m| m.name == name)
+                .unwrap_or_else(|| panic!("no metric {name}"))
+                .value
+        };
+        // 1 MB in 1 s and in 2 s is 8 and 4 Mbit/s.
+        assert!((value("kernel.loss.0p1pct.goodput_mbit_per_s") - 6.0).abs() < 1e-9);
+        assert_eq!(value("kernel.loss.0p1pct.completed_ratio"), 1.0);
+        assert_eq!(value("kernel.loss.0p1pct.retransmits"), 5.0);
+        assert_eq!(value("kernel.loss.0p1pct.complete_s"), 1.5);
+        // A transfer that did not complete counts as zero goodput.
+        assert!((value("kernel.loss.1pct.goodput_mbit_per_s") - 1.0).abs() < 1e-9);
+        assert_eq!(value("kernel.loss.1pct.completed_ratio"), 0.5);
+        let text = r.to_text();
+        assert!(text.contains("loss workload") && text.contains("NO"));
+        assert!(r
+            .to_json()
+            .contains("kernel.loss.0p1pct.goodput_mbit_per_s"));
     }
 }

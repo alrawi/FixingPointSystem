@@ -12,20 +12,24 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::clock::MonotonicClock;
+use crate::impair::{percent_text, percent_to_ppm, ImpairConfig};
 use crate::kernel::{KernelConfig, KernelStack};
+use crate::lossy::LossyOwn;
+use crate::netns::{self, NetnsError};
 use crate::own::{OwnConfig, OwnStack, Pools};
 use crate::report::BenchReport;
 use crate::smol::{SmolConfig, SmolStack, TimeWait};
 use crate::stack::TcpStack;
 use crate::sysinfo::{self, HostInfo};
 use crate::workload::{
-    session_rate, socket_scaling, throughput, BenchError, Direction, RateConfig, RateReport,
-    RateRun, ScaleConfig, ThroughputConfig, ThroughputReport, ThroughputRun,
+    loss_transfer, session_rate, socket_scaling, throughput, BenchError, Direction, LossConfig,
+    LossLevel, LossReport, LossRun, RateConfig, RateReport, RateRun, ScaleConfig, ThroughputConfig,
+    ThroughputReport, ThroughputRun,
 };
 
 /// The text that `--help` prints.
 pub const USAGE: &str = "\
-usage: tcp_bench [--stack kernel|own|smoltcp] [--workload rate|throughput|scale|all] [--profile small|full]
+usage: tcp_bench [--stack kernel|own|smoltcp] [--workload rate|throughput|scale|loss|all] [--profile small|full]
                  [--label TEXT] [--out PATH|-]
   rate:        [--duration-secs N] [--concurrency N] [--threads N]
                [--request-bytes N] [--response-bytes N]
@@ -33,6 +37,9 @@ usage: tcp_bench [--stack kernel|own|smoltcp] [--workload rate|throughput|scale|
                [--direction upload|download] [--threads N]
   scale:       [--scale-steps N,N,...] [--shards N] [--scale-buffer-bytes N]
                [--step-seconds N] [--probe-sessions N] [--batch N]
+  loss:        [--loss-levels PCT,PCT,...] [--loss-transfers N] [--loss-kib N]
+               [--loss-timeout-secs N] [--link-delay-ms N] [--link-reorder PCT]
+               [--link-rate-mbit N] [--link-queue-kib N] [--link-seed N]
   kernel:      [--nodelay on|off] [--buffer-kib N] [--backlog N]
   own:         [--own-mtu N] [--own-window-kib N] [--own-time-wait-ms N] [--own-rto-ms N]
                [--own-pool N] [--own-server-hosts N] [--own-vlan ID]
@@ -46,6 +53,16 @@ stack of TRN-18 over an in memory Ethernet link, see the module fps_tcp::own. Wi
 smoltcp is the smoltcp crate behind the same seam (TRN-20), over an in memory IP link,
 see the module fps_tcp::smol. Without --buffer-kib the kernel
 sizes the socket buffers itself.
+The workload loss (TRN-22) is not part of all. It moves one transfer per run over a link
+with random loss (each --loss-levels value, default 0,0.1,1), a delay of --link-delay-ms
+(default 20) in each direction, optional reordering (a share of frames skips the delay),
+and an optional rate limit with a bounded queue, and it reports goodput, retransmissions,
+and completion per transfer. The own and smoltcp stacks run over the in memory link with
+those settings. The kernel stack runs in two network namespaces joined by a veth pair with
+tc qdiscs (tbf for the rate, netem for the rest) on both ends, which needs root: without it
+tcp_bench runs itself again through sudo -n, and it exits with 3 when that is not possible
+(1 when CI=true or FPS_REQUIRE_NETEM=1), and also with 3 when the kernel has no sch_netem
+module. The link flags apply to the loss workload only.
 The profile small finishes within a minute and fits a hosted CI runner. The profile
 full measures up to 1,000,000 sockets and is meant for a host with 16 GiB of memory.
 Every flag after the profile overrides the profile. Sockets count both hosts of a pair.
@@ -58,6 +75,7 @@ enum Selection {
     Rate,
     Throughput,
     Scale,
+    Loss,
     All,
 }
 
@@ -70,6 +88,9 @@ impl Selection {
     }
     fn scale(self) -> bool {
         matches!(self, Selection::Scale | Selection::All)
+    }
+    fn loss(self) -> bool {
+        self == Selection::Loss
     }
 }
 
@@ -93,6 +114,12 @@ struct Options {
     /// The client hosts, the server hosts, and the VLAN of the own stack.
     own_pools: (u32, u32, Option<u16>),
     smol: SmolConfig,
+    loss: LossConfig,
+    /// The loss levels of the loss workload, in parts per million.
+    loss_levels: Vec<u32>,
+    loss_transfers: usize,
+    /// The link of the loss workload. Its `loss_ppm` is set per level.
+    link: ImpairConfig,
 }
 
 /// A mistake in the command line.
@@ -106,6 +133,8 @@ enum UsageError {
     BadValue { flag: String, value: String },
     #[error("unknown stack {0}, the stacks are: kernel, own, smoltcp")]
     UnknownStack(String),
+    #[error("the link settings are invalid: {0}")]
+    BadLink(String),
 }
 
 fn profile_defaults(profile: &str) -> Option<Options> {
@@ -127,6 +156,13 @@ fn profile_defaults(profile: &str) -> Option<Options> {
         own: OwnConfig::default(),
         own_pools: (1, 1, None),
         smol: SmolConfig::default(),
+        loss: LossConfig::default(),
+        loss_levels: vec![0, 1_000, 10_000],
+        loss_transfers: 3,
+        link: ImpairConfig {
+            delay_us: 20_000,
+            ..ImpairConfig::default()
+        },
     };
     match profile {
         "small" => {
@@ -205,6 +241,7 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
                     "rate" => Selection::Rate,
                     "throughput" => Selection::Throughput,
                     "scale" => Selection::Scale,
+                    "loss" => Selection::Loss,
                     "all" => Selection::All,
                     _ => return Err(bad(f, v)),
                 }
@@ -282,6 +319,44 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
             "--own-pool" => o.own_pools.0 = number::<u32>(f, v)?.max(1),
             "--own-server-hosts" => o.own_pools.1 = number::<u32>(f, v)?.max(1),
             "--own-vlan" => o.own_pools.2 = Some(number(f, v)?),
+            "--loss-levels" => {
+                let levels: Result<Vec<u32>, _> = v
+                    .split(',')
+                    .map(|s| percent_to_ppm(s).map_err(|_| bad(f, v)))
+                    .collect();
+                o.loss_levels = levels?;
+                if o.loss_levels.is_empty() {
+                    return Err(bad(f, v));
+                }
+            }
+            "--loss-transfers" => o.loss_transfers = number::<usize>(f, v)?.max(1),
+            "--loss-kib" => {
+                let kib: u64 = number(f, v)?;
+                o.loss.bytes = kib.saturating_mul(1024).max(1);
+            }
+            "--loss-timeout-secs" => {
+                o.loss.timeout = Duration::from_secs(number::<u64>(f, v)?.max(1));
+            }
+            "--link-delay-ms" => {
+                let ms: f64 = number(f, v)?;
+                if !(ms.is_finite() && ms >= 0.0) {
+                    return Err(bad(f, v));
+                }
+                o.link.delay_us = (ms * 1000.0).round() as i64;
+            }
+            "--link-reorder" => o.link.reorder_ppm = percent_to_ppm(v).map_err(|_| bad(f, v))?,
+            "--link-rate-mbit" => {
+                let mbit: f64 = number(f, v)?;
+                if !(mbit.is_finite() && mbit >= 0.0) {
+                    return Err(bad(f, v));
+                }
+                o.link.rate_bps = (mbit * 1e6).round() as u64;
+            }
+            "--link-queue-kib" => {
+                let kib: usize = number(f, v)?;
+                o.link.queue_bytes = kib.saturating_mul(1024);
+            }
+            "--link-seed" => o.link.seed = number(f, v)?,
             "--smol-mtu" => o.smol.link.mtu = number(f, v)?,
             "--smol-checksums" => {
                 o.smol.link.checksums = match v {
@@ -311,6 +386,9 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
     }
     if !["kernel", "own", "smoltcp"].contains(&o.stack.as_str()) {
         return Err(UsageError::UnknownStack(o.stack));
+    }
+    if let Err(reason) = o.link.validate() {
+        return Err(UsageError::BadLink(reason));
     }
     Ok(o)
 }
@@ -386,6 +464,32 @@ fn describe(o: &Options) -> Vec<(String, String)> {
     } else {
         config.push(("nodelay".into(), o.kernel.nodelay.to_string()));
         config.push(("backlog".into(), o.kernel.backlog.to_string()));
+    }
+    if o.selection.loss() {
+        let levels: Vec<String> = o.loss_levels.iter().map(|p| percent_text(*p)).collect();
+        config.push(("loss.levels_percent".into(), levels.join(",")));
+        config.push(("loss.transfers".into(), o.loss_transfers.to_string()));
+        config.push(("loss.bytes".into(), o.loss.bytes.to_string()));
+        config.push(("loss.chunk".into(), o.loss.chunk.to_string()));
+        config.push((
+            "loss.timeout_secs".into(),
+            o.loss.timeout.as_secs().to_string(),
+        ));
+        config.push(("link.delay_us".into(), o.link.delay_us.to_string()));
+        config.push((
+            "link.reorder_percent".into(),
+            percent_text(o.link.reorder_ppm),
+        ));
+        config.push(("link.rate_bps".into(), o.link.rate_bps.to_string()));
+        config.push(("link.queue_bytes".into(), o.link.queue_bytes.to_string()));
+        config.push(("link.seed".into(), o.link.seed.to_string()));
+        config.push(("link.mtu".into(), link_mtu(o).to_string()));
+        if o.stack == "kernel" {
+            config.push((
+                "kernel.buffer_bytes".into(),
+                buffer_text(o.kernel.buffer_bytes),
+            ));
+        }
     }
     if o.selection.rate() {
         config.push((
@@ -497,6 +601,164 @@ fn make_kernel(options: &Options, scale: bool) -> KernelStack {
     KernelStack::new(kernel)
 }
 
+/// The IP MTU of the loss link of the chosen stack.
+fn link_mtu(o: &Options) -> usize {
+    match o.stack.as_str() {
+        "own" => o.own.mtu,
+        "smoltcp" => o.smol.link.mtu,
+        _ => 1500,
+    }
+}
+
+/// Why the loss workload did not produce a report.
+enum LossError {
+    /// The run cannot happen here (no netem), which is a skip unless the
+    /// environment requires it.
+    Skip(String),
+    Bench(BenchError),
+}
+
+fn finish_report(options: &Options, key: &str, name: String, notes: Vec<String>) -> BenchReport {
+    BenchReport {
+        stack_key: key.into(),
+        stack_name: name,
+        stack_notes: notes,
+        label: options.label.clone(),
+        host: HostInfo::detect(),
+        config: describe(options),
+        rate: None,
+        throughput: None,
+        scale: None,
+        loss: None,
+        finished_unix_secs: 0,
+    }
+}
+
+/// Runs the transfers of every loss level. `transfer` runs transfer `run` of
+/// a level on a link with the loss `link`.
+fn loss_levels(
+    options: &Options,
+    mut transfer: impl FnMut(&ImpairConfig, usize) -> Result<LossRun, LossError>,
+) -> Result<Vec<LossLevel>, LossError> {
+    let mut levels = Vec::new();
+    for (level_index, ppm) in options.loss_levels.iter().enumerate() {
+        let mut runs = Vec::new();
+        for run in 0..options.loss_transfers {
+            let mut link = options.link;
+            link.loss_ppm = *ppm;
+            // Every transfer has its own random sequence.
+            link.seed = link
+                .seed
+                .wrapping_add((level_index * options.loss_transfers + run) as u64 * 7919);
+            runs.push(transfer(&link, run)?);
+        }
+        levels.push(LossLevel {
+            loss_ppm: *ppm,
+            runs,
+        });
+    }
+    Ok(levels)
+}
+
+fn invalid_link(reason: String) -> LossError {
+    LossError::Bench(BenchError::Stalled(format!(
+        "the link is invalid: {reason}"
+    )))
+}
+
+/// Measures the loss workload on the stack that `options` names.
+fn loss_report(options: &Options) -> Result<BenchReport, LossError> {
+    let mut report;
+    let levels = match options.stack.as_str() {
+        "own" => {
+            let make = |link: &ImpairConfig| {
+                LossyOwn::new(options.own.clone(), *link, Arc::new(MonotonicClock::new()))
+                    .map_err(invalid_link)
+            };
+            let probe = make(&options.link)?;
+            report = finish_report(options, "own", probe.name(), probe.notes());
+            loss_levels(options, |link, _| {
+                let stack = make(link)?;
+                on_runtime(loss_transfer(&stack, &options.loss)).map_err(LossError::Bench)
+            })?
+        }
+        "smoltcp" => {
+            let make = |link: &ImpairConfig, run: usize| {
+                let mut config = options.smol.clone();
+                config.impair = Some(*link);
+                // A frame that falls due must reach its host without a session
+                // acting, so the idle interval is short.
+                config.idle_poll_micros = config.idle_poll_micros.min(1000);
+                config.seed = config.seed.wrapping_add(run as u64 * 2);
+                SmolStack::new(config, Arc::new(MonotonicClock::new()))
+            };
+            let probe = make(&options.link, 0);
+            report = finish_report(options, "smoltcp", probe.name(), probe.notes());
+            loss_levels(options, |link, run| {
+                let stack = make(link, run);
+                on_runtime(loss_transfer(&stack, &options.loss)).map_err(LossError::Bench)
+            })?
+        }
+        _ => {
+            let exe = std::env::current_exe().map_err(|e| {
+                LossError::Bench(BenchError::Io {
+                    what: "locate the tcp_bench binary".into(),
+                    source: e,
+                })
+            })?;
+            report = finish_report(
+                options,
+                "kernel",
+                "kernel TCP over a veth pair in network namespaces".to_string(),
+                kernel_notes(options),
+            );
+            let mut count = 0u32;
+            loss_levels(options, |link, _| {
+                count += 1;
+                let prefix = format!("fpstcp{}x{count}", std::process::id() % 100_000);
+                let buffer = options.kernel.buffer_bytes;
+                netns::kernel_transfer(&exe, &prefix, link, &options.loss, link_mtu(options), buffer)
+                    .map_err(|error| match error {
+                        NetnsError::NetemMissing(detail) => LossError::Skip(format!(
+                            "the kernel has no netem qdisc (module sch_netem), so the kernel stack cannot be measured on a lossy link here: {detail}"
+                        )),
+                        other => LossError::Bench(BenchError::Stalled(other.to_string())),
+                    })
+            })?
+        }
+    };
+    report.loss = Some(LossReport {
+        link: ImpairConfig {
+            loss_ppm: 0,
+            ..options.link
+        }
+        .describe(),
+        bytes_per_transfer: options.loss.bytes,
+        levels,
+    });
+    report.finished_unix_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    Ok(report)
+}
+
+fn kernel_notes(options: &Options) -> Vec<String> {
+    let congestion = std::fs::read_to_string("/proc/sys/net/ipv4/tcp_congestion_control")
+        .map_or_else(|_| "unknown".to_string(), |t| t.trim().to_string());
+    vec![
+        format!(
+            "the client and the server are processes of this binary in two network namespaces joined by a veth pair (mtu {}), each end with a tbf qdisc for the rate (when set) and a netem qdisc below it for delay, loss, and reordering, so both directions have the link settings; offloads on the veth ends are turned off",
+            link_mtu(options)
+        ),
+        format!(
+            "the kernel sizes the socket buffers itself unless --buffer-kib is set, and its congestion control is {congestion}, so its window is far above the 64 KiB window of the own stack and of the smoltcp default"
+        ),
+        "retransmissions are the growth of RetransSegs in the client namespace during the transfer, which counts segments that the kernel sent again; the link drop counters are not read for the kernel".to_string(),
+        "every transfer has a fresh pair of namespaces, so the metrics cache of the kernel does not carry the slow start threshold of one transfer into the next".to_string(),
+        "the tbf token bucket holds 5 ms of the rate, which the in memory link does not have, so a kernel burst can pass the bottleneck that the in memory link serializes".to_string(),
+    ]
+}
+
 fn measure<S: TcpStack>(
     options: &Options,
     key: &str,
@@ -512,6 +774,7 @@ fn measure<S: TcpStack>(
         rate: None,
         throughput: None,
         scale: None,
+        loss: None,
         finished_unix_secs: 0,
     };
     if options.selection.rate() {
@@ -547,6 +810,9 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         let _ = out.write_all(USAGE.as_bytes());
         return 0;
     }
+    if args.first().map(String::as_str) == Some(netns::PEER_FLAG) {
+        return netns::peer_main(args.get(1..).unwrap_or_default());
+    }
     let options = match parse(args) {
         Ok(options) => options,
         Err(error) => {
@@ -554,6 +820,22 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             return 2;
         }
     };
+    if options.selection.loss() {
+        if options.stack == "kernel" && !netns::is_root() {
+            return rerun_as_root(args, err);
+        }
+        return match loss_report(&options) {
+            Ok(report) => emit(&options, &report, out, err),
+            Err(LossError::Skip(why)) => {
+                let _ = writeln!(err, "tcp_bench: {why}");
+                skip_code()
+            }
+            Err(LossError::Bench(error)) => {
+                let _ = writeln!(err, "tcp_bench: {error}");
+                1
+            }
+        };
+    }
     let measured = if options.stack == "own" {
         let (clients, servers, vlan) = options.own_pools;
         let pools = match Pools::counts(clients, servers, vlan) {
@@ -593,6 +875,57 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             return 1;
         }
     };
+    emit(&options, &report, out, err)
+}
+
+/// Whether a run that cannot happen here must fail: `CI=true` or
+/// `FPS_REQUIRE_NETEM=1`.
+fn skip_is_failure() -> bool {
+    std::env::var("CI").is_ok_and(|v| v == "true")
+        || std::env::var("FPS_REQUIRE_NETEM").is_ok_and(|v| v == "1")
+}
+
+/// The exit code of a run that could not happen: 3, or 1 where a skip fails.
+fn skip_code() -> i32 {
+    if skip_is_failure() {
+        1
+    } else {
+        3
+    }
+}
+
+/// Runs this command again as root through `sudo -n`, because the kernel loss
+/// workload needs network namespaces. The child prints the report.
+fn rerun_as_root(args: &[String], err: &mut dyn Write) -> i32 {
+    let runnable = std::env::var_os("FPS_TCP_BENCH_SUDO").is_none()
+        && std::process::Command::new("sudo")
+            .args(["-n", "true"])
+            .status()
+            .is_ok_and(|s| s.success());
+    let exe = std::env::current_exe();
+    let Some(exe) = exe.ok().filter(|_| runnable) else {
+        let _ = writeln!(
+            err,
+            "tcp_bench: the kernel loss workload needs root for network namespaces and tc, and sudo -n is not available, so it did not run"
+        );
+        return skip_code();
+    };
+    match std::process::Command::new("sudo")
+        .args(["-n", "env", "FPS_TCP_BENCH_SUDO=1"])
+        .arg(exe)
+        .args(args)
+        .status()
+    {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(error) => {
+            let _ = writeln!(err, "tcp_bench: sudo: {error}");
+            1
+        }
+    }
+}
+
+/// Prints the report and writes the document that `--out` names.
+fn emit(options: &Options, report: &BenchReport, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let _ = out.write_all(report.to_text().as_bytes());
     if let Some(path) = &options.out {
         if path.as_os_str() == "-" {
@@ -878,5 +1211,83 @@ mod tests {
         assert_eq!(run(&args(&["--help"]), &mut out, &mut err), 0);
         assert!(String::from_utf8_lossy(&out).contains("usage: tcp_bench"));
         assert_eq!(run(&args(&["--wat", "1"]), &mut out, &mut err), 2);
+    }
+
+    #[test]
+    fn loss_defaults_are_zero_point_one_and_one_percent_with_20_ms() {
+        let o = parse(&args(&["--workload", "loss"])).expect("parse");
+        assert!(o.selection.loss() && !o.selection.rate());
+        assert_eq!(o.loss_levels, vec![0, 1_000, 10_000]);
+        assert_eq!(o.link.delay_us, 20_000);
+        assert_eq!(o.link.rate_bps, 0);
+        assert_eq!(o.loss_transfers, 3);
+        // The workload all does not include loss.
+        assert!(!parse(&args(&[])).expect("parse").selection.loss());
+    }
+
+    #[test]
+    fn link_flags_reach_the_link_settings() {
+        let o = parse(&args(&[
+            "--workload",
+            "loss",
+            "--loss-levels",
+            "0,2.5",
+            "--link-delay-ms",
+            "50",
+            "--link-reorder",
+            "10",
+            "--link-rate-mbit",
+            "100",
+            "--link-queue-kib",
+            "128",
+            "--link-seed",
+            "9",
+            "--loss-kib",
+            "512",
+            "--loss-transfers",
+            "5",
+            "--loss-timeout-secs",
+            "30",
+        ]))
+        .expect("parse");
+        assert_eq!(o.loss_levels, vec![0, 25_000]);
+        assert_eq!(o.link.delay_us, 50_000);
+        assert_eq!(o.link.reorder_ppm, 100_000);
+        assert_eq!(o.link.rate_bps, 100_000_000);
+        assert_eq!(o.link.queue_bytes, 128 * 1024);
+        assert_eq!(o.link.seed, 9);
+        assert_eq!(o.loss.bytes, 512 * 1024);
+        assert_eq!(o.loss_transfers, 5);
+        assert_eq!(o.loss.timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn bad_link_input_is_reported() {
+        for bad_args in [
+            &["--loss-levels", "1,x"][..],
+            &["--loss-levels", "101"],
+            &["--link-delay-ms", "-1"],
+            &["--link-rate-mbit", "nan"],
+        ] {
+            assert!(
+                matches!(parse(&args(bad_args)), Err(UsageError::BadValue { .. })),
+                "{bad_args:?}"
+            );
+        }
+        // Reordering without a delay is not a link.
+        assert!(matches!(
+            parse(&args(&["--link-delay-ms", "0", "--link-reorder", "5"])),
+            Err(UsageError::BadLink(_))
+        ));
+    }
+
+    #[test]
+    fn the_peer_flag_runs_a_peer_and_not_the_bench() {
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        // An unknown role makes the peer fail at once, without a network.
+        let code = run(&args(&["--netns-peer", "nobody"]), &mut out, &mut err);
+        assert_eq!(code, 1);
+        assert!(out.is_empty());
     }
 }

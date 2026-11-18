@@ -10,7 +10,7 @@
 | Branch | `wp/TRN-22` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 6 plan steps) |
+| Progress | 70% (4 of 6 plan steps) |
 | Current holder | claude-9e6494, lease until 2026-11-18T03:55:16Z |
 | Last verified commit | none |
 
@@ -24,24 +24,24 @@ Add loss, delay, reordering, and a rate limit with a bounded queue to the in mem
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Read the code; design the lossy link
-- [ ] 2. Lossy link for smoltcp and own stacks with unit tests
-- [ ] 3. Netem namespace setup for the kernel stack
-- [ ] 4. Loss workload and tcp_bench command line
+- [x] 1. Read the code; design the lossy link
+- [x] 2. Lossy link for smoltcp and own stacks with unit tests
+- [x] 3. Netem namespace setup for the kernel stack
+- [x] 4. Loss workload and tcp_bench command line
 - [ ] 5. Run the sweep, commit results
 - [ ] 6. Log entry, checks, PR
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+Steps 1 to 4: impair.rs (model, netem argv), lossy.rs (own stack wrapper), smol.rs (impair option), netns.rs (kernel namespaces and peers), loss workload in workload.rs and cli.rs. `cargo test -p fps-tcp` passes, including tests/lossy.rs and the root test tests/netns.rs (rate scenario passes here, the netem scenarios skip: this sandbox kernel has no sch_netem).
 
 ## Remaining
 
-Everything.
+Step 5: run the sweep and commit results under engine/fps-tcp/results/. Step 6: log entry, README, checks, PR. Kernel rows at 20 ms and loss need a host with sch_netem.
 
 ## Next action
 
-Step 1: read engine/fps-tcp/src/{link,smol,workload,cli}.rs and fps-tcp-own link seam.
+Run tcp_bench --stack own and --stack smoltcp with --workload loss --label sandbox-2vcpu-trn22 --out, write host.txt, then the log entry.
 
 ## Blockers and open questions
 

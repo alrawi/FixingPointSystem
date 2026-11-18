@@ -40,6 +40,7 @@ use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr, IpEndpoint};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::clock::Clock;
+use crate::impair::{Framing, ImpairConfig, ImpairedLink};
 use crate::link::{LinkConfig, QueueDevice};
 use crate::stack::{StackStats, TcpStack};
 
@@ -90,6 +91,11 @@ pub struct SmolConfig {
     pub idle_poll_micros: i64,
     /// The seed of the initial sequence numbers.
     pub seed: u64,
+    /// Loss, delay, reordering, and a rate limit on the link (TRN-22), or
+    /// `None` for the lossless link. A pair with an impaired link needs a
+    /// short `idle_poll_micros`, because a frame that falls due must reach
+    /// its host without a session acting.
+    pub impair: Option<ImpairConfig>,
 }
 
 impl Default for SmolConfig {
@@ -104,6 +110,7 @@ impl Default for SmolConfig {
             ack_delay_micros: None,
             idle_poll_micros: 100_000,
             seed: 1,
+            impair: None,
         }
     }
 }
@@ -299,6 +306,32 @@ impl Host {
     }
 }
 
+/// Moves the frames that both devices transmitted into the impaired link and
+/// the frames that fell due out of it, and returns how many frames arrived.
+fn move_impaired(
+    link: &mut ImpairedLink,
+    now_micros: i64,
+    client: &mut QueueDevice,
+    server: &mut QueueDevice,
+) -> usize {
+    while let Some(frame) = client.take_tx() {
+        link.dirs[0].offer(now_micros, frame);
+    }
+    while let Some(frame) = server.take_tx() {
+        link.dirs[1].offer(now_micros, frame);
+    }
+    let mut moved = 0;
+    while let Some(frame) = link.dirs[0].pop_due(now_micros) {
+        server.push_rx(frame);
+        moved += 1;
+    }
+    while let Some(frame) = link.dirs[1].pop_due(now_micros) {
+        client.push_rx(frame);
+        moved += 1;
+    }
+    moved
+}
+
 /// Both hosts and the state that the driver keeps between passes.
 struct Net {
     hosts: [Host; 2],
@@ -311,6 +344,8 @@ struct Net {
     dirty: bool,
     last_pass_micros: i64,
     passes: u64,
+    /// The impaired link, which replaces the direct move of frames.
+    link: Option<ImpairedLink>,
 }
 
 impl Net {
@@ -332,6 +367,9 @@ impl Net {
             dirty: true,
             last_pass_micros: i64::MIN,
             passes: 0,
+            link: config
+                .impair
+                .map(|impair| ImpairedLink::new(impair, Framing::Ip)),
         }
     }
 
@@ -347,8 +385,12 @@ impl Net {
             let [client, server] = &mut self.hosts;
             client.step(now, &self.params, self.time_wait);
             server.step(now, &self.params, self.time_wait);
-            let moved =
-                client.dev.deliver_to(&mut server.dev) + server.dev.deliver_to(&mut client.dev);
+            let moved = match &mut self.link {
+                None => {
+                    client.dev.deliver_to(&mut server.dev) + server.dev.deliver_to(&mut client.dev)
+                }
+                Some(link) => move_impaired(link, now_micros, &mut client.dev, &mut server.dev),
+            };
             if moved == 0 {
                 break;
             }
@@ -361,7 +403,13 @@ impl Net {
     }
 
     fn due(&self) -> bool {
+        let now = self.clock.now_micros();
         self.dirty
+            || self
+                .link
+                .as_ref()
+                .and_then(ImpairedLink::next_release)
+                .is_some_and(|at| at <= now)
             || self
                 .clock
                 .now_micros()
@@ -448,7 +496,14 @@ fn describe(config: &SmolConfig) -> Vec<String> {
     };
     vec![
         format!(
-            "the client host and the server host are two smoltcp interfaces in one process, joined by an in memory IP link without delay or loss (mtu {}, software checksums {}), so there is no kernel socket and no descriptor",
+            "the client host and the server host are two smoltcp interfaces in one process, joined by an in memory IP link {} (mtu {}, software checksums {}), so there is no kernel socket and no descriptor",
+            config.impair.map_or_else(
+                || "without delay or loss".to_string(),
+                |impair| format!(
+                    "that is impaired ({}); retransmissions are counted at the link as data segments that start below the highest sequence number sent before",
+                    impair.describe()
+                ),
+            ),
             config.link.mtu,
             if config.link.checksums { "on" } else { "off" },
         ),
@@ -550,11 +605,19 @@ impl TcpStack for SmolStack {
 
     fn stats(&self) -> StackStats {
         let net = self.shared.lock();
+        let link = net
+            .link
+            .as_ref()
+            .map(ImpairedLink::stats)
+            .unwrap_or_default();
         StackStats {
             sockets_open: net.hosts[CLIENT_HOST].open + net.hosts[SERVER_HOST].open,
             pump_passes: net.passes,
             frames: net.hosts[CLIENT_HOST].dev.frames_sent()
                 + net.hosts[SERVER_HOST].dev.frames_sent(),
+            retransmits: link.retransmits,
+            link_lost: link.lost,
+            link_queue_dropped: link.queue_dropped,
         }
     }
 }

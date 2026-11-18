@@ -515,6 +515,183 @@ pub async fn throughput<S: TcpStack>(
     })
 }
 
+/// Settings of the loss workload, which moves one transfer over one session.
+#[derive(Clone, Debug)]
+pub struct LossConfig {
+    /// The bytes that the client sends.
+    pub bytes: u64,
+    /// The size of one read or write in bytes.
+    pub chunk: usize,
+    /// The time that a transfer may take, handshake included, before it
+    /// counts as not completed.
+    pub timeout: Duration,
+    /// The server port.
+    pub port: u16,
+}
+
+impl Default for LossConfig {
+    fn default() -> Self {
+        Self {
+            bytes: 4 * 1024 * 1024,
+            chunk: 16 * 1024,
+            timeout: Duration::from_secs(60),
+            port: 9100,
+        }
+    }
+}
+
+/// The outcome of one transfer of the loss workload.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LossRun {
+    /// Whether the server confirmed every byte before the timeout.
+    pub completed: bool,
+    /// The bytes that the server confirmed, which is the whole transfer when
+    /// it completed and 0 otherwise.
+    pub confirmed_bytes: u64,
+    /// The time from the first write to the confirmation of the server when
+    /// the transfer completed, and the time until the give up otherwise.
+    pub elapsed: Duration,
+    /// Data segments that the sender sent again.
+    pub retransmits: u64,
+    /// Frames that the link lost at random, or 0 where the link is the
+    /// network of the host and the harness cannot see it.
+    pub link_lost: u64,
+    /// Frames that the bounded queue of the link dropped, with the same
+    /// limit as `link_lost`.
+    pub link_queue_dropped: u64,
+    /// Why the transfer failed, when it did.
+    pub failure: Option<String>,
+}
+
+impl LossRun {
+    /// Returns the goodput in Mbit/s: the confirmed bytes over the elapsed
+    /// time, and 0 for a transfer that did not complete.
+    pub fn goodput_mbit_per_s(&self) -> f64 {
+        let secs = self.elapsed.as_secs_f64();
+        if self.completed && secs > 0.0 {
+            self.confirmed_bytes as f64 * 8.0 / 1e6 / secs
+        } else {
+            0.0
+        }
+    }
+}
+
+/// The transfers of one loss level.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LossLevel {
+    /// The loss probability of the link in parts per million.
+    pub loss_ppm: u32,
+    /// The transfers, in the order that they ran.
+    pub runs: Vec<LossRun>,
+}
+
+impl LossLevel {
+    /// Returns the share of transfers that completed.
+    pub fn completed_ratio(&self) -> f64 {
+        if self.runs.is_empty() {
+            return 0.0;
+        }
+        self.runs.iter().filter(|r| r.completed).count() as f64 / self.runs.len() as f64
+    }
+
+    /// Returns the mean goodput over all transfers, where a transfer that
+    /// did not complete counts as 0.
+    pub fn mean_goodput_mbit_per_s(&self) -> f64 {
+        mean(self.runs.iter().map(LossRun::goodput_mbit_per_s))
+    }
+
+    /// Returns the mean retransmissions per transfer.
+    pub fn mean_retransmits(&self) -> f64 {
+        mean(self.runs.iter().map(|r| r.retransmits as f64))
+    }
+
+    /// Returns the mean time to complete over the transfers that completed,
+    /// or `None` when none did.
+    pub fn mean_complete_secs(&self) -> Option<f64> {
+        let done: Vec<f64> = self
+            .runs
+            .iter()
+            .filter(|r| r.completed)
+            .map(|r| r.elapsed.as_secs_f64())
+            .collect();
+        (!done.is_empty()).then(|| mean(done.into_iter()))
+    }
+}
+
+fn mean(values: impl Iterator<Item = f64>) -> f64 {
+    let (sum, count) = values.fold((0.0, 0u32), |(s, n), v| (s + v, n + 1));
+    if count == 0 {
+        0.0
+    } else {
+        sum / f64::from(count)
+    }
+}
+
+/// The result of the loss workload for one stack.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LossReport {
+    /// The link settings, as one sentence, without the loss.
+    pub link: String,
+    /// The bytes of every transfer.
+    pub bytes_per_transfer: u64,
+    /// One entry per loss level, in the order of the command line.
+    pub levels: Vec<LossLevel>,
+}
+
+/// Runs one transfer of the loss workload on a stack whose link the caller
+/// has set up. The client sends `config.bytes` and closes its write side, the
+/// server counts them and answers with the count, and the transfer is complete
+/// when the client has read that answer. A failure is part of the result, not
+/// an error, because a stack that cannot finish at some loss is a finding.
+pub async fn loss_transfer<S: TcpStack>(stack: &S, config: &LossConfig) -> LossRun {
+    let mut run = LossRun::default();
+    if let Err(error) = stack.listen(config.port) {
+        run.failure = Some(format!("listen: {error}"));
+        return run;
+    }
+    let driver = spawn_driver(stack);
+    let (server_stack, client_stack) = (stack.clone(), stack.clone());
+    let (port, bytes, chunk) = (config.port, config.bytes, config.chunk);
+    let server = tokio::spawn(async move {
+        let mut session = server_stack.accept(port).await?;
+        let received = drain(&mut session, chunk).await?;
+        session.write_all(&received.to_be_bytes()).await?;
+        session.shutdown().await?;
+        Ok::<u64, io::Error>(received)
+    });
+    let client = tokio::spawn(async move {
+        let mut session = client_stack.connect(port).await?;
+        let first_write = Instant::now();
+        send_bulk(&mut session, bytes, chunk).await?;
+        let mut answer = [0u8; 8];
+        session.read_exact(&mut answer).await?;
+        Ok::<(u64, Duration), io::Error>((u64::from_be_bytes(answer), first_write.elapsed()))
+    });
+    let started = Instant::now();
+    let outcome = tokio::time::timeout(config.timeout, client).await;
+    run.elapsed = started.elapsed();
+    let stats = stack.stats();
+    driver.abort();
+    server.abort();
+    run.retransmits = stats.retransmits;
+    run.link_lost = stats.link_lost;
+    run.link_queue_dropped = stats.link_queue_dropped;
+    match outcome {
+        Err(_) => run.failure = Some(format!("not complete after {:?}", config.timeout)),
+        Ok(Err(error)) => run.failure = Some(format!("client task: {error}")),
+        Ok(Ok(Err(error))) => run.failure = Some(format!("{error}")),
+        Ok(Ok(Ok((confirmed, elapsed)))) if confirmed == bytes => {
+            run.completed = true;
+            run.confirmed_bytes = confirmed;
+            run.elapsed = elapsed;
+        }
+        Ok(Ok(Ok((confirmed, _)))) => {
+            run.failure = Some(format!("the server counted {confirmed} of {bytes} bytes"));
+        }
+    }
+    run
+}
+
 /// Settings of the socket scaling workload.
 #[derive(Clone, Debug)]
 pub struct ScaleConfig {

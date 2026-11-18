@@ -238,6 +238,7 @@ impl TcpStack for KernelStack {
             sockets_open: self.shared.open.load(Ordering::Relaxed),
             pump_passes: 0,
             frames: 0,
+            ..StackStats::default()
         }
     }
 }

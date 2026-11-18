@@ -1444,6 +1444,7 @@ dependencies = [
 name = "fps-tcp"
 version = "0.0.1"
 dependencies = [
+ "fps-backend-afxdp",
  "fps-io",
  "fps-tcp-own",
  "smoltcp",
