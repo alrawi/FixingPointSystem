@@ -61,7 +61,7 @@ done
 
 work=$(mktemp -d)
 capture_pid=
-# shellcheck disable=SC2329 # runs through the EXIT trap
+# shellcheck disable=SC2317,SC2329 # runs through the EXIT trap (SC2317 on older shellcheck, SC2329 on newer)
 cleanup() {
   if [[ -n $capture_pid ]]; then
     kill "$capture_pid" 2>/dev/null || true
