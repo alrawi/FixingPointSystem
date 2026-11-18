@@ -4,7 +4,7 @@
 
 Gate 3 (v1 release). One 16 vCPU agent meets the tier T1 targets on KVM, multi agent runs aggregate correctly, every image format boots, and the web UI passes its end to end suite.
 
-This page lists 36 work packages. Packages marked critical path gate the phase.
+This page lists 37 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -16,12 +16,13 @@ flowchart LR
   TRN_11["TRN-11<br/>AF_XDP packet input and output"]
   TRN_12["TRN-12<br/>User space TCP over AF_XDP, end to end"]
   TRN_21["TRN-21<br/>The own TCP stack in a crate of its own"]
+  TRN_32["TRN-32<br/>Host pools and Ethernet in the own stack"]
   TRN_22["TRN-22<br/>A lossy link and loss workloads for the TCP harness"]
-  TRN_23["TRN-23<br/>Loss recovery in the own stack"]
+  TRN_23["TRN-23<br/>Loss recovery and NewReno in the own stack"]
   TRN_24["TRN-24<br/>TCP options for long fat paths in the own stack"]
-  TRN_25["TRN-25<br/>Congestion control in the own stack"]
+  TRN_25["TRN-25<br/>CUBIC in the own stack"]
   TRN_26["TRN-26<br/>Interop of the own stack with smoltcp and the kernel"]
-  TRN_27["TRN-27<br/>The own stack on AF_XDP queues"]
+  TRN_27["TRN-27<br/>The user space datapath on AF_XDP queues"]
   TRN_28["TRN-28<br/>OS profile options for the own stack"]
   TRN_29["TRN-29<br/>UDP over FrameIo"]
   TRN_30["TRN-30<br/>IPv6 in the own stack"]
@@ -56,25 +57,35 @@ flowchart LR
   TRN_28 --> TRN_12
   TRN_29 --> TRN_12
   TRN_30 --> TRN_12
-  TRN_31 --> TRN_12
   TRN_10 --> TRN_21
+  TRN_21 --> TRN_32
+  HST_03 --> TRN_32
   TRN_21 --> TRN_22
   TRN_22 --> TRN_23
+  TRN_32 --> TRN_23
   TRN_23 --> TRN_24
   TRN_24 --> TRN_25
   TRN_25 --> TRN_26
+  TRN_27 --> TRN_26
+  TRN_32 --> TRN_26
   TRN_21 --> TRN_27
+  TRN_32 --> TRN_27
   TRN_11 --> TRN_27
   TRN_24 --> TRN_28
   TRN_21 --> TRN_29
+  TRN_32 --> TRN_29
   TRN_11 --> TRN_29
   TRN_26 --> TRN_30
   TRN_29 --> TRN_30
+  TRN_12 --> TRN_31
   TRN_23 --> TRN_31
   TRN_24 --> TRN_31
   TRN_25 --> TRN_31
   TRN_26 --> TRN_31
   TRN_27 --> TRN_31
+  TRN_28 --> TRN_31
+  TRN_29 --> TRN_31
+  TRN_30 --> TRN_31
   AGT_24 --> TRN_31
   CTL_54 --> TRN_31
   AGT_22 --> AGT_24
@@ -85,11 +96,11 @@ flowchart LR
   TRN_11 --> TRN_14
   TRN_14 --> QA_06
   AGT_22 --> QA_06
-  TRN_12 --> QA_06
+  TRN_31 --> QA_06
   QA_06 --> QA_07
   CTL_16 --> QA_07
   UI_07 --> QA_07
-  TRN_12 --> QA_07
+  TRN_31 --> QA_07
   HST_03 --> QA_07
   TRN_17 --> TRN_20
   TRN_17 --> TRN_18
@@ -99,7 +110,7 @@ flowchart LR
   TRN_14 --> AGT_22
   CON_32 --> AGT_22
   HST_04 --> AGT_23
-  TRN_12 --> AGT_23
+  TRN_31 --> AGT_23
   CTL_16 --> CTL_51
   CTL_51 --> CTL_52
   CON_32 --> CTL_53
@@ -115,18 +126,19 @@ flowchart LR
 | [SPK-05](#spk-05-spike-smoltcp-behind-our-own-flow-table) | Spike smoltcp behind our own flow table | S | TRN-10 |  |
 | [TRN-10](#trn-10-user-space-tcp-stack-decision) | User space TCP stack decision | S | TRN-01, TRN-17, TRN-18, TRN-20 |  |
 | [TRN-11](#trn-11-af_xdp-packet-input-and-output) | AF_XDP packet input and output | M | TRN-01 |  |
-| [TRN-12](#trn-12-user-space-tcp-over-af_xdp-end-to-end) | User space TCP over AF_XDP, end to end | M | TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-31 |  |
+| [TRN-12](#trn-12-user-space-tcp-over-af_xdp-end-to-end) | User space TCP over AF_XDP, end to end | M | TRN-26, TRN-27, TRN-28, TRN-29, TRN-30 |  |
 | [TRN-21](#trn-21-the-own-tcp-stack-in-a-crate-of-its-own) | The own TCP stack in a crate of its own | S | TRN-10 |  |
+| [TRN-32](#trn-32-host-pools-and-ethernet-in-the-own-stack) | Host pools and Ethernet in the own stack | M | TRN-21, HST-03 |  |
 | [TRN-22](#trn-22-a-lossy-link-and-loss-workloads-for-the-tcp-harness) | A lossy link and loss workloads for the TCP harness | M | TRN-21 |  |
-| [TRN-23](#trn-23-loss-recovery-in-the-own-stack) | Loss recovery in the own stack | M | TRN-22 |  |
+| [TRN-23](#trn-23-loss-recovery-and-newreno-in-the-own-stack) | Loss recovery and NewReno in the own stack | M | TRN-22, TRN-32 |  |
 | [TRN-24](#trn-24-tcp-options-for-long-fat-paths-in-the-own-stack) | TCP options for long fat paths in the own stack | M | TRN-23 |  |
-| [TRN-25](#trn-25-congestion-control-in-the-own-stack) | Congestion control in the own stack | M | TRN-24 |  |
-| [TRN-26](#trn-26-interop-of-the-own-stack-with-smoltcp-and-the-kernel) | Interop of the own stack with smoltcp and the kernel | M | TRN-25 |  |
-| [TRN-27](#trn-27-the-own-stack-on-af_xdp-queues) | The own stack on AF_XDP queues | M | TRN-21, TRN-11 |  |
+| [TRN-25](#trn-25-cubic-in-the-own-stack) | CUBIC in the own stack | M | TRN-24 |  |
+| [TRN-26](#trn-26-interop-of-the-own-stack-with-smoltcp-and-the-kernel) | Interop of the own stack with smoltcp and the kernel | M | TRN-25, TRN-27, TRN-32 |  |
+| [TRN-27](#trn-27-the-user-space-datapath-on-af_xdp-queues) | The user space datapath on AF_XDP queues | M | TRN-21, TRN-32, TRN-11 |  |
 | [TRN-28](#trn-28-os-profile-options-for-the-own-stack) | OS profile options for the own stack | S | TRN-24 |  |
-| [TRN-29](#trn-29-udp-over-frameio) | UDP over FrameIo | M | TRN-21, TRN-11 |  |
+| [TRN-29](#trn-29-udp-over-frameio) | UDP over FrameIo | M | TRN-21, TRN-32, TRN-11 |  |
 | [TRN-30](#trn-30-ipv6-in-the-own-stack) | IPv6 in the own stack | M | TRN-26, TRN-29 |  |
-| [TRN-31](#trn-31-the-af_xdp-transport-becomes-available) | The AF_XDP transport becomes available | S | TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, AGT-24, CTL-54 |  |
+| [TRN-31](#trn-31-the-af_xdp-transport-becomes-available) | The AF_XDP transport becomes available | S | TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, AGT-24, CTL-54 |  |
 | [AGT-24](#agt-24-the-agent-starts-the-selected-backend) | The agent starts the selected backend | S | AGT-22, TRN-27 |  |
 | [CTL-54](#ctl-54-the-orchestrator-inventory-uses-the-selected-backend) | The orchestrator inventory uses the selected backend | S | CTL-53 |  |
 | [HST-03](#hst-03-arp-and-nd-for-user-space-backends) | ARP and ND for user space backends | M | TRN-11 |  |
@@ -134,15 +146,15 @@ flowchart LR
 | [TRN-14](#trn-14-backend-selection-at-boot) | Backend selection at boot | S | TRN-11, AGT-03 |  |
 | [CTL-16](#ctl-16-multi-agent-runs) | Multi agent runs | M | CTL-07, CTL-08, CTL-12 |  |
 | [UI-07](#ui-07-web-ui-end-to-end-suite) | Web UI end to end suite | M | UI-03, UI-04, UI-05, UI-06, CTL-08 |  |
-| [QA-06](#qa-06-benchmark-suite-per-hypervisor) | Benchmark suite per hypervisor | M | TRN-14, QA-03, AGT-22, TRN-12 |  |
-| [QA-07](#qa-07-gate-3-acceptance-suite) | Gate 3 acceptance suite | M | QA-06, CTL-16, UI-07, IMG-03, TRN-12, HST-03 | yes |
+| [QA-06](#qa-06-benchmark-suite-per-hypervisor) | Benchmark suite per hypervisor | M | TRN-14, QA-03, AGT-22, TRN-31 |  |
+| [QA-07](#qa-07-gate-3-acceptance-suite) | Gate 3 acceptance suite | M | QA-06, CTL-16, UI-07, IMG-03, TRN-31, HST-03 | yes |
 | [TRN-17](#trn-17-tcp-stack-bench-harness-with-a-kernel-reference-stack) | TCP stack bench harness with a kernel reference stack | M | TRN-01 |  |
 | [TRN-20](#trn-20-smoltcp-on-the-tcp-stack-bench-harness) | smoltcp on the TCP stack bench harness | S | TRN-17 |  |
 | [TRN-18](#trn-18-a-minimal-own-tcp-stack-on-the-bench-harness) | A minimal own TCP stack on the bench harness | M | TRN-17 |  |
 | [TRN-19](#trn-19-af_xdp-rate-between-two-kvm-guests) | AF_XDP rate between two KVM guests | S | TRN-11 |  |
 | [HST-04](#hst-04-dhcp-for-user-space-backends) | DHCP for user space backends | S | HST-03, CON-34 |  |
 | [AGT-22](#agt-22-the-agent-selects-and-reports-its-backend) | The agent selects and reports its backend | S | TRN-14, CON-32 |  |
-| [AGT-23](#agt-23-the-agent-leases-the-addresses-of-a-dhcp-pool) | The agent leases the addresses of a DHCP pool | M | HST-04, TRN-12 |  |
+| [AGT-23](#agt-23-the-agent-leases-the-addresses-of-a-dhcp-pool) | The agent leases the addresses of a DHCP pool | M | HST-04, TRN-31 |  |
 | [CON-32](#con-32-kernel-release-selected-backend-and-xdp-mode-in-the-agent-capabilities) | Kernel release, selected backend, and XDP mode in the agent capabilities | S | none |  |
 | [CTL-51](#ctl-51-clock-offsets-of-agents-from-heartbeats) | Clock offsets of agents from heartbeats | S | CTL-16 |  |
 | [CTL-52](#ctl-52-multi-agent-runs-through-the-run-orchestrator) | Multi agent runs through the run orchestrator | M | CTL-51 |  |
@@ -212,7 +224,7 @@ Acceptance.
 
 Phase 3 · size M · workstream QA
 
-- **Depends on.** TRN-14, QA-03, AGT-22, TRN-12
+- **Depends on.** TRN-14, QA-03, AGT-22, TRN-31
 - **Paths.** `bench/`
 
 Run the standard benchmark set on KVM and publish the results. Other hypervisors follow v1.
@@ -229,7 +241,7 @@ Acceptance.
 
 Phase 3 · size M · workstream QA · critical path
 
-- **Depends on.** QA-06, CTL-16, UI-07, IMG-03, TRN-12, HST-03
+- **Depends on.** QA-06, CTL-16, UI-07, IMG-03, TRN-31, HST-03
 - **Paths.** `tests/gates/gate3/`
 - **Owner action.** The owner names the reference KVM host, which gives one guest 16 vCPUs without overcommit, and signs off Gate 3. On 2026-11-17 the owner kept the 16 vCPU tier and chose to find a larger host later, because fat-nuc has 8 vCPUs.
 
@@ -284,7 +296,7 @@ Acceptance.
 
 Phase 3 · size M · workstream TRN
 
-- **Depends on.** TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-31
+- **Depends on.** TRN-26, TRN-27, TRN-28, TRN-29, TRN-30
 - **Paths.** `engine/fps-backend-afxdp/`
 
 The closing package of the AF_XDP TCP path that decision record 0014 split into TRN-21 to TRN-31 and SPK-05. It runs the http1 module through the agent on the AF_XDP backend with the own stack and fixes what the end to end run finds.
@@ -314,6 +326,23 @@ Acceptance.
 
 - [ ] cargo tree -p fps-tcp-own shows no smoltcp, and the tests and the tcp_bench results of the own stack are unchanged within noise.
 
+### TRN-32 Host pools and Ethernet in the own stack
+
+Phase 3 · size M · workstream TRN
+
+- **Depends on.** TRN-21, HST-03
+- **Paths.** `engine/fps-tcp-own/`
+
+The own stack is two fixed hosts with one peer, a table keyed by the two ports, and bare IPv4 frames. Give it a table keyed by the 4-tuple, Ethernet and VLAN framing with mac_base + i, and neighbors from HST-03, so it serves the host pools of a test configuration.
+
+Deliverables.
+
+- The 4-tuple table, Ethernet and VLAN framing, and neighbor lookup, with tests.
+
+Acceptance.
+
+- [ ] The 1,000,000 socket row of tcp_bench still gives at least 50,000 probe sessions per second with a pool of 20,000 addresses.
+
 ### TRN-22 A lossy link and loss workloads for the TCP harness
 
 Phase 3 · size M · workstream TRN
@@ -321,7 +350,7 @@ Phase 3 · size M · workstream TRN
 - **Depends on.** TRN-21
 - **Paths.** `engine/fps-tcp/`
 
-Add loss, delay, and reordering to the in memory link of the harness, a netem counterpart for the kernel reference stack in a network namespace, and a loss workload in tcp_bench, so every later child measures against the kernel over the same link. If sch_netem is missing on the hosted runner, report it in the Shared page notes and do not install packages outside tools/ci/apt-install.sh.
+Add loss, delay, and reordering to the in memory link of the harness, a netem counterpart for the kernel reference stack in a network namespace, and a loss workload in tcp_bench, so every later child measures against the kernel over the same link. If sch_netem is missing on the hosted runner, report it in the Shared page notes and do not install packages outside tools/ci/apt-install.sh. The link also has a rate limit with a bounded queue, and the kernel side a matching rate, because TRN-24 and TRN-25 measure against a bottleneck.
 
 Deliverables.
 
@@ -331,18 +360,18 @@ Acceptance.
 
 - [ ] tcp_bench reports goodput and completion for the kernel stack at 0, 0.1, and 1 percent loss with 20 ms of delay, and for the own and smoltcp stacks over the in memory link with the same settings.
 
-### TRN-23 Loss recovery in the own stack
+### TRN-23 Loss recovery and NewReno in the own stack
 
 Phase 3 · size M · workstream TRN
 
-- **Depends on.** TRN-22
-- **Paths.** `engine/fps-tcp-own/`
+- **Depends on.** TRN-22, TRN-32
+- **Paths.** `engine/fps-tcp-own/`, `engine/fps-tcp/`
 
-An RTT estimator with RFC 6298 retransmission timeouts, fast retransmit on three duplicate acknowledgments, and an out of order queue, in the state machine of the own stack.
+An RTT estimator with RFC 6298 retransmission timeouts, fast retransmit on three duplicate acknowledgments, an out of order queue, and NewReno (slow start, congestion avoidance, and fast recovery), because fast retransmit and later SACK recovery are defined on the congestion window.
 
 Deliverables.
 
-- The three mechanisms with unit tests and loss workload results committed.
+- The four mechanisms with unit tests and loss workload results committed.
 
 Acceptance.
 
@@ -353,7 +382,7 @@ Acceptance.
 Phase 3 · size M · workstream TRN
 
 - **Depends on.** TRN-23
-- **Paths.** `engine/fps-tcp-own/`
+- **Paths.** `engine/fps-tcp-own/`, `engine/fps-tcp/`
 
 Window scaling, timestamps, selective acknowledgment, and delayed acknowledgment in the own stack. It edits the same state machine as TRN-23 and TRN-25, so these three run in sequence.
 
@@ -365,18 +394,18 @@ Acceptance.
 
 - [ ] At 0.1 percent loss and 50 ms of delay with a bandwidth delay product above 64 KB, the goodput of the own stack is at least 80 percent of the kernel stack.
 
-### TRN-25 Congestion control in the own stack
+### TRN-25 CUBIC in the own stack
 
 Phase 3 · size M · workstream TRN
 
 - **Depends on.** TRN-24
-- **Paths.** `engine/fps-tcp-own/`
+- **Paths.** `engine/fps-tcp-own/`, `engine/fps-tcp/`
 
-NewReno and then CUBIC for the own stack, ported from smoltcp, which 0BSD allows. The code records the smoltcp version and the source file of every ported part.
+CUBIC for the own stack, next to the NewReno of TRN-23, ported from smoltcp, which 0BSD allows. The code records the smoltcp version and the source file of every ported part.
 
 Deliverables.
 
-- NewReno and CUBIC behind a choice in the stack configuration, with tests and results committed.
+- CUBIC behind a choice in the stack configuration, with tests and results committed.
 
 Acceptance.
 
@@ -386,7 +415,7 @@ Acceptance.
 
 Phase 3 · size M · workstream TRN
 
-- **Depends on.** TRN-25
+- **Depends on.** TRN-25, TRN-27, TRN-32
 - **Paths.** `engine/fps-tcp/`
 
 Conformance and interop tests in the harness: the own stack against smoltcp over the lossy link in memory, and against the kernel stack over a veth pair with netem, in both directions.
@@ -399,22 +428,22 @@ Acceptance.
 
 - [ ] Every pairing completes the loss workload at 1 percent loss in both directions, and the interop tests pass in CI.
 
-### TRN-27 The own stack on AF_XDP queues
+### TRN-27 The user space datapath on AF_XDP queues
 
 Phase 3 · size M · workstream TRN
 
-- **Depends on.** TRN-21, TRN-11
-- **Paths.** `engine/fps-backend-afxdp/`
+- **Depends on.** TRN-21, TRN-32, TRN-11
+- **Paths.** `engine/fps-datapath/`, `engine/fps-backend-afxdp/`
 
-Run the own stack on the AF_XDP queues of TRN-11 through OwnStack::with_links and FrameIo, as the first real evidence for tier T1. It runs early, before the loss work finishes, and does not set TRANSPORT_AVAILABLE.
+The production datapath: a crate engine/fps-datapath with the loop per queue that splits ARP, ND, DHCP, TCP, and UDP frames between fps-hosts and the user space stacks, and offers connect and listen as fps-backend-kernel does. It cannot live in fps-backend-afxdp, because fps-hosts and the stacks depend on that crate for FrameIo. It also lets a forced --backend af_xdp run work while TRANSPORT_AVAILABLE is false, which select_backend refuses with NoTransport today, so TRN-12 and AGT-24 can run AF_XDP on purpose before the flip. It is the first real evidence for tier T1.
 
 Deliverables.
 
-- The own stack over AF_XDP on a veth pair in CI, with sessions per second and sockets held reported.
+- engine/fps-datapath with the own stack on AF_XDP queues over a veth pair in CI, sessions per second and sockets held reported, and a forced AF_XDP selection that works before the flip.
 
 Acceptance.
 
-- [ ] A test over a veth pair in CI completes sessions with the own stack on AF_XDP, and the results are committed for the CI runner.
+- [ ] A test over a veth pair in CI completes sessions through the datapath with a forced AF_XDP backend, and the results are committed for the CI runner.
 
 ### TRN-28 OS profile options for the own stack
 
@@ -437,7 +466,7 @@ Acceptance.
 
 Phase 3 · size M · workstream TRN
 
-- **Depends on.** TRN-21, TRN-11
+- **Depends on.** TRN-21, TRN-32, TRN-11
 - **Paths.** `engine/fps-udp-own/`
 
 DatagramIo over FrameIo for the AF_XDP backend, so the UDP modules (dns, ntp, sip_rtp) run on it. The own stack covers only IPv4 TCP. Leaving UDP out of v1 is a scope decision for the owner.
@@ -471,7 +500,7 @@ Acceptance.
 
 Phase 3 · size S · workstream TRN
 
-- **Depends on.** TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, AGT-24, CTL-54
+- **Depends on.** TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, AGT-24, CTL-54
 - **Paths.** `engine/fps-backend-afxdp/`
 
 Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with native XDP, and a stack without congestion control must not become the default. AGT-24 and CTL-54 prepare the agent and the controller behind the flag first.
@@ -479,6 +508,7 @@ Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP a
 Deliverables.
 
 - The flip, with a test that the selection picks AF_XDP on a fake host with native XDP.
+- Before the flip, every harness, gate, and realism job that tests the kernel backend passes --backend kernel, because veth and virtio_net count as native XDP and the flip would otherwise move them all to the own stack at once. AF_XDP runs are added on purpose. The coordinator makes the workflow changes in the same pull request.
 
 Acceptance.
 
@@ -664,7 +694,7 @@ Acceptance.
 
 Phase 3 · size M · workstream AGT
 
-- **Depends on.** HST-04, TRN-12
+- **Depends on.** HST-04, TRN-31
 - **Paths.** `engine/fps-agent/`
 
 Build a DHCP host pool at Prepare from the leases of HST-04, and filter a DHCP port by the leased addresses. The steps are in the Shared page notes of the HST-04 log entry (2026-11-17T0400).
