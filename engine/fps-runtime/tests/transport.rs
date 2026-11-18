@@ -64,7 +64,7 @@ impl Transport for FakeNet {
         Box::pin(async move {
             self.connects.lock().unwrap().push((source, destination));
             let listener = self.listeners.lock().unwrap().get(&destination).cloned();
-            let listener = listener.ok_or_else(|| io::ErrorKind::ConnectionRefused)?;
+            let listener = listener.ok_or(io::ErrorKind::ConnectionRefused)?;
             let (client, server) = duplex(64 * 1024);
             let client_addr =
                 SocketAddr::new(source, self.next_port.fetch_add(1, Ordering::Relaxed));

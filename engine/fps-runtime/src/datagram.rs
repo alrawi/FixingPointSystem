@@ -197,9 +197,11 @@ impl DatagramPorts {
             }
             match self.inner.transport.listen_datagram(&[addr]) {
                 Ok(listener) => {
-                    let local = listener.local_addrs().first().copied().ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::Other, "the transport bound no address")
-                    })?;
+                    let local = listener
+                        .local_addrs()
+                        .first()
+                        .copied()
+                        .ok_or_else(|| io::Error::other("the transport bound no address"))?;
                     let port = Rc::new(Port {
                         local,
                         gauge: Arc::default(),
