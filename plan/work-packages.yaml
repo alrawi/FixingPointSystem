@@ -2350,7 +2350,7 @@ work_packages:
     phase: 3
     workstream: TRN
     size: S
-    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, CTL-54]
+    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, CTL-54]
     paths: [engine/fps-backend-afxdp/]
     summary: >-
       Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with
@@ -2429,6 +2429,24 @@ work_packages:
       - The trait, the kernel implementation, and the workers moved onto it, with the existing runtime tests unchanged.
     acceptance:
       - Every runtime and agent test passes on the kernel backend through the trait, and a test runs a worker over a fake Transport in memory.
+
+  - id: AGT-26
+    title: The agent resolves next hops on the datapath
+    phase: 3
+    workstream: AGT
+    size: S
+    depends_on: [AGT-25, TRN-35]
+    paths: [engine/fps-agent/]
+    summary: >-
+      TRN-35 added a neighbor cache to the datapath behind DatapathConfig::neighbors, which the agent leaves off, so
+      an agent run still reads every peer from its pools. Turn it on with NeighborConfig::default when a host pool of
+      the plan carries a gateway, and set OwnConfig::resolve_next_hop for the same sides. DHCP pools take their router
+      from the lease (LeaseTable::router_of) once the DHCP hook of the datapath is wired, which this package records
+      as a gap if it is not.
+    deliverables:
+      - The agent wiring with tests on fake hosts.
+    acceptance:
+      - A forced AF_XDP run through the agent reaches a kernel peer behind a namespace router with no neighbor entry configured, in CI.
 
   - id: AGT-25
     title: The agent runs its workers on the datapath

@@ -115,6 +115,11 @@ jobs:
         env:
           FPS_REQUIRE_AFXDP: "1"
           FPS_DATAPATH_RESULTS: ${{ runner.temp }}/datapath
+      - name: Next hop resolution behind a router
+        run: cargo test -p fps-datapath --test router -- --nocapture
+        env:
+          FPS_REQUIRE_AFXDP: "1"
+          FPS_ROUTER_RESULTS: ${{ runner.temp }}/datapath
       - name: AF_XDP backend of the agent
         run: cargo test -p fps-agent --test afxdp_veth -- --nocapture
         env:
