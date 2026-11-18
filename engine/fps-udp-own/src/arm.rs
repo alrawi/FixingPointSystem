@@ -5,12 +5,14 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
-use fps_tcp_own::net::{decode_header, encode_header, Station, ETHERTYPE_IPV4, MIN_FRAME_LEN};
+use fps_tcp_own::net::{
+    decode_header, encode_header, Station, ETHERTYPE_IPV4, ETHERTYPE_IPV6, MIN_FRAME_LEN,
+};
 
 use crate::lock;
 use crate::session::{AcceptQueue, Push, SessionQueue, UdpSession};
@@ -133,22 +135,19 @@ fn bump(c: &AtomicU64) {
 /// The identity of a session: the local and the peer address and port.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Key {
-    pub(crate) local: u32,
+    pub(crate) local: IpAddr,
     pub(crate) local_port: u16,
-    pub(crate) peer: u32,
+    pub(crate) peer: IpAddr,
     pub(crate) peer_port: u16,
 }
 
 impl Key {
     pub(crate) fn local_addr(self) -> SocketAddr {
-        SocketAddr::V4(SocketAddrV4::new(
-            Ipv4Addr::from(self.local),
-            self.local_port,
-        ))
+        SocketAddr::new(self.local, self.local_port)
     }
 
     pub(crate) fn peer_addr(self) -> SocketAddr {
-        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(self.peer), self.peer_port))
+        SocketAddr::new(self.peer, self.peer_port)
     }
 }
 
@@ -157,7 +156,7 @@ struct Tables {
     sessions: HashMap<Key, Arc<SessionQueue>>,
     listeners: HashMap<u16, Arc<AcceptQueue>>,
     /// The next ephemeral port to try, per local host.
-    cursors: HashMap<u32, u16>,
+    cursors: HashMap<IpAddr, u16>,
 }
 
 #[derive(Default)]
@@ -171,7 +170,7 @@ pub(crate) struct Shared {
     config: UdpConfig,
     tables: Mutex<Tables>,
     outbox: Mutex<Outbox>,
-    ip_id: AtomicU16,
+    ip_id: AtomicU32,
     counters: Counters,
 }
 
@@ -213,7 +212,7 @@ impl UdpArm {
                     cursors: HashMap::new(),
                 }),
                 outbox: Mutex::new(Outbox::default()),
-                ip_id: AtomicU16::new(0),
+                ip_id: AtomicU32::new(0),
                 counters: Counters::default(),
             }),
         }
@@ -241,6 +240,19 @@ impl UdpArm {
             bump(&c.rx_malformed);
             return;
         };
+        // The Ethernet type and the version of the packet must agree.
+        let family = match eth.ethertype {
+            ETHERTYPE_IPV4 => 4,
+            ETHERTYPE_IPV6 => 6,
+            _ => {
+                bump(&c.rx_not_ours);
+                return;
+            }
+        };
+        if ip.first().map(|b| b >> 4) != Some(family) {
+            bump(&c.rx_not_ours);
+            return;
+        }
         let parsed = match wire::parse(ip) {
             Ok(p) => p,
             Err(error) => {
@@ -249,15 +261,15 @@ impl UdpArm {
                     RxError::IpChecksum => &c.rx_bad_ip_checksum,
                     RxError::UdpChecksum => &c.rx_bad_udp_checksum,
                     RxError::Fragment => &c.rx_fragments,
-                    RxError::NotIpv4 | RxError::NotUdp => &c.rx_not_ours,
+                    RxError::NotIp | RxError::NotUdp => &c.rx_not_ours,
                 });
                 return;
             }
         };
         let key = Key {
-            local: u32::from(parsed.dst_ip),
+            local: parsed.dst_ip,
             local_port: parsed.dst_port,
-            peer: u32::from(parsed.src_ip),
+            peer: parsed.src_ip,
             peer_port: parsed.src_port,
         };
         let route = {
@@ -271,13 +283,7 @@ impl UdpArm {
                         // the sender of this frame when the table lacks it.
                         let dst_mac = t.station.resolve(key.peer).unwrap_or(eth.src);
                         let mut head = Vec::with_capacity(18);
-                        encode_header(
-                            &mut head,
-                            dst_mac,
-                            src_mac,
-                            t.station.vlan(),
-                            ETHERTYPE_IPV4,
-                        );
+                        encode_header(&mut head, dst_mac, src_mac, t.station.vlan(), eth.ethertype);
                         Route::Listener(Arc::clone(listener), head)
                     }
                     None => Route::None(&c.rx_no_listener),
@@ -378,27 +384,34 @@ impl UdpArm {
     ///
     /// # Errors
     ///
-    /// * `InvalidInput` for a destination port of 0.
-    /// * `Unsupported` for an IPv6 destination (TRN-30).
+    /// * `InvalidInput` for a destination port of 0, and for a source and a
+    ///   destination of different IP families. The family of the addresses is
+    ///   the family of the session (TRN-30).
     /// * `AddrNotAvailable` when `source` is not a host of the arm.
     /// * `HostUnreachable` when the neighbor table has no MAC address for the
     ///   destination.
     /// * `AddrInUse` when every ephemeral port of the host is taken toward
     ///   this destination.
-    pub fn connect(&self, source: Ipv4Addr, destination: SocketAddr) -> io::Result<UdpSession> {
-        let SocketAddr::V4(dst) = destination else {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "IPv6 UDP is not served by the user space layer yet (TRN-30)",
-            ));
-        };
+    pub fn connect(
+        &self,
+        source: impl Into<IpAddr>,
+        destination: SocketAddr,
+    ) -> io::Result<UdpSession> {
+        let source = source.into();
+        let dst = destination;
         if dst.port() == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "the destination port is 0",
             ));
         }
-        let (local, peer) = (u32::from(source), u32::from(*dst.ip()));
+        if source.is_ipv4() != dst.is_ipv4() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{source} and {destination} are of different IP families"),
+            ));
+        }
+        let (local, peer) = (source, dst.ip());
         let (first, last) = self.shared.config.ephemeral_ports;
         let mut t = lock(&self.shared.tables);
         if !t.station.owns(local) {
@@ -494,7 +507,7 @@ impl Shared {
         key: Key,
         payload: &[u8],
     ) -> Poll<io::Result<()>> {
-        let needed = wire::frames_for(payload.len(), self.config.mtu);
+        let needed = wire::frames_for(payload.len(), self.config.mtu, key.local);
         {
             let mut outbox = lock(&self.outbox);
             let queued = outbox.frames.len();
@@ -507,8 +520,8 @@ impl Shared {
             }
         }
         let datagram = Outgoing {
-            src_ip: Ipv4Addr::from(key.local),
-            dst_ip: Ipv4Addr::from(key.peer),
+            src_ip: key.local,
+            dst_ip: key.peer,
             src_port: key.local_port,
             dst_port: key.peer_port,
             ttl: self.config.ttl,

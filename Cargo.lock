@@ -1492,6 +1492,7 @@ dependencies = [
 name = "fps-udp-own"
 version = "0.0.1"
 dependencies = [
+ "fps-hosts",
  "fps-io",
  "fps-tcp-own",
  "tokio",
