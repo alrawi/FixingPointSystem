@@ -124,6 +124,11 @@ jobs:
         run: cargo test -p fps-agent --test afxdp_veth -- --nocapture
         env:
           FPS_REQUIRE_AFXDP: "1"
+      - name: agent next hop resolution behind a namespace router
+        run: cargo test -p fps-agent --test afxdp_router -- --nocapture
+        env:
+          FPS_REQUIRE_AFXDP: "1"
+          FPS_ROUTER_RESULTS: ${{ runner.temp }}/datapath
       - name: dns scenarios over the user space datapath
         run: cargo test -p fps-datapath --test dns_scenarios -- --nocapture
         env:
