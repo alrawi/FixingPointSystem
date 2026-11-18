@@ -15,4 +15,4 @@ Each file records one decision from the specification's decision table, with the
 - [D11. Web UI stack](0011-web-ui-stack.md) (Accepted)
 - [D12. Answers to the Phase 1 owner questions](0012-phase-1-owner-answers.md) (Accepted)
 - [D13. Autonomous coordination with delegated approval](0013-autonomous-coordination.md) (Accepted)
-- [D14. User space TCP stack for the AF_XDP backend](0014-user-space-tcp-stack.md) (Proposed)
+- [D14. User space TCP stack for the AF_XDP backend](0014-user-space-tcp-stack.md) (Accepted)

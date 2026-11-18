@@ -1,12 +1,12 @@
 # D14. User space TCP stack for the AF_XDP backend
 
-- Status: Proposed (TRN-10, 2026-11-17), for acceptance by the vetting agent under D13
+- Status: Accepted (vetting agent under D13, 2026-11-17). Proposed by TRN-10.
 - Date: 2026-11-17
 - Deciders: vetting agent under decision D13 (technical decision record), unless the open questions at the end are answered "defer to owner"
 
 ## Context
 
-Decision D1 puts the kernel socket backend first and the AF_XDP backend (tier T1: 10 Gbps, 100,000 new sessions per second, and 2,000,000 concurrent sessions per agent on a 16 vCPU guest) behind it. AF_XDP hands the engine raw frames, so a TCP stack must run in user space behind the `SessionIo` trait. TRN-12 builds that path and is a large package that waits for this record, because the stack decides how TRN-12 splits.
+Decision D1 puts the kernel socket backend first and the AF_XDP backend (tier T1: 10 Gbps, 100,000 new sessions per second, and 2,000,000 concurrent sessions per agent on a 16 vCPU guest) behind it. AF_XDP hands the engine raw frames, so a TCP stack must run in user space behind the `SessionIo` trait. TRN-12 builds that path and is a large package that waits for this record, because the stack decides how TRN-12 splits. D1 rejected "an own stack from scratch" as the engine strategy, and that stands: the kernel backend comes first. This record only picks the TCP layer behind `SessionIo` for the AF_XDP backend.
 
 Three candidates exist.
 
@@ -108,7 +108,7 @@ We propose the following, in this order of preference.
 
 1. **The AF_XDP backend (TRN-12) runs the own stack of TRN-18, extended with loss recovery and congestion control.** The own stack keeps one flat cost per event: a slab connection of about 230 B, a timer heap with one entry per active connection, and an idle poll that does not walk the sockets. It holds 1,000,629 sockets at 229 B each and still gives 56,000 probe sessions per second with all of them open. The tier T1 target of 2,000,000 concurrent sessions per agent is 125,000 sockets per core at 16 vCPU, which costs about 29 MB per core on the own stack and 200 MB per core on smoltcp with 512 B buffers. The T1 rate of 100,000 new sessions per second is about 6,250 per core, which the own stack passes by a factor of five with all million sockets open, while one smoltcp set with 1,000 sockets gives 4,600 probe sessions per second. The numbers are for a lossless in memory link, so they do not prove the target, and TRN-12 measures it.
 2. **smoltcp stays in the harness as a reference and a test oracle, not in the engine.** It is the fastest stack with few sockets, it already has the features that the own stack lacks (window scaling, selective acknowledgment, an out of order queue, delayed acknowledgment, a round trip estimator, fast retransmit, and optional Reno and CUBIC through the Cargo features `socket-tcp-reno` and `socket-tcp-cubic`, which the harness does not enable), and the interop tests of the own stack can run against it over a lossy link. Because 0BSD allows copying, the follow-up packages may port its self contained parts (the congestion control modules and the segment assembler) into the own stack, after a read of each file, instead of writing them again.
-3. **The hybrid in the other direction is the fallback.** If the loss recovery package for the own stack does not pass its interop and loss tests within its size, TRN-12 switches to smoltcp behind a flow table and a timer wheel of our own, with sets of at most a few hundred sockets and a scheduler that polls only the sets that have work. This record does not choose it, because the measurements show that smoltcp needs that machinery around it to reach the T1 socket count and we have not checked that smoltcp's socket can run outside its interface loop. The first step of the fallback is a one day spike that answers that question.
+3. **The hybrid in the other direction is the fallback.** If the loss recovery package for the own stack does not pass its interop and loss tests within its size, TRN-12 switches to smoltcp behind a flow table and a timer wheel of our own, with sets of at most a few hundred sockets and a scheduler that polls only the sets that have work. This record does not choose it, because the measurements show that smoltcp needs that machinery around it to reach the T1 socket count. The fallback is unverified: we have not checked that smoltcp's socket can run outside its interface loop. A one day spike under `spikes/` answers that question early, in parallel with the loss recovery work, so the fallback is known to work before it is needed.
 4. **F-Stack is not a candidate for the AF_XDP backend** and stays with TRN-13 for tier T2, when a host exists.
 
 ### Why the own stack and not smoltcp
@@ -136,7 +136,7 @@ The own stack wins on the property that the tier targets depend on and loses on 
   6. **Own stack on AF_XDP queues** through `OwnStack::with_links` (TRN-12 proper, after TRN-11), with one stack per worker and the engine's flow steering to the right queue.
   7. **OS profile options** for the own stack (initial window, MSS, options order, timestamps, window scale), against the capture checks that the TLS and profile tests already use.
   8. **Agent wiring** (`engine/fps-agent/`, `controller/internal/wiring/`), as TRN-12 already lists.
-  9. **Fallback spike**, started only if item 2, 3, or 4 misses its acceptance: smoltcp behind our flow table and timer wheel.
+  9. **Fallback spike**, a one day spike under `spikes/` that runs early: can a smoltcp socket run behind our flow table and timer wheel, outside its interface loop?
 - The first item of the list needs no decision beyond this record and unlocks the others, and items 2 to 4 are independent of each other once the loss link exists.
 - The decision does not touch the kernel backend, which stays first and which is the reference of every comparison.
 - smoltcp stays a dependency of `fps-tcp` (the harness), so `cargo deny check` keeps passing and the license note above holds.
@@ -157,4 +157,4 @@ Otherwise the decision stands, and the loss measurements of the follow-up packag
 These touch D1 or a tier target, so this record only asks them.
 
 1. **Does the own stack replace F-Stack for tier T2?** The Gate 0 update of D1 says a Phase 3 spike evaluates F-Stack as a DPDK backend. If the own stack takes frames from a DPDK poll mode driver through the same `FrameIo` trait that AF_XDP uses, tier T2 might need no second TCP stack, and TRN-13 could end in a decision to extend the own stack and not to port F-Stack. That would change what D1 says about T2, so this record does not decide it. TRN-13 stays parked. We suggest the owner decides after the loss measurements, not now.
-2. **Does the T1 target of 2,000,000 concurrent sessions per agent still hold in the user space path?** The own stack needs about 460 MB of connection state for 2,000,000 sockets before buffers, and a connection that holds unread data costs more. This record does not change the target, and the estimate fits a 16 vCPU guest. We list it because the target is the owner's, and the first real number comes from TRN-12 on AF_XDP.
+2. **Does the T1 target of 2,000,000 concurrent sessions per agent still hold in the user space path?** With both ends of each session on one agent, 2,000,000 sessions are 4,000,000 sockets, so the own stack needs about 0.9 GB of connection state before buffers, and a connection that holds unread data costs more. This record does not change the target, and the estimate fits a 16 vCPU guest. We list it because the target is the owner's, and the first real number comes from TRN-12 on AF_XDP.
