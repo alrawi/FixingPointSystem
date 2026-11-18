@@ -4,7 +4,9 @@
 # the QA-01 namespace harness as root, which GitHub hosted runners allow
 # through passwordless sudo. The Rust tests of the backend run in ci.yml. The
 # afxdp job runs the AF_XDP veth test of TRN-11 with FPS_REQUIRE_AFXDP=1, so it
-# fails instead of skipping where AF_XDP cannot run.
+# fails instead of skipping where AF_XDP cannot run, and the dns scenarios over
+# the user space datapath (TRN-29). The interop job runs the own stack against
+# smoltcp and the kernel (TRN-26).
 name: trn
 
 on:
@@ -13,7 +15,9 @@ on:
     paths:
       - engine/fps-backend-kernel/**
       - engine/fps-backend-afxdp/**
+      - engine/fps-agent/**
       - engine/fps-datapath/**
+      - engine/fps-tcp/**
       - engine/fps-tcp-own/**
       - engine/fps-udp-own/**
       - modules/dns/**
@@ -27,7 +31,9 @@ on:
     paths:
       - engine/fps-backend-kernel/**
       - engine/fps-backend-afxdp/**
+      - engine/fps-agent/**
       - engine/fps-datapath/**
+      - engine/fps-tcp/**
       - engine/fps-tcp-own/**
       - engine/fps-udp-own/**
       - modules/dns/**
@@ -76,7 +82,7 @@ jobs:
 
   afxdp:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -85,3 +91,50 @@ jobs:
         run: cargo test -p fps-backend-afxdp -- --nocapture
         env:
           FPS_REQUIRE_AFXDP: "1"
+          FPS_DATAPATH_RESULTS: ${{ runner.temp }}/datapath
+      - name: AF_XDP backend of the agent
+        run: cargo test -p fps-agent --test afxdp_veth -- --nocapture
+        env:
+          FPS_REQUIRE_AFXDP: "1"
+      - name: dns scenarios over the user space datapath
+        run: cargo test -p fps-datapath --test dns_scenarios -- --nocapture
+        env:
+          FPS_REQUIRE_AFXDP: "1"
+          FPS_DNS_RESULTS: ${{ runner.temp }}/datapath
+      - name: Keep the datapath numbers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: datapath-results
+          path: ${{ runner.temp }}/datapath
+          if-no-files-found: ignore
+
+  interop:
+    # The own stack against smoltcp and the kernel (TRN-26), with netem for the loss rows.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install iproute2 and the netem module
+        run: |
+          set -euo pipefail
+          tools/ci/apt-install.sh iproute2
+          if ! sudo modprobe sch_netem; then
+            tools/ci/apt-install.sh "linux-modules-extra-$(uname -r)"
+            sudo modprobe sch_netem
+          fi
+      - name: Own stack against smoltcp and the kernel
+        run: cargo test -p fps-tcp --test interop_smol --test interop_kernel -- --nocapture
+        env:
+          FPS_REQUIRE_AFXDP: "1"
+          FPS_REQUIRE_NETEM: "1"
+          FPS_INTEROP_RESULTS: ${{ runner.temp }}/interop
+      - name: Keep the interop numbers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interop-results
+          path: ${{ runner.temp }}/interop
+          if-no-files-found: ignore

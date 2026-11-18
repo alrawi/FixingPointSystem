@@ -2160,7 +2160,7 @@ work_packages:
     phase: 3
     workstream: TRN
     size: M
-    depends_on: [TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, AGT-24, CTL-54]
+    depends_on: [TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, AGT-24, AGT-25, CTL-54]
     paths: [engine/fps-backend-afxdp/, engine/fps-datapath/]
     summary: >-
       The closing package of the AF_XDP TCP path that decision record 0014 split into TRN-21 to TRN-31 and SPK-05.
@@ -2350,7 +2350,7 @@ work_packages:
     phase: 3
     workstream: TRN
     size: S
-    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, AGT-24, CTL-54]
+    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, CTL-54]
     paths: [engine/fps-backend-afxdp/]
     summary: >-
       Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with
@@ -2361,6 +2361,107 @@ work_packages:
       - Before the flip, every harness, gate, and realism job that tests the kernel backend passes --backend kernel, because veth and virtio_net count as native XDP and the flip would otherwise move them all to the own stack at once. AF_XDP runs are added on purpose. The coordinator makes the workflow changes in the same pull request.
     acceptance:
       - On a host with native XDP the agent selects AF_XDP, runs the own stack, and reports the bound mode, and the controller inventory lists AF_XDP for that agent.
+
+  - id: TRN-33
+    title: The own stack API that the datapath needs
+    phase: 3
+    workstream: TRN
+    size: S
+    depends_on: [TRN-30]
+    paths: [engine/fps-tcp-own/, engine/fps-udp-own/, engine/fps-datapath/]
+    summary: >-
+      Close the fps-tcp-own API gaps that TRN-27 and TRN-29 worked around: OwnSession::local_addr and peer_addr, so
+      Listener::accept returns the peer as KernelListener::accept does; OwnStack::unlisten, so a dropped listener
+      frees its port; and Pools::tables, one source for the neighbor tables that fps-datapath::responders and the UDP
+      layer now build a second time. An input and take_tx seam per side, so a lane runs one stack per arm without the
+      FrameIo wrapper, is optional.
+    deliverables:
+      - The accessors, unlisten, and Pools::tables with tests, and the datapath and the UDP layer moved onto them.
+    acceptance:
+      - Listener::accept returns the peer address, a port can be listened on again after its listener is dropped, and the test that pinned the duplicate neighbor tables against each other is gone because one source remains.
+
+  - id: TRN-34
+    title: Pacing and faster loss detection in the own stack
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-33]
+    paths: [engine/fps-tcp-own/, engine/fps-tcp/]
+    summary: >-
+      The fix of bug 652 brought the own sender in a short bottleneck queue to 19.2 Mbit/s with 40 to 70
+      retransmissions per transfer, where the kernel sends 9. Add sender pacing, HyStart for the CUBIC slow start, and
+      tail loss probes with RACK, measured with the bottleneck test of bug 652 and the loss workload of TRN-22.
+    deliverables:
+      - Pacing, HyStart, TLP, and RACK in the own stack, each behind a switch, with tests and a tcp-bench comparison.
+    acceptance:
+      - In the bottleneck test the own stack retransmits at most twice as many segments as the kernel at no lower goodput, and the TRN-22 to TRN-25 acceptance rows still pass.
+
+  - id: TRN-35
+    title: The own stacks resolve their next hop
+    phase: 3
+    workstream: TRN
+    size: S
+    depends_on: [TRN-30]
+    paths: [engine/fps-datapath/, engine/fps-tcp-own/, engine/fps-udp-own/]
+    summary: >-
+      The user space stacks answer ARP and ND for their pools but send no ARP requests or neighbor solicitations, so a
+      peer behind a router works only when the next hop MAC is configured by hand (TRN-26 finding). Resolve the next
+      hop for IPv4 and IPv6, hold frames while it resolves, and age the entries.
+    deliverables:
+      - ARP requests and neighbor solicitations from the datapath with a neighbor cache and tests.
+    acceptance:
+      - On a veth pair in CI the own stack reaches a kernel peer behind a namespace router with no neighbor entry configured, over IPv4 and IPv6.
+
+  - id: ENG-31
+    title: A transport seam in the runtime
+    phase: 3
+    workstream: ENG
+    size: M
+    depends_on: [TRN-27, TRN-29]
+    paths: [engine/fps-runtime/]
+    summary: >-
+      The workers of fps-runtime open sessions only through fps_backend_kernel (Connector and KernelListener for TCP,
+      DatagramOpener for UDP), so a forced AF_XDP run binds its queues and then stops with Unimplemented (AGT-24
+      finding). Add a Transport trait with connect, listen, and the UDP calls, each returning boxed SessionIo or
+      DatagramIo, implement it for the kernel backend, and let WorkerConfig carry an Arc<dyn Transport>. The datapath
+      serves one listen per port for all server hosts, so server workers take one listener per port.
+    deliverables:
+      - The trait, the kernel implementation, and the workers moved onto it, with the existing runtime tests unchanged.
+    acceptance:
+      - Every runtime and agent test passes on the kernel backend through the trait, and a test runs a worker over a fake Transport in memory.
+
+  - id: AGT-25
+    title: The agent runs its workers on the datapath
+    phase: 3
+    workstream: AGT
+    size: S
+    depends_on: [AGT-24, ENG-31]
+    paths: [engine/fps-agent/]
+    summary: >-
+      Prepared::start_on passes the datapath to the workers through the Transport of ENG-31 (Datapath::connector and
+      Datapath::listen for TCP, Connector::connect_udp and UdpListener::accept for UDP) and removes the Unimplemented
+      that AGT-24 left. It picks the source and server host of a UDP connect without a host from the pools, as the
+      dns_scenarios test of TRN-29 does.
+    deliverables:
+      - The wiring with tests on fake hosts.
+    acceptance:
+      - A forced AF_XDP run of the http1 and dns modules through the agent completes on a veth pair in CI.
+
+  - id: CON-35
+    title: The agent reports the bound XDP mode after a plan
+    phase: 3
+    workstream: CON
+    size: S
+    depends_on: [AGT-24]
+    paths: [contracts/]
+    summary: >-
+      Register comes before any plan, so PortInfo.xdp_driver_mode carries only the driver table hint, and the mode
+      that each socket really bound in (AGT-24) reaches only the agent log. Add a field on the start result or the
+      heartbeat that carries the bound mode of each port, so the controller can show it.
+    deliverables:
+      - The contract field with its OpenAPI and protobuf checks.
+    acceptance:
+      - The contract tests show the bound mode of each port in the chosen message, and the change passes the breaking change check.
 
   - id: AGT-24
     title: The agent starts the selected backend

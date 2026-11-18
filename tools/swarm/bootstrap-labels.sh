@@ -20,6 +20,7 @@ labels=(
   "critical-path|ff9f1c|Gates the current phase"
   "needs:owner|fbca04|Requires an owner decision or action"
   "needs:split|f9d0c4|Epic; split before claiming"
+  "parked|bfbfbf|Parked by the owner; the promotion sweep leaves it in backlog"
   "has-handoff|bfdadc|Earlier progress exists on the branch"
   "wip|ededed|Pull request is not ready to merge"
   "flaky|ffffff|Quarantined flaky test"
