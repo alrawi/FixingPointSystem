@@ -130,7 +130,7 @@ The kernel backend cannot set the options below per socket. Each row names the c
 
 | Option | Why the backend cannot set it per socket | Linux control |
 |---|---|---|
-| TCP option order and padding | `tcp_options_write` writes a fixed order, for example mss, sok, ts, nop, ws, so no profile other than linux6 matches its reference order | none |
+| TCP option order and padding | `tcp_options_write` writes a fixed order, for example mss, sok, ts, nop, ws, so no profile other than linux6 matches its reference order | none. The [own stack](#os-profiles-in-the-own-stack-trn-28) writes every order of the table |
 | SACK permitted | system wide per network namespace | `net.ipv4.tcp_sack` |
 | Timestamps | system wide per network namespace, and `TCP_TIMESTAMP` sets only an offset | `net.ipv4.tcp_timestamps` |
 | Window scaling on or off | system wide per network namespace | `net.ipv4.tcp_window_scaling` |
@@ -539,6 +539,7 @@ TRN-32 gave the stack host pools. The connection table is keyed by the 4-tuple (
 | Loss recovery (TRN-23) | A round trip estimator and the retransmission timeout of RFC 6298 (minimum 200 ms, maximum 2 s, Karn's rule, backoff kept until a valid sample), fast retransmit on three duplicate acknowledgments with Limited Transmit, an out of order queue, and NewReno with an initial window of 10 segments. A one segment probe into a zero window, and a reset with `TimedOut` after 8 timeouts without any segment from the peer. See [Loss recovery in the own stack](#loss-recovery-in-the-own-stack-trn-23) |
 | Options for long fat paths (TRN-24) | Window scaling and timestamps (RFC 7323, with PAWS), selective acknowledgment (RFC 2018 blocks, RFC 6675 recovery beside NewReno), and a delayed acknowledgment (every second segment or 40 ms, at once for out of order data). Each is offered in the SYN and used only when the peer offers it. See [Options for long fat paths in the own stack](#options-for-long-fat-paths-in-the-own-stack-trn-24) |
 | CUBIC (TRN-25) | CUBIC of RFC 9438 is the default congestion control and NewReno stays selectable (`OwnConfig::congestion_control`, `tcp_bench --own-cc newreno\|cubic`). Both run on the same loss recovery. See [CUBIC in the own stack](#cubic-in-the-own-stack-trn-25) |
+| OS profiles (TRN-28) | A side can take the TTL, MSS, SYN window, window scale, offered options, and option order of `windows11`, `linux6`, or `macos14` (`OwnConfig::client_os_profile` and `server_os_profile`), which the kernel backend can set only in part. See [OS profiles in the own stack](#os-profiles-in-the-own-stack-trn-28) |
 | Checksums | The IPv4 header checksum and the TCP checksum are computed on send and verified on receive, so the numbers include them. A frame that fails a check is counted and dropped |
 
 What it leaves out is the list that a production stack must still do, and decision record 0014 has to price it: no HyStart, no PRR, no simultaneous open, no urgent data, no IP fragmentation, no keepalive, no IPv6, and one peer address per host. TIME-WAIT lasts one second and not minutes, so a rate run does not run out of the 55,000 client ports.
@@ -734,6 +735,50 @@ Run for the acceptance rows (the loss job of the `tcp-bench` workflow takes thes
 
 - Fat path, one flow: `--loss-profile fat --loss-transfers 6` for kernel, own, and smoltcp, and `--loss-profile fat --loss-transfers 6 --own-cc newreno` for the NewReno row.
 - Four flows: `--loss-profile bottleneck --loss-transfers 3` for kernel, own, and smoltcp.
+
+### OS profiles in the own stack (TRN-28)
+
+TRN-28 maps the [operating system profiles](#operating-system-profiles) onto the SYN and the SYN-ACK of the own stack. The kernel backend reaches them through socket options and sysctls and cannot write the option order of Windows 11 and macOS 14, because Linux writes a fixed order. The own stack builds its frames, so it reproduces every row of the table in [Profile files](#profile-files), the option order included.
+
+`OwnConfig::client_os_profile` and `server_os_profile` take an `OsProfile` (`engine/fps-tcp-own/src/profile.rs`; `OsProfile::builtin("windows11")` and the constants `WINDOWS11`, `LINUX6`, `MACOS14`). A test configuration names a profile per host pool, so each side has its own. A side without a profile is unchanged (TTL 64, the option order of the kernel, a window scale from the buffer).
+
+| Field of the table | In the own stack |
+|---|---|
+| `socket.ttl` | The IP TTL of every frame of the side, which `Style` in `wire.rs` writes. A reset carries it too |
+| `socket.mss` | The MSS option of the SYN and the SYN-ACK, lowered to the link MTU less 40 bytes, as `TCP_MAXSEG` only lowers |
+| `reference.syn_window` | The window field of the SYN and the SYN-ACK, which is never scaled, lowered to the receive buffer |
+| `reference.window_scale` | The shift of the option. The window field after the handshake is the free space shifted right by it |
+| `system.window_scaling`, `system.timestamps`, `system.sack` | Whether the side offers each option, in place of the `window_scale`, `timestamps`, and `sack` fields of `OwnConfig`. A SYN-ACK answers only what the SYN offered, as before |
+| `reference.options` | The order of the options of the SYN. The SYN-ACK has the same order, and an option that is not in it (the peer did not offer it, or the side does not) leaves with the NOPs that belong to it. Zero bytes fill the options to a multiple of 4, so the `eol` of macOS 14 is followed by one more zero |
+| `reference.dont_fragment` | Always on, as for every frame of the stack |
+| `socket.window_clamp`, `system.tcp_rmem_max` | Not used. They only produce the window scale in the kernel, and the own stack takes the scale from `reference.window_scale` |
+
+Linux 6 keeps the writer that the stack had before: its order is the order of the kernel, and a SYN-ACK without the timestamp pads as the kernel does (`nop nop sok`, then `nop ws`).
+
+A Windows 11 side offers no timestamp whatever `OwnConfig::timestamps` says, so a connection between a Windows 11 client and a Linux 6 server runs without timestamps and with the window scales 8 and 7.
+
+Tests (no root):
+
+- `engine/fps-tcp-own/tests/profile_table.rs` reads the table of this page and compares every value of the three profiles: TTL, MSS, SACK, timestamps, window scaling, window scale, SYN window, and the option list. A change of the table or of the profile fails it.
+- `src/host/profile_tests.rs` writes the expected bytes of the table by hand and compares the SYN and the SYN-ACK of each profile with them: the TTL, the do not fragment flag, the window, and the option bytes with the padding. It also covers the SYN-ACK of each profile against clients with other options, the TTL of the ACK and of a reset, the profile winning over the option fields, the MSS at an MTU of 9000, 1500, and 1000, and the negotiated shifts.
+- `tests/own.rs` runs each profile on both sides through `SessionIo` with a transfer in both directions, and reads the TTL, window, and option names of the SYN and the SYN-ACK and the TTL of every frame off the recorded frames.
+- `src/wire.rs` tests the ordered writer: the kernel order gives the bytes of the built in writer, padding follows the option that it belongs to, and an overlong order drops what does not fit.
+
+The example `os_profile_capture OUTDIR [PROFILE...]` records one short session per profile into `OUTDIR/PROFILE.pcapng`, so the capture checks of the kernel backend run on the own stack without root or a namespace:
+
+```bash
+cargo run -p fps-tcp-own --example os_profile_capture -- "$OUT"
+python3 -m realism score --pcap "$OUT/windows11.pcapng" --labels LABELS --parsers none \
+  --os-profile windows11 --client-hops 0 --server-hops 0 --transport-strict --output "$OUT/windows11.json"
+```
+
+The capture is one link, so no router lowers the TTL: the hops are 0 where the kernel test uses 1 on the server side. The runner exits 1 because its conformance check fails on a protocol that nDPI does not know, as in the kernel test, and the verdict is the `transport_behavior` entry of the report. In strict mode, which also compares the option order and the SYN window, the entry passed with no failure and no deviation for all three profiles, and each capture scored as another profile (windows11 as linux6, linux6 as macos14, macos14 as windows11) failed it on the TTL, the window scale, and the option list. The kernel test runs windows11 and macos14 non strict, because the kernel cannot write their order.
+
+Limits:
+
+- A profile is the SYN. The behavior after the handshake (the initial window of 10 segments, the retransmission timing, the initial sequence numbers, ECN) is the one of the own stack for every profile, as for the kernel backend.
+- The SYN-ACK of a real macOS 14 or Windows 11 may differ from its SYN in ways that public signatures do not record. The stack sends the SYN order for both.
+- Only IPv4 (the stack has no IPv6), and the three built in profiles. A profile of another system is a value of `OsProfile` with its option list, and the YAML profiles of the kernel backend are not read by this crate.
 
 ### The user space datapath (TRN-27)
 

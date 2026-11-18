@@ -84,6 +84,7 @@ pub mod cubic;
 pub mod host;
 pub mod net;
 pub mod pools;
+pub mod profile;
 pub mod recovery;
 pub mod sack;
 pub mod wire;
@@ -107,6 +108,7 @@ use crate::clock::{Clock, MonotonicClock};
 use host::{Host, HostCounters};
 use net::{ETH_LEN, VLAN_TAG_LEN};
 pub use pools::{HostSlice, PoolError, Pools};
+pub use profile::{OsProfile, ProfileError};
 pub use recovery::CongestionControl;
 
 /// The frames that one call of the link moves at most.
@@ -171,6 +173,14 @@ pub struct OwnConfig {
     /// The longest an acknowledgment waits, in microseconds. RFC 1122 allows
     /// 500 ms, the kernel waits 40 ms at the shortest.
     pub delayed_ack_us: i64,
+    /// The operating system profile of the client side (TRN-28), or `None`
+    /// for TTL 64 and the option order of the Linux kernel. A profile sets
+    /// the TTL, MSS, window, window scale, and option order of the SYN, and
+    /// decides which of window scaling, timestamps, and SACK the side offers,
+    /// in place of `window_scale`, `timestamps`, and `sack`. See [`profile`].
+    pub client_os_profile: Option<OsProfile>,
+    /// The operating system profile of the server side, as above.
+    pub server_os_profile: Option<OsProfile>,
 }
 
 impl Default for OwnConfig {
@@ -195,6 +205,8 @@ impl Default for OwnConfig {
             sack: true,
             delayed_ack: true,
             delayed_ack_us: 40_000,
+            client_os_profile: None,
+            server_os_profile: None,
         }
     }
 }
@@ -442,6 +454,7 @@ impl OwnStack {
         clock: Arc<dyn Clock>,
     ) -> Result<Self, PoolError> {
         let built = pools.stations()?;
+        let (client_profile, server_profile) = (config.client_os_profile, config.server_os_profile);
         let overhead = ETH_LEN
             + if pools.vlan.is_some() {
                 VLAN_TAG_LEN
@@ -456,11 +469,12 @@ impl OwnStack {
             shared: Arc::new(Shared {
                 inner: Mutex::new(Inner {
                     client: Endpoint {
-                        host: Host::new(built.client, config.clone(), mtu),
+                        host: Host::new(built.client, config.clone(), mtu)
+                            .with_profile(client_profile),
                         link: client,
                     },
                     server: Endpoint {
-                        host: Host::new(built.server, config, mtu),
+                        host: Host::new(built.server, config, mtu).with_profile(server_profile),
                         link: server,
                     },
                     client_hosts: pools.client,
