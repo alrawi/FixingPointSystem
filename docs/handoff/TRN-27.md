@@ -10,7 +10,7 @@
 | Branch | `wp/TRN-27` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 60% (3 of 5 plan steps) |
 | Current holder | claude-7c27a1, lease until 2026-11-18T09:08:48Z |
 | Last verified commit | none |
 
@@ -18,34 +18,39 @@ Status takes one of five values, which are in progress, paused, blocked, ready f
 
 ## Goal
 
-State the outcome in two or three sentences, copied or condensed from the issue.
+The production datapath: a crate `engine/fps-datapath` with the loop per queue that splits ARP, ND, DHCP, TCP, and UDP frames between fps-hosts and the user space stacks, and offers connect and listen as fps-backend-kernel does. Acceptance: a test over a veth pair in CI completes sessions through the datapath on AF_XDP queues, and the results are committed for the CI runner.
 
 ## Plan
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. First step
-- [ ] 2. Second step
+- [x] 1. Crate `fps-datapath`: classifier, `Splitter` (FrameIo wrapper: ARP to the fps-hosts Responder, TCP to the stack, hooks for ND/DHCP/UDP), `Datapath` with lanes, `Connector`, `Listener`.
+- [x] 2. In-memory tests (`engine/fps-datapath/tests/memory.rs`), no root.
+- [x] 3. Veth test on AF_XDP queues (`engine/fps-backend-afxdp/tests/datapath_veth.rs`), sessions per second and sockets held.
+- [ ] 4. Results of the CI runner and the sandbox under `engine/fps-datapath/results/`, Transport.md section, log entry.
+- [ ] 5. PR, CI green, review.
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+`cargo test -p fps-datapath -p fps-backend-afxdp` with FPS_REQUIRE_AFXDP=1 as root: all pass, the veth test ran on AF_XDP (copy mode) with 1000 held sessions and 4000 short sessions.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+Results files, wiki page and log entry, PR.
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Run the veth test with FPS_DATAPATH_RESULTS set, commit the results, write the log entry, open the PR.
 
 ## Blockers and open questions
 
-Write "none" or name each blocker with a link to its issue.
+none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+- OwnStack owns both links of its pair, so a lane is the client arm queue and the server arm queue; one thread per lane polls `OwnStack::pump` (drive() would wait for a timer and not see frames from the wire).
+- The splitter wraps FrameIo, so fps-tcp-own is untouched.
+- The veth test lives in fps-backend-afxdp (dev-dependency cycle is allowed) so the existing afxdp job runs it.
 
 ## Pitfalls
 
