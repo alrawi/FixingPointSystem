@@ -76,6 +76,17 @@ impl QueueDevice {
         moved
     }
 
+    /// Takes the oldest frame that this device transmitted, for a link that
+    /// holds frames before it delivers them.
+    pub fn take_tx(&mut self) -> Option<Vec<u8>> {
+        self.tx.pop_front()
+    }
+
+    /// Queues a frame for the stack to receive.
+    pub fn push_rx(&mut self, frame: Vec<u8>) {
+        self.rx.push_back(frame);
+    }
+
     /// Returns the number of frames that the stack transmitted so far.
     pub fn frames_sent(&self) -> u64 {
         self.frames_sent

@@ -1,0 +1,27 @@
+smoltcp 0.14 on sandbox 2 vcpu, smoltcp, 8 Mbit/s with a 64 KiB queue, no delay, no loss
+host: Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vcpus, kernel 6.18.44-fc-v595
+  profile = small
+  smol.mtu = 1500
+  smol.checksums = true
+  smol.time_wait = Skip
+  smol.nagle = false
+  smol.idle_poll_ms = 100
+  smol.backlog = 8
+  loss.levels_percent = 0
+  loss.transfers = 3
+  loss.bytes = 1048576
+  loss.chunk = 16384
+  loss.timeout_secs = 60
+  link.delay_us = 0
+  link.reorder_percent = 0
+  link.rate_bps = 8000000
+  link.queue_bytes = 65536
+  link.seed = 2047934465
+  link.mtu = 1500
+loss workload, 1048576 bytes per transfer, link: loss 0%, delay 0 ms, reorder 0%, rate 8 Mbit/s with a queue of 64 KiB per direction
+   loss %  run  complete goodput Mb/s    time s retransmits link drops  note
+        0    1       yes         0.63     13.33         371       196  
+        0    2       yes         0.63     13.33         371       196  
+        0    3       yes         0.63     13.33         371       196  
+        0 mean: 100% completed, goodput 0.63 Mbit/s
+wrote engine/fps-tcp/results/sandbox-2vcpu-trn22/smoltcp-rate8.json

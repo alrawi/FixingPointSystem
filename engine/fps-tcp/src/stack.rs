@@ -17,6 +17,13 @@ pub struct StackStats {
     /// Frames that both hosts transmitted since the pair was created. A stack
     /// that cannot see its frames reports zero.
     pub frames: u64,
+    /// Data segments that a sender sent again, counted at the link. A stack
+    /// whose link is not impaired reports zero.
+    pub retransmits: u64,
+    /// Frames that the impaired link lost at random.
+    pub link_lost: u64,
+    /// Frames that the bounded queue of the impaired link dropped.
+    pub link_queue_dropped: u64,
 }
 
 /// A TCP stack under test, seen as one client host and one server host that a

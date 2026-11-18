@@ -65,6 +65,7 @@ impl TcpStack for OwnStack {
             sockets_open: stats.sockets_open,
             pump_passes: stats.pump_passes,
             frames: stats.frames,
+            ..StackStats::default()
         }
     }
 }
