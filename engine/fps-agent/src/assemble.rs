@@ -358,6 +358,7 @@ pub fn assemble(
                 let cfg = WorkerConfig {
                     id,
                     core: usize::try_from(w.core).ok(),
+                    transport: None,
                     role: Role::Server(ServerConfig {
                         flow: flow_ref(i, &slice.port),
                         listen,
@@ -461,6 +462,7 @@ fn client_worker(
     let cfg = WorkerConfig {
         id,
         core: usize::try_from(w.core).ok(),
+        transport: None,
         role: Role::Client(Box::new(ClientConfig {
             flow: flow_ref(mix_index, &cslice.port),
             schedule,

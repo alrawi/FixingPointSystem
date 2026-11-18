@@ -3,7 +3,6 @@
 
 use std::io;
 
-use fps_backend_kernel::BackendError;
 use fps_sched::SchedError;
 use fps_stats::StatsError;
 
@@ -30,9 +29,10 @@ pub enum RuntimeError {
     Listen {
         /// The worker id.
         worker: u32,
-        /// The backend error.
+        /// The error of the transport. The kernel backend keeps its
+        /// [`fps_backend_kernel::BackendError`] as the cause.
         #[source]
-        source: BackendError,
+        source: io::Error,
     },
     /// A server worker could not bind a UDP port for its entry flow.
     #[error("worker {worker}: listen on UDP {address}")]

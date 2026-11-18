@@ -136,6 +136,7 @@ fn start_server(
     let worker = WorkerConfig {
         id: 10,
         core: None,
+        transport: None,
         role: Role::Server(ServerConfig {
             flow: FlowRef::new(Arc::clone(scenario), 0),
             listen: vec![SocketAddr::new(ip, 0)],
@@ -177,6 +178,7 @@ fn client_config(
     let worker = WorkerConfig {
         id: 0,
         core: None,
+        transport: None,
         role: Role::Client(Box::new(ClientConfig {
             flow: FlowRef::new(Arc::clone(scenario), 0),
             schedule,

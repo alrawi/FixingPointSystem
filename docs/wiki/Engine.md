@@ -384,10 +384,29 @@ Workers share nothing mutable. Each worker owns its sessions, its timers, its `f
 
 | Role | What the worker does |
 |---|---|
-| `Role::Client` | Drains its `fps_sched::Schedule` with a `TokioClock`, runs the client side of every start over a kernel `Connector`, and takes each source address from its range of a host pool through an `fps_hosts::HostSelector` |
-| `Role::Server` | Binds one `KernelListener` per listen address, accepts sessions, and runs the server side of each one. `RuntimeHandle::listen_addrs` reports the bound addresses, which matters for port 0 |
+| `Role::Client` | Drains its `fps_sched::Schedule` with a `TokioClock`, runs the client side of every start over its `Transport`, and takes each source address from its range of a host pool through an `fps_hosts::HostSelector` |
+| `Role::Server` | Listens through its `Transport`, with one call for each port, accepts sessions, and runs the server side of each one. `RuntimeHandle::listen_addrs` reports the bound addresses, which matters for port 0 |
 
 A client session dials the rendered `connect` host when the program sets one, which must be an IP address, and otherwise server address `session mod len` of `ClientConfig::servers`. `ClientConfig::port` replaces the rendered port when it is set.
+
+### The transport seam (ENG-31)
+
+A worker reaches the network only through the trait `fps_runtime::transport::Transport`. The trait lives in the module `transport` because the root of the crate already exports `fps_runtime::Transport`, the enum of TCP and UDP that the extension host uses. `WorkerConfig::transport` is an `Option<Arc<dyn Transport>>`. `None` runs the kernel backend with the `ClientConfig::connect` or `ServerConfig::config` of the role, as before, and `Some` names another transport that several workers may share.
+
+| Call | Result |
+|---|---|
+| `connect(source, destination)` | A future of a `StreamSession` |
+| `listen(addresses)` | A `StreamListener` whose `accept` gives `StreamSession`s and whose `local_addrs` reports the bound addresses, in order |
+| `connect_datagram(source, destination)` | A `DatagramSession` |
+| `listen_datagram(addresses)` | A `DatagramListener` whose `accept` gives the session of each new peer |
+
+A `StreamSession` boxes a `SessionIo` and a `DatagramSession` boxes a `DatagramIo`, and both carry the two addresses of the session, which the capture tap and the instances read. A stream session may lack an address, as a kernel socket does after an immediate reset, and then it is not captured.
+
+`KernelTransport` implements the trait with `Connector` and `KernelListener` for TCP and with `Connector::connect_datagram` for client UDP. Its UDP listener is the port reader that the runtime had before the seam, now behind the trait: one socket per address, one session per peer, replies from the shared socket. The kernel path therefore behaves as before, and every runtime and agent test passes over it. `RuntimeError::Listen` now holds an `io::Error`, which keeps the `BackendError` of the kernel as its cause, and `ClientOpener::new` takes a `&dyn Transport` in place of a `&Connector`.
+
+A server worker calls `listen` once for each port with all its addresses of that port, and once for each address of port 0, because the own stack of `fps-datapath` serves one `listen(port)` for all server hosts and a second listen on the port fails. The data ports of the instances and the datagram ports listen once for each address, as the worker did before. A `Transport` must make `accept` cancel safe, may fail a `connect` with `ConnectionRefused` while the peer has not bound yet (the runtime retries a data session for two seconds), and reports `AddrInUse` for a port that another socket holds (the runtime retries a data port bind for two seconds).
+
+`tests/transport.rs` runs a client and a server worker over `FakeNet`, a transport in memory, which opens no socket. It shows that the workers listen once for the two hosts of one port, that `listen_addrs` keeps the order of the configuration and reports the port that the transport chose for port 0, that 20 sessions of `web_get` run from hosts that no interface of the machine has, and that a refused listen fails the start with the error of the transport. AGT-25 passes the datapath through this seam.
 
 ### Clock
 
@@ -537,6 +556,7 @@ The tests run over loopback addresses with the kernel backend and are listed bel
 | `tests/datagrams.rs` SIP call | `call_pcmu` of the sip_rtp module runs four calls through a client runtime and a server runtime. Both workers count four succeeded sessions, one per call, and the client capture holds 20 RTP packets of 172 bytes each way per call, SIP messages, and one 5-tuple per flow, eight in all |
 | `tests/datagrams.rs` same RTP port | Six calls in one second all draw RTP port 18500. All sessions succeed, one port served every call, and the capture holds 20 RTP packets each way per call |
 | `tests/raw.rs` | A module of type `strike`, built in the test, runs a scenario whose client writes 30 bytes with `raw`, among them `{{ x }}`, two NULs, `}}`, and 0xff. A client runtime dials a plain listener, five sessions succeed, `bytes_tx` equals 150, and the listener reads the 30 bytes of every session unchanged. The same scenario in a module of type `app`, `tunnel`, `evasion`, `transport`, `host`, or `content` fails to load with `ReservedAction` |
+| `tests/transport.rs` | Workers over a fake transport in memory, see [The transport seam](#the-transport-seam-eng-31) |
 | `tests/properties.rs` | Session ids stay unique across workers, and the collector total equals the sum of the newest snapshot of every worker in any arrival order |
 | unit tests | The clock on a paused Tokio clock, the bounded wake time, the stop state order, opener address selection, the collector, and the instance openers (a used stream and the end of a side), the rendezvous of a shared port, the data ports (two waiters, a connection that comes first, a waiter that gives up, a bind that waits for a port in use), and the datagram ports (two hosts on one socket, a datagram that comes first, release of the port, a pinned port) |
 ## UDP datagram sessions

@@ -49,6 +49,7 @@ fn start_servers(scenario: &Arc<Scenario>, addrs: &[IpAddr], first_id: u32) -> R
         .map(|(ip, id)| WorkerConfig {
             id,
             core: None,
+            transport: None,
             role: Role::Server(ServerConfig {
                 flow: FlowRef::new(Arc::clone(scenario), 0),
                 listen: vec![SocketAddr::new(*ip, 0)],
@@ -95,6 +96,7 @@ fn clients(
             WorkerConfig {
                 id,
                 core: None,
+                transport: None,
                 role: Role::Client(Box::new(ClientConfig {
                     flow,
                     schedule,
@@ -395,6 +397,7 @@ fn a_worker_pins_to_an_allowed_core() {
     let workers = vec![WorkerConfig {
         id: 3,
         core,
+        transport: None,
         role: Role::Server(ServerConfig {
             flow: FlowRef::new(Arc::clone(&scenario), 0),
             listen: vec![SocketAddr::new(v4(48, 0, 1), 0)],
@@ -416,6 +419,7 @@ fn a_bind_failure_fails_the_start() {
     let workers = vec![WorkerConfig {
         id: 0,
         core: None,
+        transport: None,
         role: Role::Server(ServerConfig {
             flow: FlowRef::new(Arc::clone(&scenario), 0),
             listen: vec![addr],
@@ -435,6 +439,7 @@ fn the_config_check_rejects_duplicate_ids_and_missing_servers() {
     let server = |id| WorkerConfig {
         id,
         core: None,
+        transport: None,
         role: Role::Server(ServerConfig {
             flow: FlowRef::new(Arc::clone(&scenario), 0),
             listen: vec![SocketAddr::new(v4(50, 0, 1), 0)],

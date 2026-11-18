@@ -104,6 +104,7 @@ fn a_strike_session_sends_the_exact_bytes_of_a_raw_action() {
     let worker = WorkerConfig {
         id: 0,
         core: None,
+        transport: None,
         role: Role::Client(Box::new(ClientConfig {
             flow: FlowRef::new(Arc::clone(&scenario), 0),
             schedule,

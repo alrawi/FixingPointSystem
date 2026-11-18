@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! The openers that connect the interpreter to the kernel backend.
+//! The openers that connect the interpreter to a transport.
 
 use std::borrow::Borrow;
 use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 
-use fps_backend_kernel::{Connector, KernelStream};
 use fps_capture::{CaptureCell, FlowEndpoints, Tapped, Transport};
 use fps_interp::{OpenKind, OpenRequest, Opener, Side};
 use fps_io::SessionIo;
 
 use crate::config::SourceHosts;
+use crate::transport::{StreamSession, Transport as NetTransport};
 
 /// The number of high bits of a session id that hold the worker id.
 pub(crate) const WORKER_ID_BITS: u32 = 16;
@@ -26,16 +26,15 @@ pub fn global_session_id(worker: u32, local: u64) -> u64 {
     (u64::from(worker) << shift) | (local & ((1u64 << shift) - 1))
 }
 
-/// Opens client sessions with a kernel connector.
+/// Opens client sessions through a [`crate::transport::Transport`].
 ///
 /// The destination is the rendered `connect` host when the program sets
 /// one, which must then be an IP address, and otherwise server address
 /// `session mod len`. The port is the override when set and otherwise the
 /// rendered port. The source address is the host that the selector picks for
 /// the session.
-#[derive(Debug)]
 pub struct ClientOpener<'a> {
-    connector: &'a Connector,
+    transport: &'a dyn NetTransport,
     servers: &'a [IpAddr],
     port: Option<u16>,
     source: Result<IpAddr, String>,
@@ -45,7 +44,7 @@ pub struct ClientOpener<'a> {
 impl<'a> ClientOpener<'a> {
     /// Returns the opener of local session `session` of a worker.
     pub fn new(
-        connector: &'a Connector,
+        transport: &'a dyn NetTransport,
         sources: &SourceHosts,
         servers: &'a [IpAddr],
         port: Option<u16>,
@@ -53,7 +52,7 @@ impl<'a> ClientOpener<'a> {
     ) -> Self {
         let source = source_address(sources, session);
         Self {
-            connector,
+            transport,
             servers,
             port,
             source,
@@ -123,21 +122,21 @@ pub(crate) fn destination(
 }
 
 impl Opener for ClientOpener<'_> {
-    type Io = KernelStream;
+    type Io = StreamSession;
 
-    fn open(&mut self, request: OpenRequest<'_>) -> impl Future<Output = io::Result<KernelStream>> {
+    fn open(
+        &mut self,
+        request: OpenRequest<'_>,
+    ) -> impl Future<Output = io::Result<StreamSession>> {
         let target = match request.kind {
             OpenKind::Connect => self.destination(&request),
             OpenKind::Accept => Err(invalid("a client opener cannot accept".into())),
         };
         let source = self.source.clone().map_err(invalid);
-        let connector = self.connector;
+        let transport = self.transport;
         async move {
             let (source, destination) = (source?, target?);
-            connector
-                .connect(source, destination)
-                .await
-                .map_err(|e| io::Error::new(e.io_kind().unwrap_or(io::ErrorKind::Other), e))
+            transport.connect(source, destination).await
         }
     }
 }
@@ -177,9 +176,9 @@ pub(crate) trait Endpoints {
     fn endpoints(&self) -> Option<(SocketAddr, SocketAddr)>;
 }
 
-impl Endpoints for KernelStream {
+impl Endpoints for StreamSession {
     fn endpoints(&self) -> Option<(SocketAddr, SocketAddr)> {
-        Some((self.local_addr().ok()?, self.peer_addr().ok()?))
+        Some((self.local_addr()?, self.peer_addr()?))
     }
 }
 
@@ -273,7 +272,7 @@ mod tests {
             selector,
             ipv6: false,
         };
-        let connector = Connector::new(Default::default());
+        let transport = crate::KernelTransport::default();
         let servers: Vec<IpAddr> =
             vec!["127.31.0.1".parse().unwrap(), "127.31.0.2".parse().unwrap()];
         let req = OpenRequest {
@@ -281,7 +280,7 @@ mod tests {
             host: None,
             port: 8080,
         };
-        let o = ClientOpener::new(&connector, &sources, &servers, None, 3);
+        let o = ClientOpener::new(&transport, &sources, &servers, None, 3);
         assert_eq!(
             o.destination(&req).unwrap(),
             "127.31.0.2:8080".parse().unwrap()
@@ -290,7 +289,7 @@ mod tests {
             o.source.clone().unwrap(),
             "127.30.0.4".parse::<IpAddr>().unwrap()
         );
-        let o = ClientOpener::new(&connector, &sources, &servers, Some(9), 2);
+        let o = ClientOpener::new(&transport, &sources, &servers, Some(9), 2);
         assert_eq!(
             o.destination(&req).unwrap(),
             "127.31.0.1:9".parse().unwrap()

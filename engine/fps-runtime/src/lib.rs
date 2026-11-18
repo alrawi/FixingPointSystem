@@ -9,9 +9,12 @@
 //!
 //! A client worker drains an [`fps_sched::Schedule`] with a [`TokioClock`]
 //! and runs the client side of each session start with `fps-interp` over a
-//! kernel [`fps_backend_kernel::Connector`], taking source addresses from a
-//! host pool through an [`fps_hosts::HostSelector`]. A server worker accepts
-//! sessions on kernel listeners and runs the server side of each one. Every
+//! [`transport::Transport`], taking source addresses from a host pool through
+//! an [`fps_hosts::HostSelector`]. A server worker accepts sessions on the
+//! listeners of the transport and runs the server side of each one. The
+//! transport is the seam to the network: [`KernelTransport`] opens kernel
+//! sockets, and [`WorkerConfig::transport`] names another one, such as the
+//! own stack of `fps-datapath`, or an in memory fake in a test. Every
 //! worker sends a cumulative [`WorkerSnapshot`] once per snapshot interval,
 //! one second by default, and a final one when it ends. The [`Collector`]
 //! keeps the newest snapshot of every worker and merges them.
@@ -40,11 +43,13 @@ mod datagram;
 mod error;
 mod extension;
 mod instance;
+mod kernel;
 mod metrics;
 mod opener;
 mod rendezvous;
 mod runtime;
 mod tls;
+pub mod transport;
 mod worker;
 
 pub use clock::TokioClock;
@@ -59,6 +64,7 @@ pub use extension::{
     EXTENSION_FILE,
 };
 pub use fps_wasm::Transport;
+pub use kernel::KernelTransport;
 pub use opener::{global_session_id, ClientOpener};
 pub use runtime::{RunReport, Runtime, RuntimeHandle, WorkerExit};
 pub use tls::{ConnectorFactory, TlsProfiles, DEFAULT_SERVER_NAME};
