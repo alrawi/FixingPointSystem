@@ -24,6 +24,7 @@ on:
       - tests/harness/**
       - realism/**
       - mk/trn.mk
+      - tools/ci/own-profiles.sh
       - .github/workflows/trn.yml
       - Cargo.toml
       - Cargo.lock
@@ -40,6 +41,7 @@ on:
       - tests/harness/**
       - realism/**
       - mk/trn.mk
+      - tools/ci/own-profiles.sh
       - .github/workflows/trn.yml
       - Cargo.toml
       - Cargo.lock
@@ -78,6 +80,27 @@ jobs:
         with:
           name: trn-profile-captures
           path: ${{ runner.temp }}/captures
+          if-no-files-found: ignore
+
+  own-profiles:
+    # The OS profiles of the own stack (TRN-28), scored by the realism runner
+    # like the kernel captures of the capture job, with a negative control.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the scoring tools
+        run: tools/ci/apt-install.sh libndpi-bin python3-yaml
+      - name: Score the own stack captures
+        run: tools/ci/own-profiles.sh "$RUNNER_TEMP/own-profiles"
+      - name: Keep the captures and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: own-stack-profiles
+          path: ${{ runner.temp }}/own-profiles
           if-no-files-found: ignore
 
   afxdp:
