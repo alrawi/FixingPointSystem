@@ -4,11 +4,11 @@
 |---|---|
 | Issue | #630 |
 | Branch | `wp/TRN-29` |
-| Pull request | opened at the last checkpoint, see the issue |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps, CI pending) |
-| Current holder | claude-a7c3d1, lease renewed at each checkpoint |
-| Last verified commit | see the session log |
+| Pull request | #653 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
+| Current holder | claude-a7c3d1, lease until review |
+| Last verified commit | 2f58ebd (CI green: rust job ran the three dns tests with CI=true) |
 
 ## Goal
 
@@ -20,7 +20,7 @@ A user space UDP layer behind `fps_io::DatagramIo` over Ethernet and IPv4 frames
 - [x] 2. fps-datapath: `FrameHook::poll_tx`, UDP arms per lane, `connect_udp`, `listen_udp`, stats, memory tests
 - [x] 3. In memory dns test (no root)
 - [x] 4. dns over an AF_XDP veth pair, and with a kernel server on the other end
-- [ ] 5. Checks, log entry, PR, CI green, `fps_swarm.py review`
+- [x] 5. Checks, log entry, PR, CI green, `fps_swarm.py review`
 
 ## Done and verified
 
