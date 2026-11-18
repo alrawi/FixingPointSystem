@@ -1,21 +1,30 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Builds the plan and the module tree of the http1 realism run on AF_XDP (TRN-12).
+"""Builds the plans and the module tree of the AF_XDP realism run of a module (TRN-12, TRN-36).
 
-The kernel run of the module (modules/http1/fixtures/capture.sh) walks the ten
-scenarios one after another with a fixture peer over kernel sockets. The AF_XDP
-run gives the same scenarios to the agent as ten mix entries of one plan, with
-the backend BACKEND_AF_XDP, so the agent runs the sessions on the user space
-datapath. Two mix entries cannot listen on one port of one server host, so each
-plain scenario gets a port of its own (8080 to 8085). The https scenarios keep
-the ports 8443 to 8446 that their manifests name, so the labels of the kernel
-run (modules/http1/fixtures/expected.yaml) still tell them apart.
+The kernel run of a module (modules/MODULE/fixtures/capture.sh) walks the
+scenarios with a fixture peer over kernel sockets. The AF_XDP run gives the same
+scenarios to the agent as mix entries of plans with the backend BACKEND_AF_XDP,
+so the agent runs the sessions on the user space datapath, and it scores the
+capture with the labels of the kernel run (modules/MODULE/fixtures/expected.yaml).
 
-    make_plan.py REPO_ROOT OUT_DIR [--sessions N] [--seed S] [--client IF] [--server IF]
-                [--keys keylog|none]
+    make_plan.py REPO_ROOT OUT_DIR MODULE [--sessions N] [--seed S] [--client IF]
+                 [--server IF] [--keys keylog|none]
 
-writes OUT_DIR/plan.json, the module tree OUT_DIR/modules/http1 that the plan
-digests, and OUT_DIR/labels.yaml, the labels of the run.
+Every scenario of the manifest is a mix entry, except the scenarios that the
+profile of the module leaves out (profiles.yaml, which holds the variables and
+ports that capture.sh sets). A plan listens once for each port of a server host,
+so two scenarios on one port cannot share a plan. The scenarios of a module
+therefore run in rounds, and a round holds scenarios until two of them would
+listen on one port. All rounds go into one capture, so the labels keep the
+ports of the kernel run. A round uses its own client addresses and its own seed,
+so no two sessions of the capture share a 5-tuple.
+
+The script writes OUT_DIR/round-N/plan.json for each round, the module tree
+OUT_DIR/modules/MODULE that the plans digest, OUT_DIR/labels.yaml, the labels of
+the run, OUT_DIR/rounds, one line with the number of rounds, and
+OUT_DIR/decrypted.args, the arguments of the decrypted check, one on each line.
+It prints the number of rounds.
 """
 
 from __future__ import annotations
@@ -23,6 +32,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -30,19 +41,13 @@ from typing import Any
 
 import yaml
 
-# The scenario variables that the kernel run sets, see capture.sh.
-VARS = {
-    "body_size": 1200,
-    "page_size": 3000,
-    "chunk_size": 1024,
-    "objects": 3,
-    "object_size": 900,
-    "upload_size": 2500,
-}
-FIRST_PLAIN_PORT = 8080
-# Files of the module tree that the agent needs. The native crate, the tests,
-# and the fixtures stay out, so a build cannot change the digest.
-TREE = ("manifest.yaml", "scenarios")
+HERE = Path(__file__).resolve().parent
+# The rate of one mix entry, in sessions per second, when it has sessions to spare.
+RATE = 5
+# Files of the module that the agent never reads. They stay out of the staged
+# tree, so a build or a test cannot change the digest.
+SKIP = {"native", "tests", "fixtures", "README.md", "bench", "results", "target"}
+TEMPLATE_VAR = re.compile(r"^\{\{\s*vars\.(\w+)\s*\}\}$")
 
 
 def tree_digest(directory: Path) -> str:
@@ -58,91 +63,106 @@ def tree_digest(directory: Path) -> str:
     )
 
 
-def stage(root: Path, out: Path) -> Path:
-    """Copies the files of the http1 module that the agent loads."""
-    source = root / "modules" / "http1"
-    tree = out / "modules" / "http1"
+def load_profile(module: str) -> dict[str, Any]:
+    profiles = yaml.safe_load((HERE / "profiles.yaml").read_text(encoding="utf-8"))
+    if module not in profiles:
+        raise SystemExit(
+            f"make_plan.py: {module} has no profile in profiles.yaml "
+            f"(modules with a profile: {', '.join(sorted(profiles))})"
+        )
+    profile: dict[str, Any] = profiles[module]
+    return profile
+
+
+def stage(root: Path, out: Path, module: str) -> Path:
+    """Copies the files of the module that the agent loads."""
+    source = root / "modules" / module
+    tree = out / "modules" / module
     if tree.exists():
         shutil.rmtree(tree)
     tree.mkdir(parents=True)
-    for name in TREE:
-        src = source / name
-        if src.is_dir():
-            shutil.copytree(src, tree / name)
+    for item in source.iterdir():
+        if item.name in SKIP:
+            continue
+        if item.is_dir():
+            shutil.copytree(item, tree / item.name)
         else:
-            shutil.copy2(src, tree / name)
+            shutil.copy2(item, tree / item.name)
     return tree
 
 
-def build(
-    root: Path,
-    out: Path,
-    sessions: int,
+def entry_port(doc: dict[str, Any], params: dict[str, Any]) -> tuple[str, int]:
+    """The transport and the port of the entry flow, which the server listens on."""
+    flow = doc["flows"][0]
+    l4 = flow.get("l4", "tcp")
+    accept = next(
+        (a["accept"] for a in flow.get("server", []) if "accept" in a),
+        None,
+    )
+    if accept is None:
+        raise SystemExit(f"scenario {doc['scenario']}: the entry flow has no accept")
+    raw = str(accept["port"]).strip()
+    match = TEMPLATE_VAR.match(raw)
+    if match:
+        name = match.group(1)
+        value = params.get(name, doc.get("vars", {}).get(name))
+        if value is None:
+            raise SystemExit(f"scenario {doc['scenario']}: no value for {name}")
+        return l4, int(value)
+    return l4, int(raw)
+
+
+def rounds_of(entries: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Groups the entries so that no round listens twice on one transport and port."""
+    rounds: list[list[dict[str, Any]]] = []
+    for entry in entries:
+        for group in rounds:
+            if all(e["listen"] != entry["listen"] for e in group):
+                group.append(entry)
+                break
+        else:
+            rounds.append([entry])
+    return rounds
+
+
+def build_plan(
+    module: str,
+    version: str,
+    digest: str,
+    group: list[dict[str, Any]],
+    index: int,
     seed: int,
     client_if: str,
     server_if: str,
-    keys: bool,
-) -> None:
-    tree = stage(root, out)
-    manifest = yaml.safe_load((tree / "manifest.yaml").read_text(encoding="utf-8"))
-    scenarios: list[dict[str, Any]] = []
-    mix: list[dict[str, Any]] = []
-    rates: list[dict[str, Any]] = []
-    plain_ports: list[int] = []
-    plain = FIRST_PLAIN_PORT
-    for rel in manifest["scenarios"]:
-        text = (tree / rel).read_text(encoding="utf-8")
-        doc = yaml.safe_load(text)
-        name = doc["scenario"]
-        declared = doc.get("vars", {})
-        params = {k: v for k, v in VARS.items() if k in declared}
-        if name.startswith("https_"):
-            port = int(declared["server_port"])
-        else:
-            port = plain
-            plain += 1
-            params["server_port"] = port
-        ref = f"http1/{name}"
-        scenarios.append(
+    client_hosts: int,
+) -> dict[str, Any]:
+    steady = max(1, *(math.ceil(e["sessions"] / RATE) for e in group))
+    rates = [
+        {"mixEntry": e["id"], "sessionsPerSecond": e["sessions"] / steady}
+        for e in group
+    ]
+    return {
+        "planId": f"run-{module}-afxdp-{index}/agent-a",
+        "runId": f"run-{module}-afxdp-{index}",
+        "agentId": "agent-a",
+        "testName": f"{module}_afxdp_realism",
+        "engineApi": "0.2.0",
+        "seed": str(seed + index),
+        "topology": "TOPOLOGY_APP_SIM",
+        "backend": "BACKEND_AF_XDP",
+        "modules": [{"name": module, "version": version, "digest": digest}],
+        "scenarios": [e["scenario"] for e in group],
+        "mix": [
             {
-                "ref": ref,
-                "module": "http1",
-                "source": text,
-                "digest": "sha256:" + hashlib.sha256(text.encode()).hexdigest(),
-            }
-        )
-        mix.append(
-            {
-                "id": name,
-                "scenario": ref,
+                "id": e["id"],
+                "scenario": e["scenario"]["ref"],
                 "weight": 1.0,
-                "params": params,
+                "params": e["params"],
                 "clientPool": "clients",
                 "serverPool": "servers",
             }
-        )
-        rates.append({"mixEntry": name, "sessionsPerSecond": 5})
-        if not name.startswith("https_"):
-            plain_ports.append(port)
-    steady = max(1, sessions // 5)
-    plan = {
-        "planId": "run-http1-afxdp/agent-a",
-        "runId": "run-http1-afxdp",
-        "agentId": "agent-a",
-        "testName": "http1_afxdp_realism",
-        "engineApi": "0.2.0",
-        "seed": str(seed),
-        "topology": "TOPOLOGY_APP_SIM",
-        "backend": "BACKEND_AF_XDP",
-        "modules": [
-            {
-                "name": "http1",
-                "version": manifest["version"],
-                "digest": tree_digest(tree),
-            }
+            for e in group
         ],
-        "scenarios": scenarios,
-        "mix": mix,
         "ports": [
             {"name": "client0", "interfaceName": client_if},
             {"name": "server0", "interfaceName": server_if},
@@ -152,10 +172,10 @@ def build(
                 "name": "clients",
                 "port": "client0",
                 "role": "HOST_ROLE_CLIENT",
-                "ipv4Prefix": "10.1.0.0/24",
-                "poolCount": 8,
-                "count": 8,
-                "macBase": "02:00:10:00:00:01",
+                "ipv4Prefix": f"10.1.{index}.0/24",
+                "poolCount": client_hosts,
+                "count": client_hosts,
+                "macBase": f"02:00:10:{index:02x}:00:01",
                 "osProfile": "windows11",
             },
             {
@@ -165,7 +185,7 @@ def build(
                 "ipv4Prefix": "10.2.0.0/24",
                 "poolCount": 1,
                 "count": 1,
-                "macBase": "02:00:30:00:00:01",
+                "macBase": f"02:00:30:{index:02x}:00:01",
                 "osProfile": "linux6",
             },
         ],
@@ -173,7 +193,7 @@ def build(
             {
                 "core": 0,
                 "hosts": [
-                    {"pool": "clients", "count": 8},
+                    {"pool": "clients", "count": client_hosts},
                     {"pool": "servers", "count": 1},
                 ],
                 "rates": rates,
@@ -181,7 +201,7 @@ def build(
         ],
         "load": {
             "objective": "LOAD_OBJECTIVE_SESSIONS_PER_SECOND",
-            "objectiveValue": 5 * len(mix),
+            "objectiveValue": sum(r["sessionsPerSecond"] for r in rates),
             "phases": [
                 {
                     "name": "steady",
@@ -197,35 +217,134 @@ def build(
             {"metric": "sessions.failed_ratio", "op": "CRITERION_OP_LT", "value": 0.001}
         ],
     }
-    (out / "plan.json").write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+
+
+def build(
+    root: Path,
+    out: Path,
+    module: str,
+    sessions: int | None,
+    seed: int,
+    client_if: str,
+    server_if: str,
+    keys: bool,
+) -> int:
+    """Writes the plans, the module tree, and the labels. Returns the number of rounds."""
+    profile = load_profile(module)
+    tree = stage(root, out, module)
+    manifest = yaml.safe_load((tree / "manifest.yaml").read_text(encoding="utf-8"))
+    digest = tree_digest(tree)
+    per_scenario = sessions if sessions is not None else int(profile.get("sessions", 20))
+    client_hosts = int(profile.get("client_hosts", 8))
+    skipped = set(profile.get("skip", []))
+    entries: list[dict[str, Any]] = []
+    for rel in manifest["scenarios"]:
+        text = (tree / rel).read_text(encoding="utf-8")
+        doc = yaml.safe_load(text)
+        name = doc["scenario"]
+        if name in skipped:
+            continue
+        declared = doc.get("vars", {})
+        values = {
+            **profile.get("vars", {}),
+            **profile.get("scenario_vars", {}).get(name, {}),
+        }
+        params = {k: v for k, v in values.items() if k in declared}
+        if name in profile.get("ports", {}):
+            params["server_port"] = profile["ports"][name]
+        l4, port = entry_port(doc, params)
+        ref = f"{module}/{name}"
+        entries.append(
+            {
+                "id": name,
+                "listen": (l4, port),
+                "sessions": int(profile.get("scenario_sessions", {}).get(name, per_scenario)),
+                "params": params,
+                "declared": declared,
+                "scenario": {
+                    "ref": ref,
+                    "module": module,
+                    "source": text,
+                    "digest": "sha256:" + hashlib.sha256(text.encode()).hexdigest(),
+                },
+            }
+        )
+    groups = rounds_of(entries)
+    for index, group in enumerate(groups):
+        # The addresses that the scenarios announce in their payload are the
+        # first hosts of the pools of the round.
+        for e in group:
+            if "server_ip" in e["declared"] and "server_ip" not in e["params"]:
+                e["params"]["server_ip"] = "10.2.0.1"
+            if "client_ip" in e["declared"] and "client_ip" not in e["params"]:
+                e["params"]["client_ip"] = f"10.1.{index}.1"
+        plan = build_plan(
+            module,
+            manifest["version"],
+            digest,
+            group,
+            index,
+            seed,
+            client_if,
+            server_if,
+            client_hosts,
+        )
+        directory = out / f"round-{index}"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "plan.json").write_text(
+            json.dumps(plan, indent=2) + "\n", encoding="utf-8"
+        )
+    (out / "rounds").write_text(f"{len(groups)}\n", encoding="utf-8")
+    # The arguments of `realism decrypted`, one on each line, when the kernel run
+    # of the module scores a decrypted view. The script adds the capture, the
+    # session count, and the parsers.
+    decrypted = profile.get("decrypted")
+    lines: list[str] = []
+    if keys and decrypted:
+        lines = ["--labels", str(decrypted["labels"])]
+        for key, flag in (
+            ("starttls_port", "--starttls-port"),
+            ("view_port", "--view-port"),
+            ("plaintext", "--plaintext"),
+        ):
+            if key in decrypted:
+                lines += [flag, str(decrypted[key])]
+    (out / "decrypted.args").write_text(
+        "".join(f"{line}\n" for line in lines), encoding="utf-8"
+    )
 
     labels = yaml.safe_load(
-        (root / "modules/http1/fixtures/expected.yaml").read_text(encoding="utf-8")
+        (root / "modules" / module / "fixtures" / "expected.yaml").read_text(
+            encoding="utf-8"
+        )
     )
-    labels["sessions"] = [
-        {"application": "http1", "match": {"transport": "tcp", "server_port": p}}
-        for p in plain_ports
-    ] + [s for s in labels["sessions"] if s["application"] != "http1"]
     if not keys:
         # No key log: the capture cannot be decrypted. The https sessions keep
         # their application and nDPI class, and the encryption check (decryption
         # and JA4) leaves the labels.
-        del labels["tls"]
+        labels.pop("tls", None)
         for entry in labels["sessions"]:
             entry.pop("tls_profile", None)
-    header = "# SPDX-License-Identifier: GPL-3.0-only\n# Generated by make_plan.py from modules/http1/fixtures/expected.yaml.\n"
+    header = (
+        "# SPDX-License-Identifier: GPL-3.0-only\n"
+        f"# Generated by make_plan.py from modules/{module}/fixtures/expected.yaml.\n"
+    )
     (out / "labels.yaml").write_text(
         header + yaml.safe_dump(labels, sort_keys=False, width=1_000_000),
         encoding="utf-8",
     )
+    return len(groups)
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("out", type=Path)
+    parser.add_argument("module")
     parser.add_argument(
-        "--sessions", type=int, default=20, help="about this many sessions per scenario"
+        "--sessions",
+        type=int,
+        help="about this many sessions per scenario, default the profile of the module",
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--client", default="dpc")
@@ -238,15 +357,17 @@ def main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
-    build(
+    rounds = build(
         args.root.resolve(),
         args.out,
+        args.module,
         args.sessions,
         args.seed,
         args.client,
         args.server,
         args.keys == "keylog",
     )
+    print(rounds)
     return 0
 
 
