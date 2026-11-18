@@ -2412,21 +2412,56 @@ work_packages:
     acceptance:
       - On a veth pair in CI the own stack reaches a kernel peer behind a namespace router with no neighbor entry configured, over IPv4 and IPv6.
 
+  - id: ENG-31
+    title: A transport seam in the runtime
+    phase: 3
+    workstream: ENG
+    size: M
+    depends_on: [TRN-27, TRN-29]
+    paths: [engine/fps-runtime/]
+    summary: >-
+      The workers of fps-runtime open sessions only through fps_backend_kernel (Connector and KernelListener for TCP,
+      DatagramOpener for UDP), so a forced AF_XDP run binds its queues and then stops with Unimplemented (AGT-24
+      finding). Add a Transport trait with connect, listen, and the UDP calls, each returning boxed SessionIo or
+      DatagramIo, implement it for the kernel backend, and let WorkerConfig carry an Arc<dyn Transport>. The datapath
+      serves one listen per port for all server hosts, so server workers take one listener per port.
+    deliverables:
+      - The trait, the kernel implementation, and the workers moved onto it, with the existing runtime tests unchanged.
+    acceptance:
+      - Every runtime and agent test passes on the kernel backend through the trait, and a test runs a worker over a fake Transport in memory.
+
   - id: AGT-25
-    title: The agent opens UDP sessions on the datapath
+    title: The agent runs its workers on the datapath
     phase: 3
     workstream: AGT
     size: S
-    depends_on: [AGT-24, TRN-29]
+    depends_on: [AGT-24, ENG-31]
     paths: [engine/fps-agent/]
     summary: >-
-      The agent opens UDP sessions through DatagramOpener with the kernel backend only. On the AF_XDP backend it
-      opens them through Connector::connect_udp and UdpListener::accept of fps-datapath, as the dns_scenarios test of
-      TRN-29 does, and picks the source and server host of a connect without a host from the pools (TRN-29 finding).
+      Prepared::start_on passes the datapath to the workers through the Transport of ENG-31 (Datapath::connector and
+      Datapath::listen for TCP, Connector::connect_udp and UdpListener::accept for UDP) and removes the Unimplemented
+      that AGT-24 left. It picks the source and server host of a UDP connect without a host from the pools, as the
+      dns_scenarios test of TRN-29 does.
     deliverables:
-      - The datapath DatagramOpener in the agent with tests on fake hosts.
+      - The wiring with tests on fake hosts.
     acceptance:
-      - A forced AF_XDP run of the dns module through the agent completes its scenarios on a veth pair in CI.
+      - A forced AF_XDP run of the http1 and dns modules through the agent completes on a veth pair in CI.
+
+  - id: CON-35
+    title: The agent reports the bound XDP mode after a plan
+    phase: 3
+    workstream: CON
+    size: S
+    depends_on: [AGT-24]
+    paths: [contracts/]
+    summary: >-
+      Register comes before any plan, so PortInfo.xdp_driver_mode carries only the driver table hint, and the mode
+      that each socket really bound in (AGT-24) reaches only the agent log. Add a field on the start result or the
+      heartbeat that carries the bound mode of each port, so the controller can show it.
+    deliverables:
+      - The contract field with its OpenAPI and protobuf checks.
+    acceptance:
+      - The contract tests show the bound mode of each port in the chosen message, and the change passes the breaking change check.
 
   - id: AGT-24
     title: The agent starts the selected backend

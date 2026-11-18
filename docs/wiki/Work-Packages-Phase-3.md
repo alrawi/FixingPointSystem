@@ -4,7 +4,7 @@
 
 Gate 3 (v1 release). One 16 vCPU agent meets the tier T1 targets on KVM, multi agent runs aggregate correctly, every image format boots, and the web UI passes its end to end suite.
 
-This page lists 41 work packages. Packages marked critical path gate the phase.
+This page lists 43 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -30,7 +30,9 @@ flowchart LR
   TRN_33["TRN-33<br/>The own stack API that the datapath needs"]
   TRN_34["TRN-34<br/>Pacing and faster loss detection in the own stack"]
   TRN_35["TRN-35<br/>The own stacks resolve their next hop"]
-  AGT_25["AGT-25<br/>The agent opens UDP sessions on the datapath"]
+  ENG_31["ENG-31<br/>A transport seam in the runtime"]
+  AGT_25["AGT-25<br/>The agent runs its workers on the datapath"]
+  CON_35["CON-35<br/>The agent reports the bound XDP mode after a plan"]
   AGT_24["AGT-24<br/>The agent starts the selected backend"]
   CTL_54["CTL-54<br/>The orchestrator inventory uses the selected backend"]
   HST_03["HST-03<br/>ARP and ND for user space backends"]
@@ -103,8 +105,11 @@ flowchart LR
   TRN_30 --> TRN_33
   TRN_33 --> TRN_34
   TRN_30 --> TRN_35
+  TRN_27 --> ENG_31
+  TRN_29 --> ENG_31
   AGT_24 --> AGT_25
-  TRN_29 --> AGT_25
+  ENG_31 --> AGT_25
+  AGT_24 --> CON_35
   AGT_22 --> AGT_24
   TRN_27 --> AGT_24
   CTL_53 --> CTL_54
@@ -159,7 +164,9 @@ flowchart LR
 | [TRN-33](#trn-33-the-own-stack-api-that-the-datapath-needs) | The own stack API that the datapath needs | S | TRN-30 |  |
 | [TRN-34](#trn-34-pacing-and-faster-loss-detection-in-the-own-stack) | Pacing and faster loss detection in the own stack | M | TRN-33 |  |
 | [TRN-35](#trn-35-the-own-stacks-resolve-their-next-hop) | The own stacks resolve their next hop | S | TRN-30 |  |
-| [AGT-25](#agt-25-the-agent-opens-udp-sessions-on-the-datapath) | The agent opens UDP sessions on the datapath | S | AGT-24, TRN-29 |  |
+| [ENG-31](#eng-31-a-transport-seam-in-the-runtime) | A transport seam in the runtime | M | TRN-27, TRN-29 |  |
+| [AGT-25](#agt-25-the-agent-runs-its-workers-on-the-datapath) | The agent runs its workers on the datapath | S | AGT-24, ENG-31 |  |
+| [CON-35](#con-35-the-agent-reports-the-bound-xdp-mode-after-a-plan) | The agent reports the bound XDP mode after a plan | S | AGT-24 |  |
 | [AGT-24](#agt-24-the-agent-starts-the-selected-backend) | The agent starts the selected backend | S | AGT-22, TRN-27 |  |
 | [CTL-54](#ctl-54-the-orchestrator-inventory-uses-the-selected-backend) | The orchestrator inventory uses the selected backend | S | CTL-53 |  |
 | [HST-03](#hst-03-arp-and-nd-for-user-space-backends) | ARP and ND for user space backends | M | TRN-11 |  |
@@ -202,6 +209,23 @@ Acceptance.
 - [ ] RESULTS.md states whether a smoltcp socket processes frames outside its interface loop, and the cost per event at 16,000 sockets.
 
 ## CON Contracts
+
+### CON-35 The agent reports the bound XDP mode after a plan
+
+Phase 3 · size S · workstream CON
+
+- **Depends on.** AGT-24
+- **Paths.** `contracts/`
+
+Register comes before any plan, so PortInfo.xdp_driver_mode carries only the driver table hint, and the mode that each socket really bound in (AGT-24) reaches only the agent log. Add a field on the start result or the heartbeat that carries the bound mode of each port, so the controller can show it.
+
+Deliverables.
+
+- The contract field with its OpenAPI and protobuf checks.
+
+Acceptance.
+
+- [ ] The contract tests show the bound mode of each port in the chosen message, and the change passes the breaking change check.
 
 ### CON-32 Kernel release, selected backend, and XDP mode in the agent capabilities
 
@@ -275,6 +299,25 @@ Deliverables.
 Acceptance.
 
 - [ ] The suite passes on the reference KVM host and records every measured value, and its small profile on fat-nuc prints NOT A GATE RESULT.
+
+## ENG Agent engine
+
+### ENG-31 A transport seam in the runtime
+
+Phase 3 · size M · workstream ENG
+
+- **Depends on.** TRN-27, TRN-29
+- **Paths.** `engine/fps-runtime/`
+
+The workers of fps-runtime open sessions only through fps_backend_kernel (Connector and KernelListener for TCP, DatagramOpener for UDP), so a forced AF_XDP run binds its queues and then stops with Unimplemented (AGT-24 finding). Add a Transport trait with connect, listen, and the UDP calls, each returning boxed SessionIo or DatagramIo, implement it for the kernel backend, and let WorkerConfig carry an Arc<dyn Transport>. The datapath serves one listen per port for all server hosts, so server workers take one listener per port.
+
+Deliverables.
+
+- The trait, the kernel implementation, and the workers moved onto it, with the existing runtime tests unchanged.
+
+Acceptance.
+
+- [ ] Every runtime and agent test passes on the kernel backend through the trait, and a test runs a worker over a fake Transport in memory.
 
 ## TRN Transport backends
 
@@ -729,22 +772,22 @@ Acceptance.
 
 ## AGT Agent service
 
-### AGT-25 The agent opens UDP sessions on the datapath
+### AGT-25 The agent runs its workers on the datapath
 
 Phase 3 · size S · workstream AGT
 
-- **Depends on.** AGT-24, TRN-29
+- **Depends on.** AGT-24, ENG-31
 - **Paths.** `engine/fps-agent/`
 
-The agent opens UDP sessions through DatagramOpener with the kernel backend only. On the AF_XDP backend it opens them through Connector::connect_udp and UdpListener::accept of fps-datapath, as the dns_scenarios test of TRN-29 does, and picks the source and server host of a connect without a host from the pools (TRN-29 finding).
+Prepared::start_on passes the datapath to the workers through the Transport of ENG-31 (Datapath::connector and Datapath::listen for TCP, Connector::connect_udp and UdpListener::accept for UDP) and removes the Unimplemented that AGT-24 left. It picks the source and server host of a UDP connect without a host from the pools, as the dns_scenarios test of TRN-29 does.
 
 Deliverables.
 
-- The datapath DatagramOpener in the agent with tests on fake hosts.
+- The wiring with tests on fake hosts.
 
 Acceptance.
 
-- [ ] A forced AF_XDP run of the dns module through the agent completes its scenarios on a veth pair in CI.
+- [ ] A forced AF_XDP run of the http1 and dns modules through the agent completes on a veth pair in CI.
 
 ### AGT-24 The agent starts the selected backend
 

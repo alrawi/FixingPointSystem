@@ -15,6 +15,7 @@ on:
     paths:
       - engine/fps-backend-kernel/**
       - engine/fps-backend-afxdp/**
+      - engine/fps-agent/**
       - engine/fps-datapath/**
       - engine/fps-tcp/**
       - engine/fps-tcp-own/**
@@ -30,6 +31,7 @@ on:
     paths:
       - engine/fps-backend-kernel/**
       - engine/fps-backend-afxdp/**
+      - engine/fps-agent/**
       - engine/fps-datapath/**
       - engine/fps-tcp/**
       - engine/fps-tcp-own/**
@@ -90,6 +92,10 @@ jobs:
         env:
           FPS_REQUIRE_AFXDP: "1"
           FPS_DATAPATH_RESULTS: ${{ runner.temp }}/datapath
+      - name: AF_XDP backend of the agent
+        run: cargo test -p fps-agent --test afxdp_veth -- --nocapture
+        env:
+          FPS_REQUIRE_AFXDP: "1"
       - name: dns scenarios over the user space datapath
         run: cargo test -p fps-datapath --test dns_scenarios -- --nocapture
         env:
