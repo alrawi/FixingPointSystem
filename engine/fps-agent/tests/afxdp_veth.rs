@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! A forced AF_XDP run starts the AF_XDP backend through the datapath and
-//! reports the bound mode of a real socket (AGT-24).
+//! A forced AF_XDP run starts the AF_XDP backend through the datapath,
+//! reports the bound mode of a real socket (AGT-24), and runs the http1 and
+//! dns modules on it (AGT-25).
 //!
 //! The test makes a network namespace with a veth pair, `dpa` and `dpb`, and
 //! runs this test binary again inside it (the hidden test `helper_afxdp`).
 //! The helper takes the example plan `http_dns_smoke.json`, names the backend
 //! `BACKEND_AF_XDP`, binds the two ports of the plan to the two ends of the
-//! pair, and drops the DNS entry (UDP over the datapath is TRN-29). Then it:
-//!
+//! pair, gives the pools an OS profile each, and keeps both mix entries on two
+//! plan workers, so two server workers listen on port 8080 and two on port 53.
+//! Then it:
 //! 1. prepares the plan with `prepare_on`, as `fps-agent connect` does after
 //!    a forced `--backend af_xdp`, and checks that the run starts AF_XDP,
 //! 2. starts the backend and reads the mode of each port back from the bound
@@ -16,9 +18,12 @@
 //! 4. opens a real TCP session between a client host and a server host of the
 //!    plan pools through the datapath, which sends frames out of `dpa`
 //!    through its AF_XDP socket into `dpb` and back, and checks every byte,
-//! 5. stops the backend and runs the standalone `run` on the same plan,
-//!    which logs the bound mode of each port and then refuses with
-//!    `Unimplemented`, because `fps-runtime` opens kernel sockets only.
+//! 5. stops the backend and runs the standalone `run` on the same plan. The
+//!    workers open their sessions through the datapath, so every http1 and
+//!    dns session of the run goes out of `dpa` and in at `dpb` through the
+//!    AF_XDP sockets. The run logs the bound mode of each port, passes its
+//!    criteria with no failed session, and reports the frames that each lane
+//!    carried.
 //!
 //! The own stack sends no ARP requests, and the station tables of the pools
 //! hold the MAC address of every host, so the harness seeds no neighbors. No
@@ -42,9 +47,10 @@ use fps_agent::plan::Plan;
 use fps_agent::proto::{Capabilities, PortInfo, XdpMode};
 use fps_agent::run::prepare;
 use fps_agent::trust::ModulePolicy;
-use fps_agent::{detect, run, RunError, RunOptions, SystemRoot};
+use fps_agent::{detect, run, Outcome, RunOptions, SystemRoot};
 use fps_backend_afxdp::BackendKind;
 use fps_hosts::{HostPool, PoolSpec};
+use fps_stats::{metric, MetricId, SeriesValue, Snapshot};
 use serde_json::Value as Json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -174,7 +180,7 @@ fn a_forced_af_xdp_run_starts_the_datapath_on_a_veth_pair() {
         "port client0 interface dpa",
         "port server0 interface dpb",
         "session bytes=4096 ok=true",
-        "run refused=unimplemented",
+        "run outcome=pass sessions http1=",
     ] {
         assert!(
             lines.iter().any(|l| l.contains(want)),
@@ -186,6 +192,23 @@ fn a_forced_af_xdp_run_starts_the_datapath_on_a_veth_pair() {
 // ---------------------------------------------------------------------------
 // The helper process, inside the namespace
 // ---------------------------------------------------------------------------
+
+/// The counter of `name` for `application` on `side` of one snapshot.
+fn count(total: &Snapshot, name: MetricId, application: &str, side: &str) -> u64 {
+    total
+        .iter()
+        .filter(|(k, _)| {
+            k.metric() == name
+                && k.labels()
+                    .contains(&("application", application.to_owned()))
+                && k.labels().contains(&("side", side.to_owned()))
+        })
+        .map(|(_, v)| match v {
+            SeriesValue::Count(n) => *n,
+            _ => 0,
+        })
+        .sum()
+}
 
 fn say(msg: &str) {
     println!("{MARK}{msg}");
@@ -206,18 +229,41 @@ fn af_xdp_plan() -> Json {
     plan["hostPools"][0]["poolCount"] = 4.into();
     plan["hostPools"][0]["count"] = 4.into();
     plan["hostPools"][1]["ipv4Prefix"] = "10.2.0.0/24".into();
-    // The datapath carries TCP only (TRN-29 adds UDP), so the mix keeps the
-    // http1 entry.
-    let mix = plan["mix"].as_array_mut().expect("mix");
-    mix.retain(|e| e["id"] == "web_get");
-    plan["workers"] = serde_json::json!([{
-        "core": 0,
-        "hosts": [
-            { "pool": "clients", "count": 4 },
-            { "pool": "servers", "count": 2 }
-        ],
-        "rates": [{ "mixEntry": "web_get", "sessionsPerSecond": 10 }]
-    }]);
+    // One OS profile for each side (TRN-28): the own stack writes them into
+    // the SYN and the SYN-ACK.
+    plan["hostPools"][0]["osProfile"] = "windows11".into();
+    plan["hostPools"][1]["osProfile"] = "linux6".into();
+    // Two plan workers with a server host each: both listen on 8080 and 53.
+    plan["workers"] = serde_json::json!([
+        {
+            "core": 0,
+            "hosts": [
+                { "pool": "clients", "count": 2 },
+                { "pool": "servers", "count": 1 }
+            ],
+            "rates": [
+                { "mixEntry": "web_get", "sessionsPerSecond": 10 },
+                { "mixEntry": "dns_lookup", "sessionsPerSecond": 5 }
+            ]
+        },
+        {
+            "workerId": 1,
+            "core": 0,
+            "hosts": [
+                { "pool": "clients", "offset": 2, "count": 2 },
+                { "pool": "servers", "offset": 1, "count": 1 }
+            ],
+            "rates": [
+                { "mixEntry": "web_get", "sessionsPerSecond": 10 },
+                { "mixEntry": "dns_lookup", "sessionsPerSecond": 5 }
+            ]
+        }
+    ]);
+    plan["load"]["phases"] = serde_json::json!([
+        { "name": "steady", "duration": "3s", "shape": "PHASE_SHAPE_HOLD",
+          "startFraction": 1, "endFraction": 1 }
+    ]);
+    plan["warmup"] = "0s".into();
     plan
 }
 
@@ -379,16 +425,21 @@ fn helper_afxdp() {
     assert!(frames > 0, "the session sent frames through the queues");
     say(&format!("frames tcp={frames}"));
 
-    // 5. The standalone run starts the backend too, logs the bound mode, and
-    //    refuses to run workers on it.
+    // 5. The standalone run starts the backend, and the http1 and dns workers
+    //    run their sessions on it (AGT-25).
     let opts = RunOptions::new(path, modules);
     let mut out = Vec::new();
     let mut log = Vec::new();
-    let err = run(&opts, &mut out, &mut log).expect_err("no worker runs on the datapath yet");
+    let summary = run(&opts, &mut out, &mut log);
     let log = String::from_utf8_lossy(&log).into_owned();
-    assert!(matches!(err, RunError::Unimplemented(_)), "{err}");
-    assert!(err.to_string().contains("fps-runtime"), "{err}");
-    for line in log.lines().filter(|l| l.contains("backend af_xdp bound")) {
+    for line in log.lines() {
+        eprintln!("{MARK}log {line}");
+    }
+    let summary = summary.expect("the run on the datapath completes");
+    for line in log
+        .lines()
+        .filter(|l| l.contains("backend af_xdp bound") || l.contains("datapath lane"))
+    {
         say(line);
     }
     assert!(
@@ -400,8 +451,41 @@ fn helper_afxdp() {
         "{log}"
     );
     assert!(log.contains("xdp_driver_mode XDP_MODE_"), "{log}");
-    assert!(out.is_empty(), "no snapshot line before a worker runs");
-    say("run refused=unimplemented");
+    assert_eq!(summary.outcome, Outcome::Pass, "{log}");
+    let (client, server) = (
+        summary.client.as_ref().expect("client totals"),
+        summary.server.as_ref().expect("server totals"),
+    );
+    let mut sessions = Vec::new();
+    for application in ["http1", "dns"] {
+        let attempted = count(client, metric::SESSIONS_ATTEMPTED, application, "client");
+        let ok = count(client, metric::SESSIONS_SUCCEEDED, application, "client");
+        let served = count(server, metric::SESSIONS_SUCCEEDED, application, "server");
+        assert!(attempted > 0, "{application}: no session ran\n{log}");
+        assert_eq!(
+            ok, attempted,
+            "{application}: a client session failed\n{log}"
+        );
+        assert_eq!(
+            served, attempted,
+            "{application}: a server session failed\n{log}"
+        );
+        sessions.push(format!("{application}={ok}"));
+    }
+    assert_eq!(client.counter_total(metric::SESSIONS_FAILED), 0, "{log}");
+    assert_eq!(server.counter_total(metric::SESSIONS_FAILED), 0, "{log}");
+    // The frames of the sessions went through the AF_XDP queues of the lane.
+    assert_eq!(summary.lanes.len(), 1);
+    let lane = &summary.lanes[0];
+    assert!(!lane.panicked, "{lane:?}");
+    assert!(
+        lane.stats.client.tcp > 0 && lane.stats.server.tcp > 0,
+        "{lane:?}"
+    );
+    assert!(lane.stats.udp_client.tx_datagrams > 0, "{lane:?}");
+    assert!(lane.stats.udp_server.rx_accepted > 0, "{lane:?}");
+    assert_eq!(lane.stats.udp_client.rx_no_listener, 0, "{lane:?}");
+    say(&format!("run outcome=pass sessions {}", sessions.join(" ")));
 
     // The lease of a queue ends with the run, so a second start works.
     let plan = Plan::load(&opts.plan).expect("the plan loads");

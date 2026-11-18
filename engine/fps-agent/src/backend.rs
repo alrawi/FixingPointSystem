@@ -14,7 +14,12 @@
 //!   serves the host pools of the plan on those queues. [`AfXdpBackend`]
 //!   keeps the datapath alive and reports, for every port, the mode that the
 //!   sockets really bound in ([`BoundPort`]), read back from the kernel and
-//!   not taken from the driver table.
+//!   not taken from the driver table. [`AfXdpBackend::transport`] gives the
+//!   workers the datapath as a `fps_runtime::transport::Transport`
+//!   ([`crate::transport`]), which `Prepared::start_on` sets on every worker
+//!   (AGT-25). The `os_profile` of each host pool becomes the OS profile of
+//!   its side in the own stack, one profile for the client side and one for
+//!   the server side.
 //!
 //! # What a plan has to look like on AF_XDP
 //!
@@ -29,7 +34,8 @@
 //! * both pools are IPv4, untagged or on the same VLAN, and use no DHCP.
 //!
 //! Anything else is [`BackendError::Unsupported`] with the package that adds
-//! it (UDP is TRN-29, IPv6 is TRN-30). The bound mode is available as soon
+//! it (IPv6 is TRN-30, DHCP is HST-04 on the datapath). TCP and UDP flows both
+//! run (TRN-29, AGT-25). The bound mode is available as soon
 //! as [`start`] returns, and [`StartedBackend::report`] writes it into the
 //! `xdp_driver_mode` of the matching [`PortInfo`] of a [`Capabilities`].
 
@@ -788,6 +794,55 @@ mod tests {
             ..MixEntry::default()
         });
         assert!(err(&p, Sides::Both).contains("2 Client host pools"));
+    }
+
+    #[test]
+    fn each_pool_names_the_os_profile_of_its_side() {
+        let mut p = plan();
+        let l = layout(&p, Sides::Both).unwrap();
+        let none = own_config(&l).unwrap();
+        assert!(none.client_os_profile.is_none() && none.server_os_profile.is_none());
+
+        p.host_pools[0].os_profile = "windows11".into();
+        p.host_pools[1].os_profile = "macos14".into();
+        let l = layout(&p, Sides::Both).unwrap();
+        let own = own_config(&l).unwrap();
+        assert_eq!(own.client_os_profile.map(|o| o.name), Some("windows11"));
+        assert_eq!(own.server_os_profile.map(|o| o.name), Some("macos14"));
+
+        // One side alone leaves the other as it was.
+        p.host_pools[0].os_profile.clear();
+        let l = layout(&p, Sides::Both).unwrap();
+        let own = own_config(&l).unwrap();
+        assert!(own.client_os_profile.is_none());
+        assert_eq!(own.server_os_profile.map(|o| o.name), Some("macos14"));
+    }
+
+    #[test]
+    fn an_unknown_os_profile_is_a_plan_error_at_the_check() {
+        let mut p = plan();
+        p.host_pools[1].os_profile = "beos".into();
+        let e = check_af_xdp(&p, Sides::Both).unwrap_err();
+        assert!(matches!(e, BackendError::Plan(_)), "{e:?}");
+        let text = e.to_string();
+        assert!(text.contains("host pool servers"), "{text}");
+        assert!(text.contains("os_profile 'beos'"), "{text}");
+    }
+
+    #[test]
+    fn the_datapath_starts_on_queues_that_the_caller_opened() {
+        use fps_backend_afxdp::memory::frame_pair;
+        let p = plan();
+        let (c, s) = frame_pair(64, 1600);
+        let backend = start_on_queues(&p, Sides::Both, vec![(Box::new(c), Box::new(s))]).unwrap();
+        assert!(backend.ports().is_empty(), "no socket was bound");
+        assert_eq!(backend.datapath().lanes(), 1);
+        let reports = backend.stop();
+        assert_eq!(reports.len(), 1);
+        assert!(!reports[0].panicked);
+
+        let e = start_on_queues(&p, Sides::Both, Vec::new()).err().unwrap();
+        assert!(e.to_string().contains("at least one lane"), "{e}");
     }
 
     #[test]

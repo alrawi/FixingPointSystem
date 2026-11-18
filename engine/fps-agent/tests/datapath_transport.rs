@@ -79,8 +79,12 @@ async fn two_workers_listen_on_one_port_and_each_gets_the_sessions_of_its_hosts(
     assert_eq!(a.local_addr().map(|l| l.ip()), Some(r.clients[0]));
     assert_eq!(b.peer_addr(), Some(at(r.servers[0], 8080)));
 
-    let on_second = within("second accept", second.accept()).await.expect("accept");
-    let on_first = within("first accept", first.accept()).await.expect("accept");
+    let on_second = within("second accept", second.accept())
+        .await
+        .expect("accept");
+    let on_first = within("first accept", first.accept())
+        .await
+        .expect("accept");
     assert_eq!(on_second.local_addr(), Some(at(r.servers[1], 8080)));
     assert_eq!(on_second.peer_addr().map(|p| p.ip()), Some(r.clients[0]));
     assert_eq!(on_first.local_addr(), Some(at(r.servers[0], 8080)));
@@ -91,10 +95,14 @@ async fn two_workers_listen_on_one_port_and_each_gets_the_sessions_of_its_hosts(
     a.write_all(b"to second").await.expect("write");
     b.write_all(b"to first").await.expect("write");
     let mut buf = [0u8; 9];
-    within("read", on_second.read_exact(&mut buf)).await.expect("read");
+    within("read", on_second.read_exact(&mut buf))
+        .await
+        .expect("read");
     assert_eq!(&buf, b"to second");
     let mut buf = [0u8; 8];
-    within("read", on_first.read_exact(&mut buf)).await.expect("read");
+    within("read", on_first.read_exact(&mut buf))
+        .await
+        .expect("read");
     assert_eq!(&buf, b"to first");
     on_first.write_all(b"pong").await.expect("write");
     let mut buf = [0u8; 4];
@@ -119,7 +127,10 @@ async fn a_call_for_several_hosts_takes_the_sessions_of_all_of_them() {
         .listen(&[at(r.servers[2], 9000), at(r.servers[3], 9000)])
         .expect("listen");
     for (i, host) in [r.servers[3], r.servers[2]].into_iter().enumerate() {
-        let _client = t.connect(r.clients[i], at(host, 9000)).await.expect("connect");
+        let _client = t
+            .connect(r.clients[i], at(host, 9000))
+            .await
+            .expect("connect");
         let s = within("accept", listener.accept()).await.expect("accept");
         assert_eq!(s.local_addr(), Some(at(host, 9000)));
     }
@@ -221,10 +232,14 @@ async fn udp_sessions_are_sorted_to_the_call_of_their_host() {
     assert_eq!(session.local_addr(), at(r.servers[1], 5300));
     assert_eq!(session.peer_addr(), client.local_addr());
     let mut buf = [0u8; 64];
-    let n = within("recv", session.recv_datagram(&mut buf)).await.expect("recv");
+    let n = within("recv", session.recv_datagram(&mut buf))
+        .await
+        .expect("recv");
     assert_eq!(&buf[..n], b"query");
     session.send_datagram(b"answer").await.expect("send");
-    let n = within("recv", client.recv_datagram(&mut buf)).await.expect("recv");
+    let n = within("recv", client.recv_datagram(&mut buf))
+        .await
+        .expect("recv");
     assert_eq!(&buf[..n], b"answer");
     assert!(
         tokio::time::timeout(Duration::from_millis(100), first.accept())
@@ -258,18 +273,18 @@ async fn shutdown_ends_the_listeners_and_refuses_new_ones() {
         .listen_datagram(&[at(r.servers[0], 5300)])
         .expect("listen");
     r.transport.shutdown();
-    let e = within("accept", listener.accept()).await.err().expect("an error");
+    let e = within("accept", listener.accept())
+        .await
+        .expect_err("an error");
     assert_eq!(e.kind(), io::ErrorKind::BrokenPipe);
-    let e = within("accept", udp.accept()).await.err().expect("an error");
+    let e = within("accept", udp.accept()).await.expect_err("an error");
     assert_eq!(e.kind(), io::ErrorKind::BrokenPipe);
     let e = t.listen(&[at(r.servers[1], 80)]).err().expect("refused");
     assert_eq!(e.kind(), io::ErrorKind::ConnectionAborted);
     r.transport.shutdown();
     drop((listener, udp));
     // The datapath is still ours to stop: the transport let go of it.
-    let reports = Arc::try_unwrap(r.datapath)
-        .expect("no other handle")
-        .stop();
+    let reports = Arc::try_unwrap(r.datapath).expect("no other handle").stop();
     assert!(reports.iter().all(|l| !l.panicked));
 }
 
@@ -286,10 +301,12 @@ async fn a_call_must_name_one_port_and_at_least_one_address() {
     assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
     // A source that is not a client host of the datapath is an input error.
     let e = t
-        .connect(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), at(r.servers[0], 80))
+        .connect(
+            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+            at(r.servers[0], 80),
+        )
         .await
-        .err()
-        .expect("refused");
+        .expect_err("refused");
     assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
     r.transport.shutdown();
 }

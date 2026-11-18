@@ -28,9 +28,9 @@ use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
-use std::task::{Context, Poll};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -432,7 +432,7 @@ impl DatagramIo for UdpIo {
 
 /// The listener of one address of a server worker.
 enum UdpListener {
-    Kernel(KernelDatagramListener),
+    Kernel(Box<KernelDatagramListener>),
     Net(Box<dyn DatagramListener>),
 }
 
@@ -690,7 +690,7 @@ fn bind(
                 .map(UdpListener::Net)
                 .map_err(|source| UdpError::TransportListen { worker, source }),
             None => KernelDatagramListener::bind(*a, &s.config.socket)
-                .map(UdpListener::Kernel)
+                .map(|l| UdpListener::Kernel(Box::new(l)))
                 .map_err(|source| UdpError::Listen { worker, source }),
         })
         .collect()
