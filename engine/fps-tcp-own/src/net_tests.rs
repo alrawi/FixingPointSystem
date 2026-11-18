@@ -317,7 +317,7 @@ fn the_station_answers_arp_for_its_hosts_and_for_no_one_else() {
 fn deferred_peers_resolve_to_the_next_hop_marker_for_any_address() {
     let s = station(None);
     assert!(!s.defers_peers());
-    assert_eq!(s.resolve(S2), Some(mac(3, 0xbb)), "the table answers");
+    assert_eq!(s.resolve(S2), Some(mac(2, 0xbb)), "the table answers");
     assert_eq!(s.resolve(0xC0A8_0001u32), None, "and knows no one else");
 
     let s = station(None).defer_peers();

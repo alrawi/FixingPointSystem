@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-35` |
 | Pull request | #0 |
 | Status | in progress |
-| Progress | 75% (4 of 5 plan steps) |
+| Progress | 90% (4 of 5 plan steps, PR open) |
 | Current holder | claude-648711, lease until 2026-11-18T16:34:00Z (renewed at each heartbeat) |
 | Last verified commit | none |
 
@@ -30,15 +30,17 @@ Acceptance: on a veth pair in CI the own stack reaches a kernel peer behind a na
 
 - `cargo test -p fps-datapath` passes in the sandbox as root: 15 unit tests (11 of the neighbor cache), `next_hop.rs` (9 tests in memory, a router thread between the arms, IPv4, IPv6, VLAN, unanswered gateway), and the existing suites.
 - `cargo test -p fps-datapath --test router` runs on veth pairs in three namespaces: the own stack as client and as server through a kernel router, IPv4, 256 KiB echo, requests=1 resolved=1 failed=0. The sandbox kernel has no IPv6 (RTNETLINK operation not supported), so the two IPv6 scenarios skip here and run in CI.
+- `plan.py check`, `render --check`, `lint` are clean. `cargo check --tests` of fps-tcp, fps-backend-afxdp, fps-agent passes. The full tests of fps-tcp-own and fps-udp-own pass.
+- Log entry `docs/wiki/log/2026-11-18T1600-ingest-trn-35-own-stacks-resolve-their-next-hop.md` and the section "Next hop resolution in the datapath (TRN-35)" of `Transport.md` are written.
 - clippy `-D warnings` and fmt clean for fps-datapath, fps-tcp-own, fps-udp-own.
 
 ## Remaining
 
-- Component page, log entry, plan checks, PR, CI (IPv6 router scenarios run only there).
+- CI on the PR (the IPv6 router scenarios run only there).
 
 ## Next action
 
-Write the Transport.md section and the log entry, then run `plan.py check`, `render --check`, `lint`.
+Poll the check runs of the PR. When they are green, set the handoff to ready for review and run `fps_swarm.py review 660 --pr <PR>`.
 
 ## Blockers and open questions
 

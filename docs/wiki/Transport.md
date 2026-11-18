@@ -901,7 +901,7 @@ The own TCP stack (`fps-tcp-own`), the UDP layer (`fps-udp-own`), and the datapa
 | `fps-udp-own` | The UDP checksum is required (a zero checksum is a bad checksum), and a datagram above the MTU leaves as fragments with a fragment header. Received IPv6 fragments are dropped and counted, as for IPv4. `UdpArm::connect` takes the family from the addresses. |
 | `fps-datapath` | `classify` has `Ipv6Tcp`, `Ipv6Udp`, and `Ipv6Other`; the splitter hands neighbor solicitations to the `Responder` of `fps-hosts`, which answers for a host of the lane with the MAC address of the stack (`nd_replied`, `nd_ignored`), so a peer resolves the hosts of the pools. |
 
-What is not there: the stack sends no neighbor solicitation (neighbors come from the pools, and the next hop of a peer outside them is TRN-35), reads no ICMPv6 (no packet too big, no echo), and parses no extension header (such a frame is `Ipv6Other` and dropped). A connection costs 24 bytes more and a table entry 28 more than with IPv4 only, because the tuple holds two 17 byte `IpAddr` values.
+What is not there: the stack sends no neighbor solicitation of its own (neighbors come from the pools, and the datapath resolves the next hop of a peer outside them since TRN-35, see below), reads no ICMPv6 (no packet too big, no echo), and parses no extension header (such a frame is `Ipv6Other` and dropped). A connection costs 24 bytes more and a table entry 28 more than with IPv4 only, because the tuple holds two 17 byte `IpAddr` values.
 
 #### Tests
 
@@ -919,7 +919,7 @@ FPS_REQUIRE_AFXDP=1 cargo test -p fps-datapath --test dns_scenarios -- --nocaptu
 
 | Limit | Consequence |
 |---|---|
-| No neighbor solicitation sent | A peer outside the pools needs its MAC address from elsewhere (TRN-35). The tests seed neighbors through the pools |
+| No neighbor solicitation sent | By default a peer is a host of the pools and its MAC address comes from them. A peer behind a router is reached with `DatapathConfig::neighbors` (TRN-35, see below) |
 | No ICMPv6 | No path MTU discovery (the MTU is fixed, and 1,280 is the floor), no `ConnectionRefused` over UDP |
 | No extension headers, no reassembly | A packet with a hop by hop or routing header, and a fragmented datagram, are dropped |
 | The kernel server test needs IPv6 in a new namespace | A kernel without IPv6 fails it under `CI=true` and skips it otherwise |
@@ -938,6 +938,35 @@ TRN-27, TRN-29, and TRN-30 worked around four gaps of `fps-tcp-own`. TRN-33 clos
 The fourth gap, `OwnStack::input(side, frame)` and `take_tx(side)` so that a lane runs one stack per arm without the `FrameIo` wrapper, is not done: it changes how the stack is driven and is not small. The wrapper is enough for the datapath as it is.
 
 Tests: `engine/fps-tcp-own/tests/api.rs` (six tests: the addresses over IPv4 and IPv6 and with several hosts, distinct peers, `unlisten` and listening again, a refused connect after `unlisten`, queued connections reset and a waiting accept failed, accepted sessions kept) and `tests/own.rs` (`unlisten_resets_a_handshake_that_is_not_finished`, with a link that drops everything the client sends after its SYN, so the server holds a connection in SYN-RECEIVED).
+
+### Next hop resolution in the datapath (TRN-35)
+
+The own stack answered ARP and neighbor discovery for its pools but never asked, so a peer behind a router worked only when the next hop MAC address was configured by hand (the TRN-26 harness gave the router interface the MAC address that the stack used). With `DatapathConfig::neighbors` set (`Some(NeighborConfig)`, off by default) the datapath resolves the next hop itself, over IPv4 with ARP and over IPv6 with neighbor solicitation.
+
+How it works. The stack does not know MAC addresses of peers any more: `OwnConfig::resolve_next_hop` (which the datapath sets) makes `Station::resolve` answer `NEXT_HOP_MAC` for every peer, in the table or not, and the frame leaves the stack with that marker as its Ethernet destination. The `Splitter` of each queue keeps a neighbor cache (`engine/fps-datapath/src/neighbor.rs`) and acts on the frames with the marker, TCP and UDP alike:
+
+| Step | What happens |
+|---|---|
+| Next hop | The destination itself when it lies in the prefix of the host pool of the arm (or is an IPv6 link local address), the gateway of the pool when it does not, and the destination again when the pool has no gateway (a flat link, or a router with proxy ARP) |
+| Fresh entry | The frame leaves at once with the MAC address of the entry |
+| No entry | An ARP request or a neighbor solicitation (RFC 826, RFC 4861) goes out from the host that sends, with the VLAN tag of the port, and the frame is held. Frames to the same next hop join the hold and send no second request. The hold is bounded per next hop (32) and in all (1,024), and the oldest frame goes first |
+| Retry and failure | The request is repeated every second, 3 requests in all. Then the held frames are dropped, and the next hop is not asked for again for 3 seconds, so a dead gateway costs one round of requests and not one per frame |
+| Answer | An ARP reply or request from the next hop, or a neighbor advertisement (hop limit 255 and a good checksum, RFC 4861 section 7.1.2) gives the MAC address, the held frames leave in order, and the entry lives 60 seconds. The cache creates entries only for frames of the stack, so unsolicited answers change known entries and nothing else |
+| Aging | An entry that ran out is asked for again, and the frames wait meanwhile. A full table (65,536 entries) forgets what expired first and drops the frame otherwise |
+
+`NeighborConfig` holds the numbers (lifetime, retry interval, requests, failure hold, the two hold bounds, the table size). `FrameCounters` of each arm counts `neighbor_requests`, `neighbor_answers`, `neighbor_resolved`, `neighbor_failed`, `neighbor_refreshed`, `neighbor_expired`, `neighbor_held`, `neighbor_released`, `neighbor_dropped` (with `neighbor_table_full`), and the gauge `neighbor_entries`. The cache takes its time from the clock of the stack, so tests move it with `ManualClock`.
+
+Where the gateway comes from. `HostPool::gateway()` of the pool that the arm serves, which the plan gives for each host pool (`fps-agent` passes it through `HostPoolSlice`). `Route::of(&pool)` reads it. With the datapath resolving, `Connector::connect` also takes a destination that no pool serves (of the family of the source), because the peer is behind a router. The gap: a pool that leases its addresses with DHCP has no prefix and no gateway, and the datapath does not run DHCP yet, so such hosts resolve every destination themselves. HST-04 keeps the router of each lease (`LeaseTable::router_of`); when the DHCP hook is wired, `Route` can take the gateway from there. The agent (`fps-agent`, AGT-25) still starts the datapath with the default configuration, so a run through the agent keeps reading peers from the pools until it sets `neighbors`.
+
+Tests (no root): `neighbor.rs` has 11 unit tests (next hop choice, request contents and VLAN, hold and release in order, retries and failure, negative cache, a late answer, aging and refresh, the hold bounds, strangers and unusable MAC addresses, the table bound, IPv6, a frame that is not IP). `tests/next_hop.rs` has 9: the splitter against a hand played neighbor (hold, release, repeats, a full queue that must not make it hold a frame twice, an IPv6 advertisement and a forged one), and the whole datapath with a router thread between the two arms of a lane that answers ARP and neighbor solicitation for the gateway of each side and forwards the rest. TCP echoes 20,000 bytes through it over IPv4, over IPv6, and with a VLAN, and a gateway that never answers fails the connect and is counted.
+
+The acceptance test is `engine/fps-datapath/tests/router.rs` (root, `ip`, `sysctl`, AF_XDP): three namespaces, the own stack over an AF_XDP queue on `oa`, a kernel router with forwarding in the middle, a kernel socket peer behind it. The only address that the own stack knows is the gateway of its pool, and no namespace has a neighbor entry configured. Four scenarios, each a byte checked echo of 256 KiB: the own stack as client and as server, over IPv4 and over IPv6. The helper is the test binary again, started with `ip netns exec`; `FPS_ROUTER_KIB` sets the size and `FPS_ROUTER_RESULTS` names a directory for `router-<scenario>.txt`. The IPv4 scenarios ran in the sandbox: one request, one resolution, no failure, one held frame released, with the kernel router resolving the own host through the splitter when the kernel was the client. The sandbox kernel has no IPv6, so the two IPv6 scenarios skip there and run in CI, where `CI=true` turns a skip into a failure.
+
+| Limit | Effect |
+|---|---|
+| No reachability probing | An entry is trusted for its lifetime and asked for again after it, not probed. A gateway that changes its MAC address inside the lifetime is found when a request of the gateway arrives (it refreshes a known entry) or when the entry ages out |
+| Replies to unsolicited requests are not cached | A host that only listens does not learn its gateway until it sends |
+| The router test serves one gateway per family | Several gateways, routes per prefix, and ICMP redirects are not read; the pool has one gateway |
 
 ### Interop of the own stack with smoltcp and the kernel (TRN-26)
 
