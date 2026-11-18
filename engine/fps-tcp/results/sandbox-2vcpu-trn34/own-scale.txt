@@ -1,0 +1,36 @@
+own minimal TCP (fps-tcp) on local
+host: Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vcpus, kernel 6.18.44-fc-v595
+  profile = full
+  own.mtu = 1500
+  own.rcv_buffer = 1048576
+  own.snd_buffer = 1048576
+  own.rto_us = 200000
+  own.time_wait_us = 1000000
+  own.backlog = 4096
+  own.link_depth = 8192
+  own.window_scale = true
+  own.timestamps = true
+  own.sack = true
+  own.congestion_control = cubic
+  own.delayed_ack = true
+  own.pacing = false
+  own.hystart = false
+  own.rack = true
+  own.tlp = true
+  own.client_hosts = 1
+  own.server_hosts = 1
+  own.vlan = none
+  scale.steps = 1000,10000,100000,250000,500000,750000,1000000
+  scale.shards = 64
+  open_files_soft_limit = 20000
+  scale.step_budget_secs = 300
+  scale.probe_sessions = 500
+socket scaling over 64 shards:
+      target    sockets   setup s    sockets/s  B/socket idle poll us     probe /s probe p99
+        1000       1089      0.00       595736       508           25        51998       133
+       10000      10677      0.02       593686       508           32        58154        60
+      100000     101161      0.12       750075       351           27        59206        41
+      250000     251677      0.22       673523       368           25        59837        63
+      500000     502161      0.39       639185       360           33        57855        57
+      750000     751145      0.43       576496       373           51        60171        45
+     1000000    1001129      0.40       628525       368           25        63565        53

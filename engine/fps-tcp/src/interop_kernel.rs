@@ -79,6 +79,29 @@ impl Default for OwnOptions {
     }
 }
 
+/// The switches of TRN-34 of the own stack, all off by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LossSwitches {
+    /// Sender pacing.
+    pub pacing: bool,
+    /// HyStart for CUBIC.
+    pub hystart: bool,
+    /// RACK loss detection.
+    pub rack: bool,
+    /// Tail loss probes.
+    pub tlp: bool,
+}
+
+impl LossSwitches {
+    /// Every switch on.
+    pub const ALL: Self = Self {
+        pacing: true,
+        hystart: true,
+        rack: true,
+        tlp: true,
+    };
+}
+
 /// The settings of one kernel interop run.
 #[derive(Clone, Debug)]
 pub struct KernelInteropConfig {
@@ -86,6 +109,8 @@ pub struct KernelInteropConfig {
     pub pairing: Pairing,
     /// The options of the own stack.
     pub own: OwnOptions,
+    /// The switches of TRN-34 of the own stack.
+    pub loss: LossSwitches,
     /// Whether the kernel keeps its defaults. `false` turns timestamps, SACK,
     /// and window scaling off in the namespace of the kernel peer.
     pub kernel_options: bool,
@@ -155,6 +180,14 @@ fn own_args(role: &str, iface: &str, config: &KernelInteropConfig) -> Vec<String
         on(config.own.sack),
         "--own-timestamps".into(),
         on(config.own.timestamps),
+        "--own-pacing".into(),
+        on(config.loss.pacing),
+        "--own-hystart".into(),
+        on(config.loss.hystart),
+        "--own-rack".into(),
+        on(config.loss.rack),
+        "--own-tlp".into(),
+        on(config.loss.tlp),
         "--mtu".into(),
         config.mtu.to_string(),
     ]
@@ -357,6 +390,7 @@ fn run_own(role: &str, args: &[String]) -> io::Result<()> {
     let text = |name: &str| flag(args, name).unwrap_or_default();
     let number = |name: &str, default: u64| text(name).parse().unwrap_or(default);
     let on = |name: &str| text(name) != "0";
+    let set = |name: &str| text(name) == "1";
     let iface = text("--iface");
     let port = u16::try_from(number("--port", 9100)).unwrap_or(9100);
     let chunk = usize::try_from(number("--chunk", 16 * 1024)).unwrap_or(16 * 1024);
@@ -367,6 +401,10 @@ fn run_own(role: &str, args: &[String]) -> io::Result<()> {
         window_scale: on("--own-wscale"),
         sack: on("--own-sack"),
         timestamps: on("--own-timestamps"),
+        pacing: set("--own-pacing"),
+        hystart: set("--own-hystart"),
+        rack: set("--own-rack"),
+        tlp: set("--own-tlp"),
         mtu: usize::try_from(number("--mtu", 1500)).unwrap_or(1500),
         ..OwnConfig::default()
     };

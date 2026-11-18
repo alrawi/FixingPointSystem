@@ -38,11 +38,27 @@ fn bottleneck() -> ImpairConfig {
     }
 }
 
+/// The options of bug 652 on or off, with the loss switches of TRN-34 off.
 fn options(on: bool) -> OwnConfig {
     OwnConfig {
         window_scale: on,
         sack: on,
         timestamps: on,
+        hystart: false,
+        rack: false,
+        tlp: false,
+        pacing: false,
+        ..OwnConfig::default()
+    }
+}
+
+/// The options on with HyStart, RACK and tail loss probes (TRN-34). HyStart
+/// is not a default (see `OwnConfig::default`), so the test sets it.
+fn switched_on() -> OwnConfig {
+    OwnConfig {
+        hystart: true,
+        rack: true,
+        tlp: true,
         ..OwnConfig::default()
     }
 }
@@ -54,9 +70,8 @@ struct Measured {
     timeouts: u64,
 }
 
-async fn transfer(on: bool, port: u16) -> Measured {
-    let stack =
-        LossyOwn::new(options(on), bottleneck(), Arc::new(MonotonicClock::new())).expect("pair");
+async fn transfer(cfg: OwnConfig, port: u16) -> Measured {
+    let stack = LossyOwn::new(cfg, bottleneck(), Arc::new(MonotonicClock::new())).expect("pair");
     let config = LossConfig {
         bytes: TRANSFER_KIB * KIB,
         timeout: Duration::from_secs(60),
@@ -70,10 +85,10 @@ async fn transfer(on: bool, port: u16) -> Measured {
 }
 
 /// The run with the best goodput of `runs` transfers.
-async fn best_of(runs: usize, on: bool, port: u16) -> Measured {
+async fn best_of(runs: usize, cfg: &OwnConfig, port: u16) -> Measured {
     let mut best: Option<Measured> = None;
     for _ in 0..runs {
-        let one = transfer(on, port).await;
+        let one = transfer(cfg.clone(), port).await;
         assert!(one.run.completed, "{:?}", one.run.failure);
         let better = best
             .as_ref()
@@ -98,8 +113,8 @@ fn show(label: &str, m: &Measured) {
 
 #[tokio::test(flavor = "current_thread")]
 async fn options_do_not_collapse_the_sender_in_a_short_queue() {
-    let off = best_of(3, false, 9600).await;
-    let on = best_of(3, true, 9601).await;
+    let off = best_of(3, &options(false), 9600).await;
+    let on = best_of(3, &options(true), 9601).await;
     show("options off", &off);
     show("options on", &on);
 
@@ -125,4 +140,45 @@ async fn options_do_not_collapse_the_sender_in_a_short_queue() {
         "{} retransmission timeouts with options on",
         on.timeouts
     );
+}
+
+/// TRN-34: with HyStart, RACK and tail loss probes switched on the
+/// sender retransmits close to what the kernel does on this link, which is 8
+/// to 9 segments in a transfer of 2 MiB with CUBIC. The bound is twice that.
+/// Of three runs the one with the fewest retransmissions counts, because
+/// HyStart sometimes misses its exit when the acknowledgments of a round
+/// are spread (about one run in ten).
+#[tokio::test(flavor = "current_thread")]
+async fn the_loss_switches_keep_the_retransmissions_near_the_kernels() {
+    let legacy = best_of(3, &options(true), 9610).await;
+    let mut runs = Vec::new();
+    for i in 0..3 {
+        let one = transfer(switched_on(), 9620 + i).await;
+        assert!(one.run.completed, "{:?}", one.run.failure);
+        runs.push(one);
+    }
+    let fewest = runs.iter().min_by_key(|m| m.run.retransmits).expect("runs");
+    let goodput = runs
+        .iter()
+        .map(|m| m.run.goodput_mbit_per_s())
+        .fold(0.0, f64::max);
+    show("legacy (switches off)", &legacy);
+    show("switches on, fewest retransmissions", fewest);
+    assert!(
+        fewest.run.retransmits <= 18,
+        "{} retransmissions, bound 18 (the kernel sends 8 to 9)",
+        fewest.run.retransmits
+    );
+    assert!(
+        fewest.run.retransmits < legacy.run.retransmits,
+        "{} retransmissions, not fewer than {} without the switches",
+        fewest.run.retransmits,
+        legacy.run.retransmits
+    );
+    let g_off = legacy.run.goodput_mbit_per_s();
+    assert!(
+        goodput >= 0.95 * g_off,
+        "goodput {goodput:.2} Mbit/s, below 95% of {g_off:.2} Mbit/s"
+    );
+    assert!(fewest.timeouts <= 1, "{} timeouts", fewest.timeouts);
 }

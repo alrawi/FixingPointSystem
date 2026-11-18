@@ -74,6 +74,9 @@ pub struct Scoreboard {
     /// The ranges that were sent again, with the highest sequence number
     /// that the sender had sent when it did so.
     rexmit: Vec<(u32, u32, u32)>,
+    /// The end of the data that RACK (RFC 8985) calls lost, by time: a hole
+    /// that starts below it is lost whatever lies above it (TRN-34).
+    rack_lost: Option<u32>,
 }
 
 impl Scoreboard {
@@ -97,6 +100,29 @@ impl Scoreboard {
     pub fn clear(&mut self) {
         self.sacked.clear();
         self.rexmit.clear();
+        self.rack_lost = None;
+    }
+
+    /// Sets the end of the data that RACK calls lost, or none.
+    pub fn set_rack_lost(&mut self, to: Option<u32>) {
+        self.rack_lost = to;
+    }
+
+    /// The end of the data that RACK calls lost.
+    pub fn rack_lost(&self) -> Option<u32> {
+        self.rack_lost
+    }
+
+    /// The highest SACKed byte plus one, if any block is held.
+    pub fn highest_sacked(&self) -> Option<u32> {
+        self.sacked.last().map(|&(_, e)| e)
+    }
+
+    /// Whether the byte at `seq` was sent again.
+    pub fn is_rexmit(&self, seq: u32) -> bool {
+        self.rexmit
+            .iter()
+            .any(|&(s, e, _)| seq_le(s, seq) && seq_lt(seq, e))
     }
 
     /// Forgets the sent again ranges, which a new recovery starts without.
@@ -106,6 +132,9 @@ impl Scoreboard {
 
     /// Drops what `snd_una` passed.
     pub fn advance(&mut self, snd_una: u32) {
+        if self.rack_lost.is_some_and(|to| seq_le(to, snd_una)) {
+            self.rack_lost = None;
+        }
         trim_ranges(&mut self.sacked, snd_una);
         self.rexmit.retain_mut(|(s, e, _)| {
             if seq_le(*e, snd_una) {
@@ -157,13 +186,20 @@ impl Scoreboard {
         ranges >= DUP_THRESH || above > (DUP_THRESH - 1) * mss
     }
 
+    /// `IsLost` for a hole that starts at `start`, with RACK: the count
+    /// rule, or a time that RACK found to be over for the segment.
+    fn hole_lost(&self, start: u32, above: u32, ranges: u32, mss: u32) -> bool {
+        Self::lost(above, ranges, mss) || self.rack_lost.is_some_and(|to| seq_lt(start, to))
+    }
+
     /// Whether the first unacknowledged byte is presumed lost, which starts a
     /// recovery without waiting for the third duplicate acknowledgment.
     pub fn lost_at_una(&self, snd_una: u32, mss: u32) -> bool {
         self.sacked
             .first()
             .is_some_and(|&(s, _)| seq_lt(snd_una, s))
-            && Self::lost(self.sacked_bytes(), self.sacked.len() as u32, mss)
+            && (Self::lost(self.sacked_bytes(), self.sacked.len() as u32, mss)
+                || self.rack_lost.is_some_and(|to| seq_lt(snd_una, to)))
     }
 
     /// Records that `[start, start + len)` was sent again.
@@ -219,7 +255,7 @@ impl Scoreboard {
     pub fn pipe(&self, snd_una: u32, snd_max: u32, mss: u32, una_lost: bool) -> u32 {
         let mut pipe = 0u32;
         self.each_hole(snd_una, |s, e, above, ranges| {
-            if !(Self::lost(above, ranges, mss) || (una_lost && s == snd_una)) {
+            if !(self.hole_lost(s, above, ranges, mss) || (una_lost && s == snd_una)) {
                 pipe += e.wrapping_sub(s);
             }
             pipe += self.rexmit_in(s, e);
@@ -252,7 +288,7 @@ impl Scoreboard {
     pub fn next_hole(&self, snd_una: u32, mss: u32, una_lost: bool) -> Option<(u32, u32)> {
         let mut found = None;
         self.each_hole(snd_una, |s, e, above, ranges| {
-            if !(Self::lost(above, ranges, mss) || (una_lost && s == snd_una)) {
+            if !(self.hole_lost(s, above, ranges, mss) || (una_lost && s == snd_una)) {
                 return false;
             }
             let mut cursor = s;

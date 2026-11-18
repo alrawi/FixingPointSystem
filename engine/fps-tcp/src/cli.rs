@@ -46,6 +46,7 @@ usage: tcp_bench [--stack kernel|own|smoltcp] [--workload rate|throughput|scale|
                [--own-pool N] [--own-server-hosts N] [--own-vlan ID]
                [--own-wscale on|off] [--own-timestamps on|off] [--own-sack on|off]
                [--own-delayed-ack on|off] [--own-cc newreno|cubic] [--own-sndbuf-kib N]
+               [--own-pacing on|off] [--own-hystart on|off] [--own-rack on|off] [--own-tlp on|off]
   smoltcp:     [--smol-mtu N] [--smol-checksums on|off] [--smol-buffer-kib N]
                [--smol-time-wait skip|keep] [--smol-idle-poll-ms N]
 The stack kernel is the TCP of the operating system on the loopback interface, and it
@@ -80,7 +81,9 @@ each flow in a window of 10 s that opens 5 s after the last flow connected (--lo
 (sum x)^2 / (n sum x^2). The profile also gives the own stack a window and a send buffer of
 4 MiB (the 1 MiB default would keep four flows below the link), and it applies to the kernel
 and smoltcp stacks with the same link. --own-cc chooses the congestion control of the own
-stack: cubic (RFC 9438, the default) or newreno (RFC 5681 and RFC 6582).
+stack: cubic (RFC 9438, the default) or newreno (RFC 5681 and RFC 6582). --own-pacing,
+--own-hystart, --own-rack, and --own-tlp switch sender pacing, HyStart for CUBIC, RACK loss
+detection (RFC 8985), and tail loss probes of the own stack (TRN-34).
 The profile small finishes within a minute and fits a hosted CI runner. The profile
 full measures up to 1,000,000 sockets and is meant for a host with 16 GiB of memory.
 Every flag after the profile overrides the profile. Sockets count both hosts of a pair.
@@ -401,6 +404,10 @@ fn parse(args: &[String]) -> Result<Options, UsageError> {
             "--own-timestamps" => o.own.timestamps = on_off(f, v)?,
             "--own-sack" => o.own.sack = on_off(f, v)?,
             "--own-delayed-ack" => o.own.delayed_ack = on_off(f, v)?,
+            "--own-pacing" => o.own.pacing = on_off(f, v)?,
+            "--own-hystart" => o.own.hystart = on_off(f, v)?,
+            "--own-rack" => o.own.rack = on_off(f, v)?,
+            "--own-tlp" => o.own.tlp = on_off(f, v)?,
             "--loss-levels" => {
                 let levels: Result<Vec<u32>, _> = v
                     .split(',')
@@ -535,6 +542,10 @@ fn describe(o: &Options) -> Vec<(String, String)> {
             o.own.congestion_control.name().to_string(),
         ));
         config.push(("own.delayed_ack".into(), o.own.delayed_ack.to_string()));
+        config.push(("own.pacing".into(), o.own.pacing.to_string()));
+        config.push(("own.hystart".into(), o.own.hystart.to_string()));
+        config.push(("own.rack".into(), o.own.rack.to_string()));
+        config.push(("own.tlp".into(), o.own.tlp.to_string()));
         config.push(("own.client_hosts".into(), o.own_pools.0.to_string()));
         config.push(("own.server_hosts".into(), o.own_pools.1.to_string()));
         config.push((
@@ -1386,6 +1397,39 @@ mod tests {
         assert!(parse(&args(&["--own-sack", "maybe"])).is_err());
         let defaults = parse(&args(&["--stack", "own"])).expect("parse");
         assert!(defaults.own.window_scale && defaults.own.timestamps && defaults.own.sack);
+    }
+
+    #[test]
+    fn the_own_loss_flags_switch_pacing_hystart_rack_and_probes() {
+        let o = parse(&args(&["--stack", "own"])).expect("parse");
+        assert_eq!(
+            (o.own.pacing, o.own.hystart, o.own.rack, o.own.tlp),
+            (
+                OwnConfig::default().pacing,
+                OwnConfig::default().hystart,
+                OwnConfig::default().rack,
+                OwnConfig::default().tlp
+            )
+        );
+        let o = parse(&args(&[
+            "--stack",
+            "own",
+            "--own-pacing",
+            "on",
+            "--own-hystart",
+            "on",
+            "--own-rack",
+            "on",
+            "--own-tlp",
+            "on",
+        ]))
+        .expect("parse");
+        assert!(o.own.pacing && o.own.hystart && o.own.rack && o.own.tlp);
+        let text = format!("{:?}", describe(&o));
+        assert!(text.contains("own.pacing") && text.contains("own.tlp"));
+        let o = parse(&args(&["--own-tlp", "off", "--own-rack", "off"])).expect("parse");
+        assert!(!o.own.tlp && !o.own.rack);
+        assert!(parse(&args(&["--own-pacing", "fast"])).is_err());
     }
 
     #[test]

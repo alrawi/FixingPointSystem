@@ -91,6 +91,7 @@ pub mod host;
 pub mod net;
 pub mod pools;
 pub mod profile;
+pub mod rack;
 pub mod recovery;
 pub mod sack;
 pub mod wire;
@@ -194,6 +195,38 @@ pub struct OwnConfig {
     /// reached. The datapath sets it with its neighbor resolution. With
     /// `false` the stack reads the peers from the pools, as before.
     pub resolve_next_hop: bool,
+    /// Pace the sender (TRN-34): the segments of a window leave spread over a
+    /// round trip, at twice the rate of the window in slow start and 1.25
+    /// times in congestion avoidance, and not in one burst, which a short
+    /// queue overflows. Needs a round trip sample, so the first flight goes
+    /// out unpaced.
+    pub pacing: bool,
+    /// HyStart for CUBIC (TRN-34, as in the Linux kernel): slow start ends
+    /// when the acknowledgments of a round arrive in a train that fills the
+    /// pipe, or when the round trip of a round rises by a few milliseconds,
+    /// before the window overflows the queue. No effect with NewReno.
+    pub hystart: bool,
+    /// Time based loss detection (RACK, RFC 8985, TRN-34): a segment is lost
+    /// when one that was sent later has been delivered and a round trip plus
+    /// a reordering window have passed. Needs SACK on the connection.
+    pub rack: bool,
+    /// Tail loss probes (RFC 8985 section 7, TRN-34): after two round trips
+    /// without an acknowledgment the sender sends one probe segment, so that a
+    /// lost tail is found by the answer to the probe and not by the
+    /// retransmission timeout.
+    pub tlp: bool,
+}
+
+impl OwnConfig {
+    /// The switches of TRN-34 as the recovery state takes them.
+    pub fn features(&self) -> rack::Features {
+        rack::Features {
+            pacing: self.pacing,
+            hystart: self.hystart,
+            rack: self.rack,
+            tlp: self.tlp,
+        }
+    }
 }
 
 impl Default for OwnConfig {
@@ -221,6 +254,16 @@ impl Default for OwnConfig {
             client_os_profile: None,
             server_os_profile: None,
             resolve_next_hop: false,
+            // TRN-34. RACK and tail loss probes are on: they remove the
+            // stalls of a tail loss. HyStart is on, as with CUBIC in Linux:
+            // on the hosted runner it brings a short queue to the kernel's
+            // retransmissions (10.25 against 10) at no cost on the fat row,
+            // and the fairness of four flows stays at the bar on the mean
+            // (0.908 against 0.9). Pacing is experimental and off.
+            pacing: false,
+            hystart: true,
+            rack: true,
+            tlp: true,
         }
     }
 }
