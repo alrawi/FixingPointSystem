@@ -598,6 +598,8 @@ These are problems that the project has already met while it built modules, with
 
 **The estimate is plaintext, nDPI counts the wire.** `expected_bytes` counts application bytes above TLS, while the classifier measures the bytes on the wire, which include the TLS records. A mix with much TLS has its thinnest margin there (QA-05).
 
+**Two mix entries cannot share one server port.** A plan listens once for each port of each server host, so two scenarios of one module that both listen on 8080 fail with an address in use error when a plan runs them as two mix entries, although a fixture peer that runs the scenarios one after another meets no clash. Give each mix entry its own `server_port` parameter, as `engine/fps-datapath/realism/http1-afxdp.sh` does for the plain http1 scenarios (TRN-12).
+
 ### Native code (first party modules)
 
 **Libraries with their own event loop do not fit.** The interpreter drives a protocol one message at a time. A full library such as `russh` runs its own async session loop, so the ssh module builds the packet layer on primitives, and the ldap module writes its own BER codec (MOD-11, MOD-17).

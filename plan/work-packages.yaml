@@ -2350,7 +2350,7 @@ work_packages:
     phase: 3
     workstream: TRN
     size: S
-    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, CTL-54]
+    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, AGT-27, CTL-54]
     paths: [engine/fps-backend-afxdp/]
     summary: >-
       Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with
@@ -2429,6 +2429,23 @@ work_packages:
       - The trait, the kernel implementation, and the workers moved onto it, with the existing runtime tests unchanged.
     acceptance:
       - Every runtime and agent test passes on the kernel backend through the trait, and a test runs a worker over a fake Transport in memory.
+
+  - id: AGT-27
+    title: The standalone agent writes a TLS key log
+    phase: 3
+    workstream: AGT
+    size: S
+    depends_on: [TRN-12]
+    paths: [engine/fps-agent/]
+    summary: >-
+      fps-agent run has no way to export the TLS secrets of a run, so the http1 realism run of TRN-12 on AF_XDP scores
+      conformance, parser errors, and JA4 but cannot decrypt its capture. Add `run --keylog FILE`, which writes the
+      secrets in the NSS key log format through the KeyTap that prepare_with already takes. The diff that TRN-12 built
+      and ran in a scratch copy is in its log entry.
+    deliverables:
+      - The flag with a test in tests/standalone.rs that runs an https scenario and finds CLIENT_TRAFFIC_SECRET_0 lines, and a line on the Agent page.
+    acceptance:
+      - The afxdp job of mod-http1 decrypts every TLS session of its capture and classifies the decrypted view as HTTP, with no change to the job.
 
   - id: AGT-26
     title: The agent resolves next hops on the datapath
