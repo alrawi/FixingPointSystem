@@ -1,0 +1,35 @@
+smoltcp 0.14 on sandbox 2 vcpu, smoltcp, profile small, TRN-10 session
+host: Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vcpus, kernel 6.18.44-fc-v553
+  profile = small
+  smol.mtu = 1500
+  smol.checksums = true
+  smol.time_wait = Skip
+  smol.nagle = false
+  smol.idle_poll_ms = 100
+  smol.backlog = 8
+  rate.duration_secs = 2
+  rate.concurrency = 32
+  rate.threads = 1
+  rate.request_bytes = 64
+  rate.response_bytes = 64
+  rate.buffer_bytes = 65536
+  throughput.sessions = 4
+  throughput.bytes_per_session = 67108864
+  throughput.chunk = 65536
+  throughput.direction = Upload
+  throughput.threads = 1
+  throughput.buffer_bytes = 65536
+  scale.steps = 1000,4000,16000
+  scale.shards = 1
+  open_files_soft_limit = 20000
+  scale.buffer_bytes = 512
+  scale.step_budget_secs = 30
+  scale.probe_sessions = 100
+sessions per second: 57833 (115680 sessions in 2.00 s, 0 failed, p50 524 us, p99 1289 us)
+throughput: 26.177 Gbit/s (268435456 bytes in 0.08 s)
+socket scaling over 1 shards:
+      target    sockets   setup s    sockets/s  B/socket idle poll us     probe /s probe p99
+        1000       1016      0.00       349588      1709           10         4616       321
+        4000       4016      0.03        93864      1580           85          864      1425
+       16000      16016      0.26        46482      1582          359          119     10035
+wrote engine/fps-tcp/results/sandbox-2vcpu-trn10/smoltcp-small.json

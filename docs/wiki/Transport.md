@@ -606,6 +606,10 @@ The committed results in `engine/fps-tcp/results/sandbox-2vcpu-trn20/` come from
 
 smoltcp is the fastest stack of the three on the rate and the throughput workloads while few sockets exist. The rate comes with a caveat that a reader must keep: the pair uses TIME-WAIT skip, so a closed tuple is reused at once, and the kernel and the own stack hold a closed tuple longer. smoltcp walks every socket of a set on every poll and every frame, so the cost of one event grows with the sockets of that set. The idle poll per socket is 24 to 54 ns and the probe session rate falls by a factor of 40 between 1,000 and 16,000 sockets in one set. A user of smoltcp at a million sockets therefore needs many small sets with a flow table of its own in front of them, which is the layout of this run (64 shards of about 15,600 sockets, where the probe session rate is still only 60 per second). The memory per socket is 1.6 KB, of which 1 KB is the buffer pair that this run sets to 512 B each, so smoltcp is about 0.6 KB per socket without buffers, against 228 B for the own stack. The buffers are fixed per socket and cannot grow on demand, which a connection of the own stack does.
 
+### Decision record 0014 and the one session run
+
+TRN-10 proposes decision record 0014 (`docs/decisions/0014-user-space-tcp-stack.md`), which chooses the own stack with loss recovery added for the AF_XDP backend, keeps smoltcp as a reference and a fallback, and leaves F-Stack to the parked TRN-13. Its numbers come from `engine/fps-tcp/results/sandbox-2vcpu-trn10/`, where the three stacks ran in one session on one sandbox, including the million socket rows of the own stack and smoltcp. The kernel row at a million sockets is not measured, because the open files limit of the sandbox is 20,000 and cannot be raised, so the kernel stops at 19,815 sockets. The fat-nuc numbers are still pending, and the record says when to revisit it.
+
 ### Limits
 
 | Limit | Consequence |

@@ -1,0 +1,18 @@
+kernel loopback TCP on sandbox 2 vcpu, kernel, scale to 1,000,000 sockets in 64 shards, TRN-10 session
+host: Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vcpus, kernel 6.18.44-fc-v553
+  profile = full
+  nodelay = true
+  backlog = 4096
+  scale.steps = 1000,10000,100000,250000,500000,750000,1000000
+  scale.shards = 64
+  open_files_soft_limit = 20000
+  scale.buffer_bytes = kernel default
+  scale.step_budget_secs = 300
+  scale.probe_sessions = 500
+socket scaling over 64 shards:
+      target    sockets   setup s    sockets/s  B/socket idle poll us     probe /s probe p99
+        1000       1089      0.01       163967       489            0        45177        43
+       10000      10177      0.06       162442       464            0        44466        44
+      100000      19815      0.07       131362       n/a            0            0         0  (not reached)
+  stopped: step 100000 stopped after 0.1 s with 19815 sockets, the stack refused a socket (accept: Too many open files (os error 24))
+wrote engine/fps-tcp/results/sandbox-2vcpu-trn10/kernel-scale.json

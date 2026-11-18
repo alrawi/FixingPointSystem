@@ -1,0 +1,25 @@
+own minimal TCP (fps-tcp) on sandbox 2 vcpu, own, scale to 1,000,000 sockets in 64 shards, TRN-10 session
+host: Intel(R) Xeon(R) Processor @ 2.10GHz, 2 vcpus, kernel 6.18.44-fc-v553
+  profile = full
+  own.mtu = 1500
+  own.rcv_buffer = 65535
+  own.snd_buffer = 131072
+  own.rto_us = 200000
+  own.time_wait_us = 1000000
+  own.backlog = 4096
+  own.link_depth = 8192
+  scale.steps = 1000,10000,100000,250000,500000,750000,1000000
+  scale.shards = 64
+  open_files_soft_limit = 20000
+  scale.step_budget_secs = 300
+  scale.probe_sessions = 500
+socket scaling over 64 shards:
+      target    sockets   setup s    sockets/s  B/socket idle poll us     probe /s probe p99
+        1000       1089      0.00       708658       440           25        61412        32
+       10000      10677      0.01       680156       411           25        43465       117
+      100000     101161      0.13       682004       260           25        55675        35
+      250000     251677      0.22       674618       249           34        51225        61
+      500000     502161      0.47       536436       236           37        51280        54
+      750000     750645      0.58       424451       261           25        57449        49
+     1000000    1000629      0.72       348371       229           36        55819        44
+wrote engine/fps-tcp/results/sandbox-2vcpu-trn10/own-scale.json
