@@ -12,6 +12,8 @@ The coordinator changed the plan as the vetting agent asked:
 - AGT-23 (DHCP leases) depends on AGT-26 instead of TRN-31, because a forced AF_XDP run already works; DHCP need not come before the flip, because the kernel backend refuses it too.
 - TRN-31 depends on all of the above and on TRN-34, adds a test for each refused shape, and adds the acceptance that every file in `contracts/examples/tests/` runs on an unforced agent on a veth pair after the flip.
 
+The vetting agent approved the plan pull request after three edits: AGT-29 depends on TRN-36 and enforces its exclusion list in `check_af_xdp`, and fills the bound mode as well as the backend that ran; TRN-31 carries the condition that the vetting agent reads the QA-06 results before dispatch, and the flip proceeds only if the forced AF_XDP backend is not behind the forced kernel backend on the tier T1 measures, with a mixed result going to the owner; and QA-06 reports the bound XDP mode of each port. The CON-35 contract pull request goes to the vetting agent like every contract change.
+
 ### Shared page notes
 
 Applied by the coordinator in the same pull request: the catalog entries TRN-31, QA-06, AGT-23, CON-35, AGT-29, AGT-30, CTL-55, and TRN-36.

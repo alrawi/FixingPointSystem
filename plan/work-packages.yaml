@@ -2352,6 +2352,7 @@ work_packages:
     size: S
     depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-34, TRN-35, TRN-36, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, AGT-29, AGT-30, CTL-54, CTL-55, CON-35, QA-06]
     paths: [engine/fps-backend-afxdp/]
+    owner_action: Before dispatch the vetting agent reads the QA-06 results under D13. The flip proceeds only if the forced AF_XDP backend is not behind the forced kernel backend on the tier T1 measures on that guest, and a mixed result goes to the owner.
     summary: >-
       Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with
       native XDP. The vetting agent decided on 2026-11-18 that the flip waits for the kernel fallback of AGT-29, the
@@ -2456,7 +2457,7 @@ work_packages:
     phase: 3
     workstream: AGT
     size: S
-    depends_on: [AGT-28, CON-35]
+    depends_on: [AGT-28, CON-35, TRN-36]
     paths: [engine/fps-agent/]
     summary: >-
       check_af_xdp refuses every plan outside one shape: app_sim only, both sides in one process, one client and one
@@ -2465,7 +2466,8 @@ work_packages:
       through the fields of CON-35; a forced agent refuses as today. A pool with both prefixes falls back too, and
       never runs over IPv4 alone without saying so.
     deliverables:
-      - The fallback in prepare with tests on fake hosts for each refused shape, forced and unforced, and the report of the backend that ran.
+      - The fallback in prepare with tests on fake hosts for each refused shape, forced and unforced, and the report of the backend that ran and the bound mode of each port in the fields of CON-35.
+      - check_af_xdp refuses the mix entries of a module on the TRN-36 exclusion list.
     acceptance:
       - With TRANSPORT_AVAILABLE set in a test build, an unforced agent runs http_smoke.yaml and enterprise_mix_10g.yaml from contracts/examples/tests/ on the kernel backend and reports it, and a forced agent refuses them with the cause.
 
@@ -2709,7 +2711,7 @@ work_packages:
     deliverables:
       - Benchmark definitions for throughput, session rate, concurrency, and TLS.
     acceptance:
-      - Results for KVM with both backends forced are published with host details and compared with tier T1 targets.
+      - Results for KVM with both backends forced are published with host details and the bound XDP mode of each port, and compared with tier T1 targets.
   - id: QA-07
     title: Gate 3 acceptance suite
     phase: 3

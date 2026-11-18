@@ -128,6 +128,7 @@ flowchart LR
   TRN_30 --> AGT_28
   AGT_28 --> AGT_29
   CON_35 --> AGT_29
+  TRN_36 --> AGT_29
   AGT_28 --> AGT_30
   CON_35 --> CTL_55
   TRN_12 --> TRN_36
@@ -197,7 +198,7 @@ flowchart LR
 | [TRN-35](#trn-35-the-own-stacks-resolve-their-next-hop) | The own stacks resolve their next hop | S | TRN-30 |  |
 | [ENG-31](#eng-31-a-transport-seam-in-the-runtime) | A transport seam in the runtime | M | TRN-27, TRN-29 |  |
 | [AGT-28](#agt-28-the-agent-runs-ipv6-host-pools-on-the-datapath) | The agent runs IPv6 host pools on the datapath | S | AGT-26, TRN-30 |  |
-| [AGT-29](#agt-29-an-unforced-agent-falls-back-to-the-kernel-backend) | An unforced agent falls back to the kernel backend | S | AGT-28, CON-35 |  |
+| [AGT-29](#agt-29-an-unforced-agent-falls-back-to-the-kernel-backend) | An unforced agent falls back to the kernel backend | S | AGT-28, CON-35, TRN-36 |  |
 | [AGT-30](#agt-30-datapath-lanes-follow-the-workers-of-the-plan) | Datapath lanes follow the workers of the plan | M | AGT-28 |  |
 | [CTL-55](#ctl-55-the-controller-shows-the-backend-that-ran) | The controller shows the backend that ran | S | CON-35 |  |
 | [TRN-36](#trn-36-an-af_xdp-realism-job-for-every-first-party-module) | An AF_XDP realism job for every first party module | M | TRN-12, AGT-27, AGT-28 |  |
@@ -319,7 +320,7 @@ Deliverables.
 
 Acceptance.
 
-- [ ] Results for KVM with both backends forced are published with host details and compared with tier T1 targets.
+- [ ] Results for KVM with both backends forced are published with host details and the bound XDP mode of each port, and compared with tier T1 targets.
 
 ### QA-07 Gate 3 acceptance suite
 
@@ -606,6 +607,7 @@ Phase 3 · size S · workstream TRN
 
 - **Depends on.** TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-34, TRN-35, TRN-36, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, AGT-29, AGT-30, CTL-54, CTL-55, CON-35, QA-06
 - **Paths.** `engine/fps-backend-afxdp/`
+- **Owner action.** Before dispatch the vetting agent reads the QA-06 results under D13. The flip proceeds only if the forced AF_XDP backend is not behind the forced kernel backend on the tier T1 measures on that guest, and a mixed result goes to the owner.
 
 Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with native XDP. The vetting agent decided on 2026-11-18 that the flip waits for the kernel fallback of AGT-29, the backend report of CON-35 and CTL-55, the loss detection of TRN-34, an AF_XDP realism job for every first party module (TRN-36), lanes that follow the workers (AGT-30), and a KVM measurement of both backends (QA-06), because without them the default would refuse most plans that run today and would never have run most modules.
 
@@ -852,14 +854,15 @@ Acceptance.
 
 Phase 3 · size S · workstream AGT
 
-- **Depends on.** AGT-28, CON-35
+- **Depends on.** AGT-28, CON-35, TRN-36
 - **Paths.** `engine/fps-agent/`
 
 check_af_xdp refuses every plan outside one shape: app_sim only, both sides in one process, one client and one server pool on two interfaces, one family, one VLAN, no DHCP, and OS profiles the own stack knows. After the flip of TRN-31 an unforced agent must run such a plan on the kernel backend instead of failing, and report that through the fields of CON-35; a forced agent refuses as today. A pool with both prefixes falls back too, and never runs over IPv4 alone without saying so.
 
 Deliverables.
 
-- The fallback in prepare with tests on fake hosts for each refused shape, forced and unforced, and the report of the backend that ran.
+- The fallback in prepare with tests on fake hosts for each refused shape, forced and unforced, and the report of the backend that ran and the bound mode of each port in the fields of CON-35.
+- check_af_xdp refuses the mix entries of a module on the TRN-36 exclusion list.
 
 Acceptance.
 
