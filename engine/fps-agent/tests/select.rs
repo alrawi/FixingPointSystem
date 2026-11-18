@@ -135,6 +135,39 @@ fn a_forced_backend_that_the_host_cannot_run_is_an_error_and_never_a_fallback() 
 }
 
 #[test]
+fn a_forced_af_xdp_works_before_the_transport_constant_is_flipped() {
+    // AGT-24: a forced AF_XDP run no longer meets NoTransport. The guest has
+    // AF_XDP sockets and native XDP, so the selection takes it, whatever
+    // TRANSPORT_AVAILABLE says, and the report follows.
+    let guest = host("virtio-guest");
+    let selection = select(&guest, Some(BackendKind::AfXdp)).expect("forced AF_XDP works");
+    assert_eq!(selection.backend, BackendKind::AfXdp);
+    assert_eq!(selection.reason, SelectionReason::Forced);
+    assert_eq!(selection.xdp, Some(XdpSupport::Native));
+    let caps = guest.capabilities_for(&selection);
+    assert_eq!(caps.selected_backend, Backend::AfXdp);
+    assert!(caps
+        .ports
+        .iter()
+        .all(|p| p.xdp_driver_mode == XdpMode::Native));
+    // The default selection stays the kernel backend until TRN-31.
+    if !TRANSPORT_AVAILABLE {
+        let default = select(&guest, None).expect("a default selection works");
+        assert_eq!(default.backend, BackendKind::Kernel);
+    }
+    // A host without AF_XDP sockets still refuses it.
+    let err = select(&host("virtio-guest-no-xdp"), Some(BackendKind::AfXdp))
+        .expect_err("no AF_XDP sockets");
+    assert_eq!(
+        err,
+        SelectError::ForcedUnsupported {
+            backend: BackendKind::AfXdp,
+            why: Unavailable::NoKernelSupport,
+        }
+    );
+}
+
+#[test]
 fn a_forced_backend_reaches_the_report_when_it_works() {
     let guest = host("virtio-guest");
     let selection = select(&guest, Some(BackendKind::Kernel)).expect("kernel works");
@@ -194,6 +227,18 @@ fn a_forced_backend_that_works_lets_the_agent_dial() {
     );
     assert!(stderr.contains(r#""backend":"kernel""#), "{stderr}");
     assert!(stderr.contains("forced by the operator"), "{stderr}");
+}
+
+#[test]
+fn a_forced_af_xdp_backend_lets_the_agent_dial_before_the_flip() {
+    // Before AGT-24 this boot failed with "no transport carries TCP over this
+    // backend". Now the selection passes and the agent goes on to the dial.
+    let out = connect("virtio-guest", &["--backend", "af_xdp"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(3), "{stderr}");
+    assert!(stderr.contains(r#""backend":"af_xdp""#), "{stderr}");
+    assert!(stderr.contains("forced by the operator"), "{stderr}");
+    assert!(!stderr.contains("backend selection failed"), "{stderr}");
 }
 
 #[test]

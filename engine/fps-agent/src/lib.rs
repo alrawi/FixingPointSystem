@@ -28,6 +28,7 @@
 #![warn(missing_docs, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 pub mod assemble;
+pub mod backend;
 pub mod capabilities;
 pub mod control;
 pub mod convert;

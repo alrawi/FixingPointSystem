@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
+use fps_backend_afxdp::BackendKind;
 use fps_backend_kernel::{ConnectConfig, ListenConfig};
 use fps_flow::program::L4;
 use fps_flow::Scenario;
@@ -36,10 +37,9 @@ use fps_hosts::{HostPool, HostRange, HostSelector, PoolSpec, Selection};
 use fps_runtime::{ClientConfig, FlowRef, Role, ServerConfig, SourceHosts, WorkerConfig};
 use fps_sched::{stream_id, LoadProfile, Objective, Phase, ScheduleConfig, Shape};
 
+use crate::backend::BackendError;
 use crate::modules::{with_params, LoadedModules};
-use crate::plan::{
-    Backend, HostPoolSlice, HostRole, PhaseShape, Plan, Topology, WorkerPlan, WorkerRate,
-};
+use crate::plan::{HostPoolSlice, HostRole, PhaseShape, Plan, Topology, WorkerPlan, WorkerRate};
 use crate::run::RunError;
 
 /// Which sides of the plan this process runs.
@@ -136,7 +136,7 @@ pub fn load_profile(plan: &Plan) -> Result<LoadProfile, RunError> {
     LoadProfile::new(phases).map_err(|e| RunError::rule(format!("load phases: {e}")))
 }
 
-fn pool_of(slice: &HostPoolSlice) -> Result<HostPool, RunError> {
+pub(crate) fn pool_of(slice: &HostPoolSlice) -> Result<HostPool, RunError> {
     // HST-04 adds the DHCP client. Until then no backend can lease an address,
     // so a DHCP slice fails here, before the plan allocates anything.
     if slice.dhcp4.is_some() {
@@ -219,13 +219,22 @@ impl<'p> Pools<'p> {
     }
 }
 
-/// Builds the engine workers of `plan` for `sides`.
-pub fn assemble(plan: &Plan, loaded: &LoadedModules, sides: Sides) -> Result<Assembly, RunError> {
-    if plan.backend != Backend::Kernel {
-        return Err(RunError::Unimplemented(format!(
-            "backend {:?}; the standalone mode runs BACKEND_KERNEL only",
-            plan.backend
-        )));
+/// Builds the engine workers of `plan` for `sides` on `backend`, the backend
+/// that the run starts (AGT-24). The agent selected it at boot, or the plan
+/// named it in the standalone mode, see [`crate::backend::resolve`]. The
+/// backend of the plan is not read here.
+///
+/// The workers are the same on both backends. A plan that the AF_XDP backend
+/// cannot serve fails here, before anything binds a queue, see
+/// [`crate::backend::check_af_xdp`].
+pub fn assemble(
+    plan: &Plan,
+    loaded: &LoadedModules,
+    sides: Sides,
+    backend: BackendKind,
+) -> Result<Assembly, RunError> {
+    if backend == BackendKind::AfXdp {
+        crate::backend::check_af_xdp(plan, sides)?;
     }
     let (clients_allowed, servers_allowed) = match plan.topology {
         Topology::AppSim => (true, true),
@@ -247,6 +256,14 @@ pub fn assemble(plan: &Plan, loaded: &LoadedModules, sides: Sides) -> Result<Ass
         let s = with_params(&e.id, base, &e.params)?;
         check_flows(&e.scenario, &s)?;
         let l4 = s.flows[0].l4;
+        // The own stack of the datapath carries IPv4 TCP only (TRN-29 adds UDP).
+        if backend == BackendKind::AfXdp && s.flows.iter().any(|f| f.l4 == L4::Udp) {
+            return Err(BackendError::Unsupported(format!(
+                "mix entry {} runs a UDP flow, and UDP over the datapath is TRN-29",
+                e.id
+            ))
+            .into());
+        }
         flows.push((Arc::new(s), l4));
     }
     // `port` is the name of the test port that the side runs on, which labels
