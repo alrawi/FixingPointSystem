@@ -735,6 +735,67 @@ Run for the acceptance rows (the loss job of the `tcp-bench` workflow takes thes
 - Fat path, one flow: `--loss-profile fat --loss-transfers 6` for kernel, own, and smoltcp, and `--loss-profile fat --loss-transfers 6 --own-cc newreno` for the NewReno row.
 - Four flows: `--loss-profile bottleneck --loss-transfers 3` for kernel, own, and smoltcp.
 
+### The user space datapath (TRN-27)
+
+`engine/fps-datapath` runs the own stack on the queues of a port. It is a crate of its own because `fps-hosts` and the stacks depend on `fps-backend-afxdp` for `FrameIo`. It does not set `TRANSPORT_AVAILABLE` and does not change the backend selection: AGT-24 makes a forced AF_XDP run work, and TRN-31 flips the flag.
+
+A `Lane` is the unit of one thread: the queue of the client arm, the queue of the server arm, and the host pools (a slice of the test configuration) that the two arms serve. The own stack keeps one host per arm and owns both links, so a lane has exactly the two queues that the stack wants. `split_pools(pools, n)` cuts the pools into one slice per lane. A client host reaches only the server hosts of its own lane, and the receive side steering of a real port must send a flow to the queue of its lane (that is TRN-19 and the XDP program, not this crate).
+
+```text
+wire -> queue -> Splitter -+-> IPv4 TCP -------> OwnStack (hosts, sessions, timers)
+                           +-> ARP ------------> fps-hosts Responder (reply sent by the splitter)
+                           +-> ND, DHCP, UDP --> FrameHook (answers Unsupported for now)
+wire <- queue <------------------ frames of the stack and the replies of the splitter
+```
+
+The `Splitter` wraps the `FrameIo` of one queue and is a `FrameIo` itself, so `fps-tcp-own` needed no change: the stack sees IPv4 TCP frames only. `classify` reads the Ethernet header with its 802.1Q tags, the IPv4 header up to the protocol and for UDP the two ports, and the IPv6 header up to an ICMPv6 neighbor discovery type, and it never panics on a short frame. A frame with another VLAN tag than the port has is counted in `vlan_dropped`. ARP requests for a host of the lane are answered by the `Responder` of `fps-hosts` from the same MAC addresses that the stack puts in its frames (the lane claims them from a fresh ledger in the order of `Pools::stations`, and a test compares an ARP reply with the source MAC of a SYN). The replies leave on the queue that took the request. ND, DHCP, and UDP frames go to a `FrameHook`; the default hook answers `Unsupported` and the splitter counts it (`nd_unsupported`, `dhcp_unsupported`, `udp_unsupported`). `DatapathConfig::hooks` builds the hooks per lane and side, which is where TRN-29 plugs UDP in, HST-04 `DhcpHosts`, and TRN-30 neighbor discovery. Everything else is counted in `other_dropped`.
+
+One thread per lane polls `OwnStack::pump`. `OwnStack::drive` does not fit a queue that the kernel fills, because it sleeps until the next timer or a notification and nothing notifies it when a frame arrives from the wire. A thread that found nothing spins for `spin_passes` (256) passes and then sleeps `idle_sleep` (30 microseconds), so an idle lane costs little CPU and a busy lane never sleeps.
+
+The calls mirror `fps-backend-kernel`:
+
+| Kernel backend | Datapath |
+|---|---|
+| `Connector::connect(source, destination)` | `Datapath::connector()` gives a `Connector` that is `Clone`; `connect(source, destination)` opens a session from a client host address to a server host address of the same lane and fails with `UnknownSource`, `UnknownDestination`, `ConnectTimeout`, or `Stack` |
+| `KernelListener::bind(address, config)` and `accept` | `Datapath::listen(port)` listens at every server host of every lane, and `Listener::accept` returns the next session from any lane |
+| `KernelStream` | `DatapathSession`, the `OwnSession`, which is `SessionIo`, `AsyncRead`, and `AsyncWrite` |
+| IPv6 address, `bind_datagram_pool` | `DatapathError::Unsupported(Feature::Ipv6)` and `Feature::Udp` (`connect_udp`, `listen_udp`), with the package that adds it in the message |
+
+`Monitor` (`Datapath::monitor()`) reads `sockets_open` and the counters of every lane (`LaneStats`: the stack, the `FrameCounters` of both splitters, and the loop passes) from any task, and `Datapath::stop()` joins the threads and returns a `LaneReport` per lane.
+
+#### Tests
+
+- `engine/fps-datapath/tests/memory.rs` runs in every job and needs no root. Two lanes over in memory pairs carry 40 sessions with a 300 byte request and a 3,000 byte answer and check every byte; a tagged pool carries a session and answers tagged ARP only; the ARP reply carries the MAC address of the SYN; ND, DHCP, UDP, other protocols, an unknown Ethernet type, and a short frame are counted as unsupported, dropped, or malformed; a hook takes frames and its reply leaves on the same queue; the unsupported calls and the address errors return their errors; the pools split into lanes that cover each host once.
+- `engine/fps-datapath/src/classify.rs` has unit tests of the split, the tags, short frames, and every prefix of a frame.
+- `engine/fps-backend-afxdp/tests/datapath_veth.rs` is the acceptance test. It makes a namespace with a veth pair, `dpa` and `dpb`, runs itself again inside it, opens an AF_XDP queue on each end, and gives them to one lane as the client arm and the server arm. The hosts are two pools of 64 hosts. The helper holds a number of sessions open (connect, 64 byte request, 1,024 byte response, no close), reads `sockets_held` (both ends of every held session count), and then runs short sessions (connect, request, response, close) from 64 concurrent tasks while it still holds the first ones. It checks every response byte. The test lives in `fps-backend-afxdp`, which has `fps-datapath` as a dev-dependency (Cargo allows a cycle through dev-dependencies), so the `afxdp` job of `trn.yml` runs it with `FPS_REQUIRE_AFXDP=1` and no job of its own. It needs root (`sudo -n` when it is not root), skips with a message where that is impossible, and fails there when `CI=true` or `FPS_REQUIRE_AFXDP=1`. `FPS_DP_SESSIONS` (10,000), `FPS_DP_HOLD` (2,000), `FPS_DP_CONCURRENCY` (64), and `FPS_DATAPATH_RESULTS` (a directory that receives `datapath-veth.txt` and `host.txt`) set the run.
+
+```bash
+cargo test -p fps-datapath                                   # no root
+FPS_DATAPATH_RESULTS=/tmp/dp FPS_REQUIRE_AFXDP=1 cargo test -p fps-backend-afxdp --test datapath_veth -- --nocapture
+```
+
+#### Results
+
+| Run | Sessions per second | Sockets held | Sessions | Held | Concurrency |
+|---|---|---|---|---|---|
+| Hosted runner, `afxdp` job, debug build (`results/ci-ubuntu-24.04-trn27/`) | 6,908 | 4,001 | 10,000 | 2,000 | 64 |
+| Sandbox, 2 vCPU, debug build, two runs (`results/sandbox-2vcpu-trn27/`) | 3,181 and 3,122 | 4,001 | 10,000 | 2,000 | 64 |
+| Sandbox, 2 vCPU, release build, three runs of 50,000 sessions (`results/sandbox-2vcpu-trn27-release/`, the last run) | 16,453, 17,046, and 16,070 | 4,001 | 50,000 | 2,000 | 64 |
+
+Every run completed all its sessions with no failure and no wrong byte, and both queues bound in copy mode (a veth pair has no zero copy driver). `sockets_held` is the sockets that the stack holds with 2,000 sessions open: 4,000 for the two ends and one for the listener. The peak during the churn is higher (11,176 on the runner, 21,000 to 22,600 in the release runs) because closed sessions stay in TIME-WAIT. The splitters counted the neighbor discovery frames that the kernel sends when a veth pair comes up (3 in `nd_unsupported` and 4 in `other_dropped` on the runner), which shows the unsupported path on a real port. The rate is the whole path: the own stack, two AF_XDP sockets in copy mode, the veth driver, and a polling thread that sleeps 30 microseconds when idle, in one namespace on two to four cores that the helper, the test tasks, and the kernel share. It is the first number for tier T1 on real queues and not a limit of the design: the debug build is 2.2 to 5 times slower than release, and a host with native XDP and zero copy (TRN-19) is the measurement that decides.
+
+#### Limits
+
+| Limit | Consequence |
+|---|---|
+| A lane has one client arm and one server arm | The stack models both ends of a test, so the agent gives it the two ports (or queues of two ports) of the device under test. A run with only a client arm needs a stack with one side |
+| A client host reaches only the server hosts of its lane | `split_pools` cuts both pools evenly. A mixed pair across lanes needs the steering of TRN-19 and a stack that takes frames for a host of another lane |
+| `listen` cannot be undone | `OwnStack` has no `unlisten`, so a port that a listener used stays served, and a second `listen` on it fails |
+| `accept` returns the session only | `OwnSession` has no `local_addr` and `peer_addr`, so the caller does not learn the client host of an accepted session |
+| Polling threads | A lane thread polls and sleeps 30 microseconds when idle, which adds up to that much to a round trip on an idle lane. Busy polling or `wait_readable` on both queues is a TRN-19 question |
+| No CPU pinning | `WorkerOptions::cpus` of the AF_XDP crate pins workers with `sched_setaffinity`, which this crate (no `unsafe`) does not call yet |
+| IPv6, UDP, DHCP, ND | Counted and answered with `Unsupported`, see the hooks above |
+
 ### Decision record 0014 and the one session run
 
 TRN-10 proposes decision record 0014 (`docs/decisions/0014-user-space-tcp-stack.md`), which chooses the own stack with loss recovery added for the AF_XDP backend, keeps smoltcp as a reference and a fallback, and leaves F-Stack to the parked TRN-13. Its numbers come from `engine/fps-tcp/results/sandbox-2vcpu-trn10/`, where the three stacks ran in one session on one sandbox, including the million socket rows of the own stack and smoltcp. The kernel row at a million sockets is not measured, because the open files limit of the sandbox is 20,000 and cannot be raised, so the kernel stops at 19,815 sockets. The fat-nuc numbers are still pending, and the record says when to revisit it.

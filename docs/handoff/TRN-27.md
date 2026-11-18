@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #628 |
 | Branch | `wp/TRN-27` |
-| Pull request | #0 |
+| Pull request | #650 |
 | Status | in progress |
-| Progress | 60% (3 of 5 plan steps) |
+| Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-7c27a1, lease until 2026-11-18T09:08:48Z |
 | Last verified commit | none |
 
@@ -27,8 +27,8 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 1. Crate `fps-datapath`: classifier, `Splitter` (FrameIo wrapper: ARP to the fps-hosts Responder, TCP to the stack, hooks for ND/DHCP/UDP), `Datapath` with lanes, `Connector`, `Listener`.
 - [x] 2. In-memory tests (`engine/fps-datapath/tests/memory.rs`), no root.
 - [x] 3. Veth test on AF_XDP queues (`engine/fps-backend-afxdp/tests/datapath_veth.rs`), sessions per second and sockets held.
-- [ ] 4. Results of the CI runner and the sandbox under `engine/fps-datapath/results/`, Transport.md section, log entry.
-- [ ] 5. PR, CI green, review.
+- [x] 4. Results of the CI runner and the sandbox under `engine/fps-datapath/results/`, Transport.md section, log entry.
+- [ ] 5. CI green on the final commit, review.
 
 ## Done and verified
 
@@ -36,11 +36,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-Results files, wiki page and log entry, PR.
+CI green on the final commit, then `fps_swarm.py review 628 --pr 650`.
 
 ## Next action
 
-Run the veth test with FPS_DATAPATH_RESULTS set, commit the results, write the log entry, open the PR.
+Check the rust job of PR 650, then run the review command.
 
 ## Blockers and open questions
 
@@ -68,3 +68,7 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
+
+## Results
+
+Hosted runner (afxdp job, debug): 6,908 sessions per second, 4,001 sockets held. Sandbox: see engine/fps-datapath/results/.
