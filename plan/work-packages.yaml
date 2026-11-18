@@ -2160,8 +2160,8 @@ work_packages:
     phase: 3
     workstream: TRN
     size: M
-    depends_on: [TRN-26, TRN-27, TRN-28, TRN-29, TRN-30]
-    paths: [engine/fps-backend-afxdp/]
+    depends_on: [TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, AGT-24, CTL-54]
+    paths: [engine/fps-backend-afxdp/, engine/fps-datapath/]
     summary: >-
       The closing package of the AF_XDP TCP path that decision record 0014 split into TRN-21 to TRN-31 and SPK-05.
       It runs the http1 module through the agent on the AF_XDP backend with the own stack and fixes what the end to
@@ -2193,7 +2193,7 @@ work_packages:
     workstream: TRN
     size: M
     depends_on: [TRN-21, HST-03]
-    paths: [engine/fps-tcp-own/]
+    paths: [engine/fps-tcp-own/, engine/fps-tcp/]
     summary: >-
       The own stack is two fixed hosts with one peer, a table keyed by the two ports, and bare IPv4 frames. Give it a
       table keyed by the 4-tuple, Ethernet and VLAN framing with mac_base + i, and neighbors from HST-03, so it serves
@@ -2208,7 +2208,7 @@ work_packages:
     phase: 3
     workstream: TRN
     size: M
-    depends_on: [TRN-21]
+    depends_on: [TRN-21, TRN-32]
     paths: [engine/fps-tcp/]
     summary: >-
       Add loss, delay, and reordering to the in memory link of the harness, a netem counterpart for the kernel
@@ -2292,14 +2292,12 @@ work_packages:
     summary: >-
       The production datapath: a crate engine/fps-datapath with the loop per queue that splits ARP, ND, DHCP, TCP, and
       UDP frames between fps-hosts and the user space stacks, and offers connect and listen as fps-backend-kernel does.
-      It cannot live in fps-backend-afxdp, because fps-hosts and the stacks depend on that crate for FrameIo. It also
-      lets a forced --backend af_xdp run work while TRANSPORT_AVAILABLE is false, which select_backend refuses with
-      NoTransport today, so TRN-12 and AGT-24 can run AF_XDP on purpose before the flip. It is the first real
-      evidence for tier T1.
+      It cannot live in fps-backend-afxdp, because fps-hosts and the stacks depend on that crate for FrameIo. It is the
+      first real evidence for tier T1. AGT-24 makes a forced AF_XDP run work before the flip.
     deliverables:
-      - engine/fps-datapath with the own stack on AF_XDP queues over a veth pair in CI, sessions per second and sockets held reported, and a forced AF_XDP selection that works before the flip.
+      - engine/fps-datapath with the own stack on AF_XDP queues over a veth pair in CI, and sessions per second and sockets held reported.
     acceptance:
-      - A test over a veth pair in CI completes sessions through the datapath with a forced AF_XDP backend, and the results are committed for the CI runner.
+      - A test over a veth pair in CI completes sessions through the datapath on AF_XDP queues, and the results are committed for the CI runner.
 
   - id: TRN-28
     title: OS profile options for the own stack
@@ -2321,8 +2319,8 @@ work_packages:
     phase: 3
     workstream: TRN
     size: M
-    depends_on: [TRN-21, TRN-32, TRN-11]
-    paths: [engine/fps-udp-own/]
+    depends_on: [TRN-21, TRN-32, TRN-27]
+    paths: [engine/fps-udp-own/, engine/fps-datapath/]
     summary: >-
       DatagramIo over FrameIo for the AF_XDP backend, so the UDP modules (dns, ntp, sip_rtp) run on it. The own stack
       covers only IPv4 TCP. Leaving UDP out of v1 is a scope decision for the owner.
@@ -2337,7 +2335,7 @@ work_packages:
     workstream: TRN
     size: M
     depends_on: [TRN-26, TRN-29]
-    paths: [engine/fps-tcp-own/, engine/fps-udp-own/]
+    paths: [engine/fps-tcp-own/, engine/fps-udp-own/, engine/fps-datapath/]
     summary: >-
       IPv6 for the own TCP stack and the user space UDP layer. The own stack is IPv4 only today. Leaving IPv6 out of v1
       is a scope decision for the owner.
@@ -2372,12 +2370,14 @@ work_packages:
     paths: [engine/fps-agent/]
     summary: >-
       fps_agent::assemble starts the selected backend instead of plan.backend and reports the bound mode in
-      PortInfo.xdp_driver_mode (AGT-22 finding). While TRANSPORT_AVAILABLE is false the selection is always the
-      kernel backend, so this lands before the flip of TRN-31 without changing behavior.
+      PortInfo.xdp_driver_mode (AGT-22 finding). It also lets a forced --backend af_xdp run work while
+      TRANSPORT_AVAILABLE is false, by setting transport_available in AfXdpFacts for a forced run, which select_backend
+      refuses with NoTransport today, so TRN-12 can run AF_XDP on purpose before the flip. The tests that pin today's
+      refusal change with it. Without a forced backend the selection stays the kernel backend until TRN-31.
     deliverables:
       - The assembly change and the bound mode report, with tests on fake hosts.
     acceptance:
-      - A test with a forced AF_XDP selection on a fake host starts the AF_XDP backend and reports its bound mode.
+      - On a veth pair in the namespace harness, a forced AF_XDP run starts the AF_XDP backend through the datapath and reports the bound mode of a real socket.
 
   - id: CTL-54
     title: The orchestrator inventory uses the selected backend

@@ -57,10 +57,13 @@ flowchart LR
   TRN_28 --> TRN_12
   TRN_29 --> TRN_12
   TRN_30 --> TRN_12
+  AGT_24 --> TRN_12
+  CTL_54 --> TRN_12
   TRN_10 --> TRN_21
   TRN_21 --> TRN_32
   HST_03 --> TRN_32
   TRN_21 --> TRN_22
+  TRN_32 --> TRN_22
   TRN_22 --> TRN_23
   TRN_32 --> TRN_23
   TRN_23 --> TRN_24
@@ -74,7 +77,7 @@ flowchart LR
   TRN_24 --> TRN_28
   TRN_21 --> TRN_29
   TRN_32 --> TRN_29
-  TRN_11 --> TRN_29
+  TRN_27 --> TRN_29
   TRN_26 --> TRN_30
   TRN_29 --> TRN_30
   TRN_12 --> TRN_31
@@ -126,17 +129,17 @@ flowchart LR
 | [SPK-05](#spk-05-spike-smoltcp-behind-our-own-flow-table) | Spike smoltcp behind our own flow table | S | TRN-10 |  |
 | [TRN-10](#trn-10-user-space-tcp-stack-decision) | User space TCP stack decision | S | TRN-01, TRN-17, TRN-18, TRN-20 |  |
 | [TRN-11](#trn-11-af_xdp-packet-input-and-output) | AF_XDP packet input and output | M | TRN-01 |  |
-| [TRN-12](#trn-12-user-space-tcp-over-af_xdp-end-to-end) | User space TCP over AF_XDP, end to end | M | TRN-26, TRN-27, TRN-28, TRN-29, TRN-30 |  |
+| [TRN-12](#trn-12-user-space-tcp-over-af_xdp-end-to-end) | User space TCP over AF_XDP, end to end | M | TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, AGT-24, CTL-54 |  |
 | [TRN-21](#trn-21-the-own-tcp-stack-in-a-crate-of-its-own) | The own TCP stack in a crate of its own | S | TRN-10 |  |
 | [TRN-32](#trn-32-host-pools-and-ethernet-in-the-own-stack) | Host pools and Ethernet in the own stack | M | TRN-21, HST-03 |  |
-| [TRN-22](#trn-22-a-lossy-link-and-loss-workloads-for-the-tcp-harness) | A lossy link and loss workloads for the TCP harness | M | TRN-21 |  |
+| [TRN-22](#trn-22-a-lossy-link-and-loss-workloads-for-the-tcp-harness) | A lossy link and loss workloads for the TCP harness | M | TRN-21, TRN-32 |  |
 | [TRN-23](#trn-23-loss-recovery-and-newreno-in-the-own-stack) | Loss recovery and NewReno in the own stack | M | TRN-22, TRN-32 |  |
 | [TRN-24](#trn-24-tcp-options-for-long-fat-paths-in-the-own-stack) | TCP options for long fat paths in the own stack | M | TRN-23 |  |
 | [TRN-25](#trn-25-cubic-in-the-own-stack) | CUBIC in the own stack | M | TRN-24 |  |
 | [TRN-26](#trn-26-interop-of-the-own-stack-with-smoltcp-and-the-kernel) | Interop of the own stack with smoltcp and the kernel | M | TRN-25, TRN-27, TRN-32 |  |
 | [TRN-27](#trn-27-the-user-space-datapath-on-af_xdp-queues) | The user space datapath on AF_XDP queues | M | TRN-21, TRN-32, TRN-11 |  |
 | [TRN-28](#trn-28-os-profile-options-for-the-own-stack) | OS profile options for the own stack | S | TRN-24 |  |
-| [TRN-29](#trn-29-udp-over-frameio) | UDP over FrameIo | M | TRN-21, TRN-32, TRN-11 |  |
+| [TRN-29](#trn-29-udp-over-frameio) | UDP over FrameIo | M | TRN-21, TRN-32, TRN-27 |  |
 | [TRN-30](#trn-30-ipv6-in-the-own-stack) | IPv6 in the own stack | M | TRN-26, TRN-29 |  |
 | [TRN-31](#trn-31-the-af_xdp-transport-becomes-available) | The AF_XDP transport becomes available | S | TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, AGT-24, CTL-54 |  |
 | [AGT-24](#agt-24-the-agent-starts-the-selected-backend) | The agent starts the selected backend | S | AGT-22, TRN-27 |  |
@@ -296,8 +299,8 @@ Acceptance.
 
 Phase 3 · size M · workstream TRN
 
-- **Depends on.** TRN-26, TRN-27, TRN-28, TRN-29, TRN-30
-- **Paths.** `engine/fps-backend-afxdp/`
+- **Depends on.** TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, AGT-24, CTL-54
+- **Paths.** `engine/fps-backend-afxdp/`, `engine/fps-datapath/`
 
 The closing package of the AF_XDP TCP path that decision record 0014 split into TRN-21 to TRN-31 and SPK-05. It runs the http1 module through the agent on the AF_XDP backend with the own stack and fixes what the end to end run finds.
 
@@ -331,7 +334,7 @@ Acceptance.
 Phase 3 · size M · workstream TRN
 
 - **Depends on.** TRN-21, HST-03
-- **Paths.** `engine/fps-tcp-own/`
+- **Paths.** `engine/fps-tcp-own/`, `engine/fps-tcp/`
 
 The own stack is two fixed hosts with one peer, a table keyed by the two ports, and bare IPv4 frames. Give it a table keyed by the 4-tuple, Ethernet and VLAN framing with mac_base + i, and neighbors from HST-03, so it serves the host pools of a test configuration.
 
@@ -347,7 +350,7 @@ Acceptance.
 
 Phase 3 · size M · workstream TRN
 
-- **Depends on.** TRN-21
+- **Depends on.** TRN-21, TRN-32
 - **Paths.** `engine/fps-tcp/`
 
 Add loss, delay, and reordering to the in memory link of the harness, a netem counterpart for the kernel reference stack in a network namespace, and a loss workload in tcp_bench, so every later child measures against the kernel over the same link. If sch_netem is missing on the hosted runner, report it in the Shared page notes and do not install packages outside tools/ci/apt-install.sh. The link also has a rate limit with a bounded queue, and the kernel side a matching rate, because TRN-24 and TRN-25 measure against a bottleneck.
@@ -435,15 +438,15 @@ Phase 3 · size M · workstream TRN
 - **Depends on.** TRN-21, TRN-32, TRN-11
 - **Paths.** `engine/fps-datapath/`, `engine/fps-backend-afxdp/`
 
-The production datapath: a crate engine/fps-datapath with the loop per queue that splits ARP, ND, DHCP, TCP, and UDP frames between fps-hosts and the user space stacks, and offers connect and listen as fps-backend-kernel does. It cannot live in fps-backend-afxdp, because fps-hosts and the stacks depend on that crate for FrameIo. It also lets a forced --backend af_xdp run work while TRANSPORT_AVAILABLE is false, which select_backend refuses with NoTransport today, so TRN-12 and AGT-24 can run AF_XDP on purpose before the flip. It is the first real evidence for tier T1.
+The production datapath: a crate engine/fps-datapath with the loop per queue that splits ARP, ND, DHCP, TCP, and UDP frames between fps-hosts and the user space stacks, and offers connect and listen as fps-backend-kernel does. It cannot live in fps-backend-afxdp, because fps-hosts and the stacks depend on that crate for FrameIo. It is the first real evidence for tier T1. AGT-24 makes a forced AF_XDP run work before the flip.
 
 Deliverables.
 
-- engine/fps-datapath with the own stack on AF_XDP queues over a veth pair in CI, sessions per second and sockets held reported, and a forced AF_XDP selection that works before the flip.
+- engine/fps-datapath with the own stack on AF_XDP queues over a veth pair in CI, and sessions per second and sockets held reported.
 
 Acceptance.
 
-- [ ] A test over a veth pair in CI completes sessions through the datapath with a forced AF_XDP backend, and the results are committed for the CI runner.
+- [ ] A test over a veth pair in CI completes sessions through the datapath on AF_XDP queues, and the results are committed for the CI runner.
 
 ### TRN-28 OS profile options for the own stack
 
@@ -466,8 +469,8 @@ Acceptance.
 
 Phase 3 · size M · workstream TRN
 
-- **Depends on.** TRN-21, TRN-32, TRN-11
-- **Paths.** `engine/fps-udp-own/`
+- **Depends on.** TRN-21, TRN-32, TRN-27
+- **Paths.** `engine/fps-udp-own/`, `engine/fps-datapath/`
 
 DatagramIo over FrameIo for the AF_XDP backend, so the UDP modules (dns, ntp, sip_rtp) run on it. The own stack covers only IPv4 TCP. Leaving UDP out of v1 is a scope decision for the owner.
 
@@ -484,7 +487,7 @@ Acceptance.
 Phase 3 · size M · workstream TRN
 
 - **Depends on.** TRN-26, TRN-29
-- **Paths.** `engine/fps-tcp-own/`, `engine/fps-udp-own/`
+- **Paths.** `engine/fps-tcp-own/`, `engine/fps-udp-own/`, `engine/fps-datapath/`
 
 IPv6 for the own TCP stack and the user space UDP layer. The own stack is IPv4 only today. Leaving IPv6 out of v1 is a scope decision for the owner.
 
@@ -663,7 +666,7 @@ Phase 3 · size S · workstream AGT
 - **Depends on.** AGT-22, TRN-27
 - **Paths.** `engine/fps-agent/`
 
-fps_agent::assemble starts the selected backend instead of plan.backend and reports the bound mode in PortInfo.xdp_driver_mode (AGT-22 finding). While TRANSPORT_AVAILABLE is false the selection is always the kernel backend, so this lands before the flip of TRN-31 without changing behavior.
+fps_agent::assemble starts the selected backend instead of plan.backend and reports the bound mode in PortInfo.xdp_driver_mode (AGT-22 finding). It also lets a forced --backend af_xdp run work while TRANSPORT_AVAILABLE is false, by setting transport_available in AfXdpFacts for a forced run, which select_backend refuses with NoTransport today, so TRN-12 can run AF_XDP on purpose before the flip. The tests that pin today's refusal change with it. Without a forced backend the selection stays the kernel backend until TRN-31.
 
 Deliverables.
 
@@ -671,7 +674,7 @@ Deliverables.
 
 Acceptance.
 
-- [ ] A test with a forced AF_XDP selection on a fake host starts the AF_XDP backend and reports its bound mode.
+- [ ] On a veth pair in the namespace harness, a forced AF_XDP run starts the AF_XDP backend through the datapath and reports the bound mode of a real socket.
 
 ### AGT-22 The agent selects and reports its backend
 
