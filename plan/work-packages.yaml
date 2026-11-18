@@ -2441,7 +2441,8 @@ work_packages:
       Prepared::start_on passes the datapath to the workers through the Transport of ENG-31 (Datapath::connector and
       Datapath::listen for TCP, Connector::connect_udp and UdpListener::accept for UDP) and removes the Unimplemented
       that AGT-24 left. It picks the source and server host of a UDP connect without a host from the pools, as the
-      dns_scenarios test of TRN-29 does.
+      dns_scenarios test of TRN-29 does. It turns the os_profile name of each host pool into OsProfile::builtin for
+      client_os_profile and server_os_profile (TRN-28 finding; one profile per side).
     deliverables:
       - The wiring with tests on fake hosts.
     acceptance:
