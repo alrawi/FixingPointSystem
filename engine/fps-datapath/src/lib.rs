@@ -20,8 +20,10 @@
 //! ```text
 //!   wire --> queue --> Splitter --+--> IPv4 TCP --> OwnStack (hosts, sessions)
 //!                                 +--> ARP ------> fps-hosts Responder
-//!                                 +--> IPv4 UDP --> UdpArm (fps-udp-own, TRN-29)
-//!                                 +--> ND, DHCP --> FrameHook (unsupported)
+//!                                 +--> IPv6 TCP --> OwnStack (same hosts)
+//!                                 +--> NS -------> fps-hosts Responder (ND)
+//!                                 +--> UDP -------> UdpArm (fps-udp-own, IPv4 and IPv6)
+//!                                 +--> other ND, DHCP --> FrameHook (unsupported)
 //!   wire <-- queue <---------------- frames of the stack, replies, datagrams
 //! ```
 //!
@@ -59,10 +61,12 @@
 //!
 //! # What is not served yet
 //!
-//! IPv6, DHCP, and neighbor discovery answer
-//! [`DatapathError::Unsupported`] (the calls) or [`HookOutcome::Unsupported`]
-//! (the frames) and are counted in [`FrameCounters`]. TRN-30 wires IPv6 into
-//! the loop, and a [`FrameHook`] is the place for it.
+//! DHCP answers [`DatapathError::Unsupported`] (the calls) or
+//! [`HookOutcome::Unsupported`] (the frames) and is counted in
+//! [`FrameCounters`]; a [`FrameHook`] is the place for it. Neighbor
+//! discovery messages that are not solicitations for a host of the pools
+//! (router advertisements, say) go to the ND hook the same way. The datapath
+//! sends no neighbor solicitation: next hop resolution is TRN-35.
 //!
 //! The datapath does not set `TRANSPORT_AVAILABLE` and does not change the
 //! backend selection. TRN-31 flips the flag.
@@ -72,7 +76,7 @@ mod split;
 mod udp;
 
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -103,15 +107,11 @@ pub type DatapathDatagram = UdpSession;
 /// A feature that the datapath does not serve yet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Feature {
-    /// IPv6 sessions (TRN-30).
-    Ipv6,
     /// UDP sessions, when the layer is turned off with
     /// [`DatapathConfig::udp`] set to `None`.
     Udp,
     /// DHCP for hosts (the `DhcpHosts` of HST-04 plugs in as a hook).
     Dhcp,
-    /// IPv6 neighbor discovery (with TRN-30).
-    Nd,
 }
 
 impl Feature {
@@ -119,7 +119,6 @@ impl Feature {
     #[must_use]
     pub fn tracked_by(self) -> &'static str {
         match self {
-            Self::Ipv6 | Self::Nd => "TRN-30",
             Self::Udp => "TRN-29",
             Self::Dhcp => "HST-04 on the datapath",
         }
@@ -129,10 +128,8 @@ impl Feature {
 impl std::fmt::Display for Feature {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
-            Self::Ipv6 => "IPv6",
             Self::Udp => "UDP",
             Self::Dhcp => "DHCP",
-            Self::Nd => "IPv6 neighbor discovery",
         };
         write!(
             f,
@@ -352,10 +349,8 @@ impl Running {
 }
 
 /// The index of `ip` in `slice`, or `None` when the slice does not serve it.
-fn index_in(slice: &HostSlice, ip: Ipv4Addr) -> Option<usize> {
-    let index = slice.pool.index_of_ipv4(ip)?;
-    let relative = index.checked_sub(slice.range.offset)?;
-    (relative < slice.range.count).then_some(usize::try_from(relative).ok()?)
+fn index_in(slice: &HostSlice, ip: IpAddr) -> Option<usize> {
+    usize::try_from(slice.index_of(ip)?).ok()
 }
 
 /// Cuts the pools into `parts` lanes. Client hosts and server hosts are
@@ -718,6 +713,20 @@ impl std::fmt::Debug for Connector {
 }
 
 impl Connector {
+    /// The lane whose client hosts include `source` and whose server hosts
+    /// include `destination`. The two addresses are of one family, which is
+    /// IPv4 or IPv6.
+    fn lane_of(&self, source: IpAddr, destination: IpAddr) -> Result<&Running, DatapathError> {
+        let lane = self
+            .lanes
+            .iter()
+            .find(|l| index_in(&l.client_hosts, source).is_some())
+            .ok_or(DatapathError::UnknownSource(source))?;
+        index_in(&lane.server_hosts, destination)
+            .ok_or(DatapathError::UnknownDestination(destination))?;
+        Ok(lane)
+    }
+
     /// Opens a session from the client host `source` to `destination`.
     ///
     /// `source` must be a client host of a lane and the address of
@@ -738,20 +747,10 @@ impl Connector {
         source: IpAddr,
         destination: SocketAddr,
     ) -> Result<DatapathSession, DatapathError> {
-        let (IpAddr::V4(src), IpAddr::V4(dst)) = (source, destination.ip()) else {
-            if source.is_ipv6() || destination.is_ipv6() {
-                return Err(DatapathError::Unsupported(Feature::Ipv6));
-            }
-            return Err(DatapathError::UnknownSource(source));
-        };
-        let (lane, client) = self
-            .lanes
-            .iter()
-            .find_map(|l| index_in(&l.client_hosts, src).map(|i| (l, i)))
-            .ok_or(DatapathError::UnknownSource(source))?;
-        let server = index_in(&lane.server_hosts, dst)
-            .ok_or(DatapathError::UnknownDestination(destination.ip()))?;
-        let attempt = lane.stack.connect_hosts(client, server, destination.port());
+        let lane = self.lane_of(source, destination.ip())?;
+        let attempt = lane
+            .stack
+            .connect_addrs(source, destination.ip(), destination.port());
         match tokio::time::timeout(self.timeout, attempt).await {
             Ok(Ok(session)) => Ok(session),
             Ok(Err(source)) => Err(DatapathError::Stack {
@@ -787,24 +786,12 @@ impl Connector {
         source: IpAddr,
         destination: SocketAddr,
     ) -> Result<DatapathDatagram, DatapathError> {
-        let (IpAddr::V4(src), IpAddr::V4(dst)) = (source, destination.ip()) else {
-            if source.is_ipv6() || destination.is_ipv6() {
-                return Err(DatapathError::Unsupported(Feature::Ipv6));
-            }
-            return Err(DatapathError::UnknownSource(source));
-        };
-        let (lane, _client) = self
-            .lanes
-            .iter()
-            .find_map(|l| index_in(&l.client_hosts, src).map(|i| (l, i)))
-            .ok_or(DatapathError::UnknownSource(source))?;
-        index_in(&lane.server_hosts, dst)
-            .ok_or(DatapathError::UnknownDestination(destination.ip()))?;
+        let lane = self.lane_of(source, destination.ip())?;
         let arm = lane
             .udp_client
             .as_ref()
             .ok_or(DatapathError::Unsupported(Feature::Udp))?;
-        arm.connect(src, destination)
+        arm.connect(source, destination)
             .map_err(|source| DatapathError::Stack {
                 op: "connect_udp",
                 source,

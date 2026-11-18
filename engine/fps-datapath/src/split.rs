@@ -2,12 +2,15 @@
 //! The splitter, the layer of one queue between the wire and a stack.
 //!
 //! A [`Splitter`] wraps the [`FrameIo`] of one queue and is itself a
-//! `FrameIo`. The stack above it sees IPv4 TCP frames only. Every other frame
-//! stops here: ARP goes to the `fps-hosts` responder, whose replies the
-//! splitter sends on its own, and ND, DHCP, and UDP go to a [`FrameHook`].
-//! The UDP hook of a datapath is the UDP layer of `fps-udp-own` (TRN-29). A
-//! hook that nothing replaced answers [`HookOutcome::Unsupported`]. A frame
-//! that nothing takes is counted and dropped.
+//! `FrameIo`. The stack above it sees TCP frames only, over IPv4 and over
+//! IPv6. Every other frame stops here: ARP and IPv6 neighbor solicitations go
+//! to the `fps-hosts` responder, whose replies the splitter sends on its own
+//! (TRN-30: a peer resolves the host pools over IPv6 the way it does over
+//! IPv4), and DHCP, UDP, and the neighbor discovery messages that are not
+//! solicitations for a host go to a [`FrameHook`]. The UDP hook of a datapath
+//! is the UDP layer of `fps-udp-own` (TRN-29, with IPv6 from TRN-30). A hook
+//! that nothing replaced answers [`HookOutcome::Unsupported`]. A frame that
+//! nothing takes is counted and dropped.
 //!
 //! A hook also sends: the splitter asks every hook for frames of its own
 //! ([`FrameHook::poll_tx`]) on each pass of the queue, and sends them on the
@@ -104,11 +107,13 @@ impl FrameHook for Unsupported {
 
 /// The hooks of one side.
 pub struct Hooks {
-    /// IPv6 neighbor discovery.
+    /// IPv6 neighbor discovery that the responder does not answer: router
+    /// solicitations and advertisements, neighbor advertisements, and
+    /// redirects.
     pub nd: Box<dyn FrameHook>,
     /// DHCP on UDP ports 67 and 68.
     pub dhcp: Box<dyn FrameHook>,
-    /// All other IPv4 UDP.
+    /// All other UDP, over IPv4 and IPv6.
     pub udp: Box<dyn FrameHook>,
 }
 
@@ -127,13 +132,18 @@ impl Default for Hooks {
 pub struct FrameCounters {
     /// Frames taken from the queue.
     pub rx_frames: u64,
-    /// IPv4 TCP frames passed to the stack.
+    /// TCP frames, IPv4 and IPv6, passed to the stack.
     pub tcp: u64,
     /// ARP requests answered.
     pub arp_replied: u64,
     /// ARP frames that need no answer: requests for other stations,
     /// announcements, and replies.
     pub arp_ignored: u64,
+    /// Neighbor solicitations for a host that the splitter answered.
+    pub nd_replied: u64,
+    /// Solicitations for a station that is not a host of the port, and
+    /// announcements.
+    pub nd_ignored: u64,
     /// ND frames that a hook took.
     pub nd_handled: u64,
     /// ND frames that nothing handles yet.
@@ -168,6 +178,8 @@ pub struct SharedCounters {
     tcp: AtomicU64,
     arp_replied: AtomicU64,
     arp_ignored: AtomicU64,
+    nd_replied: AtomicU64,
+    nd_ignored: AtomicU64,
     nd_handled: AtomicU64,
     nd_unsupported: AtomicU64,
     dhcp_handled: AtomicU64,
@@ -195,6 +207,8 @@ impl SharedCounters {
             tcp: get(&self.tcp),
             arp_replied: get(&self.arp_replied),
             arp_ignored: get(&self.arp_ignored),
+            nd_replied: get(&self.nd_replied),
+            nd_ignored: get(&self.nd_ignored),
             nd_handled: get(&self.nd_handled),
             nd_unsupported: get(&self.nd_unsupported),
             dhcp_handled: get(&self.dhcp_handled),
@@ -311,6 +325,16 @@ fn poll_hooks(hooks: &mut Hooks, pending: &mut VecDeque<Vec<u8>>) -> usize {
     queued
 }
 
+/// Queues a reply of the responder, and drops the oldest one when the queue
+/// stays full.
+fn queue_reply(pending: &mut VecDeque<Vec<u8>>, reply: &[u8], counters: &SharedCounters) {
+    if pending.len() >= MAX_PENDING {
+        pending.pop_front();
+        bump(&counters.replies_dropped);
+    }
+    pending.push_back(reply.to_vec());
+}
+
 /// Sends one frame where its class says.
 fn dispatch(
     frame: &[u8],
@@ -332,7 +356,7 @@ fn dispatch(
         return;
     }
     match parsed.class {
-        Class::Ipv4Tcp => {
+        Class::Ipv4Tcp | Class::Ipv6Tcp => {
             bump(&counters.tcp);
             to_stack(frame);
         }
@@ -341,11 +365,7 @@ fn dispatch(
             match responder.process(frame, &mut out) {
                 Verdict::Reply(_, len) => {
                     if let Some(reply) = out.get(..len) {
-                        if pending.len() >= MAX_PENDING {
-                            pending.pop_front();
-                            bump(&counters.replies_dropped);
-                        }
-                        pending.push_back(reply.to_vec());
+                        queue_reply(pending, reply, counters);
                         bump(&counters.arp_replied);
                     }
                 }
@@ -353,19 +373,34 @@ fn dispatch(
                 Verdict::Pass | Verdict::NotForUs(_) => bump(&counters.arp_ignored),
             }
         }
-        Class::Nd => run_hook(
-            &mut *hooks.nd,
-            frame,
-            pending,
-            (&counters.nd_handled, &counters.nd_unsupported),
-        ),
+        Class::Nd => {
+            // The responder answers the solicitations for the hosts of the
+            // port, as it answers ARP. The hook gets what it passes.
+            let mut out = [0u8; MAX_REPLY_LEN];
+            match responder.process(frame, &mut out) {
+                Verdict::Reply(_, len) => {
+                    if let Some(reply) = out.get(..len) {
+                        queue_reply(pending, reply, counters);
+                        bump(&counters.nd_replied);
+                    }
+                }
+                Verdict::Malformed(_) => bump(&counters.malformed),
+                Verdict::NotForUs(_) => bump(&counters.nd_ignored),
+                Verdict::Pass => run_hook(
+                    &mut *hooks.nd,
+                    frame,
+                    pending,
+                    (&counters.nd_handled, &counters.nd_unsupported),
+                ),
+            }
+        }
         Class::Dhcp => run_hook(
             &mut *hooks.dhcp,
             frame,
             pending,
             (&counters.dhcp_handled, &counters.dhcp_unsupported),
         ),
-        Class::Ipv4Udp => run_hook(
+        Class::Ipv4Udp | Class::Ipv6Udp => run_hook(
             &mut *hooks.udp,
             frame,
             pending,

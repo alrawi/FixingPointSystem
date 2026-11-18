@@ -14,6 +14,8 @@ use fps_datapath::{
     split_pools, Class, Datapath, DatapathConfig, DatapathError, Feature, FrameHook, HookOutcome,
     Hooks, Lane, Replies, Side,
 };
+use fps_hosts::wire::{ns_frame, parse_neighbor_advert};
+use fps_hosts::MacAddr;
 use fps_tcp_own::Pools;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -91,10 +93,13 @@ fn nd_frame() -> Vec<u8> {
     f.extend_from_slice(&0x86ddu16.to_be_bytes());
     let mut ip = vec![0x60, 0, 0, 0, 0, 24, 58, 255];
     ip.resize(40, 0);
-    ip.extend_from_slice(&[135, 0, 0, 0]);
+    // A router advertisement: ND, but not a solicitation for a host.
+    ip.extend_from_slice(&[134, 0, 0, 0]);
     f.extend_from_slice(&ip);
     f
 }
+
+const PEER_IP6: &str = "fd00:77::9";
 
 fn send(tap: &mut MemoryFrames, frame: &[u8]) {
     assert_eq!(tap.send_batch(&[frame]).unwrap(), 1);
@@ -365,17 +370,22 @@ async fn unsupported_calls_say_what_is_missing() {
     let pools = Pools::pair();
     let dp = Datapath::start(vec![looped_lane(pools.clone())], DatapathConfig::default()).unwrap();
     let connector = dp.connector();
-    let v6: SocketAddr = "[2001:db8::1]:80".parse().unwrap();
+    let v6dst: SocketAddr = "[2001:db8::1]:80".parse().unwrap();
     let v4dst = SocketAddr::new(v4(pools.server.address(0).unwrap()), 80);
     let known = v4(pools.client.address(0).unwrap());
-    let err = connector.connect("2001:db8::2".parse().unwrap(), v6).await;
+    // The pools have no IPv6 addresses, so IPv6 endpoints are unknown hosts.
+    let err = connector
+        .connect("2001:db8::2".parse().unwrap(), v6dst)
+        .await;
+    assert!(matches!(err, Err(DatapathError::UnknownSource(_))));
     assert!(matches!(
-        err,
-        Err(DatapathError::Unsupported(Feature::Ipv6))
+        connector.connect_udp("2001:db8::2".parse().unwrap(), v6dst),
+        Err(DatapathError::UnknownSource(_))
     ));
+    // Mixed families are not a pair of hosts of one lane.
     assert!(matches!(
-        connector.connect_udp("2001:db8::2".parse().unwrap(), v6),
-        Err(DatapathError::Unsupported(Feature::Ipv6))
+        connector.connect(known, v6dst).await,
+        Err(DatapathError::UnknownDestination(_))
     ));
     // With the UDP layer off, the UDP calls say so.
     let off = Datapath::start(
@@ -513,4 +523,173 @@ fn pools_split_into_lanes_that_cover_every_host_once() {
         Err(DatapathError::TooManyLanes { parts: 7, hosts: 6 })
     ));
     assert!(split_pools(&pools, 0).is_err());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ipv6_sessions_and_datagrams_complete_over_the_same_loop() {
+    use fps_io::{DatagramIo, DatagramIoExt};
+
+    let pools = Pools::sized_v6("fd00:1::/64", 4, "fd00:2::/64", 4, None).unwrap();
+    let slices = split_pools(&pools, 2).unwrap();
+    let lanes: Vec<Lane> = slices.iter().cloned().map(looped_lane).collect();
+    let dp = Datapath::start(lanes, DatapathConfig::default()).unwrap();
+    let mut listener = dp.listen(9100).unwrap();
+    let mut udp_listener = dp.listen_udp(5400).unwrap();
+    let tcp_server = tokio::spawn(async move {
+        for _ in 0..8 {
+            let mut session = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut request = [0u8; 200];
+                session.read_exact(&mut request).await.unwrap();
+                let mut answer = pattern(4000, request[0]);
+                answer.extend_from_slice(&request);
+                session.write_all(&answer).await.unwrap();
+                session.shutdown().await.unwrap();
+            });
+        }
+    });
+    let udp_server = tokio::spawn(async move {
+        for _ in 0..8 {
+            let (mut session, _peer) = udp_listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 70_000];
+            let n = session.recv_datagram(&mut buf).await.unwrap();
+            buf.truncate(n);
+            buf.reverse();
+            session.send_datagram(&buf).await.unwrap();
+        }
+        udp_listener
+    });
+    let connector = dp.connector();
+    let mut clients = Vec::new();
+    for n in 0..8u8 {
+        let connector = connector.clone();
+        let lane = &slices[usize::from(n % 2)];
+        let source = IpAddr::V6(
+            lane.client
+                .address6(u32::from(n) / 2 % lane.client.hosts())
+                .unwrap(),
+        );
+        let target = IpAddr::V6(lane.server.address6(0).unwrap());
+        clients.push(tokio::spawn(async move {
+            let mut session = connector
+                .connect(source, SocketAddr::new(target, 9100))
+                .await
+                .unwrap();
+            let request = pattern(200, n);
+            session.write_all(&request).await.unwrap();
+            let mut answer = Vec::new();
+            session.read_to_end(&mut answer).await.unwrap();
+            let mut want = pattern(4000, n);
+            want.extend_from_slice(&request);
+            assert_eq!(answer, want, "tcp {n}");
+
+            // Sizes from empty to one frame (the MTU is 1500).
+            let mut dg = connector
+                .connect_udp(source, SocketAddr::new(target, 5400))
+                .unwrap();
+            let payload = pattern(usize::from(n) * 150, n);
+            dg.send_datagram(&payload).await.unwrap();
+            let mut buf = vec![0u8; 70_000];
+            let got = dg.recv_datagram(&mut buf).await.unwrap();
+            let mut want = payload;
+            want.reverse();
+            assert_eq!(&buf[..got], &want[..], "udp {n}");
+        }));
+    }
+    for c in clients {
+        c.await.unwrap();
+    }
+    tcp_server.await.unwrap();
+    let _udp_listener = udp_server.await.unwrap();
+    for (n, lane) in dp.stats().iter().enumerate() {
+        assert!(lane.client.tcp > 0 && lane.server.tcp > 0, "lane {n}");
+        assert_eq!(lane.client.udp_handled, 4, "lane {n}");
+        assert_eq!(lane.client.malformed + lane.server.malformed, 0);
+        assert_eq!(lane.client.other_dropped + lane.server.other_dropped, 0);
+        assert_eq!(lane.udp_client.rx_delivered, 4, "lane {n}");
+    }
+    // A mix of families is refused.
+    assert!(matches!(
+        connector
+            .connect(
+                IpAddr::V6(slices[0].client.address6(0).unwrap()),
+                SocketAddr::new(v4(u32::from(Ipv4Addr::new(10, 1, 1, 1))), 80)
+            )
+            .await,
+        Err(DatapathError::UnknownDestination(_))
+    ));
+    assert!(dp.stop().iter().all(|r| !r.panicked));
+}
+
+#[test]
+fn neighbor_solicitations_for_the_host_pools_are_answered() {
+    let pools = Pools::sized_v6("fd00:1::/64", 4, "fd00:2::/64", 4, None).unwrap();
+    let host0 = pools.client.address6(0).unwrap();
+    let unknown: std::net::Ipv6Addr = "fd00:1::ffff".parse().unwrap();
+    let peer: std::net::Ipv6Addr = PEER_IP6.parse().unwrap();
+    let (lane, mut tap) = tapped_lane(pools.clone());
+    let dp = Datapath::start(vec![lane], DatapathConfig::default()).unwrap();
+
+    // A connect makes the stack send a SYN, whose source MAC is the MAC of
+    // the client host.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let destination = SocketAddr::new(IpAddr::V6(pools.server.address6(0).unwrap()), 80);
+    let connector = dp.connector();
+    runtime.block_on(async {
+        let _ = tokio::time::timeout(
+            Duration::from_millis(50),
+            connector.connect(IpAddr::V6(host0), destination),
+        )
+        .await;
+    });
+    let syn = wait_for(&mut tap, |f| {
+        (f.get(12..14) == Some(&[0x86, 0xdd][..])).then(|| f.to_vec())
+    })
+    .expect("a SYN over IPv6");
+    assert_eq!(syn.get(14).map(|b| b >> 4), Some(6));
+    let syn_mac = syn.get(6..12).unwrap().to_vec();
+
+    send(&mut tap, &ns_frame(MacAddr(PEER_MAC), peer, unknown, &[]));
+    send(&mut tap, &ns_frame(MacAddr(PEER_MAC), peer, host0, &[]));
+    let reply = wait_for(&mut tap, parse_neighbor_advert).expect("an advertisement");
+    assert_eq!(reply.target, host0);
+    assert_eq!(
+        reply.target_lla.map(|m| m.0.to_vec()),
+        Some(syn_mac.clone())
+    );
+    assert_eq!(
+        reply.eth_src.0.to_vec(),
+        syn_mac,
+        "the MAC that the stack uses"
+    );
+    assert_eq!(reply.eth_dst.0, PEER_MAC);
+    assert_eq!(reply.ip_dst, peer);
+    assert_eq!(reply.hop_limit, 255);
+    assert!(reply.checksum_ok);
+    assert!(wait_until(|| {
+        let c = dp.stats()[0].client;
+        c.nd_replied == 1 && c.nd_ignored == 1 && c.nd_unsupported == 0
+    }));
+    // A router advertisement is not a solicitation: it goes to the hook.
+    send(&mut tap, &nd_frame());
+    assert!(wait_until(|| dp.stats()[0].client.nd_unsupported == 1));
+}
+
+#[test]
+fn ipv6_frames_are_classified_for_the_stack_and_the_hooks() {
+    let mut ip = vec![0x60, 0, 0, 0, 0, 8, 6, 64];
+    ip.resize(40, 0);
+    ip.extend_from_slice(&[0; 20]);
+    let mut f = vec![0u8; 12];
+    f.extend_from_slice(&0x86ddu16.to_be_bytes());
+    f.extend_from_slice(&ip);
+    assert_eq!(fps_datapath::classify(&f).class, Class::Ipv6Tcp);
+    f[14 + 6] = 17;
+    assert_eq!(fps_datapath::classify(&f).class, Class::Ipv6Udp);
+    f[14 + 6] = 58;
+    f[14 + 40] = 128;
+    assert_eq!(fps_datapath::classify(&f).class, Class::Ipv6Other);
 }

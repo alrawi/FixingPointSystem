@@ -389,10 +389,7 @@ async fn run_dns(
     };
     let connector = dp.connector();
     let addresses = |slice: &fps_tcp_own::HostSlice| -> Vec<IpAddr> {
-        (0..slice.hosts())
-            .filter_map(|i| slice.address(i))
-            .map(|a| IpAddr::V4(Ipv4Addr::from(a)))
-            .collect()
+        (0..slice.hosts()).filter_map(|i| slice.ip(i)).collect()
     };
     let (clients, mut servers) = (addresses(&pools.client), addresses(&pools.server));
     if kernel.is_some() {
@@ -534,7 +531,16 @@ async fn run_dns(
 
 #[tokio::test(flavor = "current_thread")]
 async fn dns_scenarios_complete_over_the_datapath_in_memory() {
-    let pools = Pools::counts(4, 4, None).unwrap();
+    in_memory(Pools::counts(4, 4, None).unwrap()).await;
+}
+
+/// The same scenarios with IPv6 pools: every flow runs over IPv6.
+#[tokio::test(flavor = "current_thread")]
+async fn dns_scenarios_complete_over_ipv6_in_memory() {
+    in_memory(Pools::sized_v6("fd00:1::/64", 4, "fd00:2::/64", 4, None).unwrap()).await;
+}
+
+async fn in_memory(pools: Pools) {
     let (client, server) = frame_pair(512, 1600);
     let lane = Lane {
         client: Box::new(client),
@@ -626,19 +632,39 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-/// The pools of the kernel server test: two client hosts and one server host.
-fn kernel_pools() -> Pools {
-    Pools::counts(2, 1, None).unwrap()
+/// The roles of the helper: `run` and `kernel` over IPv4, `run6` and `kernel6`
+/// over IPv6. The `kernel` roles give `dnsb` to the kernel.
+fn is_kernel(role: &str) -> bool {
+    role.starts_with("kernel")
+}
+
+fn is_v6(role: &str) -> bool {
+    role.ends_with('6')
+}
+
+/// The pools of a role: the kernel server roles have two client hosts and one
+/// server host, the others four and four.
+fn pools_for(role: &str) -> Pools {
+    match role {
+        "kernel" => Pools::counts(2, 1, None),
+        "kernel6" => Pools::sized_v6("fd00:1::/64", 2, "fd00:2::/64", 1, None),
+        "run6" => Pools::sized_v6("fd00:1::/64", 4, "fd00:2::/64", 4, None),
+        _ => Pools::counts(4, 4, None),
+    }
+    .unwrap()
 }
 
 /// A namespace with a veth pair, `dnsa` and `dnsb`, which `Drop` removes
-/// again. With `kernel_end` the interface `dnsb` is set up as the kernel host
-/// of the first server address: the MAC address of that host, its address,
-/// and a route to the client prefix.
+/// again. With a `kernel` role the interface `dnsb` is set up as the kernel
+/// host of the first server address: the MAC address of that host, its
+/// address, and a route to the client prefix. The IPv6 address has no
+/// duplicate address detection (`nodad`), so a socket can bind it at once,
+/// and the kernel resolves a client host with a neighbor solicitation that the
+/// splitter answers.
 struct Namespace(String);
 
 impl Namespace {
-    fn up(name: &str, kernel_end: bool) -> Result<Self, String> {
+    fn up(name: &str, role: &str) -> Result<Self, String> {
         run("ip", &["netns", "add", name])?;
         let ns = Self(name.to_owned());
         run(
@@ -647,17 +673,28 @@ impl Namespace {
                 "-n", name, "link", "add", "dnsa", "type", "veth", "peer", "name", "dnsb",
             ],
         )?;
-        if kernel_end {
-            let pools = kernel_pools();
-            let server = pools.server.address(0).map(Ipv4Addr::from).unwrap();
+        if is_kernel(role) {
+            let pools = pools_for(role);
+            let server = pools.server.ip(0).unwrap();
             let station = pools.stations().unwrap().server;
-            let mac = station.local_mac(u32::from(server)).unwrap().0;
+            let mac = station.local_mac(server).unwrap().0;
             let mac = mac.map(|b| format!("{b:02x}")).join(":");
-            let prefix = format!("{server}/30");
-            let client = pools.client.address(0).map(Ipv4Addr::from).unwrap();
-            let route = format!("{}/30", Ipv4Addr::from(u32::from(client) & !3));
+            let (prefix, route, nodad) = match (server, pools.client.ip(0).unwrap()) {
+                (IpAddr::V4(server), IpAddr::V4(client)) => (
+                    format!("{server}/30"),
+                    format!("{}/30", Ipv4Addr::from(u32::from(client) & !3)),
+                    None,
+                ),
+                _ => (
+                    format!("{server}/64"),
+                    "fd00:1::/64".to_owned(),
+                    Some("nodad"),
+                ),
+            };
             run("ip", &["-n", name, "link", "set", "dnsb", "address", &mac])?;
-            run("ip", &["-n", name, "addr", "add", &prefix, "dev", "dnsb"])?;
+            let mut add = vec!["-n", name, "addr", "add", &prefix, "dev", "dnsb"];
+            add.extend(nodad);
+            run("ip", &add)?;
             run("ip", &["-n", name, "link", "set", "dnsb", "up"])?;
             run("ip", &["-n", name, "link", "set", "dnsa", "up"])?;
             run("ip", &["-n", name, "route", "add", &route, "dev", "dnsb"])?;
@@ -722,8 +759,8 @@ fn in_namespace(test: &str, role: &str) -> Option<Vec<String>> {
         skip("the kernel has no AF_XDP sockets");
         return None;
     }
-    let name = format!("dns{}{}", &role[..1], std::process::id() % 100_000);
-    let ns = match Namespace::up(&name, role == "kernel") {
+    let name = format!("dns{role}{}", std::process::id() % 100_000);
+    let ns = match Namespace::up(&name, role) {
         Ok(ns) => ns,
         Err(e) => {
             skip(&format!("the namespace did not come up: {e}"));
@@ -773,8 +810,19 @@ fn save(lines: &[String], file: &str) {
 
 #[test]
 fn dns_scenarios_complete_over_af_xdp_on_a_veth_pair() {
-    let Some(lines) = in_namespace("dns_scenarios_complete_over_af_xdp_on_a_veth_pair", "run")
-    else {
+    veth_run("dns_scenarios_complete_over_af_xdp_on_a_veth_pair", "run");
+}
+
+/// The same run over IPv6: the pools are IPv6 prefixes, so every flow has IPv6
+/// addresses, the UDP checksum is the one of RFC 8200, and the stacks resolve
+/// every neighbor from the seeded tables.
+#[test]
+fn dns_scenarios_complete_over_ipv6_on_a_veth_pair() {
+    veth_run("dns_scenarios_complete_over_ipv6_on_a_veth_pair", "run6");
+}
+
+fn veth_run(test: &str, role: &str) {
+    let Some(lines) = in_namespace(test, role) else {
         return;
     };
     let reps = env_u64("FPS_DNS_REPS", 5);
@@ -806,15 +854,35 @@ fn dns_scenarios_complete_over_af_xdp_on_a_veth_pair() {
     assert!(number(frames, "client_tcp") > 0 && number(frames, "server_tcp") > 0);
     assert_eq!(number(frames, "udp_unsupported"), 0, "{frames}");
     assert_eq!(number(frames, "panicked"), 0, "{frames}");
-    save(&lines, "dns-veth.txt");
+    let file = if is_v6(role) {
+        "dns-veth6.txt"
+    } else {
+        "dns-veth.txt"
+    };
+    save(&lines, file);
 }
 
 #[test]
 fn dns_client_over_af_xdp_completes_against_a_kernel_server() {
-    let Some(lines) = in_namespace(
+    kernel_run(
         "dns_client_over_af_xdp_completes_against_a_kernel_server",
         "kernel",
-    ) else {
+    );
+}
+
+/// The kernel server over IPv6: the kernel verifies the IPv6 pseudo-header
+/// checksums of the user space layers and resolves the client hosts with
+/// neighbor discovery, which the splitter answers.
+#[test]
+fn dns_client_over_af_xdp_completes_against_a_kernel_server_over_ipv6() {
+    kernel_run(
+        "dns_client_over_af_xdp_completes_against_a_kernel_server_over_ipv6",
+        "kernel6",
+    );
+}
+
+fn kernel_run(test: &str, role: &str) {
+    let Some(lines) = in_namespace(test, role) else {
         return;
     };
     let reps = env_u64("FPS_DNS_REPS", 5);
@@ -844,12 +912,22 @@ fn dns_client_over_af_xdp_completes_against_a_kernel_server() {
     }
     let frames = find(&lines, "frames ");
     assert!(number(frames, "client_tcp") > 0, "{frames}");
+    let (answered, how) = if is_v6(role) {
+        (number(frames, "client_nd_replied"), "neighbor discovery")
+    } else {
+        (number(frames, "client_arp_replied"), "ARP")
+    };
     assert!(
-        number(frames, "client_arp_replied") > 0,
-        "the kernel resolved a client host with ARP: {frames}"
+        answered > 0,
+        "the kernel resolved a client host with {how}: {frames}"
     );
     assert_eq!(number(frames, "panicked"), 0, "{frames}");
-    save(&lines, "dns-veth-kernel.txt");
+    let file = if is_v6(role) {
+        "dns-veth-kernel6.txt"
+    } else {
+        "dns-veth-kernel.txt"
+    };
+    save(&lines, file);
 }
 
 fn say(msg: &str) {
@@ -950,7 +1028,7 @@ fn report(lane: &LaneStats) -> [String; 2] {
         ),
         format!(
             "frames stack_tx={} client_tcp={} server_tcp={} client_udp={} server_udp={} \
-             udp_unsupported={} client_arp_replied={} loop_passes={}",
+             udp_unsupported={} client_arp_replied={} client_nd_replied={} loop_passes={}",
             lane.stack.frames,
             lane.client.tcp,
             lane.server.tcp,
@@ -958,6 +1036,7 @@ fn report(lane: &LaneStats) -> [String; 2] {
             lane.server.udp_handled,
             lane.client.udp_unsupported + lane.server.udp_unsupported,
             lane.client.arp_replied,
+            lane.client.nd_replied,
             lane.loop_passes,
         ),
     ]
@@ -969,7 +1048,7 @@ fn helper_dns() {
     let Ok(role) = std::env::var("FPS_DNS_ROLE") else {
         return;
     };
-    let kernel_server = role == "kernel";
+    let kernel_server = is_kernel(&role);
     let reps = env_u64("FPS_DNS_REPS", 5);
     let mut a = open("dnsa");
     let (pools, lane, modes, _spare) = if kernel_server {
@@ -977,7 +1056,7 @@ fn helper_dns() {
         // in memory pair that nobody writes to.
         tx_checksum_off("dnsb").expect("the transmit offload of dnsb turns off");
         let (spare_arm, spare) = frame_pair(8, 1600);
-        let pools = kernel_pools();
+        let pools = pools_for(&role);
         let modes = format!("client={} server=kernel", mode_name(a.info.queues[0].bound));
         let lane = Lane {
             client: Box::new(a.queues.remove(0)),
@@ -992,7 +1071,7 @@ fn helper_dns() {
             mode_name(a.info.queues[0].bound),
             mode_name(b.info.queues[0].bound)
         );
-        let pools = Pools::counts(4, 4, None).unwrap();
+        let pools = pools_for(&role);
         let lane = Lane {
             client: Box::new(a.queues.remove(0)),
             server: Box::new(b.queues.remove(0)),
@@ -1009,10 +1088,7 @@ fn helper_dns() {
     let out = {
         let _guard = runtime.enter();
         let kernel = kernel_server.then(|| {
-            let address = SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::from(pools.server.address(0).unwrap())),
-                53,
-            );
+            let address = SocketAddr::new(pools.server.ip(0).unwrap(), 53);
             KernelServer {
                 udp: KernelDatagramListener::bind(address, &SocketOptions::default()).unwrap(),
                 tcp: KernelListener::bind(address, &ListenConfig::default()).unwrap(),

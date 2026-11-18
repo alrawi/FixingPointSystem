@@ -6,7 +6,7 @@
 | Branch | `wp/TRN-30` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 40% (2 of 6 plan steps) |
+| Progress | 70% (4 of 6 plan steps) |
 | Current holder | claude-1d4805, lease until 2026-11-18T13:31:09Z |
 | Last verified commit | none |
 
@@ -21,11 +21,15 @@ IPv6 for the own TCP stack (`fps-tcp-own`), the user space UDP layer (`fps-udp-o
 - [x] 1. Read the code of the three crates and decide the address and header types.
 - [x] 2. IPv6 in fps-tcp-own (wire, host, pools, net).
 - [x] 3. IPv6 in fps-udp-own.
-- [ ] 4. ND in fps-datapath and the IPv6 connect and listen calls.
-- [ ] 5. Tests in memory and on a veth pair.
+- [x] 4. ND in fps-datapath and the IPv6 connect and listen calls.
+- [ ] 5. Tests in memory and on a veth pair (dns done, loss workload open).
 - [ ] 6. Checks, log entry, Transport page, pull request, CI.
 
 ## Done and verified
+
+Step 4: classifier (Ipv6Tcp, Ipv6Udp, Ipv6Other, Nd), splitter answers neighbor solicitations of the host pools through the Responder (counters nd_replied and nd_ignored), Connector connects TCP and UDP by address family (`Feature::Ipv6` and `Feature::Nd` removed). `cargo test -p fps-datapath --test memory --lib` passes (3 new IPv6 tests).
+
+Step 5 so far: dns scenarios over IPv6 in memory and on a veth pair with AF_XDP on both ends pass locally (root, ethtool offload ioctl). The kernel server over IPv6 test needs a kernel with IPv6; this sandbox has none, so it runs only in CI.
 
 Step 3: fps-udp-own wire (IPv6 header, pseudo header, fragment header, required checksum) and arm (IpAddr keys, connect by family); 22 layer tests (5 new IPv6) and 15 wire tests (7 new) pass, clippy clean.
 
@@ -33,23 +37,27 @@ Step 2: wire, net, pools, host, lib of fps-tcp-own speak IPv4 and IPv6; `cargo t
 
 ## Remaining
 
-Steps 4 to 6.
+Loss workload over IPv6 (a lossy FrameIo wrapper in fps-datapath/tests), compile checks of fps-tcp, fps-agent, fps-backend-afxdp, log entry, Transport page, PR, CI.
 
 ## Next action
 
-Start step 4: classify Ipv6Tcp and Ipv6Udp, ND from the Responder in the splitter, IPv6 connect and listen in fps-datapath.
+Write the IPv6 loss test in engine/fps-datapath/tests, then run cargo check on the dependents.
 
 ## Blockers and open questions
 
-none
+The sandbox disk is nearly full (about 600 MB free), so builds use few jobs and no debug info.
 
 ## Decisions taken in this package
 
-none yet
+- `Tuple` and `Conn` hold `IpAddr`; a connection grows by 24 bytes and a table entry by 28 (the Conn budget test went from 176 to 200).
+- A dual stack pool connects over IPv4 by default; `OwnStack::connect_addrs` picks the family.
+- Over IPv6, UDP receive drops fragments and a zero checksum; no extension headers, no ICMPv6 errors.
+- The datapath sends no neighbor solicitation; next hop resolution is TRN-35.
 
 ## Pitfalls
 
-none yet
+- The UDP checksum is required over IPv6; zero is invalid.
+- The IPv6 traffic class bits are not covered by a checksum, so a bit flip test must skip them.
 
 ## Verify the current state
 
