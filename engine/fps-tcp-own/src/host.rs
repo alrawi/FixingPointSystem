@@ -1732,6 +1732,9 @@ impl Host {
                         .on_timeout(snd_max.wrapping_sub(conn.snd_una), snd_max);
                     rec.snd_max = snd_max;
                     rec.rtx = false;
+                    // The receiver may have dropped what it reported
+                    // (RFC 2018 section 8), and go back N sends it all again.
+                    rec.sb.clear();
                     rec.retransmitted();
                 }
                 // Go back N: everything after the first unacknowledged byte
@@ -1778,6 +1781,11 @@ impl Host {
         let ips = (conn.local_ip, conn.remote_ip);
         let (lp, rp) = (conn.local_port, conn.remote_port);
         let mut sent_anything = false;
+        // The oldest segment went out again: the timeout starts over, as the
+        // kernel does, so a recovery that lasts a round trip does not run
+        // into a timer that the last advancing ACK set (RFC 6298 section 5.4
+        // for the segment, RFC 6675 section 5.1 for the recovery).
+        let mut restart_rto = false;
         let frames_before = self.counters.frames_out;
 
         if conn.syn_pending && matches!(conn.state, State::SynSent | State::SynReceived) {
@@ -1880,6 +1888,7 @@ impl Host {
                 self.counters.fast_retransmits += 1;
                 conn.acked();
                 sent_anything = true;
+                restart_rto = true;
                 let una = conn.snd_una;
                 if let Some(rec) = conn.rec.as_deref_mut() {
                     rec.rtx = false;
@@ -1931,6 +1940,7 @@ impl Host {
                     self.counters.retransmits += 1;
                     self.counters.sack_retransmits += 1;
                     sent_anything = true;
+                    restart_rto |= start == una;
                     if let Some(rec) = conn.rec.as_deref_mut() {
                         rec.sb.mark_rexmit(una, start, n as u32);
                         rec.retransmitted();
@@ -2060,7 +2070,7 @@ impl Host {
         if self.counters.frames_out != frames_before {
             conn.adv_wnd = rcv_wnd;
         }
-        if sent_anything && conn.outstanding() && !conn.armed {
+        if sent_anything && conn.outstanding() && (!conn.armed || restart_rto) {
             let deadline = now + conn.rto_us();
             conn.deadline = deadline;
             conn.armed = true;

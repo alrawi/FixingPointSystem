@@ -41,6 +41,8 @@ struct Pair {
     received: Vec<u8>,
     /// Whether the server application saw the end of the stream.
     eof: bool,
+    /// Run the timers of both hosts at every step of the clock.
+    timers: bool,
 }
 
 fn payload_len(frame: &[u8]) -> usize {
@@ -96,6 +98,14 @@ impl Pair {
             data_seen: 0,
             received: Vec::new(),
             eof: false,
+            timers: false,
+        }
+    }
+
+    fn run_timers(&mut self) {
+        if self.timers {
+            self.client.expire(self.now);
+            self.server.expire(self.now);
         }
     }
 
@@ -121,6 +131,7 @@ impl Pair {
             self.server.flush_dirty(self.now);
             let mut to_server: VecDeque<Vec<u8>> = std::mem::take(&mut self.client.out.queue);
             self.now += self.hop;
+            self.run_timers();
             while let Some(frame) = to_server.pop_front() {
                 moved = true;
                 if payload_len(&frame) > 0 {
@@ -136,6 +147,7 @@ impl Pair {
             self.server.flush_dirty(self.now);
             let to_client: VecDeque<Vec<u8>> = std::mem::take(&mut self.server.out.queue);
             self.now += self.hop;
+            self.run_timers();
             for frame in to_client {
                 moved = true;
                 self.client.input(&frame, self.now);
@@ -1062,4 +1074,33 @@ fn a_whole_transfer_with_the_delay_completes_without_a_timeout() {
         acks * 3 < segments * 2,
         "{acks} acks for {segments} segments"
     );
+}
+
+#[test]
+fn a_retransmission_of_the_oldest_segment_starts_the_timeout_again() {
+    // A round trip of 200 ms and a timeout of 250 ms: the duplicates come
+    // back before the timer, the retransmission is acknowledged after it. The
+    // timer that the last advancing ACK set would fire in between, and a
+    // retransmission resets it (as in the kernel), so no timeout fires.
+    for cfg in [
+        OwnConfig {
+            rto_us: 250_000,
+            min_rto_us: 250_000,
+            delayed_ack: false,
+            ..OwnConfig::default()
+        },
+        OwnConfig {
+            rto_us: 250_000,
+            min_rto_us: 250_000,
+            ..plain()
+        },
+    ] {
+        let mut p = Pair::new(cfg);
+        p.hop = 100_000;
+        p.timers = true;
+        p.write(&pattern(10 * 1400));
+        p.pump(&mut |i| i == 0);
+        assert_eq!(p.received, pattern(10 * 1400));
+        assert_eq!(p.client.counters.timeouts, 0, "{:?}", p.client.counters);
+    }
 }
