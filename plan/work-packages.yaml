@@ -64,7 +64,7 @@ workstreams:
     languages: [Rust]
   - id: TRN
     name: Transport backends
-    paths: [engine/fps-backend-kernel/, engine/fps-backend-afxdp/, engine/fps-backend-dpdk/, engine/fps-tcp/, modules/tls/]
+    paths: [engine/fps-backend-kernel/, engine/fps-backend-afxdp/, engine/fps-backend-dpdk/, engine/fps-tcp/, engine/fps-tcp-own/, engine/fps-udp-own/, modules/tls/]
     languages: [Rust]
   - id: HST
     name: Host emulation
@@ -187,6 +187,22 @@ work_packages:
       - spikes/s4-trex-astf with RESULTS.md and the translator tests.
     acceptance:
       - RESULTS.md reports translation coverage and the TLS review.
+
+  - id: SPK-05
+    title: Spike smoltcp behind our own flow table
+    phase: 3
+    workstream: SPK
+    size: S
+    depends_on: [TRN-10]
+    paths: [spikes/s5-smoltcp-flow-table/]
+    summary: >-
+      The fallback of decision record 0014 is unverified. This one day spike checks early whether a smoltcp socket can
+      run outside its interface loop, behind a flow table and a timer wheel of our own, so the fallback is known to work
+      before it is needed.
+    deliverables:
+      - spikes/s5-smoltcp-flow-table with a prototype and RESULTS.md.
+    acceptance:
+      - RESULTS.md states whether a smoltcp socket processes frames outside its interface loop, and the cost per event at 16,000 sockets.
 
   - id: QA-00
     title: Gate 0 report and CI
@@ -2140,20 +2156,220 @@ work_packages:
       - AF_XDP on a veth pair in the namespace harness passes frames both ways in CI, falls back to copy mode, and reads the bind mode from the socket.
 
   - id: TRN-12
-    title: User space TCP over AF_XDP
+    title: User space TCP over AF_XDP, end to end
     phase: 3
     workstream: TRN
-    size: L
-    depends_on: [TRN-10, TRN-11]
-    paths: [engine/fps-tcp/, engine/fps-backend-afxdp/]
+    size: M
+    depends_on: [TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-31]
+    paths: [engine/fps-backend-afxdp/]
     summary: >-
-      Run the chosen TCP stack over AF_XDP and expose SessionIo. Split this epic after
-      decision record 0014 is accepted.
+      The closing package of the AF_XDP TCP path that decision record 0014 split into TRN-21 to TRN-31 and SPK-05.
+      It runs the http1 module through the agent on the AF_XDP backend with the own stack and fixes what the end to
+      end run finds.
     deliverables:
-      - Child packages for connection setup, data transfer, timers and retransmission, and OS profile options.
-      - A child package with paths engine/fps-agent/ and controller/internal/wiring/ that lands with the change that sets fps_backend_afxdp::TRANSPORT_AVAILABLE. It makes fps_agent::assemble start the selected backend instead of plan.backend and report the bound mode in PortInfo.xdp_driver_mode (AGT-22 finding), and makes the orchestrator inventory use the selected backend of each agent instead of its first backend (CTL-53 finding).
+      - The http1 run on the AF_XDP backend over a veth pair, and the fixes it needs within its paths. The coordinator adds the realism CI job.
     acceptance:
       - The http1 module passes realism CI on the AF_XDP backend.
+
+  - id: TRN-21
+    title: The own TCP stack in a crate of its own
+    phase: 3
+    workstream: TRN
+    size: S
+    depends_on: [TRN-10]
+    paths: [engine/fps-tcp/, engine/fps-tcp-own/]
+    summary: >-
+      Move the own stack of TRN-18 out of fps-tcp into engine/fps-tcp-own, a crate with no smoltcp dependency, so an
+      agent that uses the own stack does not link smoltcp (decision record 0014, item 2) and the stack and the bench
+      harness get separate paths. fps-tcp keeps the harness and the smoltcp adapter and depends on the new crate.
+    deliverables:
+      - engine/fps-tcp-own with the own stack and its tests, and fps-tcp using it through the TcpStack seam.
+    acceptance:
+      - cargo tree -p fps-tcp-own shows no smoltcp, and the tests and the tcp_bench results of the own stack are unchanged within noise.
+
+  - id: TRN-22
+    title: A lossy link and loss workloads for the TCP harness
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-21]
+    paths: [engine/fps-tcp/]
+    summary: >-
+      Add loss, delay, and reordering to the in memory link of the harness, a netem counterpart for the kernel
+      reference stack in a network namespace, and a loss workload in tcp_bench, so every later child measures against
+      the kernel over the same link. If sch_netem is missing on the hosted runner, report it in the Shared page notes
+      and do not install packages outside tools/ci/apt-install.sh.
+    deliverables:
+      - The lossy link, the netem setup for the kernel stack, and a loss workload with goodput, retransmissions, and completion per transfer.
+    acceptance:
+      - tcp_bench reports goodput and completion for the kernel stack at 0, 0.1, and 1 percent loss with 20 ms of delay, and for the own and smoltcp stacks over the in memory link with the same settings.
+
+  - id: TRN-23
+    title: Loss recovery in the own stack
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-22]
+    paths: [engine/fps-tcp-own/]
+    summary: >-
+      An RTT estimator with RFC 6298 retransmission timeouts, fast retransmit on three duplicate acknowledgments,
+      and an out of order queue, in the state machine of the own stack.
+    deliverables:
+      - The three mechanisms with unit tests and loss workload results committed.
+    acceptance:
+      - At 1 percent loss and 20 ms of delay every transfer completes, and the goodput of the own stack is at least 50 percent of the kernel stack on the same link settings.
+
+  - id: TRN-24
+    title: TCP options for long fat paths in the own stack
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-23]
+    paths: [engine/fps-tcp-own/]
+    summary: >-
+      Window scaling, timestamps, selective acknowledgment, and delayed acknowledgment in the own stack. It edits the
+      same state machine as TRN-23 and TRN-25, so these three run in sequence.
+    deliverables:
+      - The four options with unit tests and results committed.
+    acceptance:
+      - At 0.1 percent loss and 50 ms of delay with a bandwidth delay product above 64 KB, the goodput of the own stack is at least 80 percent of the kernel stack.
+
+  - id: TRN-25
+    title: Congestion control in the own stack
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-24]
+    paths: [engine/fps-tcp-own/]
+    summary: >-
+      NewReno and then CUBIC for the own stack, ported from smoltcp, which 0BSD allows. The code records the smoltcp
+      version and the source file of every ported part.
+    deliverables:
+      - NewReno and CUBIC behind a choice in the stack configuration, with tests and results committed.
+    acceptance:
+      - Four flows that share a 1 Gbps bottleneck with 20 ms of delay reach a Jain fairness index of at least 0.9 and together at least 80 percent of the goodput of four kernel flows on the same link.
+
+  - id: TRN-26
+    title: Interop of the own stack with smoltcp and the kernel
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-25]
+    paths: [engine/fps-tcp/]
+    summary: >-
+      Conformance and interop tests in the harness: the own stack against smoltcp over the lossy link in memory, and
+      against the kernel stack over a veth pair with netem, in both directions.
+    deliverables:
+      - Interop tests that run in CI, and a matrix of the results in Transport.md.
+    acceptance:
+      - Every pairing completes the loss workload at 1 percent loss in both directions, and the interop tests pass in CI.
+
+  - id: TRN-27
+    title: The own stack on AF_XDP queues
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-21, TRN-11]
+    paths: [engine/fps-backend-afxdp/]
+    summary: >-
+      Run the own stack on the AF_XDP queues of TRN-11 through OwnStack::with_links and FrameIo, as the first real
+      evidence for tier T1. It runs early, before the loss work finishes, and does not set TRANSPORT_AVAILABLE.
+    deliverables:
+      - The own stack over AF_XDP on a veth pair in CI, with sessions per second and sockets held reported.
+    acceptance:
+      - A test over a veth pair in CI completes sessions with the own stack on AF_XDP, and the results are committed for the CI runner.
+
+  - id: TRN-28
+    title: OS profile options for the own stack
+    phase: 3
+    workstream: TRN
+    size: S
+    depends_on: [TRN-24]
+    paths: [engine/fps-tcp-own/]
+    summary: >-
+      Map the OS profile fields of the test configuration (TTL, window, MSS, window scale, and option order) onto the
+      SYN and SYN-ACK of the own stack, as the kernel backend does through socket options today.
+    deliverables:
+      - The profile mapping with tests that compare the SYN of each profile with the table in Transport.md.
+    acceptance:
+      - The SYN and SYN-ACK of the own stack match the option order and values of every OS profile in Transport.md.
+
+  - id: TRN-29
+    title: UDP over FrameIo
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-21, TRN-11]
+    paths: [engine/fps-udp-own/]
+    summary: >-
+      DatagramIo over FrameIo for the AF_XDP backend, so the UDP modules (dns, ntp, sip_rtp) run on it. The own stack
+      covers only IPv4 TCP. Leaving UDP out of v1 is a scope decision for the owner.
+    deliverables:
+      - A user space UDP layer behind DatagramIo with tests.
+    acceptance:
+      - The dns module completes its scenarios over the user space UDP layer on a veth pair in CI.
+
+  - id: TRN-30
+    title: IPv6 in the own stack
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [TRN-26, TRN-29]
+    paths: [engine/fps-tcp-own/, engine/fps-udp-own/]
+    summary: >-
+      IPv6 for the own TCP stack and the user space UDP layer. The own stack is IPv4 only today. Leaving IPv6 out of v1
+      is a scope decision for the owner.
+    deliverables:
+      - IPv6 in both layers with tests.
+    acceptance:
+      - The loss workload and the dns scenarios pass over IPv6 on a veth pair in CI.
+
+  - id: TRN-31
+    title: The AF_XDP transport becomes available
+    phase: 3
+    workstream: TRN
+    size: S
+    depends_on: [TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, AGT-24, CTL-54]
+    paths: [engine/fps-backend-afxdp/]
+    summary: >-
+      Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with
+      native XDP, and a stack without congestion control must not become the default. AGT-24 and CTL-54 prepare the
+      agent and the controller behind the flag first.
+    deliverables:
+      - The flip, with a test that the selection picks AF_XDP on a fake host with native XDP.
+    acceptance:
+      - On a host with native XDP the agent selects AF_XDP, runs the own stack, and reports the bound mode, and the controller inventory lists AF_XDP for that agent.
+
+  - id: AGT-24
+    title: The agent starts the selected backend
+    phase: 3
+    workstream: AGT
+    size: S
+    depends_on: [AGT-22, TRN-27]
+    paths: [engine/fps-agent/]
+    summary: >-
+      fps_agent::assemble starts the selected backend instead of plan.backend and reports the bound mode in
+      PortInfo.xdp_driver_mode (AGT-22 finding). While TRANSPORT_AVAILABLE is false the selection is always the
+      kernel backend, so this lands before the flip of TRN-31 without changing behavior.
+    deliverables:
+      - The assembly change and the bound mode report, with tests on fake hosts.
+    acceptance:
+      - A test with a forced AF_XDP selection on a fake host starts the AF_XDP backend and reports its bound mode.
+
+  - id: CTL-54
+    title: The orchestrator inventory uses the selected backend
+    phase: 3
+    workstream: CTL
+    size: S
+    depends_on: [CTL-53]
+    paths: [controller/internal/wiring/]
+    summary: >-
+      The orchestrator inventory in controller/internal/wiring takes the selected backend of each agent instead of its
+      first backend (CTL-53 finding). Today both are the kernel backend, so this lands before the flip of TRN-31.
+    deliverables:
+      - The inventory change with tests.
+    acceptance:
+      - A test with an agent whose selected backend is not its first backend lists the selected one in the inventory.
 
   - id: HST-03
     title: ARP and ND for user space backends
