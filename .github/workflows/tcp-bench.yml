@@ -1,0 +1,67 @@
+name: tcp-bench
+
+# Runs the scale row of tcp_bench for the own stack on a hosted runner, alternating a
+# branch with main, so a package can read an absolute number on a quieter host than the
+# agent sandbox. Dispatch only; it reports in the job log and the step summary.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or commit to measure against main
+        required: true
+      args:
+        description: Extra tcp_bench arguments for the branch build
+        required: false
+        default: "--own-pool 20000"
+      pairs:
+        description: Alternating pairs of runs
+        required: false
+        default: "3"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tcp-bench
+  cancel-in-progress: false
+
+jobs:
+  scale:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: base
+      - name: Check out the branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          path: branch
+      - name: Build both binaries
+        run: |
+          set -euo pipefail
+          for d in base branch; do
+            (cd "$d" && cargo build --release -p fps-tcp --example tcp_bench)
+          done
+      - name: Run alternating pairs
+        env:
+          ARGS: ${{ inputs.args }}
+          PAIRS: ${{ inputs.pairs }}
+        run: |
+          set -euo pipefail
+          ulimit -n 1048576 || true
+          nproc; grep -m1 'model name' /proc/cpuinfo; free -g | head -2
+          common=(--stack own --profile full --workload scale --shards 64 --out -)
+          row() { tail -15; }
+          read -r -a extra <<< "$ARGS"
+          for i in $(seq 1 "$PAIRS"); do
+            echo "== pair $i: branch ($ARGS)"
+            branch/target/release/examples/tcp_bench "${common[@]}" "${extra[@]}" --label "branch $i" | tee "branch-$i.txt" | row
+            echo "== pair $i: main"
+            base/target/release/examples/tcp_bench "${common[@]}" --label "main $i" | tee "main-$i.txt" | row
+          done
+          { echo '## tcp_bench scale row'; for f in branch-*.txt main-*.txt; do echo "### $f"; echo '```'; row < "$f"; echo '```'; done; } >> "$GITHUB_STEP_SUMMARY"
