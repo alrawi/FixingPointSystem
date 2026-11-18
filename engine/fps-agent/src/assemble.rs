@@ -37,7 +37,6 @@ use fps_hosts::{HostPool, HostRange, HostSelector, PoolSpec, Selection};
 use fps_runtime::{ClientConfig, FlowRef, Role, ServerConfig, SourceHosts, WorkerConfig};
 use fps_sched::{stream_id, LoadProfile, Objective, Phase, ScheduleConfig, Shape};
 
-use crate::backend::BackendError;
 use crate::modules::{with_params, LoadedModules};
 use crate::plan::{HostPoolSlice, HostRole, PhaseShape, Plan, Topology, WorkerPlan, WorkerRate};
 use crate::run::RunError;
@@ -224,8 +223,10 @@ impl<'p> Pools<'p> {
 /// named it in the standalone mode, see [`crate::backend::resolve`]. The
 /// backend of the plan is not read here.
 ///
-/// The workers are the same on both backends. A plan that the AF_XDP backend
-/// cannot serve fails here, before anything binds a queue, see
+/// The workers are the same on both backends, and carry no transport: the
+/// run gives the workers of the AF_XDP backend the datapath when it starts
+/// them (AGT-25, see [`crate::run::Prepared::start_on`]). A plan that the
+/// AF_XDP backend cannot serve fails here, before anything binds a queue, see
 /// [`crate::backend::check_af_xdp`].
 pub fn assemble(
     plan: &Plan,
@@ -256,14 +257,6 @@ pub fn assemble(
         let s = with_params(&e.id, base, &e.params)?;
         check_flows(&e.scenario, &s)?;
         let l4 = s.flows[0].l4;
-        // The own stack of the datapath carries IPv4 TCP only (TRN-29 adds UDP).
-        if backend == BackendKind::AfXdp && s.flows.iter().any(|f| f.l4 == L4::Udp) {
-            return Err(BackendError::Unsupported(format!(
-                "mix entry {} runs a UDP flow, and UDP over the datapath is TRN-29",
-                e.id
-            ))
-            .into());
-        }
         flows.push((Arc::new(s), l4));
     }
     // `port` is the name of the test port that the side runs on, which labels

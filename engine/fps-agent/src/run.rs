@@ -142,6 +142,9 @@ pub struct RunSummary {
     pub server: Option<Snapshot>,
     /// The number of snapshot lines written, including the final one.
     pub lines: u64,
+    /// What each lane of the datapath did, for a run on the AF_XDP backend,
+    /// and nothing for the kernel backend.
+    pub lanes: Vec<fps_datapath::LaneReport>,
 }
 
 /// The TCP and UDP workers of one side.
@@ -428,35 +431,44 @@ impl Prepared {
     /// Like [`Prepared::start_with`], on a backend that [`Prepared::start_backend`]
     /// started.
     ///
+    /// On the kernel backend the workers open kernel sockets. On the AF_XDP
+    /// backend every worker, TCP and UDP, gets the datapath as its
+    /// [`fps_runtime::transport::Transport`] (AGT-25), so the sessions of the
+    /// run go through the queues of the plan ports. The returned [`Active`]
+    /// owns the backend and stops it in [`Active::finish`], after the workers
+    /// ended. When the workers do not start, the backend stops before the
+    /// error returns, and the queues are released.
+    ///
     /// # Errors
     ///
-    /// Returns [`RunError::Unimplemented`] for the AF_XDP backend: the
-    /// datapath is up, and the bound mode is reported, but the TCP workers of
-    /// `fps-runtime` open kernel sockets only, so no worker can run its
-    /// sessions on the datapath yet. The datapath stops again before the
-    /// error returns, and the queues are released.
+    /// Returns the [`RunError`] of the worker that did not start.
     pub fn start_on(
         self,
         started: StartedBackend,
         interval: Duration,
         capture: CaptureCell,
     ) -> Result<Active, RunError> {
-        if let StartedBackend::AfXdp(af_xdp) = started {
-            let ports: Vec<String> = af_xdp.ports().iter().map(ToString::to_string).collect();
-            let _ = af_xdp.stop();
-            return Err(RunError::Unimplemented(format!(
-                "backend af_xdp started its datapath on [{}], but fps-runtime opens sessions on kernel sockets only, so no worker can run on it yet",
-                ports.join("; ")
-            )));
-        }
         let Prepared {
             plan,
-            assembly,
+            mut assembly,
             profile,
             reports,
             tls,
             ..
         } = self;
+        if let StartedBackend::AfXdp(af_xdp) = &started {
+            let transport: Arc<dyn fps_runtime::transport::Transport> =
+                Arc::new(af_xdp.transport());
+            for worker in assembly
+                .tcp_servers
+                .iter_mut()
+                .chain(&mut assembly.udp_servers)
+                .chain(&mut assembly.tcp_clients)
+                .chain(&mut assembly.udp_clients)
+            {
+                worker.transport = Some(Arc::clone(&transport));
+            }
+        }
         // A client session holds both directions of its conversation, so a
         // process that runs clients taps those and not its server sessions.
         let tap_servers = !assembly.has_clients();
@@ -480,7 +492,14 @@ impl Prepared {
             hooks.clone(),
             server_cell,
             tls.clone(),
-        )?;
+        );
+        let servers = match servers {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = started.stop();
+                return Err(e);
+            }
+        };
         let clients = match SideRun::start(
             plan.seed,
             interval,
@@ -494,6 +513,7 @@ impl Prepared {
             Err(e) => {
                 servers.stop(Duration::ZERO);
                 let _ = servers.join(Side::Server);
+                let _ = started.stop();
                 return Err(e);
             }
         };
@@ -501,6 +521,7 @@ impl Prepared {
             plan,
             profile,
             reports,
+            backend: Some(started),
             servers,
             clients,
             start: Instant::now(),
@@ -519,6 +540,9 @@ pub struct Active {
     plan: Plan,
     profile: LoadProfile,
     reports: Side,
+    /// The backend of the run, which [`Active::finish`] stops after the
+    /// workers ended.
+    backend: Option<StartedBackend>,
     servers: SideRun,
     clients: SideRun,
     start: Instant,
@@ -552,6 +576,9 @@ pub struct Finished {
     pub baseline: Option<Snapshot>,
     /// The time from the start to the end of the run.
     pub elapsed: Duration,
+    /// What each lane of the datapath did, for a run on the AF_XDP backend,
+    /// and nothing for the kernel backend.
+    pub lanes: Vec<fps_datapath::LaneReport>,
 }
 
 impl Active {
@@ -651,6 +678,7 @@ impl Active {
     pub fn finish(self, server_ramp_down: Duration) -> Result<Finished, RunError> {
         let Active {
             reports,
+            backend,
             servers,
             clients,
             start,
@@ -662,6 +690,13 @@ impl Active {
         let client_total = clients.join(Side::Client);
         servers.stop(server_ramp_down);
         let server_total = servers.join(Side::Server);
+        // The workers ended, so no session is left on the datapath.
+        let lanes = backend.map(StartedBackend::stop).unwrap_or_default();
+        for (n, lane) in lanes.iter().enumerate() {
+            if lane.panicked {
+                tracing::error!(lane = n, "a lane of the datapath panicked during the run");
+            }
+        }
         let (client_total, server_total) = (client_total?, server_total?);
         let shown = both_sides(&client_total, &server_total)?;
         Ok(Finished {
@@ -671,6 +706,7 @@ impl Active {
             server: has_servers.then_some(server_total),
             baseline,
             elapsed: start.elapsed(),
+            lanes,
         })
     }
 
@@ -791,6 +827,18 @@ pub fn run(
             if c.holds { "holds" } else { "fails" }
         )?;
     }
+    for (n, lane) in finished.lanes.iter().enumerate() {
+        let s = &lane.stats;
+        writeln!(
+            log,
+            "fps-agent: datapath lane {n} tcp frames {} udp datagrams sent {} delivered {} accepted {}{}",
+            s.client.tcp + s.server.tcp,
+            s.udp_client.tx_datagrams + s.udp_server.tx_datagrams,
+            s.udp_client.rx_delivered + s.udp_server.rx_delivered,
+            s.udp_client.rx_accepted + s.udp_server.rx_accepted,
+            if lane.panicked { " panicked" } else { "" }
+        )?;
+    }
     let outcome = if criteria.iter().all(|c| c.holds) {
         Outcome::Pass
     } else {
@@ -810,5 +858,6 @@ pub fn run(
         client: finished.client,
         server: finished.server,
         lines,
+        lanes: finished.lanes,
     })
 }
