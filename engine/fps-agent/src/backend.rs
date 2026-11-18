@@ -19,7 +19,9 @@
 //!   ([`crate::transport`]), which `Prepared::start_on` sets on every worker
 //!   (AGT-25). The `os_profile` of each host pool becomes the OS profile of
 //!   its side in the own stack, one profile for the client side and one for
-//!   the server side.
+//!   the server side. When a host pool names a gateway, the datapath resolves
+//!   the next hop of its frames with ARP (AGT-26, [`datapath_config`]), so a
+//!   peer behind a router needs no neighbor entry.
 //!
 //! # What a plan has to look like on AF_XDP
 //!
@@ -48,7 +50,9 @@ use fps_backend_afxdp::{
     open_port, AfXdpError, BackendKind, BoundMode, FrameIo, OpenedPort, PortConfig, QueueConfig,
     XdpMode as Attach,
 };
-use fps_datapath::{split_pools, Datapath, DatapathConfig, DatapathError, Lane, LaneReport};
+use fps_datapath::{
+    split_pools, Datapath, DatapathConfig, DatapathError, Lane, LaneReport, NeighborConfig,
+};
 use fps_hosts::HostRange;
 use fps_tcp_own::{HostSlice, OsProfile, OwnConfig, Pools};
 
@@ -481,6 +485,31 @@ fn own_config(l: &Layout<'_>) -> Result<OwnConfig, BackendError> {
     })
 }
 
+/// The datapath settings that the pools decide.
+///
+/// The neighbor resolution of the datapath (TRN-35) is on when a host pool of
+/// the plan carries a gateway, because a peer behind that gateway has no
+/// neighbor entry and the pools alone cannot name its MAC address. The
+/// datapath then asks for the next hop of each arm (the gateway of the pool
+/// of that arm, or the destination itself for an arm whose pool has none),
+/// and `OwnConfig::resolve_next_hop` is set for the same sides, so the stack
+/// leaves the MAC address of every peer to it. Without a gateway on either
+/// side the stack keeps reading its peers from the pools, as before.
+///
+/// DHCP pools are refused by [`layout`] before this point. When the datapath
+/// runs the DHCP hook, a leased host takes its router from
+/// `LeaseTable::router_of` and not from the pool, which is a gap that
+/// `docs/handoff/AGT-26.md` records.
+fn datapath_config(pools: &Pools, mut own: OwnConfig) -> DatapathConfig {
+    let resolving = pools.client.pool.gateway().is_some() || pools.server.pool.gateway().is_some();
+    own.resolve_next_hop = resolving;
+    DatapathConfig {
+        own,
+        neighbors: resolving.then(NeighborConfig::default),
+        ..DatapathConfig::default()
+    }
+}
+
 /// Opens a port, and again for a short time while the kernel still holds the
 /// queue of an earlier socket.
 fn open_retrying(config: &PortConfig, port: &str) -> Result<OpenedPort, BackendError> {
@@ -607,10 +636,7 @@ fn launch(
             pools,
         })
         .collect();
-    let config = DatapathConfig {
-        own,
-        ..DatapathConfig::default()
-    };
+    let config = datapath_config(&pools, own);
     let datapath = Arc::new(Datapath::start(built, config)?);
     let transport =
         DatapathTransport::new(Arc::clone(&datapath)).map_err(BackendError::Transport)?;
@@ -843,6 +869,70 @@ mod tests {
 
         let e = start_on_queues(&p, Sides::Both, Vec::new()).err().unwrap();
         assert!(e.to_string().contains("at least one lane"), "{e}");
+    }
+
+    #[test]
+    fn a_gateway_on_a_host_pool_turns_the_next_hop_resolution_on() {
+        let cases = [
+            ("neither", "", "", false),
+            ("the client pool", "10.1.0.1", "", true),
+            ("the server pool", "", "10.2.0.1", true),
+            ("both pools", "10.1.0.1", "10.2.0.1", true),
+        ];
+        for (what, client_gw, server_gw, on) in cases {
+            let mut p = plan();
+            p.host_pools[0].gateway = client_gw.into();
+            p.host_pools[1].gateway = server_gw.into();
+            let l = layout(&p, Sides::Both).unwrap();
+            let pools = Pools {
+                client: slice_of(l.client).unwrap(),
+                server: slice_of(l.server).unwrap(),
+                vlan: l.vlan,
+            };
+            let config = datapath_config(&pools, own_config(&l).unwrap());
+            assert_eq!(config.neighbors.is_some(), on, "{what}");
+            assert_eq!(config.own.resolve_next_hop, on, "{what}");
+            if on {
+                assert_eq!(config.neighbors, Some(NeighborConfig::default()), "{what}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_pool_with_a_gateway_makes_the_datapath_ask_for_its_next_hop() {
+        use fps_backend_afxdp::memory::frame_pair;
+        use std::net::SocketAddr;
+        let mut p = plan();
+        p.host_pools[0].gateway = "10.1.0.1".into();
+        let l = layout(&p, Sides::Both).unwrap();
+        let client_pool = slice_of(l.client).unwrap().pool;
+        let src = std::net::IpAddr::V4(client_pool.ipv4_addr(0).unwrap().unwrap());
+        // The peer is on no pool address: it is behind the gateway.
+        let dst = SocketAddr::new("10.9.9.9".parse().unwrap(), 80);
+        let (c, s) = frame_pair(64, 1600);
+        let backend = start_on_queues(&p, Sides::Both, vec![(Box::new(c), Box::new(s))]).unwrap();
+        let connector = backend.datapath().connector();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        // Nobody answers, so the connect ends in a timeout or an error. The
+        // splitter of the client arm asked for the gateway meanwhile and not
+        // for the destination, which no pool serves.
+        let first = runtime.block_on(async {
+            tokio::time::timeout(Duration::from_millis(300), connector.connect(src, dst)).await
+        });
+        assert!(first.is_err(), "no gateway answered, so no session opens");
+        let stats = backend.datapath().stats().remove(0);
+        assert!(
+            stats.client.neighbor_requests >= 1,
+            "the client arm did not ask: {:?}",
+            stats.client
+        );
+        assert_eq!(stats.client.neighbor_resolved, 0);
+        assert_eq!(stats.server.neighbor_requests, 0);
+        drop(connector);
+        let _ = backend.stop();
     }
 
     #[test]
