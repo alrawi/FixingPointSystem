@@ -231,6 +231,9 @@ impl LossyOwn {
     }
 }
 
+/// The start of the note of the own stack that holds for a lossless link only.
+const LOSSLESS_NOTE: &str = "the in memory link of the lossless workloads";
+
 impl TcpStack for LossyOwn {
     type Session = OwnSession;
 
@@ -241,16 +244,7 @@ impl TcpStack for LossyOwn {
     fn notes(&self) -> Vec<String> {
         let mut notes: Vec<String> = TcpStack::notes(&self.stack)
             .into_iter()
-            .map(|note| {
-                if note.starts_with("retransmission is minimal") {
-                    note.replace(
-                        ", and the link loses nothing, so the measurements never retransmit",
-                        "",
-                    )
-                } else {
-                    note
-                }
-            })
+            .filter(|note| !note.starts_with(LOSSLESS_NOTE))
             .collect();
         notes.push(format!(
             "the link is the impaired link of TRN-22 ({}), which wraps the frame queues of the stack; retransmissions are counted at the link as data segments that start below the highest sequence number sent before",

@@ -162,3 +162,45 @@ async fn a_transfer_that_cannot_finish_is_reported_not_raised() {
     assert!(run.link_lost > 0);
     assert!(stack.name().contains("own"));
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn own_stack_completes_at_one_percent_loss_and_recovers_by_duplicate_acknowledgments() {
+    // The acceptance setting of TRN-23: 1 percent loss and 20 ms of delay in
+    // each direction. A 4 MiB transfer takes seconds in real time, so the
+    // test moves 1 MiB, which still sees about 7 lost segments in the data
+    // direction.
+    let stack = own(link(10_000, 20));
+    let cfg = LossConfig {
+        timeout: Duration::from_secs(60),
+        ..config(1024)
+    };
+    let run = loss_transfer(&stack, &cfg).await;
+    assert!(run.completed, "{:?}", run.failure);
+    assert!(run.link_lost > 0, "the link lost nothing");
+    let host = stack.stack().counters();
+    // Most losses are recovered by a fast retransmit and not by a timeout.
+    assert!(host.client.fast_retransmits > 0, "{host:?}");
+    assert!(host.client.aborted == 0 && host.server.aborted == 0);
+    // At 1 percent the stack must stay above one Mbit/s, where the go back N
+    // stack of TRN-18 sat at 1.8 with a third of its transfers not finishing.
+    assert!(
+        run.goodput_mbit_per_s() > 1.0,
+        "{}",
+        run.goodput_mbit_per_s()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn own_stack_survives_reordering_with_the_out_of_order_queue() {
+    // A fifth of the frames skip the delay, so segments arrive out of order
+    // without a loss. The receiver queues them and the transfer completes.
+    let reordered = ImpairConfig {
+        reorder_ppm: 200_000,
+        ..link(0, 10)
+    };
+    let stack = own(reordered);
+    let run = loss_transfer(&stack, &config(512)).await;
+    assert!(run.completed, "{:?}", run.failure);
+    let host = stack.stack().counters();
+    assert!(host.server.ooo_segments > 0, "{host:?}");
+}

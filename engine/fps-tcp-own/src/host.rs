@@ -17,6 +17,7 @@ use std::task::Waker;
 use super::net::{
     NetError, Received, Station, ETH_LEN, MAX_REPLY_LEN, MIN_FRAME_LEN, VLAN_TAG_LEN,
 };
+use super::recovery::{self, AckView, Action, Recovery};
 use super::wire::{self, flags, Header};
 use super::OwnConfig;
 
@@ -76,11 +77,11 @@ impl Hasher for IntHasher {
 
 type IntMap<K, V> = HashMap<K, V, BuildHasherDefault<IntHasher>>;
 
-fn seq_lt(a: u32, b: u32) -> bool {
+pub(crate) fn seq_lt(a: u32, b: u32) -> bool {
     (a.wrapping_sub(b) as i32) < 0
 }
 
-fn seq_le(a: u32, b: u32) -> bool {
+pub(crate) fn seq_le(a: u32, b: u32) -> bool {
     (a.wrapping_sub(b) as i32) <= 0
 }
 
@@ -133,6 +134,12 @@ struct Conn {
     error: Option<io::ErrorKind>,
     read_waker: Option<Waker>,
     write_waker: Option<Waker>,
+    /// The loss recovery state, which exists only while data is in flight,
+    /// waits to be sent, or waits behind a hole (see [`recovery`]).
+    rec: Option<Box<Recovery>>,
+    /// The window that the last segment sent advertised, which decides when
+    /// a read of the application is worth a window update.
+    adv_wnd: u16,
 }
 
 impl Conn {
@@ -169,7 +176,36 @@ impl Conn {
             error: None,
             read_waker: None,
             write_waker: None,
+            rec: None,
+            adv_wnd: u16::MAX,
         }
+    }
+
+    /// The highest sequence number sent: `snd_nxt`, or more after a timeout
+    /// went back.
+    fn snd_max(&self) -> u32 {
+        self.rec.as_ref().map_or(self.snd_nxt, |r| {
+            if seq_lt(self.snd_nxt, r.snd_max) {
+                r.snd_max
+            } else {
+                self.snd_nxt
+            }
+        })
+    }
+
+    /// Whether the recovery state has nothing left to do, so that the box
+    /// can go: no data in flight or waiting, no segment held out of order.
+    fn recovery_idle(&self) -> bool {
+        self.rec.as_ref().is_some_and(|r| {
+            !r.rtx && r.ooo.is_empty() && self.sndbuf.is_empty() && self.snd_max() == self.snd_una
+        })
+    }
+
+    /// The recovery state, made on first use.
+    fn rec_mut(&mut self, iw: u32) -> &mut Recovery {
+        let (mss, snd_nxt) = (self.mss, self.snd_nxt);
+        self.rec
+            .get_or_insert_with(|| Box::new(Recovery::new(mss, iw, snd_nxt)))
     }
 
     /// The sequence space that was sent and is not acknowledged.
@@ -206,8 +242,15 @@ pub struct HostCounters {
     pub frames_in: u64,
     /// Frames that failed a length or checksum test.
     pub bad_frames: u64,
-    /// Segments sent again after a timeout.
+    /// Segments sent again after a timeout or a fast retransmit.
     pub retransmits: u64,
+    /// Retransmission timeouts that fired with data in flight.
+    pub timeouts: u64,
+    /// Fast retransmits: the oldest segment sent again on the third duplicate
+    /// acknowledgment or on a partial acknowledgment in fast recovery.
+    pub fast_retransmits: u64,
+    /// Segments that were held out of order and joined the stream later.
+    pub ooo_segments: u64,
     /// Resets that the host sent.
     pub resets_sent: u64,
     /// Connections that a timeout or a reset ended abnormally.
@@ -586,12 +629,14 @@ impl Host {
             if conn.rcvbuf.is_empty() {
                 conn.rcvbuf = VecDeque::new();
             }
-            // Tell the peer when the window opened by a worthwhile amount.
+            // Tell the peer when the window opened by a worthwhile amount
+            // since the last one it was told: a segment of data or half the
+            // buffer, as RFC 1122 section 4.2.3.3 asks. Without this a sender
+            // that a congestion window keeps below the receive window would
+            // see the window shrink by what is unread at every ACK.
             let space = rcv_cap.saturating_sub(conn.rcvbuf.len());
-            let before = space.saturating_sub(take);
             let step = usize::from(conn.mss).min(rcv_cap / 2).max(1);
-            if before < step
-                && space >= step
+            if space.min(65_535).saturating_sub(usize::from(conn.adv_wnd)) >= step
                 && !matches!(conn.state, State::Closed | State::TimeWait)
             {
                 conn.ack_pending = true;
@@ -783,6 +828,7 @@ impl Host {
             self.counters.aborted += 1;
         }
         conn.sndbuf = VecDeque::new();
+        conn.rec = None;
         let key = Tuple {
             local_ip: conn.local_ip,
             remote_ip: conn.remote_ip,
@@ -964,6 +1010,7 @@ impl Host {
                 conn.state = State::Established;
                 conn.armed = false;
                 conn.retries = 0;
+                conn.rto_us = self.cfg.rto_us;
                 conn.ack_pending = true;
                 if let Some(waker) = conn.write_waker.take() {
                     waker.wake();
@@ -1037,13 +1084,45 @@ impl Host {
                     seq = conn.rcv_nxt;
                 }
             } else {
-                // A gap: the stack keeps no out of order data. It drops the
-                // segment and repeats its ACK so that the sender goes back.
+                // A gap: hold the data (and a FIN) in the out of order queue
+                // if it lies inside the window, repeat the ACK at once, so
+                // that the sender counts one duplicate for every segment, and
+                // go on with the ACK field of the segment.
                 if seg_len > 0 {
-                    conn.ack_pending = true;
-                    self.mark_dirty(id);
+                    let queue = matches!(
+                        conn.state,
+                        State::Established | State::FinWait1 | State::FinWait2
+                    ) && (conn.app_alive || conn.state == State::Established);
+                    if queue {
+                        let rcv_nxt = conn.rcv_nxt;
+                        let offset = u64::from(seq.wrapping_sub(rcv_nxt));
+                        let rec = conn.rec_mut(self.cfg.initial_cwnd_segments);
+                        if rec.ooo.insert(rcv_nxt, seq, data, wnd_now) > 0 {
+                            self.counters.ooo_segments += 1;
+                        }
+                        if fin && offset + data.len() as u64 <= u64::from(wnd_now) {
+                            rec.ooo.set_fin(seq.wrapping_add(data.len() as u32));
+                        }
+                    }
+                    let window = u16::try_from(wnd_now.min(65_535)).unwrap_or(65_535);
+                    self.out.send(
+                        &mut self.counters,
+                        (conn.local_ip, conn.remote_ip),
+                        conn.local_port,
+                        conn.remote_port,
+                        conn.snd_nxt,
+                        conn.rcv_nxt,
+                        flags::ACK,
+                        window,
+                        None,
+                        (&[], &[]),
+                    );
+                    conn.ack_pending = false;
+                    conn.adv_wnd = window;
                 }
-                return;
+                data = &[];
+                fin = false;
+                seq = conn.rcv_nxt;
             }
         }
         let Some(conn) = self.conns.get_mut(id as usize).and_then(Option::as_mut) else {
@@ -1061,6 +1140,7 @@ impl Host {
                 conn.snd_una = h.ack;
                 conn.state = State::Established;
                 conn.armed = false;
+                conn.rto_us = self.cfg.rto_us;
                 conn.snd_wnd = u32::from(h.window);
                 let listener = conn.listener;
                 let handle = (id, gen);
@@ -1080,9 +1160,20 @@ impl Host {
             return;
         };
         let mut state_changed = false;
-        if seq_lt(conn.snd_una, h.ack) && seq_le(h.ack, conn.snd_nxt) {
+        let snd_max = conn.snd_max();
+        let dup = recovery::is_dupack(&AckView {
+            ack: h.ack,
+            snd_una: conn.snd_una,
+            snd_max,
+            payload_len: payload.len(),
+            control: h.flags & (flags::SYN | flags::FIN | flags::RST) != 0,
+            window: u32::from(h.window),
+            last_window: conn.snd_wnd,
+        });
+        if seq_lt(conn.snd_una, h.ack) && seq_le(h.ack, snd_max) {
             let advanced = h.ack.wrapping_sub(conn.snd_una);
-            let fin_acked = conn.sent_fin && h.ack == conn.snd_nxt;
+            let fin_in_flight = conn.sent_fin || conn.rec.as_ref().is_some_and(|r| r.fin_sent);
+            let fin_acked = fin_in_flight && h.ack == snd_max;
             let data_acked = (advanced - u32::from(fin_acked)) as usize;
             let drop_bytes = data_acked.min(conn.sndbuf.len());
             conn.sndbuf.drain(..drop_bytes);
@@ -1090,7 +1181,27 @@ impl Host {
                 conn.sndbuf = VecDeque::new();
             }
             conn.snd_una = h.ack;
-            conn.rto_us = self.cfg.rto_us;
+            if seq_lt(conn.snd_nxt, h.ack) {
+                // The peer holds data that a timeout sent again: skip it.
+                conn.snd_nxt = h.ack;
+            }
+            if fin_acked {
+                conn.sent_fin = true;
+            }
+            if let Some(rec) = conn.rec.as_deref_mut() {
+                // Karn's rule: only a segment that was never sent again gives
+                // a sample, and the timeout keeps its backoff until one does.
+                if let Some(sample) = rec.take_sample(h.ack, now) {
+                    rec.rtt.sample(sample);
+                    if let Some(rto) = rec.rtt.rto_us(self.cfg.min_rto_us, self.cfg.max_rto_us) {
+                        conn.rto_us = rto;
+                    }
+                }
+                if rec.cc.on_new_ack(h.ack, advanced) == Action::Retransmit {
+                    rec.rtx = true;
+                    rec.retransmitted();
+                }
+            }
             if conn.outstanding() {
                 conn.deadline = now + conn.rto_us;
             } else {
@@ -1116,11 +1227,19 @@ impl Host {
             if let Some(waker) = conn.write_waker.take() {
                 waker.wake();
             }
-        } else if seq_lt(conn.snd_nxt, h.ack) {
+        } else if seq_lt(snd_max, h.ack) {
             // An acknowledgment for data that was never sent.
             conn.ack_pending = true;
             self.mark_dirty(id);
             return;
+        } else if dup {
+            if let Some(rec) = conn.rec.as_deref_mut() {
+                let flight = snd_max.wrapping_sub(conn.snd_una);
+                if rec.cc.on_dupack(h.ack, flight, snd_max) == Action::Retransmit {
+                    rec.rtx = true;
+                    rec.retransmitted();
+                }
+            }
         }
         if !seq_lt(h.ack, conn.snd_una) {
             let wnd = u32::from(h.window);
@@ -1144,6 +1263,7 @@ impl Host {
             State::Established | State::FinWait1 | State::FinWait2
         );
         let mut all_taken = true;
+        let mut held_fin = false;
         if !data.is_empty() {
             if !can_receive {
                 conn.ack_pending = true;
@@ -1160,6 +1280,19 @@ impl Host {
                 if take > 0 {
                     conn.rcvbuf.extend(&data[..take]);
                     conn.rcv_nxt = conn.rcv_nxt.wrapping_add(take as u32);
+                    if let Some(rec) = conn.rec.as_deref_mut() {
+                        if !rec.ooo.is_empty() {
+                            // The data may have filled a hole: what was held
+                            // behind it joins the stream.
+                            let room = self.cfg.rcv_buffer.saturating_sub(conn.rcvbuf.len());
+                            rec.ooo
+                                .drain_into(&mut conn.rcv_nxt, &mut conn.rcvbuf, room);
+                            if rec.ooo.fin_at(conn.rcv_nxt) {
+                                rec.ooo.clear_fin();
+                                held_fin = true;
+                            }
+                        }
+                    }
                     if let Some(waker) = conn.read_waker.take() {
                         waker.wake();
                     }
@@ -1169,6 +1302,7 @@ impl Host {
         }
 
         // FIN.
+        let fin = fin || held_fin;
         if fin && all_taken && can_receive && !conn.fin_rcvd {
             conn.rcv_nxt = conn.rcv_nxt.wrapping_add(1);
             conn.fin_rcvd = true;
@@ -1188,6 +1322,9 @@ impl Host {
             self.after_state_change(id, now);
         }
         if let Some(conn) = self.conn(id) {
+            if conn.recovery_idle() {
+                conn.rec = None;
+            }
             if conn.ack_pending {
                 self.mark_dirty(id);
             }
@@ -1203,6 +1340,7 @@ impl Host {
                 // Unread data stays readable until the session reads or
                 // drops it.
                 conn.sndbuf = VecDeque::new();
+                conn.rec = None;
                 if !conn.app_alive {
                     conn.rcvbuf = VecDeque::new();
                 }
@@ -1277,7 +1415,18 @@ impl Host {
                     self.close_conn(id, Some(io::ErrorKind::TimedOut));
                     return;
                 }
-                conn.rto_us = (conn.rto_us * 2).min(max_rto);
+                conn.rto_us = recovery::backoff_us(conn.rto_us, max_rto);
+                let snd_max = conn.snd_max();
+                if let Some(rec) = conn.rec.as_deref_mut() {
+                    // The window falls to one segment and slow start sends
+                    // the flight again (RFC 5681 section 3.1, RFC 6298 rule
+                    // 5.4); a segment that is sent again gives no sample.
+                    rec.cc
+                        .on_timeout(snd_max.wrapping_sub(conn.snd_una), snd_max);
+                    rec.snd_max = snd_max;
+                    rec.rtx = false;
+                    rec.retransmitted();
+                }
                 // Go back N: everything after the first unacknowledged byte
                 // is sent again, within the window, and a zero window gets a
                 // one segment probe.
@@ -1289,6 +1438,7 @@ impl Host {
                     conn.snd_nxt = conn.snd_una;
                 }
                 self.counters.retransmits += 1;
+                self.counters.timeouts += 1;
                 let deadline = now + self.conn(id).map_or(0, |c| c.rto_us);
                 self.arm(id, gen, deadline);
                 self.mark_dirty(id);
@@ -1318,6 +1468,7 @@ impl Host {
         let ips = (conn.local_ip, conn.remote_ip);
         let (lp, rp) = (conn.local_port, conn.remote_port);
         let mut sent_anything = false;
+        let frames_before = self.counters.frames_out;
 
         if conn.syn_pending && matches!(conn.state, State::SynSent | State::SynReceived) {
             conn.syn_pending = false;
@@ -1373,11 +1524,59 @@ impl Host {
                 | State::LastAck
         );
         if sendable {
+            if conn.rec.as_ref().is_some_and(|r| r.rtx) {
+                // Fast retransmit or a partial acknowledgment: the oldest
+                // unacknowledged segment goes out again, and `snd_nxt` stays.
+                let fin_out = conn.sent_fin || conn.rec.as_ref().is_some_and(|r| r.fin_sent);
+                let outstanding = conn.snd_max().wrapping_sub(conn.snd_una) as usize;
+                let data_out = outstanding - usize::from(fin_out).min(outstanding);
+                let n = data_out.min(conn.sndbuf.len()).min(usize::from(conn.mss));
+                if n > 0 {
+                    let (a, b) = conn.sndbuf.as_slices();
+                    let payload = slices_range(a, b, 0, n);
+                    self.out.send(
+                        &mut self.counters,
+                        ips,
+                        lp,
+                        rp,
+                        conn.snd_una,
+                        conn.rcv_nxt,
+                        flags::ACK,
+                        rcv_wnd,
+                        None,
+                        payload,
+                    );
+                } else if fin_out && outstanding > 0 {
+                    self.out.send(
+                        &mut self.counters,
+                        ips,
+                        lp,
+                        rp,
+                        conn.snd_una,
+                        conn.rcv_nxt,
+                        flags::FIN | flags::ACK,
+                        rcv_wnd,
+                        None,
+                        (&[], &[]),
+                    );
+                }
+                self.counters.retransmits += 1;
+                self.counters.fast_retransmits += 1;
+                conn.ack_pending = false;
+                sent_anything = true;
+                if let Some(rec) = conn.rec.as_deref_mut() {
+                    rec.rtx = false;
+                    rec.retransmitted();
+                }
+            }
             loop {
                 let unacked = conn.unacked_data();
                 let avail = conn.sndbuf.len().saturating_sub(unacked);
                 if avail == 0 {
                     break;
+                }
+                if conn.rec.is_none() {
+                    conn.rec_mut(self.cfg.initial_cwnd_segments);
                 }
                 let mut wnd = conn.snd_wnd;
                 if conn.probe {
@@ -1386,6 +1585,15 @@ impl Host {
                 let room = wnd.saturating_sub(conn.in_flight()) as usize;
                 let n = avail.min(room).min(usize::from(conn.mss));
                 if n == 0 {
+                    break;
+                }
+                // The congestion window never cuts a segment short: with less
+                // room than the segment, the sender waits for an ACK. It
+                // cannot stall, because the window is at least one segment.
+                let cwnd_room = conn.rec.as_ref().map_or(usize::MAX, |r| {
+                    r.cc.send_window().saturating_sub(conn.in_flight()) as usize
+                });
+                if cwnd_room < n {
                     break;
                 }
                 let (a, b) = conn.sndbuf.as_slices();
@@ -1403,10 +1611,22 @@ impl Host {
                     None,
                     payload,
                 );
+                let is_new = conn.snd_max() == conn.snd_nxt;
                 conn.snd_nxt = conn.snd_nxt.wrapping_add(n as u32);
                 conn.ack_pending = false;
                 conn.probe = false;
                 sent_anything = true;
+                let snd_nxt = conn.snd_nxt;
+                if let Some(rec) = conn.rec.as_deref_mut() {
+                    if is_new {
+                        rec.time_segment(snd_nxt, now);
+                    } else {
+                        rec.retransmitted();
+                    }
+                    if seq_lt(rec.snd_max, snd_nxt) {
+                        rec.snd_max = snd_nxt;
+                    }
+                }
             }
             let all_sent = conn.sndbuf.len() <= conn.unacked_data();
             if conn.fin_wanted && !conn.sent_fin && all_sent {
@@ -1425,6 +1645,13 @@ impl Host {
                 conn.sent_fin = true;
                 conn.snd_nxt = conn.snd_nxt.wrapping_add(1);
                 conn.ack_pending = false;
+                let snd_nxt = conn.snd_nxt;
+                if let Some(rec) = conn.rec.as_deref_mut() {
+                    rec.fin_sent = true;
+                    if seq_lt(rec.snd_max, snd_nxt) {
+                        rec.snd_max = snd_nxt;
+                    }
+                }
                 conn.state = match conn.state {
                     State::Established => State::FinWait1,
                     State::CloseWait => State::LastAck,
@@ -1448,6 +1675,9 @@ impl Host {
                 None,
                 (&[], &[]),
             );
+        }
+        if self.counters.frames_out != frames_before {
+            conn.adv_wnd = rcv_wnd;
         }
         if sent_anything && conn.outstanding() && !conn.armed {
             let deadline = now + conn.rto_us;
@@ -1477,6 +1707,9 @@ fn slices_range<'a>(a: &'a [u8], b: &'a [u8], from: usize, len: usize) -> (&'a [
 fn not_connected() -> io::Error {
     io::Error::new(io::ErrorKind::NotConnected, "the session was aborted")
 }
+
+#[cfg(test)]
+mod recovery_tests;
 
 #[cfg(test)]
 mod tests {
