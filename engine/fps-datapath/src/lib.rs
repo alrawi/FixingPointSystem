@@ -67,13 +67,32 @@
 //! [`HookOutcome::Unsupported`] (the frames) and is counted in
 //! [`FrameCounters`]; a [`FrameHook`] is the place for it. Neighbor
 //! discovery messages that are not solicitations for a host of the pools
-//! (router advertisements, say) go to the ND hook the same way. The datapath
-//! sends no neighbor solicitation: next hop resolution is TRN-35.
+//! (router advertisements, say) go to the ND hook the same way.
+//!
+//! # Next hop resolution
+//!
+//! By default the stack reads the MAC address of every peer from the host
+//! pools, so a peer is a host of the other pool on the same link. A peer
+//! behind a router has no entry there. With [`DatapathConfig::neighbors`] set
+//! (TRN-35) the stack leaves the MAC address of its peers to the splitter,
+//! and the splitter keeps a neighbor cache per queue ([`NeighborConfig`]): it
+//! sends an ARP request (IPv4) or a neighbor solicitation (IPv6) for the next
+//! hop of a frame, holds the frame while it waits (bounded), asks again, gives
+//! up after a few requests, and ages its entries. The next hop is the
+//! destination on the prefix of the local host pool, and the gateway of the
+//! pool otherwise ([`Route`]); a pool without a gateway resolves the
+//! destination itself. The gateway comes from the pool of the plan
+//! (`HostPool::gateway`). A pool that leases its addresses through DHCP has no
+//! prefix and no gateway until the lease hook is wired (HST-04 keeps the
+//! router of each lease in `LeaseTable::router_of`), so DHCP hosts resolve
+//! the destination itself. [`FrameCounters`] counts requests, resolutions,
+//! failures, held, released, and dropped frames.
 //!
 //! The datapath does not set `TRANSPORT_AVAILABLE` and does not change the
 //! backend selection. TRN-31 flips the flag.
 
 mod classify;
+mod neighbor;
 mod split;
 mod udp;
 
@@ -86,7 +105,8 @@ use std::time::Duration;
 
 use fps_backend_afxdp::FrameIo;
 use fps_hosts::{Responder, SliceError};
-use fps_tcp_own::clock::MonotonicClock;
+use fps_tcp_own::clock::{Clock, MonotonicClock};
+use fps_tcp_own::net::Station;
 use fps_tcp_own::{HostSlice, OwnConfig, OwnSession, OwnStack, OwnStats, PoolError, Pools};
 use fps_udp_own::UdpArm;
 pub use fps_udp_own::{UdpConfig, UdpListener, UdpSession, UdpStats};
@@ -94,6 +114,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle as TaskHandle;
 
 pub use classify::{classify, Class, Frame, Tagging};
+pub use neighbor::{NeighborConfig, Route};
 pub use split::{
     FrameCounters, FrameHook, HookOutcome, Hooks, Replies, SharedCounters, Splitter, Unsupported,
 };
@@ -258,12 +279,19 @@ pub struct DatapathConfig {
     /// UDP calls answer [`Feature::Udp`]. The datapath lowers the MTU of an
     /// arm to what its queue carries.
     pub udp: Option<UdpConfig>,
+    /// Resolve the next hop of the frames with ARP and neighbor solicitation
+    /// (TRN-35), or `None` to read the MAC address of every peer from the host
+    /// pools. With the setting a peer need not be a host of the pools: a
+    /// destination behind a router reaches the gateway of the pool of the
+    /// arm. The datapath sets `own.resolve_next_hop` and defers the peers of
+    /// the UDP layers itself.
+    pub neighbors: Option<NeighborConfig>,
 }
 
 impl Default for DatapathConfig {
     /// The default stack, a connect timeout of 10 seconds, 256 spin passes,
-    /// a sleep of 30 microseconds, the name `fps-dp`, no hooks, and the
-    /// default UDP layer.
+    /// a sleep of 30 microseconds, the name `fps-dp`, no hooks, the default
+    /// UDP layer, and no next hop resolution.
     fn default() -> Self {
         Self {
             own: OwnConfig::default(),
@@ -273,6 +301,7 @@ impl Default for DatapathConfig {
             name: "fps-dp".to_owned(),
             hooks: None,
             udp: Some(UdpConfig::default()),
+            neighbors: None,
         }
     }
 }
@@ -286,6 +315,7 @@ impl std::fmt::Debug for DatapathConfig {
             .field("name", &self.name)
             .field("hooks", &self.hooks.is_some())
             .field("udp", &self.udp)
+            .field("neighbors", &self.neighbors)
             .finish_non_exhaustive()
     }
 }
@@ -451,13 +481,23 @@ impl Datapath {
         if lanes.is_empty() {
             return Err(DatapathError::NoLanes);
         }
+        let mut own = config.own.clone();
+        own.resolve_next_hop = config.neighbors.is_some();
+        // One clock for the stack and the neighbor caches of every lane.
+        let clock: Arc<dyn Clock> = Arc::new(MonotonicClock::new());
         let mut running = Vec::with_capacity(lanes.len());
         for (n, lane) in lanes.into_iter().enumerate() {
             let (client_responder, server_responder) = responders(&lane.pools)?;
             let (udp_client, udp_server) = match &config.udp {
                 Some(settings) => {
                     let built = lane.pools.stations()?;
-                    let arm = |station, queue: &dyn FrameIo| {
+                    let defer = config.neighbors.is_some();
+                    let arm = |station: Station, queue: &dyn FrameIo| {
+                        let station = if defer {
+                            station.defer_peers()
+                        } else {
+                            station
+                        };
                         UdpArm::new(station, udp_settings(settings, queue, lane.pools.vlan))
                     };
                     (
@@ -489,12 +529,23 @@ impl Datapath {
                 lane.pools.vlan,
                 hooks(Side::Server, &udp_server),
             );
+            // Each arm resolves through the gateway of its own pool.
+            let resolving = |splitter: Splitter, pool: &HostSlice| match &config.neighbors {
+                Some(settings) => splitter.with_next_hop(
+                    settings.clone(),
+                    Route::of(&pool.pool),
+                    Arc::clone(&clock),
+                ),
+                None => splitter,
+            };
+            let client = resolving(client, &lane.pools.client);
+            let server = resolving(server, &lane.pools.server);
             let stack = OwnStack::with_links_and_pools(
                 Box::new(client),
                 Box::new(server),
-                config.own.clone(),
+                own.clone(),
                 lane.pools.clone(),
-                Arc::new(MonotonicClock::new()),
+                Arc::clone(&clock),
             )?;
             running.push(Running {
                 stack,
@@ -546,6 +597,7 @@ impl Datapath {
         Connector {
             lanes: Arc::clone(&self.lanes),
             timeout: self.config.connect_timeout,
+            resolving: self.config.neighbors.is_some(),
         }
     }
 
@@ -708,6 +760,9 @@ impl Monitor {
 pub struct Connector {
     lanes: Arc<Vec<Running>>,
     timeout: Duration,
+    /// Whether the datapath resolves the next hop, in which case a
+    /// destination need not be a server host of the lane.
+    resolving: bool,
 }
 
 impl std::fmt::Debug for Connector {
@@ -715,6 +770,7 @@ impl std::fmt::Debug for Connector {
         f.debug_struct("Connector")
             .field("lanes", &self.lanes.len())
             .field("timeout", &self.timeout)
+            .field("resolving", &self.resolving)
             .finish()
     }
 }
@@ -722,15 +778,20 @@ impl std::fmt::Debug for Connector {
 impl Connector {
     /// The lane whose client hosts include `source` and whose server hosts
     /// include `destination`. The two addresses are of one family, which is
-    /// IPv4 or IPv6.
+    /// IPv4 or IPv6. A datapath that resolves the next hop takes a destination
+    /// of the family of `source` that no pool serves, because the peer is
+    /// behind a router.
     fn lane_of(&self, source: IpAddr, destination: IpAddr) -> Result<&Running, DatapathError> {
         let lane = self
             .lanes
             .iter()
             .find(|l| index_in(&l.client_hosts, source).is_some())
             .ok_or(DatapathError::UnknownSource(source))?;
-        index_in(&lane.server_hosts, destination)
-            .ok_or(DatapathError::UnknownDestination(destination))?;
+        let known = index_in(&lane.server_hosts, destination).is_some();
+        let routed = self.resolving && source.is_ipv4() == destination.is_ipv4();
+        if !known && !routed {
+            return Err(DatapathError::UnknownDestination(destination));
+        }
         Ok(lane)
     }
 

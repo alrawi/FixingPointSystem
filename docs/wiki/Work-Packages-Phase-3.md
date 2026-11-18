@@ -4,7 +4,7 @@
 
 Gate 3 (v1 release). One 16 vCPU agent meets the tier T1 targets on KVM, multi agent runs aggregate correctly, every image format boots, and the web UI passes its end to end suite.
 
-This page lists 43 work packages. Packages marked critical path gate the phase.
+This page lists 44 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -31,6 +31,7 @@ flowchart LR
   TRN_34["TRN-34<br/>Pacing and faster loss detection in the own stack"]
   TRN_35["TRN-35<br/>The own stacks resolve their next hop"]
   ENG_31["ENG-31<br/>A transport seam in the runtime"]
+  AGT_26["AGT-26<br/>The agent resolves next hops on the datapath"]
   AGT_25["AGT-25<br/>The agent runs its workers on the datapath"]
   CON_35["CON-35<br/>The agent reports the bound XDP mode after a plan"]
   AGT_24["AGT-24<br/>The agent starts the selected backend"]
@@ -101,12 +102,15 @@ flowchart LR
   TRN_35 --> TRN_31
   AGT_24 --> TRN_31
   AGT_25 --> TRN_31
+  AGT_26 --> TRN_31
   CTL_54 --> TRN_31
   TRN_30 --> TRN_33
   TRN_33 --> TRN_34
   TRN_30 --> TRN_35
   TRN_27 --> ENG_31
   TRN_29 --> ENG_31
+  AGT_25 --> AGT_26
+  TRN_35 --> AGT_26
   AGT_24 --> AGT_25
   ENG_31 --> AGT_25
   AGT_24 --> CON_35
@@ -160,11 +164,12 @@ flowchart LR
 | [TRN-28](#trn-28-os-profile-options-for-the-own-stack) | OS profile options for the own stack | S | TRN-24 |  |
 | [TRN-29](#trn-29-udp-over-frameio) | UDP over FrameIo | M | TRN-21, TRN-32, TRN-27 |  |
 | [TRN-30](#trn-30-ipv6-in-the-own-stack) | IPv6 in the own stack | M | TRN-26, TRN-29 |  |
-| [TRN-31](#trn-31-the-af_xdp-transport-becomes-available) | The AF_XDP transport becomes available | S | TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, CTL-54 |  |
+| [TRN-31](#trn-31-the-af_xdp-transport-becomes-available) | The AF_XDP transport becomes available | S | TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, CTL-54 |  |
 | [TRN-33](#trn-33-the-own-stack-api-that-the-datapath-needs) | The own stack API that the datapath needs | S | TRN-30 |  |
 | [TRN-34](#trn-34-pacing-and-faster-loss-detection-in-the-own-stack) | Pacing and faster loss detection in the own stack | M | TRN-33 |  |
 | [TRN-35](#trn-35-the-own-stacks-resolve-their-next-hop) | The own stacks resolve their next hop | S | TRN-30 |  |
 | [ENG-31](#eng-31-a-transport-seam-in-the-runtime) | A transport seam in the runtime | M | TRN-27, TRN-29 |  |
+| [AGT-26](#agt-26-the-agent-resolves-next-hops-on-the-datapath) | The agent resolves next hops on the datapath | S | AGT-25, TRN-35 |  |
 | [AGT-25](#agt-25-the-agent-runs-its-workers-on-the-datapath) | The agent runs its workers on the datapath | S | AGT-24, ENG-31 |  |
 | [CON-35](#con-35-the-agent-reports-the-bound-xdp-mode-after-a-plan) | The agent reports the bound XDP mode after a plan | S | AGT-24 |  |
 | [AGT-24](#agt-24-the-agent-starts-the-selected-backend) | The agent starts the selected backend | S | AGT-22, TRN-27 |  |
@@ -565,7 +570,7 @@ Acceptance.
 
 Phase 3 · size S · workstream TRN
 
-- **Depends on.** TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, CTL-54
+- **Depends on.** TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-35, AGT-24, AGT-25, AGT-26, CTL-54
 - **Paths.** `engine/fps-backend-afxdp/`
 
 Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with native XDP, and a stack without congestion control must not become the default. AGT-24 and CTL-54 prepare the agent and the controller behind the flag first.
@@ -771,6 +776,23 @@ Acceptance.
 - [ ] The fps-hosts API gives the agent the leased addresses of a DHCP pool, so that a later agent change can build the pool at Prepare and filter a DHCP port by those addresses instead of keeping every session.
 
 ## AGT Agent service
+
+### AGT-26 The agent resolves next hops on the datapath
+
+Phase 3 · size S · workstream AGT
+
+- **Depends on.** AGT-25, TRN-35
+- **Paths.** `engine/fps-agent/`
+
+TRN-35 added a neighbor cache to the datapath behind DatapathConfig::neighbors, which the agent leaves off, so an agent run still reads every peer from its pools. Turn it on with NeighborConfig::default when a host pool of the plan carries a gateway, and set OwnConfig::resolve_next_hop for the same sides. DHCP pools take their router from the lease (LeaseTable::router_of) once the DHCP hook of the datapath is wired, which this package records as a gap if it is not.
+
+Deliverables.
+
+- The agent wiring with tests on fake hosts.
+
+Acceptance.
+
+- [ ] A forced AF_XDP run through the agent reaches a kernel peer behind a namespace router with no neighbor entry configured, in CI.
 
 ### AGT-25 The agent runs its workers on the datapath
 
