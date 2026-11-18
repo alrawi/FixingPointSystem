@@ -41,6 +41,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime};
 
+use fps_backend_afxdp::BackendKind;
 use fps_sched::Objective;
 use fps_stats::{Snapshot, SnapshotMeta, Timestamp};
 use tokio::sync::mpsc;
@@ -48,6 +49,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Endpoint;
 
 use crate::assemble::Sides;
+use crate::backend::BackendError;
 use crate::control::{CaptureError, CaptureSettings, Captures, Rates, RatesError, Transfer};
 use crate::convert::{self, plan_from_pb, snapshot_to_pb};
 use crate::identity::{self, Identity, IdentityError, TlsConfig};
@@ -225,6 +227,11 @@ pub struct Config {
     pub tls: Option<TlsConfig>,
     /// What the agent requires of the module signatures of a plan (AGT-04).
     pub policy: ModulePolicy,
+    /// The backend that the agent selected at boot (AGT-24). A run starts
+    /// this backend, and a plan that names another one is refused with
+    /// `ERROR_CODE_FAILED_PRECONDITION`. `None` leaves the choice to the
+    /// plan, as the standalone mode does.
+    pub backend: Option<BackendKind>,
 }
 
 impl Config {
@@ -244,6 +251,7 @@ impl Config {
             captures: CaptureSettings::default(),
             tls: None,
             policy: ModulePolicy::default(),
+            backend: None,
         }
     }
 }
@@ -471,6 +479,14 @@ fn code_of(e: &RunError) -> ErrorCode {
             | ModuleError::Param { .. } => ErrorCode::InvalidArgument,
         },
         RunError::Unimplemented(_) => ErrorCode::Unimplemented,
+        RunError::Backend(b) => match b {
+            BackendError::Mismatch { .. } | BackendError::Open { .. } => {
+                ErrorCode::FailedPrecondition
+            }
+            BackendError::Unsupported(_) => ErrorCode::Unimplemented,
+            BackendError::Plan(_) => ErrorCode::InvalidArgument,
+            BackendError::Datapath(_) => ErrorCode::Internal,
+        },
         RunError::Runtime(_) | RunError::Udp(_) | RunError::Stats(_) | RunError::Output(_) => {
             ErrorCode::Internal
         }
@@ -1047,12 +1063,13 @@ impl Shared {
                 ),
             ));
         }
-        let prepared = run::prepare_with(
+        let prepared = run::prepare_on(
             plan,
             &self.cfg.modules,
             self.cfg.sides,
             &self.cfg.policy,
             &self.captures.key_tap(),
+            self.cfg.backend,
         )
         .map_err(|e| (code_of(&e), chain(&e)))?;
         for warning in prepared.warnings() {

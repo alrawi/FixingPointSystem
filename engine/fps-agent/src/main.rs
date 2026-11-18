@@ -148,6 +148,9 @@ fn connect(args: &[String]) -> ExitCode {
                 kernel = %host.kernel.release,
                 "selected the transport backend"
             );
+            // The runs of this agent start the backend that it selected, and
+            // a plan for another backend is refused (AGT-24).
+            cfg.backend = Some(selection.backend);
             let mut caps = host.capabilities_for(&selection);
             caps.modules = fps_agent::modules::installed(&cfg.modules)
                 .into_iter()

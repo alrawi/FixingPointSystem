@@ -30,7 +30,10 @@ use fps_runtime::{
 use fps_sched::LoadProfile;
 use fps_stats::{metric, Snapshot, SnapshotMeta, StatsError, Timestamp};
 
+use fps_backend_afxdp::BackendKind;
+
 use crate::assemble::{assemble, load_profile, Sides};
+use crate::backend::{self, AfXdpSettings, BackendError, StartedBackend};
 use crate::control::{CaptureCell, Rates};
 use crate::criteria::{evaluate_for, CriterionResult};
 use crate::modules::{self, ModuleError};
@@ -107,6 +110,10 @@ pub enum RunError {
     /// A UDP worker failed.
     #[error("udp runtime")]
     Udp(#[from] UdpError),
+    /// The transport backend of the run did not start, or the plan names
+    /// another backend than the agent runs (AGT-24).
+    #[error(transparent)]
+    Backend(#[from] BackendError),
     /// A snapshot could not be merged or serialized.
     #[error("statistics")]
     Stats(#[from] StatsError),
@@ -242,6 +249,8 @@ fn both_sides(client: &Snapshot, server: &Snapshot) -> Result<Snapshot, StatsErr
 /// assembled, which waits for [`Prepared::start`].
 pub struct Prepared {
     plan: Plan,
+    backend: BackendKind,
+    sides: Sides,
     assembly: crate::assemble::Assembly,
     profile: LoadProfile,
     reports: Side,
@@ -272,10 +281,9 @@ pub fn prepare(
     prepare_with(plan, modules_dir, sides, policy, &KeyTap::new())
 }
 
-/// Like [`prepare`], and the TLS profiles that the scenarios name send the
-/// secrets of their handshakes to `keys`, which a capture that exports TLS keys
-/// reads. A scenario whose `tls_upgrade` names a profile that the agent does
-/// not provide refuses the plan here, see [`tls::scan`].
+/// Like [`prepare`], and the TLS profiles of the run send their secrets to
+/// `keys`. The plan names the backend (the standalone mode), see
+/// [`prepare_on`].
 pub fn prepare_with(
     plan: Plan,
     modules_dir: &Path,
@@ -283,7 +291,28 @@ pub fn prepare_with(
     policy: &ModulePolicy,
     keys: &KeyTap,
 ) -> Result<Prepared, RunError> {
+    prepare_on(plan, modules_dir, sides, policy, keys, None)
+}
+
+/// Like [`prepare_with`], and `selected` is the backend that the agent
+/// selected at boot (AGT-24), or `None` in the standalone mode. The run starts
+/// the selected backend and not the one that the plan names, and a plan that
+/// names another one is refused, see [`backend::resolve`].
+///
+/// The TLS profiles that the scenarios name send the secrets of their
+/// handshakes to `keys`, which a capture that exports TLS keys reads. A
+/// scenario whose `tls_upgrade` names a profile that the agent does not
+/// provide refuses the plan here, see [`tls::scan`].
+pub fn prepare_on(
+    plan: Plan,
+    modules_dir: &Path,
+    sides: Sides,
+    policy: &ModulePolicy,
+    keys: &KeyTap,
+    selected: Option<BackendKind>,
+) -> Result<Prepared, RunError> {
     plan.check()?;
+    let backend = backend::resolve(plan.backend, selected)?;
     let loaded = modules::load(&plan, modules_dir, policy)?;
     let needs = tls::scan(plan.mix.iter().filter_map(|e| {
         loaded
@@ -291,7 +320,7 @@ pub fn prepare_with(
             .get(&e.scenario)
             .map(|s| (e.scenario.as_str(), s))
     }))?;
-    let assembly = assemble(&plan, &loaded, sides)?;
+    let assembly = assemble(&plan, &loaded, sides, backend)?;
     let profile = load_profile(&plan)?;
     let tls = tls::build(plan.seed, &needs, keys)?;
     let reports = if assembly.has_clients() {
@@ -311,6 +340,8 @@ pub fn prepare_with(
     );
     Ok(Prepared {
         plan,
+        backend,
+        sides,
         assembly,
         profile,
         reports,
@@ -353,6 +384,71 @@ impl Prepared {
     /// Like [`Prepared::start`], and the TCP and UDP workers tap the sessions
     /// that begin while `capture` holds a capture.
     pub fn start_with(self, interval: Duration, capture: CaptureCell) -> Result<Active, RunError> {
+        let started = self.start_backend()?;
+        self.start_on(started, interval, capture)
+    }
+
+    /// Returns the backend that the run starts, which is the backend that the
+    /// agent selected or the one that the standalone plan named.
+    pub fn backend(&self) -> BackendKind {
+        self.backend
+    }
+
+    /// Starts the transport backend of the run (AGT-24). The kernel backend
+    /// needs nothing. The AF_XDP backend opens the queues of the plan ports
+    /// and starts the datapath on them, and the result holds the mode that
+    /// each socket bound in, which [`StartedBackend::report`] writes into the
+    /// `xdp_driver_mode` of a [`crate::proto::Capabilities`]. The run logs one
+    /// line per bound port.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunError::Backend`] when a queue does not bind or the
+    /// datapath does not start.
+    pub fn start_backend(&self) -> Result<StartedBackend, RunError> {
+        let started = backend::start(
+            self.backend,
+            &self.plan,
+            self.sides,
+            &AfXdpSettings::default(),
+        )?;
+        for port in started.ports() {
+            tracing::info!(
+                plan_id = %self.plan.plan_id,
+                backend = started.kind().name(),
+                port = %port.name,
+                interface = %port.interface,
+                xdp_driver_mode = port.xdp_mode().proto_name(),
+                "bound the AF_XDP queues of a port"
+            );
+        }
+        Ok(started)
+    }
+
+    /// Like [`Prepared::start_with`], on a backend that [`Prepared::start_backend`]
+    /// started.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunError::Unimplemented`] for the AF_XDP backend: the
+    /// datapath is up, and the bound mode is reported, but the TCP workers of
+    /// `fps-runtime` open kernel sockets only, so no worker can run its
+    /// sessions on the datapath yet. The datapath stops again before the
+    /// error returns, and the queues are released.
+    pub fn start_on(
+        self,
+        started: StartedBackend,
+        interval: Duration,
+        capture: CaptureCell,
+    ) -> Result<Active, RunError> {
+        if let StartedBackend::AfXdp(af_xdp) = started {
+            let ports: Vec<String> = af_xdp.ports().iter().map(ToString::to_string).collect();
+            let _ = af_xdp.stop();
+            return Err(RunError::Unimplemented(format!(
+                "backend af_xdp started its datapath on [{}], but fps-runtime opens sessions on kernel sockets only, so no worker can run on it yet",
+                ports.join("; ")
+            )));
+        }
         let Prepared {
             plan,
             assembly,
@@ -627,7 +723,11 @@ pub fn run(
     }
     writeln!(log, "fps-agent: {}", prepared.summary())?;
     let criteria_plan = prepared.plan().criteria.clone();
-    let mut active = prepared.start(opts.interval)?;
+    let started = prepared.start_backend()?;
+    for port in started.ports() {
+        writeln!(log, "fps-agent: backend af_xdp bound {port}")?;
+    }
+    let mut active = prepared.start_on(started, opts.interval, CaptureCell::new())?;
     let mut printer = Printer {
         out,
         plan_id: active.plan().plan_id.clone(),

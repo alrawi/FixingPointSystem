@@ -180,6 +180,12 @@ struct Harness {
 
 impl Harness {
     async fn start(agent_id: &str) -> Self {
+        Self::start_on(agent_id, None).await
+    }
+
+    /// Starts an agent that selected `backend` at boot (AGT-24), or one that
+    /// leaves the backend to the plan.
+    async fn start_on(agent_id: &str, backend: Option<fps_backend_afxdp::BackendKind>) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
         let shared = Arc::new(Shared::default());
@@ -203,6 +209,7 @@ impl Harness {
             max: Duration::from_millis(400),
         };
         cfg.capabilities.engine_api = "0.1.0".into();
+        cfg.backend = backend;
         let (stop_agent, rx) = oneshot::channel::<()>();
         let agent = tokio::spawn(async move {
             serve(cfg, async {
@@ -481,6 +488,42 @@ async fn a_bad_plan_fails_prepare_and_leaves_the_state_unchanged() {
 
     let hb = h.wait_state(AgentState::Idle).await;
     assert_eq!(hb.plan_id, "");
+    h.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_plan_for_another_backend_than_the_selected_one_fails_prepare() {
+    use fps_backend_afxdp::BackendKind;
+    // An agent that selected the kernel backend refuses a plan for AF_XDP,
+    // with a code that tells the controller the agent cannot run it, and it
+    // still prepares a plan for the kernel backend.
+    let mut h = Harness::start_on("agent-a", Some(BackendKind::Kernel)).await;
+    h.wait_state(AgentState::Idle).await;
+    let mut plan = loopback_plan(87, 88, 18_480, 15_753, phases(1, 1));
+    plan.backend = pb::Backend::AfXdp as i32;
+    let r = h.command(prepare(&plan)).await;
+    assert_eq!(error_code(&r), Some(ErrorCode::FailedPrecondition), "{r:?}");
+    let message = r
+        .error
+        .as_ref()
+        .map(|e| e.message.clone())
+        .unwrap_or_default();
+    assert!(
+        message.contains("asks for backend af_xdp") && message.contains("runs kernel"),
+        "{message}"
+    );
+    h.wait_state(AgentState::Idle).await;
+    let plan = loopback_plan(87, 88, 18_480, 15_753, phases(1, 1));
+    assert!(h.command(prepare(&plan)).await.error.is_none());
+    h.shutdown().await;
+
+    // The reverse: an agent that selected AF_XDP does not run a kernel plan
+    // on kernel sockets while it reports AF_XDP.
+    let mut h = Harness::start_on("agent-a", Some(BackendKind::AfXdp)).await;
+    h.wait_state(AgentState::Idle).await;
+    let plan = loopback_plan(89, 90, 18_580, 15_853, phases(1, 1));
+    let r = h.command(prepare(&plan)).await;
+    assert_eq!(error_code(&r), Some(ErrorCode::FailedPrecondition), "{r:?}");
     h.shutdown().await;
 }
 

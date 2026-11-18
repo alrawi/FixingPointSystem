@@ -22,6 +22,8 @@ fps-backend-afxdp = { path = "../fps-backend-afxdp" }
 fps-backend-kernel = { path = "../fps-backend-kernel" }
 # The session capture ring that StartCapture and StopCapture serve.
 fps-capture = { path = "../fps-capture" }
+# The user space datapath that the AF_XDP backend runs on the queues of the plan ports (AGT-24).
+fps-datapath = { path = "../fps-datapath" }
 fps-flow = { path = "../fps-flow" }
 fps-hosts = { path = "../fps-hosts" }
 fps-interp = { path = "../fps-interp" }
@@ -50,6 +52,8 @@ fps-module-tls = { path = "../../modules/tls/native" }
 fps-runtime = { path = "../fps-runtime" }
 fps-sched = { path = "../fps-sched" }
 fps-stats = { path = "../fps-stats" }
+# HostSlice and Pools, the host pools that a datapath lane serves (AGT-24).
+fps-tcp-own = { path = "../fps-tcp-own" }
 # CloseReason of the extension sessions that the UDP workers close, and the
 # limits of the extensions that the agent loads (AGT-11).
 fps-wasm = { path = "../fps-wasm" }
