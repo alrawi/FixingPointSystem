@@ -23,7 +23,10 @@
 # https://archive.ubuntu.com/ubuntu, and https://security.ubuntu.com/ubuntu for
 # the security suite, with the components and Signed-By as they are. A failed
 # install attempt applies the same fallback once, refreshes the lists, and
-# retries. Options before the package names go to apt-get install, and
+# retries. The fallback also sets aside every other file in the directory of
+# the sources file (renamed to NAME.fps-ci-disabled, which apt ignores): on
+# 2026-11-27 the image's packages.microsoft.com source answered 403 and failed
+# every update (bug #696), and CI installs only Ubuntu packages. Options before the package names go to apt-get install, and
 # --install-recommends drops the default --no-install-recommends, so a step
 # that installs with recommends keeps doing so. DEBIAN_FRONTEND is
 # noninteractive, and the script uses sudo unless it already runs as root.
@@ -36,6 +39,8 @@
 #   FPS_APT_RETRY_DELAY_S      seconds between two attempts            (default 5)
 #   FPS_APT_CONF               the apt.conf.d file to write
 #   FPS_APT_SOURCES            the deb822 sources file of the fallback
+#   FPS_APT_SOURCES_DIR        the directory whose other sources the fallback
+#                              sets aside (default: that of FPS_APT_SOURCES)
 set -euo pipefail
 
 attempts=${FPS_APT_ATTEMPTS:-3}
@@ -45,6 +50,7 @@ kill_after=${FPS_APT_KILL_AFTER_S:-30}
 retry_delay=${FPS_APT_RETRY_DELAY_S:-5}
 conf=${FPS_APT_CONF:-/etc/apt/apt.conf.d/zzz-fps-ci}
 sources=${FPS_APT_SOURCES:-/etc/apt/sources.list.d/ubuntu.sources}
+sources_dir=${FPS_APT_SOURCES_DIR:-$(dirname "$sources")}
 archive=https://archive.ubuntu.com/ubuntu
 security=https://security.ubuntu.com/ubuntu
 
@@ -99,6 +105,7 @@ use_direct_archive() {
     return 0
   fi
   fallback_done=1
+  set_aside_other_sources
   if [[ ! -f $sources ]]; then
     echo "apt-install.sh: $sources does not exist, so the sources stay as they are"
     return 0
@@ -117,6 +124,21 @@ use_direct_archive() {
       print $0 "\n\n"
     }' "$sources")
   printf '%s\n' "$rewritten" | as_root tee "$sources" >/dev/null
+}
+
+# set_aside_other_sources renames every .list and .sources file in the sources
+# directory, other than the Ubuntu sources file, to NAME.fps-ci-disabled. apt
+# ignores files with that extension, so a third party source that fails (such
+# as the image's packages.microsoft.com, bug #696) no longer fails the update.
+set_aside_other_sources() {
+  local f
+  [[ -d $sources_dir ]] || return 0
+  for f in "$sources_dir"/*.list "$sources_dir"/*.sources; do
+    [[ -f $f ]] || continue
+    [[ $f -ef $sources ]] && continue
+    echo "apt-install.sh: setting aside $f"
+    as_root mv -f "$f" "$f.fps-ci-disabled"
+  done
 }
 
 # describe EXIT_CODE says what ended an attempt.
