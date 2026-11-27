@@ -102,6 +102,7 @@ run() {
   : > "$log"
   printf '%s\n' "$@" > "$dir/plan"
   printf '%s\n' "$sources_before" > "$dir/ubuntu.sources"
+  printf '%s\n' 'deb [arch=amd64] https://packages.microsoft.com/ubuntu/24.04/prod noble main' > "$dir/microsoft-prod.list"
   rc=0
   out=$(
     PATH="$tmp/bin:$PATH" \
@@ -113,6 +114,7 @@ run() {
   ) || rc=$?
   conf_file=$dir/apt.conf.d/zzz-fps-ci
   sources_file=$dir/ubuntu.sources
+  third_party=$dir/microsoft-prod.list
 }
 calls() { grep -c "^$1" "$log" || true; }
 
@@ -143,6 +145,11 @@ if [[ $(cat "$sources_file") == "$sources_before" ]]; then
 else
   fail "a successful update leaves the sources file alone"
 fi
+if [[ -f $third_party && ! -e $third_party.fps-ci-disabled ]]; then
+  pass "a successful update leaves third party sources alone"
+else
+  fail "a successful update leaves third party sources alone"
+fi
 
 # 2. An update that sleeps past the limit is stopped and retried.
 args=(iproute2)
@@ -167,6 +174,11 @@ if ((rc == 0)) && [[ $(cat "$sources_file") == "$sources_after" ]]; then
 else
   fail "a failed update points the sources at archive.ubuntu.com and security.ubuntu.com (exit $rc)"
   diff <(printf '%s\n' "$sources_after") "$sources_file" || true
+fi
+if [[ ! -e $third_party && -f $third_party.fps-ci-disabled && -f $sources_file ]]; then
+  pass "a failed update sets aside third party sources and keeps the Ubuntu one (bug #696)"
+else
+  fail "a failed update sets aside third party sources and keeps the Ubuntu one (bug #696)"
 fi
 
 # 4. Three failed updates end with a nonzero exit and the named message.
