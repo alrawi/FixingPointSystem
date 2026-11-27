@@ -641,8 +641,15 @@ pub fn start_af_xdp(
             });
         match opened {
             Ok((c, s)) => break (layout_of_lanes, c, s),
-            Err(e) if n > 1 => {
-                tracing::debug!(lanes = n, error = %e, "the queues did not bind, trying fewer lanes");
+            // EINVAL is what a bind to a queue that the port lacks returns.
+            // Any other error (a busy queue, no privilege) is the caller's.
+            Err(BackendError::Open { ref source, .. })
+                if n > 1 && source.raw_os_error() == Some(22) =>
+            {
+                tracing::info!(
+                    lanes = n,
+                    "a port has fewer queues than lanes, trying fewer lanes"
+                );
                 limit = n - 1;
             }
             Err(e) => return Err(e),
