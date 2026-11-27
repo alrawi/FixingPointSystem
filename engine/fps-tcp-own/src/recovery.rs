@@ -789,7 +789,17 @@ impl Recovery {
         if !self.is_original(last) {
             return;
         }
-        if let Some(ts) = self.log.time_of(last) {
+        // The log holds data only, so a FIN that the receiver selectively
+        // acknowledged has no entry. It left with or after the last flight, so
+        // the time of that flight is the one that counts: without it a lost
+        // last segment behind a SACKed FIN waits for the retransmission
+        // timeout (bug 687).
+        let ts = self.log.time_of(last).or_else(|| {
+            (self.log.end() == Some(last))
+                .then(|| self.log.time_of(last.wrapping_sub(1)))
+                .flatten()
+        });
+        if let Some(ts) = ts {
             self.rack.delivered(ts, high, now);
         }
     }
@@ -805,8 +815,14 @@ impl Recovery {
             .lost_to(&self.log, now)
             .filter(|&to| seq_lt(una, to));
         self.sb.set_rack_lost(lost);
+        // What `snd_una` passed is delivered, so a loss call at or below it
+        // (the filter above drops it) leaves the same open range as one at
+        // `una`. Without this a flight that left at the reading of the clock
+        // of the delivered segment, above its end, looked like a segment
+        // that waits for its window and was due at once (bug 687).
+        let after = lost.unwrap_or(una);
         self.reo_at = if self.sb.ranges() > 0 {
-            self.rack.reorder_deadline(&self.log, now, lost)
+            self.rack.reorder_deadline(&self.log, now, Some(after))
         } else {
             None
         };
@@ -933,6 +949,59 @@ mod tests {
         r.time_segment(499, 0);
         assert_eq!(r.take_sample(u32::MAX - 10, 10), None);
         assert_eq!(r.take_sample(600, 77), Some(77));
+    }
+
+    // ---- RACK (bug 687) ----
+
+    /// The state that a hung transfer showed: the delivered segment ended at
+    /// `snd_una` and left at the same reading of the clock as the flight
+    /// above it, which holds one segment behind a hole and the FIN. The
+    /// flight is not older than the delivered segment, so RACK has nothing to
+    /// wait for. The reordering timer was due at `now` again and again.
+    #[test]
+    fn a_flight_of_the_delivered_segments_reading_sets_no_reordering_timer() {
+        let (una, end, t) = (834_603_468u32, 834_604_452u32, 860_462i64);
+        let mut r = Recovery::new(CongestionControl::NewReno, MSS, 10, una);
+        r.feat.rack = true;
+        r.log.push(una, end, t);
+        // A round trip of 1 us was seen, so the window is its floor of 100 us.
+        r.rack.note_rtt(1);
+        r.rack.delivered(t as u32, una, t + 12_682);
+        // The FIN above the flight is selectively acknowledged.
+        r.sb.update(una, end + 1, &[(end, end + 1)]);
+        assert_eq!(r.sb.ranges(), 1);
+        let now = 873_259;
+        r.rack_detect(now, una);
+        assert_eq!(r.sb.rack_lost(), None);
+        assert_eq!(r.reo_at, None, "due at {:?}, now is {now}", r.reo_at);
+    }
+
+    #[test]
+    fn a_hole_below_the_delivered_segment_still_waits_for_the_window() {
+        let (una, t) = (1000u32, 5_000i64);
+        let mut r = Recovery::new(CongestionControl::NewReno, MSS, 10, una);
+        r.feat.rack = true;
+        r.log.push(una, 3000, t);
+        r.log.push(3000, 4000, t + 100);
+        r.rack.delivered((t + 100) as u32, 4000, t + 10_100);
+        r.sb.update(una, 4000, &[(3000, 4000)]);
+        r.rack_detect(t + 10_200, una);
+        // The first flight turns lost 10,000 + 2,500 after it left.
+        assert_eq!(r.reo_at, Some(t + 12_500));
+    }
+
+    #[test]
+    fn a_sacked_fin_marks_the_last_segment_before_it_lost() {
+        let (una, end, t) = (5_000u32, 6_000u32, 1_000i64);
+        let mut r = Recovery::new(CongestionControl::NewReno, MSS, 10, una);
+        r.feat.rack = true;
+        r.log.push(una, end, t);
+        // Only the FIN (one sequence number past the data) was SACKed.
+        r.sb.update(una, end + 1, &[(end, end + 1)]);
+        r.rack_on_sack(t + 10_000);
+        assert!(r.rack.valid());
+        r.rack_detect(t + 10_000 + 20_000, una);
+        assert_eq!(r.sb.rack_lost(), Some(end + 1));
     }
 
     // ---- Duplicate acknowledgments ----

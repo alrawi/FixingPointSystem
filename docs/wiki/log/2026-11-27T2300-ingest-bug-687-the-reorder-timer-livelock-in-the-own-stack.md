@@ -1,0 +1,16 @@
+## [2026-11-27] ingest | bug 687 The reorder timer of the own stack no longer livelocks
+
+Issue #687: the row "own client to kernel server, bottleneck with tail drop, loss switches on" of `interop_kernel` failed with "the peer did not report in time", first once on PR #683 and then often (PR #691). The own client was not slow and not stalled on a timer: it spun in `Host::expire`. The reorder timer of RACK set itself for the reading of the clock at which it fired, `expire` ran it again at that reading without end, and `OwnStack::pump` held the lock of the stack, so the client could not report its own timeout of 90 s. The parent gave up after 120 s plus 2 s. The suspects of the issue (a probe or reorder timer that is not rearmed, a timeout that is too tight) were half right: it was the reorder timer, but it was rearmed too eagerly, and no timeout is widened.
+
+Cause. After a SACK that covered only the FIN above a one segment hole, with the delivered segment ending at `snd_una` and sent at the same microsecond as the flight above it, `rack_detect` passed `None` as the end of the lost range to `reorder_deadline`. The call looked at the first flight of the log, which is not older than the delivered segment and so cannot wait for a window, and returned a deadline that was already past.
+
+Fix. `Recovery::rack_detect` passes `snd_una` when RACK calls nothing lost above it. `Host::on_probe_timer` keeps the reorder timer at least 1 us ahead of the clock, so a wrong deadline can never hold the lock again.
+
+Evidence. A trace at the timer showed `now`, `snd_una`, the log, the RACK state and the scoreboard of the hang. The unit test `a_flight_of_the_delivered_segments_reading_sets_no_reordering_timer` builds that state and fails without the fix ("due at Some(873259), now is 873259"). The row ran 5 times out of about 80 with the hang in the sandbox before the fix (veth and tbf namespaces, the `ip` package installed) and 200 times out of 200 without it.
+
+Two follow-ups on PR #698 (the `interop` job of the first fix failed the goodput check: 15.63 against 19.23 Mbit/s with 6 retransmissions). Not HyStart and not the timer change: the same tail event that used to hang now ended at the retransmission timeout of 200 ms, in two forms that the counters showed (`timeouts=1`, `tlp=0`). (1) A SACKed FIN has no entry in the send log, so RACK never saw the delivery and the last segment before the FIN waited for the timeout; `Recovery::rack_on_sack` now uses the time of the last flight. (2) A retransmission lost at the tail needed more than two later segments SACKed to be found; `Scoreboard::detect_lost_rexmit` now takes `snd_max` and asks for no margin when everything that was sent is acknowledged. 500 of 500 runs passed with no timeout, the slowest at 19.08 Mbit/s, and the 90 percent threshold is unchanged.
+
+### Shared page notes
+
+- Module Development, "Watch out for": nothing for module authors. The lesson for anyone who writes a timer loop: a timer that can re-arm itself for `now` must not run in a loop that holds a lock at one reading of the clock.
+- Testing: `tests/interop_kernel.rs` waits `timeout + 30 s` for a peer that holds a lock it needs for its own timeout. The wait is right, and a hang shows as 122 s, which is the signature of this bug.
