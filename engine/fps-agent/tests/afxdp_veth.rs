@@ -67,7 +67,19 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 const MARK: &str = "fps-agent-afxdp ";
 const TEST: &str = "a_forced_af_xdp_run_starts_the_datapath_on_a_veth_pair";
 const TEST_V6: &str = "a_forced_af_xdp_run_over_ipv6_pools_starts_the_datapath_on_a_veth_pair";
+const TEST_Q4: &str = "four_workers_on_a_veth_pair_with_four_queues_run_on_four_lanes";
 const PORT: u16 = 8080;
+
+/// The number of queues of each end of the veth pair, which is also the
+/// number of plan workers of the run (AGT-30). The parent test names it for
+/// the helper.
+fn queues_from_env() -> u32 {
+    std::env::var("FPS_AGENT_AFXDP_QUEUES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1)
+        .max(1)
+}
 
 /// The address family of the pools of a run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,13 +138,31 @@ fn skip(why: &str) {
 struct Namespace(String);
 
 impl Namespace {
-    fn up(name: &str) -> Result<Self, String> {
+    fn up(name: &str, queues: u32) -> Result<Self, String> {
         run_cmd("ip", &["netns", "add", name])?;
         let ns = Self(name.to_owned());
+        let q = queues.to_string();
         run_cmd(
             "ip",
             &[
-                "-n", name, "link", "add", "dpa", "type", "veth", "peer", "name", "dpb",
+                "-n",
+                name,
+                "link",
+                "add",
+                "dpa",
+                "numrxqueues",
+                &q,
+                "numtxqueues",
+                &q,
+                "type",
+                "veth",
+                "peer",
+                "name",
+                "dpb",
+                "numrxqueues",
+                &q,
+                "numtxqueues",
+                &q,
             ],
         )?;
         for dev in ["dpa", "dpb"] {
@@ -154,18 +184,26 @@ fn contracts() -> PathBuf {
 
 #[test]
 fn a_forced_af_xdp_run_starts_the_datapath_on_a_veth_pair() {
-    drive(TEST, Family::V4);
+    drive(TEST, Family::V4, 1);
 }
 
 #[test]
 fn a_forced_af_xdp_run_over_ipv6_pools_starts_the_datapath_on_a_veth_pair() {
-    drive(TEST_V6, Family::V6);
+    drive(TEST_V6, Family::V6, 1);
+}
+
+/// AGT-30: the veth pair has four queues on each end and the plan four
+/// workers, so a forced AF_XDP run starts four lanes. Each lane carries
+/// sessions, and the totals of the lanes match the sessions of the run.
+#[test]
+fn four_workers_on_a_veth_pair_with_four_queues_run_on_four_lanes() {
+    drive(TEST_Q4, Family::V4, 4);
 }
 
 /// Runs the helper of `family` in a namespace and checks what it reports.
 /// `test` is the name of the calling test, which a run as a normal user
 /// starts again under `sudo -n`.
-fn drive(test: &str, family: Family) {
+fn drive(test: &str, family: Family, queues: u32) {
     let root = run_cmd("id", &["-u"]).is_ok_and(|s| s.trim() == "0");
     if !root {
         if run_cmd("sudo", &["-n", "true"]).is_err() {
@@ -196,8 +234,12 @@ fn drive(test: &str, family: Family) {
         Err(e) => return skip(&format!("capability detection failed: {e}")),
     }
     // Both tests run in one process, so the family is part of the name.
-    let name = format!("ag{}{}", std::process::id() % 100_000, &family.name()[3..]);
-    let ns = match Namespace::up(&name) {
+    let name = format!(
+        "ag{}{}q{queues}",
+        std::process::id() % 100_000,
+        &family.name()[3..]
+    );
+    let ns = match Namespace::up(&name, queues) {
         Ok(ns) => ns,
         Err(e) => return skip(&format!("the namespace did not come up: {e}")),
     };
@@ -209,6 +251,7 @@ fn drive(test: &str, family: Family) {
         .args(["--ignored", "--exact", "helper_afxdp", "--nocapture"])
         .env("FPS_AGENT_AFXDP_ROLE", "run")
         .env("FPS_AGENT_AFXDP_FAMILY", family.name())
+        .env("FPS_AGENT_AFXDP_QUEUES", queues.to_string())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
@@ -225,8 +268,10 @@ fn drive(test: &str, family: Family) {
     }
     assert!(status.success(), "the helper failed: {lines:?}");
     let pools = format!("pools family={}", family.name());
+    let lanes = format!("lanes started={queues} carrying={queues}");
     for want in [
         pools.as_str(),
+        lanes.as_str(),
         "selected backend=af_xdp",
         "port client0 interface dpa",
         "port server0 interface dpb",
@@ -267,7 +312,7 @@ fn say(msg: &str) {
 }
 
 /// The example plan on the two ends of the veth pair with the AF_XDP backend.
-fn af_xdp_plan(family: Family) -> Json {
+fn af_xdp_plan(family: Family, workers: u32) -> Json {
     let text = std::fs::read_to_string(contracts().join("examples/plans/http_dns_smoke.json"))
         .expect("example plan");
     let mut plan: Json = serde_json::from_str(&text).expect("example plan JSON");
@@ -293,38 +338,36 @@ fn af_xdp_plan(family: Family) -> Json {
             }
         }
     }
-    plan["hostPools"][0]["poolCount"] = 4.into();
-    plan["hostPools"][0]["count"] = 4.into();
+    // Two clients and one server host for each plan worker.
+    plan["hostPools"][0]["poolCount"] = (2 * workers).into();
+    plan["hostPools"][0]["count"] = (2 * workers).into();
+    plan["hostPools"][1]["poolCount"] = workers.into();
+    plan["hostPools"][1]["count"] = workers.into();
     // One OS profile for each side (TRN-28): the own stack writes them into
     // the SYN and the SYN-ACK.
     plan["hostPools"][0]["osProfile"] = "windows11".into();
     plan["hostPools"][1]["osProfile"] = "linux6".into();
-    // Two plan workers with a server host each: both listen on 8080 and 53.
-    plan["workers"] = serde_json::json!([
-        {
-            "core": 0,
-            "hosts": [
-                { "pool": "clients", "count": 2 },
-                { "pool": "servers", "count": 1 }
-            ],
-            "rates": [
-                { "mixEntry": "web_get", "sessionsPerSecond": 10 },
-                { "mixEntry": "dns_lookup", "sessionsPerSecond": 5 }
-            ]
-        },
-        {
-            "workerId": 1,
-            "core": 0,
-            "hosts": [
-                { "pool": "clients", "offset": 2, "count": 2 },
-                { "pool": "servers", "offset": 1, "count": 1 }
-            ],
-            "rates": [
-                { "mixEntry": "web_get", "sessionsPerSecond": 10 },
-                { "mixEntry": "dns_lookup", "sessionsPerSecond": 5 }
-            ]
-        }
-    ]);
+    // One plan worker per queue, each with its own hosts: the agent starts
+    // one lane per worker (AGT-30), and the workers of one lane listen on
+    // 8080 and 53 at their own server host.
+    plan["workers"] = Json::Array(
+        (0..workers)
+            .map(|w| {
+                serde_json::json!({
+                    "workerId": w,
+                    "core": 0,
+                    "hosts": [
+                        { "pool": "clients", "offset": 2 * w, "count": 2 },
+                        { "pool": "servers", "offset": w, "count": 1 }
+                    ],
+                    "rates": [
+                        { "mixEntry": "web_get", "sessionsPerSecond": 10 },
+                        { "mixEntry": "dns_lookup", "sessionsPerSecond": 5 }
+                    ]
+                })
+            })
+            .collect(),
+    );
     plan["load"]["phases"] = serde_json::json!([
         { "name": "steady", "duration": "3s", "shape": "PHASE_SHAPE_HOLD",
           "startFraction": 1, "endFraction": 1 }
@@ -375,13 +418,15 @@ fn helper_afxdp() {
         return;
     }
     let family = Family::from_env();
-    let dir =
-        Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("fps-agent-afxdp-{}", family.name()));
+    let queues = queues_from_env();
+    // The tests run in parallel, so each shape has a plan file of its own.
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("fps-agent-afxdp-{}-q{queues}", family.name()));
     std::fs::create_dir_all(&dir).expect("plan dir");
     let path = dir.join("af_xdp_plan.json");
     std::fs::write(
         &path,
-        serde_json::to_string_pretty(&af_xdp_plan(family)).unwrap(),
+        serde_json::to_string_pretty(&af_xdp_plan(family, queues)).unwrap(),
     )
     .unwrap();
     let modules = contracts().join("examples/modules");
@@ -442,7 +487,17 @@ fn helper_afxdp() {
     for port in backend.ports() {
         say(&format!("{port}"));
         assert_ne!(port.xdp_mode(), XdpMode::Unspecified, "{port}");
-        assert_eq!(port.queues.len(), 1, "{port}");
+        assert_eq!(port.queues.len(), queues as usize, "{port}");
+    }
+    // One lane per worker, each with the hosts of its worker (AGT-30).
+    let layout = backend.lane_layout();
+    assert_eq!(layout.lanes.len(), queues as usize, "{layout:?}");
+    assert_eq!(layout.note, None);
+    for (k, lane) in layout.lanes.iter().enumerate() {
+        let k = u32::try_from(k).expect("a lane index");
+        assert_eq!(lane.workers, vec![k]);
+        assert_eq!((lane.client.offset, lane.client.count), (2 * k, 2));
+        assert_eq!((lane.server.offset, lane.server.count), (k, 1));
     }
     let started = StartedBackend::AfXdp(backend);
     // 3. The mode reaches PortInfo.xdp_driver_mode of the ports that were bound.
@@ -569,27 +624,54 @@ fn helper_afxdp() {
     }
     assert_eq!(client.counter_total(metric::SESSIONS_FAILED), 0, "{log}");
     assert_eq!(server.counter_total(metric::SESSIONS_FAILED), 0, "{log}");
-    // The frames of the sessions went through the AF_XDP queues of the lane.
-    assert_eq!(summary.lanes.len(), 1);
-    let lane = &summary.lanes[0];
-    assert!(!lane.panicked, "{lane:?}");
-    assert!(
-        lane.stats.client.tcp > 0 && lane.stats.server.tcp > 0,
-        "{lane:?}"
-    );
-    assert!(lane.stats.udp_client.tx_datagrams > 0, "{lane:?}");
-    assert!(lane.stats.udp_server.rx_accepted > 0, "{lane:?}");
-    assert_eq!(lane.stats.udp_client.rx_no_listener, 0, "{lane:?}");
-    // No frame needed a neighbor resolution, because no pool names a gateway.
-    // (Frames that the kernel of the namespace sends on its own, such as
-    // multicast listener reports, are counted as other protocols, so the test
-    // does not pin `other_dropped`.)
-    for (side, frames) in [
-        ("client", &lane.stats.client),
-        ("server", &lane.stats.server),
-    ] {
-        assert_eq!(frames.neighbor_requests, 0, "{side}: {frames:?}");
+    // The frames of the sessions went through the AF_XDP queues of every
+    // lane: one lane per worker, and each carries sessions (AGT-30).
+    assert_eq!(summary.lanes.len(), queues as usize, "{:?}", summary.lanes);
+    for (k, lane) in summary.lanes.iter().enumerate() {
+        assert!(!lane.panicked, "lane {k}: {lane:?}");
+        assert!(
+            lane.stats.client.tcp > 0 && lane.stats.server.tcp > 0,
+            "lane {k}: {lane:?}"
+        );
+        assert!(lane.stats.udp_client.tx_datagrams > 0, "lane {k}: {lane:?}");
+        assert!(lane.stats.udp_server.rx_accepted > 0, "lane {k}: {lane:?}");
+        assert_eq!(
+            lane.stats.udp_client.rx_no_listener, 0,
+            "lane {k}: {lane:?}"
+        );
+        // No frame needed a neighbor resolution, because no pool names a
+        // gateway. (Frames that the kernel of the namespace sends on its own,
+        // such as multicast listener reports, are counted as other protocols,
+        // so the test does not pin `other_dropped`.)
+        for (side, frames) in [
+            ("client", &lane.stats.client),
+            ("server", &lane.stats.server),
+        ] {
+            assert_eq!(frames.neighbor_requests, 0, "lane {k} {side}: {frames:?}");
+        }
     }
+    // The totals match the plan: every dns session of the run is one query
+    // datagram on exactly one lane, and the sessions of each worker add up to
+    // the sessions of the run.
+    let dns_ok = count(client, metric::SESSIONS_SUCCEEDED, "dns", "client");
+    let sent: u64 = summary
+        .lanes
+        .iter()
+        .map(|l| l.stats.udp_client.tx_datagrams)
+        .sum();
+    assert_eq!(
+        sent, dns_ok,
+        "the lanes sent {sent} queries for {dns_ok} dns sessions"
+    );
+    let carrying = summary
+        .lanes
+        .iter()
+        .filter(|l| l.stats.client.tcp > 0 && l.stats.udp_client.tx_datagrams > 0)
+        .count();
+    say(&format!(
+        "lanes started={} carrying={carrying}",
+        summary.lanes.len()
+    ));
     say(&format!("run outcome=pass sessions {}", sessions.join(" ")));
 
     // The lease of a queue ends with the run, so a second start works.

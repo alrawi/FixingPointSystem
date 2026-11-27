@@ -464,6 +464,16 @@ impl Prepared {
                 "bound the AF_XDP queues of a port"
             );
         }
+        for (k, lane) in started.lane_specs().iter().enumerate() {
+            tracing::info!(
+                plan_id = %self.plan.plan_id,
+                lane = k,
+                workers = ?lane.workers,
+                client_hosts = %format!("{}+{}", lane.client.offset, lane.client.count),
+                server_hosts = %format!("{}+{}", lane.server.offset, lane.server.count),
+                "started a datapath lane"
+            );
+        }
         Ok(started)
     }
 

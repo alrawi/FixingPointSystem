@@ -52,8 +52,19 @@ fn plan_json() -> Json {
 }
 
 fn queues() -> Vec<(Box<dyn FrameIo>, Box<dyn FrameIo>)> {
-    let (client, server) = frame_pair(2048, 1600);
-    vec![(Box::new(client), Box::new(server))]
+    queue_pairs(1)
+}
+
+fn queue_pairs(n: usize) -> Vec<(Box<dyn FrameIo>, Box<dyn FrameIo>)> {
+    (0..n)
+        .map(|_| {
+            let (client, server) = frame_pair(2048, 1600);
+            (
+                Box::new(client) as Box<dyn FrameIo>,
+                Box::new(server) as Box<dyn FrameIo>,
+            )
+        })
+        .collect()
 }
 
 fn try_prepare(name: &str, plan: &Json) -> Result<fps_agent::run::Prepared, Box<RunError>> {
@@ -94,7 +105,14 @@ fn count(total: &Snapshot, name: MetricId, application: &str, side: &str) -> u64
 }
 
 fn run_to_the_end(prepared: fps_agent::run::Prepared) -> fps_agent::run::Finished {
-    let backend = start_on_queues(prepared.plan(), Sides::Both, queues()).expect("the datapath");
+    run_on(prepared, queues())
+}
+
+fn run_on(
+    prepared: fps_agent::run::Prepared,
+    queues: Vec<(Box<dyn FrameIo>, Box<dyn FrameIo>)>,
+) -> fps_agent::run::Finished {
+    let backend = start_on_queues(prepared.plan(), Sides::Both, queues).expect("the datapath");
     let mut active = prepared
         .start_on(
             StartedBackend::AfXdp(Box::new(backend)),
@@ -179,4 +197,34 @@ fn a_dropped_run_stops_the_datapath_and_its_listeners() {
     active.abort();
     // `abort` ends the workers and stops the backend.
     assert_eq!(transport.open_ports(), (0, 0));
+}
+
+/// AGT-30: with a queue pair for each of the two plan workers, the datapath
+/// starts two lanes, each with the hosts of its worker, and both carry
+/// sessions. Queue pairs beyond the workers stay unused.
+#[test]
+fn the_lanes_follow_the_workers_of_the_plan() {
+    for pairs in [2, 3] {
+        let finished = run_on(prepare("lanes.json", &plan_json()), queue_pairs(pairs));
+        assert_eq!(finished.lanes.len(), 2, "{pairs} queue pairs, two workers");
+        let (client, server) = (
+            finished.client.as_ref().expect("client totals"),
+            finished.server.as_ref().expect("server totals"),
+        );
+        for (k, lane) in finished.lanes.iter().enumerate() {
+            assert!(!lane.panicked, "lane {k}");
+            assert!(lane.stats.client.tcp > 0, "lane {k}: {:?}", lane.stats);
+            assert!(lane.stats.server.tcp > 0, "lane {k}: {:?}", lane.stats);
+            assert!(lane.stats.udp_client.tx_datagrams > 0, "lane {k}");
+        }
+        let dns = count(client, metric::SESSIONS_SUCCEEDED, "dns", "client");
+        let sent: u64 = finished
+            .lanes
+            .iter()
+            .map(|l| l.stats.udp_client.tx_datagrams)
+            .sum();
+        assert_eq!(sent, dns, "every dns session is one datagram on one lane");
+        assert_eq!(client.counter_total(metric::SESSIONS_FAILED), 0);
+        assert_eq!(server.counter_total(metric::SESSIONS_FAILED), 0);
+    }
 }

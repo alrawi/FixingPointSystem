@@ -69,13 +69,12 @@ use fps_backend_afxdp::{
     open_port, AfXdpError, BackendKind, BoundMode, FrameIo, OpenedPort, PortConfig, QueueConfig,
     XdpMode as Attach,
 };
-use fps_datapath::{
-    split_pools, Datapath, DatapathConfig, DatapathError, Lane, LaneReport, NeighborConfig,
-};
+use fps_datapath::{Datapath, DatapathConfig, DatapathError, Lane, LaneReport, NeighborConfig};
 use fps_hosts::HostRange;
 use fps_tcp_own::{HostSlice, OsProfile, OwnConfig, Pools};
 
 use crate::assemble::{pool_of, Sides};
+use crate::lanes::{self, LaneLayout, LaneSpec};
 use crate::plan::{Backend, HostPoolSlice, HostRole, Plan, Topology};
 use crate::proto::{Capabilities, XdpMode};
 use crate::run::RunError;
@@ -233,7 +232,9 @@ impl fmt::Display for BoundPort {
 /// The settings of the AF_XDP backend.
 #[derive(Debug, Clone)]
 pub struct AfXdpSettings {
-    /// The lanes of the datapath. Lane `k` uses queue `k` of each port.
+    /// The most lanes of the datapath, where lane `k` uses queue `k` of each
+    /// port. 0 lets the lanes follow the workers of the plan (AGT-30): one
+    /// lane per worker that owns hosts, up to the queue count of each port.
     pub lanes: usize,
     /// The queue settings, which also choose the bind mode (the default asks
     /// for zero copy and falls back to copy mode).
@@ -241,10 +242,10 @@ pub struct AfXdpSettings {
 }
 
 impl Default for AfXdpSettings {
-    /// One lane and the default queue settings.
+    /// Lanes that follow the workers and the default queue settings.
     fn default() -> Self {
         Self {
-            lanes: 1,
+            lanes: 0,
             queue: QueueConfig::default(),
         }
     }
@@ -256,9 +257,17 @@ pub struct AfXdpBackend {
     datapath: Arc<Datapath>,
     transport: DatapathTransport,
     ports: Vec<BoundPort>,
+    lanes: LaneLayout,
 }
 
 impl AfXdpBackend {
+    /// What each lane serves: the plan workers and the host ranges of the
+    /// lane, in the order of the queues (AGT-30).
+    #[must_use]
+    pub fn lane_layout(&self) -> &LaneLayout {
+        &self.lanes
+    }
+
     /// The datapath, whose [`Datapath::connector`] and [`Datapath::listen`]
     /// open the sessions of the plan hosts. A caller that listens through it
     /// directly and also through [`AfXdpBackend::transport`] cannot use a port
@@ -314,6 +323,15 @@ impl StartedBackend {
         match self {
             Self::Kernel => BackendKind::Kernel,
             Self::AfXdp(_) => BackendKind::AfXdp,
+        }
+    }
+
+    /// What each lane serves, empty for the kernel backend (AGT-30).
+    #[must_use]
+    pub fn lane_specs(&self) -> &[LaneSpec] {
+        match self {
+            Self::Kernel => &[],
+            Self::AfXdp(a) => &a.lanes.lanes,
         }
     }
 
@@ -620,13 +638,49 @@ pub fn start_af_xdp(
     let l = layout(plan, sides)?;
     // Refused here, before a queue binds, when a pool names an unknown profile.
     own_config(&l)?;
-    let port_config = |interface: &str| PortConfig {
-        interface: interface.to_owned(),
-        queues: (0..u32::try_from(settings.lanes).unwrap_or(u32::MAX)).collect(),
-        queue: settings.queue.clone(),
+    // One lane per worker, as far as both ports have queues (AGT-30). The
+    // sysfs may not show the queues (a container with the sysfs of its host),
+    // and then the agent tries the lanes that the plan wants and steps down
+    // when a queue does not bind, down to queue 0 alone.
+    let sys = std::path::Path::new("/sys/class/net");
+    let mut limit = if settings.lanes == 0 {
+        usize::MAX
+    } else {
+        settings.lanes
     };
-    let client = open_retrying(&port_config(l.client_interface), &l.client.port)?;
-    let server = open_retrying(&port_config(l.server_interface), &l.server.port)?;
+    for interface in [l.client_interface, l.server_interface] {
+        if let Some(n) = lanes::queue_count(sys, interface) {
+            limit = limit.min(n);
+        }
+    }
+    let (layout_of_lanes, client, server) = loop {
+        let layout_of_lanes = lanes::plan_lanes(plan, l.client, l.server, limit);
+        let n = layout_of_lanes.lanes.len();
+        let port_config = |interface: &str| PortConfig {
+            interface: interface.to_owned(),
+            queues: (0..u32::try_from(n).unwrap_or(u32::MAX)).collect(),
+            queue: settings.queue.clone(),
+        };
+        let opened =
+            open_retrying(&port_config(l.client_interface), &l.client.port).and_then(|c| {
+                open_retrying(&port_config(l.server_interface), &l.server.port).map(|s| (c, s))
+            });
+        match opened {
+            Ok((c, s)) => break (layout_of_lanes, c, s),
+            // EINVAL is what a bind to a queue that the port lacks returns.
+            // Any other error (a busy queue, no privilege) is the caller's.
+            Err(BackendError::Open { ref source, .. })
+                if n > 1 && source.raw_os_error() == Some(22) =>
+            {
+                tracing::info!(
+                    lanes = n,
+                    "a port has fewer queues than lanes, trying fewer lanes"
+                );
+                limit = n - 1;
+            }
+            Err(e) => return Err(e),
+        }
+    };
     let ports = vec![
         bound(&l.client.port, HostRole::Client, &client),
         bound(&l.server.port, HostRole::Server, &server),
@@ -642,7 +696,7 @@ pub fn start_af_xdp(
             )
         })
         .collect();
-    launch(&l, settings.lanes, queues, ports)
+    launch(&l, layout_of_lanes, queues, ports)
 }
 
 /// Starts the datapath of a plan on queues that the caller opened, one pair
@@ -664,15 +718,18 @@ pub fn start_on_queues(
     queues: Vec<(Box<dyn FrameIo>, Box<dyn FrameIo>)>,
 ) -> Result<AfXdpBackend, BackendError> {
     let l = layout(plan, sides)?;
-    let lanes = queues.len();
-    launch(&l, lanes, queues, Vec::new())
+    let mut queues = queues;
+    let layout_of_lanes = lanes::plan_lanes(plan, l.client, l.server, queues.len().max(1));
+    // A plan with fewer lanes than queue pairs leaves the last pairs unused.
+    queues.truncate(layout_of_lanes.lanes.len());
+    launch(&l, layout_of_lanes, queues, Vec::new())
 }
 
-/// Cuts the pools of `l` into `lanes` slices, pairs each with its queues, and
+/// Gives each lane of `layout_of_lanes` its slices, pairs each with its queues, and
 /// starts the datapath and its transport.
 fn launch(
     l: &Layout<'_>,
-    lanes: usize,
+    layout_of_lanes: LaneLayout,
     queues: Vec<(Box<dyn FrameIo>, Box<dyn FrameIo>)>,
     ports: Vec<BoundPort>,
 ) -> Result<AfXdpBackend, BackendError> {
@@ -685,10 +742,24 @@ fn launch(
     if queues.is_empty() {
         return Err(plan_error("a datapath needs at least one lane"));
     }
-    let slices = split_pools(&pools, lanes)?;
-    if slices.len() != queues.len() {
+    if layout_of_lanes.lanes.len() != queues.len() {
         return Err(plan_error("a port opened fewer queues than lanes"));
     }
+    let slices: Vec<Pools> = layout_of_lanes
+        .lanes
+        .iter()
+        .map(|spec| Pools {
+            client: HostSlice {
+                pool: pools.client.pool.clone(),
+                range: spec.client,
+            },
+            server: HostSlice {
+                pool: pools.server.pool.clone(),
+                range: spec.server,
+            },
+            vlan: pools.vlan,
+        })
+        .collect();
     let built: Vec<Lane> = slices
         .into_iter()
         .zip(queues)
@@ -706,6 +777,7 @@ fn launch(
         datapath,
         transport,
         ports,
+        lanes: layout_of_lanes,
     })
 }
 
