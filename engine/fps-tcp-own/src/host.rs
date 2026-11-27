@@ -1691,7 +1691,8 @@ impl Host {
             let mss = u32::from(conn.mss);
             if let Some(rec) = conn.rec.as_deref_mut() {
                 if rec.cc.sack_recovery() {
-                    self.counters.sack_lost_rexmits += u64::from(rec.sb.detect_lost_rexmit(mss));
+                    self.counters.sack_lost_rexmits +=
+                        u64::from(rec.sb.detect_lost_rexmit(mss, snd_max));
                 }
                 // RACK: the highest byte reported is delivered, and what
                 // was sent long enough before it is lost.
@@ -2152,7 +2153,15 @@ impl Host {
                 if lost {
                     enter_sack_recovery(conn, &mut self.counters, una, true);
                 }
-                let (deadline, kind) = plan_timer(conn, now);
+                let (mut deadline, kind) = plan_timer(conn, now);
+                // `expire` runs every timer that is due at one reading of the
+                // clock, so a timer that sets itself for `now` again would
+                // keep the host in that loop with the lock of the stack held
+                // for good (bug 687). The next pass runs it a microsecond
+                // later.
+                if kind == TimerKind::Reo {
+                    deadline = deadline.max(now + 1);
+                }
                 arm_conn(conn, &mut self.timers, id, gen, deadline, kind);
             }
             TimerKind::Rto => {}
