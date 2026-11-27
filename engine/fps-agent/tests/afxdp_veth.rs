@@ -419,8 +419,9 @@ fn helper_afxdp() {
     }
     let family = Family::from_env();
     let queues = queues_from_env();
-    let dir =
-        Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("fps-agent-afxdp-{}", family.name()));
+    // The tests run in parallel, so each shape has a plan file of its own.
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("fps-agent-afxdp-{}-q{queues}", family.name()));
     std::fs::create_dir_all(&dir).expect("plan dir");
     let path = dir.join("af_xdp_plan.json");
     std::fs::write(
