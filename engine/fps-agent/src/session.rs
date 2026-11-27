@@ -57,6 +57,7 @@ use crate::modules::ModuleError;
 use crate::pb::{self, AgentState, ErrorCode};
 use crate::portfilter::{self, PortNets};
 use crate::run::{self, Prepared, RunError, SERVER_RAMP_DOWN};
+use crate::select;
 use crate::trust::ModulePolicy;
 
 /// The heartbeat interval when `RegisterResponse` carries none.
@@ -232,6 +233,12 @@ pub struct Config {
     /// `ERROR_CODE_FAILED_PRECONDITION`. `None` leaves the choice to the
     /// plan, as the standalone mode does.
     pub backend: Option<BackendKind>,
+    /// Whether the selection chose `backend` by its rules and not because the
+    /// operator forced it (AGT-29). Such an agent runs a plan that the AF_XDP
+    /// datapath refuses on the kernel backend and reports that in
+    /// `Heartbeat.run_backend`, where a forced agent refuses the plan with the
+    /// cause. `false` keeps the refusal, as the standalone mode does.
+    pub fall_back: bool,
 }
 
 impl Config {
@@ -252,6 +259,7 @@ impl Config {
             tls: None,
             policy: ModulePolicy::default(),
             backend: None,
+            fall_back: false,
         }
     }
 }
@@ -413,6 +421,19 @@ struct Core {
     timeout: Duration,
     /// What the run time commands need to know about the started plan.
     live: Option<Live>,
+    /// The backend that started the plan and the mode of each port (CON-35),
+    /// which every heartbeat carries from the start until the plan is
+    /// released.
+    run: Option<RunReport>,
+}
+
+/// The backend that started a plan and its ports, as `Heartbeat` carries them.
+#[derive(Debug, Clone)]
+struct RunReport {
+    /// The `Backend` number of the backend that started the plan.
+    backend: i32,
+    /// One entry for every port binding of the plan, in plan order.
+    ports: Vec<pb::RunPort>,
 }
 
 /// The started plan, as far as `UpdateRates` and `StartCapture` need it.
@@ -644,9 +665,18 @@ impl Shared {
                 phase: core.phase.clone(),
                 agent_time: Some(convert::timestamp(SystemTime::now())),
                 message: core.message.clone(),
-                // The backend that ran and the bound mode of each port
-                // (CON-35) are filled by AGT-29.
-                ..Default::default()
+                // Both fields are named on purpose: a field that a later
+                // contract adds to the heartbeat stops this build and is not
+                // skipped (AGT-29).
+                run_backend: core
+                    .run
+                    .as_ref()
+                    .map_or(pb::Backend::Unspecified as i32, |r| r.backend),
+                run_ports: core
+                    .run
+                    .as_ref()
+                    .map(|r| r.ports.clone())
+                    .unwrap_or_default(),
             })),
         }
     }
@@ -983,6 +1013,8 @@ impl Shared {
         core.state = AgentState::Preparing;
         core.plan_id.clone_from(&plan.plan_id);
         core.message.clear();
+        // A new plan has not started, so no backend ran it.
+        core.run = None;
         core.generation += 1;
         let generation = core.generation;
         let old = core.driver.take();
@@ -1066,15 +1098,24 @@ impl Shared {
                 ),
             ));
         }
-        let prepared = run::prepare_on(
+        let prepared = run::prepare_selected(
             plan,
             &self.cfg.modules,
             self.cfg.sides,
             &self.cfg.policy,
             &self.captures.key_tap(),
             self.cfg.backend,
+            self.cfg.fall_back,
         )
         .map_err(|e| (code_of(&e), chain(&e)))?;
+        if let Some(cause) = prepared.fallback() {
+            tracing::warn!(
+                plan_id = %prepared.plan().plan_id,
+                backend = prepared.backend().name(),
+                cause = %cause,
+                "the AF_XDP datapath refuses the plan, so the run uses the kernel backend"
+            );
+        }
         for warning in prepared.warnings() {
             tracing::warn!(warning = %warning, "module signature");
         }
@@ -1276,7 +1317,27 @@ impl Shared {
                 return;
             }
         }
-        let mut active = match prepared.start_with(params.interval, self.captures.cell()) {
+        let started = match prepared.start_backend() {
+            Ok(b) => b,
+            Err(e) => {
+                self.failed(generation, format!("start the workers: {}", chain(&e)));
+                return;
+            }
+        };
+        // The backend is up: say which one it is and how its ports bound
+        // (CON-35). Every heartbeat carries it until the plan is released.
+        let report = RunReport {
+            backend: select::backend_of(started.kind()).number(),
+            ports: convert::run_ports_to_pb(&started.run_ports(prepared.plan())),
+        };
+        {
+            let mut core = self.lock();
+            if core.generation == generation {
+                core.run = Some(report);
+            }
+        }
+        self.emit(Event::StateChanged);
+        let mut active = match prepared.start_on(started, params.interval, self.captures.cell()) {
             Ok(a) => a,
             Err(e) => {
                 self.failed(generation, format!("start the workers: {}", chain(&e)));
@@ -1490,6 +1551,7 @@ impl Shared {
         core.message.clear();
         core.prepared = None;
         core.live = None;
+        core.run = None;
         core.stop_waiters.clear();
         core.start_waiter = None;
         if let Some(d) = &core.driver {
@@ -1751,6 +1813,7 @@ where
             last_heard: None,
             timeout: DEFAULT_HEARTBEAT_TIMEOUT,
             live: None,
+            run: None,
         }),
         events: tx,
         captures: Captures::new(cfg.captures.clone()),

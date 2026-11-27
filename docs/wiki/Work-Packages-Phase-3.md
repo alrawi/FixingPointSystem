@@ -866,7 +866,7 @@ Deliverables.
 
 Acceptance.
 
-- [ ] With TRANSPORT_AVAILABLE set in a test build, an unforced agent runs http_smoke.yaml and enterprise_mix_10g.yaml from contracts/examples/tests/ on the kernel backend and reports it, and a forced agent refuses them with the cause.
+- [ ] {'With TRANSPORT_AVAILABLE set in a test build, an unforced agent runs http_smoke.yaml from contracts/examples/tests/ on the kernel backend and reports it, and a forced agent refuses it with the cause. (Amended by the coordinator on 2026-11-18': 'enterprise_mix_10g.yaml is a plan that the datapath serves, because the own stack knows its OS profiles, so it does not fall back; it fails on both backends for a port clash of two mix entries, which is bug'}
 
 ### AGT-30 Datapath lanes follow the workers of the plan
 
