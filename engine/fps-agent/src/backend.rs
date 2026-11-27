@@ -612,23 +612,42 @@ pub fn start_af_xdp(
     let l = layout(plan, sides)?;
     // Refused here, before a queue binds, when a pool names an unknown profile.
     own_config(&l)?;
-    // One lane per worker, as far as both ports have queues (AGT-30).
+    // One lane per worker, as far as both ports have queues (AGT-30). The
+    // sysfs may not show the queues (a container with the sysfs of its host),
+    // and then the agent tries the lanes that the plan wants and steps down
+    // when a queue does not bind, down to queue 0 alone.
     let sys = std::path::Path::new("/sys/class/net");
-    let limit = if settings.lanes == 0 {
+    let mut limit = if settings.lanes == 0 {
         usize::MAX
     } else {
         settings.lanes
-    }
-    .min(lanes::queue_count(sys, l.client_interface))
-    .min(lanes::queue_count(sys, l.server_interface));
-    let layout_of_lanes = lanes::plan_lanes(plan, l.client, l.server, limit);
-    let port_config = |interface: &str| PortConfig {
-        interface: interface.to_owned(),
-        queues: (0..u32::try_from(layout_of_lanes.lanes.len()).unwrap_or(u32::MAX)).collect(),
-        queue: settings.queue.clone(),
     };
-    let client = open_retrying(&port_config(l.client_interface), &l.client.port)?;
-    let server = open_retrying(&port_config(l.server_interface), &l.server.port)?;
+    for interface in [l.client_interface, l.server_interface] {
+        if let Some(n) = lanes::queue_count(sys, interface) {
+            limit = limit.min(n);
+        }
+    }
+    let (layout_of_lanes, client, server) = loop {
+        let layout_of_lanes = lanes::plan_lanes(plan, l.client, l.server, limit);
+        let n = layout_of_lanes.lanes.len();
+        let port_config = |interface: &str| PortConfig {
+            interface: interface.to_owned(),
+            queues: (0..u32::try_from(n).unwrap_or(u32::MAX)).collect(),
+            queue: settings.queue.clone(),
+        };
+        let opened =
+            open_retrying(&port_config(l.client_interface), &l.client.port).and_then(|c| {
+                open_retrying(&port_config(l.server_interface), &l.server.port).map(|s| (c, s))
+            });
+        match opened {
+            Ok((c, s)) => break (layout_of_lanes, c, s),
+            Err(e) if n > 1 => {
+                tracing::debug!(lanes = n, error = %e, "the queues did not bind, trying fewer lanes");
+                limit = n - 1;
+            }
+            Err(e) => return Err(e),
+        }
+    };
     let ports = vec![
         bound(&l.client.port, HostRole::Client, &client),
         bound(&l.server.port, HostRole::Server, &server),

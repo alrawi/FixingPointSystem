@@ -175,10 +175,12 @@ pub fn plan_lanes(
 
 /// The number of queues that a network interface has: the smaller of its
 /// receive and transmit queue counts under `sys_class_net`, which is
-/// `/sys/class/net` on a host. An interface that cannot be read counts one
-/// queue, which is queue 0 that every interface has.
+/// `/sys/class/net` on a host. It is `None` when the interface has no queue
+/// entries there, for example because the sysfs of a container shows the
+/// network namespace of its host and not the one of the process. The caller
+/// then tries the lanes that it wants and steps down on a failed bind.
 #[must_use]
-pub fn queue_count(sys_class_net: &Path, interface: &str) -> usize {
+pub fn queue_count(sys_class_net: &Path, interface: &str) -> Option<usize> {
     let count = |prefix: &str| {
         std::fs::read_dir(sys_class_net.join(interface).join("queues"))
             .map(|dir| {
@@ -188,7 +190,7 @@ pub fn queue_count(sys_class_net: &Path, interface: &str) -> usize {
             })
             .unwrap_or(0)
     };
-    count("rx-").min(count("tx-")).max(1)
+    Some(count("rx-").min(count("tx-"))).filter(|n| *n > 0)
 }
 
 #[cfg(test)]
@@ -378,11 +380,11 @@ mod tests {
         for q in ["rx-0", "rx-1", "rx-2", "rx-3", "tx-0", "tx-1", "tx-2"] {
             std::fs::create_dir_all(queues.join(q)).expect("make a queue");
         }
-        assert_eq!(queue_count(&dir, "dpa"), 3);
+        assert_eq!(queue_count(&dir, "dpa"), Some(3));
         assert_eq!(
             queue_count(&dir, "missing"),
-            1,
-            "an unreadable interface has queue 0"
+            None,
+            "an unreadable interface is unknown"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

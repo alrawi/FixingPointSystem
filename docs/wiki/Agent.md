@@ -290,7 +290,7 @@ The workers run on the datapath since AGT-25, see [Workers on the datapath](#wor
 
 ### Lanes
 
-The AF_XDP backend starts one lane per plan worker that owns hosts, up to the queue count of each port (AGT-30). Lane `k` runs on queue `k` of both ports, on a thread of its own, with its own own stack. `AfXdpSettings::lanes` is the most lanes to start, and 0, the default, lets the plan decide. The queue count of a port is the smaller of the `rx-*` and `tx-*` entries under `/sys/class/net/<interface>/queues`, and the agent takes the smaller count of the two ports. An unreadable interface counts one queue.
+The AF_XDP backend starts one lane per plan worker that owns hosts, up to the queue count of each port (AGT-30). Lane `k` runs on queue `k` of both ports, on a thread of its own, with its own own stack. `AfXdpSettings::lanes` is the most lanes to start, and 0, the default, lets the plan decide. The queue count of a port is the smaller of the `rx-*` and `tx-*` entries under `/sys/class/net/<interface>/queues`, and the agent takes the smaller count of the two ports. An interface that the sysfs does not show is unknown, and the agent tries the lanes it wants and steps down when a queue does not bind.
 
 `fps_agent::lanes::plan_lanes` divides the workers, in the order of their ids, into as many groups as there are lanes, and the first groups take the remainder. A lane serves the smallest range of each of the two pools that holds the ranges of its workers, so a client host reaches only the server hosts of its own lane, and a worker sends to the server range that it owns, which stays inside its lane. A worker that owns no hosts in either pool gets no lane. The agent starts one lane over the whole pools, as before AGT-30, when
 
