@@ -35,6 +35,7 @@ pub mod convert;
 pub mod criteria;
 pub mod error;
 pub mod identity;
+pub mod lanes;
 pub mod modules;
 pub mod pb;
 pub mod plan;
