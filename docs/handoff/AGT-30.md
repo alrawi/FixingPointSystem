@@ -8,11 +8,11 @@
 |---|---|
 | Issue | #680 |
 | Branch | `wp/AGT-30` |
-| Pull request | #0 |
-| Status | in progress |
-| Progress | 90% (3 of 3 plan steps, CI pending) |
+| Pull request | #693 |
+| Status | ready for review |
+| Progress | 100% (3 of 3 plan steps) |
 | Current holder | claude-a30e71, lease until 2026-11-27T23:54:44Z |
-| Last verified commit | none |
+| Last verified commit | 62470b94 |
 
 Status takes one of five values, which are in progress, paused, blocked, ready for review, and done.
 
@@ -36,13 +36,13 @@ List each finished step with the command that verified it and the result.
 
 ## Remaining
 
-CI, then review.
+Nothing; CI green on 62470b94. Review.
 
 List what is still missing, including known gaps in finished steps.
 
 ## Next action
 
-Open the PR, wait for CI, run `fps_swarm.py review 680 --pr N`.
+Review PR #693.
 
 Write exactly one concrete step that the next agent can start immediately.
 
@@ -57,6 +57,8 @@ See the log entry of 2026-11-27: `AfXdpSettings::lanes` 0 means follow the worke
 Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
 
 ## Pitfalls
+
+The veth tests run in parallel, so each shape needs its own plan file. CI containers may show the sysfs of the host, so the queue count can be unknown: the agent then tries the wanted lanes and steps down on EINVAL.
 
 Record anything that cost time and that a successor should avoid.
 
