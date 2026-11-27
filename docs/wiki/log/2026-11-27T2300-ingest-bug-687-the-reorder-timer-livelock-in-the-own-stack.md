@@ -8,6 +8,8 @@ Fix. `Recovery::rack_detect` passes `snd_una` when RACK calls nothing lost above
 
 Evidence. A trace at the timer showed `now`, `snd_una`, the log, the RACK state and the scoreboard of the hang. The unit test `a_flight_of_the_delivered_segments_reading_sets_no_reordering_timer` builds that state and fails without the fix ("due at Some(873259), now is 873259"). The row ran 5 times out of about 80 with the hang in the sandbox before the fix (veth and tbf namespaces, the `ip` package installed) and 200 times out of 200 without it.
 
+Two follow-ups on PR #698 (the `interop` job of the first fix failed the goodput check: 15.63 against 19.23 Mbit/s with 6 retransmissions). Not HyStart and not the timer change: the same tail event that used to hang now ended at the retransmission timeout of 200 ms, in two forms that the counters showed (`timeouts=1`, `tlp=0`). (1) A SACKed FIN has no entry in the send log, so RACK never saw the delivery and the last segment before the FIN waited for the timeout; `Recovery::rack_on_sack` now uses the time of the last flight. (2) A retransmission lost at the tail needed more than two later segments SACKed to be found; `Scoreboard::detect_lost_rexmit` now takes `snd_max` and asks for no margin when everything that was sent is acknowledged. 500 of 500 runs passed with no timeout, the slowest at 19.08 Mbit/s, and the 90 percent threshold is unchanged.
+
 ### Shared page notes
 
 - Module Development, "Watch out for": nothing for module authors. The lesson for anyone who writes a timer loop: a timer that can re-arm itself for `now` must not run in a loop that holds a lock at one reading of the clock.

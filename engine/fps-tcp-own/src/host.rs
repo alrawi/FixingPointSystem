@@ -1691,7 +1691,8 @@ impl Host {
             let mss = u32::from(conn.mss);
             if let Some(rec) = conn.rec.as_deref_mut() {
                 if rec.cc.sack_recovery() {
-                    self.counters.sack_lost_rexmits += u64::from(rec.sb.detect_lost_rexmit(mss));
+                    self.counters.sack_lost_rexmits +=
+                        u64::from(rec.sb.detect_lost_rexmit(mss, snd_max));
                 }
                 // RACK: the highest byte reported is delivered, and what
                 // was sent long enough before it is lost.

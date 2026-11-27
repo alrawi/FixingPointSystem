@@ -231,11 +231,21 @@ impl Scoreboard {
     /// counting it. This is the detection of a lost retransmission that the
     /// kernel makes (`tcp_mark_lost_retrans`), which RFC 6675 leaves to the
     /// retransmission timer. Returns the number of ranges that were lost.
-    pub fn detect_lost_rexmit(&mut self, mss: u32) -> u32 {
+    ///
+    /// When everything that was sent is selectively acknowledged (`snd_max`
+    /// is at most a FIN beyond the highest SACKed byte), no more data follows
+    /// to widen the margin, and the copy would wait for the retransmission
+    /// timeout. Then any data that was sent after the copy and is
+    /// acknowledged shows the loss (bug 687).
+    pub fn detect_lost_rexmit(&mut self, mss: u32, snd_max: u32) -> u32 {
         let Some(&(_, high)) = self.sacked.last() else {
             return 0;
         };
-        let margin = (DUP_THRESH - 1) * mss;
+        let margin = if snd_max.wrapping_sub(high) <= 1 {
+            0
+        } else {
+            (DUP_THRESH - 1) * mss
+        };
         let before = self.rexmit.len();
         self.rexmit
             .retain(|&(_, _, at)| !seq_lt(at.wrapping_add(margin), high));
@@ -491,17 +501,34 @@ mod tests {
         assert_eq!(sb.pipe(0, 30 * M, M, true), 22 * M);
         assert_eq!(sb.next_hole(0, M, true), Some((M, M)));
         // Data below the mark says nothing about the copy.
-        assert_eq!(sb.detect_lost_rexmit(M), 0);
+        assert_eq!(sb.detect_lost_rexmit(M, 30 * M), 0);
         // The data that came after the copy is acknowledged, but by two
         // segments only, which reordering explains.
         sb.update(0, 30 * M, &[(20 * M, 22 * M)]);
-        assert_eq!(sb.detect_lost_rexmit(M), 0);
+        assert_eq!(sb.detect_lost_rexmit(M, 30 * M), 0);
         // A third segment beyond the mark: the copy is lost. The first
         // segment is a hole again and stops counting in the pipe.
         sb.update(0, 30 * M, &[(20 * M, 23 * M)]);
-        assert_eq!(sb.detect_lost_rexmit(M), 1);
+        assert_eq!(sb.detect_lost_rexmit(M, 30 * M), 1);
         assert_eq!(sb.next_hole(0, M, true), Some((0, M)));
         assert_eq!(sb.pipe(0, 30 * M, M, true), 7 * M);
+    }
+
+    #[test]
+    fn a_copy_is_lost_at_the_tail_when_all_that_followed_it_is_acknowledged() {
+        // The first segment was sent again with 20 segments out, and 248
+        // bytes were sent after it. They are acknowledged and nothing else
+        // is out, so the copy was lost.
+        let mut sb = board(0, &[(M, 20 * M)]);
+        sb.mark_rexmit_at(0, 0, M, 20 * M);
+        sb.update(0, 20 * M + 248, &[(20 * M, 20 * M + 248)]);
+        assert_eq!(sb.detect_lost_rexmit(M, 20 * M + 248), 1);
+        assert_eq!(sb.next_hole(0, M, true), Some((0, M)));
+        // With more data out the margin of two segments still holds.
+        let mut sb = board(0, &[(M, 20 * M)]);
+        sb.mark_rexmit_at(0, 0, M, 20 * M);
+        sb.update(0, 30 * M, &[(20 * M, 20 * M + 248)]);
+        assert_eq!(sb.detect_lost_rexmit(M, 30 * M), 0);
     }
 
     #[test]
@@ -512,6 +539,6 @@ mod tests {
         sb.mark_rexmit_at(0, 0, M, 25 * M);
         assert_eq!(sb.pipe(0, 30 * M, M, true), 22 * M);
         sb.advance(M);
-        assert_eq!(sb.detect_lost_rexmit(M), 0);
+        assert_eq!(sb.detect_lost_rexmit(M, 30 * M), 0);
     }
 }

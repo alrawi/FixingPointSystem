@@ -789,7 +789,17 @@ impl Recovery {
         if !self.is_original(last) {
             return;
         }
-        if let Some(ts) = self.log.time_of(last) {
+        // The log holds data only, so a FIN that the receiver selectively
+        // acknowledged has no entry. It left with or after the last flight, so
+        // the time of that flight is the one that counts: without it a lost
+        // last segment behind a SACKed FIN waits for the retransmission
+        // timeout (bug 687).
+        let ts = self.log.time_of(last).or_else(|| {
+            (self.log.end() == Some(last))
+                .then(|| self.log.time_of(last.wrapping_sub(1)))
+                .flatten()
+        });
+        if let Some(ts) = ts {
             self.rack.delivered(ts, high, now);
         }
     }
@@ -978,6 +988,20 @@ mod tests {
         r.rack_detect(t + 10_200, una);
         // The first flight turns lost 10,000 + 2,500 after it left.
         assert_eq!(r.reo_at, Some(t + 12_500));
+    }
+
+    #[test]
+    fn a_sacked_fin_marks_the_last_segment_before_it_lost() {
+        let (una, end, t) = (5_000u32, 6_000u32, 1_000i64);
+        let mut r = Recovery::new(CongestionControl::NewReno, MSS, 10, una);
+        r.feat.rack = true;
+        r.log.push(una, end, t);
+        // Only the FIN (one sequence number past the data) was SACKed.
+        r.sb.update(una, end + 1, &[(end, end + 1)]);
+        r.rack_on_sack(t + 10_000);
+        assert!(r.rack.valid());
+        r.rack_detect(t + 10_000 + 20_000, una);
+        assert_eq!(r.sb.rack_lost(), Some(end + 1));
     }
 
     // ---- Duplicate acknowledgments ----
