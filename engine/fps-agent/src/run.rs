@@ -259,6 +259,9 @@ fn both_sides(client: &Snapshot, server: &Snapshot) -> Result<Snapshot, StatsErr
 pub struct Prepared {
     plan: Plan,
     backend: BackendKind,
+    /// Why the run starts the kernel backend and not the AF_XDP backend that
+    /// the agent selected, see [`backend::resolve_with_fallback`].
+    fallback: Option<String>,
     sides: Sides,
     assembly: crate::assemble::Assembly,
     profile: LoadProfile,
@@ -320,8 +323,29 @@ pub fn prepare_on(
     keys: &KeyTap,
     selected: Option<BackendKind>,
 ) -> Result<Prepared, RunError> {
+    prepare_selected(plan, modules_dir, sides, policy, keys, selected, false)
+}
+
+/// Like [`prepare_on`], and `fall_back` says whether the backend of the agent
+/// was selected by the rules and not forced by the operator (AGT-29). Such an
+/// agent runs a plan that the AF_XDP datapath refuses on the kernel backend
+/// and keeps the cause in [`Prepared::fallback`], where a forced agent, and
+/// [`prepare_on`], refuse the plan with the cause. See
+/// [`backend::resolve_with_fallback`].
+pub fn prepare_selected(
+    plan: Plan,
+    modules_dir: &Path,
+    sides: Sides,
+    policy: &ModulePolicy,
+    keys: &KeyTap,
+    selected: Option<BackendKind>,
+    fall_back: bool,
+) -> Result<Prepared, RunError> {
     plan.check()?;
-    let backend = backend::resolve(plan.backend, selected)?;
+    let backend::Resolution {
+        kind: backend,
+        fallback,
+    } = backend::resolve_with_fallback(&plan, sides, selected, fall_back)?;
     let loaded = modules::load(&plan, modules_dir, policy)?;
     let needs = tls::scan(plan.mix.iter().filter_map(|e| {
         loaded
@@ -350,6 +374,7 @@ pub fn prepare_on(
     Ok(Prepared {
         plan,
         backend,
+        fallback,
         sides,
         assembly,
         profile,
@@ -398,9 +423,17 @@ impl Prepared {
     }
 
     /// Returns the backend that the run starts, which is the backend that the
-    /// agent selected or the one that the standalone plan named.
+    /// agent selected or the one that the standalone plan named, and the
+    /// kernel backend when [`Prepared::fallback`] holds a cause.
     pub fn backend(&self) -> BackendKind {
         self.backend
+    }
+
+    /// Returns why the run starts the kernel backend although the agent
+    /// selected AF_XDP: the cause that the datapath refused the plan (AGT-29).
+    /// It is `None` for every other run.
+    pub fn fallback(&self) -> Option<&str> {
+        self.fallback.as_deref()
     }
 
     /// Starts the transport backend of the run (AGT-24). The kernel backend

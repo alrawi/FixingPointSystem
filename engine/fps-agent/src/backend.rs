@@ -23,8 +23,20 @@
 //!   the next hop of its frames with ARP (AGT-26, [`datapath_config`]), so a
 //!   peer behind a router needs no neighbor entry.
 //!
+//! # A plan that the datapath refuses (AGT-29)
+//!
+//! An agent that nobody forced to a backend may select AF_XDP, and a plan of
+//! another shape than the one below still has to run. [`resolve_with_fallback`]
+//! runs such a plan on the kernel backend and keeps the cause in
+//! [`Resolution::fallback`], which `prepare` logs. An agent that the operator
+//! forced to AF_XDP keeps the refusal and its cause, because a silent fallback
+//! would make a benchmark measure the wrong backend. The run reports the
+//! backend that it started and the mode of each port in `Heartbeat.run_backend`
+//! and `Heartbeat.run_ports` (CON-35, [`StartedBackend::run_ports`]).
+//!
 //! # What a plan has to look like on AF_XDP
 //!
+
 //! The datapath is one own stack per lane, and the stack wants two links, so
 //! the plan needs both arms:
 //!
@@ -36,6 +48,12 @@
 //! * both pools use the same address family, IPv4 or IPv6 (AGT-28), are
 //!   untagged or on the same VLAN, and use no DHCP.
 //!
+//! * no host pool has both an IPv4 and an IPv6 prefix, because the run would use
+//!   IPv4 alone (AGT-29),
+//! * no mix entry runs a scenario on the exclusion list of the AF_XDP realism
+//!   run (`excluded` in `engine/fps-datapath/realism/profiles.yaml`, TRN-36).
+//!   The file is read at build time ([`parse_excluded`]).
+//!
 //! Anything else is [`BackendError::Unsupported`] with the package that adds
 //! it (DHCP is HST-04 on the datapath). TCP and UDP flows both run (TRN-29,
 //! AGT-25), over IPv4 and over IPv6 (TRN-30, AGT-28). The bound mode is available as soon
@@ -44,7 +62,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use fps_backend_afxdp::{
@@ -428,19 +446,27 @@ impl fmt::Display for Family {
 }
 
 /// The family that the workers of a run use for the hosts of `slice`: IPv4
-/// when the pool has an IPv4 prefix, as `assemble` picks the addresses, and
-/// otherwise IPv6. The datapath finds the lane of a session by the family of
-/// its hosts (TRN-30), so the two pools of a lane have to agree.
+/// for a pool with an IPv4 prefix only and IPv6 for a pool with an IPv6 prefix
+/// only. The datapath finds the lane of a session by the family of its hosts
+/// (TRN-30), so the two pools of a lane have to agree.
+///
+/// A pool with both prefixes is [`BackendError::Unsupported`] (AGT-29): the
+/// datapath carries one family per lane, `assemble` would pick the IPv4
+/// addresses, and the IPv6 hosts of the pool would stay unused without a word.
+/// The kernel backend serves the pool, and an unforced agent falls back to it.
 fn family_of(slice: &HostPoolSlice) -> Result<Family, BackendError> {
-    if !slice.ipv4_prefix.is_empty() {
-        Ok(Family::V4)
-    } else if !slice.ipv6_prefix.is_empty() {
-        Ok(Family::V6)
-    } else {
-        Err(plan_error(format!(
+    match (slice.ipv4_prefix.is_empty(), slice.ipv6_prefix.is_empty()) {
+        (false, true) => Ok(Family::V4),
+        (true, false) => Ok(Family::V6),
+        (false, false) => Err(unsupported(format!(
+            "host pool {} has an IPv4 and an IPv6 prefix, and a lane of the datapath carries one family, \
+             so the run would use IPv4 alone",
+            slice.name
+        ))),
+        (true, true) => Err(plan_error(format!(
             "host pool {} has neither an IPv4 nor an IPv6 prefix",
             slice.name
-        )))
+        ))),
     }
 }
 
@@ -775,20 +801,188 @@ pub fn start(
     }
 }
 
+/// The exclusion list of the AF_XDP realism run (TRN-36): the scenarios that
+/// the agent cannot run on AF_XDP yet, each with its reason, under the key
+/// `excluded` of each module in `profiles.yaml`. The file is read at build
+/// time, so the list cannot drift from the file that the realism job runs.
+const REALISM_PROFILES: &str = include_str!("../../fps-datapath/realism/profiles.yaml");
+
+/// One scenario that the datapath does not run yet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Excluded {
+    /// The scenario ref of a mix entry, `module/scenario`.
+    pub scenario: String,
+    /// Why the datapath cannot run it, on one line.
+    pub reason: String,
+}
+
+/// Reads the exclusion list from the text of `profiles.yaml`: for every module
+/// the entries of its `excluded` mapping, each a scenario name and a reason.
+///
+/// # Errors
+///
+/// Returns the cause when the text is not YAML, or when a module section or an
+/// `excluded` entry has another shape than the file documents.
+pub fn parse_excluded(yaml: &str) -> Result<Vec<Excluded>, String> {
+    use serde_norway::Value;
+    let root: Value = serde_norway::from_str(yaml).map_err(|e| e.to_string())?;
+    let modules = root
+        .as_mapping()
+        .ok_or_else(|| "the file is not a mapping of modules".to_owned())?;
+    let mut out = Vec::new();
+    for (module, section) in modules {
+        let module = module
+            .as_str()
+            .ok_or_else(|| "a module name is not a string".to_owned())?;
+        let Some(excluded) = section.get("excluded") else {
+            continue;
+        };
+        let entries = excluded
+            .as_mapping()
+            .ok_or_else(|| format!("{module}: excluded is not a mapping"))?;
+        for (scenario, reason) in entries {
+            let (Some(scenario), Some(reason)) = (scenario.as_str(), reason.as_str()) else {
+                return Err(format!(
+                    "{module}: an excluded entry is not a scenario name with a reason"
+                ));
+            };
+            out.push(Excluded {
+                scenario: format!("{module}/{scenario}"),
+                reason: reason.split_whitespace().collect::<Vec<_>>().join(" "),
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// The exclusion list that was built into the agent, or the cause when it
+/// does not parse. A plan is refused for AF_XDP in the second case, so a
+/// broken list never lets an excluded scenario through.
+fn excluded() -> Result<&'static [Excluded], &'static str> {
+    static LIST: OnceLock<Result<Vec<Excluded>, String>> = OnceLock::new();
+    LIST.get_or_init(|| parse_excluded(REALISM_PROFILES))
+        .as_ref()
+        .map(Vec::as_slice)
+        .map_err(String::as_str)
+}
+
+/// Refuses a plan whose mix runs a scenario of the exclusion list.
+fn check_excluded(plan: &Plan) -> Result<(), BackendError> {
+    let list = excluded().map_err(|cause| {
+        plan_error(format!(
+            "the exclusion list of the AF_XDP realism run (engine/fps-datapath/realism/profiles.yaml) does not parse: {cause}"
+        ))
+    })?;
+    for entry in &plan.mix {
+        if let Some(x) = list.iter().find(|x| x.scenario == entry.scenario) {
+            return Err(unsupported(format!(
+                "mix entry {} runs scenario {}, which the datapath does not run yet: {} \
+                 (exclusion list of the AF_XDP realism run, TRN-36)",
+                entry.id, x.scenario, x.reason
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Checks that `plan` has the shape that the AF_XDP backend serves, without
 /// opening anything. [`crate::run::prepare_on`] calls it, so a plan that the
-/// datapath cannot serve fails at `prepare` and not at `start`.
+/// datapath cannot serve fails at `prepare` and not at `start`, or runs on the
+/// kernel backend when nobody forced AF_XDP (see [`resolve_with_fallback`]).
+///
+/// Besides the shape of [`layout`], it refuses a mix entry whose scenario is on
+/// the exclusion list of the AF_XDP realism run (TRN-36).
 ///
 /// # Errors
 ///
 /// Returns the [`BackendError`] that [`start_af_xdp`] would return before it
-/// opens a queue.
+/// opens a queue, and [`BackendError::Unsupported`] for an excluded scenario.
 pub fn check_af_xdp(plan: &Plan, sides: Sides) -> Result<(), BackendError> {
     let l = layout(plan, sides)?;
     slice_of(l.client)?;
     slice_of(l.server)?;
     own_config(&l)?;
-    Ok(())
+    check_excluded(plan)
+}
+
+/// The backend that a run starts, and why it is not the one that the agent
+/// selected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolution {
+    /// The backend that the run starts.
+    pub kind: BackendKind,
+    /// The cause that the AF_XDP datapath refused the plan, when the run falls
+    /// back to the kernel backend, and `None` otherwise.
+    pub fallback: Option<String>,
+}
+
+/// Like [`resolve`], and an agent that nobody forced to AF_XDP runs a plan that
+/// the datapath refuses on the kernel backend (AGT-29).
+///
+/// `fall_back` is true for an agent whose backend the rules selected and false
+/// for one that the operator forced, and for the standalone mode, where the
+/// plan names the backend. With it, a selected AF_XDP backend that
+/// [`check_af_xdp`] refuses for this plan becomes [`BackendKind::Kernel`], and
+/// [`Resolution::fallback`] holds the cause. A forced agent keeps the error: a
+/// silent fallback would make a benchmark measure the wrong backend.
+///
+/// # Errors
+///
+/// Returns the errors of [`resolve`], and the error of [`check_af_xdp`] when
+/// the agent may not fall back.
+pub fn resolve_with_fallback(
+    plan: &Plan,
+    sides: Sides,
+    selected: Option<BackendKind>,
+    fall_back: bool,
+) -> Result<Resolution, RunError> {
+    let kind = resolve(plan.backend, selected)?;
+    if kind == BackendKind::AfXdp && fall_back && selected.is_some() {
+        if let Err(cause) = check_af_xdp(plan, sides) {
+            return Ok(Resolution {
+                kind: BackendKind::Kernel,
+                fallback: Some(cause.to_string()),
+            });
+        }
+    }
+    Ok(Resolution {
+        kind,
+        fallback: None,
+    })
+}
+
+/// One port of a started plan, as `Heartbeat.run_ports` reports it (CON-35).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPort {
+    /// The port name of the plan, `PortBinding.name`.
+    pub name: String,
+    /// The local interface of the port.
+    pub interface_name: String,
+    /// The mode that the sockets of the port bound in, which is
+    /// [`XdpMode::Unspecified`] unless the run backend is AF_XDP, and for a
+    /// port that no pool of the run uses.
+    pub xdp_mode: XdpMode,
+}
+
+impl StartedBackend {
+    /// The ports of `plan` with the mode that each bound in, one entry for
+    /// every port binding in plan order (CON-35). The kernel backend binds no
+    /// XDP socket, so its ports carry no mode.
+    #[must_use]
+    pub fn run_ports(&self, plan: &Plan) -> Vec<RunPort> {
+        plan.ports
+            .iter()
+            .map(|p| RunPort {
+                name: p.name.clone(),
+                interface_name: p.interface_name.clone(),
+                xdp_mode: self
+                    .ports()
+                    .iter()
+                    .find(|b| b.name == p.name)
+                    .map_or(XdpMode::Unspecified, BoundPort::xdp_mode),
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -958,13 +1152,32 @@ mod tests {
         assert_eq!(client.ip(0), Some("fd00:1::1".parse().unwrap()));
         assert_eq!(server.ip(1), Some("fd00:2::2".parse().unwrap()));
         assert_eq!(client.address(0), None);
-        // A pool with both prefixes keeps the IPv4 hosts, as `assemble` does.
-        let mut p = plan_v6();
-        p.host_pools[0].ipv4_prefix = "10.1.0.0/24".into();
-        p.host_pools[1].ipv4_prefix = "10.2.0.0/24".into();
-        let l = layout(&p, Sides::Both).unwrap();
-        assert_eq!(family_of(l.client).unwrap(), Family::V4);
-        check_af_xdp(&p, Sides::Both).unwrap();
+    }
+
+    #[test]
+    fn a_pool_with_both_prefixes_is_refused_and_never_runs_over_ipv4_alone() {
+        // `assemble` would pick the IPv4 hosts of such a pool and leave its
+        // IPv6 hosts unused, so the datapath refuses it (AGT-29).
+        for (side, name) in [(0, "clients"), (1, "servers")] {
+            let mut p = plan();
+            p.host_pools[side].ipv6_prefix = format!("fd00:{}::/64", side + 1);
+            let e = check_af_xdp(&p, Sides::Both).unwrap_err();
+            assert!(matches!(e, BackendError::Unsupported(_)), "{e:?}");
+            let text = e.to_string();
+            assert!(
+                text.contains(&format!("host pool {name} has an IPv4 and an IPv6 prefix"))
+                    && text.contains("IPv4 alone"),
+                "{text}"
+            );
+        }
+        // Both pools with both prefixes are refused as well, and so is the
+        // start of the backend.
+        let mut p = plan();
+        for (pool, prefix) in p.host_pools.iter_mut().zip(["fd00:1::/64", "fd00:2::/64"]) {
+            pool.ipv6_prefix = prefix.into();
+        }
+        assert!(check_af_xdp(&p, Sides::Both).is_err());
+        assert!(layout(&p, Sides::Both).is_err());
     }
 
     #[test]
@@ -979,8 +1192,8 @@ mod tests {
             text.contains("clients runs over IPv6") && text.contains("servers over IPv4"),
             "{text}"
         );
-        // A client pool with both prefixes sends over IPv4, so a server pool
-        // with IPv6 alone cannot answer.
+        // A client pool with both prefixes is refused, whatever the server
+        // pool has.
         let mut p = plan_v6();
         p.host_pools[0].ipv4_prefix = "10.1.0.0/24".into();
         assert!(check_af_xdp(&p, Sides::Both).is_err());
@@ -1261,5 +1474,292 @@ mod tests {
             b.to_string(),
             "port c interface dpa attach native queues copy xdp_driver_mode XDP_MODE_NATIVE"
         );
+    }
+
+    // ---- the fallback of an unforced agent (AGT-29) ----
+
+    /// The plans that the datapath refuses, each with the words of its cause.
+    fn refused_shapes() -> Vec<(&'static str, Plan, Sides, &'static str)> {
+        let mut shapes = Vec::new();
+        let mut p = plan();
+        p.topology = Topology::ClientSim;
+        shapes.push(("client_sim topology", p, Sides::Both, "TOPOLOGY_APP_SIM"));
+        let mut p = plan();
+        p.topology = Topology::ServerSim;
+        shapes.push(("server_sim topology", p, Sides::Both, "TOPOLOGY_APP_SIM"));
+        shapes.push(("the client side only", plan(), Sides::Client, "both arms"));
+        shapes.push(("the server side only", plan(), Sides::Server, "both arms"));
+        let mut p = plan();
+        p.host_pools[1].port = "c".into();
+        shapes.push((
+            "one interface for both pools",
+            p,
+            Sides::Both,
+            "same interface",
+        ));
+        let mut p = plan();
+        p.ports[1].interface_name.clear();
+        shapes.push((
+            "a port without an interface",
+            p,
+            Sides::Both,
+            "names no interface",
+        ));
+        let mut p = plan();
+        p.host_pools[0].dhcp4 = Some(crate::plan::Dhcp4 {});
+        p.host_pools[0].ipv4_prefix.clear();
+        shapes.push(("a DHCP pool", p, Sides::Both, "DHCP"));
+        let mut p = plan();
+        p.host_pools
+            .push(slice("more", "c", HostRole::Client, "10.3.0.0/24"));
+        p.mix.push(MixEntry {
+            id: "other".into(),
+            client_pool: "more".into(),
+            server_pool: "servers".into(),
+            ..MixEntry::default()
+        });
+        shapes.push(("two client pools", p, Sides::Both, "2 Client host pools"));
+        let mut p = plan_v6();
+        p.host_pools[1].ipv6_prefix.clear();
+        p.host_pools[1].ipv4_prefix = "10.2.0.0/24".into();
+        shapes.push(("two families", p, Sides::Both, "a lane carries one family"));
+        let mut p = plan();
+        p.host_pools[0].ipv6_prefix = "fd00:1::/64".into();
+        shapes.push(("a pool with both prefixes", p, Sides::Both, "IPv4 alone"));
+        let mut p = plan();
+        p.host_pools[0].vlan = 7;
+        shapes.push(("two VLANs", p, Sides::Both, "VLAN 7 and 0"));
+        let mut p = plan();
+        p.host_pools[1].os_profile = "beos".into();
+        shapes.push(("an unknown OS profile", p, Sides::Both, "os_profile 'beos'"));
+        for scenario in ["dns/tcp_fallback", "hls/vod_segments", "strike/conn_churn"] {
+            let mut p = plan();
+            p.mix[0].scenario = scenario.into();
+            shapes.push(("an excluded scenario", p, Sides::Both, scenario));
+        }
+        shapes
+    }
+
+    #[test]
+    fn an_unforced_agent_runs_every_refused_shape_on_the_kernel_backend_and_says_why() {
+        let shapes = refused_shapes();
+        assert!(shapes.len() >= 14);
+        for (what, p, sides, cause) in shapes {
+            let r = resolve_with_fallback(&p, sides, Some(BackendKind::AfXdp), true)
+                .unwrap_or_else(|e| panic!("{what}: {e}"));
+            assert_eq!(r.kind, BackendKind::Kernel, "{what}");
+            let text = r.fallback.unwrap_or_else(|| panic!("{what}: no cause"));
+            assert!(text.contains(cause), "{what}: {text}");
+            // The cause is the refusal that a forced agent gets.
+            let refusal = check_af_xdp(&p, sides).unwrap_err().to_string();
+            assert_eq!(text, refusal, "{what}");
+        }
+    }
+
+    #[test]
+    fn a_forced_agent_refuses_every_refused_shape_with_the_cause() {
+        for (what, p, sides, cause) in refused_shapes() {
+            // A forced agent keeps the AF_XDP backend, and the check of
+            // `prepare` refuses the plan.
+            let r = resolve_with_fallback(&p, sides, Some(BackendKind::AfXdp), false)
+                .unwrap_or_else(|e| panic!("{what}: {e}"));
+            assert_eq!((r.kind, r.fallback), (BackendKind::AfXdp, None), "{what}");
+            let e = check_af_xdp(&p, sides).expect_err(what);
+            assert!(e.to_string().contains(cause), "{what}: {e}");
+        }
+        // The standalone mode names the backend itself and never falls back,
+        // whatever `fall_back` says.
+        let mut p = plan();
+        p.topology = Topology::ClientSim;
+        let r = resolve_with_fallback(&p, Sides::Both, None, true).unwrap();
+        assert_eq!((r.kind, r.fallback), (BackendKind::AfXdp, None));
+    }
+
+    #[test]
+    fn a_plan_that_the_datapath_serves_does_not_fall_back() {
+        for fall_back in [true, false] {
+            let r =
+                resolve_with_fallback(&plan(), Sides::Both, Some(BackendKind::AfXdp), fall_back)
+                    .unwrap();
+            assert_eq!((r.kind, r.fallback), (BackendKind::AfXdp, None));
+            let r =
+                resolve_with_fallback(&plan_v6(), Sides::Both, Some(BackendKind::AfXdp), fall_back)
+                    .unwrap();
+            assert_eq!(r.kind, BackendKind::AfXdp);
+        }
+        // An agent on the kernel backend has nothing to fall back from, and a
+        // plan for another backend than the selected one is refused as before.
+        let mut p = plan();
+        p.topology = Topology::ClientSim;
+        p.backend = Backend::Kernel;
+        let r = resolve_with_fallback(&p, Sides::Both, Some(BackendKind::Kernel), true).unwrap();
+        assert_eq!((r.kind, r.fallback), (BackendKind::Kernel, None));
+        let e = resolve_with_fallback(&plan(), Sides::Both, Some(BackendKind::Kernel), true);
+        assert!(matches!(
+            e,
+            Err(RunError::Backend(BackendError::Mismatch { .. }))
+        ));
+    }
+
+    /// The modules of `profiles.yaml` that have an `excluded` mapping.
+    fn modules_with_exclusions(yaml: &str) -> usize {
+        yaml.lines()
+            .filter(|l| l.starts_with("  excluded:"))
+            .count()
+    }
+
+    #[test]
+    fn the_exclusion_list_is_the_file_that_the_realism_run_reads() {
+        let list = excluded().expect("the built in list parses");
+        let names: Vec<&str> = list.iter().map(|x| x.scenario.as_str()).collect();
+        assert_eq!(
+            names,
+            ["dns/tcp_fallback", "hls/vod_segments", "strike/conn_churn"],
+            "the TRN-36 list; remove an entry here when its fix lands"
+        );
+        assert!(list
+            .iter()
+            .all(|x| x.reason.len() > 40 && !x.reason.contains('\n')));
+        // A key that the parser does not read would leave the list empty or
+        // short, and the check would pass every scenario.
+        let modules: BTreeSet<&str> = list
+            .iter()
+            .filter_map(|x| x.scenario.split('/').next())
+            .collect();
+        assert_eq!(modules.len(), modules_with_exclusions(REALISM_PROFILES));
+        // The agent reads the file in the repository and not a copy of it.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fps-datapath/realism/profiles.yaml");
+        let on_disk = std::fs::read_to_string(path).expect("profiles.yaml");
+        assert_eq!(parse_excluded(&on_disk).unwrap(), list);
+        // Every entry names a scenario that its module has, so a typo cannot
+        // leave a scenario unguarded.
+        for x in list {
+            let (module, scenario) = x.scenario.split_once('/').unwrap();
+            let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../modules")
+                .join(module)
+                .join("scenarios")
+                .join(format!("{scenario}.yaml"));
+            assert!(
+                file.exists(),
+                "{} has no file {}",
+                x.scenario,
+                file.display()
+            );
+        }
+    }
+
+    #[test]
+    fn the_exclusion_list_reads_folded_text_and_anchors_and_refuses_other_shapes() {
+        let list = parse_excluded(
+            "# comment\nsmall: &s {sessions: 1}\nbig:\n  sessions: 2\n  excluded:\n    one: >-\n      first line\n      second line\n    two: a reason\nmore: *s\n",
+        )
+        .unwrap();
+        assert_eq!(
+            list,
+            [
+                Excluded {
+                    scenario: "big/one".into(),
+                    reason: "first line second line".into()
+                },
+                Excluded {
+                    scenario: "big/two".into(),
+                    reason: "a reason".into()
+                },
+            ]
+        );
+        assert!(parse_excluded("").is_err(), "an empty file is no mapping");
+        assert!(parse_excluded("a: [").is_err());
+        assert!(parse_excluded("m:\n  excluded: [x]\n").is_err());
+        assert!(parse_excluded("m:\n  excluded:\n    x: {a: 1}\n").is_err());
+    }
+
+    #[test]
+    fn a_mix_entry_of_the_exclusion_list_fails_the_check_with_its_reason() {
+        let mut p = plan();
+        p.mix[0].id = "fallback".into();
+        p.mix[0].scenario = "dns/tcp_fallback".into();
+        let e = check_af_xdp(&p, Sides::Both).unwrap_err();
+        assert!(matches!(e, BackendError::Unsupported(_)), "{e:?}");
+        let text = e.to_string();
+        assert!(
+            text.contains("mix entry fallback runs scenario dns/tcp_fallback")
+                && text.contains("TCP leg")
+                && text.contains("TRN-36"),
+            "{text}"
+        );
+        // The same scenario of another module, and the other scenarios of the
+        // module, are not excluded.
+        for scenario in ["http1/tcp_fallback", "dns/lookup_a", "hls/live_refresh"] {
+            let mut p = plan();
+            p.mix[0].scenario = scenario.into();
+            check_af_xdp(&p, Sides::Both).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_run_reports_each_port_of_the_plan_in_plan_order() {
+        use fps_backend_afxdp::memory::frame_pair;
+        let p = plan();
+        // The kernel backend binds nothing, so no port has a mode.
+        let kernel = StartedBackend::Kernel.run_ports(&p);
+        assert_eq!(
+            kernel,
+            [
+                RunPort {
+                    name: "c".into(),
+                    interface_name: "dpa".into(),
+                    xdp_mode: XdpMode::Unspecified
+                },
+                RunPort {
+                    name: "s".into(),
+                    interface_name: "dpb".into(),
+                    xdp_mode: XdpMode::Unspecified
+                },
+            ]
+        );
+        // The AF_XDP backend reports what each port bound in, by port name,
+        // and a port of the plan that no pool uses has no mode.
+        let (c, s) = frame_pair(64, 1600);
+        let mut backend =
+            start_on_queues(&p, Sides::Both, vec![(Box::new(c), Box::new(s))]).unwrap();
+        backend.ports = vec![
+            BoundPort {
+                name: "s".into(),
+                interface: "dpb".into(),
+                role: HostRole::Server,
+                attach: Attach::Native,
+                queues: vec![BoundMode::ZeroCopy],
+            },
+            BoundPort {
+                name: "c".into(),
+                interface: "dpa".into(),
+                role: HostRole::Client,
+                attach: Attach::Generic,
+                queues: vec![BoundMode::Copy],
+            },
+        ];
+        let mut with_spare = plan();
+        with_spare.ports.push(PortBinding {
+            name: "spare".into(),
+            interface_name: "dpc".into(),
+            mtu: 0,
+        });
+        let started = StartedBackend::AfXdp(Box::new(backend));
+        let modes: Vec<(String, XdpMode)> = started
+            .run_ports(&with_spare)
+            .into_iter()
+            .map(|r| (r.name, r.xdp_mode))
+            .collect();
+        assert_eq!(
+            modes,
+            [
+                ("c".to_owned(), XdpMode::Generic),
+                ("s".to_owned(), XdpMode::ZeroCopy),
+                ("spare".to_owned(), XdpMode::Unspecified),
+            ]
+        );
+        let _ = started.stop();
     }
 }
