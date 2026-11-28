@@ -127,7 +127,11 @@ for ns in "$ns_agent" "$ns_wire"; do
 done
 
 raw=$work/$module-afxdp.pcap
-ip netns exec "$ns_wire" tcpdump -n -s 0 -U --immediate-mode -i wc -w "$raw" 2>"$work/tcpdump.log" &
+# The ring of tcpdump holds buffer / snaplen frames in immediate mode: -s 0 (262144)
+# with the default 2 MB leaves about 30 slots, and a descheduled tcpdump on a busy
+# runner then lost the rest of one session (bug 735). 9216 covers a jumbo frame and
+# 65536 KB leaves thousands of slots. The drop count is checked after the run.
+ip netns exec "$ns_wire" tcpdump -n -s 9216 -B 65536 -U --immediate-mode -i wc -w "$raw" 2>"$work/tcpdump.log" &
 capture_pid=$!
 for _ in $(seq 50); do
   grep -q "listening on" "$work/tcpdump.log" && break
@@ -157,6 +161,12 @@ sleep 1
 kill "$capture_pid"
 wait "$capture_pid" 2>/dev/null || true
 capture_pid=
+# A frame that tcpdump drops leaves a session cut in the middle, and the encryption
+# check then reports a handshake that is not complete. Name the cause instead.
+dropped=$(sed -n 's/^\([0-9][0-9]*\) packets\? dropped by .*/\1/p' "$work/tcpdump.log")
+cat "$work/tcpdump.log" >&2
+[[ -n $dropped ]] || die "tcpdump did not report its drop count, see its log above"
+[[ $dropped -eq 0 ]] || die "tcpdump dropped $dropped packets, so the capture is incomplete (bug 735); rerun, or raise the buffer -B"
 
 pcap=$out/$module-afxdp.pcapng
 python3 -I "$root/tests/harness/pcapng.py" convert "$raw" "$pcap"
