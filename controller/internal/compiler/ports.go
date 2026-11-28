@@ -128,7 +128,7 @@ func checkServerPorts(cfg Config, catalog []Scenario) error {
 // constantAcceptPort returns the port that an accept action names when it is
 // constant: an integer or a digit string, or a single {{ vars.<name> }} that
 // the entry params or the scenario vars give as an integer.
-func constantAcceptPort(raw any, m MixEntry, vars map[string]any) (int, bool) {
+func constantAcceptPort(raw any, m MixConfig, vars map[string]any) (int, bool) {
 	if s, ok := raw.(string); ok {
 		if match := acceptPortVar.FindStringSubmatch(s); match != nil {
 			value, set := m.Params[match[1]]
