@@ -501,10 +501,28 @@ pub fn violations(
             "SACK blocks without agreement",
         );
     }
-    check(
-        wire.opener.sack_segments == 0,
-        "the opener has no holes to report",
-    );
+    // The opener sends the bulk and the acceptor sends little: an answer and
+    // a FIN. On a clean link the opener has no hole to report, so it sends no
+    // SACK block. On a link that drops frames the acceptor's own segments can
+    // be lost too: a lost answer followed by an arriving FIN (an own acceptor
+    // always sends the FIN in a segment of its own, after the data) is a hole,
+    // and a repeated segment is reported as a duplicate (RFC 2883), both with
+    // a SACK block. Each acceptor segment that takes up sequence space
+    // raises at most one such ACK, so the opener may send at most as many as
+    // the acceptor sent data segments (retransmissions included), plus the
+    // FIN and one FIN again.
+    if loss {
+        let due = wire.acceptor.data_segments + 2;
+        check(
+            wire.opener.sack_segments <= due,
+            "the opener reports more holes than the acceptor sent segments",
+        );
+    } else {
+        check(
+            wire.opener.sack_segments == 0,
+            "the opener has no holes to report",
+        );
+    }
     out
 }
 
@@ -602,6 +620,44 @@ mod tests {
         };
         assert_eq!(WireSummary::from_line(&summary.to_line()), Some(summary));
         assert_eq!(WireSummary::from_line("nothing"), None);
+    }
+
+    #[test]
+    fn the_opener_reports_holes_only_for_what_the_acceptor_sent() {
+        let both = SynOptions {
+            mss: Some(1460),
+            window_scale: Some(7),
+            sack_permitted: true,
+            timestamps: true,
+        };
+        let own = OwnSide {
+            opener: false,
+            mtu: 1500,
+            window_scale: true,
+            sack: true,
+            timestamps: true,
+            rcv_buffer: 1024 * 1024,
+        };
+        let mut wire = WireSummary {
+            syn: Some(both),
+            syn_ack: Some(both),
+            ..WireSummary::default()
+        };
+        wire.acceptor.data_segments = 1;
+        wire.acceptor.sack_segments = 1;
+        let hole = "opener has no holes";
+        let many = "more holes than";
+        let text = |wire: &WireSummary, loss| violations(wire, &own, loss, None).join("|");
+        // A clean link: no hole, no block.
+        wire.opener.sack_segments = 1;
+        assert!(text(&wire, false).contains(hole));
+        // A lost answer with the FIN arriving: a block or two.
+        assert!(!text(&wire, true).contains(many) && !text(&wire, true).contains(hole));
+        wire.opener.sack_segments = 3;
+        assert!(!text(&wire, true).contains(many));
+        // More blocks than the acceptor had segments to report on.
+        wire.opener.sack_segments = 4;
+        assert!(text(&wire, true).contains(many));
     }
 
     #[test]
