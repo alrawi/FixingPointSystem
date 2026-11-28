@@ -594,6 +594,8 @@ These are problems that the project has already met while it built modules, with
 
 **A capture check loses a session on one client port in a run.** tshark decodes a port with `-d` and offers a segment that the first dissector rejects to the dissector of the other port of the pair, and Wireshark registers protocols on ephemeral ports (40000 is SAP NI). A STARTTLS session, whose clear text start TLS rejects, then showed no ClientHello and the encryption check decrypted 7 of 8 sessions only in runs that used that port. The check now decodes the client ports of the sampled sessions as TLS as well. If you write a tshark based check, bind both ports of a session or list the registered ports with `tshark -G decodes` (bug 712).
 
+**A capture check reports a session cut in the middle when tcpdump drops frames.** tcpdump in immediate mode holds buffer / snaplen frames in its ring, so `-s 0` with the default 2 MB leaves about 30 slots, and a tcpdump that is not scheduled for a few milliseconds drops a burst. One TLS session then lacked its Finished messages and the encryption check decrypted 79 of 80 sessions. Use a snaplen near the frame size and `-B` of tens of MB, and fail the run when tcpdump reports dropped packets (bug 735).
+
 ### Byte estimates and sessions
 
 **Measure the estimate, never write it by hand.** Four hand written sip_rtp estimates were 12 to 21 percent too high. Sizes drawn by the session generator vary five to tenfold between sessions, so a guard test averages over 10 to 100 session ids (MOD-25).
