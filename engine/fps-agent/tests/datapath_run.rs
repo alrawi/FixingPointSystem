@@ -228,3 +228,82 @@ fn the_lanes_follow_the_workers_of_the_plan() {
         assert_eq!(server.counter_total(metric::SESSIONS_FAILED), 0);
     }
 }
+
+/// Bug #689: `strike/conn_churn` on the datapath. Each instance holds a keeper
+/// connection and spawns 32 connections that reset at once, matched by server
+/// accepts that reset the same way. The own stack must keep a connection that
+/// the peer reset after the handshake and before `accept` (the accept returns
+/// it and its first read reports the reset), and `connect` must succeed when
+/// the reset comes right after the SYN-ACK, as on a kernel. Without both,
+/// about a third of the sessions failed (`connect_timeout` on the server side,
+/// `unexpected_reset` on the client side).
+#[test]
+fn strike_conn_churn_runs_through_the_agent_on_the_datapath_without_a_failed_session() {
+    use fps_agent::modules::{sha256_digest, tree_digest};
+    let modules = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules");
+    let source = std::fs::read_to_string(modules.join("strike/scenarios/conn_churn.yaml"))
+        .expect("scenario source");
+    let manifest = std::fs::read_to_string(modules.join("strike/manifest.yaml")).expect("manifest");
+    let version = manifest
+        .lines()
+        .find_map(|l| l.strip_prefix("version:"))
+        .map(|v| v.trim().trim_matches('"').to_owned())
+        .expect("version");
+    let mut plan = plan_json();
+    plan["modules"] = serde_json::json!([{
+        "name": "strike",
+        "version": version,
+        "digest": tree_digest("strike", &modules.join("strike")).expect("digest"),
+    }]);
+    plan["scenarios"] = serde_json::json!([{
+        "ref": "strike/conn_churn",
+        "module": "strike",
+        "digest": sha256_digest(source.as_bytes()),
+        "source": source,
+    }]);
+    plan["mix"] = serde_json::json!([{
+        "id": "conn_churn",
+        "scenario": "strike/conn_churn",
+        "weight": 1,
+        "params": { "server_port": 8081, "churn_port": 8082 },
+        "clientPool": "clients",
+        "serverPool": "servers",
+    }]);
+    for w in plan["workers"].as_array_mut().expect("workers") {
+        w["rates"] = serde_json::json!([{ "mixEntry": "conn_churn", "sessionsPerSecond": 5 }]);
+    }
+    plan["load"]["phases"] = serde_json::json!([
+        { "name": "steady", "duration": "4s", "shape": "PHASE_SHAPE_HOLD",
+          "startFraction": 1, "endFraction": 1 }
+    ]);
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fps-agent-datapath-run");
+    std::fs::create_dir_all(&dir).expect("plan dir");
+    let path = dir.join("conn_churn.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&plan).expect("text")).expect("write");
+    let prepared = prepare_on(
+        Plan::load(&path).expect("the plan loads"),
+        &modules,
+        Sides::Both,
+        &ModulePolicy::default(),
+        &KeyTap::new(),
+        Some(BackendKind::AfXdp),
+    )
+    .expect("the plan prepares on AF_XDP");
+    let finished = run_to_the_end(prepared);
+    let (client, server) = (
+        finished.client.as_ref().expect("client totals"),
+        finished.server.as_ref().expect("server totals"),
+    );
+    let attempted = count(client, metric::SESSIONS_ATTEMPTED, "strike", "client");
+    assert!(attempted >= 20, "only {attempted} sessions attempted");
+    assert_eq!(
+        count(client, metric::SESSIONS_SUCCEEDED, "strike", "client"),
+        attempted
+    );
+    assert_eq!(
+        count(server, metric::SESSIONS_SUCCEEDED, "strike", "server"),
+        attempted
+    );
+    assert_eq!(client.counter_total(metric::SESSIONS_FAILED), 0);
+    assert_eq!(server.counter_total(metric::SESSIONS_FAILED), 0);
+}

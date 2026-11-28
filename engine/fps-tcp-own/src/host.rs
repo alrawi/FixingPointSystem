@@ -221,6 +221,10 @@ struct Conn {
     sent_fin: bool,
     fin_rcvd: bool,
     app_alive: bool,
+    /// An active open got its SYN-ACK. `connected` then succeeds even when a
+    /// reset arrived before the task looked, as `connect` of a kernel does; the
+    /// error is reported by the first read or write.
+    handshook: bool,
     dirty: bool,
     ack_pending: bool,
     syn_pending: bool,
@@ -271,6 +275,7 @@ impl Conn {
             sent_fin: false,
             fin_rcvd: false,
             app_alive: true,
+            handshook: false,
             dirty: false,
             ack_pending: false,
             syn_pending: true,
@@ -1149,7 +1154,12 @@ impl Host {
         }
         let conn = self.conn(id)?;
         if let Some(kind) = conn.error {
-            return Some(Err(io::Error::new(kind, "the connection failed")));
+            if !conn.handshook {
+                return Some(Err(io::Error::new(kind, "the connection failed")));
+            }
+            // The handshake finished and the peer reset right after it: the
+            // connect succeeded, and the first read or write fails.
+            return Some(Ok(()));
         }
         if conn.state == State::SynSent {
             conn.write_waker = Some(waker.clone());
@@ -1498,6 +1508,7 @@ impl Host {
                     conn.mss = conn.mss.saturating_sub(TS_OVERHEAD).max(1);
                 }
                 conn.state = State::Established;
+                conn.handshook = true;
                 conn.armed = false;
                 conn.retries = 0;
                 conn.set_rto(self.cfg.rto_us);

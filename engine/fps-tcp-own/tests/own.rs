@@ -520,6 +520,34 @@ async fn a_hundred_connections_reset_before_accept_are_all_accepted() {
     reset_before_accept(true, 100).await;
 }
 
+/// A server that accepts and resets before the connecting task looks at its
+/// socket (the churned connections of `strike/conn_churn`, bug #689). The
+/// connect of a kernel has succeeded at the SYN-ACK, and the first read fails
+/// with the reset, so `connect` must not report the reset.
+#[tokio::test(flavor = "current_thread")]
+async fn a_connect_that_is_reset_right_after_the_handshake_succeeds_and_the_first_read_fails() {
+    let stack = OwnStack::default();
+    stack.listen(PORT).expect("listen");
+    within(async {
+        let connect = tokio::spawn({
+            let stack = stack.clone();
+            async move { stack.connect(PORT).await }
+        });
+        // The connect task sends its SYN, and the frames of the handshake
+        // move, without the task looking at its socket again.
+        tokio::task::yield_now().await;
+        stack.pump();
+        let mut server = stack.accept(PORT).await.expect("accept");
+        server.abort();
+        stack.pump();
+        let mut client = connect.await.expect("task").expect("connect succeeds");
+        let mut buf = [0u8; 8];
+        let error = client.read(&mut buf).await.expect_err("reset");
+        assert_eq!(error.kind(), ErrorKind::ConnectionReset);
+    })
+    .await;
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_server_abort_resets_the_client() {
     let stack = OwnStack::default();
