@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #681 |
 | Branch | `wp/CTL-55` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 75% (3 of 4 plan steps) |
+| Pull request | #700 |
+| Status | ready for review |
+| Progress | 100% (4 of 4 plan steps) |
 | Current holder | see the card on #681 |
 | Last verified commit | none |
 
@@ -21,19 +21,19 @@ Store the backend that ran each plan and the bound XDP mode of each port from th
 - [x] 1. Agent manager keeps run_backend and run_ports and emits an event on change
 - [x] 2. Orchestrator keeps them per agent of a run with the selected backend, REST `Run.agents`, CSV and HTML report marks
 - [x] 3. Tests, Controller page, log entry, this file
-- [ ] 4. Pull request and CI
+- [x] 4. Pull request and CI
 
 ## Done and verified
 
-Steps 1 to 3 are written. Go cannot build in the sandbox, so only `gofmt -l` ran (clean). The pull request CI is the build and test loop.
+All steps done. Go cannot build in the sandbox, so only `gofmt -l` ran locally. PR #700 CI is green on all check runs.
 
 ## Remaining
 
-The pull request and CI.
+Nothing.
 
 ## Next action
 
-Open the pull request and poll the check runs.
+The coordinator reviews and merges #700.
 
 ## Blockers and open questions
 
