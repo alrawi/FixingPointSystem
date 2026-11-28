@@ -92,6 +92,7 @@
 //! backend selection. TRN-31 flips the flag.
 
 mod classify;
+mod dhcp;
 mod neighbor;
 mod split;
 mod udp;
@@ -104,16 +105,19 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use fps_backend_afxdp::FrameIo;
-use fps_hosts::{Responder, SliceError};
+use fps_hosts::{DhcpError, DhcpHosts, Responder, SliceError};
 use fps_tcp_own::clock::{Clock, MonotonicClock};
 use fps_tcp_own::net::Station;
-use fps_tcp_own::{HostSlice, OwnConfig, OwnSession, OwnStack, OwnStats, PoolError, Pools};
+use fps_tcp_own::{
+    HostSlice, LeaseBoard, Leases, OwnConfig, OwnSession, OwnStack, OwnStats, PoolError, Pools,
+};
 use fps_udp_own::UdpArm;
 pub use fps_udp_own::{UdpConfig, UdpListener, UdpSession, UdpStats};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle as TaskHandle;
 
 pub use classify::{classify, Class, Frame, Tagging};
+pub use dhcp::DhcpSettings;
 pub use neighbor::{NeighborConfig, Route};
 pub use split::{
     FrameCounters, FrameHook, HookOutcome, Hooks, Replies, SharedCounters, Splitter, Unsupported,
@@ -185,6 +189,27 @@ pub enum DatapathError {
     /// A datapath needs at least one lane.
     #[error("a datapath needs at least one lane")]
     NoLanes,
+    /// A pool leases its addresses and the datapath has no DHCP settings.
+    #[error("host pool {pool} leases its addresses (dhcp4) and DatapathConfig::dhcp is not set")]
+    DhcpOff {
+        /// The pool.
+        pool: String,
+    },
+    /// The DHCP clients of a pool could not be made.
+    #[error("dhcp4: {0}")]
+    DhcpSetup(#[from] DhcpError),
+    /// The lease phase ended before every lease was bound.
+    #[error("dhcp4: {bound} of {hosts} leases bound after {timeout_ms} ms ({detail})")]
+    LeaseTimeout {
+        /// The leases bound when the phase ended.
+        bound: usize,
+        /// The hosts that lease.
+        hosts: usize,
+        /// The limit that passed.
+        timeout_ms: u64,
+        /// The bound count of each pool of each lane.
+        detail: String,
+    },
     /// The source address is not a client host of any lane.
     #[error("source {0} is not a client host of the datapath")]
     UnknownSource(IpAddr),
@@ -286,6 +311,11 @@ pub struct DatapathConfig {
     /// arm. The datapath sets `own.resolve_next_hop` and defers the peers of
     /// the UDP layers itself.
     pub neighbors: Option<NeighborConfig>,
+    /// The DHCP clients of the arms whose pool leases its addresses
+    /// (TRN-37), or `None` when no pool leases. A pool that leases and no
+    /// settings fail [`Datapath::start`]. The caller waits for the leases
+    /// with [`Datapath::wait_leases`] before it opens a session.
+    pub dhcp: Option<DhcpSettings>,
 }
 
 impl Default for DatapathConfig {
@@ -302,6 +332,7 @@ impl Default for DatapathConfig {
             hooks: None,
             udp: Some(UdpConfig::default()),
             neighbors: None,
+            dhcp: None,
         }
     }
 }
@@ -316,6 +347,7 @@ impl std::fmt::Debug for DatapathConfig {
             .field("hooks", &self.hooks.is_some())
             .field("udp", &self.udp)
             .field("neighbors", &self.neighbors)
+            .field("dhcp", &self.dhcp)
             .finish_non_exhaustive()
     }
 }
@@ -351,6 +383,7 @@ struct Running {
     stack: OwnStack,
     client_hosts: HostSlice,
     server_hosts: HostSlice,
+    leases: Leases,
     client_counters: Arc<SharedCounters>,
     server_counters: Arc<SharedCounters>,
     udp_client: Option<UdpArm>,
@@ -381,8 +414,17 @@ impl Running {
 }
 
 /// The index of `ip` in `slice`, or `None` when the slice does not serve it.
-fn index_in(slice: &HostSlice, ip: IpAddr) -> Option<usize> {
-    usize::try_from(slice.index_of(ip)?).ok()
+/// A slice that leases serves the addresses that its hosts hold now.
+fn index_in(slice: &HostSlice, board: Option<&Arc<LeaseBoard>>, ip: IpAddr) -> Option<usize> {
+    let index = match board {
+        Some(board) => {
+            let IpAddr::V4(a) = ip else { return None };
+            let relative = board.index_of(a)?.checked_sub(slice.range.offset)?;
+            (relative < slice.range.count).then_some(relative)?
+        }
+        None => slice.index_of(ip)?,
+    };
+    usize::try_from(index).ok()
 }
 
 /// Cuts the pools into `parts` lanes. Client hosts and server hosts are
@@ -488,9 +530,20 @@ impl Datapath {
         let mut running = Vec::with_capacity(lanes.len());
         for (n, lane) in lanes.into_iter().enumerate() {
             let (client_responder, server_responder) = responders(&lane.pools)?;
+            let leases = lane.pools.leases()?;
+            for (board, slice) in [
+                (&leases.client, &lane.pools.client),
+                (&leases.server, &lane.pools.server),
+            ] {
+                if board.is_some() && config.dhcp.is_none() {
+                    return Err(DatapathError::DhcpOff {
+                        pool: slice.pool.name().to_owned(),
+                    });
+                }
+            }
             let (udp_client, udp_server) = match &config.udp {
                 Some(settings) => {
-                    let built = lane.pools.stations()?;
+                    let built = lane.pools.stations_with(&leases)?;
                     let defer = config.neighbors.is_some();
                     let arm = |station: Station, queue: &dyn FrameIo| {
                         let station = if defer {
@@ -507,7 +560,7 @@ impl Datapath {
                 }
                 None => (None, None),
             };
-            let hooks = |side, arm: &Option<UdpArm>| {
+            let hooks = |side, arm: &Option<UdpArm>, queue: &dyn FrameIo| {
                 let mut hooks = config
                     .hooks
                     .as_ref()
@@ -515,19 +568,50 @@ impl Datapath {
                 if let Some(arm) = arm {
                     hooks.udp = Box::new(udp::UdpHook(arm.clone()));
                 }
-                hooks
+                let (board, slice) = match side {
+                    Side::Client => (&leases.client, &lane.pools.client),
+                    Side::Server => (&leases.server, &lane.pools.server),
+                };
+                if let (Some(board), Some(settings)) = (board, &config.dhcp) {
+                    let mut dhcp = settings.config.clone();
+                    dhcp.vlans = lane.pools.vlan.into_iter().collect();
+                    dhcp.seed = dhcp
+                        .seed
+                        .wrapping_add((n as u64).wrapping_mul(2) + u64::from(side == Side::Server));
+                    let now = Duration::from_micros(u64::try_from(clock.now_micros()).unwrap_or(0));
+                    let hosts = DhcpHosts::new(&slice.pool, board.block(), &dhcp, now)?;
+                    hooks.dhcp = Box::new(dhcp::DhcpHook::new(
+                        hosts,
+                        Arc::clone(board),
+                        Arc::clone(&clock),
+                        queue.max_frame_len(),
+                    ));
+                }
+                Ok::<_, DatapathError>(hooks)
             };
+            let client_hooks = hooks(Side::Client, &udp_client, &*lane.client)?;
+            let server_hooks = hooks(Side::Server, &udp_server, &*lane.server)?;
             let (client, client_counters) = Splitter::new(
                 lane.client,
                 client_responder,
                 lane.pools.vlan,
-                hooks(Side::Client, &udp_client),
+                client_hooks,
             );
             let (server, server_counters) = Splitter::new(
                 lane.server,
                 server_responder,
                 lane.pools.vlan,
-                hooks(Side::Server, &udp_server),
+                server_hooks,
+            );
+            let (client, server) = (
+                match &leases.client {
+                    Some(b) => client.with_leases(Arc::clone(b)),
+                    None => client,
+                },
+                match &leases.server {
+                    Some(b) => server.with_leases(Arc::clone(b)),
+                    None => server,
+                },
             );
             // Each arm resolves through the gateway of its own pool.
             let resolving = |splitter: Splitter, pool: &HostSlice| match &config.neighbors {
@@ -540,17 +624,19 @@ impl Datapath {
             };
             let client = resolving(client, &lane.pools.client);
             let server = resolving(server, &lane.pools.server);
-            let stack = OwnStack::with_links_and_pools(
+            let stack = OwnStack::with_links_pools_and_leases(
                 Box::new(client),
                 Box::new(server),
                 own.clone(),
                 lane.pools.clone(),
+                leases.clone(),
                 Arc::clone(&clock),
             )?;
             running.push(Running {
                 stack,
                 client_hosts: lane.pools.client,
                 server_hosts: lane.pools.server,
+                leases,
                 client_counters,
                 server_counters,
                 udp_client,
@@ -681,6 +767,29 @@ impl Datapath {
         Ok(listener)
     }
 
+    /// A handle on the lease phase (TRN-37).
+    #[must_use]
+    pub fn leases(&self) -> LeaseMonitor {
+        LeaseMonitor {
+            lanes: Arc::clone(&self.lanes),
+            timeout: self.config.dhcp.as_ref().map(|d| d.timeout),
+        }
+    }
+
+    /// Waits until every host of every leasing pool holds an address, for at
+    /// most [`DhcpSettings::timeout`]. It returns at once when no pool
+    /// leases. Call it before the first session; the clients keep renewing
+    /// after it returns. It blocks the calling thread, so a task calls
+    /// [`LeaseMonitor::wait_async`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatapathError::LeaseTimeout`], which names DHCP and the
+    /// bound count, when the limit passed first.
+    pub fn wait_leases(&self) -> Result<LeaseReport, DatapathError> {
+        self.leases().wait()
+    }
+
     /// A handle that reads the counters from any thread or task.
     #[must_use]
     pub fn monitor(&self) -> Monitor {
@@ -728,6 +837,145 @@ impl Datapath {
 impl Drop for Datapath {
     fn drop(&mut self) {
         let _ = self.join();
+    }
+}
+
+/// The leases of one arm of one lane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArmLeases {
+    /// The lane.
+    pub lane: usize,
+    /// The side of the arm.
+    pub side: Side,
+    /// The name of the pool.
+    pub pool: String,
+    /// The hosts that hold an address now.
+    pub bound: usize,
+    /// The hosts of the slice of the lane.
+    pub hosts: usize,
+}
+
+/// The leases of every leasing arm, at one moment.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LeaseReport {
+    /// One entry per leasing arm of each lane. Empty when no pool leases.
+    pub arms: Vec<ArmLeases>,
+}
+
+impl LeaseReport {
+    /// The hosts that hold an address, over all arms.
+    #[must_use]
+    pub fn bound(&self) -> usize {
+        self.arms.iter().map(|a| a.bound).sum()
+    }
+
+    /// The hosts that lease, over all arms.
+    #[must_use]
+    pub fn hosts(&self) -> usize {
+        self.arms.iter().map(|a| a.hosts).sum()
+    }
+
+    /// Whether every host holds an address. True when no pool leases.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.arms.iter().all(|a| a.bound == a.hosts)
+    }
+
+    /// The bound count of each arm, for an error message.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        self.arms
+            .iter()
+            .map(|a| {
+                format!(
+                    "lane {} {:?} pool {}: {} of {}",
+                    a.lane, a.side, a.pool, a.bound, a.hosts
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// A cloneable handle on the lease phase of a [`Datapath`] (TRN-37).
+#[derive(Clone)]
+pub struct LeaseMonitor {
+    lanes: Arc<Vec<Running>>,
+    timeout: Option<Duration>,
+}
+
+impl LeaseMonitor {
+    /// How many hosts of each leasing arm hold an address now.
+    #[must_use]
+    pub fn report(&self) -> LeaseReport {
+        let mut arms = Vec::new();
+        for (lane, running) in self.lanes.iter().enumerate() {
+            for (side, board) in [
+                (Side::Client, &running.leases.client),
+                (Side::Server, &running.leases.server),
+            ] {
+                if let Some(board) = board {
+                    arms.push(ArmLeases {
+                        lane,
+                        side,
+                        pool: board.pool().name().to_owned(),
+                        bound: board.bound(),
+                        hosts: board.count(),
+                    });
+                }
+            }
+        }
+        LeaseReport { arms }
+    }
+
+    fn timed_out(&self, report: &LeaseReport, limit: Duration) -> DatapathError {
+        DatapathError::LeaseTimeout {
+            bound: report.bound(),
+            hosts: report.hosts(),
+            timeout_ms: u64::try_from(limit.as_millis()).unwrap_or(u64::MAX),
+            detail: report.describe(),
+        }
+    }
+
+    /// Waits for every lease, as [`Datapath::wait_leases`] does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatapathError::LeaseTimeout`] when the limit passed.
+    pub fn wait(&self) -> Result<LeaseReport, DatapathError> {
+        let limit = self.timeout.unwrap_or_default();
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            let report = self.report();
+            if report.is_complete() {
+                return Ok(report);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(self.timed_out(&report, limit));
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// Waits for every lease without blocking the thread, inside a Tokio
+    /// runtime with time enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DatapathError::LeaseTimeout`] when the limit passed.
+    pub async fn wait_async(&self) -> Result<LeaseReport, DatapathError> {
+        let limit = self.timeout.unwrap_or_default();
+        let deadline = tokio::time::Instant::now() + limit;
+        loop {
+            let report = self.report();
+            if report.is_complete() {
+                return Ok(report);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(self.timed_out(&report, limit));
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
     }
 }
 
@@ -785,9 +1033,10 @@ impl Connector {
         let lane = self
             .lanes
             .iter()
-            .find(|l| index_in(&l.client_hosts, source).is_some())
+            .find(|l| index_in(&l.client_hosts, l.leases.client.as_ref(), source).is_some())
             .ok_or(DatapathError::UnknownSource(source))?;
-        let known = index_in(&lane.server_hosts, destination).is_some();
+        let known =
+            index_in(&lane.server_hosts, lane.leases.server.as_ref(), destination).is_some();
         let routed = self.resolving && source.is_ipv4() == destination.is_ipv4();
         if !known && !routed {
             return Err(DatapathError::UnknownDestination(destination));

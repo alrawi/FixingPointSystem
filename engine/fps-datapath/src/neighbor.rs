@@ -38,8 +38,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fps_hosts::wire::{arp_request, ethernet_payload, ns_frame, ETHERTYPE_IPV4, ETHERTYPE_IPV6};
-use fps_hosts::{HostPool, Ipv4Prefix, Ipv6Prefix, MacAddr};
+use fps_hosts::{HostPool, Ipv4Prefix, Ipv6Prefix, LeaseTable, MacAddr};
 use fps_tcp_own::clock::Clock;
+use fps_tcp_own::Follower;
 use fps_tcp_own::net::NEXT_HOP_MAC;
 
 use crate::split::SharedCounters;
@@ -103,6 +104,21 @@ pub struct Route {
 }
 
 impl Route {
+    /// The route of the hosts that lease their addresses (TRN-37): the subnet
+    /// of the first lease whose server sent a mask, and the router of the
+    /// first lease that names one. The hosts of an arm share a link, so one
+    /// subnet and one router serve the arm; a lease that disagrees is not
+    /// followed.
+    #[must_use]
+    pub fn of_leases(leases: &LeaseTable) -> Self {
+        Self {
+            ipv4: leases.subnets().into_iter().next(),
+            ipv6: None,
+            gateway_v4: leases.iter().find_map(|(_, l)| l.router),
+            gateway_v6: None,
+        }
+    }
+
     /// The route of the hosts of `pool`: its prefixes and its gateway, which
     /// serves the family that it belongs to.
     #[must_use]
@@ -235,6 +251,8 @@ pub(crate) struct Neighbors {
     /// The next hops in state `Resolving`, which the timer pass visits.
     resolving: Vec<IpAddr>,
     held: usize,
+    /// The leases that the route follows, with the generation it was built at.
+    leases: Option<(Follower, u64)>,
 }
 
 fn micros(d: Duration) -> i64 {
@@ -258,7 +276,30 @@ impl Neighbors {
             entries: HashMap::new(),
             resolving: Vec::new(),
             held: 0,
+            leases: None,
         }
+    }
+
+    /// Makes the route follow the leases of `follower` (TRN-37). The route
+    /// is built from the leases at once and again whenever their generation
+    /// moves. Entries that were resolved stay: they are keyed by next hop.
+    pub(crate) fn follow(&mut self, follower: Follower) {
+        self.route = Route::of_leases(follower.current().leases());
+        let seen = follower.current().generation();
+        self.leases = Some((follower, seen));
+    }
+
+    /// Rebuilds the route when the leases moved.
+    pub(crate) fn sync(&mut self) {
+        let Some((follower, seen)) = self.leases.as_mut() else {
+            return;
+        };
+        if follower.board().generation() == *seen {
+            return;
+        }
+        let snapshot = follower.current();
+        *seen = snapshot.generation();
+        self.route = Route::of_leases(snapshot.leases());
     }
 
     fn bump(&self, counter: &std::sync::atomic::AtomicU64, by: usize) {

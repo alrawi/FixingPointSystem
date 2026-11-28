@@ -88,6 +88,7 @@
 pub mod clock;
 pub mod cubic;
 pub mod host;
+pub mod leases;
 pub mod net;
 pub mod pools;
 pub mod profile;
@@ -115,7 +116,8 @@ use crate::clock::{Clock, MonotonicClock};
 
 use host::{Host, HostCounters};
 use net::{ETH_LEN, VLAN_TAG_LEN};
-pub use pools::{HostSlice, PoolError, Pools, Tables};
+pub use leases::{BoardError, Follower, LeaseBoard, Leases, Snapshot};
+pub use pools::{Blocks, HostSlice, PoolError, Pools, Tables};
 pub use profile::{OsProfile, ProfileError};
 pub use recovery::CongestionControl;
 
@@ -357,6 +359,8 @@ struct Inner {
     server: Endpoint,
     client_hosts: HostSlice,
     server_hosts: HostSlice,
+    /// The lease boards of the sides whose pool leases (TRN-37).
+    leases: Leases,
     /// The number of connects so far, which picks the next pair of hosts.
     connects: u64,
     passes: u64,
@@ -397,11 +401,35 @@ impl Inner {
         if n == 0 || m == 0 {
             return None;
         }
-        let c = self.connects;
-        self.connects = self.connects.wrapping_add(1);
-        let local = self.client_hosts.ip((c % n) as u32)?;
-        let remote = self.server_hosts.ip(((c / n) % m) as u32)?;
-        Some((local, remote))
+        // A host that holds no lease has no address, so the turn passes it.
+        for _ in 0..n.saturating_mul(m) {
+            let c = self.connects;
+            self.connects = self.connects.wrapping_add(1);
+            let local = self.host_ip(Side::Client, (c % n) as u32);
+            let remote = self.host_ip(Side::Server, ((c / n) % m) as u32);
+            if let Some(pair) = local.zip(remote) {
+                return Some(pair);
+            }
+        }
+        None
+    }
+
+    /// The address of host `i` of a side: by arithmetic for a static pool, and
+    /// from the lease board for a pool that leases.
+    fn host_ip(&self, side: Side, i: u32) -> Option<IpAddr> {
+        let (slice, board) = match side {
+            Side::Client => (&self.client_hosts, &self.leases.client),
+            Side::Server => (&self.server_hosts, &self.leases.server),
+        };
+        match board {
+            Some(b) => {
+                if i >= slice.range.count {
+                    return None;
+                }
+                b.addr_of(slice.range.offset + i).map(IpAddr::V4)
+            }
+            None => slice.ip(i),
+        }
     }
 
     fn blocked(&self) -> bool {
@@ -521,7 +549,23 @@ impl OwnStack {
         pools: Pools,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, PoolError> {
-        let mut built = pools.stations()?;
+        Self::with_links_pools_and_leases(client, server, config, pools, Leases::default(), clock)
+    }
+
+    /// Like [`OwnStack::with_links_and_pools`], for pools of which a side may
+    /// lease its addresses (TRN-37). `leases` holds the board of each such
+    /// side (see [`Pools::leases`]). The stations and the choice of hosts
+    /// read the boards, so a host starts to work when its lease is bound and
+    /// stops when it is lost.
+    pub fn with_links_pools_and_leases(
+        client: Box<dyn FrameIo>,
+        server: Box<dyn FrameIo>,
+        config: OwnConfig,
+        pools: Pools,
+        leases: Leases,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, PoolError> {
+        let mut built = pools.stations_with(&leases)?;
         if config.resolve_next_hop {
             built.client = built.client.defer_peers();
             built.server = built.server.defer_peers();
@@ -551,6 +595,7 @@ impl OwnStack {
                     },
                     client_hosts: pools.client,
                     server_hosts: pools.server,
+                    leases,
                     connects: 0,
                     passes: 0,
                 }),
@@ -683,7 +728,11 @@ impl OwnStack {
                     Target::Hosts(c, s) => u32::try_from(c)
                         .ok()
                         .zip(u32::try_from(s).ok())
-                        .and_then(|(c, s)| inner.client_hosts.ip(c).zip(inner.server_hosts.ip(s))),
+                        .and_then(|(c, s)| {
+                            inner
+                                .host_ip(Side::Client, c)
+                                .zip(inner.host_ip(Side::Server, s))
+                        }),
                 };
                 let Some((local, remote)) = pair else {
                     return Err(io::Error::new(

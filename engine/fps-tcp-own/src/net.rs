@@ -25,9 +25,12 @@
 
 use std::cell::Cell;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
 
 pub use fps_hosts::wire::{ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_IPV6, MAX_REPLY_LEN};
 use fps_hosts::{MacAddr, NeighborTable, Responder, Verdict};
+
+use crate::leases::{Follower, LeaseBoard};
 
 /// The length of an Ethernet header without a tag.
 pub const ETH_LEN: usize = 14;
@@ -202,6 +205,10 @@ pub struct Station {
     /// Whether the MAC address of a peer is left to the layer below
     /// ([`Station::defer_peers`]).
     defer_peers: bool,
+    /// The leased hosts of this side (TRN-37), read in addition to `local`.
+    local_leases: Option<Follower>,
+    /// The leased hosts of the other side, read in addition to `peers`.
+    peer_leases: Option<Follower>,
     /// The last local host and the last neighbor that were found. The frames
     /// of one connection repeat the same two addresses, so the table, which
     /// walks its slices, is read about once per connection and not once per
@@ -216,6 +223,12 @@ fn lookup(table: &NeighborTable, ip: IpAddr) -> Option<MacAddr> {
         IpAddr::V4(a) => table.lookup_v4(a),
         IpAddr::V6(a) => table.lookup_v6(a),
     }
+}
+
+/// The MAC address that the leases of `follower` give to `ip`.
+fn leased(follower: Option<&Follower>, ip: IpAddr) -> Option<MacAddr> {
+    let IpAddr::V4(a) = ip else { return None };
+    follower?.current().table().lookup_v4(a)
 }
 
 impl Station {
@@ -236,9 +249,29 @@ impl Station {
             local: Responder::new(local),
             peers,
             defer_peers: false,
+            local_leases: None,
+            peer_leases: None,
             last_local: Cell::new(None),
             last_peer: Cell::new(None),
         })
+    }
+
+    /// Makes the station serve the hosts that `board` leases, in addition to
+    /// the hosts of its table (TRN-37). The station follows the generation of
+    /// the board: an address that was lost stops answering, and a new one
+    /// starts to.
+    #[must_use]
+    pub fn with_local_leases(mut self, board: Arc<LeaseBoard>) -> Self {
+        self.local_leases = Some(Follower::new(board));
+        self
+    }
+
+    /// Makes the station resolve the hosts that `board` leases as peers, in
+    /// addition to its neighbor table (TRN-37).
+    #[must_use]
+    pub fn with_peer_leases(mut self, board: Arc<LeaseBoard>) -> Self {
+        self.peer_leases = Some(Follower::new(board));
+        self
     }
 
     /// Leaves the MAC address of every peer to the layer below the stack
@@ -266,6 +299,10 @@ impl Station {
     /// The number of hosts that the station serves.
     pub fn hosts(&self) -> u64 {
         self.local.table().hosts()
+            + self
+                .local_leases
+                .as_ref()
+                .map_or(0, |f| f.board().bound() as u64)
     }
 
     /// Reports whether `ip` belongs to a host of the station.
@@ -281,7 +318,10 @@ impl Station {
                 return Some(mac);
             }
         }
-        let mac = lookup(self.local.table(), ip)?;
+        let Some(mac) = lookup(self.local.table(), ip) else {
+            // Leased addresses change, so they are not cached.
+            return leased(self.local_leases.as_ref(), ip);
+        };
         self.last_local.set(Some((ip, mac)));
         Some(mac)
     }
@@ -298,7 +338,9 @@ impl Station {
                 return Some(mac);
             }
         }
-        let mac = lookup(&self.peers, ip)?;
+        let Some(mac) = lookup(&self.peers, ip) else {
+            return leased(self.peer_leases.as_ref(), ip);
+        };
         self.last_peer.set(Some((ip, mac)));
         Some(mac)
     }
@@ -325,6 +367,20 @@ impl Station {
         true
     }
 
+    /// Answers an ARP request or a neighbor solicitation from the hosts of the
+    /// table, and then from the leased hosts.
+    fn answer<'a>(&self, frame: &[u8], reply: &mut [u8]) -> Received<'a> {
+        if let Verdict::Reply(_, len) = self.local.process(frame, reply) {
+            return Received::Reply(len);
+        }
+        if let Some(follower) = &self.local_leases {
+            if let Verdict::Reply(_, len) = follower.current().responder().process(frame, reply) {
+                return Received::Reply(len);
+            }
+        }
+        Received::Ignored
+    }
+
     /// Takes one frame from the link. IPv4 and IPv6 packets come back as
     /// [`Received::Ip`], ARP requests and neighbor solicitations for a host
     /// are answered into `reply`, and everything else is an error or
@@ -344,15 +400,9 @@ impl Station {
                 if packet.get(IPV6_NEXT_HEADER_AT) != Some(&NEXT_HEADER_ICMP6) {
                     return Ok(Received::Ip(packet));
                 }
-                match self.local.process(frame, reply) {
-                    Verdict::Reply(_, len) => Ok(Received::Reply(len)),
-                    _ => Ok(Received::Ignored),
-                }
+                Ok(self.answer(frame, reply))
             }
-            ETHERTYPE_ARP => match self.local.process(frame, reply) {
-                Verdict::Reply(_, len) => Ok(Received::Reply(len)),
-                _ => Ok(Received::Ignored),
-            },
+            ETHERTYPE_ARP => Ok(self.answer(frame, reply)),
             _ => Ok(Received::Ignored),
         }
     }

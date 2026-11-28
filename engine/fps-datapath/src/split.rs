@@ -34,6 +34,7 @@ use fps_backend_afxdp::{FrameIo, QueueStats};
 use fps_hosts::wire::{parse_arp, parse_neighbor_advert, MAX_REPLY_LEN};
 use fps_hosts::{MacAddr, Responder, Verdict};
 use fps_tcp_own::clock::Clock;
+use fps_tcp_own::{Follower, LeaseBoard};
 
 use crate::classify::{classify, Class};
 use crate::neighbor::{needs_next_hop, NeighborConfig, Neighbors, Outcome, Route};
@@ -292,6 +293,8 @@ pub struct Splitter {
     pending: VecDeque<Vec<u8>>,
     counters: Arc<SharedCounters>,
     neighbors: Option<Neighbors>,
+    /// The leases of the hosts of this arm, when the pool leases (TRN-37).
+    leases: Option<Follower>,
 }
 
 impl Splitter {
@@ -314,6 +317,7 @@ impl Splitter {
             pending: VecDeque::new(),
             counters: Arc::clone(&counters),
             neighbors: None,
+            leases: None,
         };
         (splitter, counters)
     }
@@ -338,7 +342,26 @@ impl Splitter {
             clock,
             Arc::clone(&self.counters),
         ));
+        self.link_leases();
         self
+    }
+
+    /// Makes the splitter answer ARP and neighbor solicitations for the hosts
+    /// that `board` leases, in addition to the hosts of its responder, and
+    /// makes the route of the next hop cache follow the leases (TRN-37). The
+    /// responder and the route are rebuilt when the generation of the board
+    /// moves, so a lost address stops answering and a new one starts to.
+    #[must_use]
+    pub fn with_leases(mut self, board: Arc<LeaseBoard>) -> Self {
+        self.leases = Some(Follower::new(board));
+        self.link_leases();
+        self
+    }
+
+    fn link_leases(&mut self) {
+        if let (Some(cache), Some(follower)) = (self.neighbors.as_mut(), &self.leases) {
+            cache.follow(Follower::new(Arc::clone(follower.board())));
+        }
     }
 
     /// Sends the replies that wait, as many as the queue takes.
@@ -356,6 +379,7 @@ impl Splitter {
 /// frames to a known next hop get their MAC address, and the others are held
 /// or dropped, with the requests that this takes queued behind them.
 fn resolve_pending(neighbors: &mut Neighbors, pending: &mut VecDeque<Vec<u8>>) {
+    neighbors.sync();
     if !pending.iter().any(|f| needs_next_hop(f)) {
         return;
     }
@@ -457,12 +481,34 @@ fn queue_reply(pending: &mut VecDeque<Vec<u8>>, reply: &[u8], counters: &SharedC
     pending.push_back(reply.to_vec());
 }
 
+/// Asks the responder of the static hosts, and then the one of the leased
+/// hosts, and returns the first reply, or the verdict of the static one.
+fn process(
+    responder: &Responder,
+    leased: Option<&Responder>,
+    frame: &[u8],
+    out: &mut [u8],
+) -> Verdict {
+    let verdict = responder.process(frame, out);
+    if matches!(verdict, Verdict::Reply(..)) {
+        return verdict;
+    }
+    if let Some(leased) = leased {
+        let second = leased.process(frame, out);
+        if matches!(second, Verdict::Reply(..)) {
+            return second;
+        }
+    }
+    verdict
+}
+
 /// Sends one frame where its class says.
 #[allow(clippy::too_many_arguments)] // reason: the pieces of one queue that a frame touches
 fn dispatch(
     frame: &[u8],
     vlan: Option<u16>,
     responder: &Responder,
+    leased: Option<&Responder>,
     hooks: &mut Hooks,
     pending: &mut VecDeque<Vec<u8>>,
     counters: &SharedCounters,
@@ -492,7 +538,7 @@ fn dispatch(
                 bump(&counters.neighbor_answers);
             }
             let mut out = [0u8; MAX_REPLY_LEN];
-            match responder.process(frame, &mut out) {
+            match process(responder, leased, frame, &mut out) {
                 Verdict::Reply(_, len) => {
                     if let Some(reply) = out.get(..len) {
                         queue_reply(pending, reply, counters);
@@ -520,7 +566,7 @@ fn dispatch(
             // The responder answers the solicitations for the hosts of the
             // port, as it answers ARP. The hook gets what it passes.
             let mut out = [0u8; MAX_REPLY_LEN];
-            match responder.process(frame, &mut out) {
+            match process(responder, leased, frame, &mut out) {
                 Verdict::Reply(_, len) => {
                     if let Some(reply) = out.get(..len) {
                         queue_reply(pending, reply, counters);
@@ -579,14 +625,19 @@ impl FrameIo for Splitter {
             pending,
             counters,
             neighbors,
+            leases,
         } = self;
+        // One look per pass: the follower refreshes only when the board moved.
+        let snapshot = leases.as_ref().map(Follower::current);
+        let leased = snapshot.as_deref().map(fps_tcp_own::Snapshot::responder);
         let taken = inner.recv_batch(max, &mut |f| {
             dispatch(
-                f, *vlan, responder, hooks, pending, counters, neighbors, frame,
+                f, *vlan, responder, leased, hooks, pending, counters, neighbors, frame,
             );
         })?;
         let mut queued = poll_hooks(hooks, pending);
         if let Some(cache) = neighbors.as_mut() {
+            cache.sync();
             let before = pending.len();
             cache.poll(pending);
             queued += pending.len().saturating_sub(before);
@@ -648,6 +699,7 @@ impl FrameIo for Splitter {
         let Some(cache) = neighbors.as_mut() else {
             return inner.send_batch(frames);
         };
+        cache.sync();
         let max = inner.max_frame_len();
         if frames.iter().any(|f| f.is_empty() || f.len() > max) {
             return Err(io::Error::new(
