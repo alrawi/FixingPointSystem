@@ -5,13 +5,14 @@
 
 use std::io;
 use std::io::ErrorKind;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use fps_backend_afxdp::memory::{frame_pair, MemoryFrames};
 use fps_backend_afxdp::{FrameIo, QueueStats};
 use fps_io::SessionIo;
-use fps_tcp_own::clock::ManualClock;
+use fps_tcp_own::clock::{Clock, ManualClock};
 use fps_tcp_own::net::decode_header;
 use fps_tcp_own::wire::{self, flags};
 use fps_tcp_own::{OsProfile, OwnConfig, OwnSession, OwnStack, Pools};
@@ -1445,4 +1446,36 @@ async fn unlisten_resets_a_handshake_that_is_not_finished() {
         );
     })
     .await;
+}
+
+/// A clock that moves by 100 microseconds at every reading, and counts them.
+struct TickingClock {
+    micros: AtomicI64,
+    reads: AtomicI64,
+}
+
+impl Clock for TickingClock {
+    fn now_micros(&self) -> i64 {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.micros.fetch_add(100, Ordering::Relaxed)
+    }
+}
+
+/// Bug #732: one `pump` call can run for milliseconds (an unoptimized build
+/// needs 65 microseconds per segment, and the acknowledgments of a burst come
+/// back while it is still going out). A time read once at its start gave a
+/// segment and its acknowledgment the same instant, so the round trip samples
+/// read 1 microsecond, the smallest round trip of HyStart became 1, and the
+/// slow start ran on past the queue (63 to 113 segments sent again where the
+/// kernel sends 7). The call reads the clock before every step of a pass.
+#[test]
+fn a_pump_pass_reads_the_clock_before_each_of_its_steps() {
+    let clock = Arc::new(TickingClock {
+        micros: AtomicI64::new(0),
+        reads: AtomicI64::new(0),
+    });
+    let stack = OwnStack::with_clock(OwnConfig::default(), clock.clone());
+    assert!(!stack.pump(), "an idle stack has nothing to move");
+    // Receive and transmit of the client and of the server: four steps.
+    assert_eq!(clock.reads.load(Ordering::Relaxed), 4);
 }
