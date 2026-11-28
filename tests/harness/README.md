@@ -18,6 +18,7 @@ The router takes the first host address of each prefix, and the client and serve
 | `pcapng.py` | Converts the pcap file of tcpdump to pcapng and prints a JSON summary of a pcapng file |
 | `selftest.sh` | Component test that runs the harness in several configurations, needs root |
 | `test_pcapng.py` | Unit tests of `pcapng.py` |
+| `test_capture_drops.py` | Tests that the capture keeps a burst and that `capture stop` fails on drops (root, `ip`, `tcpdump`) |
 | `requirements.txt` | Python tools for the lint and unit test targets |
 
 ## Commands
@@ -40,7 +41,7 @@ sudo tests/harness/netns.sh down
 | `down` | Stops a running capture, kills every process in the namespaces, deletes the namespaces, and removes the state files. It succeeds when the harness is already down. |
 | `exec client\|router\|server CMD...` | Runs a command in one namespace. |
 | `capture start FILE [client\|server\|all]` | Records on the router's client arm (the default), server arm, or both, and returns once tcpdump listens. |
-| `capture stop` | Stops the capture and writes FILE as pcapng. |
+| `capture stop` | Stops the capture and writes FILE as pcapng. It fails with "tcpdump dropped N packets" when tcpdump reports drops (the capture runs with `-s 9216 -B 65536`), or when it reports no count. |
 | `info` | Prints the stored configuration as `KEY=VALUE` lines, for example `SERVER_ADDR=10.202.0.2`. |
 
 A test reads addresses from `info` and does not hard code them. The namespaces have no DNS server, so a program that resolves names at start, such as `http.server`, which looks up its own address, waits for the resolver timeout before it listens. The client and server arms record Ethernet frames with their 802.1Q tags. The `all` mode records the Linux cooked v2 link type of the `any` interface, so each forwarded packet appears once per arm.

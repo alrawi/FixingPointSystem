@@ -367,8 +367,13 @@ capture_start() {
   # with a capture extension, so the temporary file ends in .pcap.
   local raw="${file}.part.pcap"
   : >"${CAPTURE_LOG}"
+  # In immediate mode the ring holds buffer / snaplen frames: -s 0 (262144) with
+  # the default 2 MB leaves about 30 slots, and a tcpdump that is not scheduled
+  # for a few milliseconds drops the rest of a burst (bug 735, bug 738). 9216
+  # covers the largest frame (MTU 9000 with a VLAN tag) and 65536 KB leaves
+  # thousands of slots. capture_stop fails when tcpdump reports drops.
   setsid ip netns exec "${NS_ROUTER}" \
-    tcpdump -n -s 0 -U --immediate-mode -i "${dev}" -w "${raw}" \
+    tcpdump -n -s 9216 -B 65536 -U --immediate-mode -i "${dev}" -w "${raw}" \
     >"${CAPTURE_LOG}" 2>&1 </dev/null &
   echo "$!" >"${CAPTURE_PID}"
   cat >"${CAPTURE_META}" <<EOF
@@ -398,6 +403,19 @@ capture_stop() {
   raw="$(meta_value "${CAPTURE_META}" CAPTURE_RAW)"
   file="$(meta_value "${CAPTURE_META}" CAPTURE_FILE)"
   stop_capture
+  # tcpdump prints its statistics on stderr when it stops. A frame that it drops
+  # cuts a session in the middle, so name the cause here and write no capture.
+  local dropped
+  dropped="$(sed -n 's/^\([0-9][0-9]*\) packets\? dropped by .*/\1/p' "${CAPTURE_LOG}" | tail -n 1)"
+  if [[ -z "${dropped}" ]]; then
+    cat "${CAPTURE_LOG}" >&2
+    rm -f "${raw}" "${CAPTURE_META}"
+    die "tcpdump did not report its drop count, see its log above"
+  fi
+  if ((dropped != 0)); then
+    rm -f "${raw}" "${CAPTURE_META}"
+    die "tcpdump dropped ${dropped} packets, so the capture is incomplete (bug 735); rerun, or raise the buffer -B"
+  fi
   python3 -I "${HARNESS_DIR}/pcapng.py" convert "${raw}" "${file}"
   rm -f "${raw}" "${CAPTURE_META}"
   log "capture written to ${file}"
