@@ -32,11 +32,11 @@
   "ports": [
     {
       "name": "client0",
-      "interfaceName": "lo"
+      "interfaceName": "eth1"
     },
     {
       "name": "server0",
-      "interfaceName": "lo"
+      "interfaceName": "eth2"
     }
   ],
   "hostPools": [
@@ -56,6 +56,7 @@
       "ipv4Prefix": "48.0.0.0/24",
       "poolCount": 1,
       "count": 1,
+      "gateway": "48.0.0.254",
       "macBase": "02:00:01:00:00:00"
     }
   ],
