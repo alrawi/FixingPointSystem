@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use fps_agent::modules::sha256_digest;
+use fps_agent::modules::{sha256_digest, tree_digest};
 use serde_json::{json, Value as Json};
 
 pub fn contracts() -> PathBuf {
@@ -26,14 +26,52 @@ pub fn served_plan() -> Json {
 /// Turns a test configuration of `contracts/examples/tests/` into a plan for
 /// one agent that the controller selected AF_XDP for.
 pub fn plan_of(test: &str) -> Json {
+    plan_in(test, &contracts().join("examples/modules"))
+}
+
+/// The module tree that holds every scenario of a test configuration: the
+/// example modules of the contracts, or else the first party modules of the
+/// repository (`dns/lookup_a` and `http1/single_fetch` live only there).
+pub fn modules_of(test: &str) -> PathBuf {
+    let text = std::fs::read_to_string(contracts().join("examples/tests").join(test))
+        .expect("test configuration");
+    let config: serde_norway::Value = serde_norway::from_str(&text).expect("test YAML");
+    let refs: Vec<&str> = config["profile"]["mix"]
+        .as_sequence()
+        .expect("mix")
+        .iter()
+        .map(|e| e["scenario"].as_str().expect("scenario"))
+        .collect();
+    let first_party = contracts().join("../modules");
+    for dir in [contracts().join("examples/modules"), first_party] {
+        let has = |r: &&str| {
+            let (module, name) = r.split_once('/').expect("module/scenario");
+            dir.join(module)
+                .join("scenarios")
+                .join(format!("{name}.yaml"))
+                .exists()
+        };
+        if refs.iter().all(has) {
+            return dir;
+        }
+    }
+    panic!("{test}: no module tree holds every scenario {refs:?}");
+}
+
+/// Like [`plan_of`] for the module tree `modules`. It reads every shape of
+/// the files in `contracts/examples/tests/`: a pool that leases its address
+/// (`dhcp4`), a missing seed, a mix entry with its own pools, and module
+/// settings.
+pub fn plan_in(test: &str, modules: &Path) -> Json {
     let text = std::fs::read_to_string(contracts().join("examples/tests").join(test))
         .expect("test configuration");
     let config: serde_norway::Value = serde_norway::from_str(&text).expect("test YAML");
     let mut plan = served_plan();
     plan["testName"] = config["metadata"]["name"].as_str().expect("name").into();
+    // The controller chooses a random nonzero seed for a file without one.
     plan["seed"] = config["timeline"]["seed"]
         .as_u64()
-        .expect("seed")
+        .unwrap_or(99)
         .to_string()
         .into();
 
@@ -67,19 +105,23 @@ pub fn plan_of(test: &str) -> Json {
             "name": name,
             "port": p["port"].as_str().expect("pool port"),
             "role": if role == "client" { "HOST_ROLE_CLIENT" } else { "HOST_ROLE_SERVER" },
-            "ipv4Prefix": p["ipv4"].as_str().expect("prefix"),
             "poolCount": count,
             "count": count,
             "macBase": format!("02:00:{:02x}:00:00:01", n + 1),
         });
+        if p["dhcp4"].is_mapping() {
+            pool["dhcp4"] = json!({});
+        } else {
+            pool["ipv4Prefix"] = p["ipv4"].as_str().expect("prefix").into();
+        }
         for (key, field) in [("gateway", "gateway"), ("os_profile", "osProfile")] {
             if let Some(v) = p[key].as_str() {
                 pool[field] = v.into();
             }
         }
-        if role == "client" {
+        if role == "client" && client_pool.is_empty() {
             client_pool.clone_from(&name);
-        } else {
+        } else if role != "client" && server_pool.is_empty() {
             server_pool.clone_from(&name);
         }
         hosts.push(json!({ "pool": name, "count": count }));
@@ -100,16 +142,15 @@ pub fn plan_of(test: &str) -> Json {
             "id": name,
             "scenario": scenario,
             "weight": e["weight"].as_f64().expect("weight") / total,
-            "clientPool": client_pool,
-            "serverPool": server_pool,
+            "clientPool": e["client_pool"].as_str().unwrap_or(&client_pool),
+            "serverPool": e["server_pool"].as_str().unwrap_or(&server_pool),
         });
         if !e["params"].is_null() {
             entry["params"] = serde_json::to_value(&e["params"]).expect("params");
         }
         mix.push(entry);
         rates.push(json!({ "mixEntry": name, "sessionsPerSecond": 1 }));
-        let path = contracts()
-            .join("examples/modules")
+        let path = modules
             .join(module)
             .join("scenarios")
             .join(format!("{name}.yaml"));
@@ -121,6 +162,37 @@ pub fn plan_of(test: &str) -> Json {
             "source": source,
         }));
     }
+    let mut used: Vec<String> = scenarios
+        .iter()
+        .map(|s| s["module"].as_str().expect("module").to_owned())
+        .collect();
+    used.sort();
+    used.dedup();
+    plan["modules"] = Json::Array(
+        used.iter()
+            .map(|name| {
+                let dir = modules.join(name);
+                let manifest =
+                    std::fs::read_to_string(dir.join("manifest.yaml")).expect("manifest");
+                let version = manifest
+                    .lines()
+                    .find_map(|l| l.strip_prefix("version:"))
+                    .map(|v| v.trim().trim_matches('"').to_owned())
+                    .expect("version");
+                let mut m = json!({
+                    "name": name,
+                    "version": version,
+                    "digest": tree_digest(name, &dir).expect("tree digest"),
+                });
+                if !config["modules"][name.as_str()]["settings"].is_null() {
+                    m["settings"] =
+                        serde_json::to_value(&config["modules"][name.as_str()]["settings"])
+                            .expect("settings");
+                }
+                m
+            })
+            .collect(),
+    );
     plan["mix"] = Json::Array(mix);
     plan["scenarios"] = Json::Array(scenarios);
     plan["workers"] = json!([{ "core": 0, "hosts": hosts, "rates": rates }]);
