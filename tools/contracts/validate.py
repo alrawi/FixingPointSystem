@@ -1304,7 +1304,28 @@ def check_test_config(doc: dict, file: Path, report: Report, index: ModuleIndex,
     _check_distributions(doc, file, report)
 
 
-_SERVER_PORT_VAR = re.compile(r"^\s*\{\{\s*vars\.server_port\s*\}\}\s*$")
+_ACCEPT_PORT_VAR = re.compile(r"^\s*\{\{\s*vars\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\s*$")
+
+
+def _constant_accept_port(accept: dict, entry: dict, scenario: dict) -> int | None:
+    """The port the first flow of a scenario accepts on, or None when it is not a constant.
+
+    A literal port counts, and so does a single `{{ vars.<name> }}`, which takes the value of the
+    entry's param of that name, or else the default of the scenario var. An expression, a missing
+    value, or a value that is not an integer gives None, as the agent would fail such a plan itself.
+    """
+    raw = accept.get("port", "")
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    match = _ACCEPT_PORT_VAR.match(str(raw))
+    if match:
+        name = match.group(1)
+        port = (entry.get("params") or {}).get(name, (scenario.get("vars") or {}).get(name))
+    elif str(raw).strip().isdigit():
+        port = int(str(raw).strip())
+    else:
+        return None
+    return port if isinstance(port, int) and not isinstance(port, bool) else None
 
 
 def _check_server_ports(doc: dict, file: Path, report: Report, index: ModuleIndex, pools: dict) -> None:
@@ -1312,9 +1333,9 @@ def _check_server_ports(doc: dict, file: Path, report: Report, index: ModuleInde
 
     A plan listens once for each port of each server host, and an agent refuses a plan in which two
     entries accept on the same transport and port of the same hosts. The check is narrow on purpose: it
-    reads only the port of a scenario whose first flow accepts on exactly `{{ vars.server_port }}`, with
-    the value of the entry's `server_port` param or else the default of the scenario var. A client_sim
-    test starts no servers, so it has no clash to report.
+    reads only the first flow of a scenario, as the agent does, and only an accept port that is a literal
+    or a single `{{ vars.<name> }}`, with the value of the entry's param of that name or else the default
+    of the scenario var. A client_sim test starts no servers, so it has no clash to report.
     """
     if doc.get("topology") == "client_sim":
         return
@@ -1329,10 +1350,8 @@ def _check_server_ports(doc: dict, file: Path, report: Report, index: ModuleInde
         if not flows:
             continue
         accept = next((a["accept"] for a in flows[0].get("server") or [] if "accept" in a), None)
-        if not accept or not _SERVER_PORT_VAR.match(str(accept.get("port", ""))):
-            continue
-        port = (entry.get("params") or {}).get("server_port", (scenario.get("vars") or {}).get("server_port"))
-        if not isinstance(port, int) or isinstance(port, bool):
+        port = _constant_accept_port(accept, entry, scenario) if accept else None
+        if port is None:
             continue
         key = (entry.get("server_pool", default_server), flows[0].get("l4", "tcp"), port)
         if key in seen:

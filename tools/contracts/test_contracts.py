@@ -1420,3 +1420,44 @@ def test_a_client_sim_test_has_no_server_port_clash(smoke, index):
     for entry in smoke["profile"]["mix"]:
         entry.pop("server_pool", None)
     assert not any("both listen" in m for m in messages(check_test(smoke, index)))
+
+
+def add_listener(index: v.ModuleIndex, name: str, port) -> None:
+    """Add a scenario to the http1 module whose first flow accepts on `port`, a literal or a var."""
+    import copy
+    doc = copy.deepcopy(index.scenarios["http1"]["web_get"])
+    doc["name"] = name
+    if isinstance(port, str):
+        var = port.removeprefix("{{ vars.").removesuffix(" }}")
+        doc["vars"] = {**{k: x for k, x in (doc.get("vars") or {}).items() if k != "server_port"}, var: 5060}
+    doc["flows"][0]["server"][0]["accept"]["port"] = port
+    index.scenarios["http1"][name] = doc
+
+
+def pair_of(smoke: dict, first: str, second: str) -> dict:
+    smoke["profile"]["mix"] = [{"scenario": f"http1/{first}", "weight": 1},
+                               {"scenario": f"http1/{second}", "weight": 1}]
+    return smoke
+
+
+def test_a_sip_port_accept_clashes_and_a_param_clears_it(smoke, index):
+    add_listener(index, "sip_a", "{{ vars.sip_port }}")
+    add_listener(index, "sip_b", "{{ vars.sip_port }}")
+    msgs = messages(check_test(pair_of(smoke, "sip_a", "sip_b"), index))
+    assert any("both listen on tcp port 5060" in m for m in msgs), msgs
+    smoke["profile"]["mix"][1]["params"] = {"sip_port": 5061}
+    assert not any("both listen" in m for m in messages(check_test(smoke, index)))
+
+
+def test_a_literal_accept_port_clashes_with_a_var_accept(smoke, index):
+    add_listener(index, "fixed", 8080)
+    msgs = messages(check_test(pair_of(smoke, "web_get", "fixed"), index))
+    assert any("both listen on tcp port 8080" in m for m in msgs), msgs
+    add_listener(index, "other", 8081)
+    assert not any("both listen" in m for m in messages(check_test(pair_of(smoke, "web_get", "other"), index)))
+
+
+def test_an_accept_expression_is_not_a_constant_port(smoke, index):
+    add_listener(index, "calc", "{{ vars.server_port + 1 }}")
+    add_listener(index, "calc2", "{{ vars.server_port + 1 }}")
+    assert not any("both listen" in m for m in messages(check_test(pair_of(smoke, "calc", "calc2"), index)))

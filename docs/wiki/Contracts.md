@@ -390,4 +390,4 @@ The values sit on the heartbeat and not on the start result, because the start r
 
 ## Two mix entries on one server port
 
-Two mix entries of a test configuration cannot accept on the same transport and port of one server pool, and an agent refuses such a plan. The controller assigns no ports, so give one entry its own `server_port` in `params`, as `enterprise_mix_10g.yaml` and `port_locations.yaml` do for `web_browse` (bug #692), or its own `server_pool`. `tools/contracts/validate.py` reports the clash when the scenarios accept on `{{ vars.server_port }}`.
+Two mix entries of a test configuration cannot accept on the same transport and port of one server pool, and an agent refuses such a plan. The controller assigns no ports, so give one entry its own `server_port` in `params`, as `enterprise_mix_10g.yaml` and `port_locations.yaml` do for `web_browse` (bug #692), or its own `server_pool`. `tools/contracts/validate.py` reports the clash when the first flow of each scenario accepts on a literal port or on a single `{{ vars.<name> }}`, such as `server_port` or `sip_port`, whose value is the entry's param of that name or else the scenario var default (bug #705).
