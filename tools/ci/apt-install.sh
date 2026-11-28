@@ -23,10 +23,13 @@
 # https://archive.ubuntu.com/ubuntu, and https://security.ubuntu.com/ubuntu for
 # the security suite, with the components and Signed-By as they are. A failed
 # install attempt applies the same fallback once, refreshes the lists, and
-# retries. The fallback also sets aside every other file in the directory of
-# the sources file (renamed to NAME.fps-ci-disabled, which apt ignores): on
-# 2026-11-27 the image's packages.microsoft.com source answered 403 and failed
-# every update (bug #696), and CI installs only Ubuntu packages. Options before the package names go to apt-get install, and
+# retries. After a failed update, the script also sets aside each other file in
+# the directory of the sources file that names a host apt reported as failing
+# (`Failed to fetch` or `Err:` lines), renamed to NAME.fps-ci-disabled, which
+# apt ignores: on 2026-11-27 the image's packages.microsoft.com source answered
+# 403 and failed every update (bug #696). A source that did not fail, such as
+# the zeek repository that a job adds, stays. Options before the package names
+# go to apt-get install, and
 # --install-recommends drops the default --no-install-recommends, so a step
 # that installs with recommends keeps doing so. DEBIAN_FRONTEND is
 # noninteractive, and the script uses sudo unless it already runs as root.
@@ -105,7 +108,6 @@ use_direct_archive() {
     return 0
   fi
   fallback_done=1
-  set_aside_other_sources
   if [[ ! -f $sources ]]; then
     echo "apt-install.sh: $sources does not exist, so the sources stay as they are"
     return 0
@@ -126,19 +128,30 @@ use_direct_archive() {
   printf '%s\n' "$rewritten" | as_root tee "$sources" >/dev/null
 }
 
-# set_aside_other_sources renames every .list and .sources file in the sources
-# directory, other than the Ubuntu sources file, to NAME.fps-ci-disabled. apt
-# ignores files with that extension, so a third party source that fails (such
-# as the image's packages.microsoft.com, bug #696) no longer fails the update.
-set_aside_other_sources() {
-  local f
+# failing_hosts LOG prints the hosts of the `Failed to fetch` and `Err:` lines
+# of an apt-get update output, one per line.
+failing_hosts() {
+  grep -oE '(Failed to fetch|Err:[0-9]+) +[a-z+]+://[^/ ]+' "$1" | sed -E 's#.*://##' | sort -u || true
+}
+
+# set_aside_failing_sources LOG renames each .list and .sources file in the
+# sources directory, other than the Ubuntu sources file, that names a failing
+# host of LOG to NAME.fps-ci-disabled. apt ignores files with that extension,
+# so a third party source that fails (the image's packages.microsoft.com, bug
+# #696) no longer fails the update, while a working one stays.
+set_aside_failing_sources() {
+  local f host
   [[ -d $sources_dir ]] || return 0
-  for f in "$sources_dir"/*.list "$sources_dir"/*.sources; do
-    [[ -f $f ]] || continue
-    [[ $f -ef $sources ]] && continue
-    echo "apt-install.sh: setting aside $f"
-    as_root mv -f "$f" "$f.fps-ci-disabled"
-  done
+  while IFS= read -r host; do
+    [[ -n $host ]] || continue
+    for f in "$sources_dir"/*.list "$sources_dir"/*.sources; do
+      [[ -f $f ]] || continue
+      [[ $f -ef $sources ]] && continue
+      grep -qF "$host" "$f" || continue
+      echo "apt-install.sh: setting aside $f, whose host $host failed"
+      as_root mv -f "$f" "$f.fps-ci-disabled"
+    done
+  done < <(failing_hosts "$1")
 }
 
 # describe EXIT_CODE says what ended an attempt.
@@ -149,16 +162,20 @@ describe() {
   esac
 }
 
+update_log=$(mktemp)
+trap 'rm -f "$update_log"' EXIT
+
 apt_update() {
   local attempt rc
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     echo "apt-install.sh: apt-get update, attempt $attempt of $attempts, ${update_timeout}s limit"
     rc=0
-    bounded "$update_timeout" apt-get update -q || rc=$?
+    bounded "$update_timeout" apt-get update -q 2>&1 | tee "$update_log" || rc=$?
     if ((rc == 0)); then
       return 0
     fi
     echo "apt-install.sh: apt-get update $(describe "$rc")"
+    set_aside_failing_sources "$update_log"
     use_direct_archive
     if ((attempt < attempts)); then
       sleep "$retry_delay"
