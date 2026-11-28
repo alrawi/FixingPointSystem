@@ -68,11 +68,6 @@ http2:
 
 dns:
   sessions: 20
-  excluded:
-    tcp_fallback: >-
-      its TCP leg starts right after the UDP leg ends, and its server side binds the port in that moment, so
-      the client sometimes connects first; the hub of AGT-25 completes the handshake and resets the session, and the
-      client does not retry a reset after the handshake (1 session in 24 fails)
   drop_rules: [{transport: tcp, server_port: 53}]
 
 ftp:
@@ -103,10 +98,6 @@ hls:
     vod_segments: {stages: 3, stage_segments: 11, segments: 33}
     live_refresh: {cycles: 8, window: 3, rung: 1}
   scenario_sessions: {vod_segments: 1}
-  excluded:
-    vod_segments: >-
-      it spawns 33 segment flows on the port 8092, and the server side of each binds the port after the client
-      dialed; the hub of AGT-25 completes the handshake and resets the session, so the playback fails (see dns)
   drop_applications: [hls_playlist, hls_segment]
   # The streams of the rung check are the playbacks that the agent started.
   streams_from: {hls_vod: vod_ladder, hls_live: live_refresh}
