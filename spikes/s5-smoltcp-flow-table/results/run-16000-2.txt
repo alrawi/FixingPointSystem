@@ -1,0 +1,29 @@
+clock read overhead per Instant::now pair, about 23 ns (included in every per event sample)
+size_of: tcp::Socket 408 B, SocketStorage 432 B
+
+== flow table, 16000 connections (32000 sockets, both ends) ==
+  resident memory per socket after the handshake: 4037 B
+  phase handshake: wall 109.3 ms
+    frame ingest        48000 events, mean    1705 ns, p50   1064 ns, p99    5508 ns, max  3463757 ns
+    app read/write      16000 events, mean    1441 ns, p50   1305 ns, p99    2737 ns, max   233635 ns
+  phase burst: wall 209.5 ms
+    frame ingest       192000 events, mean     791 ns, p50    439 ns, p99    2194 ns, max   172061 ns
+    app read/write     144000 events, mean     256 ns, p50    187 ns, p99     825 ns, max    45397 ns
+    wheel tick              6 events, mean     213 ns, p50    213 ns, p99     241 ns, max      303 ns
+  phase single: wall 7.5 ms
+    frame ingest         8000 events, mean     662 ns, p50    371 ns, p99    2213 ns, max    29876 ns
+    app read/write       6000 events, mean     223 ns, p50    180 ns, p99     586 ns, max    16776 ns
+    wheel tick              2 events, mean     114 ns, p50     92 ns, p99      92 ns, max      137 ns
+  phase loss: wall 67.5 ms
+    frame ingest        64000 events, mean     708 ns, p50    419 ns, p99    2053 ns, max    44183 ns
+    app read/write      48000 events, mean     207 ns, p50    186 ns, p99     521 ns, max    42178 ns
+    timer fire          48000 events, mean      95 ns, p50     87 ns, p99     224 ns, max    57140 ns
+    wheel tick           2000 events, mean    3195 ns, p50     23 ns, p99      38 ns, max  2949381 ns
+  phase close: wall 59.3 ms
+    frame ingest        64000 events, mean     702 ns, p50    303 ns, p99    2730 ns, max    49778 ns
+    app read/write      16000 events, mean     124 ns, p50     99 ns, p99     229 ns, max    44742 ns
+    timer fire          32000 events, mean     156 ns, p50    148 ns, p99     470 ns, max    44909 ns
+    wheel tick          20000 events, mean     348 ns, p50     23 ns, p99     151 ns, max  4568661 ns
+  timer fires, whole run, both hosts: 80000 for a live flow, 16000 of them sent a frame
+  loss: 16000 frames dropped, 16000 retransmit fires on the client; server ingested 196000 frames; orphans 0; stale wheel entries 16000; wheel entries left 0; flows left 0
+  checks: all passed

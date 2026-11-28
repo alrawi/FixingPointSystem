@@ -6,7 +6,7 @@
 | Branch | `wp/SPK-05` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Progress | 90% (4 of 5 plan steps) |
 | Current holder | claude-03a72e |
 | Last verified commit | none |
 
@@ -16,23 +16,24 @@ Decision record 0014 names smoltcp behind a flow table and a timer wheel of our 
 
 ## Plan
 
-- [ ] 1. Claim, handoff, read smoltcp 0.14 API for ingress, egress, and timers.
-- [ ] 2. Prototype: flow table, one socket set per flow, timer wheel, frame device.
-- [ ] 3. Scenarios and verification: handshake, echo, loss and retransmission, close and TIME-WAIT.
-- [ ] 4. Measure at 1,000 to 64,000 sockets, with the interface loop as baseline; write RESULTS.md.
+- [x] 1. Claim, handoff, read smoltcp 0.14 API for ingress, egress, and timers.
+- [x] 2. Prototype: flow table, one socket set per flow, timer wheel, frame device.
+- [x] 3. Scenarios and verification: handshake, echo, loss and retransmission, close and TIME-WAIT.
+- [x] 4. Measure at 1,000 to 64,000 sockets, with the interface loop as baseline; write RESULTS.md.
 - [ ] 5. Lints, log entry, pull request, CI.
 
 ## Done and verified
 
-Nothing yet.
+- `cd spikes/s5-smoltcp-flow-table/flowtable && cargo test --release`: 3 tests pass. `cargo fmt --check` and `cargo clippy --all-targets -D warnings` clean.
+- Sweep, three runs at 16,000 and one at 64,000 connections: all checks pass, raw output in `results/`. RESULTS.md written.
 
 ## Remaining
 
-Everything above.
+Plan checks, pull request, CI, review request.
 
 ## Next action
 
-Write the prototype crate in `spikes/s5-smoltcp-flow-table/flowtable/`.
+Run plan checks, open the pull request, wait for CI.
 
 ## Blockers and open questions
 
@@ -40,7 +41,7 @@ none
 
 ## Decisions taken in this package
 
-- The crate sits one directory down (`flowtable/`) with its own `[workspace]` table and `Cargo.lock`, because the root `members` glob `spikes/*` would otherwise pull a crate at the spike root into the workspace and change the shared `Cargo.lock`.
+- The root `Cargo.toml` must exclude `spikes/s5-smoltcp-flow-table` (shared file, coordinator applies it); without it cargo cannot load the workspace. The crate sits one directory down (`flowtable/`) with its own `[workspace]` table and `Cargo.lock`, because the root `members` glob `spikes/*` would otherwise pull a crate at the spike root into the workspace and change the shared `Cargo.lock`.
 
 ## Pitfalls
 
