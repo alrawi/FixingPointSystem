@@ -862,6 +862,18 @@ pub struct ArmLeases {
     pub hosts: usize,
 }
 
+/// The live [`LeaseBoard`] of one leasing arm of one lane (not a snapshot):
+/// `board.addr_of(i)` is the address that host `i` of the slice holds now.
+#[derive(Clone, Debug)]
+pub struct ArmBoard {
+    /// The lane.
+    pub lane: usize,
+    /// The side of the arm.
+    pub side: Side,
+    /// The board that the stack, the splitter, and the route read.
+    pub board: Arc<LeaseBoard>,
+}
+
 /// The leases of every leasing arm, at one moment.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LeaseReport {
@@ -912,6 +924,30 @@ pub struct LeaseMonitor {
 }
 
 impl LeaseMonitor {
+    /// The live lease boards, one per leasing arm of each lane, in the order
+    /// of [`LeaseMonitor::report`]. Empty when no pool leases. The boards are
+    /// the ones the datapath reads, so an address read from them follows
+    /// every bind, renewal, and loss.
+    #[must_use]
+    pub fn boards(&self) -> Vec<ArmBoard> {
+        let mut out = Vec::new();
+        for (lane, running) in self.lanes.iter().enumerate() {
+            for (side, board) in [
+                (Side::Client, &running.leases.client),
+                (Side::Server, &running.leases.server),
+            ] {
+                if let Some(board) = board {
+                    out.push(ArmBoard {
+                        lane,
+                        side,
+                        board: Arc::clone(board),
+                    });
+                }
+            }
+        }
+        out
+    }
+
     /// How many hosts of each leasing arm hold an address now.
     #[must_use]
     pub fn report(&self) -> LeaseReport {

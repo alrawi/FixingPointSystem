@@ -252,6 +252,22 @@ async fn every_lease_binds_and_sessions_from_the_leased_addresses_reach_the_stat
         .arms
         .iter()
         .all(|a| a.side == Side::Client && a.bound == 3));
+    // The live boards give the address that each host uses (#724).
+    let boards = dp.leases().boards();
+    assert_eq!(boards.len(), 2, "one board per leasing arm");
+    for b in &boards {
+        assert_eq!(b.side, Side::Client);
+        // `addr_of` takes the absolute index of the pool: lane 1 holds 3 to 5.
+        for i in 3 * b.lane..3 * b.lane + 3 {
+            let host = u8::try_from(i).unwrap();
+            assert_eq!(
+                b.board.addr_of(u32::from(host)),
+                Some(Ipv4Addr::new(10, 201, 0, 100 + host)),
+                "lane {} host {i}",
+                b.lane
+            );
+        }
+    }
 
     let mut listener = dp.listen(9200).unwrap();
     let server = tokio::spawn(async move {
