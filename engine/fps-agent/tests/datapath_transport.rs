@@ -160,6 +160,37 @@ async fn a_session_that_arrives_before_its_call_goes_to_the_call_that_comes_next
     r.transport.shutdown();
 }
 
+/// The shape of `dns/tcp_fallback` 100 times: a client dials right after the
+/// previous leg ended, and the server side of the flow binds a moment later.
+#[tokio::test(flavor = "current_thread")]
+async fn a_hundred_flows_that_dial_before_their_call_all_complete() {
+    let r = rig();
+    let t = &r.transport;
+    let _port = t.listen(&[at(r.servers[0], 53)]).expect("listen");
+    for i in 0..100u16 {
+        let mut client = t
+            .connect(r.clients[0], at(r.servers[1], 53))
+            .await
+            .unwrap_or_else(|e| panic!("flow {i}: {e}"));
+        tokio::task::yield_now().await;
+        let mut call = t.listen(&[at(r.servers[1], 53)]).expect("listen");
+        let mut server = within("accept", call.accept())
+            .await
+            .unwrap_or_else(|e| panic!("flow {i}: {e}"));
+        client.write_all(b"q").await.expect("write");
+        let mut buf = [0u8; 1];
+        within("read", server.read_exact(&mut buf))
+            .await
+            .unwrap_or_else(|e| panic!("flow {i}: {e}"));
+        server.write_all(b"a").await.expect("answer");
+        within("read", client.read_exact(&mut buf))
+            .await
+            .unwrap_or_else(|e| panic!("flow {i}: {e}"));
+        assert_eq!(&buf, b"a");
+    }
+    r.transport.shutdown();
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_session_for_a_host_that_nobody_listens_for_is_reset() {
     let r = rig();
