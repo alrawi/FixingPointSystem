@@ -160,3 +160,31 @@ func TestRenderFromReportEscapesReason(t *testing.T) {
 		t.Errorf("external references: %q", v)
 	}
 }
+
+func TestFromReportListsBackends(t *testing.T) {
+	r := testReport()
+	if p := FromReport(r, Options{}); len(p.Backends) != 0 {
+		t.Fatalf("backends %+v for a run that reported none", p.Backends)
+	}
+	r.Run.AgentRuns = []runs.AgentRun{{
+		Agent: "a", Backend: "kernel", SelectedBackend: "af_xdp",
+		Ports: []runs.AgentRunPort{{Name: "client", XdpMode: "native"}},
+	}}
+	p := FromReport(r, Options{})
+	if len(p.Backends) != 2 {
+		t.Fatalf("backends %+v, want one for each agent of the run", p.Backends)
+	}
+	if a := p.Backends[0]; a.Agent != "a" || a.Backend != "kernel" || a.Selected != "af_xdp" || !a.Mismatch || len(a.Ports) != 1 {
+		t.Errorf("backend of a: %+v", a)
+	}
+	if b := p.Backends[1]; b.Agent != "b" || b.Backend != "unknown" || b.Mismatch {
+		t.Errorf("backend of b: %+v, want unknown and no mismatch", b)
+	}
+	out, err := Render(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(out); !strings.Contains(s, "MISMATCH") || !strings.Contains(s, "<code>unknown</code>") {
+		t.Errorf("page lacks the mismatch or the unknown backend")
+	}
+}

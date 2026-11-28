@@ -191,6 +191,7 @@ func (r Report) CSV() ([]byte, error) {
 	}
 	text("agents", strings.Join(run.Agents, " "))
 	text("failed_agents", strings.Join(run.FailedAgents, " "))
+	rows = append(rows, r.backendRows()...)
 	verdict := "not evaluated"
 	if r.Evaluation != nil {
 		verdict = "fail"
@@ -218,6 +219,41 @@ func (r Report) CSV() ([]byte, error) {
 		return nil, fmt.Errorf("encode csv report of run %s: %w", run.ID, err)
 	}
 	return buf.Bytes(), nil
+}
+
+// backendRows returns the run rows that name the backend that each agent ran,
+// the XDP mode of each port, and whether the backend differs from the one that
+// the inventory listed. They are empty while no agent reported a backend.
+// Once one did, an agent that did not report is listed as unknown, and never
+// as the kernel backend.
+func (r Report) backendRows() [][]string {
+	if len(r.Run.AgentRuns) == 0 {
+		return nil
+	}
+	byAgent := map[string]runs.AgentRun{}
+	for _, a := range r.Run.AgentRuns {
+		byAgent[a.Agent] = a
+	}
+	var rows [][]string
+	field := func(name, value string) { rows = append(rows, []string{"run", name, "", "", value, "", ""}) }
+	for _, id := range r.Run.Agents {
+		a, ok := byAgent[id]
+		if !ok {
+			field("backend."+id, "unknown")
+			continue
+		}
+		field("backend."+id, a.Backend)
+		if a.SelectedBackend != "" {
+			field("selected_backend."+id, a.SelectedBackend)
+		}
+		field("backend_mismatch."+id, strconv.FormatBool(a.Mismatch()))
+		for _, p := range a.Ports {
+			if p.XdpMode != "" {
+				field("xdp_mode."+id+"."+p.Name, p.XdpMode)
+			}
+		}
+	}
+	return rows
 }
 
 // metricOrder returns the keys of the totals in catalog order, histogram

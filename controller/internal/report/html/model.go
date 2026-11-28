@@ -38,6 +38,9 @@ type Page struct {
 	Modules      []KV
 	Agents       []string
 	FailedAgents []string
+	// Backends names the backend that each agent ran, and is empty while no
+	// agent reported one.
+	Backends []Backend
 	// Verdict is VerdictPass, VerdictFail, or VerdictNotEvaluated.
 	Verdict string
 
@@ -50,6 +53,21 @@ type Page struct {
 
 // KV is one labeled value.
 type KV struct{ Name, Value string }
+
+// Backend is the backend that one agent ran for the run.
+type Backend struct {
+	Agent string
+	// Backend is kernel, af_xdp, or dpdk, and "unknown" for an agent that
+	// reported none, which is never shown as the kernel backend.
+	Backend string
+	// Selected is the backend that the inventory listed at the start of the
+	// run, or empty.
+	Selected string
+	// Mismatch is true when Backend and Selected are both known and differ.
+	Mismatch bool
+	// Ports holds the XDP mode of each port that reported one.
+	Ports []KV
+}
 
 // Criterion is one row of the criteria table.
 type Criterion struct {

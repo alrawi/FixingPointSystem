@@ -87,6 +87,12 @@ type Options struct {
 	// OnCommand runs before the agent applies a command. A non-nil error
 	// answers the command with it and leaves the state unchanged.
 	OnCommand func(*agentpb.SessionResponse) *agentpb.CommandError
+	// RunBackend and RunPorts are what the agent reports as run_backend and
+	// run_ports of its heartbeats from the start of a plan until the plan is
+	// released, as an agent of agent protocol 0.2.7 does. Both are empty by
+	// default, which is an agent of 0.2.6 or earlier that reports nothing.
+	RunBackend agentpb.Backend
+	RunPorts   []*agentpb.RunPort
 	// Traffic turns on the traffic simulation, which reports counters while the
 	// agent runs and follows UpdateRates. Without it, the agent reports no
 	// counters of its own.
@@ -264,14 +270,22 @@ func (a *Agent) heartbeatMsg() (*agentpb.SessionRequest, uint64) {
 		return nil, 0
 	}
 	a.hbSeq++
-	return &agentpb.SessionRequest{Body: &agentpb.SessionRequest_Heartbeat{Heartbeat: &agentpb.Heartbeat{
+	hb := &agentpb.Heartbeat{
 		Sequence:  a.hbSeq,
 		State:     a.state,
 		PlanId:    a.planID,
 		Phase:     a.phase,
 		AgentTime: a.now(),
 		Message:   a.message,
-	}}}, a.hbSeq
+	}
+	switch a.state {
+	case agentpb.AgentState_AGENT_STATE_RUNNING, agentpb.AgentState_AGENT_STATE_STOPPING, agentpb.AgentState_AGENT_STATE_STOPPED:
+		hb.RunBackend = a.opts.RunBackend
+		for _, p := range a.opts.RunPorts {
+			hb.RunPorts = append(hb.RunPorts, &agentpb.RunPort{Name: p.GetName(), InterfaceName: p.GetInterfaceName(), XdpMode: p.GetXdpMode()})
+		}
+	}
+	return &agentpb.SessionRequest{Body: &agentpb.SessionRequest_Heartbeat{Heartbeat: hb}}, a.hbSeq
 }
 
 // sendHeartbeat sends one heartbeat without waiting for its acknowledgement.

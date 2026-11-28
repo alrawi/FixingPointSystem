@@ -12,6 +12,7 @@ import (
 
 	"github.com/alrawi/FixingPointSystem/controller/internal/metrics"
 	"github.com/alrawi/FixingPointSystem/controller/internal/report"
+	"github.com/alrawi/FixingPointSystem/controller/internal/runs"
 )
 
 // Options adds to a report what the report model does not hold.
@@ -64,6 +65,34 @@ var summarySpecs = []struct{ label, metric, unit string }{
 	{"Response time p99", "sessions.response_time.p99", "us"},
 }
 
+// backends lists the backend of each agent of run, or nothing while no agent
+// reported one. An agent that reported none is listed as unknown.
+func backends(run runs.Run) []Backend {
+	if len(run.AgentRuns) == 0 {
+		return nil
+	}
+	byAgent := map[string]runs.AgentRun{}
+	for _, a := range run.AgentRuns {
+		byAgent[a.Agent] = a
+	}
+	out := make([]Backend, 0, len(run.Agents))
+	for _, id := range run.Agents {
+		a, ok := byAgent[id]
+		if !ok {
+			out = append(out, Backend{Agent: id, Backend: "unknown"})
+			continue
+		}
+		b := Backend{Agent: id, Backend: a.Backend, Selected: a.SelectedBackend, Mismatch: a.Mismatch()}
+		for _, p := range a.Ports {
+			if p.XdpMode != "" {
+				b.Ports = append(b.Ports, KV{p.Name, p.XdpMode})
+			}
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
 // FromReport builds the page of r. A report without evaluation has the
 // verdict "not evaluated" and no criteria.
 func FromReport(r report.Report, o Options) Page {
@@ -88,6 +117,7 @@ func FromReport(r report.Report, o Options) Page {
 		Verdict:      VerdictNotEvaluated,
 		Realism:      slices.Clone(o.Realism),
 	}
+	p.Backends = backends(run)
 	for _, name := range slices.Sorted(maps.Keys(run.ModuleVersions)) {
 		p.Modules = append(p.Modules, KV{name, run.ModuleVersions[name]})
 	}

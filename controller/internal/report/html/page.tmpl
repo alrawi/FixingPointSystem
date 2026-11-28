@@ -118,7 +118,7 @@ footer { margin-top: 40px; color: var(--muted); font-size: 0.85em; }
 </header>
 
 {{if .Reason}}<div class="note bad" role="note"><strong>Reason.</strong> {{.Reason}}</div>{{end}}
-{{if .FailedAgents}}<div class="note warn" role="note"><strong>Failed agents.</strong> {{range $i, $a := .FailedAgents}}{{if $i}}, {{end}}<code>{{$a}}</code>{{end}}</div>{{end}}
+{{if .FailedAgents}}<div class="note warn" role="note"><strong>Failed agents.</strong> {{range $i, $a := .FailedAgents}}{{if $i}}, {{end}}<code>{{$a}}</code>{{end}}</div>{{end}}{{if .Backends}}<div class="note warn" role="note"><strong>Backend.</strong> {{range $i, $b := .Backends}}{{if $i}}; {{end}}<code>{{$b.Agent}}</code> ran <code>{{$b.Backend}}</code>{{range $b.Ports}}, port <code>{{.Name}}</code> in <code>{{.Value}}</code> mode{{end}}{{if $b.Mismatch}}, MISMATCH: the inventory listed <code>{{$b.Selected}}</code>{{end}}{{end}}</div>{{end}}
 
 <section aria-labelledby="summary">
 <h2 id="summary">Summary</h2>

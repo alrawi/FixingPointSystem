@@ -183,12 +183,59 @@ type Run struct {
 	// a throughput_bps objective, oldest first. It is empty for any other
 	// objective and while the factor stays at one.
 	Calibration []CalibrationStep
+	// AgentRuns holds what each agent that reported it ran, ordered by agent
+	// id: the backend that started its plan and the XDP mode that each port
+	// bound in. An agent appears once its heartbeat carried the backend, so an
+	// agent that does not report it (agent protocol 0.2.6 or earlier) never
+	// appears, and a reader shows that agent's backend as unknown and never as
+	// the kernel backend.
+	AgentRuns []AgentRun
 	// Totals, Series, and Verdict are set when the run stopped and its
 	// criteria were evaluated. Series holds the counters of the agents with
 	// their labels, which a report merges with the metrics aggregator.
 	Totals  map[string]float64
 	Series  []Series
 	Verdict *Verdict
+}
+
+// AgentRun is what one agent ran for a run, from the run_backend and run_ports
+// of its heartbeats (agent protocol 0.2.7).
+type AgentRun struct {
+	// Agent is the identity of the agent.
+	Agent string
+	// Backend is the backend that started the plan: kernel, af_xdp, or dpdk.
+	Backend string
+	// SelectedBackend is the backend that the inventory listed for the agent
+	// when the run started, or empty when the controller did not hold one.
+	SelectedBackend string
+	// Ports has one entry for each port of the plan, in plan order.
+	Ports []AgentRunPort
+}
+
+// Mismatch reports a run that did not measure the backend that the inventory
+// promised: both backends are known and they differ. It is false while the
+// inventory backend is unknown, because nothing then says what was promised.
+func (a AgentRun) Mismatch() bool {
+	return a.Backend != "" && a.SelectedBackend != "" && a.Backend != a.SelectedBackend
+}
+
+// AgentRunPort is the XDP mode that one port of a plan bound in.
+type AgentRunPort struct {
+	// Name is the port name of the test configuration and InterfaceName the
+	// interface of the agent that it is bound to.
+	Name          string
+	InterfaceName string
+	// XdpMode is generic, native, or zero_copy, and empty unless the backend
+	// is af_xdp.
+	XdpMode string
+}
+
+// xdpModeNames maps the proto XDP modes to the contract names. The
+// unspecified mode has no entry, so the name stays empty.
+var xdpModeNames = map[agentpb.XdpMode]string{
+	agentpb.XdpMode_XDP_MODE_GENERIC:   "generic",
+	agentpb.XdpMode_XDP_MODE_NATIVE:    "native",
+	agentpb.XdpMode_XDP_MODE_ZERO_COPY: "zero_copy",
 }
 
 // stopRequest is the strongest stop request a run received.
@@ -217,6 +264,13 @@ type runAgent struct {
 	status      agentStatus
 	prepared    bool
 	started     bool
+	// selected is the backend that the inventory listed at the start of the
+	// run. runBackend and runPorts are the newest ones that a heartbeat of the
+	// plan reported, and runBackend stays empty until one did, which is
+	// unknown and never the kernel backend.
+	selected   string
+	runBackend string
+	runPorts   []AgentRunPort
 	// seq is the sequence of the newest snapshot, and counters holds the
 	// newest value of every unlabeled counter and gauge. series holds the
 	// newest value of every counter by metric and labels. Counters are
@@ -260,6 +314,21 @@ func (a *runAgent) absorb(snap *agentpb.CounterSnapshot) bool {
 		}
 	}
 	return true
+}
+
+// absorbRun takes the run backend and the bound ports of a heartbeat of the
+// plan of a. A heartbeat that reports no known backend leaves what an earlier
+// one reported. The caller holds the lock.
+func (a *runAgent) absorbRun(ev agents.Event) {
+	name, ok := backendNames[ev.RunBackend]
+	if !ok {
+		return
+	}
+	a.runBackend = name
+	a.runPorts = nil
+	for _, p := range ev.RunPorts {
+		a.runPorts = append(a.runPorts, AgentRunPort{Name: p.Name, InterfaceName: p.InterfaceName, XdpMode: xdpModeNames[p.XdpMode]})
+	}
 }
 
 // run is the state of one run. The orchestrator lock guards every field
@@ -599,14 +668,18 @@ func (o *Orchestrator) newRun(id string, req StartRequest, cfg compiler.Config, 
 		done:        make(chan struct{}),
 	}
 	prior := map[string]string{}
+	selected := map[string]string{}
 	for _, x := range rs {
 		prior[x.agent.ID] = x.priorHolder
+		if b := agents.ToAPI(x.agent).Backend; b != nil {
+			selected[x.agent.ID] = string(*b)
+		}
 	}
 	for _, p := range plans {
 		if _, ok := prior[p.AgentID]; !ok {
 			continue
 		}
-		r.agents[p.AgentID] = &runAgent{id: p.AgentID, plan: p, priorHolder: prior[p.AgentID]}
+		r.agents[p.AgentID] = &runAgent{id: p.AgentID, plan: p, priorHolder: prior[p.AgentID], selected: selected[p.AgentID]}
 		r.Agents = append(r.Agents, p.AgentID)
 	}
 	slices.Sort(r.Agents)
@@ -629,6 +702,16 @@ func (r *run) copy() Run {
 	out.Agents = slices.Clone(r.Agents)
 	out.FailedAgents = slices.Clone(r.FailedAgents)
 	out.Calibration = slices.Clone(r.Calibration)
+	out.AgentRuns = nil
+	for _, id := range r.Agents {
+		a := r.agents[id]
+		if a == nil || a.runBackend == "" {
+			continue
+		}
+		out.AgentRuns = append(out.AgentRuns, AgentRun{
+			Agent: id, Backend: a.runBackend, SelectedBackend: a.selected, Ports: slices.Clone(a.runPorts),
+		})
+	}
 	out.Totals = maps.Clone(r.Totals)
 	out.Series = slices.Clone(r.Series)
 	if r.Verdict != nil {
@@ -779,6 +862,9 @@ func (o *Orchestrator) Observe(ev agents.Event) {
 			}
 		}
 	case agents.EventStateChanged, agents.EventRegistered:
+		if ev.Kind == agents.EventStateChanged && ev.PlanID == a.plan.PlanID {
+			a.absorbRun(ev)
+		}
 		if a.status != agentActive || !a.prepared {
 			break
 		}
