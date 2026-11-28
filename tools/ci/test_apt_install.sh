@@ -40,6 +40,7 @@ mv "$FPS_TEST_PLAN.next" "$FPS_TEST_PLAN"
 case ${line:-ok} in
   ok) exit 0 ;;
   fail) exit 100 ;;
+  fail-host*) echo "E: Failed to fetch https://${line#fail-host }/ubuntu/dists/noble/InRelease  403  Forbidden"; exit 100 ;;
   sleep*) sleep "${line#sleep }"; exit 0 ;;
   *) echo "apt-get stub: unknown plan line '$line'" >&2; exit 99 ;;
 esac
@@ -103,6 +104,7 @@ run() {
   printf '%s\n' "$@" > "$dir/plan"
   printf '%s\n' "$sources_before" > "$dir/ubuntu.sources"
   printf '%s\n' 'deb [arch=amd64] https://packages.microsoft.com/ubuntu/24.04/prod noble main' > "$dir/microsoft-prod.list"
+  printf '%s\n' 'deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_24.04/ /' > "$dir/zeek.list"
   rc=0
   out=$(
     PATH="$tmp/bin:$PATH" \
@@ -115,6 +117,7 @@ run() {
   conf_file=$dir/apt.conf.d/zzz-fps-ci
   sources_file=$dir/ubuntu.sources
   third_party=$dir/microsoft-prod.list
+  zeek=$dir/zeek.list
 }
 calls() { grep -c "^$1" "$log" || true; }
 
@@ -175,10 +178,24 @@ else
   fail "a failed update points the sources at archive.ubuntu.com and security.ubuntu.com (exit $rc)"
   diff <(printf '%s\n' "$sources_after") "$sources_file" || true
 fi
-if [[ ! -e $third_party && -f $third_party.fps-ci-disabled && -f $sources_file ]]; then
-  pass "a failed update sets aside third party sources and keeps the Ubuntu one (bug #696)"
+if [[ -f $third_party && -f $zeek ]]; then
+  pass "a failed update that names no host keeps the third party sources"
 else
-  fail "a failed update sets aside third party sources and keeps the Ubuntu one (bug #696)"
+  fail "a failed update that names no host keeps the third party sources"
+fi
+
+# 3b. A failed update that names a host sets aside only the sources of that
+#     host and keeps the others, such as the zeek repository (bug #696).
+run failing-host "fail-host packages.microsoft.com" ok ok
+if ((rc == 0)) && [[ ! -e $third_party && -f $third_party.fps-ci-disabled && -f $zeek && -f $sources_file ]]; then
+  pass "a failed update sets aside the failing host's source and keeps zeek and Ubuntu (bug #696)"
+else
+  fail "a failed update sets aside the failing host's source and keeps zeek and Ubuntu (bug #696) (exit $rc)"
+fi
+if grep -q "setting aside .*microsoft-prod.list, whose host packages.microsoft.com failed" <<<"$out"; then
+  pass "the output names the source and its failing host"
+else
+  fail "the output names the source and its failing host"
 fi
 
 # 4. Three failed updates end with a nonzero exit and the named message.
