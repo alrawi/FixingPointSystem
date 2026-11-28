@@ -83,6 +83,11 @@ pub struct Assembly {
     pub udp_clients: Vec<WorkerConfig>,
     /// UDP server workers.
     pub udp_servers: Vec<WorkerConfig>,
+    /// The constant accept ports of the spawned TCP flows of the scenarios that
+    /// the server workers run. The datapath listens on them when it starts, so
+    /// a child that dials before its server flow binds reaches a listener
+    /// (bug #689).
+    pub spawned_tcp_ports: Vec<u16>,
 }
 
 impl Assembly {
@@ -337,6 +342,20 @@ pub fn assemble(
                     .into_iter()
                     .map(|ip| SocketAddr::new(ip, port))
                     .collect();
+                for flow in scenario.flows.iter().skip(1) {
+                    let spawned_port = flow
+                        .server
+                        .as_ref()
+                        .filter(|_| flow.l4 == L4::Tcp)
+                        .and_then(|s| s.port.as_static())
+                        .and_then(|b| std::str::from_utf8(b).ok())
+                        .and_then(|s| s.trim().parse::<u16>().ok());
+                    if let Some(p) = spawned_port {
+                        if !out.spawned_tcp_ports.contains(&p) {
+                            out.spawned_tcp_ports.push(p);
+                        }
+                    }
+                }
                 let udp = *l4 == L4::Udp;
                 for a in &listen {
                     if let Some(other) = taken.insert((udp, *a), e.id.clone()) {

@@ -68,7 +68,6 @@ http2:
 
 dns:
   sessions: 20
-  drop_rules: [{transport: tcp, server_port: 53}]
 
 ftp:
   sessions: 8
@@ -98,7 +97,6 @@ hls:
     vod_segments: {stages: 3, stage_segments: 11, segments: 33}
     live_refresh: {cycles: 8, window: 3, rung: 1}
   scenario_sessions: {vod_segments: 1}
-  drop_applications: [hls_playlist, hls_segment]
   # The streams of the rung check are the playbacks that the agent started.
   streams_from: {hls_vod: vod_ladder, hls_live: live_refresh}
 
