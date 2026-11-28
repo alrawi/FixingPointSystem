@@ -75,7 +75,10 @@ impl Net {
 /// [`LeaseCell::set`] runs the cell holds none, and a filter that reads it
 /// keeps no session.
 #[derive(Clone, Default)]
-pub struct LeaseCell(Arc<Mutex<Vec<(String, Arc<dyn LeaseIndex>)>>>);
+pub struct LeaseCell(Arc<Mutex<Vec<PoolBoard>>>);
+
+/// A lease board with the name of its pool.
+type PoolBoard = (String, Arc<dyn LeaseIndex>);
 
 impl fmt::Debug for LeaseCell {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -97,7 +100,7 @@ impl LeaseIndex for LeaseBoard {
 
 impl LeaseCell {
     /// Hands the live boards, each with the name of its pool, to every reader.
-    pub fn set(&self, boards: Vec<(String, Arc<dyn LeaseIndex>)>) {
+    pub fn set(&self, boards: Vec<PoolBoard>) {
         *self.0.lock().unwrap_or_else(PoisonError::into_inner) = boards;
     }
 
@@ -554,6 +557,44 @@ mod tests {
         // The lease moves, and the same filter follows it.
         *held.0.lock().unwrap() = Some(Ipv4Addr::new(10, 201, 0, 7));
         assert!(leased([10, 201, 0, 7]) && !leased([10, 201, 0, 100]));
+    }
+
+    #[test]
+    fn a_capture_of_a_leased_port_drops_a_session_whose_addresses_are_not_leased() {
+        let mut pools = vec![nets("client0", &[])];
+        pools[0].leased = vec!["clients".into()];
+        pools[0].lease_cell().set(vec![(
+            "clients".into(),
+            Arc::new(Held(Mutex::new(Some(Ipv4Addr::new(10, 201, 0, 100))))) as Arc<dyn LeaseIndex>,
+        )]);
+        let f = PortFilter::parse("client0", &plan_ports(), &pools).unwrap();
+        let mut ff = FrameFilter::new(&f);
+        // A leased client keeps its session, the frames of both directions.
+        assert!(ff.keep(&frame(
+            true,
+            ([10, 201, 0, 100], 40000),
+            ([48, 0, 0, 1], 80),
+            SYN
+        )));
+        assert!(ff.keep(&frame(
+            true,
+            ([48, 0, 0, 1], 80),
+            ([10, 201, 0, 100], 40000),
+            SYN | ACK
+        )));
+        // A session between two addresses that nobody holds is dropped.
+        assert!(!ff.keep(&frame(
+            true,
+            ([10, 201, 0, 77], 40001),
+            ([48, 0, 0, 1], 80),
+            SYN
+        )));
+        assert!(!ff.keep(&frame(
+            true,
+            ([48, 0, 0, 1], 80),
+            ([10, 201, 0, 77], 40001),
+            SYN | ACK
+        )));
     }
 
     #[test]

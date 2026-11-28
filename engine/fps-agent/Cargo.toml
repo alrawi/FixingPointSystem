@@ -127,3 +127,7 @@ rand_pcg = "0.3"
 wat = "1"
 wit-component = "0.254"
 wit-parser = { version = "0.254", default-features = false, features = ["std"] }
+# tests/afxdp_dhcp.rs runs a DHCP server bound to an interface and reads the
+# frames of the router namespace through a packet socket (AGT-23). MIT or
+# Apache-2.0; the lock gains one edge and no package.
+socket2 = { version = "0.6", features = ["all"] }

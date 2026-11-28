@@ -5,8 +5,8 @@
 | Issue | #635 |
 | Branch | `wp/AGT-23` |
 | Pull request | none yet |
-| Status | blocked |
-| Progress | 10% (0 of 5 plan steps; deliverable 2 done) |
+| Status | in progress |
+| Progress | 95% (5 of 5 plan steps, CI pending) |
 | Current holder | claude-a23c7e, lease until 2026-11-28T08:28:34Z |
 | Last verified commit | none |
 
@@ -26,31 +26,35 @@ The agent leases the addresses of a DHCP host pool through the lease phase of TR
 
 ## Done and verified
 
-- Deliverable 2 (kernel refusal carries the fallback cause): `backend::check_kernel_dhcp`, called from `run::prepare_selected` for the kernel backend. New test `the_kernel_refusal_of_a_dhcp_plan_carries_the_cause_of_the_fallback`; the dhcp_clients.yaml row text of EXPECTED follows. `cargo test -p fps-agent --test fallback`: 11 passed. `cargo clippy -p fps-agent --all-targets -D warnings` clean.
+- Kernel refusal with the fallback cause (`backend::check_kernel_dhcp`), the virtual source pool in 240.0.0.0/4, `LeaseMap` in the transport, the lease phase and `DatapathConfig::dhcp` in `backend::launch`, the live-board capture filter (`portfilter::LeaseCell`), the stricter `EXPECTED` row, the Agent page, and `tests/afxdp_dhcp.rs`.
+- `cargo test -p fps-agent` (each target, as root): all pass, including `afxdp_dhcp` (200 leases, 84 of 84 sessions, every server-side client address leased, none in 240.0.0.0/4). `cargo clippy -p fps-agent --all-targets -D warnings` and `cargo fmt --check` clean.
 
 ## Remaining
 
-Steps 1 to 5 of the plan, which are blocked on one change outside `engine/fps-agent/`:
-
-`fps_datapath::Datapath` keeps its live lease boards private (`Running.leases`), and `Pools::leases()` builds fresh boards, so the agent cannot read the address a leased host holds. The datapath connector needs a leased address as `source`, and the runtime workers pick the source from the pool (`fps-runtime` `source_address`, `pool.ipv4_addr(index)`, which is `None` for a DHCP pool). Needed in `engine/fps-datapath/src/lib.rs`: `LeaseMonitor::boards() -> Vec<ArmBoard>` with `pub struct ArmBoard { pub lane: usize, pub side: Side, pub board: Arc<LeaseBoard> }`, built from `Running.leases` as `LeaseMonitor::report` does.
-
-Planned agent design once it exists: a client DHCP pool gets a virtual static pool (100.64.0.0/10) in `SourceHosts` so the runtime picks an index; `DatapathTransport::connect` and `connect_datagram` map the virtual source to `board.addr_of(index)`; `AfXdpBackend` waits for `wait_leases()` in `launch` with `DhcpSettings` seeded from the plan; `layout` accepts a DHCP client pool and refuses a DHCP server pool; `PortNets` carries a cell that the drive thread fills with the boards after `start_backend`, and the filter keeps a session when `board.index_of(addr)` is `Some`.
+PR, CI, review.
 
 ## Next action
 
-Apply the datapath accessor (coordinator or a TRN bug), then start step 1.
+Open the PR and poll CI.
 
 ## Blockers and open questions
 
-The accessor above, outside the paths of AGT-23.
+none (bug #724 merged)
 
 ## Decisions taken in this package
 
-none yet
+- Virtual source pool 240.0.0.0/4 for a leasing client pool, mapped on the live lease boards at each connect by the transport (vetting agent, log 2026-11-28T0730). Known debt: the encoding exists because `SourceHosts` and the transport trait live in `engine/fps-runtime/`.
+- `socket2` dev dependency for the harness test, so Cargo.lock gains one edge.
 
 ## Pitfalls
 
-none yet
+- `LeaseBoard::addr_of` takes the absolute pool index.
+- The disk of the machine fills when all test binaries of fps-agent link at once; build one `--test` target at a time.
+- A `LeaseTable` cannot be filled from outside `fps-hosts`, so unit tests use a fake `LeaseLookup` and `LeaseIndex`.
+
+## Host test
+
+`cargo test -p fps-agent --test afxdp_dhcp -- --nocapture`, needs root (or sudo), `ip`, AF_XDP, timeout 300 s, expected: `test result: ok. 1 passed`, and the log lines `run outcome=pass`, `server leased=200`.
 
 ## Verify the current state
 
@@ -64,3 +68,4 @@ cd engine/fps-agent && cargo test -p fps-agent --lib
 |---|---|---|---|---|
 | 2026-11-28T08:28Z | claude-a23c7e | claim | none | claimed #635 with 5 plan steps |
 | 2026-11-28T08:50Z | claude-a23c7e | block | see git log | deliverable 2 done; the rest needs LeaseMonitor::boards in fps-datapath |
+| 2026-11-28T09:24Z | claude-a23c7e | takeover | see git log | bug #724 merged, design approved; implemented all deliverables |
