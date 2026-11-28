@@ -16,6 +16,7 @@ thiserror = "2"
 tokio = { version = "1.54", features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
+socket2 = { version = "0.6", features = ["all"] }
 fps-backend-kernel = { path = "../fps-backend-kernel" }
 fps-flow = { path = "../fps-flow" }
 fps-interp = { path = "../fps-interp" }

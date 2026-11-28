@@ -10,11 +10,14 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use std::sync::Arc;
+
 use fps_hosts::{
-    HostPool, HostRange, MacAllocator, MacError, NeighborError, NeighborTable,
-    PoolError as HostPoolError, PoolSpec,
+    HostPool, HostRange, LeaseTable, MacAllocator, MacBlock, MacError, NeighborError,
+    NeighborTable, PoolError as HostPoolError, PoolSpec,
 };
 
+use crate::leases::{BoardError, LeaseBoard, Leases};
 use crate::net::{NetError, Station};
 
 /// Why a pool setup was rejected.
@@ -35,6 +38,9 @@ pub enum PoolError {
     /// A pool has no IPv4 prefix where the caller needs IPv4 addresses.
     #[error("pool {0} has no IPv4 prefix")]
     NoIpv4(String),
+    /// A lease board could not be made for a DHCP pool.
+    #[error("leases: {0}")]
+    Board(#[from] BoardError),
 }
 
 /// The hosts of one side: a contiguous slice of a pool.
@@ -56,6 +62,25 @@ impl HostSlice {
     /// The number of hosts of the slice.
     pub fn hosts(&self) -> u32 {
         self.range.count
+    }
+
+    /// The IPv4 address of the `i`-th host of the slice from the lease table
+    /// of a DHCP pool (TRN-37), or `None` when the host holds no lease. A
+    /// plain struct cannot carry the table, because callers build slices by
+    /// hand, so the table is a parameter.
+    pub fn address_leased(&self, i: u32, leases: &LeaseTable) -> Option<u32> {
+        if i >= self.range.count {
+            return None;
+        }
+        leases.addr_of(self.range.offset + i).map(u32::from)
+    }
+
+    /// The host of the slice that holds `ip` in `leases`, as an index into the
+    /// slice.
+    pub fn index_of_leased(&self, ip: IpAddr, leases: &LeaseTable) -> Option<u32> {
+        let IpAddr::V4(a) = ip else { return None };
+        let relative = leases.index_of(a)?.checked_sub(self.range.offset)?;
+        (relative < self.range.count).then_some(relative)
     }
 
     /// The IPv4 address of the `i`-th host of the slice, by arithmetic and
@@ -126,6 +151,30 @@ pub struct Tables {
     pub client: NeighborTable,
     /// The hosts of the server side.
     pub server: NeighborTable,
+}
+
+/// The MAC blocks of both sides.
+#[derive(Clone, Debug)]
+pub struct Blocks {
+    /// The block of the client slice.
+    pub client: MacBlock,
+    /// The block of the server slice.
+    pub server: MacBlock,
+}
+
+/// Adds the hosts of `slice` to `table`: static hosts by prefix, leased hosts
+/// with an empty lease table, which the lease board of the side fills later.
+fn add_slice(
+    table: &mut NeighborTable,
+    slice: &HostSlice,
+    block: &MacBlock,
+) -> Result<(), PoolError> {
+    if slice.pool.is_dhcp() {
+        table.add_leased(&slice.pool, block, &LeaseTable::new(slice.range))?;
+    } else {
+        table.add(&slice.pool, block)?;
+    }
+    Ok(())
 }
 
 /// The stations of both sides.
@@ -240,23 +289,74 @@ impl Pools {
     /// ARP and neighbor discovery both take their tables from it, so they
     /// cannot disagree.
     pub fn tables(&self) -> Result<Tables, PoolError> {
-        let mut ledger = MacAllocator::new();
-        let client_block = ledger.claim(&self.client.pool, self.client.range)?;
-        let server_block = ledger.claim(&self.server.pool, self.server.range)?;
+        let blocks = self.blocks()?;
         let mut client = NeighborTable::new();
-        client.add(&self.client.pool, &client_block)?;
+        add_slice(&mut client, &self.client, &blocks.client)?;
         let mut server = NeighborTable::new();
-        server.add(&self.server.pool, &server_block)?;
+        add_slice(&mut server, &self.server, &blocks.server)?;
         Ok(Tables { client, server })
+    }
+
+    /// The MAC blocks of both sides, claimed from one ledger in the order of
+    /// [`Pools::tables`]. The DHCP clients of a side need their block so that
+    /// the MAC address of a client is the one the tables hold.
+    pub fn blocks(&self) -> Result<Blocks, PoolError> {
+        let mut ledger = MacAllocator::new();
+        let client = ledger.claim(&self.client.pool, self.client.range)?;
+        let server = ledger.claim(&self.server.pool, self.server.range)?;
+        Ok(Blocks { client, server })
+    }
+
+    /// The lease boards of the sides whose pool leases (TRN-37), empty for
+    /// static pools.
+    pub fn leases(&self) -> Result<Leases, PoolError> {
+        let blocks = self.blocks()?;
+        let board = |slice: &HostSlice, block: MacBlock| -> Result<_, PoolError> {
+            slice
+                .pool
+                .is_dhcp()
+                .then(|| LeaseBoard::new(slice.pool.clone(), block).map(Arc::new))
+                .transpose()
+                .map_err(PoolError::from)
+        };
+        Ok(Leases {
+            client: board(&self.client, blocks.client)?,
+            server: board(&self.server, blocks.server)?,
+        })
     }
 
     /// Builds the station of each side from [`Pools::tables`], with the other
     /// side as its neighbor table.
     pub fn stations(&self) -> Result<Built, PoolError> {
+        self.stations_with(&Leases::default())
+    }
+
+    /// Like [`Pools::stations`], with the stations of a DHCP side reading the
+    /// addresses of that side from its lease board (TRN-37).
+    pub fn stations_with(&self, leases: &Leases) -> Result<Built, PoolError> {
         let tables = self.tables()?;
+        let station = |local: NeighborTable,
+                       peers: NeighborTable,
+                       own: &Option<Arc<LeaseBoard>>,
+                       other: &Option<Arc<LeaseBoard>>|
+         -> Result<Station, PoolError> {
+            let mut s = Station::new(local, peers, self.vlan)?;
+            if let Some(b) = own {
+                s = s.with_local_leases(Arc::clone(b));
+            }
+            if let Some(b) = other {
+                s = s.with_peer_leases(Arc::clone(b));
+            }
+            Ok(s)
+        };
         Ok(Built {
-            client: Station::new(tables.client.clone(), tables.server.clone(), self.vlan)?,
-            server: Station::new(tables.server, tables.client, self.vlan)?,
+            client: station(
+                tables.client.clone(),
+                tables.server.clone(),
+                &leases.client,
+                &leases.server,
+            )?,
+            server: station(tables.server, tables.client, &leases.server, &leases.client)?,
         })
     }
 }
