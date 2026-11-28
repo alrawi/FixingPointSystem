@@ -4,7 +4,7 @@
 
 Gate 3 (v1 release). One 16 vCPU agent meets the tier T1 targets on KVM, multi agent runs aggregate correctly, every image format boots, and the web UI passes its end to end suite.
 
-This page lists 50 work packages. Packages marked critical path gate the phase.
+This page lists 52 work packages. Packages marked critical path gate the phase.
 Read [Swarm Protocol](Swarm-Protocol.md) before claiming one.
 
 ## Dependency graph
@@ -36,10 +36,12 @@ flowchart LR
   AGT_30["AGT-30<br/>Datapath lanes follow the workers of the plan"]
   CTL_55["CTL-55<br/>The controller shows the backend that ran"]
   TRN_36["TRN-36<br/>An AF_XDP realism job for every first party module"]
+  TRN_37["TRN-37<br/>DHCP leases on the datapath"]
   AGT_27["AGT-27<br/>The standalone agent writes a TLS key log"]
   AGT_26["AGT-26<br/>The agent resolves next hops on the datapath"]
   AGT_25["AGT-25<br/>The agent runs its workers on the datapath"]
   CON_35["CON-35<br/>The agent reports the backend that ran and the bound XDP mode"]
+  CON_36["CON-36<br/>The DHCP example names a port for each arm"]
   AGT_24["AGT-24<br/>The agent starts the selected backend"]
   CTL_54["CTL-54<br/>The orchestrator inventory uses the selected backend"]
   HST_03["HST-03<br/>ARP and ND for user space backends"]
@@ -108,6 +110,7 @@ flowchart LR
   TRN_34 --> TRN_31
   TRN_35 --> TRN_31
   TRN_36 --> TRN_31
+  AGT_23 --> TRN_31
   AGT_24 --> TRN_31
   AGT_25 --> TRN_31
   AGT_26 --> TRN_31
@@ -134,12 +137,16 @@ flowchart LR
   TRN_12 --> TRN_36
   AGT_27 --> TRN_36
   AGT_28 --> TRN_36
+  HST_04 --> TRN_37
+  TRN_33 --> TRN_37
+  TRN_35 --> TRN_37
   TRN_12 --> AGT_27
   AGT_25 --> AGT_26
   TRN_35 --> AGT_26
   AGT_24 --> AGT_25
   ENG_31 --> AGT_25
   AGT_24 --> CON_35
+  CON_34 --> CON_36
   AGT_22 --> AGT_24
   TRN_27 --> AGT_24
   CTL_53 --> CTL_54
@@ -165,6 +172,8 @@ flowchart LR
   CON_32 --> AGT_22
   HST_04 --> AGT_23
   AGT_26 --> AGT_23
+  TRN_37 --> AGT_23
+  CON_36 --> AGT_23
   CTL_16 --> CTL_51
   CTL_51 --> CTL_52
   CON_32 --> CTL_53
@@ -192,7 +201,7 @@ flowchart LR
 | [TRN-28](#trn-28-os-profile-options-for-the-own-stack) | OS profile options for the own stack | S | TRN-24 |  |
 | [TRN-29](#trn-29-udp-over-frameio) | UDP over FrameIo | M | TRN-21, TRN-32, TRN-27 |  |
 | [TRN-30](#trn-30-ipv6-in-the-own-stack) | IPv6 in the own stack | M | TRN-26, TRN-29 |  |
-| [TRN-31](#trn-31-the-af_xdp-transport-becomes-available) | The AF_XDP transport becomes available | S | TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-34, TRN-35, TRN-36, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, AGT-29, AGT-30, CTL-54, CTL-55, CON-35, QA-06 |  |
+| [TRN-31](#trn-31-the-af_xdp-transport-becomes-available) | The AF_XDP transport becomes available | S | TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-34, TRN-35, TRN-36, AGT-23, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, AGT-29, AGT-30, CTL-54, CTL-55, CON-35, QA-06 |  |
 | [TRN-33](#trn-33-the-own-stack-api-that-the-datapath-needs) | The own stack API that the datapath needs | S | TRN-30 |  |
 | [TRN-34](#trn-34-pacing-and-faster-loss-detection-in-the-own-stack) | Pacing and faster loss detection in the own stack | M | TRN-33 |  |
 | [TRN-35](#trn-35-the-own-stacks-resolve-their-next-hop) | The own stacks resolve their next hop | S | TRN-30 |  |
@@ -202,10 +211,12 @@ flowchart LR
 | [AGT-30](#agt-30-datapath-lanes-follow-the-workers-of-the-plan) | Datapath lanes follow the workers of the plan | M | AGT-28 |  |
 | [CTL-55](#ctl-55-the-controller-shows-the-backend-that-ran) | The controller shows the backend that ran | S | CON-35 |  |
 | [TRN-36](#trn-36-an-af_xdp-realism-job-for-every-first-party-module) | An AF_XDP realism job for every first party module | M | TRN-12, AGT-27, AGT-28 |  |
+| [TRN-37](#trn-37-dhcp-leases-on-the-datapath) | DHCP leases on the datapath | M | HST-04, TRN-33, TRN-35 |  |
 | [AGT-27](#agt-27-the-standalone-agent-writes-a-tls-key-log) | The standalone agent writes a TLS key log | S | TRN-12 |  |
 | [AGT-26](#agt-26-the-agent-resolves-next-hops-on-the-datapath) | The agent resolves next hops on the datapath | S | AGT-25, TRN-35 |  |
 | [AGT-25](#agt-25-the-agent-runs-its-workers-on-the-datapath) | The agent runs its workers on the datapath | S | AGT-24, ENG-31 |  |
 | [CON-35](#con-35-the-agent-reports-the-backend-that-ran-and-the-bound-xdp-mode) | The agent reports the backend that ran and the bound XDP mode | S | AGT-24 |  |
+| [CON-36](#con-36-the-dhcp-example-names-a-port-for-each-arm) | The DHCP example names a port for each arm | S | CON-34 |  |
 | [AGT-24](#agt-24-the-agent-starts-the-selected-backend) | The agent starts the selected backend | S | AGT-22, TRN-27 |  |
 | [CTL-54](#ctl-54-the-orchestrator-inventory-uses-the-selected-backend) | The orchestrator inventory uses the selected backend | S | CTL-53 |  |
 | [HST-03](#hst-03-arp-and-nd-for-user-space-backends) | ARP and ND for user space backends | M | TRN-11 |  |
@@ -221,7 +232,7 @@ flowchart LR
 | [TRN-19](#trn-19-af_xdp-rate-between-two-kvm-guests) | AF_XDP rate between two KVM guests | S | TRN-11 |  |
 | [HST-04](#hst-04-dhcp-for-user-space-backends) | DHCP for user space backends | S | HST-03, CON-34 |  |
 | [AGT-22](#agt-22-the-agent-selects-and-reports-its-backend) | The agent selects and reports its backend | S | TRN-14, CON-32 |  |
-| [AGT-23](#agt-23-the-agent-leases-the-addresses-of-a-dhcp-pool) | The agent leases the addresses of a DHCP pool | M | HST-04, AGT-26 |  |
+| [AGT-23](#agt-23-the-agent-leases-the-addresses-of-a-dhcp-pool) | The agent leases the addresses of a DHCP pool | M | HST-04, AGT-26, TRN-37, CON-36 |  |
 | [CON-32](#con-32-kernel-release-selected-backend-and-xdp-mode-in-the-agent-capabilities) | Kernel release, selected backend, and XDP mode in the agent capabilities | S | none |  |
 | [CTL-51](#ctl-51-clock-offsets-of-agents-from-heartbeats) | Clock offsets of agents from heartbeats | S | CTL-16 |  |
 | [CTL-52](#ctl-52-multi-agent-runs-through-the-run-orchestrator) | Multi agent runs through the run orchestrator | M | CTL-51 |  |
@@ -265,6 +276,25 @@ Deliverables.
 Acceptance.
 
 - [ ] The contract tests show the backend that ran and the bound mode of each port in the chosen message, and the change passes the breaking change check.
+
+### CON-36 The DHCP example names a port for each arm
+
+Phase 3 · size S · workstream CON
+
+- **Depends on.** CON-34
+- **Paths.** `contracts/`, `tools/contracts/`
+- **Owner action.** A contract example change with no schema or protocol change, specified and approved by the vetting agent under decision D13 on 2026-11-28 (bug #708).
+
+contracts/examples/tests/dhcp_clients.yaml puts both ports on local/lo. No DHCP server answers on loopback, the kernel backend leases nothing (HST-04), and the datapath needs an interface for each arm, so no backend can run the file as written. Give each arm its own interface and the server pool a gateway, so the file describes clients that lease from the device under test and reach the servers through it.
+
+Deliverables.
+
+- dhcp_clients.yaml with client0 on local/eth1, server0 on local/eth2, gateway 48.0.0.254 on the servers pool, and a header comment that says what the network must provide (a DHCP server on the segment of client0 and a route from the leased subnet to the servers) and that the file needs a user space backend.
+- The cases of tools/contracts/test_contracts.py, contracts/README.md, and contracts/changes/CON-36.md with the consumers, AGT-23 first. The golden case of controller/internal/compiler (the agent interfaces of the case and testdata/dhcp_clients/) is outside workstream CON, so the coordinator regenerates it in the same pull request.
+
+Acceptance.
+
+- [ ] The contracts validate, the controller golden test passes, cargo test -p fps-agent --test fallback passes with the EXPECTED row of the file unchanged, and no schema or protocol version moves.
 
 ### CON-32 Kernel release, selected backend, and XDP mode in the agent capabilities
 
@@ -605,23 +635,25 @@ Acceptance.
 
 Phase 3 · size S · workstream TRN
 
-- **Depends on.** TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-34, TRN-35, TRN-36, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, AGT-29, AGT-30, CTL-54, CTL-55, CON-35, QA-06
+- **Depends on.** TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-34, TRN-35, TRN-36, AGT-23, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, AGT-29, AGT-30, CTL-54, CTL-55, CON-35, QA-06
 - **Paths.** `engine/fps-backend-afxdp/`
 - **Owner action.** Before dispatch the vetting agent reads the QA-06 results under D13. The flip proceeds only if the forced AF_XDP backend is not behind the forced kernel backend on the tier T1 measures on that guest, and a mixed result goes to the owner.
 
-Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with native XDP. The vetting agent decided on 2026-11-18 that the flip waits for the kernel fallback of AGT-29, the backend report of CON-35 and CTL-55, the loss detection of TRN-34, an AF_XDP realism job for every first party module (TRN-36), lanes that follow the workers (AGT-30), and a KVM measurement of both backends (QA-06), because without them the default would refuse most plans that run today and would never have run most modules.
+Set fps_backend_afxdp::TRANSPORT_AVAILABLE last, because the flip makes AF_XDP automatic on every host with native XDP. The vetting agent decided on 2026-11-18 that the flip waits for the kernel fallback of AGT-29, the backend report of CON-35 and CTL-55, the loss detection of TRN-34, an AF_XDP realism job for every first party module (TRN-36), lanes that follow the workers (AGT-30), and a KVM measurement of both backends (QA-06), because without them the default would refuse most plans that run today and would never have run most modules. The vetting agent decided on 2026-11-28 (bug #708) that the flip also waits for the DHCP pool of AGT-23, because dhcp_clients.yaml runs on no backend until then, and that a file which an unforced agent runs on the kernel fallback with the cause reported counts as run.
 
 Deliverables.
 
 - The flip, with a test that the selection picks AF_XDP on a fake host with native XDP.
 - A test for each shape that the datapath refuses, where an unforced agent runs it on the kernel backend and reports that, and a forced agent refuses it.
 - Every harness, gate, and realism job that tests the kernel backend passes --backend kernel, and the AF_XDP jobs stay explicit. The coordinator makes the workflow changes in the same pull request.
-- The selection and fallback rule stated on the Agent and Transport pages.
+- The tests of engine/fps-agent that pin TRANSPORT_AVAILABLE (tests/fallback.rs, src/select.rs, tests/select.rs) follow the flip. They are outside workstream TRN, so the coordinator makes those changes in the same pull request (bug
+- The selection and fallback rule stated on the Agent and Transport pages, with the list of shapes that fall back (both pools on one interface, more than one client or server pool in the mix, and the others of AGT-29) and the statement that a DHCP pool runs only on a user space backend.
 
 Acceptance.
 
 - [ ] On a host with native XDP the agent selects AF_XDP, runs the own stack, and reports the bound mode, and the controller inventory lists AF_XDP for that agent.
-- [ ] Every file in contracts/examples/tests/ runs on an unforced agent on a veth pair after the flip.
+- [ ] After the flip, an unforced agent on a host whose data ports are veth ends with native XDP runs every file in contracts/examples/tests/ and refuses none. A file whose shape the datapath serves runs on AF_XDP. Any other file runs on the kernel backend, and the agent reports that backend and the cause of the fallback in the fields of CON-35. A run may shorten the phases and lower the objective of a file for the runner, and changes nothing else in it.
+- [ ] dhcp_clients.yaml runs on AF_XDP on that agent and leases its addresses from a DHCP server in the router namespace of the harness. The EXPECTED table of engine/fps-agent/tests/fallback.rs names every file that does not end on AF_XDP with its cause, and no row of it says that every backend refuses a file.
 
 ### TRN-33 The own stack API that the datapath needs
 
@@ -690,6 +722,26 @@ Deliverables.
 Acceptance.
 
 - [ ] Every first party module passes its AF_XDP realism run in CI, or appears on the written exclusion list with its reason and the fallback that covers it.
+
+### TRN-37 DHCP leases on the datapath
+
+Phase 3 · size M · workstream TRN
+
+- **Depends on.** HST-04, TRN-33, TRN-35
+- **Paths.** `engine/fps-datapath/`, `engine/fps-tcp-own/`, `engine/fps-udp-own/`
+
+fps-datapath classifies DHCP frames and answers Unsupported, the own stacks read every host address from the prefix of the pool (HostSlice::address), and Route takes its gateway from the pool. A DHCP pool has neither, so AGT-23 cannot run one from engine/fps-agent/ alone (gap recorded by AGT-26, bug #708). Plug fps_hosts::DhcpHosts into the dhcp hook of the arm whose pool leases, and let the stacks, the responder, and the route of that arm read the lease table. A change that fps_hosts itself needs goes to an HST bug.
+
+Deliverables.
+
+- A FrameHook that runs DhcpHosts on each lane of an arm whose pool leases, set through DatapathConfig, with a lease phase that the caller waits on. The phase ends when every lease is bound or at a timeout, and reports the bound count of each lane.
+- HostSlice and the own TCP and UDP stacks take the address of a leased host from the lease table, the responder answers ARP for the leased addresses, and the route of the arm takes its subnet and its router from the lease. All of them follow the lease generation.
+- Tests on in memory links with no root, and one harness test.
+
+Acceptance.
+
+- [ ] In the QA-01 harness with a DHCP server in the router namespace, a datapath whose client pool leases binds every lease, and own stack TCP sessions from the leased addresses reach the static server pool through the router with none failed, in CI.
+- [ ] With no DHCP server the lease phase ends at its timeout with an error that names DHCP and the bound count.
 
 ### TRN-13 DPDK backend spike with F-Stack
 
@@ -974,20 +1026,23 @@ Acceptance.
 
 Phase 3 · size M · workstream AGT
 
-- **Depends on.** HST-04, AGT-26
+- **Depends on.** HST-04, AGT-26, TRN-37, CON-36
 - **Paths.** `engine/fps-agent/`
 
-Build a DHCP host pool at Prepare from the leases of HST-04, and filter a DHCP port by the leased addresses. The steps are in the Shared page notes of the HST-04 log entry (2026-11-17T0400).
+Build a DHCP host pool from the leases of HST-04, and filter a DHCP port by the leased addresses. The steps are in the Shared page notes of the HST-04 log entry (2026-11-17T0400). Those notes predate the datapath: the queues now belong to fps-datapath, so the agent leases through the lease phase of TRN-37 and runs no DhcpHosts on a queue itself. The vetting agent decided on 2026-11-28 (bug #708) that DHCP stays a user space feature in v1, that the kernel backend keeps refusing it, and that TRN-31 waits for this package.
 
 Deliverables.
 
-- assemble builds a DHCP pool with HostPool::dhcp, runs the DHCP clients of each worker queue at Prepare until every lease is bound or a timeout, and fails with an error that names dhcp4 on a timeout or on the kernel backend.
+- assemble builds a DHCP pool with HostPool::dhcp, check_af_xdp accepts a DHCP client pool, and the AF_XDP backend waits for the lease phase of TRN-37 before traffic starts, until every lease is bound or a timeout. A timeout fails with an error that names dhcp4, the pool, and the bound count.
+- The kernel backend fails at Prepare with an error that names dhcp4. When an unforced agent fell back to the kernel backend for a DHCP plan, the error also carries the cause of the fallback, so the user sees which shape kept the plan off AF_XDP.
 - Pools::addresses reads the lease table, and the capture filter of a DHCP port keeps a session only when an address of the session is leased.
 - The agent rebuilds the neighbor table when the lease generation moves.
+- The dhcp_clients.yaml row of EXPECTED in tests/fallback.rs changes from Refused to an outcome that asserts AF_XDP without a fallback on the unforced selection and a dhcp4 refusal on the kernel selection, and the test a_dhcp_pool_is_refused_by_both_backends_and_the_fallback_does_not_hide_it changes with it.
 
 Acceptance.
 
 - [ ] In the namespace harness, a run with a DHCP client pool on the user space backend leases every address before traffic starts, and the capture filter drops a session whose addresses are not leased.
+- [ ] contracts/examples/tests/dhcp_clients.yaml runs through an agent forced onto AF_XDP in the namespace harness with a DHCP server in the router namespace, with its phases shortened for the runner and nothing else changed, and no session fails. Bug
 
 ## CTL Controller
 
