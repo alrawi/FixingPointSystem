@@ -33,7 +33,7 @@ use fps_backend_afxdp::{BackendKind, Selection, SelectionReason, TRANSPORT_AVAIL
 use serde_json::{json, Value as Json};
 
 mod common;
-use common::{contracts, plan_of, served_plan};
+use common::{contracts, modules_of, plan_in, plan_of, served_plan};
 
 fn host(name: &str) -> HostCapabilities {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -64,9 +64,23 @@ fn forced() -> Selection {
 }
 
 fn prepare(plan: &Json, selection: &Selection, sides: Sides) -> Result<Prepared, Box<RunError>> {
+    prepare_in(
+        plan,
+        selection,
+        sides,
+        &contracts().join("examples/modules"),
+    )
+}
+
+fn prepare_in(
+    plan: &Json,
+    selection: &Selection,
+    sides: Sides,
+    modules: &Path,
+) -> Result<Prepared, Box<RunError>> {
     prepare_selected(
         Plan::parse(&plan.to_string()).expect("the plan parses"),
-        &contracts().join("examples/modules"),
+        modules,
         sides,
         &ModulePolicy::default(),
         &KeyTap::new(),
@@ -305,4 +319,116 @@ fn a_dhcp_pool_is_refused_by_both_backends_and_the_fallback_does_not_hide_it() {
     assert!(e.to_string().contains("dhcp4"), "{e}");
     let e = prepare(&plan, &forced(), Sides::Both).expect_err("a DHCP pool does not run");
     assert!(e.to_string().contains("DHCP"), "{e}");
+}
+
+/// What an unforced agent does with a file of `contracts/examples/tests/`
+/// that does not end on AF_XDP.
+enum Outcome {
+    /// It runs on the kernel backend, and reports this cause of the fallback.
+    FallsBack(&'static str),
+    /// Neither backend runs it: both the kernel selection and the unforced
+    /// one refuse it with this cause. This blocks TRN-31.
+    Refused(&'static str),
+}
+
+const LO: &str = "host pools clients and servers sit on the same interface lo";
+
+/// The files that do not end on AF_XDP, each with its cause. A file that is
+/// not in this table must prepare on the kernel selection and end on AF_XDP
+/// without a fallback on the unforced one.
+const EXPECTED: &[(&str, Outcome, &str)] = &[
+    (
+        "dhcp_clients.yaml",
+        Outcome::Refused("asks for dhcp4, which this agent cannot lease yet (HST-04)"),
+        "the clients lease their address, and no backend leases one yet (bug #708)",
+    ),
+    (
+        "dns_zone.yaml",
+        Outcome::FallsBack(LO),
+        "both ports are local/lo, so the datapath has no interface for each arm",
+    ),
+    (
+        "filtered_criteria.yaml",
+        Outcome::FallsBack(LO),
+        "both ports are local/lo, so the datapath has no interface for each arm",
+    ),
+    (
+        "http1_first_party.yaml",
+        Outcome::FallsBack(LO),
+        "both ports are local/lo, so the datapath has no interface for each arm",
+    ),
+    (
+        "http_smoke.yaml",
+        Outcome::FallsBack(LO),
+        "both ports are local/lo, so the datapath has no interface for each arm",
+    ),
+    (
+        "seedless_smoke.yaml",
+        Outcome::FallsBack(LO),
+        "both ports are local/lo, so the datapath has no interface for each arm",
+    ),
+    (
+        "port_locations.yaml",
+        Outcome::FallsBack("the mix uses 2 Client host pools"),
+        "two client pools in the mix, and the datapath serves one per side",
+    ),
+];
+
+/// Every file of `contracts/examples/tests/` prepares on the kernel selection
+/// and on the unforced AF_XDP selection of the guest, or is in `EXPECTED`
+/// with its cause. A new example is covered without a change here.
+#[test]
+fn every_example_test_prepares_on_the_kernel_and_the_unforced_selection() {
+    let mut names: Vec<String> = std::fs::read_dir(contracts().join("examples/tests"))
+        .expect("the examples")
+        .map(|e| e.expect("entry").file_name().into_string().expect("name"))
+        .filter(|n| n.ends_with(".yaml"))
+        .collect();
+    names.sort();
+    for (file, _, _) in EXPECTED {
+        assert!(names.iter().any(|n| n == file), "{file} is not an example");
+    }
+    let guest = host("virtio-guest");
+    let kernel = select_with_transport(&guest, None, false).expect("a selection");
+    assert_eq!(kernel.backend, BackendKind::Kernel);
+
+    for name in &names {
+        let modules = modules_of(name);
+        let afxdp_plan = plan_in(name, &modules);
+        let mut kernel_plan = afxdp_plan.clone();
+        kernel_plan["backend"] = "BACKEND_KERNEL".into();
+        let on_kernel = prepare_in(&kernel_plan, &kernel, Sides::Both, &modules);
+        let on_unforced = prepare_in(&afxdp_plan, &unforced(), Sides::Both, &modules);
+        let expected = EXPECTED.iter().find(|(f, _, _)| f == name).map(|e| &e.1);
+        match expected {
+            None => {
+                let k = on_kernel.unwrap_or_else(|e| panic!("{name} on kernel: {e}"));
+                assert_eq!(k.backend(), BackendKind::Kernel, "{name}");
+                let u = on_unforced.unwrap_or_else(|e| panic!("{name} unforced: {e}"));
+                assert_eq!(
+                    (u.backend(), u.fallback()),
+                    (BackendKind::AfXdp, None),
+                    "{name}: a new example that falls back or is refused needs a row in EXPECTED"
+                );
+            }
+            Some(Outcome::FallsBack(cause)) => {
+                let k = on_kernel.unwrap_or_else(|e| panic!("{name} on kernel: {e}"));
+                assert_eq!(k.backend(), BackendKind::Kernel, "{name}");
+                let u = on_unforced.unwrap_or_else(|e| panic!("{name} unforced: {e}"));
+                assert_eq!(u.backend(), BackendKind::Kernel, "{name}");
+                let got = u.fallback().unwrap_or_else(|| panic!("{name}: no cause"));
+                assert!(
+                    got.starts_with("backend af_xdp: ") && got.contains(cause),
+                    "{name}: {got}"
+                );
+            }
+            Some(Outcome::Refused(cause)) => {
+                for (which, r) in [("kernel", on_kernel), ("unforced", on_unforced)] {
+                    let e = r.err().unwrap_or_else(|| panic!("{name} {which} runs"));
+                    assert!(matches!(*e, RunError::Plan(_)), "{name} {which}: {e}");
+                    assert!(e.to_string().contains(cause), "{name} {which}: {e}");
+                }
+            }
+        }
+    }
 }
