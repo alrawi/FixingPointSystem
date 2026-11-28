@@ -56,7 +56,7 @@ def test_the_script_checks_the_drop_count_of_tcpdump() -> None:
 def test_a_stopped_tcpdump_loses_no_frame_of_a_burst(tmp_path: Path) -> None:
     names = ("fps735a", "fps735b")
     for name in names:
-        subprocess.run(["ip", "netns", "del", name], capture_output=True)
+        subprocess.run(["ip", "netns", "del", name], capture_output=True, check=False)
     try:
         for name in names:
             subprocess.run(["ip", "netns", "add", name], check=True)
@@ -141,4 +141,6 @@ def test_a_stopped_tcpdump_loses_no_frame_of_a_burst(tmp_path: Path) -> None:
         assert int(match.group(1)) == 0, stats
     finally:
         for name in names:
-            subprocess.run(["ip", "netns", "del", name], capture_output=True)
+            subprocess.run(
+                ["ip", "netns", "del", name], capture_output=True, check=False
+            )
