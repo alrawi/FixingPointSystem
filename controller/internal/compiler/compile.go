@@ -194,6 +194,9 @@ func compile(req Request) ([]Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkServerPorts(cfg, req.Scenarios); err != nil {
+		return nil, err
+	}
 	if err := c.loadAndCriteria(cfg); err != nil {
 		return nil, err
 	}
