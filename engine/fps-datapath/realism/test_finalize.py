@@ -102,7 +102,9 @@ def test_the_labels_of_an_excluded_scenario_leave_with_it(tmp_path: Path) -> Non
     # The mechanism stays for the next entry of the exclusion list.
     make_plan.build(ROOT, tmp_path, "dns", None, 42, "dpc", "dps", True)
     labels = yaml.safe_load((tmp_path / "labels.yaml").read_text(encoding="utf-8"))
-    make_plan.prune_labels(labels, {"drop_rules": [{"transport": "tcp", "server_port": 53}]})
+    make_plan.prune_labels(
+        labels, {"drop_rules": [{"transport": "tcp", "server_port": 53}]}
+    )
     assert [e["match"] for e in labels["sessions"]] == [
         {"transport": "udp", "server_port": 53}
     ]
