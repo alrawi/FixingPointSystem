@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fps_backend_kernel::{
-    bind_pool, ConnectConfig, Connector, KernelListener, Linger, ListenConfig, OsProfile,
-    PortRange, SocketOptions, BUILTIN_PROFILES,
+    bind_pool, BackendError, ConnectConfig, Connector, KernelListener, Linger, ListenConfig,
+    OsProfile, PortRange, SocketOptions, BUILTIN_PROFILES,
 };
 use fps_io::SessionIo;
 use socket2::SockRef;
@@ -130,11 +130,65 @@ async fn ten_thousand_sessions_from_one_hundred_sources_without_address_errors()
     assert!(per_source.values().all(|&n| n == SESSIONS / 100));
 }
 
+/// A block of `n` local ports that no socket holds right now.
+///
+/// The block must lie inside `ip_local_port_range`: the kernel ignores an
+/// `IP_LOCAL_PORT_RANGE` outside the namespace range. A fixed block (41000 to
+/// 41003) failed with EADDRNOTAVAIL whenever another socket on the machine
+/// (a parallel test, an outgoing connection) held one of its ports (bug #669).
+/// So read the namespace range, start at a time-based offset away from its
+/// edges, and take the first block whose ports all bind.
+fn free_port_block(n: u16) -> PortRange {
+    let (lo, hi): (u32, u32) = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
+        .ok()
+        .and_then(|s| {
+            let mut it = s.split_whitespace().map(|v| v.parse().ok());
+            Some((it.next()??, it.next()??))
+        })
+        .unwrap_or((32768, 60999));
+    let (lo, hi) = (lo + 500, hi - 500);
+    assert!(hi > lo + 1000, "ephemeral range too small ({lo}..{hi})");
+    let span = hi - lo - u32::from(n);
+    let mut seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos()
+        ^ std::process::id().rotate_left(16);
+    for _ in 0..200 {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let first = (lo + (seed >> 8) % span) as u16;
+        let probes: Vec<_> = (first..first + n)
+            .map(|p| std::net::TcpListener::bind(("0.0.0.0", p)))
+            .collect();
+        if probes.iter().all(Result::is_ok) {
+            drop(probes);
+            return PortRange::new(first, first + n - 1).unwrap();
+        }
+    }
+    panic!("no free block of {n} ports in {lo}..{hi}");
+}
+
 #[tokio::test]
 async fn port_range_limits_sessions_per_destination_and_shares_ports_across_destinations() {
     let servers = bind_pool([v4(12, 0, 1), v4(12, 0, 2)], 0, &ListenConfig::default()).unwrap();
     let (a, b) = (servers[0].local_addr(), servers[1].local_addr());
-    let range = PortRange::new(41000, 41003).unwrap();
+    // A socket of another process can still take a port of the block between
+    // the probe in `free_port_block` and the connect. That shows up as
+    // EADDRNOTAVAIL where the scenario expects a connection, so pick a new
+    // block and run it again. Every assertion still has to hold in a run.
+    for attempt in 1..=5 {
+        match port_range_scenario(a, b).await {
+            Ok(()) => return,
+            Err(e) if e.io_kind() == Some(io::ErrorKind::AddrNotAvailable) && attempt < 5 => {
+                eprintln!("attempt {attempt}: a port of the block was taken ({e}); retrying");
+            }
+            Err(e) => panic!("{e}"),
+        }
+    }
+}
+
+async fn port_range_scenario(a: SocketAddr, b: SocketAddr) -> Result<(), BackendError> {
+    let range = free_port_block(4);
     let connector = Connector::new(ConnectConfig {
         local_ports: Some(range),
         ..ConnectConfig::default()
@@ -144,7 +198,7 @@ async fn port_range_limits_sessions_per_destination_and_shares_ports_across_dest
     let mut held = Vec::new();
     let mut ports_a = HashSet::new();
     for _ in 0..range.len() {
-        let io = connector.connect(source, a).await.unwrap();
+        let io = connector.connect(source, a).await?;
         ports_a.insert(io.local_addr().unwrap().port());
         held.push(io);
     }
@@ -161,12 +215,12 @@ async fn port_range_limits_sessions_per_destination_and_shares_ports_across_dest
     // IP_BIND_ADDRESS_NO_PORT lets the same four ports serve a second destination.
     let mut ports_b = HashSet::new();
     for _ in 0..range.len() {
-        let io = connector.connect(source, b).await.unwrap();
+        let io = connector.connect(source, b).await?;
         ports_b.insert(io.local_addr().unwrap().port());
         held.push(io);
     }
     assert_eq!(ports_a, ports_b);
-    drop(servers);
+    Ok(())
 }
 
 #[tokio::test]
