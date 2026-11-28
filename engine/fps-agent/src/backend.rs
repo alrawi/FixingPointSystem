@@ -46,7 +46,8 @@
 //! * the two pools sit on two different ports, and each port names an
 //!   interface in `PortBinding`,
 //! * both pools use the same address family, IPv4 or IPv6 (AGT-28), are
-//!   untagged or on the same VLAN, and use no DHCP.
+//!   untagged or on the same VLAN, and the server pool uses no DHCP (a client
+//!   pool may lease its addresses, AGT-23).
 //!
 //! * no host pool has both an IPv4 and an IPv6 prefix, because the run would use
 //!   IPv4 alone (AGT-29),
@@ -55,7 +56,7 @@
 //!   The file is read at build time ([`parse_excluded`]).
 //!
 //! Anything else is [`BackendError::Unsupported`] with the package that adds
-//! it (DHCP is HST-04 on the datapath). TCP and UDP flows both run (TRN-29,
+//! it (a DHCP server pool is not served). TCP and UDP flows both run (TRN-29,
 //! AGT-25), over IPv4 and over IPv6 (TRN-30, AGT-28). The bound mode is available as soon
 //! as [`start`] returns, and [`StartedBackend::report`] writes it into the
 //! `xdp_driver_mode` of the matching [`PortInfo`] of a [`Capabilities`].
@@ -69,16 +70,18 @@ use fps_backend_afxdp::{
     open_port, AfXdpError, BackendKind, BoundMode, FrameIo, OpenedPort, PortConfig, QueueConfig,
     XdpMode as Attach,
 };
-use fps_datapath::{Datapath, DatapathConfig, DatapathError, Lane, LaneReport, NeighborConfig};
-use fps_hosts::HostRange;
-use fps_tcp_own::{HostSlice, OsProfile, OwnConfig, Pools};
+use fps_datapath::{
+    Datapath, DatapathConfig, DatapathError, DhcpSettings, Lane, LaneReport, NeighborConfig,
+};
+use fps_hosts::{DhcpConfig, HostRange};
+use fps_tcp_own::{HostSlice, LeaseBoard, OsProfile, OwnConfig, Pools};
 
 use crate::assemble::{pool_of, Sides};
 use crate::lanes::{self, LaneLayout, LaneSpec};
 use crate::plan::{Backend, HostPoolSlice, HostRole, Plan, Topology};
 use crate::proto::{Capabilities, XdpMode};
 use crate::run::RunError;
-use crate::transport::DatapathTransport;
+use crate::transport::{DatapathTransport, LeaseLookup, LeaseMap};
 
 /// How long a bind retries while the kernel still releases the queue of a
 /// socket that a previous run closed. The release runs in a work queue, so a
@@ -116,6 +119,10 @@ pub enum BackendError {
     /// The datapath did not start.
     #[error("backend af_xdp: start the datapath")]
     Datapath(#[from] DatapathError),
+    /// The lease phase ended before every host of a leasing pool held an
+    /// address. The text names dhcp4, the pool, and the bound count.
+    #[error("backend af_xdp: {0}")]
+    Leases(DatapathError),
     /// The thread that serves the listeners of the datapath did not start.
     #[error("backend af_xdp: start the listener thread of the datapath transport")]
     Transport(#[source] std::io::Error),
@@ -258,9 +265,19 @@ pub struct AfXdpBackend {
     transport: DatapathTransport,
     ports: Vec<BoundPort>,
     lanes: LaneLayout,
+    /// The live lease boards of the client pool when it leases (AGT-23).
+    boards: Vec<(String, Arc<LeaseBoard>)>,
 }
 
 impl AfXdpBackend {
+    /// The live lease boards of the pools that lease, each with the name of
+    /// its pool. They are empty for a run with static pools. The capture
+    /// filter of a port reads them (AGT-23).
+    #[must_use]
+    pub fn lease_boards(&self) -> &[(String, Arc<LeaseBoard>)] {
+        &self.boards
+    }
+
     /// What each lane serves: the plan workers and the host ranges of the
     /// lane, in the order of the queues (AGT-30).
     #[must_use]
@@ -323,6 +340,16 @@ impl StartedBackend {
         match self {
             Self::Kernel => BackendKind::Kernel,
             Self::AfXdp(_) => BackendKind::AfXdp,
+        }
+    }
+
+    /// The live lease boards of the pools that lease, with the name of each
+    /// pool. Empty for the kernel backend and for static pools.
+    #[must_use]
+    pub fn lease_boards(&self) -> Vec<(String, Arc<LeaseBoard>)> {
+        match self {
+            Self::Kernel => Vec::new(),
+            Self::AfXdp(a) => a.boards.clone(),
         }
     }
 
@@ -455,6 +482,10 @@ impl fmt::Display for Family {
 /// addresses, and the IPv6 hosts of the pool would stay unused without a word.
 /// The kernel backend serves the pool, and an unforced agent falls back to it.
 fn family_of(slice: &HostPoolSlice) -> Result<Family, BackendError> {
+    // A pool that leases takes IPv4 addresses from DHCPv4 (AGT-23).
+    if slice.dhcp4.is_some() && slice.ipv6_prefix.is_empty() {
+        return Ok(Family::V4);
+    }
     match (slice.ipv4_prefix.is_empty(), slice.ipv6_prefix.is_empty()) {
         (false, true) => Ok(Family::V4),
         (true, false) => Ok(Family::V6),
@@ -492,13 +523,15 @@ fn layout(plan: &Plan, sides: Sides) -> Result<Layout<'_>, BackendError> {
             client.name, server.name
         )));
     }
-    for s in [client, server] {
-        if s.dhcp4.is_some() {
-            return Err(unsupported(format!(
-                "host pool {} leases its address through DHCP (HST-04 on the datapath)",
-                s.name
-            )));
-        }
+    // A client pool may lease (AGT-23). A server pool may not: the clients
+    // compute the addresses of the servers from its prefix, and a server
+    // listens on an address that it must have before the run starts.
+    if server.dhcp4.is_some() {
+        return Err(unsupported(format!(
+            "host pool {} is a server pool that leases its address through dhcp4, \
+             and the datapath leases the addresses of a client pool only",
+            server.name
+        )));
     }
     let (client_family, server_family) = (family_of(client)?, family_of(server)?);
     if client_family != server_family {
@@ -576,16 +609,26 @@ fn own_config(l: &Layout<'_>) -> Result<OwnConfig, BackendError> {
 /// leaves the MAC address of every peer to it. Without a gateway on either
 /// side the stack keeps reading its peers from the pools, as before.
 ///
-/// DHCP pools are refused by [`layout`] before this point. When the datapath
-/// runs the DHCP hook, a leased host takes its router from
-/// `LeaseTable::router_of` and not from the pool, which is a gap that
-/// `docs/handoff/AGT-26.md` records.
-fn datapath_config(pools: &Pools, mut own: OwnConfig) -> DatapathConfig {
-    let resolving = pools.client.pool.gateway().is_some() || pools.server.pool.gateway().is_some();
+/// A client pool that leases (AGT-23) turns the DHCP clients of the datapath
+/// on, with the seed of the run. The route and the neighbor table of its arm
+/// follow the leases inside the datapath (TRN-37), so the agent builds none,
+/// and the router of a leased host is a next hop that the datapath resolves,
+/// so a leasing pool turns the resolution on too.
+fn datapath_config(pools: &Pools, mut own: OwnConfig, seed: u64) -> DatapathConfig {
+    let leasing = pools.client.pool.is_dhcp();
+    let resolving =
+        leasing || pools.client.pool.gateway().is_some() || pools.server.pool.gateway().is_some();
     own.resolve_next_hop = resolving;
     DatapathConfig {
         own,
         neighbors: resolving.then(NeighborConfig::default),
+        dhcp: leasing.then(|| DhcpSettings {
+            config: DhcpConfig {
+                seed,
+                ..DhcpConfig::default()
+            },
+            ..DhcpSettings::default()
+        }),
         ..DatapathConfig::default()
     }
 }
@@ -696,7 +739,7 @@ pub fn start_af_xdp(
             )
         })
         .collect();
-    launch(&l, layout_of_lanes, queues, ports)
+    launch(&l, layout_of_lanes, queues, ports, plan.seed)
 }
 
 /// Starts the datapath of a plan on queues that the caller opened, one pair
@@ -722,7 +765,7 @@ pub fn start_on_queues(
     let layout_of_lanes = lanes::plan_lanes(plan, l.client, l.server, queues.len().max(1));
     // A plan with fewer lanes than queue pairs leaves the last pairs unused.
     queues.truncate(layout_of_lanes.lanes.len());
-    launch(&l, layout_of_lanes, queues, Vec::new())
+    launch(&l, layout_of_lanes, queues, Vec::new(), plan.seed)
 }
 
 /// Gives each lane of `layout_of_lanes` its slices, pairs each with its queues, and
@@ -732,6 +775,7 @@ fn launch(
     layout_of_lanes: LaneLayout,
     queues: Vec<(Box<dyn FrameIo>, Box<dyn FrameIo>)>,
     ports: Vec<BoundPort>,
+    plan_seed: u64,
 ) -> Result<AfXdpBackend, BackendError> {
     let pools = Pools {
         client: slice_of(l.client)?,
@@ -769,15 +813,36 @@ fn launch(
             pools,
         })
         .collect();
-    let config = datapath_config(&pools, own);
+    let config = datapath_config(&pools, own, plan_seed);
     let datapath = Arc::new(Datapath::start(built, config)?);
-    let transport =
-        DatapathTransport::new(Arc::clone(&datapath)).map_err(BackendError::Transport)?;
+    // The lease phase ends before any traffic starts. It returns at once when
+    // no pool leases. On a timeout the datapath stops with the error.
+    datapath.wait_leases().map_err(BackendError::Leases)?;
+    let boards: Vec<(String, Arc<LeaseBoard>)> = datapath
+        .leases()
+        .boards()
+        .into_iter()
+        .filter(|b| b.side == fps_datapath::Side::Client)
+        .map(|b| (b.board.pool().name().to_owned(), b.board))
+        .collect();
+    let transport = if pools.client.pool.is_dhcp() {
+        let virtual_pool =
+            crate::assemble::virtual_pool(l.client).map_err(|e| plan_error(e.to_string()))?;
+        let lookups: Vec<Arc<dyn LeaseLookup>> = boards
+            .iter()
+            .map(|(_, b)| Arc::clone(b) as Arc<dyn LeaseLookup>)
+            .collect();
+        DatapathTransport::with_leases(Arc::clone(&datapath), LeaseMap::new(virtual_pool, lookups))
+    } else {
+        DatapathTransport::new(Arc::clone(&datapath))
+    }
+    .map_err(BackendError::Transport)?;
     Ok(AfXdpBackend {
         datapath,
         transport,
         ports,
         lanes: layout_of_lanes,
+        boards,
     })
 }
 
@@ -1116,6 +1181,38 @@ mod tests {
     }
 
     #[test]
+    fn a_client_pool_that_leases_is_served_and_turns_the_dhcp_clients_on() {
+        let mut p = plan();
+        p.host_pools[0].dhcp4 = Some(crate::plan::Dhcp4 {});
+        p.host_pools[0].ipv4_prefix.clear();
+        check_af_xdp(&p, Sides::Both).unwrap();
+        let l = layout(&p, Sides::Both).unwrap();
+        let pools = Pools {
+            client: slice_of(l.client).unwrap(),
+            server: slice_of(l.server).unwrap(),
+            vlan: None,
+        };
+        let config = datapath_config(&pools, own_config(&l).unwrap(), 42);
+        let dhcp = config.dhcp.expect("the clients lease");
+        assert_eq!(dhcp.config.seed, 42, "the seed of the run");
+        assert!(
+            config.neighbors.is_some(),
+            "the router of a lease is resolved"
+        );
+        // A static plan turns neither on.
+        let static_plan = plan();
+        let l = layout(&static_plan, Sides::Both).unwrap();
+        let pools = Pools {
+            client: slice_of(l.client).unwrap(),
+            server: slice_of(l.server).unwrap(),
+            vlan: None,
+        };
+        assert!(datapath_config(&pools, own_config(&l).unwrap(), 42)
+            .dhcp
+            .is_none());
+    }
+
+    #[test]
     fn the_datapath_refuses_the_shapes_it_does_not_serve_and_says_which_package_adds_them() {
         let err = |p: &Plan, sides| check_af_xdp(p, sides).unwrap_err().to_string();
 
@@ -1125,10 +1222,13 @@ mod tests {
 
         assert!(err(&plan(), Sides::Client).contains("both arms"));
 
+        // A server pool that leases is refused, a client pool that leases is
+        // served (AGT-23).
         let mut p = plan();
-        p.host_pools[0].dhcp4 = Some(crate::plan::Dhcp4 {});
-        p.host_pools[0].ipv4_prefix.clear();
-        assert!(err(&p, Sides::Both).contains("DHCP"));
+        p.host_pools[1].dhcp4 = Some(crate::plan::Dhcp4 {});
+        p.host_pools[1].ipv4_prefix.clear();
+        let text = err(&p, Sides::Both);
+        assert!(text.contains("dhcp4") && text.contains("servers"), "{text}");
 
         let mut p = plan();
         p.host_pools[1].ipv4_prefix.clear();
@@ -1242,7 +1342,7 @@ mod tests {
                 server: slice_of(l.server).unwrap(),
                 vlan: l.vlan,
             };
-            datapath_config(&pools, own_config(&l).unwrap())
+            datapath_config(&pools, own_config(&l).unwrap(), 7)
         };
         assert!(off.neighbors.is_none() && !off.own.resolve_next_hop);
         p.host_pools[0].gateway = "fd00:1::ffff".into();
@@ -1256,7 +1356,7 @@ mod tests {
             pools.client.pool.gateway(),
             Some("fd00:1::ffff".parse().unwrap())
         );
-        let on = datapath_config(&pools, own_config(&l).unwrap());
+        let on = datapath_config(&pools, own_config(&l).unwrap(), 7);
         assert_eq!(on.neighbors, Some(NeighborConfig::default()));
         assert!(on.own.resolve_next_hop);
     }
@@ -1413,7 +1513,7 @@ mod tests {
                 server: slice_of(l.server).unwrap(),
                 vlan: l.vlan,
             };
-            let config = datapath_config(&pools, own_config(&l).unwrap());
+            let config = datapath_config(&pools, own_config(&l).unwrap(), 7);
             assert_eq!(config.neighbors.is_some(), on, "{what}");
             assert_eq!(config.own.resolve_next_hop, on, "{what}");
             if on {
@@ -1539,9 +1639,9 @@ mod tests {
             "names no interface",
         ));
         let mut p = plan();
-        p.host_pools[0].dhcp4 = Some(crate::plan::Dhcp4 {});
-        p.host_pools[0].ipv4_prefix.clear();
-        shapes.push(("a DHCP pool", p, Sides::Both, "DHCP"));
+        p.host_pools[1].dhcp4 = Some(crate::plan::Dhcp4 {});
+        p.host_pools[1].ipv4_prefix.clear();
+        shapes.push(("a DHCP server pool", p, Sides::Both, "dhcp4"));
         let mut p = plan();
         p.host_pools
             .push(slice("more", "c", HostRole::Client, "10.3.0.0/24"));
