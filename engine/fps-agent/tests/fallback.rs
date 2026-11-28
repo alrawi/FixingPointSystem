@@ -141,7 +141,10 @@ fn the_enterprise_mix_runs_on_af_xdp_for_an_unforced_and_a_forced_agent() {
 
 #[test]
 fn the_enterprise_mix_runs_on_the_kernel_backend() {
-    let plan = plan_of("enterprise_mix_10g.yaml");
+    // The plan of an agent that runs on the kernel backend names that
+    // backend; a plan that asks for AF_XDP is a mismatch on such an agent.
+    let mut plan = plan_of("enterprise_mix_10g.yaml");
+    plan["backend"] = "BACKEND_KERNEL".into();
     let guest = host("virtio-guest");
     let kernel = select_with_transport(&guest, None, false).expect("a selection");
     assert_eq!(kernel.backend, BackendKind::Kernel);
