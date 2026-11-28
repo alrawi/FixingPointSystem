@@ -590,6 +590,8 @@ These are problems that the project has already met while it built modules, with
 
 **A capture script should fail with its cause.** Count what the capture holds against what the peers ran, and print the difference, so that a short capture names itself instead of failing a later check (MOD-21, MOD-23).
 
+**A capture check loses a session on one client port in a run.** tshark decodes a port with `-d` and offers a segment that the first dissector rejects to the dissector of the other port of the pair, and Wireshark registers protocols on ephemeral ports (40000 is SAP NI). A STARTTLS session, whose clear text start TLS rejects, then showed no ClientHello and the encryption check decrypted 7 of 8 sessions only in runs that used that port. The check now decodes the client ports of the sampled sessions as TLS as well. If you write a tshark based check, bind both ports of a session or list the registered ports with `tshark -G decodes` (bug 712).
+
 ### Byte estimates and sessions
 
 **Measure the estimate, never write it by hand.** Four hand written sip_rtp estimates were 12 to 21 percent too high. Sizes drawn by the session generator vary five to tenfold between sessions, so a guard test averages over 10 to 100 session ids (MOD-25).
