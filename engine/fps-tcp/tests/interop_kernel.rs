@@ -329,12 +329,9 @@ fn run_scenario(index: usize, scenario: &Scenario) -> Result<Option<Row>, String
     if scenario.drops() && sent_again == 0 {
         found.push("the link drops frames and the sender never sent one again".into());
     }
-    if scenario.kernel_cc.is_some()
-        && scenario.pairing == Pairing::OwnServer
-        && run.goodput_mbit_per_s() < NO_SACK_FLOOR_MBIT
-    {
+    if scenario.kernel_cc.is_some() && run.goodput_mbit_per_s() < NO_SACK_FLOOR_MBIT {
         found.push(format!(
-            "the goodput is {:.2} Mbit/s, below the floor of {NO_SACK_FLOOR_MBIT} Mbit/s of a link of 20 (bug #699)",
+            "the goodput is {:.2} Mbit/s, below the floor of {NO_SACK_FLOOR_MBIT} Mbit/s of a link of 20 (bugs #699 and #731)",
             run.goodput_mbit_per_s()
         ));
     }
@@ -395,9 +392,12 @@ fn compare_with_the_kernel(measures: &[(String, f64, u64)]) -> Result<(), String
     Ok(())
 }
 
-/// The goodput that a row of the own server without SACK must reach on the
-/// bottleneck of 20 Mbit/s: about half of what the rows reach (13 to 19.5 Mbit/s). Before bug
-/// #699 the own server sometimes ran at 0.6 Mbit/s and the rows had no floor.
+/// The goodput that a row without SACK (the rows that pin the kernel to CUBIC)
+/// must reach on the bottleneck of 20 Mbit/s: about half of what the rows
+/// reach (13 to 19.5 Mbit/s; a single retransmission timeout of 200 ms costs
+/// a run about 6 Mbit/s). Before bug #699 the own server sometimes ran at 0.6
+/// Mbit/s, and before bug #731 the own sender at 4.6 Mbit/s (three timeouts in
+/// a row, 200, 400 and 800 ms), and the rows had no floor.
 const NO_SACK_FLOOR_MBIT: f64 = 9.0;
 
 /// The retransmissions that one run of the probing of a 32 KiB queue may cost
