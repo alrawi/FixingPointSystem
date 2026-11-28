@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import ssl
+import struct
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,7 @@ from realism.encryption import (
     has_embedded_keys,
     parse_fields,
 )
-from realism.labels import LabelsError, parse
+from realism.labels import LabelsError, load, parse
 from realism.parsers import ParserError
 from realism.report import SCHEMA_PATH, score
 from realism.tests import pcapgen, tlsgen
@@ -542,3 +543,46 @@ def test_the_job_summary_has_an_encryption_row(tmp_path: Path) -> None:
     assert row.startswith("| tls | encryption | all | fail |")
     assert "2 of 2 sampled sessions decrypted, 0 with the JA4 of their profile" in row
     assert "profile chrome" in row
+
+
+def _move_client_port(src: Path, dst: Path, old: int, new: int) -> None:
+    """Copy a pcapng and give the client side of every TCP frame of port ``old`` the port ``new``.
+
+    The edit leaves the checksums stale, which tshark does not verify by default.
+    """
+    data = bytearray(src.read_bytes())
+    offset = 0
+    while offset < len(data):
+        block_type, length = struct.unpack_from("<II", data, offset)
+        if block_type == 6:  # enhanced packet block
+            frame = offset + 28
+            if data[frame + 12 : frame + 14] == b"\x08\x00":
+                tcp = frame + 14 + (data[frame + 14] & 15) * 4
+                if struct.unpack_from(">H", data, tcp)[0] == old:
+                    struct.pack_into(">H", data, tcp, new)
+                elif struct.unpack_from(">H", data, tcp + 2)[0] == old:
+                    struct.pack_into(">H", data, tcp + 2, new)
+        offset += length
+    dst.write_bytes(bytes(data))
+
+
+@needs_tls_tools
+def test_a_client_port_that_wireshark_registers_does_not_hide_the_handshake(
+    tmp_path: Path,
+) -> None:
+    # Bug #712: tshark gives a STARTTLS session, which starts in clear text, to the dissector of
+    # the client port once the TLS dissector of the server port rejects it. Port 40000 is SAP NI
+    # in Wireshark, so a run whose sampled session used it found no ClientHello (decrypted 7 of
+    # 8). Other client ports do not trigger this, so the test moves one session to 40000.
+    fixture = Path(__file__).resolve().parents[2] / "modules" / "smtp" / "fixtures"
+    pcap = fixture / "smtp.pcapng"
+    labels = load(fixture / "expected.yaml")
+    sessions = summarize(pcap).sessions
+    tls = [s for s in sessions if labels.tls_profile_of(s) is not None]
+    assert len(tls) == 8 and all(s.client_port != 40000 for s in tls)
+    moved = tmp_path / "smtp-40000.pcapng"
+    _move_client_port(pcap, moved, tls[3].client_port, 40000)
+    report = check(moved, summarize(moved).sessions, labels, TSHARK).to_dict()
+    assert report["failures"] == []
+    assert report["decrypted_sessions"] == report["sampled_sessions"] == 8
+    assert any(s["client"]["port"] == 40000 and s["decrypted"] for s in report["sessions"])

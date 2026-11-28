@@ -104,8 +104,18 @@ class TlsProbe(Protocol):
     def available(self) -> bool:
         """Return True when the tool of the probe is installed."""
 
-    def observe(self, capture: Path, ports: Sequence[int], keylog: Path | None) -> TlsObservation:
-        """Read the capture, decrypt with ``keylog`` and the embedded keys, and report."""
+    def observe(
+        self,
+        capture: Path,
+        ports: Sequence[int],
+        keylog: Path | None,
+        client_ports: Sequence[int] = (),
+    ) -> TlsObservation:
+        """Read the capture, decrypt with ``keylog`` and the embedded keys, and report.
+
+        ``client_ports`` are the client ports of the sampled sessions, which a reader that
+        picks a dissector by port must not leave to another protocol (bug #712).
+        """
 
 
 class StubTlsProbe:
@@ -116,14 +126,22 @@ class StubTlsProbe:
         self.observation = observation or TlsObservation(tool="stub", version="stub")
         self.installed = installed
         self.calls: list[tuple[Path, tuple[int, ...], Path | None]] = []
+        self.client_ports: list[tuple[int, ...]] = []
 
     def available(self) -> bool:
         """Return the installed flag of the stub."""
         return self.installed
 
-    def observe(self, capture: Path, ports: Sequence[int], keylog: Path | None) -> TlsObservation:
+    def observe(
+        self,
+        capture: Path,
+        ports: Sequence[int],
+        keylog: Path | None,
+        client_ports: Sequence[int] = (),
+    ) -> TlsObservation:
         """Record the call and return the fixed observation."""
         self.calls.append((capture, tuple(ports), keylog))
+        self.client_ports.append(tuple(client_ports))
         return self.observation
 
 
@@ -143,11 +161,22 @@ class TsharkTlsProbe:
         """Return True when the tshark program exists."""
         return self.runner.available()
 
-    def observe(self, capture: Path, ports: Sequence[int], keylog: Path | None) -> TlsObservation:
+    def observe(
+        self,
+        capture: Path,
+        ports: Sequence[int],
+        keylog: Path | None,
+        client_ports: Sequence[int] = (),
+    ) -> TlsObservation:
         """Run tshark once and return the ClientHellos and Finished messages it prints."""
         argv = ["-r", str(capture), "-n", "-2"]
         argv += ["-Y", "tls.handshake.type == 1 || tls.handshake.type == 20"]
-        for port in sorted(set(ports) - {443}):
+        # tshark offers a segment that the TLS dissector of the server port rejects, such as
+        # the clear text start of a STARTTLS session, to the dissector of the other port, and
+        # Wireshark registers protocols on ports of the ephemeral range: client port 40000
+        # belongs to SAP NI, which took the session and hid its ClientHello (bug #712). The
+        # client ports of the sampled sessions decode as TLS too, so no other protocol can.
+        for port in sorted((set(ports) | set(client_ports)) - {443}):
             argv += ["-d", f"tcp.port=={port},tls"]
         if keylog is not None:
             argv += ["-o", f"tls.keylog_file:{keylog}"]
@@ -425,7 +454,12 @@ def check(
         return _result(
             None, keys, tls, labelled, [], ["tshark is not installed, so no session was decrypted"]
         )
-    observation = probe.observe(capture, sorted({s.server_port for s in sample}), keylog)
+    observation = probe.observe(
+        capture,
+        sorted({s.server_port for s in sample}),
+        keylog,
+        client_ports=sorted({s.client_port for s in sample}),
+    )
     first_hello: dict[SessionKey, Hello] = {}
     for hello in observation.hellos:
         first_hello.setdefault(hello.key, hello)
