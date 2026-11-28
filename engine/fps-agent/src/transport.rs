@@ -18,9 +18,11 @@
 //!   `local_addr()`, so two workers that listen on one port with different
 //!   hosts each get the sessions of their own hosts, as two kernel sockets
 //!   bound to different addresses would.
-//! * A session whose host no call names, or whose queue is full, is reset (TCP)
-//!   or dropped (UDP). The kernel does the same for a SYN to an address with no
-//!   listener and for a full accept queue.
+//! * A TCP session whose host no call names is kept for [`PENDING_GRACE`] for
+//!   the next call that names it (bug #688), and reset after that. A UDP
+//!   session whose host no call names, and a session whose queue is full, is
+//!   reset (TCP) or dropped (UDP). The kernel does the same for a SYN to an
+//!   address with no listener and for a full accept queue.
 //!
 //! # The hub
 //!
@@ -40,8 +42,8 @@
 //! on the datapath would fail while the first listener lives, so one listener
 //! that lasts the run lets every later waiter bind again at once. While no
 //! worker listens, the stack still accepts the handshake of a connection, and
-//! the hub resets it, so the peer sees a refused or reset connection, as it
-//! does on the kernel while the port is closed. Nothing is left to the kernel.
+//! the hub resets it after [`PENDING_GRACE`], so the peer sees a reset
+//! connection, as it does on the kernel while the port is closed. Nothing is left to the kernel.
 //!
 //! A port that the transport chose for a `listen` on port 0 (a SIP media port,
 //! say) is different: it closes when its last listener drops, because every
@@ -54,13 +56,14 @@
 //! family, and the datapath finds the lane of a session by the family of its
 //! hosts.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use fps_datapath::{Connector, Datapath, DatapathError, Listener, UdpListener};
 use fps_io::SessionIo;
@@ -72,6 +75,21 @@ use tokio::sync::{mpsc, oneshot, Notify};
 
 /// The sessions that wait for one `listen` call, at most.
 const QUEUE: usize = 1024;
+
+/// How long the hub keeps a TCP session that arrived while no call held its
+/// host, for the next call that subscribes the host (bug #688). A server worker
+/// binds its port when its scenario reaches the listen step, and a client that
+/// starts a moment earlier completes the handshake first; a kernel answers such
+/// a SYN with a reset before the handshake, which the client retries, but the
+/// stack of the datapath has already completed it, so a reset now fails the
+/// session. The grace equals `OPEN_GRACE` of `fps-runtime`, which is how long
+/// the server side of a spawned flow retries its bind. After the grace the session is reset, as a port that no call
+/// listens on resets it.
+const PENDING_GRACE: Duration = Duration::from_secs(2);
+
+/// The sessions that wait for a call on one port, at most. A playback of
+/// `hls/vod_segments` has 33 flows on one port.
+const PENDING_MAX: usize = 256;
 
 /// The ports that the transport picks for a `listen` on port 0.
 const EPHEMERAL_FIRST: u32 = 32_768;
@@ -122,6 +140,9 @@ struct Sub<T> {
 
 struct PortState<T> {
     subs: Vec<Sub<T>>,
+    /// Sessions that arrived before a call held their host, oldest first, with
+    /// the time that they arrived.
+    pending: VecDeque<(Instant, IpAddr, T)>,
     /// Set when the last call of a port of the transport's own choice left.
     /// A call that finds it set takes another port.
     dead: bool,
@@ -130,6 +151,9 @@ struct PortState<T> {
 /// A port of the datapath that the hub serves.
 struct Port<T> {
     number: u16,
+    /// How long a session that no call holds waits for one. Zero refuses it at
+    /// once.
+    grace: Duration,
     /// A port that the transport chose, which closes with its last call.
     ephemeral: bool,
     state: Mutex<PortState<T>>,
@@ -175,6 +199,24 @@ impl<T> Port<T> {
                     format!("{held}:{} is already listened on", self.number),
                 ));
             }
+            // Give the call the sessions of its hosts that came first. A
+            // session that the call's queue cannot take stays parked.
+            let mut rest = VecDeque::with_capacity(state.pending.len());
+            for (at, host, item) in std::mem::take(&mut state.pending) {
+                if hosts.contains(&host) {
+                    match tx.try_send(Ok(item)) {
+                        Ok(()) => continue,
+                        Err(e) => {
+                            if let Ok(item) = e.into_inner() {
+                                rest.push_back((at, host, item));
+                            }
+                            continue;
+                        }
+                    }
+                }
+                rest.push_back((at, host, item));
+            }
+            state.pending = rest;
             state.subs.push(Sub { id, hosts, tx });
         }
         Ok(Subscription {
@@ -186,11 +228,17 @@ impl<T> Port<T> {
     }
 
     /// Hands `item`, which arrived at `host`, to the call that holds the host.
-    /// Gives it back when no call holds it or the call's queue is full or gone.
+    /// When no call holds it, the port keeps it for `grace` and gives it to the
+    /// next call that holds the host (see [`Port::expire`]). Gives it back when
+    /// the port cannot keep it or the call's queue is full or gone.
     fn route(&self, host: IpAddr, item: T) -> Result<(), T> {
-        let state = lock(&self.state);
+        let mut state = lock(&self.state);
         let Some(sub) = state.subs.iter().find(|s| s.hosts.contains(&host)) else {
-            return Err(item);
+            if self.grace.is_zero() || state.pending.len() >= PENDING_MAX {
+                return Err(item);
+            }
+            state.pending.push_back((Instant::now(), host, item));
+            return Ok(());
         };
         match sub.tx.try_send(Ok(item)) {
             Ok(()) => Ok(()),
@@ -199,11 +247,31 @@ impl<T> Port<T> {
         }
     }
 
+    /// Takes the parked sessions whose grace is over, and returns them with the
+    /// time that the next one expires, if any.
+    fn expire(&self, now: Instant) -> (Vec<T>, Option<Instant>) {
+        let mut state = lock(&self.state);
+        let mut expired = Vec::new();
+        // The queue is in arrival order, so the expired ones are at the front.
+        while state
+            .pending
+            .front()
+            .is_some_and(|(at, _, _)| now.saturating_duration_since(*at) >= self.grace)
+        {
+            if let Some((_, _, item)) = state.pending.pop_front() {
+                expired.push(item);
+            }
+        }
+        let next = state.pending.front().map(|(at, _, _)| *at + self.grace);
+        (expired, next)
+    }
+
     /// Drops every call, which makes their `accept` fail. The task of the hub
     /// calls it when it ends.
     fn clear(&self) {
         let mut state = lock(&self.state);
         state.subs.clear();
+        state.pending.clear();
         state.dead = true;
     }
 }
@@ -266,6 +334,16 @@ impl<T> Drop for EndGuard<T> {
     }
 }
 
+/// Resets the parked sessions of `port` whose grace is over and returns the
+/// time that the next one expires.
+fn reap(port: &Port<StreamSession>) -> Option<Instant> {
+    let (expired, next) = port.expire(Instant::now());
+    for mut lost in expired {
+        lost.abort();
+    }
+    next
+}
+
 /// Takes the sessions of a TCP port and routes each to its call.
 ///
 /// The guard is made before the future exists, so it also runs when the hub
@@ -277,9 +355,20 @@ fn serve_tcp(
     let end = EndGuard(Arc::clone(&port));
     async move {
         let _end = end;
+        let mut next_expiry: Option<Instant> = None;
         loop {
             let accepted = tokio::select! {
                 () = port.close.notified() => return,
+                () = async {
+                    match next_expiry {
+                        Some(at) => tokio::time::sleep_until(at.into()).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    // A session that no call took within the grace is reset.
+                    next_expiry = reap(&port);
+                    continue;
+                }
                 accepted = listener.accept() => accepted,
             };
             match accepted {
@@ -290,9 +379,13 @@ fn serve_tcp(
                     };
                     let routed = StreamSession::new(session, Some(local), Some(peer));
                     if let Err(mut lost) = port.route(local.ip(), routed) {
-                        // No call holds the host, or its queue is full: refuse.
+                        // The port cannot keep it, or the queue of the call is
+                        // full: refuse.
                         lost.abort();
                     }
+                    // A parked session needs its deadline; a call may also have
+                    // taken the earlier ones, which only makes a wake up idle.
+                    next_expiry = reap(&port);
                 }
                 Err(e) if e.io_kind() == Some(io::ErrorKind::BrokenPipe) => return,
                 Err(_) => tokio::task::yield_now().await,
@@ -472,7 +565,7 @@ impl DatapathTransport {
         // `Datapath::listen` spawns its accept tasks on the current runtime.
         let _enter = self.inner.handle.enter();
         let listener = datapath.listen(number).map_err(to_io)?;
-        let port = self.new_port(number, ephemeral, &self.inner.tcp);
+        let port = self.new_port(number, ephemeral, PENDING_GRACE, &self.inner.tcp);
         self.inner
             .handle
             .spawn(serve_tcp(listener, Arc::clone(&port)));
@@ -488,7 +581,7 @@ impl DatapathTransport {
         }
         let datapath = self.datapath()?;
         let listener = datapath.listen_udp(number).map_err(to_io)?;
-        let port = self.new_port(number, ephemeral, &self.inner.udp);
+        let port = self.new_port(number, ephemeral, Duration::ZERO, &self.inner.udp);
         self.inner
             .handle
             .spawn(serve_udp(listener, Arc::clone(&port)));
@@ -500,13 +593,16 @@ impl DatapathTransport {
         &self,
         number: u16,
         ephemeral: bool,
+        grace: Duration,
         registry: &Arc<Registry<T>>,
     ) -> Arc<Port<T>> {
         Arc::new(Port {
             number,
+            grace,
             ephemeral,
             state: Mutex::new(PortState {
                 subs: Vec::new(),
+                pending: VecDeque::new(),
                 dead: false,
             }),
             close: Notify::new(),
@@ -644,9 +740,11 @@ mod tests {
         });
         let port = Arc::new(Port {
             number: 80,
+            grace: PENDING_GRACE,
             ephemeral,
             state: Mutex::new(PortState {
                 subs: Vec::new(),
+                pending: VecDeque::new(),
                 dead: false,
             }),
             close: Notify::new(),
@@ -667,8 +765,63 @@ mod tests {
         assert_eq!(a.rx.try_recv().unwrap().unwrap(), 7);
         assert_eq!(b.rx.try_recv().unwrap().unwrap(), 8);
         assert!(a.rx.try_recv().is_err());
-        // A host that no call holds gives the session back to be refused.
-        assert_eq!(port.route(addr(9, 80).ip(), 9), Err(9));
+        // A host that no call holds is kept for the grace, not refused.
+        assert!(port.route(addr(9, 80).ip(), 9).is_ok());
+        assert_eq!(lock(&port.state).pending.len(), 1);
+    }
+
+    #[test]
+    fn a_session_that_came_first_goes_to_the_next_call_that_holds_its_host() {
+        let (_registry, port) = port(false);
+        let ids = AtomicU64::new(0);
+        for i in 0..33 {
+            assert!(port.route(addr(1, 80).ip(), i).is_ok());
+        }
+        assert!(port.route(addr(2, 80).ip(), 99).is_ok());
+        let mut a = port.subscribe(&ids, &[addr(1, 80)]).unwrap();
+        // All 33 arrive in order; the session of another host stays parked.
+        for i in 0..33 {
+            assert_eq!(a.rx.try_recv().unwrap().unwrap(), i);
+        }
+        assert!(a.rx.try_recv().is_err());
+        assert_eq!(lock(&port.state).pending.len(), 1);
+    }
+
+    #[test]
+    fn a_parked_session_is_given_back_when_its_grace_is_over() {
+        let (_registry, port) = port(false);
+        assert!(port.route(addr(1, 80).ip(), 1).is_ok());
+        let now = Instant::now();
+        let (expired, next) = port.expire(now);
+        assert!(expired.is_empty());
+        assert!(next.is_some_and(|t| t > now));
+        let (expired, next) = port.expire(now + PENDING_GRACE);
+        assert_eq!(expired, [1]);
+        assert!(next.is_none());
+    }
+
+    #[test]
+    fn a_port_without_grace_or_with_a_full_park_refuses_at_once() {
+        let (_registry, mut_port) = port(false);
+        let none = Port {
+            number: 80,
+            grace: Duration::ZERO,
+            ephemeral: false,
+            state: Mutex::new(PortState {
+                subs: Vec::new(),
+                pending: VecDeque::new(),
+                dead: false,
+            }),
+            close: Notify::new(),
+            registry: Weak::new(),
+        };
+        assert_eq!(none.route(addr(1, 80).ip(), 4), Err(4));
+        for i in 0..PENDING_MAX {
+            assert!(mut_port
+                .route(addr(1, 80).ip(), u32::try_from(i).unwrap())
+                .is_ok());
+        }
+        assert_eq!(mut_port.route(addr(1, 80).ip(), 5), Err(5));
     }
 
     #[test]

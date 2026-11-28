@@ -1532,18 +1532,17 @@ mod tests {
         let mut p = plan();
         p.host_pools[1].os_profile = "beos".into();
         shapes.push(("an unknown OS profile", p, Sides::Both, "os_profile 'beos'"));
-        for scenario in ["dns/tcp_fallback", "hls/vod_segments", "strike/conn_churn"] {
-            let mut p = plan();
-            p.mix[0].scenario = scenario.into();
-            shapes.push(("an excluded scenario", p, Sides::Both, scenario));
-        }
+        let scenario = "strike/conn_churn";
+        let mut p = plan();
+        p.mix[0].scenario = scenario.into();
+        shapes.push(("an excluded scenario", p, Sides::Both, scenario));
         shapes
     }
 
     #[test]
     fn an_unforced_agent_runs_every_refused_shape_on_the_kernel_backend_and_says_why() {
         let shapes = refused_shapes();
-        assert!(shapes.len() >= 14);
+        assert!(shapes.len() >= 12);
         for (what, p, sides, cause) in shapes {
             let r = resolve_with_fallback(&p, sides, Some(BackendKind::AfXdp), true)
                 .unwrap_or_else(|e| panic!("{what}: {e}"));
@@ -1614,7 +1613,7 @@ mod tests {
         let names: Vec<&str> = list.iter().map(|x| x.scenario.as_str()).collect();
         assert_eq!(
             names,
-            ["dns/tcp_fallback", "hls/vod_segments", "strike/conn_churn"],
+            ["strike/conn_churn"],
             "the TRN-36 list; remove an entry here when its fix lands"
         );
         assert!(list
@@ -1678,20 +1677,25 @@ mod tests {
     #[test]
     fn a_mix_entry_of_the_exclusion_list_fails_the_check_with_its_reason() {
         let mut p = plan();
-        p.mix[0].id = "fallback".into();
-        p.mix[0].scenario = "dns/tcp_fallback".into();
+        p.mix[0].id = "churn".into();
+        p.mix[0].scenario = "strike/conn_churn".into();
         let e = check_af_xdp(&p, Sides::Both).unwrap_err();
         assert!(matches!(e, BackendError::Unsupported(_)), "{e:?}");
         let text = e.to_string();
         assert!(
-            text.contains("mix entry fallback runs scenario dns/tcp_fallback")
-                && text.contains("TCP leg")
+            text.contains("mix entry churn runs scenario strike/conn_churn")
+                && text.contains("reset before")
                 && text.contains("TRN-36"),
             "{text}"
         );
-        // The same scenario of another module, and the other scenarios of the
-        // module, are not excluded.
-        for scenario in ["http1/tcp_fallback", "dns/lookup_a", "hls/live_refresh"] {
+        // The same scenario of another module, the other scenarios of the
+        // module, and the two that bug #688 took off the list are not excluded.
+        for scenario in [
+            "http1/conn_churn",
+            "strike/slowloris",
+            "dns/tcp_fallback",
+            "hls/vod_segments",
+        ] {
             let mut p = plan();
             p.mix[0].scenario = scenario.into();
             check_af_xdp(&p, Sides::Both).unwrap();
