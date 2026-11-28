@@ -177,6 +177,12 @@ fn the_enterprise_mix_without_its_second_port_is_refused_on_every_backend() {
             text.contains("mix entries web_browse and web_get both listen on tcp 172.16.0.2:8080"),
             "{text}"
         );
+        assert!(
+            text.contains(
+                "give one entry its own `server_port` in its params or its own `server_pool`"
+            ),
+            "{text}"
+        );
         assert!(matches!(*e, RunError::Plan(_)), "{text}");
     }
 }
