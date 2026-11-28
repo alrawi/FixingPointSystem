@@ -10,7 +10,7 @@
 | Branch | `wp/TRN-37` |
 | Pull request | none yet |
 | Status | in progress |
-| Progress | 0% (0 of 7 plan steps) |
+| Progress | 90% (6 of 7 plan steps) |
 | Current holder | claude-00af87, lease until 2026-11-28T07:39:53Z |
 | Last verified commit | none |
 
@@ -24,42 +24,45 @@ Plug `fps_hosts::DhcpHosts` into the dhcp hook of the arm whose pool leases, wit
 
 Each step takes at most 30 minutes of work and ends in a state that tests can check.
 
-- [ ] 1. Lease board in fps-tcp-own (shared lease table with generation), Station and Pools follow it
-- [ ] 2. Stack reads leased addresses (connect by index, next pair)
-- [ ] 3. DHCP hook, lease phase, DatapathConfig in fps-datapath
-- [ ] 4. Splitter responder and Route follow the lease generation
-- [ ] 5. In memory tests (no root), timeout error test
-- [ ] 6. Harness test and CI
+- [x] 1. Lease board in fps-tcp-own (shared lease table with generation), Station and Pools follow it
+- [x] 2. Stack reads leased addresses (connect by index, next pair)
+- [x] 3. DHCP hook, lease phase, DatapathConfig in fps-datapath
+- [x] 4. Splitter responder and Route follow the lease generation
+- [x] 5. In memory tests (no root), timeout error test
+- [x] 6. Harness test and CI
 - [ ] 7. Docs, log entry, PR, review
 
 ## Done and verified
 
-List each finished step with the command that verified it and the result.
+- `cargo test -p fps-datapath -p fps-tcp-own -p fps-udp-own --offline`: all pass, including `dhcp_memory` (5 tests).
+- `cargo test -p fps-datapath --test dhcp_harness -- --nocapture` as root here: 8 of 8 bound, 8 of 8 sessions ok, 0 failed.
+- `cargo clippy -p fps-datapath -p fps-tcp-own -p fps-udp-own --all-targets -- -D warnings` and `cargo fmt`: clean. `cargo check -p fps-agent --all-targets`: builds.
 
 ## Remaining
 
-List what is still missing, including known gaps in finished steps.
+PR, CI, review hand off.
 
 ## Next action
 
-Write exactly one concrete step that the next agent can start immediately.
+Open the PR and poll CI.
 
 ## Blockers and open questions
 
-Write "none" or name each blocker with a link to its issue.
+none
 
 ## Decisions taken in this package
 
-Record each local design choice with its reason. Choices that change a contract belong in a contract change issue.
+See the log entry docs/wiki/log/2026-11-28T0900-ingest-trn-37-*.md. Key one: no new fields on HostSlice, Pools, or Lane because fps-agent builds them by literal.
 
 ## Pitfalls
 
-Record anything that cost time and that a successor should avoid.
+The harness arms are in two namespaces; the test moves the server arm interface into the client namespace.
 
 ## Verify the current state
 
 ```bash
-# Commands that a successor runs first, with the expected result
+cargo test -p fps-datapath --test dhcp_memory   # 5 passed
+cargo test -p fps-datapath --test dhcp_harness  # needs root
 ```
 
 ## Session log
@@ -69,3 +72,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-28T06:10 | claude-00af87 | claim | 502f726 | claimed #720 |
+| 2026-11-28T06:55 | claude-00af87 | checkpoint | see git | steps 1 to 6 done, docs written |

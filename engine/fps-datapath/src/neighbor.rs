@@ -40,8 +40,8 @@ use std::time::Duration;
 use fps_hosts::wire::{arp_request, ethernet_payload, ns_frame, ETHERTYPE_IPV4, ETHERTYPE_IPV6};
 use fps_hosts::{HostPool, Ipv4Prefix, Ipv6Prefix, LeaseTable, MacAddr};
 use fps_tcp_own::clock::Clock;
-use fps_tcp_own::Follower;
 use fps_tcp_own::net::NEXT_HOP_MAC;
+use fps_tcp_own::Follower;
 
 use crate::split::SharedCounters;
 

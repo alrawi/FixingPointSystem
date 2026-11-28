@@ -72,9 +72,7 @@ impl HostSlice {
         if i >= self.range.count {
             return None;
         }
-        leases
-            .addr_of(self.range.offset + i)
-            .map(u32::from)
+        leases.addr_of(self.range.offset + i).map(u32::from)
     }
 
     /// The host of the slice that holds `ip` in `leases`, as an index into the

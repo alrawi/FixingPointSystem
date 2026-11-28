@@ -115,8 +115,8 @@ use tokio::sync::Notify;
 use crate::clock::{Clock, MonotonicClock};
 
 use host::{Host, HostCounters};
-use net::{ETH_LEN, VLAN_TAG_LEN};
 pub use leases::{BoardError, Follower, LeaseBoard, Leases, Snapshot};
+use net::{ETH_LEN, VLAN_TAG_LEN};
 pub use pools::{Blocks, HostSlice, PoolError, Pools, Tables};
 pub use profile::{OsProfile, ProfileError};
 pub use recovery::CongestionControl;

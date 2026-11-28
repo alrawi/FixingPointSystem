@@ -23,7 +23,8 @@
 //!                                 +--> IPv6 TCP --> OwnStack (same hosts)
 //!                                 +--> NS -------> fps-hosts Responder (ND)
 //!                                 +--> UDP -------> UdpArm (fps-udp-own, IPv4 and IPv6)
-//!                                 +--> other ND, DHCP --> FrameHook (unsupported)
+//!                                 +--> DHCP ------> DhcpHosts of fps-hosts (a pool that leases)
+//!                                 +--> other ND ---> FrameHook (unsupported)
 //!   wire <-- queue <---------------- frames of the stack, replies, datagrams
 //! ```
 //!
@@ -61,13 +62,28 @@
 //! `None`, turns it off and leaves the UDP hook of
 //! [`DatapathConfig::hooks`] in place.
 //!
+//! # DHCP leases
+//!
+//! An arm whose pool leases its addresses ([`fps_hosts::HostPool::dhcp`],
+//! TRN-37) runs the DHCP clients of `fps-hosts` on its queue. Set
+//! [`DatapathConfig::dhcp`] and give the lane a pool without a prefix;
+//! [`Datapath::wait_leases`] (or [`LeaseMonitor::wait_async`]) returns when
+//! every host holds an address, and fails at the timeout with
+//! [`DatapathError::LeaseTimeout`], which names dhcp4 and the bound count of
+//! each pool. The hook publishes the lease table to a
+//! [`fps_tcp_own::LeaseBoard`] and everything that reads an address follows
+//! its generation: the stations of the own stack and of the UDP layer (the
+//! source address of a session, the MAC address of a leased host), the ARP
+//! responder of the splitter, the connector (`connect` takes a leased source
+//! address), and the [`Route`] of the arm, which takes its subnet and its
+//! router from the leases ([`Route::of_leases`]). A lease that is lost stops
+//! answering at once. The server pool of a lane may lease too.
+//!
 //! # What is not served yet
 //!
-//! DHCP answers [`DatapathError::Unsupported`] (the calls) or
-//! [`HookOutcome::Unsupported`] (the frames) and is counted in
-//! [`FrameCounters`]; a [`FrameHook`] is the place for it. Neighbor
-//! discovery messages that are not solicitations for a host of the pools
-//! (router advertisements, say) go to the ND hook the same way.
+//! Neighbor discovery messages that are not solicitations for a host of the
+//! pools (router advertisements, say) go to the ND hook, which answers
+//! [`HookOutcome::Unsupported`]; a [`FrameHook`] is the place for them.
 //!
 //! # Next hop resolution
 //!
@@ -83,9 +99,7 @@
 //! pool otherwise ([`Route`]); a pool without a gateway resolves the
 //! destination itself. The gateway comes from the pool of the plan
 //! (`HostPool::gateway`). A pool that leases its addresses through DHCP has no
-//! prefix and no gateway until the lease hook is wired (HST-04 keeps the
-//! router of each lease in `LeaseTable::router_of`), so DHCP hosts resolve
-//! the destination itself. [`FrameCounters`] counts requests, resolutions,
+//! prefix and no gateway, so its route is built from the leases (TRN-37). [`FrameCounters`] counts requests, resolutions,
 //! failures, held, released, and dropped frames.
 //!
 //! The datapath does not set `TRANSPORT_AVAILABLE` and does not change the
@@ -137,7 +151,8 @@ pub enum Feature {
     /// UDP sessions, when the layer is turned off with
     /// [`DatapathConfig::udp`] set to `None`.
     Udp,
-    /// DHCP for hosts (the `DhcpHosts` of HST-04 plugs in as a hook).
+    /// DHCP for hosts without [`DatapathConfig::dhcp`]. The datapath serves
+    /// DHCP since TRN-37, so no call answers it any more.
     Dhcp,
 }
 
@@ -147,7 +162,7 @@ impl Feature {
     pub fn tracked_by(self) -> &'static str {
         match self {
             Self::Udp => "TRN-29",
-            Self::Dhcp => "HST-04 on the datapath",
+            Self::Dhcp => "TRN-37",
         }
     }
 }
@@ -591,18 +606,10 @@ impl Datapath {
             };
             let client_hooks = hooks(Side::Client, &udp_client, &*lane.client)?;
             let server_hooks = hooks(Side::Server, &udp_server, &*lane.server)?;
-            let (client, client_counters) = Splitter::new(
-                lane.client,
-                client_responder,
-                lane.pools.vlan,
-                client_hooks,
-            );
-            let (server, server_counters) = Splitter::new(
-                lane.server,
-                server_responder,
-                lane.pools.vlan,
-                server_hooks,
-            );
+            let (client, client_counters) =
+                Splitter::new(lane.client, client_responder, lane.pools.vlan, client_hooks);
+            let (server, server_counters) =
+                Splitter::new(lane.server, server_responder, lane.pools.vlan, server_hooks);
             let (client, server) = (
                 match &leases.client {
                     Some(b) => client.with_leases(Arc::clone(b)),

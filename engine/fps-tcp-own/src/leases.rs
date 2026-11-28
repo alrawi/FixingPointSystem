@@ -198,7 +198,8 @@ impl LeaseBoard {
             return false;
         }
         let mut state = self.lock();
-        if leases.generation() == state.leases.generation() && leases.bound() == state.leases.bound()
+        if leases.generation() == state.leases.generation()
+            && leases.bound() == state.leases.bound()
         {
             return false;
         }
@@ -340,13 +341,8 @@ mod tests {
     fn an_empty_board_has_no_address_and_a_publish_of_nothing_changes_nothing() {
         let b = board(3);
         assert_eq!((b.bound(), b.count(), b.is_complete()), (0, 3, false));
-        let hosts = DhcpHosts::new(
-            b.pool(),
-            b.block(),
-            &DhcpConfig::default(),
-            Duration::ZERO,
-        )
-        .unwrap();
+        let hosts =
+            DhcpHosts::new(b.pool(), b.block(), &DhcpConfig::default(), Duration::ZERO).unwrap();
         assert!(!b.publish(hosts.leases()), "nothing moved");
         assert!(b.snapshot().addr_of(0).is_none());
     }

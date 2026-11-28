@@ -1046,6 +1046,7 @@ dependencies = [
  "fps-tcp-own",
  "fps-udp-own",
  "libc",
+ "socket2",
  "thiserror 2.0.21",
  "tokio",
 ]
