@@ -2350,7 +2350,7 @@ work_packages:
     phase: 3
     workstream: TRN
     size: S
-    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-34, TRN-35, TRN-36, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, AGT-29, AGT-30, CTL-54, CTL-55, CON-35, QA-06]
+    depends_on: [TRN-12, TRN-23, TRN-24, TRN-25, TRN-26, TRN-27, TRN-28, TRN-29, TRN-30, TRN-33, TRN-34, TRN-35, TRN-36, AGT-23, AGT-24, AGT-25, AGT-26, AGT-27, AGT-28, AGT-29, AGT-30, CTL-54, CTL-55, CON-35, QA-06]
     paths: [engine/fps-backend-afxdp/]
     owner_action: Before dispatch the vetting agent reads the QA-06 results under D13. The flip proceeds only if the forced AF_XDP backend is not behind the forced kernel backend on the tier T1 measures on that guest, and a mixed result goes to the owner.
     summary: >-
@@ -2359,14 +2359,19 @@ work_packages:
       backend report of CON-35 and CTL-55, the loss detection of TRN-34, an AF_XDP realism job for every first party
       module (TRN-36), lanes that follow the workers (AGT-30), and a KVM measurement of both backends (QA-06), because
       without them the default would refuse most plans that run today and would never have run most modules.
+      The vetting agent decided on 2026-11-28 (bug #708) that the flip also waits for the DHCP pool of AGT-23, because
+      dhcp_clients.yaml runs on no backend until then, and that a file which an unforced agent runs on the kernel
+      fallback with the cause reported counts as run.
     deliverables:
       - The flip, with a test that the selection picks AF_XDP on a fake host with native XDP.
       - A test for each shape that the datapath refuses, where an unforced agent runs it on the kernel backend and reports that, and a forced agent refuses it.
       - Every harness, gate, and realism job that tests the kernel backend passes --backend kernel, and the AF_XDP jobs stay explicit. The coordinator makes the workflow changes in the same pull request.
-      - The selection and fallback rule stated on the Agent and Transport pages.
+      - The tests of engine/fps-agent that pin TRANSPORT_AVAILABLE (tests/fallback.rs, src/select.rs, tests/select.rs) follow the flip. They are outside workstream TRN, so the coordinator makes those changes in the same pull request (bug #708).
+      - The selection and fallback rule stated on the Agent and Transport pages, with the list of shapes that fall back (both pools on one interface, more than one client or server pool in the mix, and the others of AGT-29) and the statement that a DHCP pool runs only on a user space backend.
     acceptance:
       - On a host with native XDP the agent selects AF_XDP, runs the own stack, and reports the bound mode, and the controller inventory lists AF_XDP for that agent.
-      - Every file in contracts/examples/tests/ runs on an unforced agent on a veth pair after the flip.
+      - After the flip, an unforced agent on a host whose data ports are veth ends with native XDP runs every file in contracts/examples/tests/ and refuses none. A file whose shape the datapath serves runs on AF_XDP. Any other file runs on the kernel backend, and the agent reports that backend and the cause of the fallback in the fields of CON-35. A run may shorten the phases and lower the objective of a file for the runner, and changes nothing else in it.
+      - dhcp_clients.yaml runs on AF_XDP on that agent and leases its addresses from a DHCP server in the router namespace of the harness. The EXPECTED table of engine/fps-agent/tests/fallback.rs names every file that does not end on AF_XDP with its cause, and no row of it says that every backend refuses a file.
   - id: TRN-33
     title: The own stack API that the datapath needs
     phase: 3
@@ -2519,6 +2524,27 @@ work_packages:
     acceptance:
       - Every first party module passes its AF_XDP realism run in CI, or appears on the written exclusion list with its reason and the fallback that covers it.
 
+  - id: TRN-37
+    title: DHCP leases on the datapath
+    phase: 3
+    workstream: TRN
+    size: M
+    depends_on: [HST-04, TRN-33, TRN-35]
+    paths: [engine/fps-datapath/, engine/fps-tcp-own/, engine/fps-udp-own/]
+    summary: >-
+      fps-datapath classifies DHCP frames and answers Unsupported, the own stacks read every host address from the
+      prefix of the pool (HostSlice::address), and Route takes its gateway from the pool. A DHCP pool has neither, so
+      AGT-23 cannot run one from engine/fps-agent/ alone (gap recorded by AGT-26, bug #708). Plug
+      fps_hosts::DhcpHosts into the dhcp hook of the arm whose pool leases, and let the stacks, the responder, and the
+      route of that arm read the lease table. A change that fps_hosts itself needs goes to an HST bug.
+    deliverables:
+      - A FrameHook that runs DhcpHosts on each lane of an arm whose pool leases, set through DatapathConfig, with a lease phase that the caller waits on. The phase ends when every lease is bound or at a timeout, and reports the bound count of each lane.
+      - HostSlice and the own TCP and UDP stacks take the address of a leased host from the lease table, the responder answers ARP for the leased addresses, and the route of the arm takes its subnet and its router from the lease. All of them follow the lease generation.
+      - Tests on in memory links with no root, and one harness test.
+    acceptance:
+      - In the QA-01 harness with a DHCP server in the router namespace, a datapath whose client pool leases binds every lease, and own stack TCP sessions from the leased addresses reach the static server pool through the router with none failed, in CI.
+      - With no DHCP server the lease phase ends at its timeout with an error that names DHCP and the bound count.
+
   - id: AGT-27
     title: The standalone agent writes a TLS key log
     phase: 3
@@ -2589,6 +2615,25 @@ work_packages:
       - The contract fields with their OpenAPI and protobuf checks.
     acceptance:
       - The contract tests show the backend that ran and the bound mode of each port in the chosen message, and the change passes the breaking change check.
+  - id: CON-36
+    title: The DHCP example names a port for each arm
+    phase: 3
+    workstream: CON
+    size: S
+    depends_on: [CON-34]
+    paths: [contracts/, tools/contracts/]
+    owner_action: "A contract example change with no schema or protocol change, specified and approved by the vetting agent under decision D13 on 2026-11-28 (bug #708)."
+    summary: >-
+      contracts/examples/tests/dhcp_clients.yaml puts both ports on local/lo. No DHCP server answers on loopback, the
+      kernel backend leases nothing (HST-04), and the datapath needs an interface for each arm, so no backend can run
+      the file as written. Give each arm its own interface and the server pool a gateway, so the file describes
+      clients that lease from the device under test and reach the servers through it.
+    deliverables:
+      - dhcp_clients.yaml with client0 on local/eth1, server0 on local/eth2, gateway 48.0.0.254 on the servers pool, and a header comment that says what the network must provide (a DHCP server on the segment of client0 and a route from the leased subnet to the servers) and that the file needs a user space backend.
+      - The cases of tools/contracts/test_contracts.py, contracts/README.md, and contracts/changes/CON-36.md with the consumers, AGT-23 first. The golden case of controller/internal/compiler (the agent interfaces of the case and testdata/dhcp_clients/) is outside workstream CON, so the coordinator regenerates it in the same pull request.
+    acceptance:
+      - The contracts validate, the controller golden test passes, cargo test -p fps-agent --test fallback passes with the EXPECTED row of the file unchanged, and no schema or protocol version moves.
+
   - id: AGT-24
     title: The agent starts the selected backend
     phase: 3
@@ -2823,17 +2868,23 @@ work_packages:
     phase: 3
     workstream: AGT
     size: M
-    depends_on: [HST-04, AGT-26]
+    depends_on: [HST-04, AGT-26, TRN-37, CON-36]
     paths: [engine/fps-agent/]
     summary: >-
-      Build a DHCP host pool at Prepare from the leases of HST-04, and filter a DHCP port by the leased addresses.
-      The steps are in the Shared page notes of the HST-04 log entry (2026-11-17T0400).
+      Build a DHCP host pool from the leases of HST-04, and filter a DHCP port by the leased addresses. The steps are
+      in the Shared page notes of the HST-04 log entry (2026-11-17T0400). Those notes predate the datapath: the queues
+      now belong to fps-datapath, so the agent leases through the lease phase of TRN-37 and runs no DhcpHosts on a
+      queue itself. The vetting agent decided on 2026-11-28 (bug #708) that DHCP stays a user space feature in v1,
+      that the kernel backend keeps refusing it, and that TRN-31 waits for this package.
     deliverables:
-      - assemble builds a DHCP pool with HostPool::dhcp, runs the DHCP clients of each worker queue at Prepare until every lease is bound or a timeout, and fails with an error that names dhcp4 on a timeout or on the kernel backend.
+      - assemble builds a DHCP pool with HostPool::dhcp, check_af_xdp accepts a DHCP client pool, and the AF_XDP backend waits for the lease phase of TRN-37 before traffic starts, until every lease is bound or a timeout. A timeout fails with an error that names dhcp4, the pool, and the bound count.
+      - The kernel backend fails at Prepare with an error that names dhcp4. When an unforced agent fell back to the kernel backend for a DHCP plan, the error also carries the cause of the fallback, so the user sees which shape kept the plan off AF_XDP.
       - Pools::addresses reads the lease table, and the capture filter of a DHCP port keeps a session only when an address of the session is leased.
       - The agent rebuilds the neighbor table when the lease generation moves.
+      - The dhcp_clients.yaml row of EXPECTED in tests/fallback.rs changes from Refused to an outcome that asserts AF_XDP without a fallback on the unforced selection and a dhcp4 refusal on the kernel selection, and the test a_dhcp_pool_is_refused_by_both_backends_and_the_fallback_does_not_hide_it changes with it.
     acceptance:
       - In the namespace harness, a run with a DHCP client pool on the user space backend leases every address before traffic starts, and the capture filter drops a session whose addresses are not leased.
+      - contracts/examples/tests/dhcp_clients.yaml runs through an agent forced onto AF_XDP in the namespace harness with a DHCP server in the router namespace, with its phases shortened for the runner and nothing else changed, and no session fails. Bug #708 closes with this package.
 
   - id: CON-32
     title: Kernel release, selected backend, and XDP mode in the agent capabilities
