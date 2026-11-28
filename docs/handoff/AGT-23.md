@@ -4,9 +4,9 @@
 |---|---|
 | Issue | #635 |
 | Branch | `wp/AGT-23` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 95% (5 of 5 plan steps, CI pending) |
+| Pull request | #729 |
+| Status | ready for review |
+| Progress | 100% (5 of 5 plan steps) |
 | Current holder | claude-a23c7e, lease until 2026-11-28T08:28:34Z |
 | Last verified commit | none |
 
@@ -31,7 +31,9 @@ The agent leases the addresses of a DHCP host pool through the lease phase of TR
 
 ## Remaining
 
-PR, CI, review.
+Review and merge. CI is green on fcfcbc0e.
+
+Known debt: the virtual pool (240.0.0.0/4) encodes a host index as an address because SourceHosts and the transport trait live in engine/fps-runtime/.
 
 ## Next action
 
@@ -69,3 +71,4 @@ cd engine/fps-agent && cargo test -p fps-agent --lib
 | 2026-11-28T08:28Z | claude-a23c7e | claim | none | claimed #635 with 5 plan steps |
 | 2026-11-28T08:50Z | claude-a23c7e | block | see git log | deliverable 2 done; the rest needs LeaseMonitor::boards in fps-datapath |
 | 2026-11-28T09:24Z | claude-a23c7e | takeover | see git log | bug #724 merged, design approved; implemented all deliverables |
+| 2026-11-28T10:00Z | claude-a23c7e | review | see git log | PR #729, CI green, ready for review |
