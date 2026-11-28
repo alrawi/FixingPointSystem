@@ -388,4 +388,6 @@ CON-35 moves the controller API from 0.13.0 to 0.14.0 and the agent protocol fro
 
 The values sit on the heartbeat and not on the start result, because the start result is sent once and a controller that lost the stream during the run would never learn them, while the heartbeat repeats on every session. AGT-29 fills the fields and CTL-55 stores and shows them.
 
-Two mix entries of a test configuration cannot accept on the same transport and port of one server pool, and an agent refuses such a plan. The controller assigns no ports, so give one entry its own `server_port` in `params`, as `enterprise_mix_10g.yaml` and `port_locations.yaml` do for `web_browse` (bug #692). `tools/contracts/validate.py` reports the clash when the scenarios accept on `{{ vars.server_port }}`.
+### Two mix entries on one server port
+
+Two mix entries of a test configuration cannot accept on the same transport and port of one server pool, and an agent refuses such a plan. The controller assigns no ports, so give one entry its own `server_port` in `params` or its own `server_pool`, as `enterprise_mix_10g.yaml` and `port_locations.yaml` do for `web_browse` (bug #692). `tools/contracts/validate.py` reports the clash when the scenarios accept on `{{ vars.server_port }}`.

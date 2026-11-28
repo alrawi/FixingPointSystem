@@ -1409,3 +1409,14 @@ def test_the_same_param_on_both_entries_is_still_a_clash(smoke, index):
     for entry in web_pair(smoke)["profile"]["mix"]:
         entry["params"] = {"server_port": 9000}
     assert any("port 9000" in m for m in messages(check_test(smoke, index)))
+
+
+def test_a_client_sim_test_has_no_server_port_clash(smoke, index):
+    # A client_sim test starts no servers, so two entries on one port are fine.
+    web_pair(smoke)
+    smoke["topology"] = "client_sim"
+    smoke["network"]["host_pools"] = [p for p in smoke["network"]["host_pools"] if p["role"] == "client"]
+    smoke["network"]["external_servers"] = [{"name": "web", "address": "203.0.113.10", "port": 8080}]
+    for entry in smoke["profile"]["mix"]:
+        entry.pop("server_pool", None)
+    assert not any("both listen" in m for m in messages(check_test(smoke, index)))

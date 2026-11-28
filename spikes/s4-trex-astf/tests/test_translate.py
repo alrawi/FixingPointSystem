@@ -136,3 +136,15 @@ def test_render_rules():
         t.render("{{ fill(2) }}tail", {})
     with pytest.raises(t.NonDeterministic):
         t.render("{{ session.id }}", {})
+
+
+def test_two_entries_on_one_port_get_disjoint_server_ranges():
+    # The example without the server_port of web_browse (before bug 692): both
+    # HTTP entries accept on 8080, and the translator splits the server pool.
+    config = yaml.safe_load((TESTS / "enterprise_mix_10g.yaml").read_text())
+    config["profile"]["mix"][0].pop("params")
+    profile, _, _ = build(config)
+    http = [tp.server_template.assoc for tp in profile.templates if tp.server_template.assoc.port == 8080]
+    assert len(http) == 2
+    lo, hi = sorted(http, key=lambda r: r.ip_start)
+    assert lo.ip_end < hi.ip_start  # disjoint server ranges

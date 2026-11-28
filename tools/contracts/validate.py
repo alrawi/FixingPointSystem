@@ -1313,8 +1313,11 @@ def _check_server_ports(doc: dict, file: Path, report: Report, index: ModuleInde
     A plan listens once for each port of each server host, and an agent refuses a plan in which two
     entries accept on the same transport and port of the same hosts. The check is narrow on purpose: it
     reads only the port of a scenario whose first flow accepts on exactly `{{ vars.server_port }}`, with
-    the value of the entry's `server_port` param or else the default of the scenario var.
+    the value of the entry's `server_port` param or else the default of the scenario var. A client_sim
+    test starts no servers, so it has no clash to report.
     """
+    if doc.get("topology") == "client_sim":
+        return
     default_server = next((name for name, p in pools.items() if p["role"] == "server"), None)
     seen: dict[tuple[str, str, Any], tuple[int, str]] = {}
     for i, entry in enumerate(doc["profile"]["mix"]):
@@ -1336,7 +1339,7 @@ def _check_server_ports(doc: dict, file: Path, report: Report, index: ModuleInde
             first_index, first_ref = seen[key]
             report.error(file, f"/profile/mix/{i}",
                          f"mix entries {first_ref} and {entry['scenario']} both listen on {key[1]} port {port} "
-                         f"of server pool '{key[0]}'; give one of them its own server_port in params "
+                         f"of server pool '{key[0]}'; give one of them its own server_port in params or its own server_pool "
                          f"(/profile/mix/{first_index} is the other)")
         else:
             seen[key] = (i, entry["scenario"])
