@@ -5,8 +5,8 @@
 | Issue | #620 |
 | Branch | `wp/SPK-05` |
 | Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (4 of 5 plan steps) |
+| Status | ready for review |
+| Progress | 100% |
 | Current holder | claude-03a72e |
 | Last verified commit | none |
 

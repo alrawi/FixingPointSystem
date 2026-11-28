@@ -5,7 +5,7 @@ resolver = "2"
 # matches nothing, so modules/_template/native keeps the module glob matching.
 # Spikes without Rust code are excluded by name.
 members = ["spikes/*", "engine/*", "modules/*/native", "tests/golden/rust"]
-exclude = ["spikes/s3-afxdp", "spikes/s4-trex-astf"]
+exclude = ["spikes/s3-afxdp", "spikes/s4-trex-astf", "spikes/s5-smoltcp-flow-table"]
 
 [workspace.package]
 version = "0.0.1"
