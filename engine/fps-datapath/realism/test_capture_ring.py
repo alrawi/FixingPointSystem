@@ -35,7 +35,9 @@ SEND = (
 def capture_options() -> list[str]:
     """The tcpdump options of the script, without the interface and the file."""
     line = next(
-        l for l in SCRIPT.read_text(encoding="utf-8").splitlines() if " tcpdump -n " in l
+        l
+        for l in SCRIPT.read_text(encoding="utf-8").splitlines()
+        if " tcpdump -n " in l
     )
     words = shlex.split(line.split(" tcpdump ", 1)[1])
     return words[: words.index("-i")]
@@ -59,26 +61,75 @@ def test_a_stopped_tcpdump_loses_no_frame_of_a_burst(tmp_path: Path) -> None:
         for name in names:
             subprocess.run(["ip", "netns", "add", name], check=True)
         subprocess.run(
-            ["ip", "-n", names[0], "link", "add", "va", "type", "veth", "peer", "name", "vb",
-             "netns", names[1]], check=True)
-        for ns, dev, addr in ((names[0], "va", "10.97.0.1/24"), (names[1], "vb", "10.97.0.2/24")):
-            subprocess.run(["ip", "-n", ns, "addr", "add", addr, "dev", dev], check=True)
+            [
+                "ip",
+                "-n",
+                names[0],
+                "link",
+                "add",
+                "va",
+                "type",
+                "veth",
+                "peer",
+                "name",
+                "vb",
+                "netns",
+                names[1],
+            ],
+            check=True,
+        )
+        for ns, dev, addr in (
+            (names[0], "va", "10.97.0.1/24"),
+            (names[1], "vb", "10.97.0.2/24"),
+        ):
+            subprocess.run(
+                ["ip", "-n", ns, "addr", "add", addr, "dev", dev], check=True
+            )
             subprocess.run(["ip", "-n", ns, "link", "set", dev, "up"], check=True)
         subprocess.run(
-            ["ip", "-n", names[0], "neigh", "add", "10.97.0.2", "lladdr", "02:00:00:00:00:02",
-             "dev", "va", "nud", "permanent"], check=True)
+            [
+                "ip",
+                "-n",
+                names[0],
+                "neigh",
+                "add",
+                "10.97.0.2",
+                "lladdr",
+                "02:00:00:00:00:02",
+                "dev",
+                "va",
+                "nud",
+                "permanent",
+            ],
+            check=True,
+        )
         log = tmp_path / "tcpdump.log"
         with log.open("w") as err:
             dump = subprocess.Popen(
-                ["ip", "netns", "exec", names[1], "tcpdump", "-n", *capture_options(), "-i", "vb",
-                 "-w", str(tmp_path / "x.pcap")], stderr=err)
+                [
+                    "ip",
+                    "netns",
+                    "exec",
+                    names[1],
+                    "tcpdump",
+                    "-n",
+                    *capture_options(),
+                    "-i",
+                    "vb",
+                    "-w",
+                    str(tmp_path / "x.pcap"),
+                ],
+                stderr=err,
+            )
         for _ in range(50):
             if "listening on" in log.read_text():
                 break
             time.sleep(0.1)
         # ip netns exec replaces itself with tcpdump, so the pid is the tcpdump.
         os.kill(dump.pid, signal.SIGSTOP)
-        subprocess.run(["ip", "netns", "exec", names[0], "python3", "-I", "-c", SEND], check=True)
+        subprocess.run(
+            ["ip", "netns", "exec", names[0], "python3", "-I", "-c", SEND], check=True
+        )
         time.sleep(0.2)
         os.kill(dump.pid, signal.SIGCONT)
         time.sleep(0.5)
