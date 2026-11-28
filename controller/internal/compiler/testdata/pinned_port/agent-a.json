@@ -40,6 +40,9 @@
       "id": "web_browse",
       "scenario": "http1/web_browse",
       "weight": 0.75,
+      "params": {
+        "server_port": 8081
+      },
       "clientPool": "users",
       "serverPool": "web"
     }

@@ -71,6 +71,9 @@ func (v *Validator) Validate(ctx context.Context, doc []byte) (api.ValidationRep
 			return api.ValidationReport{}, fmt.Errorf("validate config %s: list scenarios: %w", cfg.Metadata.Name, err)
 		}
 		findings = append(findings, scenarioRefs(cfg, catalog)...)
+		for _, clash := range compiler.ServerPortClashes(cfg, catalog) {
+			findings = append(findings, errorFinding(fmt.Sprintf("/profile/mix/%d", clash.Index), clash.Message))
+		}
 	}
 
 	var agents []compiler.Agent

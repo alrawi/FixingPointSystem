@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -156,6 +157,55 @@ func TestCompilerPath(t *testing.T) {
 	for _, tc := range tests {
 		if got := compilerPath(tc.err); got != tc.want {
 			t.Errorf("compilerPath(%v) = %q, want %q", tc.err, got, tc.want)
+		}
+	}
+}
+
+// scenarioSourceCatalog is the example catalog with the real scenario files,
+// which the port clash check reads.
+func scenarioSourceCatalog(t *testing.T) fakeCatalog {
+	t.Helper()
+	cat := exampleCatalog(t)
+	for i, sc := range cat.scenarios {
+		src, err := os.ReadFile(filepath.Join(contracts, "examples", "modules", sc.Module.Name, "scenarios", sc.Name+".yaml")) //nolint:gosec // G304: fixed test path
+		if err != nil {
+			t.Fatal(err)
+		}
+		cat.scenarios[i].Source = string(src)
+	}
+	return cat
+}
+
+func TestValidateReportsServerPortClash(t *testing.T) {
+	smoke := exampleNamed(t, "http_smoke")
+	const entry = "- { scenario: http1/web_get, weight: 1 }"
+	if !strings.Contains(string(smoke.data), entry) {
+		t.Fatalf("example http_smoke lacks the entry %q", entry)
+	}
+	clash := strings.Replace(string(smoke.data), entry, entry+"\n    - { scenario: http1/web_browse, weight: 1 }", 1)
+	cleared := strings.Replace(string(smoke.data), entry, entry+"\n    - { scenario: http1/web_browse, weight: 1, params: { server_port: 8081 } }", 1)
+	// With and without agents, so the check does not depend on the compiler dry run.
+	for name, v := range map[string]*Validator{
+		"with agents":    NewValidator(newSchema(t), scenarioSourceCatalog(t), exampleInventory()),
+		"without agents": NewValidator(newSchema(t), scenarioSourceCatalog(t), nil),
+	} {
+		rep, err := v.Validate(context.Background(), mustCanonical(t, []byte(clash)))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var found []api.Finding
+		for _, f := range rep.Findings {
+			if f.Severity == api.FindingSeverityError && f.Path == "/profile/mix/1" {
+				found = append(found, f)
+			}
+		}
+		if rep.Valid || len(found) != 1 || !strings.Contains(found[0].Message, "server_port") ||
+			!strings.Contains(found[0].Message, "http1/web_get") || !strings.Contains(found[0].Message, "http1/web_browse") {
+			t.Errorf("%s: report %+v, want one error at /profile/mix/1 that names both entries and the remedy", name, rep)
+		}
+		rep, err = v.Validate(context.Background(), mustCanonical(t, []byte(cleared)))
+		if err != nil || !rep.Valid {
+			t.Errorf("%s: with a server_port param, report %+v, %v, want valid", name, rep, err)
 		}
 	}
 }

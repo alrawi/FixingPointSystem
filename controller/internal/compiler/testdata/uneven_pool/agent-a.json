@@ -48,7 +48,10 @@
     {
       "id": "web_browse",
       "scenario": "http1/web_browse",
-      "weight": 0.3
+      "weight": 0.3,
+      "params": {
+        "server_port": 8081
+      }
     },
     {
       "id": "lookup",

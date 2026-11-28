@@ -16,7 +16,7 @@ profile:
   basis: sessions
   mix:
     - { scenario: http1/web_get, weight: 5 }
-    - { scenario: http1/web_browse, weight: 3 }
+    - { scenario: http1/web_browse, weight: 3, params: { server_port: 8081 } }
     - { scenario: dns/lookup, weight: 2 }
 load:
   objective: { type: concurrent_sessions, value: 1001 }
