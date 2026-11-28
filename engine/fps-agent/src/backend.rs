@@ -873,6 +873,11 @@ fn check_excluded(plan: &Plan) -> Result<(), BackendError> {
             "the exclusion list of the AF_XDP realism run (engine/fps-datapath/realism/profiles.yaml) does not parse: {cause}"
         ))
     })?;
+    check_against(list, plan)
+}
+
+/// Refuses a plan whose mix runs a scenario of `list`.
+fn check_against(list: &[Excluded], plan: &Plan) -> Result<(), BackendError> {
     for entry in &plan.mix {
         if let Some(x) = list.iter().find(|x| x.scenario == entry.scenario) {
             return Err(unsupported(format!(
@@ -1532,17 +1537,13 @@ mod tests {
         let mut p = plan();
         p.host_pools[1].os_profile = "beos".into();
         shapes.push(("an unknown OS profile", p, Sides::Both, "os_profile 'beos'"));
-        let scenario = "strike/conn_churn";
-        let mut p = plan();
-        p.mix[0].scenario = scenario.into();
-        shapes.push(("an excluded scenario", p, Sides::Both, scenario));
         shapes
     }
 
     #[test]
     fn an_unforced_agent_runs_every_refused_shape_on_the_kernel_backend_and_says_why() {
         let shapes = refused_shapes();
-        assert!(shapes.len() >= 12);
+        assert!(shapes.len() >= 11);
         for (what, p, sides, cause) in shapes {
             let r = resolve_with_fallback(&p, sides, Some(BackendKind::AfXdp), true)
                 .unwrap_or_else(|e| panic!("{what}: {e}"));
@@ -1613,8 +1614,8 @@ mod tests {
         let names: Vec<&str> = list.iter().map(|x| x.scenario.as_str()).collect();
         assert_eq!(
             names,
-            ["strike/conn_churn"],
-            "the TRN-36 list; remove an entry here when its fix lands"
+            Vec::<&str>::new(),
+            "the TRN-36 list is empty since bug #689; add an entry here with its reason when a scenario cannot run on AF_XDP"
         );
         assert!(list
             .iter()
@@ -1676,10 +1677,16 @@ mod tests {
 
     #[test]
     fn a_mix_entry_of_the_exclusion_list_fails_the_check_with_its_reason() {
+        // The list of the file is empty since bug #689, so the check runs
+        // against a list that the parser reads from text.
+        let list = parse_excluded(
+            "strike:\n  excluded:\n    conn_churn: a reason that is long enough, reset before accept\n",
+        )
+        .unwrap();
         let mut p = plan();
         p.mix[0].id = "churn".into();
         p.mix[0].scenario = "strike/conn_churn".into();
-        let e = check_af_xdp(&p, Sides::Both).unwrap_err();
+        let e = check_against(&list, &p).unwrap_err();
         assert!(matches!(e, BackendError::Unsupported(_)), "{e:?}");
         let text = e.to_string();
         assert!(
@@ -1688,9 +1695,13 @@ mod tests {
                 && text.contains("TRN-36"),
             "{text}"
         );
-        // The same scenario of another module, the other scenarios of the
-        // module, and the two that bug #688 took off the list are not excluded.
+        let mut other = plan();
+        other.mix[0].scenario = "http1/conn_churn".into();
+        check_against(&list, &other).unwrap();
+        // Nothing is excluded in the built in list: the three scenarios that
+        // bugs #688 and #689 took off it pass the check of a forced run.
         for scenario in [
+            "strike/conn_churn",
             "http1/conn_churn",
             "strike/slowloris",
             "dns/tcp_fallback",

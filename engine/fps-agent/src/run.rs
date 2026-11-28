@@ -506,8 +506,14 @@ impl Prepared {
             ..
         } = self;
         if let StartedBackend::AfXdp(af_xdp) = &started {
-            let transport: Arc<dyn fps_runtime::transport::Transport> =
-                Arc::new(af_xdp.transport());
+            let hub = af_xdp.transport();
+            if let Err(e) = hub.prelisten_tcp(&assembly.spawned_tcp_ports) {
+                let _ = started.stop();
+                return Err(RunError::rule(format!(
+                    "the datapath cannot listen on the ports of the spawned flows: {e}"
+                )));
+            }
+            let transport: Arc<dyn fps_runtime::transport::Transport> = Arc::new(hub);
             for worker in assembly
                 .tcp_servers
                 .iter_mut()

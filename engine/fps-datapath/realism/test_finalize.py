@@ -57,13 +57,17 @@ def test_a_placeholder_sums_the_sessions_with_their_weights() -> None:
 
 def test_the_labels_take_the_sessions_that_the_agent_started(tmp_path: Path) -> None:
     make_plan.build(ROOT, tmp_path, "strike", None, 42, "dpc", "dps", True)
-    report(tmp_path / "agent-0.jsonl", {"slowloris": 23})
+    report(tmp_path / "agent-0.jsonl", {"slowloris": 23, "conn_churn": 21})
     finalize.apply_counts(tmp_path, make_plan.load_profile("strike"))
     labels = yaml.safe_load((tmp_path / "labels.yaml").read_text(encoding="utf-8"))
-    [scenario] = labels["structure"]["scenarios"]
-    assert scenario["expected_instances"] == 23
+    scenarios = {
+        Path(s["file"]).stem: s["expected_instances"]
+        for s in labels["structure"]["scenarios"]
+    }
+    assert scenarios == {"slowloris": 23, "conn_churn": 21}
     assert json.loads((tmp_path / "started.json").read_text(encoding="utf-8")) == {
-        "slowloris": 23
+        "conn_churn": 21,
+        "slowloris": 23,
     }
 
 
@@ -75,21 +79,35 @@ def test_the_streams_of_the_rung_check_are_the_playbacks(tmp_path: Path) -> None
     rungs = labels["temporal"]["rungs"]["applications"]
     assert rungs["hls_vod"]["streams"] == 4
     assert rungs["hls_live"]["streams"] == 2
-    assert "hls_segment" not in rungs, "the excluded scenario leaves the labels"
+    assert "hls_segment" in rungs, "vod_segments runs, so its labels stay"
 
 
-def test_the_labels_of_an_excluded_scenario_leave_with_it(tmp_path: Path) -> None:
+def test_nothing_is_excluded_so_every_label_stays(tmp_path: Path) -> None:
+    # The exclusion list is empty since bug #689: dns keeps its TCP label and
+    # strike keeps conn_churn.
     make_plan.build(ROOT, tmp_path, "dns", None, 42, "dpc", "dps", True)
     labels = yaml.safe_load((tmp_path / "labels.yaml").read_text(encoding="utf-8"))
-    assert [e["match"] for e in labels["sessions"]] == [
-        {"transport": "udp", "server_port": 53}
+    assert {"transport": "tcp", "server_port": 53} in [
+        e["match"] for e in labels["sessions"]
     ]
     make_plan.build(ROOT, tmp_path, "strike", None, 42, "dpc", "dps", True)
     labels = yaml.safe_load((tmp_path / "labels.yaml").read_text(encoding="utf-8"))
-    assert [e["match"]["server_port"] for e in labels["sessions"]] == [8080]
+    assert [e["match"]["server_port"] for e in labels["sessions"]] == [8080, 8081]
     files = [Path(e["file"]) for e in labels["structure"]["scenarios"]]
-    assert [f.name for f in files] == ["slowloris.yaml"]
-    assert files[0].is_file(), "the file of a scenario is an absolute path"
+    assert [f.name for f in files] == ["slowloris.yaml", "conn_churn.yaml"]
+    assert all(f.is_file() for f in files), "the file of a scenario is an absolute path"
+
+
+def test_the_labels_of_an_excluded_scenario_leave_with_it(tmp_path: Path) -> None:
+    # The mechanism stays for the next entry of the exclusion list.
+    make_plan.build(ROOT, tmp_path, "dns", None, 42, "dpc", "dps", True)
+    labels = yaml.safe_load((tmp_path / "labels.yaml").read_text(encoding="utf-8"))
+    make_plan.prune_labels(
+        labels, {"drop_rules": [{"transport": "tcp", "server_port": 53}]}
+    )
+    assert [e["match"] for e in labels["sessions"]] == [
+        {"transport": "udp", "server_port": 53}
+    ]
 
 
 def test_the_excluded_scenarios_run_again_on_request(tmp_path: Path) -> None:

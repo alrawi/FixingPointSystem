@@ -160,6 +160,35 @@ async fn a_session_that_arrives_before_its_call_goes_to_the_call_that_comes_next
     r.transport.shutdown();
 }
 
+/// Bug #689: the churned children of `strike/conn_churn` dial port 8082 before
+/// any spawned server flow has called `listen` there, and the stack refused the
+/// first of them. The agent now starts the hub of the spawned flows' ports
+/// first (`prelisten_tcp`), so the connect succeeds and the session waits for
+/// its call.
+#[tokio::test(flavor = "current_thread")]
+async fn a_port_that_is_listened_on_ahead_accepts_a_dial_that_comes_before_any_call() {
+    let r = rig();
+    let t = &r.transport;
+    // Without the prelisten the connect is refused: no listener holds 8082.
+    let refused = t.connect(r.clients[0], at(r.servers[0], 8082)).await;
+    assert!(refused.is_err(), "no listener: the connect is refused");
+    t.prelisten_tcp(&[8082]).expect("prelisten");
+    t.prelisten_tcp(&[8082]).expect("twice is fine");
+    let mut client = t
+        .connect(r.clients[0], at(r.servers[0], 8082))
+        .await
+        .expect("connect before any call");
+    let mut call = t.listen(&[at(r.servers[0], 8082)]).expect("listen");
+    let mut server = within("accept", call.accept()).await.expect("accept");
+    client.write_all(b"ping").await.expect("write");
+    let mut buf = [0u8; 4];
+    within("read", server.read_exact(&mut buf))
+        .await
+        .expect("read");
+    assert_eq!(&buf, b"ping");
+    r.transport.shutdown();
+}
+
 /// The shape of `dns/tcp_fallback` 100 times: a client dials right after the
 /// previous leg ended, and the server side of the flow binds a moment later.
 #[tokio::test(flavor = "current_thread")]

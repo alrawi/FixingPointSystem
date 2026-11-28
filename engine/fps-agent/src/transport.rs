@@ -573,6 +573,21 @@ impl DatapathTransport {
         Ok(port)
     }
 
+    /// Starts the hub of each TCP port in `ports` now, so a client that dials
+    /// before any call listens on the port reaches the stack's listener, and the
+    /// hub parks the session for `PENDING_GRACE` until a call subscribes
+    /// (bug #689). A port that is open already is left alone.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of the first port that cannot start.
+    pub fn prelisten_tcp(&self, ports: &[u16]) -> io::Result<()> {
+        for &number in ports {
+            self.tcp_port(number, false)?;
+        }
+        Ok(())
+    }
+
     /// Returns the UDP port, started on the datapath when no call holds it.
     fn udp_port(&self, number: u16, ephemeral: bool) -> io::Result<Arc<Port<DatagramSession>>> {
         let mut ports = lock(&self.inner.udp.ports);

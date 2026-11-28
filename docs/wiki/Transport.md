@@ -991,19 +991,15 @@ Results (sandbox, 2 vCPU, root, kernel 6.18, debug build, nDPI 4.14 built by `re
 | smb2 | 3 | 3 | 22 of 22 | 22 | 10 s | conformance, parser errors |
 | smtp | 3 | 7 | 57 of 57 | 57 | 14 s | conformance, parser errors, encryption, decrypted view, zeek_check.py, zeek_check.py |
 | ssh | 4 | 4 | 19 of 19 | 19 | 18 s | conformance, parser errors, zeek_check.py |
-| strike | 1 | 1 | 23 of 23 | 23 | 11 s | conformance, parser errors, structure |
+| strike | 1 | 2 | 47 of 47 (24 conn_churn, 23 slowloris) | 815 | n/a | conformance, parser errors, structure (47 instances, none failed; bug #689, PR #703) |
 
 The sessions of sip_rtp in the capture are the SIP dialogs and the RTP flows. The run time includes the time of the rounds only, not the build. A forced run of a module took 8 to 32 seconds.
 
 #### The exclusion list
 
-One scenario cannot pass on AF_XDP yet (`dns/tcp_fallback` and `hls/vod_segments` left the list with bug #688: a session that no call claims now waits for a subscriber of its host for 2 s, `PENDING_GRACE` in `engine/fps-agent/src/transport.rs`). They are left out of the run (`excluded` in `profiles.yaml`), and their labels go with them. The kernel fallback of AGT-29 covers them: an unforced agent runs a plan with one of these mix entries on the kernel backend and reports that, and a forced agent refuses it with the cause (AGT-29 reads this list in `check_af_xdp`). The other modules are not excluded.
+The exclusion list is empty. `dns/tcp_fallback` and `hls/vod_segments` left it with bug #688 (a session that no call claims now waits for a subscriber of its host for 2 s, `PENDING_GRACE` in `engine/fps-agent/src/transport.rs`), and `strike/conn_churn` left it with bug #689 (the own stack keeps a connection that the peer reset after the handshake and before `accept` in the accept queue of its listener, `accept` returns it, and its first read reports the reset, as a kernel does; `on_segment` in `engine/fps-tcp-own/src/host.rs`). Every first party module with scenarios runs all of them on AF_XDP, and the kernel fallback of AGT-29 now serves only the plan shapes that the backend refuses (families, VLANs, pools), not scenarios.
 
-| Scenario | Cause | What fixes it |
-|---|---|---|
-| `strike/conn_churn` | The client connects and resets, and the server accepts and resets. The own stack drops a connection that was reset before it was accepted, so the accept times out (18 of 24 sessions fail with `connect_timeout`). A kernel keeps such a connection in the accept queue, and `accept` returns it | `engine/fps-tcp-own`: deliver a connection that was reset before `accept` to the listener, which then reports the reset on its first read |
-
-The exclusion list is the key `excluded` of `profiles.yaml`, and removing an entry puts the scenario back in the run. The agent reads the same file in `check_af_xdp` (AGT-29), so removing an entry also lets the agent run that scenario on AF_XDP; the unit test `the_exclusion_list_is_the_file_that_the_realism_run_reads` in `engine/fps-agent/src/backend.rs` pins the names, and the package that fixes an entry updates it in the same pull request. Nothing else needs ICMP, UDP datagrams above the MTU, several pools on a side, VLANs, or DHCP: the first party scenarios use TCP and UDP datagrams below 1,500 bytes between one client pool and one server pool.
+The exclusion list is the key `excluded` of `profiles.yaml`, and adding an entry under `excluded` takes a scenario out of the run. The agent reads the same file in `check_af_xdp` (AGT-29), so removing an entry also lets the agent run that scenario on AF_XDP; the unit test `the_exclusion_list_is_the_file_that_the_realism_run_reads` in `engine/fps-agent/src/backend.rs` pins the names (the list is empty today), and a package that adds or removes an entry updates it in the same pull request. Nothing else needs ICMP, UDP datagrams above the MTU, several pools on a side, VLANs, or DHCP: the first party scenarios use TCP and UDP datagrams below 1,500 bytes between one client pool and one server pool.
 
 #### The CI job
 

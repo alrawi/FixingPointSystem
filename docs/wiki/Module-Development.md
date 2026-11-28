@@ -604,7 +604,7 @@ These are problems that the project has already met while it built modules, with
 
 ### Native code (first party modules)
 
-A first party module needs an entry in `engine/fps-datapath/realism/profiles.yaml` with the sessions, variables, and ports of its `fixtures/capture.sh`. `test_every_first_party_module_has_a_profile` fails without it, and the AF_XDP realism job (`engine/fps-datapath/realism/module-afxdp.sh MODULE AGENT OUT`) runs the module from it. A scenario that the agent cannot run on AF_XDP yet goes under `excluded` with its reason (TRN-36).
+A first party module needs an entry in `engine/fps-datapath/realism/profiles.yaml` with the sessions, variables, and ports of its `fixtures/capture.sh`. `test_every_first_party_module_has_a_profile` fails without it, and the AF_XDP realism job (`engine/fps-datapath/realism/module-afxdp.sh MODULE AGENT OUT`) runs the module from it. A scenario that the agent cannot run on AF_XDP yet goes under `excluded` with its reason (TRN-36). The list is empty today.
 
 **Libraries with their own event loop do not fit.** The interpreter drives a protocol one message at a time. A full library such as `russh` runs its own async session loop, so the ssh module builds the packet layer on primitives, and the ldap module writes its own BER codec (MOD-11, MOD-17).
 
