@@ -59,17 +59,19 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use fps_datapath::{Connector, Datapath, DatapathError, Listener, UdpListener};
+use fps_hosts::{HostPool, HostRange};
 use fps_io::SessionIo;
 use fps_runtime::transport::{
     BoxFuture, DatagramListener, DatagramSession, StreamListener, StreamSession, Transport,
 };
+use fps_tcp_own::LeaseBoard;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, Notify};
 
@@ -464,6 +466,112 @@ impl Hub {
 }
 
 // ---------------------------------------------------------------------------
+// The leased sources of a client pool that leases (AGT-23)
+// ---------------------------------------------------------------------------
+
+/// What the transport reads of a lease board: the hosts it covers and the
+/// address that a host holds now. [`LeaseBoard`] is the implementation of a
+/// run, and a test supplies one that changes its answer.
+pub trait LeaseLookup: Send + Sync {
+    /// The pool indexes that the board covers.
+    fn range(&self) -> HostRange;
+    /// The address that host `index` of the pool holds now.
+    fn addr_of(&self, index: u32) -> Option<Ipv4Addr>;
+}
+
+impl LeaseLookup for LeaseBoard {
+    fn range(&self) -> HostRange {
+        LeaseBoard::range(self)
+    }
+
+    fn addr_of(&self, index: u32) -> Option<Ipv4Addr> {
+        LeaseBoard::addr_of(self, index)
+    }
+}
+
+/// Turns the source of a session of a client pool that leases into the address
+/// that its host holds on the live lease board.
+///
+/// The workers of such a pool pick a host index, and the runtime turns it into
+/// a source with the virtual pool of [`crate::assemble`], which only encodes
+/// the index in 240.0.0.0/4. The transport holds a `LeaseMap` exactly when the
+/// client pool of the run leases, so the mapping follows from the pool and
+/// never from a test of the address. The board is read at every connect, so a
+/// host that renewed onto another address connects from it.
+///
+/// A host without a lease fails its session before any frame is sent. The
+/// virtual address does not appear in an error: the text names `dhcp4`, the
+/// pool, and the host index.
+#[derive(Clone)]
+pub struct LeaseMap {
+    pool: String,
+    virtual_pool: HostPool,
+    boards: Vec<Arc<dyn LeaseLookup>>,
+}
+
+impl fmt::Debug for LeaseMap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LeaseMap")
+            .field("pool", &self.pool)
+            .field("boards", &self.boards.len())
+            .finish()
+    }
+}
+
+impl LeaseMap {
+    /// A map for the client pool `pool` whose workers use `virtual_pool`, over
+    /// the boards of the lanes.
+    #[must_use]
+    pub fn new(virtual_pool: HostPool, boards: Vec<Arc<dyn LeaseLookup>>) -> Self {
+        Self {
+            pool: virtual_pool.name().to_owned(),
+            virtual_pool,
+            boards,
+        }
+    }
+
+    /// The address that the host named by the virtual `source` holds now.
+    ///
+    /// # Errors
+    ///
+    /// `AddrNotAvailable` when the host holds no lease, and `InvalidInput`
+    /// when the source names no host of the pool. Both texts name dhcp4 and
+    /// the pool.
+    pub fn source_of(&self, source: IpAddr) -> io::Result<IpAddr> {
+        let index = match source {
+            IpAddr::V4(a) => self.virtual_pool.index_of_ipv4(a),
+            IpAddr::V6(_) => None,
+        }
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "dhcp4: a session of host pool {} names no host of the pool",
+                    self.pool
+                ),
+            )
+        })?;
+        self.boards
+            .iter()
+            .find(|b| {
+                let r = b.range();
+                index >= r.offset && index - r.offset < r.count
+            })
+            .and_then(|b| b.addr_of(index))
+            .map(IpAddr::V4)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::AddrNotAvailable,
+                    format!(
+                        "dhcp4: host {index} of host pool {} holds no lease, so it opens no session",
+                        self.pool
+                    ),
+                )
+            })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The transport
 // ---------------------------------------------------------------------------
 
@@ -476,6 +584,7 @@ struct Inner {
     udp: Arc<Registry<DatagramSession>>,
     ids: AtomicU64,
     ephemeral: AtomicU32,
+    leases: Option<LeaseMap>,
 }
 
 impl Drop for Inner {
@@ -510,6 +619,20 @@ impl DatapathTransport {
     /// Returns the error of the operating system when the hub thread or its
     /// runtime does not start.
     pub fn new(datapath: Arc<Datapath>) -> io::Result<Self> {
+        Self::build(datapath, None)
+    }
+
+    /// Like [`DatapathTransport::new`] for a run whose client pool leases its
+    /// addresses: every source of a session goes through `leases` (AGT-23).
+    ///
+    /// # Errors
+    ///
+    /// As [`DatapathTransport::new`].
+    pub fn with_leases(datapath: Arc<Datapath>, leases: LeaseMap) -> io::Result<Self> {
+        Self::build(datapath, Some(leases))
+    }
+
+    fn build(datapath: Arc<Datapath>, leases: Option<LeaseMap>) -> io::Result<Self> {
         let (handle, hub) = Hub::start()?;
         Ok(Self {
             inner: Arc::new(Inner {
@@ -525,6 +648,7 @@ impl DatapathTransport {
                 }),
                 ids: AtomicU64::new(0),
                 ephemeral: AtomicU32::new(0),
+                leases,
             }),
         })
     }
@@ -549,6 +673,16 @@ impl DatapathTransport {
             lock(&self.inner.tcp.ports).len(),
             lock(&self.inner.udp.ports).len(),
         )
+    }
+
+    /// The address that a session opens from: the source that the worker
+    /// picked, or for a run whose client pool leases the address that the
+    /// host holds now.
+    fn source(&self, source: IpAddr) -> io::Result<IpAddr> {
+        match &self.inner.leases {
+            Some(map) => map.source_of(source),
+            None => Ok(source),
+        }
     }
 
     fn datapath(&self) -> io::Result<Arc<Datapath>> {
@@ -677,7 +811,9 @@ impl Transport for DatapathTransport {
         destination: SocketAddr,
     ) -> BoxFuture<'_, io::Result<StreamSession>> {
         let connector = self.inner.connector.clone();
+        let source = self.source(source);
         Box::pin(async move {
+            let source = source?;
             let session = connector
                 .connect(source, destination)
                 .await
@@ -697,6 +833,7 @@ impl Transport for DatapathTransport {
         source: IpAddr,
         destination: SocketAddr,
     ) -> io::Result<DatagramSession> {
+        let source = self.source(source)?;
         let session = self
             .inner
             .connector
@@ -891,5 +1028,104 @@ mod tests {
         drop(EndGuard(Arc::clone(&port)));
         let e = a.recv().await.unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    /// A board whose addresses the test changes between two connects.
+    struct Board {
+        range: HostRange,
+        addrs: Mutex<HashMap<u32, Ipv4Addr>>,
+    }
+
+    impl LeaseLookup for Board {
+        fn range(&self) -> HostRange {
+            self.range
+        }
+
+        fn addr_of(&self, index: u32) -> Option<Ipv4Addr> {
+            lock(&self.addrs).get(&index).copied()
+        }
+    }
+
+    fn map(boards: Vec<Arc<dyn LeaseLookup>>) -> (LeaseMap, HostPool) {
+        let slice = crate::plan::HostPoolSlice {
+            name: "clients".into(),
+            pool_count: 8,
+            ..crate::plan::HostPoolSlice::default()
+        };
+        let virtual_pool = crate::assemble::virtual_pool(&slice).unwrap();
+        (LeaseMap::new(virtual_pool.clone(), boards), virtual_pool)
+    }
+
+    fn virt(pool: &HostPool, index: u32) -> IpAddr {
+        IpAddr::V4(pool.ipv4_addr(index).unwrap().unwrap())
+    }
+
+    #[test]
+    fn the_mapping_reads_the_board_at_each_connect() {
+        let board = Arc::new(Board {
+            range: HostRange::new(0, 8),
+            addrs: Mutex::new(HashMap::from([(3, Ipv4Addr::new(10, 201, 0, 103))])),
+        });
+        let (map, pool) = map(vec![board.clone()]);
+        let source = virt(&pool, 3);
+        assert_eq!(
+            map.source_of(source).unwrap(),
+            IpAddr::from([10, 201, 0, 103])
+        );
+        // The host renews onto another address, and the next connect takes it.
+        lock(&board.addrs).insert(3, Ipv4Addr::new(10, 201, 0, 150));
+        assert_eq!(
+            map.source_of(source).unwrap(),
+            IpAddr::from([10, 201, 0, 150])
+        );
+    }
+
+    #[test]
+    fn a_host_picks_the_board_of_its_lane_by_the_absolute_index() {
+        let low = Arc::new(Board {
+            range: HostRange::new(0, 4),
+            addrs: Mutex::new(HashMap::from([(1, Ipv4Addr::new(10, 201, 0, 101))])),
+        });
+        let high = Arc::new(Board {
+            range: HostRange::new(4, 4),
+            addrs: Mutex::new(HashMap::from([(5, Ipv4Addr::new(10, 201, 0, 105))])),
+        });
+        let (map, pool) = map(vec![low, high]);
+        assert_eq!(
+            map.source_of(virt(&pool, 5)).unwrap(),
+            IpAddr::from([10, 201, 0, 105])
+        );
+        assert_eq!(
+            map.source_of(virt(&pool, 1)).unwrap(),
+            IpAddr::from([10, 201, 0, 101])
+        );
+    }
+
+    #[test]
+    fn a_host_without_a_lease_fails_naming_dhcp4_the_pool_and_the_index_and_not_the_virtual_address(
+    ) {
+        let board = Arc::new(Board {
+            range: HostRange::new(0, 8),
+            addrs: Mutex::new(HashMap::new()),
+        });
+        let (map, pool) = map(vec![board]);
+        let source = virt(&pool, 6);
+        let e = map.source_of(source).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::AddrNotAvailable);
+        let text = e.to_string();
+        assert!(
+            text.contains("dhcp4") && text.contains("clients") && text.contains("host 6"),
+            "{text}"
+        );
+        assert!(!text.contains(&source.to_string()), "{text}");
+        assert!(!text.contains("240."), "{text}");
+    }
+
+    #[test]
+    fn a_source_that_names_no_host_of_the_pool_fails_without_a_frame() {
+        let (map, _) = map(Vec::new());
+        let e = map.source_of(IpAddr::from([10, 201, 0, 100])).unwrap_err();
+        assert!(e.to_string().contains("dhcp4"), "{e}");
+        assert!(!e.to_string().contains("10.201.0.100"), "{e}");
     }
 }

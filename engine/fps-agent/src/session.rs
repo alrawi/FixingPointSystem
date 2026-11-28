@@ -445,6 +445,8 @@ struct Live {
     pools: Vec<PortNets>,
     /// The seed of the plan, which seeds the capture.
     seed: u64,
+    /// Where the live lease boards go once the backend started (AGT-23).
+    leases: Option<portfilter::LeaseCell>,
     /// The rate registries, once the workers run.
     rates: Option<Rates>,
 }
@@ -501,7 +503,7 @@ fn code_of(e: &RunError) -> ErrorCode {
         },
         RunError::Unimplemented(_) => ErrorCode::Unimplemented,
         RunError::Backend(b) => match b {
-            BackendError::Mismatch { .. } | BackendError::Open { .. } => {
+            BackendError::Mismatch { .. } | BackendError::Open { .. } | BackendError::Leases(_) => {
                 ErrorCode::FailedPrecondition
             }
             BackendError::Unsupported(_) => ErrorCode::Unimplemented,
@@ -512,6 +514,14 @@ fn code_of(e: &RunError) -> ErrorCode {
             ErrorCode::Internal
         }
     }
+}
+
+/// The cell of the live lease boards, when a pool of the plan leases.
+fn leases_of(pools: &[PortNets]) -> Option<portfilter::LeaseCell> {
+    pools
+        .iter()
+        .find(|p| p.is_leased())
+        .map(|p| p.lease_cell().clone())
 }
 
 /// Maps a capture error to the error code of the contract.
@@ -1149,6 +1159,7 @@ impl Shared {
             self.emit(Event::StateChanged);
             return Some(error(reply, ErrorCode::Internal, message));
         };
+        let pools = portfilter::port_nets(prepared.plan());
         core.live = Some(Live {
             ports: prepared
                 .plan()
@@ -1156,7 +1167,8 @@ impl Shared {
                 .iter()
                 .map(|p| p.name.clone())
                 .collect(),
-            pools: portfilter::port_nets(prepared.plan()),
+            leases: leases_of(&pools),
+            pools,
             seed: prepared.plan().seed,
             rates: None,
         });
@@ -1324,6 +1336,22 @@ impl Shared {
                 return;
             }
         };
+        // The lease boards are live: the capture filter of a port whose pool
+        // leases reads them from here on (AGT-23).
+        {
+            let core = self.lock();
+            if core.generation == generation {
+                if let Some(cell) = core.live.as_ref().and_then(|l| l.leases.as_ref()) {
+                    cell.set(
+                        started
+                            .lease_boards()
+                            .into_iter()
+                            .map(|(pool, board)| (pool, board as Arc<dyn portfilter::LeaseIndex>))
+                            .collect(),
+                    );
+                }
+            }
+        }
         // The backend is up: say which one it is and how its ports bound
         // (CON-35). Every heartbeat carries it until the plan is released.
         let report = RunReport {

@@ -35,8 +35,10 @@
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::RangeInclusive;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use fps_hosts::{Ipv4Prefix, Ipv6Prefix};
+use fps_tcp_own::LeaseBoard;
 
 use crate::plan::Plan;
 
@@ -65,25 +67,95 @@ impl Net {
     }
 }
 
+/// The live lease boards of the pools that lease, which the agent hands to the
+/// capture filter after the backend started (AGT-23). Clones share the boards.
+///
+/// The boards are the ones that the DHCP clients of the datapath publish to,
+/// so a filter that reads them sees the address that a host holds now. Until
+/// [`LeaseCell::set`] runs the cell holds none, and a filter that reads it
+/// keeps no session.
+#[derive(Clone, Default)]
+pub struct LeaseCell(Arc<Mutex<Vec<PoolBoard>>>);
+
+/// A lease board with the name of its pool.
+type PoolBoard = (String, Arc<dyn LeaseIndex>);
+
+impl fmt::Debug for LeaseCell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("LeaseCell")
+    }
+}
+
+/// The host that holds an address now, as a lease board answers it.
+pub trait LeaseIndex: Send + Sync {
+    /// The pool index of the host that holds `addr`.
+    fn index_of(&self, addr: Ipv4Addr) -> Option<u32>;
+}
+
+impl LeaseIndex for LeaseBoard {
+    fn index_of(&self, addr: Ipv4Addr) -> Option<u32> {
+        LeaseBoard::index_of(self, addr)
+    }
+}
+
+impl LeaseCell {
+    /// Hands the live boards, each with the name of its pool, to every reader.
+    pub fn set(&self, boards: Vec<PoolBoard>) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = boards;
+    }
+
+    /// Whether a host of one of `pools` holds `ip` now.
+    fn is_leased(&self, pools: &[String], ip: IpAddr) -> bool {
+        let IpAddr::V4(a) = ip else {
+            return false;
+        };
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|(pool, board)| pools.contains(pool) && board.index_of(a).is_some())
+    }
+}
+
 /// The address prefixes of the host pools that sit on one port of the plan.
 #[derive(Debug, Clone)]
 pub struct PortNets {
     port: String,
     nets: Vec<Net>,
-    /// A pool on the port leases its addresses through DHCP (CON-34), so the
-    /// prefixes do not name every host of the port.
-    leased: bool,
+    /// The pools on the port that lease their addresses through DHCP
+    /// (CON-34), so the prefixes do not name every host of the port.
+    leased: Vec<String>,
+    /// Where the live boards of those pools arrive.
+    cell: LeaseCell,
+}
+
+impl PortNets {
+    /// Whether a pool on the port leases its addresses.
+    pub fn is_leased(&self) -> bool {
+        !self.leased.is_empty()
+    }
+
+    /// The cell that the live lease boards go to.
+    pub fn lease_cell(&self) -> &LeaseCell {
+        &self.cell
+    }
 }
 
 /// Returns the prefixes of the host pools of `plan`, by the port that they sit
 /// on. A prefix that does not parse is left out, because the run path refused
 /// such a plan before. A pool with `dhcp4` has no prefix, so it adds no net and
-/// marks its port as leased.
+/// marks its port as leased. All entries share one [`LeaseCell`].
 pub fn port_nets(plan: &Plan) -> Vec<PortNets> {
     let mut out: Vec<PortNets> = Vec::new();
+    let cell = LeaseCell::default();
     for pool in &plan.host_pools {
         let mut nets = Vec::new();
-        let leased = pool.dhcp4.is_some();
+        let leased: Vec<String> = pool
+            .dhcp4
+            .is_some()
+            .then(|| pool.name.clone())
+            .into_iter()
+            .collect();
         if let Ok(p) = pool.ipv4_prefix.parse::<Ipv4Prefix>() {
             nets.push(Net::V4(p));
         }
@@ -93,12 +165,13 @@ pub fn port_nets(plan: &Plan) -> Vec<PortNets> {
         match out.iter_mut().find(|n| n.port == pool.port) {
             Some(n) => {
                 n.nets.extend(nets);
-                n.leased |= leased;
+                n.leased.extend(leased);
             }
             None => out.push(PortNets {
                 port: pool.port.clone(),
                 nets,
                 leased,
+                cell: cell.clone(),
             }),
         }
     }
@@ -118,8 +191,12 @@ enum Kind {
     All,
     /// The sessions whose server port lies in one of the ranges.
     ServerPorts(Vec<RangeInclusive<u16>>),
-    /// The sessions with a client or server host in the prefixes.
-    Hosts(Vec<Net>),
+    /// The sessions with a client or server host in the prefixes, or with a
+    /// host that holds an address of a pool that leases.
+    Hosts {
+        nets: Vec<Net>,
+        leased: Option<(LeaseCell, Vec<String>)>,
+    },
 }
 
 impl PortFilter {
@@ -145,18 +222,26 @@ impl PortFilter {
         }
         if plan_ports.iter().any(|p| p == spec) {
             // The leased addresses of a DHCP pool lie in no prefix of the plan,
-            // so a filter by prefix would drop their sessions. A port with such
-            // a pool keeps every session.
-            if pools.iter().any(|p| p.port == spec && p.leased) {
-                return Ok(Self::all());
-            }
+            // so the filter reads the live lease boards for them (AGT-23).
             let nets = pools
                 .iter()
                 .filter(|p| p.port == spec)
                 .flat_map(|p| p.nets.iter().copied())
                 .collect();
+            let leased: Vec<String> = pools
+                .iter()
+                .filter(|p| p.port == spec)
+                .flat_map(|p| p.leased.iter().cloned())
+                .collect();
+            let cell = pools
+                .iter()
+                .find(|p| p.port == spec)
+                .map(|p| p.cell.clone());
             return Ok(Self {
-                kind: Kind::Hosts(nets),
+                kind: Kind::Hosts {
+                    nets,
+                    leased: cell.filter(|_| !leased.is_empty()).map(|c| (c, leased)),
+                },
             });
         }
         match parse_ports(spec) {
@@ -183,9 +268,13 @@ impl PortFilter {
         match &self.kind {
             Kind::All => true,
             Kind::ServerPorts(ranges) => ranges.iter().any(|r| r.contains(&server_port)),
-            Kind::Hosts(nets) => nets
-                .iter()
-                .any(|n| n.contains(client) || n.contains(server)),
+            Kind::Hosts { nets, leased } => {
+                nets.iter()
+                    .any(|n| n.contains(client) || n.contains(server))
+                    || leased.as_ref().is_some_and(|(cell, pools)| {
+                        cell.is_leased(pools, client) || cell.is_leased(pools, server)
+                    })
+            }
         }
     }
 }
@@ -339,7 +428,14 @@ impl fmt::Display for PortFilter {
                     .collect();
                 write!(f, "server ports {}", items.join(","))
             }
-            Kind::Hosts(n) => write!(f, "the hosts of {} pool prefixes", n.len()),
+            Kind::Hosts { nets, leased } => match leased {
+                Some(_) => write!(
+                    f,
+                    "the hosts of {} pool prefixes and the leased hosts",
+                    nets.len()
+                ),
+                None => write!(f, "the hosts of {} pool prefixes", nets.len()),
+            },
         }
     }
 }
@@ -355,7 +451,8 @@ mod tests {
                 .iter()
                 .map(|p| Net::V4(p.parse().expect("prefix")))
                 .collect(),
-            leased: false,
+            leased: Vec::new(),
+            cell: LeaseCell::default(),
         }
     }
 
@@ -398,7 +495,7 @@ mod tests {
     const ACK: u8 = 0x10;
 
     #[test]
-    fn a_dhcp_pool_adds_no_prefix_and_a_port_with_one_keeps_every_session() {
+    fn a_dhcp_pool_adds_no_prefix_and_marks_its_port_as_leased() {
         use crate::plan::{Dhcp4, HostPoolSlice};
         let plan = Plan {
             host_pools: vec![
@@ -419,14 +516,85 @@ mod tests {
         };
         let pools = port_nets(&plan);
         assert_eq!(pools.len(), 2);
-        assert!(pools[0].nets.is_empty() && pools[0].leased);
+        assert!(pools[0].nets.is_empty() && pools[0].is_leased());
         assert_eq!(pools[1].nets.len(), 1);
-        assert!(!pools[1].leased);
+        assert!(!pools[1].is_leased());
         let ports = plan_ports();
         let client = PortFilter::parse("client0", &ports, &pools).unwrap();
-        assert!(client.is_all(), "leased addresses lie in no prefix");
+        assert!(!client.is_all(), "a leased port filters by the live boards");
+        // Before the boards are set the filter keeps no session.
+        assert!(!client.matches([10, 201, 0, 100].into(), [10, 2, 0, 1].into(), 80));
         let server = PortFilter::parse("server0", &ports, &pools).unwrap();
         assert!(!server.is_all());
+    }
+
+    /// A board that holds one address, which the test can change.
+    struct Held(Mutex<Option<Ipv4Addr>>);
+
+    impl LeaseIndex for Held {
+        fn index_of(&self, addr: Ipv4Addr) -> Option<u32> {
+            (*self.0.lock().unwrap() == Some(addr)).then_some(0)
+        }
+    }
+
+    #[test]
+    fn a_leased_port_keeps_a_session_only_when_an_address_of_it_is_leased_now() {
+        let mut pools = vec![nets("client0", &[])];
+        pools[0].leased = vec!["clients".into()];
+        let held = Arc::new(Held(Mutex::new(Some(Ipv4Addr::new(10, 201, 0, 100)))));
+        let filter = PortFilter::parse("client0", &plan_ports(), &pools).unwrap();
+        let leased = |c: [u8; 4]| filter.matches(c.into(), [10, 2, 0, 1].into(), 80);
+        assert!(!leased([10, 201, 0, 100]), "no boards are set yet");
+        pools[0].lease_cell().set(vec![(
+            "clients".into(),
+            held.clone() as Arc<dyn LeaseIndex>,
+        )]);
+        assert!(leased([10, 201, 0, 100]), "a leased address is kept");
+        assert!(
+            !leased([10, 201, 0, 7]),
+            "an address nobody holds is dropped"
+        );
+        // The lease moves, and the same filter follows it.
+        *held.0.lock().unwrap() = Some(Ipv4Addr::new(10, 201, 0, 7));
+        assert!(leased([10, 201, 0, 7]) && !leased([10, 201, 0, 100]));
+    }
+
+    #[test]
+    fn a_capture_of_a_leased_port_drops_a_session_whose_addresses_are_not_leased() {
+        let mut pools = vec![nets("client0", &[])];
+        pools[0].leased = vec!["clients".into()];
+        pools[0].lease_cell().set(vec![(
+            "clients".into(),
+            Arc::new(Held(Mutex::new(Some(Ipv4Addr::new(10, 201, 0, 100))))) as Arc<dyn LeaseIndex>,
+        )]);
+        let f = PortFilter::parse("client0", &plan_ports(), &pools).unwrap();
+        let mut ff = FrameFilter::new(&f);
+        // A leased client keeps its session, the frames of both directions.
+        assert!(ff.keep(&frame(
+            true,
+            ([10, 201, 0, 100], 40000),
+            ([48, 0, 0, 1], 80),
+            SYN
+        )));
+        assert!(ff.keep(&frame(
+            true,
+            ([48, 0, 0, 1], 80),
+            ([10, 201, 0, 100], 40000),
+            SYN | ACK
+        )));
+        // A session between two addresses that nobody holds is dropped.
+        assert!(!ff.keep(&frame(
+            true,
+            ([10, 201, 0, 77], 40001),
+            ([48, 0, 0, 1], 80),
+            SYN
+        )));
+        assert!(!ff.keep(&frame(
+            true,
+            ([48, 0, 0, 1], 80),
+            ([10, 201, 0, 77], 40001),
+            SYN | ACK
+        )));
     }
 
     #[test]
@@ -440,8 +608,10 @@ mod tests {
 
     #[test]
     fn a_name_beats_a_number_and_a_number_is_a_server_port() {
-        assert!(matches!(parse("server0").unwrap().kind, Kind::Hosts(n) if n.len() == 1));
-        assert!(matches!(parse("53").unwrap().kind, Kind::Hosts(_)));
+        assert!(
+            matches!(parse("server0").unwrap().kind, Kind::Hosts { nets, .. } if nets.len() == 1)
+        );
+        assert!(matches!(parse("53").unwrap().kind, Kind::Hosts { .. }));
         let Kind::ServerPorts(r) = parse("80").unwrap().kind else {
             panic!("80 is a server port");
         };

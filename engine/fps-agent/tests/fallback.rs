@@ -315,16 +315,61 @@ fn a_forced_agent_refuses_each_refused_shape_with_the_cause() {
 }
 
 #[test]
-fn a_dhcp_pool_is_refused_by_both_backends_and_the_fallback_does_not_hide_it() {
-    // Neither backend leases an address yet (HST-04, AGT-23), so the fallback
-    // of an unforced agent ends at the kernel refusal and not in a run.
+fn a_dhcp_client_pool_runs_on_af_xdp_and_the_kernel_backend_refuses_it() {
+    // The datapath leases the addresses of a client pool (AGT-23, TRN-37), so
+    // an unforced agent and a forced one both end on AF_XDP with no fallback,
+    // and the kernel backend refuses the plan naming dhcp4.
     let mut plan = served_plan();
     plan["hostPools"][0]["ipv4Prefix"] = "".into();
     plan["hostPools"][0]["dhcp4"] = json!({});
-    let e = prepare(&plan, &unforced(), Sides::Both).expect_err("a DHCP pool does not run");
+    for selection in [unforced(), forced()] {
+        let p = prepare(&plan, &selection, Sides::Both).expect("a DHCP client pool runs");
+        assert_eq!((p.backend(), p.fallback()), (BackendKind::AfXdp, None));
+    }
+    let guest = host("virtio-guest");
+    let kernel = select_with_transport(&guest, None, false).expect("a selection");
+    let mut on_kernel = plan.clone();
+    on_kernel["backend"] = "BACKEND_KERNEL".into();
+    let e = prepare(&on_kernel, &kernel, Sides::Both).expect_err("the kernel leases nothing");
     assert!(e.to_string().contains("dhcp4"), "{e}");
-    let e = prepare(&plan, &forced(), Sides::Both).expect_err("a DHCP pool does not run");
-    assert!(e.to_string().contains("DHCP"), "{e}");
+}
+
+#[test]
+fn a_dhcp_server_pool_is_refused_by_the_datapath_and_the_kernel_backend() {
+    let mut plan = served_plan();
+    plan["hostPools"][1]["ipv4Prefix"] = "".into();
+    plan["hostPools"][1]["dhcp4"] = json!({});
+    let e = prepare(&plan, &forced(), Sides::Both).expect_err("a server pool does not lease");
+    assert!(e.to_string().contains("dhcp4"), "{e}");
+    let e = prepare(&plan, &unforced(), Sides::Both).expect_err("the kernel leases nothing");
+    assert!(e.to_string().contains("dhcp4"), "{e}");
+    assert!(e.to_string().contains("fell back from AF_XDP"), "{e}");
+}
+
+#[test]
+fn the_kernel_refusal_of_a_dhcp_plan_carries_the_cause_of_the_fallback() {
+    // A DHCP plan of a shape that the datapath refuses falls back to the
+    // kernel backend, which cannot lease. The error names dhcp4 and says why
+    // the plan left AF_XDP (AGT-23).
+    for shape in shapes() {
+        let mut plan = served_plan();
+        plan["hostPools"][0]["ipv4Prefix"] = "".into();
+        plan["hostPools"][0]["dhcp4"] = json!({});
+        (shape.change)(&mut plan);
+        let e = prepare(&plan, &unforced(), shape.sides)
+            .expect_err(&format!("{}: a DHCP pool does not run", shape.what));
+        let text = e.to_string();
+        // The cause is what the forced agent reports for the same plan.
+        let cause = prepare(&plan, &forced(), shape.sides)
+            .expect_err(&format!("{}: a forced agent refuses", shape.what))
+            .to_string();
+        assert!(text.contains("dhcp4"), "{}: {text}", shape.what);
+        assert!(
+            text.contains("fell back from AF_XDP") && text.contains(&cause),
+            "{}: the error carries the cause of the fallback {cause}: {text}",
+            shape.what
+        );
+    }
 }
 
 /// What an unforced agent does with a file of `contracts/examples/tests/`
@@ -332,9 +377,9 @@ fn a_dhcp_pool_is_refused_by_both_backends_and_the_fallback_does_not_hide_it() {
 enum Outcome {
     /// It runs on the kernel backend, and reports this cause of the fallback.
     FallsBack(&'static str),
-    /// Neither backend runs it: both the kernel selection and the unforced
-    /// one refuse it with this cause. This blocks TRN-31.
-    Refused(&'static str),
+    /// The unforced selection runs it on AF_XDP with no fallback, and the
+    /// kernel selection refuses it with this text (a DHCP client pool).
+    AfXdpAndKernelRefuses(&'static str),
 }
 
 const LO: &str = "host pools clients and servers sit on the same interface lo";
@@ -345,8 +390,10 @@ const LO: &str = "host pools clients and servers sit on the same interface lo";
 const EXPECTED: &[(&str, Outcome, &str)] = &[
     (
         "dhcp_clients.yaml",
-        Outcome::Refused("asks for dhcp4, which this agent cannot lease yet (HST-04)"),
-        "the clients lease their address, and no backend leases one yet (bug #708)",
+        Outcome::AfXdpAndKernelRefuses(
+            "host pool clients asks for dhcp4, and the kernel backend leases no address",
+        ),
+        "the clients lease their address, which only the datapath does (AGT-23, bug #708)",
     ),
     (
         "dns_zone.yaml",
@@ -428,12 +475,17 @@ fn every_example_test_prepares_on_the_kernel_and_the_unforced_selection() {
                     "{name}: {got}"
                 );
             }
-            Some(Outcome::Refused(cause)) => {
-                for (which, r) in [("kernel", on_kernel), ("unforced", on_unforced)] {
-                    let e = r.err().unwrap_or_else(|| panic!("{name} {which} runs"));
-                    assert!(matches!(*e, RunError::Plan(_)), "{name} {which}: {e}");
-                    assert!(e.to_string().contains(cause), "{name} {which}: {e}");
-                }
+            Some(Outcome::AfXdpAndKernelRefuses(text)) => {
+                let e = on_kernel
+                    .err()
+                    .unwrap_or_else(|| panic!("{name} kernel runs"));
+                assert!(e.to_string().contains(text), "{name} kernel: {e}");
+                let u = on_unforced.unwrap_or_else(|e| panic!("{name} unforced: {e}"));
+                assert_eq!(
+                    (u.backend(), u.fallback()),
+                    (BackendKind::AfXdp, None),
+                    "{name}"
+                );
             }
         }
     }

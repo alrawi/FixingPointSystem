@@ -140,14 +140,56 @@ pub fn load_profile(plan: &Plan) -> Result<LoadProfile, RunError> {
     LoadProfile::new(phases).map_err(|e| RunError::rule(format!("load phases: {e}")))
 }
 
+/// The prefix of the virtual source pool of a client pool that leases
+/// (AGT-23). Class E is never leased, so a source that reaches a frame by a
+/// missed mapping fails closed, where a prefix that a lab leases from would
+/// connect from the real address of another host.
+pub(crate) const VIRTUAL_PREFIX: &str = "240.0.0.0/4";
+
+/// The virtual static pool of a client pool that leases (AGT-23).
+///
+/// The leases exist only after the datapath started, so `assemble` can give
+/// the workers no address of such a pool. The workers pick a host index and
+/// the runtime turns it into a source with `HostPool::ipv4_addr`, so this pool
+/// only encodes the index as an address. `DatapathTransport` turns the
+/// encoded index into the address that the host holds on the live lease
+/// board at each connect ([`crate::transport::LeaseMap`]). The address never
+/// reaches a frame, a capture, a report, or an error text.
+///
+/// Known debt: the encoding exists because `SourceHosts` and the transport
+/// trait live in `engine/fps-runtime/`, which AGT-23 does not own.
+///
+/// # Errors
+///
+/// A rule error that names `dhcp4` when the pool has more hosts than the
+/// virtual prefix holds.
+pub(crate) fn virtual_pool(slice: &HostPoolSlice) -> Result<HostPool, RunError> {
+    let pool = HostPool::parse(&PoolSpec {
+        name: &slice.name,
+        ipv4: Some(VIRTUAL_PREFIX),
+        ipv6: None,
+        count: slice.pool_count,
+        gateway: None,
+        mac_base: None,
+    })
+    .map_err(|e| {
+        RunError::rule(format!(
+            "host pool {} (dhcp4): {} hosts do not fit the virtual source pool of the agent: {e}",
+            slice.name, slice.pool_count
+        ))
+    })?;
+    Ok(pool)
+}
+
 pub(crate) fn pool_of(slice: &HostPoolSlice) -> Result<HostPool, RunError> {
-    // HST-04 adds the DHCP client. Until then no backend can lease an address,
-    // so a DHCP slice fails here, before the plan allocates anything.
     if slice.dhcp4.is_some() {
-        return Err(RunError::rule(format!(
-            "host pool {} asks for dhcp4, which this agent cannot lease yet (HST-04)",
-            slice.name
-        )));
+        let opt = |s: &str| (!s.is_empty()).then(|| s.to_owned());
+        return HostPool::dhcp(
+            &slice.name,
+            slice.pool_count,
+            opt(&slice.mac_base).as_deref(),
+        )
+        .map_err(|e| RunError::rule(format!("host pool {}: {e}", slice.name)));
     }
     let opt = |s: &str| (!s.is_empty()).then(|| s.to_owned());
     let (v4, v6, gw, mac) = (
@@ -177,7 +219,12 @@ impl<'p> Pools<'p> {
     fn new(plan: &'p Plan) -> Result<Self, RunError> {
         let mut parsed = HashMap::new();
         for p in &plan.host_pools {
-            parsed.insert(p.name.clone(), pool_of(p)?);
+            let pool = if p.dhcp4.is_some() {
+                virtual_pool(p)?
+            } else {
+                pool_of(p)?
+            };
+            parsed.insert(p.name.clone(), pool);
         }
         Ok(Self { plan, parsed })
     }
@@ -241,6 +288,8 @@ pub fn assemble(
 ) -> Result<Assembly, RunError> {
     if backend == BackendKind::AfXdp {
         crate::backend::check_af_xdp(plan, sides)?;
+    } else {
+        crate::backend::check_kernel_dhcp(plan, None)?;
     }
     let (clients_allowed, servers_allowed) = match plan.topology {
         Topology::AppSim => (true, true),
@@ -518,22 +567,38 @@ mod tests {
     }
 
     #[test]
-    fn a_dhcp_pool_fails_with_an_error_that_names_dhcp4() {
-        let e = pool_of(&slice("clients", "", true))
-            .unwrap_err()
-            .to_string();
-        assert!(e.contains("dhcp4"), "{e}");
-        assert!(e.contains("host pool clients"), "{e}");
-        assert!(e.contains("HST-04"), "{e}");
+    fn a_dhcp_pool_is_a_pool_that_leases() {
+        let pool = pool_of(&slice("clients", "", true)).unwrap();
+        assert!(pool.is_dhcp());
+        assert_eq!(
+            pool.ipv4_addr(0).unwrap(),
+            None,
+            "no address before a lease"
+        );
     }
 
     #[test]
-    fn a_static_pool_still_parses() {
-        pool_of(&slice("servers", "10.2.0.0/24", false)).unwrap();
+    fn the_workers_of_a_dhcp_pool_get_a_virtual_pool_in_class_e() {
+        let pool = virtual_pool(&slice("clients", "", true)).unwrap();
+        assert!(!pool.is_dhcp());
+        let first = pool.ipv4_addr(0).unwrap().unwrap();
+        let last = pool.ipv4_addr(3).unwrap().unwrap();
+        for a in [first, last] {
+            assert_eq!(a.octets()[0] & 0xf0, 0xf0, "{a} is in 240.0.0.0/4");
+        }
+        assert_eq!(pool.index_of_ipv4(last), Some(3));
     }
 
     #[test]
-    fn a_plan_with_a_dhcp_pool_fails_before_any_pool_is_used() {
+    fn a_dhcp_pool_larger_than_the_virtual_prefix_is_refused_naming_dhcp4() {
+        let mut big = slice("clients", "", true);
+        big.pool_count = u32::MAX;
+        let e = virtual_pool(&big).unwrap_err().to_string();
+        assert!(e.contains("dhcp4") && e.contains("clients"), "{e}");
+    }
+
+    #[test]
+    fn a_plan_with_a_dhcp_pool_builds_its_pools_with_a_virtual_one() {
         let plan = Plan {
             host_pools: vec![
                 slice("servers", "10.2.0.0/24", false),
@@ -541,8 +606,14 @@ mod tests {
             ],
             ..Plan::default()
         };
-        let e = Pools::new(&plan).err().expect("a refusal").to_string();
-        assert!(e.contains("host pool clients asks for dhcp4"), "{e}");
+        let pools = Pools::new(&plan).unwrap();
+        let (_, clients) = pools.get("clients", HostRole::Client).unwrap();
+        assert!(clients.ipv4().is_some() && !clients.is_dhcp());
+    }
+
+    #[test]
+    fn a_static_pool_still_parses() {
+        pool_of(&slice("servers", "10.2.0.0/24", false)).unwrap();
     }
 
     fn parse(text: &str) -> Scenario {
