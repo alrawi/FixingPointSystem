@@ -38,7 +38,13 @@ func locationConfig(locations ...string) compiler.Config {
 }
 
 func TestCheckCapacityLocations(t *testing.T) {
-	inv := exampleInventory().agents
+	// A fixed inventory, so these cases stay independent of the agents
+	// that the example configurations need.
+	inv := []compiler.Agent{
+		{ID: "local", Cores: 2, Interfaces: []string{"lo"}},
+		{ID: "agent-a", Cores: 4, Interfaces: []string{"eth1", "eth2"}},
+		{ID: "spare", Cores: 1},
+	}
 	tests := []struct {
 		name      string
 		locations []string
