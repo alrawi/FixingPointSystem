@@ -828,3 +828,37 @@ def test_real_ndpi_names_the_sessions_of_the_view_http_where_it_names_the_captur
     assert code == EXIT_PASS, result["failures"]
     app = result["report"]["checks"][0]["applications"][0]
     assert app["conforming"] == app["sessions"] == 3
+
+
+@pytest.mark.skipif(not HAS_TSHARK, reason="no tshark")
+@pytest.mark.parametrize(
+    ("module", "protocol", "port"), [("smtp", "smtp", 5587), ("imap", "imap", 1143)]
+)
+def test_a_client_port_that_wireshark_registers_loses_no_starttls_session(
+    tmp_path: Path, module: str, protocol: str, port: int
+) -> None:
+    # Bug #716, after #712: Wireshark 4.2 registers client port 40000 for SAP NI. The reader
+    # decodes the server port as the application protocol, which accepts the clear text start
+    # of a STARTTLS session, so SAP NI never gets it and the reader and the message count of
+    # its view stay the same. This guards that choice: decoding the server port as TLS instead
+    # would hide the ClientHello of the session on port 40000.
+    from realism.tests.test_encryption import _move_client_port
+
+    root = Path(__file__).resolve().parents[2]
+    capture = root / "modules" / module / "fixtures" / f"{module}.pcapng"
+    if not capture.is_file():
+        pytest.skip(f"{capture} is not in this checkout")
+    plain = "upgrade" if module == "smtp" else "inside"
+    starttls = {port: protocol}
+    base = decrypted.read_sessions(capture, None, TSHARK, plain, (), starttls)
+    moved = tmp_path / f"{module}-40000.pcapng"
+    _move_client_port(capture, moved, base[3].client[1], 40000)
+    sessions = decrypted.read_sessions(moved, None, TSHARK, plain, (), starttls)
+    assert len(sessions) == len(base) == 8
+    assert all(s.decrypted for s in sessions)
+    assert any(s.client[1] == 40000 for s in sessions)
+    view = tmp_path / "view.pcap"
+    write_view(view, sessions, plain, port)
+    counts = messages.TsharkMessageProbe(TSHARK.program).observe(view, protocol, [port]).counts
+    assert sum(n for c in counts.values() for k, n in c.items() if k.startswith("commands.")) > 0
+    assert any(40000 in (k.a_port, k.b_port) for k in counts)
