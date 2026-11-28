@@ -14,7 +14,8 @@ network:
 profile:
   basis: bytes
   mix:
-    - { scenario: http1/web_browse, weight: 60 }
+    # web_browse and web_get both listen on tcp 8080 by default and share the server hosts, so web_browse takes 8081.
+    - { scenario: http1/web_browse, weight: 60, params: { server_port: 8081 } }
     - { scenario: http1/web_get, weight: 39.9, params: { body_size: 65536, requests: 8 } }
     - { scenario: dns/lookup, weight: 0.1 }
 load:

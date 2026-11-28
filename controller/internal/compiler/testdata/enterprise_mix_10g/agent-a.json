@@ -43,7 +43,10 @@
     {
       "id": "web_browse",
       "scenario": "http1/web_browse",
-      "weight": 0.08271108558299828
+      "weight": 0.08271108558299828,
+      "params": {
+        "server_port": 8081
+      }
     },
     {
       "id": "web_get",

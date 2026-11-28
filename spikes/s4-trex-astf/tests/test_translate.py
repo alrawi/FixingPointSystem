@@ -67,8 +67,16 @@ def test_enterprise_mix_reports_losses():
     profile, report, meta = build(yaml.safe_load((TESTS / "enterprise_mix_10g.yaml").read_text()))
     assert len(profile.templates) == 3
     rules = [tp.server_template.assoc for tp in profile.templates]
-    http = [r for r in rules if r.port == 8080]
-    assert len(http) == 2 and http[0].ip_end < http[1].ip_start  # disjoint server ranges
+    # web_get accepts on 8080 and web_browse on 8081 since bug 692, so the
+    # port alone tells the two HTTP templates apart.
+    http = [r for r in rules if r.port in (8080, 8081)]
+    assert len(http) == 2 and {r.port for r in http} == {8080, 8081}
+    # No two templates may claim one server port without disjoint server ranges.
+    for i, a in enumerate(rules):
+        for b in rules[i + 1 :]:
+            if a.port == b.port:
+                lo, hi = sorted((a, b), key=lambda r: r.ip_start)
+                assert lo.ip_end < hi.ip_start
     notes = {(e["action"], e["verdict"]) for e in report.entries}
     assert ("delay", "unsupported") in notes  # lognormal think time
     assert ("phases", "approximate") in notes
@@ -128,3 +136,15 @@ def test_render_rules():
         t.render("{{ fill(2) }}tail", {})
     with pytest.raises(t.NonDeterministic):
         t.render("{{ session.id }}", {})
+
+
+def test_two_entries_on_one_port_get_disjoint_server_ranges():
+    # The example without the server_port of web_browse (before bug 692): both
+    # HTTP entries accept on 8080, and the translator splits the server pool.
+    config = yaml.safe_load((TESTS / "enterprise_mix_10g.yaml").read_text())
+    config["profile"]["mix"][0].pop("params")
+    profile, _, _ = build(config)
+    http = [tp.server_template.assoc for tp in profile.templates if tp.server_template.assoc.port == 8080]
+    assert len(http) == 2
+    lo, hi = sorted(http, key=lambda r: r.ip_start)
+    assert lo.ip_end < hi.ip_start  # disjoint server ranges

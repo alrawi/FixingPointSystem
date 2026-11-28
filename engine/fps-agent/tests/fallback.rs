@@ -125,15 +125,37 @@ fn an_unforced_agent_runs_http_smoke_on_the_kernel_backend_and_a_forced_agent_re
 }
 
 #[test]
-fn the_enterprise_mix_is_refused_by_the_agent_on_both_backends_before_any_fallback_matters() {
+fn the_enterprise_mix_runs_on_af_xdp_for_an_unforced_and_a_forced_agent() {
     // enterprise_mix_10g.yaml has two interfaces, one client pool, and one
-    // server pool, which is the shape of the datapath, so the datapath has
-    // nothing to refuse (the next test). The agent refuses the plan on every
-    // backend for a reason of its own: the entries web_browse and web_get
-    // listen on tcp 8080 of the same server hosts. The controller assigns no
-    // ports (its golden plan has the same two entries), so the example does
-    // not run through an agent until it names two ports.
+    // server pool, which is the shape of the datapath. Its entries web_browse
+    // and web_get would both listen on tcp 8080 of the server hosts, so the
+    // example gives web_browse the server_port 8081 (bug #692).
     let plan = plan_of("enterprise_mix_10g.yaml");
+    assert_eq!(plan["mix"][0]["params"]["server_port"], 8081);
+    for selection in [unforced(), forced()] {
+        let p = prepare(&plan, &selection, Sides::Both).expect("the plan prepares");
+        assert_eq!(p.backend(), BackendKind::AfXdp);
+        assert_eq!(p.fallback(), None);
+    }
+}
+
+#[test]
+fn the_enterprise_mix_runs_on_the_kernel_backend() {
+    // The plan of an agent that runs on the kernel backend names that
+    // backend; a plan that asks for AF_XDP is a mismatch on such an agent.
+    let mut plan = plan_of("enterprise_mix_10g.yaml");
+    plan["backend"] = "BACKEND_KERNEL".into();
+    let guest = host("virtio-guest");
+    let kernel = select_with_transport(&guest, None, false).expect("a selection");
+    assert_eq!(kernel.backend, BackendKind::Kernel);
+    let p = prepare(&plan, &kernel, Sides::Both).expect("the plan prepares");
+    assert_eq!(p.backend(), BackendKind::Kernel);
+}
+
+#[test]
+fn the_enterprise_mix_without_its_second_port_is_refused_on_every_backend() {
+    let mut plan = plan_of("enterprise_mix_10g.yaml");
+    plan["mix"][0].as_object_mut().unwrap().remove("params");
     for selection in [unforced(), forced()] {
         let e = prepare(&plan, &selection, Sides::Both).expect_err("the plan is refused");
         let text = e.to_string();
@@ -142,17 +164,6 @@ fn the_enterprise_mix_is_refused_by_the_agent_on_both_backends_before_any_fallba
             "{text}"
         );
         assert!(matches!(*e, RunError::Plan(_)), "{text}");
-    }
-}
-
-#[test]
-fn the_enterprise_mix_with_two_ports_is_a_plan_that_the_datapath_serves() {
-    let mut plan = plan_of("enterprise_mix_10g.yaml");
-    plan["mix"][0]["params"] = json!({ "server_port": 8081 });
-    for selection in [unforced(), forced()] {
-        let p = prepare(&plan, &selection, Sides::Both).expect("the plan prepares");
-        assert_eq!(p.backend(), BackendKind::AfXdp);
-        assert_eq!(p.fallback(), None);
     }
 }
 

@@ -1383,3 +1383,40 @@ def test_dhcp4_takes_no_property_yet(dhcp):
 def test_static_pools_keep_their_meaning(smoke, index):
     assert "dhcp4" not in smoke["network"]["host_pools"][0]
     assert not check_test(smoke, index).errors
+
+
+# --- two mix entries on one server port (bug #692) --------------------------
+
+def web_pair(smoke: dict) -> dict:
+    smoke["profile"]["mix"] = [
+        {"scenario": "http1/web_browse", "weight": 1},
+        {"scenario": "http1/web_get", "weight": 1},
+    ]
+    return smoke
+
+
+def test_two_mix_entries_on_one_server_port_are_an_error(smoke, index):
+    msgs = messages(check_test(web_pair(smoke), index))
+    assert any("both listen on tcp port 8080" in m and "server_port" in m for m in msgs), msgs
+
+
+def test_a_server_port_param_clears_the_clash(smoke, index):
+    web_pair(smoke)["profile"]["mix"][0]["params"] = {"server_port": 8081}
+    assert not check_test(smoke, index).errors
+
+
+def test_the_same_param_on_both_entries_is_still_a_clash(smoke, index):
+    for entry in web_pair(smoke)["profile"]["mix"]:
+        entry["params"] = {"server_port": 9000}
+    assert any("port 9000" in m for m in messages(check_test(smoke, index)))
+
+
+def test_a_client_sim_test_has_no_server_port_clash(smoke, index):
+    # A client_sim test starts no servers, so two entries on one port are fine.
+    web_pair(smoke)
+    smoke["topology"] = "client_sim"
+    smoke["network"]["host_pools"] = [p for p in smoke["network"]["host_pools"] if p["role"] == "client"]
+    smoke["network"]["external_servers"] = [{"name": "web", "address": "203.0.113.10", "port": 8080}]
+    for entry in smoke["profile"]["mix"]:
+        entry.pop("server_pool", None)
+    assert not any("both listen" in m for m in messages(check_test(smoke, index)))
