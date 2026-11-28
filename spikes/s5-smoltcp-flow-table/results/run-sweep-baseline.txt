@@ -1,0 +1,118 @@
+clock read overhead per Instant::now pair, about 22 ns (included in every per event sample)
+size_of: tcp::Socket 408 B, SocketStorage 432 B
+
+== flow table, 100 connections (200 sockets, both ends) ==
+  resident memory per socket after the handshake: 4116 B
+  phase handshake: wall 0.3 ms
+    frame ingest          300 events, mean     580 ns, p50    153 ns, p99    2949 ns, max     3842 ns
+    app read/write        100 events, mean    1359 ns, p50   1203 ns, p99    4222 ns, max     6683 ns
+  phase burst: wall 0.4 ms
+    frame ingest         1200 events, mean     150 ns, p50    134 ns, p99     230 ns, max    21115 ns
+    app read/write        900 events, mean     113 ns, p50    118 ns, p99     258 ns, max     2297 ns
+    wheel tick              6 events, mean      74 ns, p50     51 ns, p99     100 ns, max      144 ns
+  phase single: wall 0.1 ms
+    frame ingest          400 events, mean     130 ns, p50    136 ns, p99     200 ns, max      238 ns
+    app read/write        300 events, mean     104 ns, p50    119 ns, p99     166 ns, max      181 ns
+    wheel tick              2 events, mean      26 ns, p50     25 ns, p99      25 ns, max       27 ns
+  phase loss: wall 0.3 ms
+    frame ingest          400 events, mean     138 ns, p50    134 ns, p99     236 ns, max     4835 ns
+    app read/write        300 events, mean     104 ns, p50    115 ns, p99     182 ns, max      238 ns
+    timer fire            300 events, mean      79 ns, p50     48 ns, p99     184 ns, max     2590 ns
+    wheel tick           2000 events, mean      40 ns, p50     23 ns, p99      35 ns, max    14619 ns
+  phase close: wall 1.2 ms
+    frame ingest          400 events, mean     122 ns, p50    117 ns, p99     340 ns, max      428 ns
+    app read/write        100 events, mean      91 ns, p50     87 ns, p99     120 ns, max      309 ns
+    timer fire            200 events, mean      71 ns, p50     61 ns, p99     300 ns, max      350 ns
+    wheel tick          20000 events, mean      26 ns, p50     23 ns, p99      29 ns, max    21505 ns
+  timer fires, whole run, both hosts: 500 for a live flow, 100 of them sent a frame
+  loss: 100 frames dropped, 100 retransmit fires on the client; server ingested 1400 frames; orphans 0; stale wheel entries 100; wheel entries left 0; flows left 0
+  checks: all passed
+== interface loop baseline, 100 connections in one set per host ==
+    loop turn             500 events, mean    2239 ns, p50   2293 ns, p99    2580 ns, max    14137 ns
+
+== flow table, 1000 connections (2000 sockets, both ends) ==
+  resident memory per socket after the handshake: 3570 B
+  phase handshake: wall 3.3 ms
+    frame ingest         3000 events, mean     672 ns, p50    266 ns, p99    2524 ns, max    44167 ns
+    app read/write       1000 events, mean    1023 ns, p50   1003 ns, p99    2546 ns, max    42411 ns
+  phase burst: wall 5.5 ms
+    frame ingest        12000 events, mean     249 ns, p50    214 ns, p99     492 ns, max    44737 ns
+    app read/write       9000 events, mean     161 ns, p50    166 ns, p99     495 ns, max    33884 ns
+    wheel tick              6 events, mean     182 ns, p50    165 ns, p99     209 ns, max      292 ns
+  phase single: wall 1.5 ms
+    frame ingest         4000 events, mean     186 ns, p50    168 ns, p99     434 ns, max      767 ns
+    app read/write       3000 events, mean     153 ns, p50    170 ns, p99     290 ns, max    28920 ns
+    wheel tick              2 events, mean     163 ns, p50     94 ns, p99      94 ns, max      232 ns
+  phase loss: wall 2.1 ms
+    frame ingest         4000 events, mean     212 ns, p50    189 ns, p99     435 ns, max    39728 ns
+    app read/write       3000 events, mean     143 ns, p50    173 ns, p99     327 ns, max      562 ns
+    timer fire           3000 events, mean      80 ns, p50     48 ns, p99     186 ns, max     7524 ns
+    wheel tick           2000 events, mean     200 ns, p50     23 ns, p99     163 ns, max   164271 ns
+  phase close: wall 2.5 ms
+    frame ingest         4000 events, mean     194 ns, p50    170 ns, p99     406 ns, max    37003 ns
+    app read/write       1000 events, mean      99 ns, p50     88 ns, p99     162 ns, max      633 ns
+    timer fire           2000 events, mean     103 ns, p50    103 ns, p99     307 ns, max     4745 ns
+    wheel tick          20000 events, mean      39 ns, p50     23 ns, p99      37 ns, max   170683 ns
+  timer fires, whole run, both hosts: 5000 for a live flow, 1000 of them sent a frame
+  loss: 1000 frames dropped, 1000 retransmit fires on the client; server ingested 14000 frames; orphans 0; stale wheel entries 1000; wheel entries left 0; flows left 0
+  checks: all passed
+== interface loop baseline, 1000 connections in one set per host ==
+    loop turn            2500 events, mean   21092 ns, p50  21705 ns, p99   35394 ns, max    50033 ns
+
+== flow table, 4000 connections (8000 sockets, both ends) ==
+  resident memory per socket after the handshake: 2966 B
+  phase handshake: wall 17.2 ms
+    frame ingest        12000 events, mean    1009 ns, p50    496 ns, p99    3134 ns, max   289117 ns
+    app read/write       4000 events, mean    1023 ns, p50    614 ns, p99    2578 ns, max   148998 ns
+  phase burst: wall 31.1 ms
+    frame ingest        48000 events, mean     397 ns, p50    330 ns, p99     858 ns, max    47621 ns
+    app read/write      36000 events, mean     215 ns, p50    184 ns, p99     676 ns, max    41077 ns
+    wheel tick              6 events, mean     155 ns, p50    159 ns, p99     165 ns, max      199 ns
+  phase single: wall 4.3 ms
+    frame ingest         8000 events, mean     322 ns, p50    214 ns, p99     880 ns, max    29874 ns
+    app read/write       6000 events, mean     183 ns, p50    180 ns, p99     399 ns, max    28265 ns
+    wheel tick              2 events, mean     120 ns, p50     95 ns, p99      95 ns, max      146 ns
+  phase loss: wall 10.6 ms
+    frame ingest        16000 events, mean     330 ns, p50    272 ns, p99     716 ns, max    37635 ns
+    app read/write      12000 events, mean     176 ns, p50    187 ns, p99     345 ns, max    37308 ns
+    timer fire          12000 events, mean      86 ns, p50     83 ns, p99     213 ns, max    47007 ns
+    wheel tick           2000 events, mean     765 ns, p50     24 ns, p99      69 ns, max   677867 ns
+  phase close: wall 9.0 ms
+    frame ingest        16000 events, mean     309 ns, p50    226 ns, p99     926 ns, max    45822 ns
+    app read/write       4000 events, mean     139 ns, p50    135 ns, p99     214 ns, max    35190 ns
+    timer fire           8000 events, mean     126 ns, p50    114 ns, p99     330 ns, max    18134 ns
+    wheel tick          20000 events, mean      93 ns, p50     24 ns, p99      40 ns, max   904711 ns
+  timer fires, whole run, both hosts: 20000 for a live flow, 4000 of them sent a frame
+  loss: 4000 frames dropped, 4000 retransmit fires on the client; server ingested 52000 frames; orphans 0; stale wheel entries 4000; wheel entries left 0; flows left 0
+  checks: all passed
+== interface loop baseline, 4000 connections in one set per host ==
+    loop turn            2500 events, mean  154362 ns, p50 156561 ns, p99  229147 ns, max   530606 ns
+
+== flow table, 16000 connections (32000 sockets, both ends) ==
+  resident memory per socket after the handshake: 2966 B
+  phase handshake: wall 108.1 ms
+    frame ingest        48000 events, mean    1775 ns, p50   1103 ns, p99    5598 ns, max  3481853 ns
+    app read/write      16000 events, mean    1143 ns, p50    944 ns, p99    2607 ns, max   233104 ns
+  phase burst: wall 211.5 ms
+    frame ingest       192000 events, mean     796 ns, p50    417 ns, p99    2225 ns, max   278948 ns
+    app read/write     144000 events, mean     262 ns, p50    183 ns, p99     878 ns, max    54558 ns
+    wheel tick              6 events, mean     176 ns, p50    153 ns, p99     252 ns, max      361 ns
+  phase single: wall 7.6 ms
+    frame ingest         8000 events, mean     674 ns, p50    377 ns, p99    2270 ns, max    35166 ns
+    app read/write       6000 events, mean     218 ns, p50    180 ns, p99     590 ns, max    27730 ns
+    wheel tick              2 events, mean     194 ns, p50    155 ns, p99     155 ns, max      233 ns
+  phase loss: wall 69.1 ms
+    frame ingest        64000 events, mean     730 ns, p50    424 ns, p99    2093 ns, max   267631 ns
+    app read/write      48000 events, mean     200 ns, p50    186 ns, p99     490 ns, max    41254 ns
+    timer fire          48000 events, mean     103 ns, p50     89 ns, p99     237 ns, max    50402 ns
+    wheel tick           2000 events, mean    3413 ns, p50     24 ns, p99      63 ns, max  3376702 ns
+  phase close: wall 60.0 ms
+    frame ingest        64000 events, mean     706 ns, p50    298 ns, p99    2788 ns, max    43351 ns
+    app read/write      16000 events, mean     120 ns, p50     95 ns, p99     214 ns, max    40552 ns
+    timer fire          32000 events, mean     163 ns, p50    147 ns, p99     469 ns, max    45915 ns
+    wheel tick          20000 events, mean     368 ns, p50     24 ns, p99      83 ns, max  4541941 ns
+  timer fires, whole run, both hosts: 80000 for a live flow, 16000 of them sent a frame
+  loss: 16000 frames dropped, 16000 retransmit fires on the client; server ingested 196000 frames; orphans 0; stale wheel entries 16000; wheel entries left 0; flows left 0
+  checks: all passed
+== interface loop baseline, 16000 connections in one set per host ==
+    loop turn            2500 events, mean  927318 ns, p50 943953 ns, p99 1188133 ns, max  2258591 ns

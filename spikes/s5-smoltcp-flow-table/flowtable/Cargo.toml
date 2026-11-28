@@ -1,0 +1,31 @@
+[package]
+name = "fps-spike-smoltcp-flow-table"
+description = "Spike SPK-05: a smoltcp TCP socket driven by a flow table and a timer wheel of our own, outside the interface loop"
+version = "0.0.1"
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/alrawi/FixingPointSystem"
+publish = false
+
+# The spike is a standalone crate. The root Cargo.toml matches spikes/* only one
+# level deep, so this directory is not a member of the root workspace, and the
+# table below stops Cargo from searching further up. The root Cargo.toml and
+# Cargo.lock stay unchanged.
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "flowtable-bench"
+path = "src/main.rs"
+
+[dependencies]
+# smoltcp is 0BSD and its crate `managed` is 0BSD. The same version and the
+# same features as the harness of engine/fps-tcp, without `async`.
+smoltcp = { version = "0.14", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "socket-tcp"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = 1
