@@ -275,7 +275,7 @@ git diff --stat -- '*testdata*'
 
 ## Determinism and flaky tests
 
-Tests use fixed seeds, injected clocks, and loopback or namespace networks. A test that depends on real time uses generous limits and asserts ranges.
+Tests use fixed seeds, injected clocks, and loopback or namespace networks. A test that depends on real time uses generous limits and asserts ranges. A test that needs exact local ports picks a free block inside `ip_local_port_range` at run time and retries on `EADDRNOTAVAIL`, because a fixed block can be taken by any socket (bug 669).
 
 A flaky test is a defect. The agent that observes it opens a `type:bug` issue with the label `flaky`, marks the test as ignored with a reference to the issue, and continues. The quarantine lasts at most one week before the test is fixed or removed with the owner's approval.
 
