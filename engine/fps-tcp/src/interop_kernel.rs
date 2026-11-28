@@ -114,6 +114,11 @@ pub struct KernelInteropConfig {
     /// Whether the kernel keeps its defaults. `false` turns timestamps, SACK,
     /// and window scaling off in the namespace of the kernel peer.
     pub kernel_options: bool,
+    /// The congestion control of the kernel peer (`--cc`), or `None` for the
+    /// default of the host. A host may default to BBR (the sandbox does), and
+    /// a BBR sender without SACK stalls on a short tail drop queue even
+    /// against a kernel receiver (bug #699).
+    pub kernel_cc: Option<&'static str>,
     /// The transfer.
     pub transfer: LossConfig,
     /// The settings of one direction of the link.
@@ -204,6 +209,9 @@ fn kernel_args(role: &str, config: &KernelInteropConfig) -> Vec<String> {
         "--verify".into(),
         u8::from(t.verify).to_string(),
     ];
+    if let Some(name) = config.kernel_cc {
+        args.extend(["--cc".into(), name.into()]);
+    }
     if role == "client" {
         args.extend([
             "--bytes".into(),
