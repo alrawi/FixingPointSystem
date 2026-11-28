@@ -8,9 +8,9 @@
 |---|---|
 | Issue | #720 |
 | Branch | `wp/TRN-37` |
-| Pull request | none yet |
-| Status | in progress |
-| Progress | 90% (6 of 7 plan steps) |
+| Pull request | #722 |
+| Status | ready for review |
+| Progress | 100% (7 of 7 plan steps) |
 | Current holder | claude-00af87, lease until 2026-11-28T07:39:53Z |
 | Last verified commit | none |
 
@@ -30,7 +30,7 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 - [x] 4. Splitter responder and Route follow the lease generation
 - [x] 5. In memory tests (no root), timeout error test
 - [x] 6. Harness test and CI
-- [ ] 7. Docs, log entry, PR, review
+- [x] 7. Docs, log entry, PR, review
 
 ## Done and verified
 
@@ -40,11 +40,11 @@ Each step takes at most 30 minutes of work and ends in a state that tests can ch
 
 ## Remaining
 
-PR, CI, review hand off.
+none
 
 ## Next action
 
-Open the PR and poll CI.
+Review and merge.
 
 ## Blockers and open questions
 
@@ -73,3 +73,4 @@ Append one row per session start, checkpoint, release, block, takeover, and fini
 |---|---|---|---|---|
 | 2026-11-28T06:10 | claude-00af87 | claim | 502f726 | claimed #720 |
 | 2026-11-28T06:55 | claude-00af87 | checkpoint | see git | steps 1 to 6 done, docs written |
+| 2026-11-28T07:20 | claude-00af87 | finish | see git | PR #722, CI green |
