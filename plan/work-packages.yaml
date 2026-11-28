@@ -2876,15 +2876,20 @@ work_packages:
       now belong to fps-datapath, so the agent leases through the lease phase of TRN-37 and runs no DhcpHosts on a
       queue itself. The vetting agent decided on 2026-11-28 (bug #708) that DHCP stays a user space feature in v1,
       that the kernel backend keeps refusing it, and that TRN-31 waits for this package.
+      The leases exist only after the datapath starts, so assemble reads none. The vetting agent accepted on
+      2026-11-28 a design that encodes the host index in a virtual source pool (240.0.0.0/4) and maps it on the live
+      lease boards at each connect. The package waits for bug #724 (LeaseMonitor::boards in fps-datapath), which is a
+      bug and not a package, so depends_on cannot name it.
     deliverables:
       - assemble builds a DHCP pool with HostPool::dhcp, check_af_xdp accepts a DHCP client pool, and the AF_XDP backend waits for the lease phase of TRN-37 before traffic starts, until every lease is bound or a timeout. A timeout fails with an error that names dhcp4, the pool, and the bound count.
       - The kernel backend fails at Prepare with an error that names dhcp4. When an unforced agent fell back to the kernel backend for a DHCP plan, the error also carries the cause of the fallback, so the user sees which shape kept the plan off AF_XDP.
-      - Pools::addresses reads the lease table, and the capture filter of a DHCP port keeps a session only when an address of the session is leased.
-      - The agent rebuilds the neighbor table when the lease generation moves.
+      - A client pool that leases gets no address at assemble. Its SourceHosts carry a virtual static pool in 240.0.0.0/4, which only encodes the host index that the selector picked. DatapathTransport::connect and connect_datagram turn that source into the address that the host holds on the live lease board (LeaseMonitor::boards, bug #724) at each connect, chosen by the pool and never by the range of the address. A host without a lease fails its session with an error that names dhcp4, the pool, and the host index, and sends no frame. The virtual address reaches no frame, capture, report, label, or error text. A pool with more hosts than the virtual prefix holds is refused at assemble with an error that names dhcp4. layout accepts a client pool that leases and refuses a server pool that leases.
+      - The capture filter of a port whose pool leases reads the live lease boards, which the agent hands to it after the backend started. It keeps a session only when an address of the session is leased at that time, and keeps none before the boards are set.
+      - The agent builds no neighbor table and no route for a pool that leases, because the datapath follows the lease generation (TRN-37). A unit test shows that the mapping reads the board at each connect: after the board publishes another address for a host, the next connect of that host takes it.
       - The dhcp_clients.yaml row of EXPECTED in tests/fallback.rs changes from Refused to an outcome that asserts AF_XDP without a fallback on the unforced selection and a dhcp4 refusal on the kernel selection, and the test a_dhcp_pool_is_refused_by_both_backends_and_the_fallback_does_not_hide_it changes with it.
     acceptance:
       - In the namespace harness, a run with a DHCP client pool on the user space backend leases every address before traffic starts, and the capture filter drops a session whose addresses are not leased.
-      - contracts/examples/tests/dhcp_clients.yaml runs through an agent forced onto AF_XDP in the namespace harness with a DHCP server in the router namespace, with its phases shortened for the runner and nothing else changed, and no session fails. Bug #708 closes with this package.
+      - contracts/examples/tests/dhcp_clients.yaml runs through an agent forced onto AF_XDP in the namespace harness with a DHCP server in the router namespace, with its phases shortened for the runner and nothing else changed, and no session fails, and every client address that the server side saw is a leased one, none in 240.0.0.0/4. Bug #708 closes with this package.
 
   - id: CON-32
     title: Kernel release, selected backend, and XDP mode in the agent capabilities
