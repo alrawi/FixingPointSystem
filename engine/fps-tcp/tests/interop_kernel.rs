@@ -93,6 +93,8 @@ struct Scenario {
     kib: u64,
     own: OwnOptions,
     kernel_options: bool,
+    /// The congestion control of the kernel peer, where the row needs one.
+    kernel_cc: Option<&'static str>,
     /// The switches of TRN-34 of the own stack.
     loss: LossSwitches,
 }
@@ -145,7 +147,14 @@ fn scenarios() -> Vec<Scenario> {
         (Pairing::OwnClient, "own client", "kernel server"),
         (Pairing::OwnServer, "kernel client", "own server"),
     ] {
-        let mut add = |what: &str, link, kib, own, kernel_options| {
+        let mut add = |what: &str, link, kib, own: OwnOptions, kernel_options: bool| {
+            // Without SACK the kernel sender recovers one hole per round
+            // trip, and a BBR sender (the default of some hosts, the
+            // sandbox among them) then stalls on the short queue about 30
+            // percent of the time even against a kernel receiver. The rows
+            // that switch SACK off pin the kernel to CUBIC, as the TRN-34
+            // comparison does, and have a goodput floor (bug #699).
+            let no_sack = !kernel_options || !own.sack;
             all.push(Scenario {
                 name: format!("{from} to {to}, {what}"),
                 pairing,
@@ -153,6 +162,7 @@ fn scenarios() -> Vec<Scenario> {
                 kib,
                 own,
                 kernel_options,
+                kernel_cc: no_sack.then_some("cubic"),
                 loss: LossSwitches::default(),
             });
         };
@@ -183,6 +193,7 @@ fn scenarios() -> Vec<Scenario> {
             kib: 2048,
             own: ALL,
             kernel_options: true,
+            kernel_cc: None,
             loss: LossSwitches::ALL,
         });
         all.push(Scenario {
@@ -192,6 +203,7 @@ fn scenarios() -> Vec<Scenario> {
             kib: 2048,
             own: ALL,
             kernel_options: true,
+            kernel_cc: None,
             loss: LossSwitches::ALL,
         });
     }
@@ -209,6 +221,7 @@ fn config_of(scenario: &Scenario) -> KernelInteropConfig {
         own: scenario.own,
         loss: scenario.loss,
         kernel_options: scenario.kernel_options,
+        kernel_cc: scenario.kernel_cc,
         transfer: LossConfig {
             bytes: scenario.kib * KIB,
             timeout: Duration::from_secs(90),
@@ -310,6 +323,15 @@ fn run_scenario(index: usize, scenario: &Scenario) -> Result<Option<Row>, String
     if scenario.drops() && sent_again == 0 {
         found.push("the link drops frames and the sender never sent one again".into());
     }
+    if scenario.kernel_cc.is_some()
+        && scenario.pairing == Pairing::OwnServer
+        && run.goodput_mbit_per_s() < NO_SACK_FLOOR_MBIT
+    {
+        found.push(format!(
+            "the goodput is {:.2} Mbit/s, below the floor of {NO_SACK_FLOOR_MBIT} Mbit/s of a link of 20 (bug #699)",
+            run.goodput_mbit_per_s()
+        ));
+    }
     if !found.is_empty() {
         return Err(format!("{}: {found:?}\nwire: {line}", scenario.name));
     }
@@ -367,6 +389,11 @@ fn compare_with_the_kernel(measures: &[(String, f64, u64)]) -> Result<(), String
     Ok(())
 }
 
+/// The goodput that a row of the own server without SACK must reach on the
+/// bottleneck of 20 Mbit/s: about half of what the rows reach (13 to 19.5 Mbit/s). Before bug
+/// #699 the own server sometimes ran at 0.6 Mbit/s and the rows had no floor.
+const NO_SACK_FLOOR_MBIT: f64 = 9.0;
+
 /// The retransmissions that one run of the probing of a 32 KiB queue may cost
 /// beyond twice those of the kernel, so that a loaded host does not decide.
 const RETRANSMIT_FLOOR: u64 = 8;
@@ -376,6 +403,21 @@ fn leftover_namespaces() -> bool {
         .args(["netns", "list"])
         .output()
         .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("fpsix"))
+}
+
+/// Removes the `fpsix*` namespaces that a killed or failed run left behind
+/// (bug #699), so that the check at the end of this run sees only its own.
+fn remove_stale_namespaces() {
+    let Ok(out) = Command::new("ip").args(["netns", "list"]).output() else {
+        return;
+    };
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let name = line.split_whitespace().next().unwrap_or_default();
+        if name.starts_with("fpsix") {
+            eprintln!("removing the stale namespace {name}");
+            let _ = Command::new("ip").args(["netns", "del", name]).status();
+        }
+    }
 }
 
 fn has_af_xdp() -> bool {
@@ -392,6 +434,7 @@ fn run_all() -> Result<(), String> {
             "the kernel has no AF_XDP sockets",
         );
     }
+    remove_stale_namespaces();
     let mut rows = Vec::new();
     let mut measures: Vec<(String, f64, u64)> = Vec::new();
     for (index, scenario) in scenarios().iter().enumerate() {

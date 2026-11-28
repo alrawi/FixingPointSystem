@@ -996,6 +996,41 @@ fn every_second_segment_is_acknowledged_at_once() {
     assert_eq!(p.server.counters.delayed_acks, 1);
 }
 
+/// Bug #699: the link hands the stack a batch of frames, and the stack sent
+/// one ACK for the whole batch at the flush. A stretch of segments behind one
+/// ACK lets the sender send a burst, which a short queue drops, and a sender
+/// without SACK then recovers one hole per round trip or per timeout (0.6
+/// Mbit/s instead of 13 on the bottleneck row of `interop_kernel`).
+#[test]
+fn a_batch_of_segments_gets_an_acknowledgment_for_every_second_one() {
+    let mut p = Pair::new(delayed());
+    p.write(&pattern(5 * TS_MSS));
+    p.client.flush_dirty(p.now);
+    let frames: Vec<Vec<u8>> = std::mem::take(&mut p.client.out.queue).into();
+    assert_eq!(frames.len(), 5);
+    // All five arrive before the flush of the connection.
+    for frame in &frames {
+        p.server.input(frame, p.now);
+    }
+    let acks: Vec<u32> = p
+        .server
+        .out
+        .queue
+        .iter()
+        .map(|f| header_of(f).ack)
+        .collect();
+    let first = header_of(&frames[0]).seq;
+    let after = |n: usize| first.wrapping_add((n * TS_MSS) as u32);
+    assert_eq!(acks, [after(2), after(4)], "one ACK for each pair");
+    p.server.flush_dirty(p.now);
+    assert_eq!(p.server.out.queue.len(), 2, "the flush adds none");
+    // The fifth segment waits for the timer, as one segment does.
+    assert_eq!(p.server.expire(p.now + 40_000), 1);
+    p.server.flush_dirty(p.now + 40_000);
+    let last = header_of(p.server.out.queue.back().expect("the delayed ACK"));
+    assert_eq!(last.ack, after(5));
+}
+
 #[test]
 fn a_segment_after_a_gap_is_acknowledged_at_once_and_so_is_the_one_that_fills_it() {
     let mut p = Pair::new(delayed());

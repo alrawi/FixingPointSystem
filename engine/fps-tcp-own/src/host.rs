@@ -1913,6 +1913,9 @@ impl Host {
                 let take = space.min(data.len());
                 all_taken = take == data.len();
                 let behind_hole = conn.rec.as_ref().is_some_and(|r| !r.ooo.is_empty());
+                // An acknowledgment is owed already, so this segment is the
+                // second one that it would cover.
+                let owed = conn.has(O_UNACKED) || conn.ack_pending;
                 if take > 0 {
                     conn.rcvbuf.extend(&data[..take]);
                     conn.rcv_nxt = conn.rcv_nxt.wrapping_add(take as u32);
@@ -1955,6 +1958,32 @@ impl Host {
                         conn.opts |= O_DQ;
                         self.timers.push(Reverse((due, id, gen)));
                     }
+                } else if owed && take > 0 && all_taken && !fin && !behind_hole {
+                    // At least every second full sized segment is
+                    // acknowledged when it arrives (RFC 5681 section 4.2),
+                    // not once for the batch of frames that the link handed
+                    // over together: a stretch of segments behind one ACK
+                    // lets the sender send a burst that a short queue drops,
+                    // which a sender without SACK recovers from one hole
+                    // per round trip or per timeout (bug #699).
+                    let window =
+                        conn.window_field(self.cfg.rcv_buffer.saturating_sub(conn.rcvbuf.len()));
+                    let opts = conn.tx_opts(ts_now);
+                    self.out.send(
+                        &mut self.counters,
+                        (conn.local_ip, conn.remote_ip),
+                        conn.local_port,
+                        conn.remote_port,
+                        conn.snd_nxt,
+                        conn.rcv_nxt,
+                        flags::ACK,
+                        window,
+                        None,
+                        opts,
+                        (&[], &[]),
+                    );
+                    conn.acked();
+                    conn.adv_wnd = window;
                 } else {
                     conn.ack_pending = true;
                 }
