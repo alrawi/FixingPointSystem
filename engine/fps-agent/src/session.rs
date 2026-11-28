@@ -72,6 +72,9 @@ pub const DEFAULT_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 const WATCHDOG_TICK: Duration = Duration::from_millis(100);
 /// How long a dial may take before it counts as failed.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long `Register` and the opening of the session stream may stay
+/// unanswered before the dial counts as failed (bug #637).
+const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 /// The largest chunk of a capture upload, 256 KiB (CON-13).
 pub const MAX_CHUNK_BYTES: u32 = 262_144;
 
@@ -319,6 +322,9 @@ enum Lost {
     ClosedAfterHandshake(tonic::Status),
     /// The controller stayed silent for the heartbeat timeout.
     Silent,
+    /// A call that opens the session got no answer within `CALL_TIMEOUT`,
+    /// and no error either, so the redial policy must bound the wait.
+    Unanswered(&'static str),
     /// The key, the certificate, or the enrollment failed.
     Identity(IdentityError),
 }
@@ -336,7 +342,11 @@ impl Lost {
             Lost::Status(s) => identity::tls_failure(s).map(tls_reason),
             Lost::Transport(e) => identity::tls_failure(e).map(tls_reason),
             Lost::Identity(e) if e.is_permanent() => Some(chain(e)),
-            Lost::Identity(_) | Lost::Closed | Lost::Silent | Lost::ClosedAfterHandshake(_) => None,
+            Lost::Identity(_)
+            | Lost::Closed
+            | Lost::Silent
+            | Lost::Unanswered(_)
+            | Lost::ClosedAfterHandshake(_) => None,
         }
     }
 
@@ -364,6 +374,12 @@ impl std::fmt::Display for Lost {
             }
             Lost::Closed => f.write_str("the controller closed the stream"),
             Lost::Silent => f.write_str("the controller stayed silent for the heartbeat timeout"),
+            Lost::Unanswered(call) => {
+                write!(
+                    f,
+                    "the controller did not answer {call} within {CALL_TIMEOUT:?}"
+                )
+            }
             Lost::Identity(e) => write!(f, "identity: {}", chain(e)),
         }
     }
@@ -1682,7 +1698,8 @@ where
     });
     let reg = tokio::select! {
         () = shutdown.as_mut() => return Ok(()),
-        r = register => r
+        r = tokio::time::timeout(CALL_TIMEOUT, register) => r
+            .map_err(|_| Lost::Unanswered("Register"))?
             .map_err(|status| {
                 // Under TLS 1.3 a client finishes its handshake before the
                 // server checks the client certificate, so a server that
@@ -1724,7 +1741,10 @@ where
     let open = client.session(ReceiverStream::new(rx));
     let mut inbound = tokio::select! {
         () = shutdown.as_mut() => return Ok(()),
-        r = open => r.map_err(Lost::Status)?.into_inner(),
+        r = tokio::time::timeout(CALL_TIMEOUT, open) => r
+            .map_err(|_| Lost::Unanswered("Session"))?
+            .map_err(Lost::Status)?
+            .into_inner(),
     };
     *opened = true;
     tracing::info!(controller_id = %reg.controller_id, session = number, interval_ms = interval.as_millis() as u64, timeout_ms = timeout.as_millis() as u64, "session open");
