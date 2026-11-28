@@ -246,6 +246,9 @@ func ToAPI(run Run) api.Run {
 	if len(run.Calibration) > 0 {
 		out.Calibration = ptr(calibration(run.Calibration))
 	}
+	if len(run.AgentRuns) > 0 {
+		out.Agents = ptr(agentRuns(run.AgentRuns))
+	}
 	if run.Totals != nil {
 		out.Summary = summary(run.Totals)
 	}
@@ -265,6 +268,41 @@ func ToAPI(run Run) api.Run {
 			}
 		}
 		out.Verdict.Criteria = &cs
+	}
+	return out
+}
+
+// agentRuns maps what the agents ran to the AgentRun schema. A backend that
+// the contract does not name is left out with its agent, so a value is never
+// guessed.
+func agentRuns(in []AgentRun) []api.AgentRun {
+	out := make([]api.AgentRun, 0, len(in))
+	for _, a := range in {
+		o := api.AgentRun{Agent: a.Agent, Backend: api.AgentRunBackend(a.Backend)}
+		if !o.Backend.Valid() {
+			continue
+		}
+		if sb := api.AgentRunSelectedBackend(a.SelectedBackend); sb.Valid() {
+			o.SelectedBackend = &sb
+		}
+		if len(a.Ports) > 0 {
+			ports := make([]struct {
+				InterfaceName *string                   `json:"interface_name,omitempty"`
+				Name          string                    `json:"name"`
+				XdpMode       *api.AgentRunPortsXdpMode `json:"xdp_mode,omitempty"`
+			}, len(a.Ports))
+			for i, p := range a.Ports {
+				ports[i].Name = p.Name
+				if p.InterfaceName != "" {
+					ports[i].InterfaceName = ptr(p.InterfaceName)
+				}
+				if m := api.AgentRunPortsXdpMode(p.XdpMode); m.Valid() {
+					ports[i].XdpMode = &m
+				}
+			}
+			o.Ports = &ports
+		}
+		out = append(out, o)
 	}
 	return out
 }

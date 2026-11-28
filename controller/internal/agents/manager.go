@@ -71,6 +71,14 @@ type Agent struct {
 	PlanID     string
 	Phase      string
 	Message    string
+	// RunBackend and RunPorts are what the latest heartbeat reported about
+	// the loaded plan: the backend that started it and the XDP mode that each
+	// port of the plan bound in (agent protocol 0.2.7). RunBackend is
+	// BACKEND_UNSPECIFIED, and RunPorts is empty, while the agent has started
+	// no plan and for an agent that does not report them, and a reader must
+	// treat that as unknown and never as the kernel backend.
+	RunBackend agentpb.Backend
+	RunPorts   []RunPort
 	// Address is the peer address of the open session.
 	Address string
 	// ReservedBy names the reservation holder, or is empty.
@@ -86,6 +94,29 @@ type Agent struct {
 	// heartbeat with an agent_time, and for an offline agent.
 	ClockOffset    time.Duration
 	HasClockOffset bool
+}
+
+// RunPort is the XDP mode that one port of a plan bound in, from RunPort of
+// the heartbeat.
+type RunPort struct {
+	// Name is the port name of the plan and InterfaceName the interface of
+	// the agent that it is bound to.
+	Name          string
+	InterfaceName string
+	// XdpMode is XDP_MODE_UNSPECIFIED unless the run backend is AF_XDP.
+	XdpMode agentpb.XdpMode
+}
+
+// runPorts copies the run_ports of a heartbeat.
+func runPorts(in []*agentpb.RunPort) []RunPort {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]RunPort, len(in))
+	for i, p := range in {
+		out[i] = RunPort{Name: p.GetName(), InterfaceName: p.GetInterfaceName(), XdpMode: p.GetXdpMode()}
+	}
+	return out
 }
 
 // EventKind classifies an Event.
@@ -133,6 +164,10 @@ type Event struct {
 	// AgentState and PlanID are the agent state and plan after the event.
 	AgentState agentpb.AgentState
 	PlanID     string
+	// RunBackend and RunPorts are the run backend and the bound ports that
+	// the heartbeat reported, as Agent.RunBackend and Agent.RunPorts say.
+	RunBackend agentpb.Backend
+	RunPorts   []RunPort
 	// Reason explains EventOffline, such as heartbeat timeout.
 	Reason string
 	// Snapshot is the snapshot of EventSnapshot.
@@ -160,6 +195,8 @@ type record struct {
 	planID     string
 	phase      string
 	message    string
+	runBackend agentpb.Backend
+	runPorts   []RunPort
 	token      string
 	reservedBy string
 	sess       *session
@@ -212,6 +249,8 @@ func (r *record) snapshot() Agent {
 		PlanID:        r.planID,
 		Phase:         r.phase,
 		Message:       r.message,
+		RunBackend:    r.runBackend,
+		RunPorts:      slices.Clone(r.runPorts),
 		Address:       r.address,
 		ReservedBy:    r.reservedBy,
 		LastHeartbeat: r.lastBeat,

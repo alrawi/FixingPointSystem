@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -337,6 +338,8 @@ func (m *Manager) heartbeat(s *session, hb *agentpb.Heartbeat) error {
 		return nil
 	}
 	changed := r.agentState != hb.GetState() || r.planID != hb.GetPlanId()
+	ports := runPorts(hb.GetRunPorts())
+	reported := r.runBackend != hb.GetRunBackend() || !slices.Equal(r.runPorts, ports)
 	r.lastBeat = now
 	if at := hb.GetAgentTime(); at != nil && at.IsValid() {
 		r.clockOffset, r.hasOffset = at.AsTime().Sub(now), true
@@ -345,10 +348,19 @@ func (m *Manager) heartbeat(s *session, hb *agentpb.Heartbeat) error {
 	r.planID = hb.GetPlanId()
 	r.phase = hb.GetPhase()
 	r.message = hb.GetMessage()
-	ev := Event{Kind: EventStateChanged, AgentID: r.id, Time: now, AgentState: r.agentState, PlanID: r.planID}
+	r.runBackend, r.runPorts = hb.GetRunBackend(), ports
+	ev := Event{
+		Kind: EventStateChanged, AgentID: r.id, Time: now, AgentState: r.agentState, PlanID: r.planID,
+		RunBackend: r.runBackend, RunPorts: slices.Clone(ports),
+	}
 	m.mu.Unlock()
 	if changed {
 		m.log.Info("agent state changed", "agent_id", s.agentID, "state", hb.GetState().String(), "plan_id", hb.GetPlanId())
+	}
+	// A heartbeat that brings the run backend or the bound ports without a new
+	// state is an event too, so a run learns them even when the agent sent
+	// them one heartbeat after the state change.
+	if changed || reported {
 		m.emit(ev)
 	}
 	ack := &agentpb.SessionResponse{Body: &agentpb.SessionResponse_HeartbeatAck{HeartbeatAck: &agentpb.HeartbeatAck{
