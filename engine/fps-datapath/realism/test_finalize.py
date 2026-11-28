@@ -57,13 +57,17 @@ def test_a_placeholder_sums_the_sessions_with_their_weights() -> None:
 
 def test_the_labels_take_the_sessions_that_the_agent_started(tmp_path: Path) -> None:
     make_plan.build(ROOT, tmp_path, "strike", None, 42, "dpc", "dps", True)
-    report(tmp_path / "agent-0.jsonl", {"slowloris": 23})
+    report(tmp_path / "agent-0.jsonl", {"slowloris": 23, "conn_churn": 21})
     finalize.apply_counts(tmp_path, make_plan.load_profile("strike"))
     labels = yaml.safe_load((tmp_path / "labels.yaml").read_text(encoding="utf-8"))
-    [scenario] = labels["structure"]["scenarios"]
-    assert scenario["expected_instances"] == 23
+    scenarios = {
+        Path(s["file"]).stem: s["expected_instances"]
+        for s in labels["structure"]["scenarios"]
+    }
+    assert scenarios == {"slowloris": 23, "conn_churn": 21}
     assert json.loads((tmp_path / "started.json").read_text(encoding="utf-8")) == {
-        "slowloris": 23
+        "conn_churn": 21,
+        "slowloris": 23,
     }
 
 
@@ -86,10 +90,11 @@ def test_the_labels_of_an_excluded_scenario_leave_with_it(tmp_path: Path) -> Non
     ]
     make_plan.build(ROOT, tmp_path, "strike", None, 42, "dpc", "dps", True)
     labels = yaml.safe_load((tmp_path / "labels.yaml").read_text(encoding="utf-8"))
-    assert [e["match"]["server_port"] for e in labels["sessions"]] == [8080]
+    # Nothing of strike is excluded since bug #689: conn_churn keeps its labels.
+    assert [e["match"]["server_port"] for e in labels["sessions"]] == [8080, 8081]
     files = [Path(e["file"]) for e in labels["structure"]["scenarios"]]
-    assert [f.name for f in files] == ["slowloris.yaml"]
-    assert files[0].is_file(), "the file of a scenario is an absolute path"
+    assert [f.name for f in files] == ["slowloris.yaml", "conn_churn.yaml"]
+    assert all(f.is_file() for f in files), "the file of a scenario is an absolute path"
 
 
 def test_the_excluded_scenarios_run_again_on_request(tmp_path: Path) -> None:

@@ -181,9 +181,3 @@ strike:
   scenario_vars:
     conn_churn: {server_port: 8081, churn_port: 8082}
   skip: [bad_request_line, te_cl_conflict]
-  excluded:
-    conn_churn: >-
-      its churned connections reset before the server accepts them, and the own stack drops a connection that
-      was reset before accept, so the server side times out (18 of 24 sessions fail); a kernel keeps such a
-      connection in the accept queue
-  drop_rules: [{transport: tcp, server_port: 8081}]

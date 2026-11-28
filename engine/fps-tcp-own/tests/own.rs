@@ -461,6 +461,65 @@ async fn abort_resets_the_peer_and_ends_later_operations() {
     driver.abort();
 }
 
+/// A client that connects and resets before the server accepts, as the
+/// churned connections of `strike/conn_churn` do (bug #689). A kernel keeps
+/// the connection in the accept queue: `accept` returns it and the first read
+/// reports the reset. `drop_ack` drops the plain ACK that completes the
+/// handshake, so the reset (which carries the ACK field) is the first segment
+/// that completes it.
+async fn reset_before_accept(drop_ack: bool, connections: usize) {
+    let lab = lab(
+        OwnConfig::default(),
+        Box::new(move |frame| {
+            let Ok(parsed) = wire::parse_frame(frame) else {
+                return Fate::Deliver;
+            };
+            let f = parsed.header.flags;
+            if drop_ack && f & (flags::SYN | flags::RST | flags::FIN) == 0 && f & flags::ACK != 0 {
+                return Fate::Drop;
+            }
+            Fate::Deliver
+        }),
+        deliver_all(),
+    );
+    lab.stack.listen(PORT).expect("listen");
+    let driver = start_driver(&lab.stack);
+    within(async {
+        for _ in 0..connections {
+            let mut client = lab.stack.connect(PORT).await.expect("connect");
+            client.abort();
+        }
+        for index in 0..connections {
+            let mut server = tokio::time::timeout(Duration::from_secs(5), lab.stack.accept(PORT))
+                .await
+                .unwrap_or_else(|_| {
+                    panic!("accept {index} timed out: the reset connection was dropped")
+                })
+                .expect("accept");
+            let mut buf = [0u8; 8];
+            let error = server.read(&mut buf).await.expect_err("reset");
+            assert_eq!(error.kind(), ErrorKind::ConnectionReset);
+        }
+    })
+    .await;
+    driver.abort();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_connection_reset_after_the_handshake_stays_in_the_accept_queue() {
+    reset_before_accept(false, 1).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_reset_that_carries_the_last_ack_of_the_handshake_stays_in_the_accept_queue() {
+    reset_before_accept(true, 1).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_hundred_connections_reset_before_accept_are_all_accepted() {
+    reset_before_accept(true, 100).await;
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_server_abort_resets_the_client() {
     let stack = OwnStack::default();

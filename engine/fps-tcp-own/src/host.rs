@@ -1566,6 +1566,23 @@ impl Host {
             } else {
                 Some(io::ErrorKind::ConnectionReset)
             };
+            if conn.state == State::SynReceived && has_ack && h.ack == conn.snd_nxt {
+                // A reset that carries the ACK of our SYN-ACK completes the
+                // handshake before it ends the connection: the peer reset
+                // before its plain ACK went out. A kernel keeps such a
+                // connection in the accept queue, `accept` returns it, and
+                // its first read reports the reset (bug #689).
+                conn.snd_una = h.ack;
+                conn.state = State::Established;
+                conn.armed = false;
+                let listener = conn.listener;
+                if let Some(l) = self.listeners.get_mut(&listener) {
+                    l.queue.push_back((id, gen));
+                    if let Some((_, waker)) = l.waiters.pop_first() {
+                        waker.wake();
+                    }
+                }
+            }
             self.close_conn(id, error);
             return;
         }
