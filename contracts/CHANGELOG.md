@@ -1,5 +1,9 @@
 # Contracts changelog
 
+## Example fix (2026-11-27)
+
+Bug #692. The example tests `enterprise_mix_10g.yaml` and `port_locations.yaml` ran two scenarios on tcp 8080 of one server pool, which every agent refuses. `web_browse` takes `server_port: 8081` in both. No schema changed, and `tools/contracts/validate.py` now reports such a clash.
+
 ## Scenario contract 0.6, test configuration 0.3, and metric catalog 0.3.0 (2026-11-10)
 
 Contract gaps that CAP-02 and RLM-06 found (CON-19). All changes are additive. See `changes/CON-19.md`.

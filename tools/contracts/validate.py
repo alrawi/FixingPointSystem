@@ -1294,12 +1294,52 @@ def check_test_config(doc: dict, file: Path, report: Report, index: ModuleIndex,
                 elif pool["role"] != role:
                     report.error(file, where + f"/{key}", f"host pool '{entry[key]}' has role '{pool['role']}'")
 
+    _check_server_ports(doc, file, report, index, pools)
+
     names = [p["name"] for p in doc["load"]["phases"]]
     for i, name in enumerate(names):
         if names.index(name) != i:
             report.error(file, f"/load/phases/{i}/name", f"duplicate phase '{name}'")
 
     _check_distributions(doc, file, report)
+
+
+_SERVER_PORT_VAR = re.compile(r"^\s*\{\{\s*vars\.server_port\s*\}\}\s*$")
+
+
+def _check_server_ports(doc: dict, file: Path, report: Report, index: ModuleIndex, pools: dict) -> None:
+    """Two mix entries cannot listen on one port of one server pool (bug #692).
+
+    A plan listens once for each port of each server host, and an agent refuses a plan in which two
+    entries accept on the same transport and port of the same hosts. The check is narrow on purpose: it
+    reads only the port of a scenario whose first flow accepts on exactly `{{ vars.server_port }}`, with
+    the value of the entry's `server_port` param or else the default of the scenario var.
+    """
+    default_server = next((name for name, p in pools.items() if p["role"] == "server"), None)
+    seen: dict[tuple[str, str, Any], tuple[int, str]] = {}
+    for i, entry in enumerate(doc["profile"]["mix"]):
+        resolved = index.resolve(entry["scenario"])
+        if not isinstance(resolved, tuple):
+            continue
+        scenario = resolved[1]
+        flows = scenario.get("flows") or []
+        if not flows:
+            continue
+        accept = next((a["accept"] for a in flows[0].get("server") or [] if "accept" in a), None)
+        if not accept or not _SERVER_PORT_VAR.match(str(accept.get("port", ""))):
+            continue
+        port = (entry.get("params") or {}).get("server_port", (scenario.get("vars") or {}).get("server_port"))
+        if not isinstance(port, int) or isinstance(port, bool):
+            continue
+        key = (entry.get("server_pool", default_server), flows[0].get("l4", "tcp"), port)
+        if key in seen:
+            first_index, first_ref = seen[key]
+            report.error(file, f"/profile/mix/{i}",
+                         f"mix entries {first_ref} and {entry['scenario']} both listen on {key[1]} port {port} "
+                         f"of server pool '{key[0]}'; give one of them its own server_port in params "
+                         f"(/profile/mix/{first_index} is the other)")
+        else:
+            seen[key] = (i, entry["scenario"])
 
 
 def _check_distributions(doc: dict, file: Path, report: Report) -> None:

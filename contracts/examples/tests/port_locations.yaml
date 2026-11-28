@@ -18,7 +18,8 @@ profile:
   basis: sessions
   mix:
     - { scenario: http1/web_get, weight: 1, client_pool: lab, server_pool: web }
-    - { scenario: http1/web_browse, weight: 3, client_pool: users, server_pool: web }
+    # Both scenarios listen on tcp 8080 of the pool web, so web_browse takes 8081.
+    - { scenario: http1/web_browse, weight: 3, client_pool: users, server_pool: web, params: { server_port: 8081 } }
 load:
   objective: { type: sessions_per_second, value: 2000 }
   phases:
