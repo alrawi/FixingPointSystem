@@ -182,7 +182,7 @@ func goldenCases() []goldenCase {
 		{
 			name:   "dhcp_clients",
 			config: filepath.Join(contracts, "examples", "tests", "dhcp_clients.yaml"),
-			agents: []Agent{{ID: "local", Cores: 2, Interfaces: []string{"lo"}}},
+			agents: []Agent{{ID: "local", Cores: 2, Interfaces: []string{"eth1", "eth2"}}},
 		},
 	}
 }

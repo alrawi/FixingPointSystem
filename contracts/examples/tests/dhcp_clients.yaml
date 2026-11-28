@@ -1,4 +1,9 @@
-# A pool of DHCP clients against a static server pool (test configuration v0.4, CON-34). The clients pool names no ipv4, ipv6, or gateway: its hosts take their addresses and their router from DHCP, and keep the MAC address mac_base plus their index. The servers pool keeps static addresses, and the clients compute the addresses of the servers from its prefix. Pairs with the example modules of contracts/examples/modules/, like http_smoke.yaml.
+# A pool of DHCP clients against a static server pool (test configuration v0.4, CON-34, CON-36). The clients pool names no ipv4, ipv6, or gateway: its hosts take their addresses and their router from DHCP, and keep the MAC address mac_base plus their index. The servers pool keeps static addresses, and the clients compute the addresses of the servers from its prefix. Pairs with the example modules of contracts/examples/modules/, like http_smoke.yaml.
+#
+# What the network must provide. The device under test sits between the two ports. client0 is local/eth1 and server0 is local/eth2, so each arm has its own interface.
+#   - A DHCP server on the segment of client0, which leases the 200 clients an address and a router.
+#   - A route from the leased subnet to the servers, so that the traffic of the clients reaches 48.0.0.0/24 through the device under test. The servers answer through their gateway 48.0.0.254 on the servers pool.
+# The file needs a user space backend (AF_XDP). The kernel backend leases no address and refuses dhcp4, and the interface lo has no DHCP server, so no run on local/lo can lease.
 apiVersion: fixingpoint.dev/v1alpha1
 kind: Test
 metadata:
@@ -7,11 +12,11 @@ metadata:
 topology: app_sim
 network:
   ports:
-    - { name: client0, location: local/lo }
-    - { name: server0, location: local/lo }
+    - { name: client0, location: local/eth1 }
+    - { name: server0, location: local/eth2 }
   host_pools:
     - { name: clients, port: client0, role: client, count: 200, dhcp4: {} }
-    - { name: servers, port: server0, role: server, ipv4: 48.0.0.0/24, count: 1 }
+    - { name: servers, port: server0, role: server, ipv4: 48.0.0.0/24, count: 1, gateway: 48.0.0.254 }
 profile:
   basis: sessions
   mix:

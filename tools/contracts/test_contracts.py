@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import ipaddress
 import os
 import re
 import shutil
@@ -1349,6 +1350,33 @@ def test_dhcp_example_validates(dhcp, index):
     assert dhcp["network"]["host_pools"][0] == {
         "name": "clients", "port": "client0", "role": "client", "count": 200, "dhcp4": {}}
     assert not check_test(dhcp, index).errors
+
+
+def test_dhcp_example_names_a_port_for_each_arm(dhcp, index):
+    # CON-36: both ports on local/lo left no backend able to run the file.
+    # No DHCP server answers on loopback, and the datapath needs an interface
+    # for each arm.
+    ports = {p["name"]: p["location"] for p in dhcp["network"]["ports"]}
+    assert ports == {"client0": "local/eth1", "server0": "local/eth2"}
+    assert len(set(ports.values())) == 2
+    clients, servers = dhcp["network"]["host_pools"]
+    assert servers["gateway"] == "48.0.0.254"
+    assert ipaddress.ip_address(servers["gateway"]) in ipaddress.ip_network(servers["ipv4"])
+    # The clients keep taking address and router from DHCP.
+    assert not {"ipv4", "ipv6", "gateway"} & clients.keys()
+    assert not check_test(dhcp, index).errors
+
+
+def test_dhcp_example_header_says_what_the_network_provides():
+    head = []
+    for line in (EXAMPLES / "tests/dhcp_clients.yaml").read_text().splitlines():
+        if not line.startswith("#"):
+            break
+        head.append(line)
+    text = " ".join(head)
+    assert "DHCP server on the segment of client0" in text
+    assert "route from the leased subnet to the servers" in text
+    assert "user space backend" in text
 
 
 def test_pool_without_address_source_is_rejected(dhcp):

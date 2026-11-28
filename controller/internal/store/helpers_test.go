@@ -146,7 +146,9 @@ func exampleCatalog(t *testing.T) fakeCatalog {
 // exampleInventory holds the agents that the example configurations name.
 func exampleInventory() fakeInventory {
 	return fakeInventory{agents: []compiler.Agent{
-		{ID: "local", Cores: 2, Interfaces: []string{"lo"}},
+		// local runs the lo examples and dhcp_clients.yaml (CON-36), which
+		// pins its ports to local/eth1 and local/eth2.
+		{ID: "local", Cores: 2, Interfaces: []string{"lo", "eth1", "eth2"}},
 		{ID: "agent-a", Cores: 4, Interfaces: []string{"eth1", "eth2"}},
 		{ID: "spare", Cores: 1},
 	}}
