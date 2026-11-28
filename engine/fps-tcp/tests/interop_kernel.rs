@@ -155,6 +155,12 @@ fn scenarios() -> Vec<Scenario> {
             // that switch SACK off pin the kernel to CUBIC, as the TRN-34
             // comparison does, and have a goodput floor (bug #699).
             let no_sack = !kernel_options || !own.sack;
+            // The bottleneck row is also the baseline of the TRN-34
+            // comparison, which counts the segments that the kernel sends
+            // again. A BBR sender (the sandbox default) sends again 100 to
+            // 140 where CUBIC sends 7 to 13, so the baseline pins CUBIC
+            // and the bound means the same on every host (bug #732).
+            let baseline = what == "bottleneck with tail drop";
             all.push(Scenario {
                 name: format!("{from} to {to}, {what}"),
                 pairing,
@@ -162,7 +168,7 @@ fn scenarios() -> Vec<Scenario> {
                 kib,
                 own,
                 kernel_options,
-                kernel_cc: no_sack.then_some("cubic"),
+                kernel_cc: (no_sack || baseline).then_some("cubic"),
                 loss: LossSwitches::default(),
             });
         };

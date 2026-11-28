@@ -375,15 +375,22 @@ impl Inner {
     }
 
     /// Runs passes over both hosts until no frame, timer, or connection has
-    /// work left. Returns true when anything moved.
-    fn pump(&mut self, now: i64) -> bool {
+    /// work left. Returns true when anything moved. The clock is read again
+    /// before every step: a call can run for milliseconds (an unoptimized
+    /// build takes 65 microseconds per segment) while frames go out and
+    /// their acknowledgments come back, and a time read once at the start
+    /// would stamp a segment and its acknowledgment with the same instant.
+    /// The round trip samples then read 1 microsecond, which poisons the
+    /// smallest round trip of HyStart (bug #732), and the pacing and the
+    /// timers of RACK run on a time that stands still.
+    fn pump(&mut self, clock: &dyn Clock) -> bool {
         let mut moved = false;
         loop {
             self.passes += 1;
-            let work = self.client.receive(now)
-                + self.server.receive(now)
-                + self.client.transmit(now)
-                + self.server.transmit(now);
+            let work = self.client.receive(clock.now_micros())
+                + self.server.receive(clock.now_micros())
+                + self.client.transmit(clock.now_micros())
+                + self.server.transmit(clock.now_micros());
             if work == 0 {
                 return moved;
             }
@@ -609,10 +616,9 @@ impl OwnStack {
     /// Runs the hosts until nothing moves and returns whether anything did.
     /// This is one poll of the poll mode driver.
     pub fn pump(&self) -> bool {
-        let now = self.shared.now();
         self.shared.pumped.fetch_add(1, Ordering::Relaxed);
         let mut inner = self.shared.lock();
-        inner.pump(now)
+        inner.pump(&*self.shared.clock)
     }
 
     /// The counters of both hosts.
@@ -797,10 +803,10 @@ impl OwnStack {
         async move {
             loop {
                 let (moved, blocked, wait) = {
-                    let now = stack.shared.now();
                     let mut inner = stack.shared.lock();
                     stack.shared.pumped.fetch_add(1, Ordering::Relaxed);
-                    let moved = inner.pump(now);
+                    let moved = inner.pump(&*stack.shared.clock);
+                    let now = stack.shared.now();
                     let wait = inner
                         .next_deadline()
                         .map_or(1_000_000, |d| (d - now).clamp(0, 1_000_000));
