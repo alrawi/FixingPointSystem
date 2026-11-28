@@ -284,10 +284,21 @@ impl NewReno {
             }
             return Action::None;
         }
-        if self.dupacks != DUPACK_THRESHOLD {
-            return Action::None;
-        }
         if self.has_recover && seq_lt(ack, self.recover) {
+            // The acknowledgment stops short of the end of the old flight. A
+            // go back N after a timeout sends the old segments above the
+            // hole again, and the peer, which holds them, answers each with
+            // a duplicate: those carry no news. Only the duplicates beyond
+            // them can come from data sent after the timeout, and when three
+            // of those arrive, a segment of the new flight is lost. Without
+            // this the loss of the last old segment, or of a segment sent
+            // since, waited for a timeout of 400 ms or more (bug #731).
+            let above_the_hole = self.recover.wrapping_sub(ack).div_ceil(self.mss);
+            let needed = u32::from(DUPACK_THRESHOLD) + above_the_hole.saturating_sub(1);
+            if u32::from(self.dupacks) < needed {
+                return Action::None;
+            }
+        } else if self.dupacks != DUPACK_THRESHOLD {
             return Action::None;
         }
         self.ssthresh = self.event_ssthresh(flight);
@@ -377,6 +388,21 @@ impl NewReno {
             return Action::Retransmit;
         }
         let mut acked = acked;
+        if self.has_recover && seq_le(ack, self.recover) {
+            // After a timeout the sender goes back and sends the old flight
+            // again, and the peer, which holds part of it out of order, may
+            // acknowledge a long stretch of it at once. Those bytes were
+            // delivered before the timeout, not in this round trip, so the
+            // acknowledgment is worth at most two segments of window growth
+            // (RFC 3465 section 2.3, L = 2), as an acknowledgment of the old
+            // flight in Linux counts only what the duplicates did not. A
+            // jump of 17 segments doubled the window, sent 29 segments into
+            // a queue of 22, and the dropped ones could not start a fast
+            // retransmit, because their duplicate acknowledgments stay below
+            // `recover`: the timeout fired again, backed off to 400 ms and
+            // then 800 ms (bug #731, 4.6 Mbit/s).
+            acked = acked.min(2 * self.mss);
+        }
         if self.cwnd < self.ssthresh {
             // Slow start: grow by the bytes acknowledged (appropriate byte
             // counting without the limit of RFC 5681 equation 2, because this
@@ -1165,6 +1191,43 @@ mod tests {
         assert_eq!(tiny.cwnd(), 2);
         tiny.on_new_ack(2, 1);
         assert_eq!(tiny.cwnd(), 3);
+    }
+
+    #[test]
+    fn an_acknowledgment_that_jumps_over_the_old_flight_grows_the_window_by_two_segments() {
+        let mut cc = NewReno::new(MSS, 10);
+        cc.on_timeout(30 * M, 30 * M);
+        assert_eq!(cc.cwnd(), M);
+        // The peer held 17 segments out of order and acknowledges them with
+        // the first segment that went out again.
+        cc.on_new_ack(17 * M, 17 * M);
+        assert_eq!(cc.cwnd(), 3 * M);
+        // Beyond the old flight the window grows by the bytes acknowledged.
+        let mut fresh = NewReno::new(MSS, 10);
+        fresh.on_timeout(30 * M, 30 * M);
+        fresh.on_new_ack(40 * M, 10 * M);
+        assert_eq!(fresh.cwnd(), M + 10 * M);
+    }
+
+    #[test]
+    fn duplicates_beyond_those_of_the_old_flight_start_a_recovery_below_recover() {
+        // The old flight ended at 13 000 and the segment at 11 000 was lost
+        // again: the one old segment above it draws a duplicate, which
+        // changes nothing, and the third duplicate beyond it is the news.
+        let mut cc = NewReno::new(MSS, 10);
+        cc.on_timeout(8 * M, 13_000);
+        for _ in 0..3 {
+            assert_eq!(cc.on_dupack(11_000, 3 * M, 16_000), Action::None);
+        }
+        assert_eq!(cc.on_dupack(11_000, 3 * M, 16_000), Action::Retransmit);
+        assert!(cc.in_recovery());
+        // The last old segment itself: no old segment above it, so the third
+        // duplicate starts the recovery.
+        let mut last = NewReno::new(MSS, 10);
+        last.on_timeout(8 * M, 13_000);
+        last.on_dupack(12_000, 3 * M, 16_000);
+        last.on_dupack(12_000, 3 * M, 16_000);
+        assert_eq!(last.on_dupack(12_000, 3 * M, 16_000), Action::Retransmit);
     }
 
     #[test]
