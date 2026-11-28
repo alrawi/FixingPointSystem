@@ -540,6 +540,8 @@ These are problems that the project has already met while it built modules, with
 
 **`close: fin` waits for the peer.** A side that closes with `fin` waits until the peer closes too, so a test listener that never closes its side makes the session fail with `expect_timeout` (ENG-29).
 
+**A test fails with `EADDRNOTAVAIL` on a fixed local port.** A test that needs exact local ports in an `IP_LOCAL_PORT_RANGE` must pick a free block inside `ip_local_port_range` at run time and retry with a new block on `EADDRNOTAVAIL`. A fixed block can be taken by any other socket, and the kernel ignores a range outside `ip_local_port_range` (bug 669).
+
 ### Timing and pacing
 
 **Sleeps drift.** A plain `delay` of the packet time after every packet drifts, because every sleep wakes late and the delays add up: the harness showed 21.5 ms for a 20 ms packet time. Keep an absolute due time per flow side, so that a late wake shortens the next sleep, as `sip_rtp.pace` does (MOD-14).
