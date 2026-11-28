@@ -956,6 +956,34 @@ pub fn resolve_with_fallback(
     })
 }
 
+/// Refuses a plan with a DHCP pool on the kernel backend (AGT-23): the kernel
+/// has no DHCP client, and a host pool that leases needs a user space backend.
+///
+/// `fallback` is the cause that an unforced agent fell back from AF_XDP to the
+/// kernel backend, see [`Resolution::fallback`]. The error carries it, so the
+/// user sees which shape of the plan kept it off the backend that can lease.
+///
+/// # Errors
+///
+/// Returns a [`RunError`] that names `dhcp4` and the pool when any host pool of
+/// the plan has `dhcp4`.
+pub fn check_kernel_dhcp(plan: &Plan, fallback: Option<&str>) -> Result<(), RunError> {
+    let Some(pool) = plan.host_pools.iter().find(|p| p.dhcp4.is_some()) else {
+        return Ok(());
+    };
+    let mut text = format!(
+        "host pool {} asks for dhcp4, and the kernel backend leases no address; \
+         DHCP runs on a user space backend only",
+        pool.name
+    );
+    if let Some(cause) = fallback {
+        text.push_str(&format!(
+            ". This agent fell back from AF_XDP to the kernel backend because: {cause}"
+        ));
+    }
+    Err(RunError::rule(text))
+}
+
 /// One port of a started plan, as `Heartbeat.run_ports` reports it (CON-35).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunPort {

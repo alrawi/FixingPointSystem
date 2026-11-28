@@ -327,6 +327,32 @@ fn a_dhcp_pool_is_refused_by_both_backends_and_the_fallback_does_not_hide_it() {
     assert!(e.to_string().contains("DHCP"), "{e}");
 }
 
+#[test]
+fn the_kernel_refusal_of_a_dhcp_plan_carries_the_cause_of_the_fallback() {
+    // A DHCP plan of a shape that the datapath refuses falls back to the
+    // kernel backend, which cannot lease. The error names dhcp4 and says why
+    // the plan left AF_XDP (AGT-23).
+    for shape in shapes() {
+        let mut plan = served_plan();
+        plan["hostPools"][0]["ipv4Prefix"] = "".into();
+        plan["hostPools"][0]["dhcp4"] = json!({});
+        (shape.change)(&mut plan);
+        let e = prepare(&plan, &unforced(), shape.sides)
+            .expect_err(&format!("{}: a DHCP pool does not run", shape.what));
+        let text = e.to_string();
+        // The cause is what the forced agent reports for the same plan.
+        let cause = prepare(&plan, &forced(), shape.sides)
+            .expect_err(&format!("{}: a forced agent refuses", shape.what))
+            .to_string();
+        assert!(text.contains("dhcp4"), "{}: {text}", shape.what);
+        assert!(
+            text.contains("fell back from AF_XDP") && text.contains(&cause),
+            "{}: the error carries the cause of the fallback {cause}: {text}",
+            shape.what
+        );
+    }
+}
+
 /// What an unforced agent does with a file of `contracts/examples/tests/`
 /// that does not end on AF_XDP.
 enum Outcome {
@@ -345,7 +371,9 @@ const LO: &str = "host pools clients and servers sit on the same interface lo";
 const EXPECTED: &[(&str, Outcome, &str)] = &[
     (
         "dhcp_clients.yaml",
-        Outcome::Refused("asks for dhcp4, which this agent cannot lease yet (HST-04)"),
+        Outcome::Refused(
+            "host pool clients asks for dhcp4, and the kernel backend leases no address",
+        ),
         "the clients lease their address, and no backend leases one yet (bug #708)",
     ),
     (

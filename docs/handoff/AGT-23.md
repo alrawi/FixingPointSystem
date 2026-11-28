@@ -5,8 +5,8 @@
 | Issue | #635 |
 | Branch | `wp/AGT-23` |
 | Pull request | none yet |
-| Status | in progress |
-| Progress | 0% (0 of 5 plan steps) |
+| Status | blocked |
+| Progress | 10% (0 of 5 plan steps; deliverable 2 done) |
 | Current holder | claude-a23c7e, lease until 2026-11-28T08:28:34Z |
 | Last verified commit | none |
 
@@ -26,19 +26,23 @@ The agent leases the addresses of a DHCP host pool through the lease phase of TR
 
 ## Done and verified
 
-Nothing yet.
+- Deliverable 2 (kernel refusal carries the fallback cause): `backend::check_kernel_dhcp`, called from `run::prepare_selected` for the kernel backend. New test `the_kernel_refusal_of_a_dhcp_plan_carries_the_cause_of_the_fallback`; the dhcp_clients.yaml row text of EXPECTED follows. `cargo test -p fps-agent --test fallback`: 11 passed. `cargo clippy -p fps-agent --all-targets -D warnings` clean.
 
 ## Remaining
 
-Everything.
+Steps 1 to 5 of the plan, which are blocked on one change outside `engine/fps-agent/`:
+
+`fps_datapath::Datapath` keeps its live lease boards private (`Running.leases`), and `Pools::leases()` builds fresh boards, so the agent cannot read the address a leased host holds. The datapath connector needs a leased address as `source`, and the runtime workers pick the source from the pool (`fps-runtime` `source_address`, `pool.ipv4_addr(index)`, which is `None` for a DHCP pool). Needed in `engine/fps-datapath/src/lib.rs`: `LeaseMonitor::boards() -> Vec<ArmBoard>` with `pub struct ArmBoard { pub lane: usize, pub side: Side, pub board: Arc<LeaseBoard> }`, built from `Running.leases` as `LeaseMonitor::report` does.
+
+Planned agent design once it exists: a client DHCP pool gets a virtual static pool (100.64.0.0/10) in `SourceHosts` so the runtime picks an index; `DatapathTransport::connect` and `connect_datagram` map the virtual source to `board.addr_of(index)`; `AfXdpBackend` waits for `wait_leases()` in `launch` with `DhcpSettings` seeded from the plan; `layout` accepts a DHCP client pool and refuses a DHCP server pool; `PortNets` carries a cell that the drive thread fills with the boards after `start_backend`, and the filter keeps a session when `board.index_of(addr)` is `Some`.
 
 ## Next action
 
-Read engine/fps-agent/src/backend.rs layout and transport.rs, then start step 1.
+Apply the datapath accessor (coordinator or a TRN bug), then start step 1.
 
 ## Blockers and open questions
 
-none
+The accessor above, outside the paths of AGT-23.
 
 ## Decisions taken in this package
 
@@ -59,3 +63,4 @@ cd engine/fps-agent && cargo test -p fps-agent --lib
 | Time (UTC) | Agent | Event | Commit | Note |
 |---|---|---|---|---|
 | 2026-11-28T08:28Z | claude-a23c7e | claim | none | claimed #635 with 5 plan steps |
+| 2026-11-28T08:50Z | claude-a23c7e | block | see git log | deliverable 2 done; the rest needs LeaseMonitor::boards in fps-datapath |

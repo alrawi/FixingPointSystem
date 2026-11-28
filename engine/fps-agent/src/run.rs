@@ -346,6 +346,9 @@ pub fn prepare_selected(
         kind: backend,
         fallback,
     } = backend::resolve_with_fallback(&plan, sides, selected, fall_back)?;
+    if backend == BackendKind::Kernel {
+        backend::check_kernel_dhcp(&plan, fallback.as_deref())?;
+    }
     let loaded = modules::load(&plan, modules_dir, policy)?;
     let needs = tls::scan(plan.mix.iter().filter_map(|e| {
         loaded
