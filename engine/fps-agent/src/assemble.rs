@@ -360,7 +360,8 @@ pub fn assemble(
                 for a in &listen {
                     if let Some(other) = taken.insert((udp, *a), e.id.clone()) {
                         return Err(RunError::rule(format!(
-                            "mix entries {other} and {} both listen on {} {a}",
+                            "mix entries {other} and {} both listen on {} {a}; give one entry its own \
+                             `server_port` in its params or its own `server_pool`",
                             e.id,
                             if udp { "udp" } else { "tcp" }
                         )));
